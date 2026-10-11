@@ -1,0 +1,59 @@
+schema_version: 1
+id: dns_bind
+name: BIND query log
+version: 1.0.0
+author: starter-pack
+description: >-
+  ISC BIND 9 query logging (category queries), through syslog or the query log file.
+  The queried name, type, and flags are kept in unmapped (query, qtype, flags).
+category: dns
+vendor: isc
+classification_default: local_only
+sigma:
+  logsource:
+    - {category: dns}
+
+envelope:
+  type: syslog
+  syslog: { rfc: auto, assume_year: rollover_safe, timezone: UTC, strip_relay_headers: true }
+
+match:
+  app_name: [named]
+  regex: 'client (?:@0x[0-9a-f]+ )?[\da-fA-F:.]+#\d+'
+  min_confidence: 0.9
+
+payload:
+  format: regex
+  regex:
+    patterns:
+      - '^(?:\d{2}-\w{3}-\d{4} [\d:.]+ )?(?:queries: info: )?client (?:@0x[0-9a-f]+ )?(?P<src_ip>[\da-fA-F:.]+)#(?P<src_port>\d+) \((?P<qname>[^)]*)\):(?: view (?P<view>[^:]+):)? query: (?P<query>\S+) (?P<qclass>\S+) (?P<qtype>\S+) (?P<flags>\S+) \((?P<server_ip>[^)]+)\)'
+
+transforms:
+  - { field: src_port, op: to_int }
+
+mapping:
+  class_uid: 4003          # DNS Activity
+  fields:
+    activity_id: { default: 1 }    # Query
+    src_endpoint_ip: { from: src_ip }
+    src_endpoint_port: { from: src_port }
+    dst_endpoint_ip: { from: server_ip }
+    message: { from: query }
+
+tests:
+  - name: BIND 9.16 syslog with client object
+    input: "<30>Oct  9 20:41:12 ns1 named[812]: client @0x7f2a1c0a5b68 10.20.1.5#53212 (www.example.com): query: www.example.com IN A +E(0)K (10.20.0.53)"
+    expect:
+      parse_status: ok
+      class_uid: 4003
+      fields: { src_endpoint_ip: 10.20.1.5, src_endpoint_port: 53212, dst_endpoint_ip: 10.20.0.53, message: www.example.com, activity_id: 1 }
+  - name: older BIND with a view
+    input: "<30>Oct  9 20:42:00 ns1 named[812]: client 10.20.1.6#40000 (mail.example.com): view internal: query: mail.example.com IN MX + (10.20.0.53)"
+    expect:
+      parse_status: ok
+      fields: { src_endpoint_ip: 10.20.1.6, message: mail.example.com }
+  - name: query log file line without syslog
+    input: "09-Oct-2026 20:43:00.123 queries: info: client @0x7f00 2001:db8::5#5353 (example.org): query: example.org IN AAAA -E(0)DC (2001:db8::53)"
+    expect:
+      parse_status: partial
+      fields: { src_endpoint_ip: "2001:db8::5", dst_endpoint_ip: "2001:db8::53" }

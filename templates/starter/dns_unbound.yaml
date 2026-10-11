@@ -1,0 +1,59 @@
+schema_version: 1
+id: dns_unbound
+name: Unbound query and reply log
+version: 1.0.0
+author: starter-pack
+description: >-
+  Unbound with log-queries and log-replies. Queries become DNS Activity Query, replies
+  DNS Activity Response with the response code as the status. Name, type, and timing
+  are kept in unmapped.
+category: dns
+vendor: nlnetlabs
+classification_default: local_only
+sigma:
+  logsource:
+    - {category: dns}
+
+envelope:
+  type: syslog
+  syslog: { rfc: auto, assume_year: rollover_safe, timezone: UTC, strip_relay_headers: true }
+
+match:
+  app_name: [unbound]
+  regex: 'info: [\da-fA-F:.]+ \S+\. \S+ IN'
+  min_confidence: 0.9
+
+payload:
+  format: regex
+  regex:
+    patterns:
+      - '^(?:\[\d+\] unbound\[\d+:\d+\] |\[\d+:\d+\] )?(?:info|reply): (?P<src_ip>[\da-fA-F:.]+) (?P<query>\S+) (?P<qtype>\S+) (?P<qclass>IN|CH|HS|ANY)(?: (?P<rcode>[A-Z]+) (?P<seconds>[\d.]+) (?P<cached>\d) (?P<size>\d+))?\s*$'
+
+transforms:
+  - { field: query, op: strip, args: { chars: "." } }
+
+mapping:
+  class_uid: 4003          # DNS Activity
+  fields:
+    src_endpoint_ip: { from: src_ip }
+    message: { from: query }
+    activity_id: { from: rcode, map: { NOERROR: 2, NXDOMAIN: 2, SERVFAIL: 2, REFUSED: 2, FORMERR: 2, NOTIMPL: 2 }, default: 1 }
+    status_id: { from: rcode, map: { NOERROR: 1, NXDOMAIN: 2, SERVFAIL: 2, REFUSED: 2, FORMERR: 2, NOTIMPL: 2 } }
+
+tests:
+  - name: query
+    input: "<30>Oct  9 20:41:12 ns2 unbound: [812:0] info: 10.20.1.5 www.example.com. A IN"
+    expect:
+      parse_status: ok
+      class_uid: 4003
+      fields: { src_endpoint_ip: 10.20.1.5, message: www.example.com, activity_id: 1, status_id: null }
+  - name: reply NXDOMAIN
+    input: "<30>Oct  9 20:41:13 ns2 unbound: [812:0] reply: 10.20.1.5 xj3k9q2v.example.org. A IN NXDOMAIN 0.012345 0 98"
+    expect:
+      parse_status: ok
+      fields: { activity_id: 2, status_id: 2, message: xj3k9q2v.example.org }
+  - name: cached reply
+    input: "<30>1 2026-10-09T20:41:14Z ns2 unbound 812 - - [812:0] info: 10.20.2.14 mail.example.com. MX IN NOERROR 0.000000 1 120"
+    expect:
+      parse_status: ok
+      fields: { activity_id: 2, status_id: 1, src_endpoint_ip: 10.20.2.14 }

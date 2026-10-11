@@ -1,0 +1,3 @@
+# Supply chain: never resolve a package version published less than 14 days ago
+# (minutes). New releases get time for the community to spot a compromised publish.
+minimumReleaseAge: 20160

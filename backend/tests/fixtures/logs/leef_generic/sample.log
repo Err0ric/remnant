@@ -1,0 +1,60 @@
+<13>Oct  9 20:00:20 mail01 LEEF:1.0|ExampleCorp|MailGuard|3.1|MAIL_0|src=10.20.3.30	dst=198.51.100.4	srcPort=15328	dstPort=53	usrName=bob	sev=4
+<13>Oct  9 20:01:23 mail01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|41|^|src=10.20.2.14^dst=203.0.113.9^srcPort=29950^dstPort=443^usrName=alice^sev=2
+<13>Oct  9 20:02:03 nta01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|42|x09|src=10.20.3.30	dst=203.0.113.77	srcPort=33776	dstPort=53	usrName=bob	sev=5
+<13>Oct  9 20:02:12 nta01 LEEF:1.0|ExampleCorp|MailGuard|3.1|MAIL_3|src=10.20.1.5	dst=203.0.113.77	srcPort=44327	dstPort=53	usrName=carol	sev=4
+<13>Oct  9 20:02:49 nta01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|41|^|src=10.20.2.14^dst=203.0.113.9^srcPort=17144^dstPort=25^usrName=bob^sev=10
+<13>Oct  9 20:04:13 mail01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|42|x09|src=10.20.2.14	dst=203.0.113.77	srcPort=61622	dstPort=53	usrName=dave	sev=2
+<13>Oct  9 20:05:18 nta01 LEEF:1.0|ExampleCorp|MailGuard|3.1|MAIL_2|src=10.20.1.6	dst=203.0.113.77	srcPort=32451	dstPort=53	usrName=bob	sev=10
+<13>Oct  9 20:05:59 nta01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|41|^|src=10.20.2.14^dst=198.51.100.4^srcPort=35895^dstPort=53^usrName=bob^sev=2
+<13>Oct  9 20:06:46 nta01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|42|x09|src=10.20.1.6	dst=192.0.2.10	srcPort=14560	dstPort=443	usrName=alice	sev=7
+<13>Oct  9 20:07:18 nta01 LEEF:1.0|ExampleCorp|MailGuard|3.1|MAIL_1|src=10.20.2.14	dst=203.0.113.77	srcPort=51780	dstPort=53	usrName=dave	sev=10
+<13>Oct  9 20:07:30 nta01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|41|^|src=10.20.2.14^dst=203.0.113.9^srcPort=4809^dstPort=443^usrName=dave^sev=6
+<13>Oct  9 20:08:44 nta01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|42|x09|src=10.20.1.5	dst=203.0.113.9	srcPort=22518	dstPort=25	usrName=dave	sev=7
+<13>Oct  9 20:09:22 nta01 LEEF:1.0|ExampleCorp|MailGuard|3.1|MAIL_0|src=10.20.3.30	dst=192.0.2.10	srcPort=55959	dstPort=53	usrName=carol	sev=5
+<13>Oct  9 20:10:32 nta01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|41|^|src=10.20.1.6^dst=203.0.113.77^srcPort=49824^dstPort=53^usrName=alice^sev=10
+<13>Oct  9 20:11:30 nta01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|42|x09|src=10.20.1.5	dst=192.0.2.10	srcPort=27252	dstPort=25	usrName=carol	sev=7
+<13>Oct  9 20:12:32 mail01 LEEF:1.0|ExampleCorp|MailGuard|3.1|MAIL_3|src=10.20.3.30	dst=203.0.113.77	srcPort=21902	dstPort=25	usrName=dave	sev=1
+<13>Oct  9 20:12:50 nta01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|41|^|src=10.20.3.30^dst=203.0.113.9^srcPort=12064^dstPort=53^usrName=bob^sev=3
+<13>Oct  9 20:14:02 mail01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|42|x09|src=10.20.1.6	dst=203.0.113.9	srcPort=8419	dstPort=53	usrName=bob	sev=1
+<13>Oct  9 20:14:17 mail01 LEEF:1.0|ExampleCorp|MailGuard|3.1|MAIL_2|src=10.20.3.30	dst=203.0.113.9	srcPort=13031	dstPort=443	usrName=alice	sev=5
+<13>Oct  9 20:15:45 nta01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|41|^|src=10.20.1.6^dst=203.0.113.9^srcPort=40158^dstPort=25^usrName=carol^sev=8
+<13>Oct  9 20:15:56 nta01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|42|x09|src=10.20.3.30	dst=192.0.2.10	srcPort=43514	dstPort=443	usrName=bob	sev=7
+<13>Oct  9 20:16:26 nta01 LEEF:1.0|ExampleCorp|MailGuard|3.1|MAIL_1|src=10.20.1.6	dst=198.51.100.4	srcPort=12927	dstPort=53	usrName=carol	sev=8
+<13>Oct  9 20:17:26 nta01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|41|^|src=10.20.1.6^dst=198.51.100.4^srcPort=7564^dstPort=443^usrName=bob^sev=10
+<13>Oct  9 20:18:25 nta01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|42|x09|src=10.20.1.5	dst=198.51.100.4	srcPort=15050	dstPort=443	usrName=dave	sev=10
+<13>Oct  9 20:18:27 mail01 LEEF:1.0|ExampleCorp|MailGuard|3.1|MAIL_0|src=10.20.1.6	dst=203.0.113.9	srcPort=62110	dstPort=53	usrName=bob	sev=3
+<13>Oct  9 20:19:01 nta01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|41|^|src=10.20.1.6^dst=203.0.113.77^srcPort=21161^dstPort=443^usrName=bob^sev=10
+<13>Oct  9 20:19:32 mail01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|42|x09|src=10.20.1.6	dst=203.0.113.77	srcPort=62998	dstPort=443	usrName=carol	sev=9
+<13>Oct  9 20:20:15 nta01 LEEF:1.0|ExampleCorp|MailGuard|3.1|MAIL_3|src=10.20.2.14	dst=203.0.113.77	srcPort=62103	dstPort=53	usrName=bob	sev=6
+<13>Oct  9 20:21:16 nta01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|41|^|src=10.20.1.5^dst=203.0.113.9^srcPort=24485^dstPort=443^usrName=carol^sev=8
+<13>Oct  9 20:22:38 nta01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|42|x09|src=10.20.3.30	dst=198.51.100.4	srcPort=3234	dstPort=53	usrName=alice	sev=3
+<13>Oct  9 20:22:57 nta01 LEEF:1.0|ExampleCorp|MailGuard|3.1|MAIL_2|src=10.20.1.5	dst=203.0.113.77	srcPort=65226	dstPort=53	usrName=bob	sev=10
+<13>Oct  9 20:23:33 mail01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|41|^|src=10.20.1.5^dst=198.51.100.4^srcPort=34895^dstPort=443^usrName=carol^sev=10
+<13>Oct  9 20:24:52 nta01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|42|x09|src=10.20.3.30	dst=203.0.113.77	srcPort=58006	dstPort=53	usrName=bob	sev=5
+<13>Oct  9 20:25:55 nta01 LEEF:1.0|ExampleCorp|MailGuard|3.1|MAIL_1|src=10.20.1.5	dst=203.0.113.9	srcPort=16850	dstPort=443	usrName=bob	sev=1
+<13>Oct  9 20:26:39 mail01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|41|^|src=10.20.1.6^dst=198.51.100.4^srcPort=56191^dstPort=25^usrName=alice^sev=6
+<13>Oct  9 20:27:56 mail01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|42|x09|src=10.20.1.6	dst=198.51.100.4	srcPort=64032	dstPort=25	usrName=carol	sev=4
+<13>Oct  9 20:28:56 mail01 LEEF:1.0|ExampleCorp|MailGuard|3.1|MAIL_0|src=10.20.3.30	dst=198.51.100.4	srcPort=64852	dstPort=443	usrName=dave	sev=8
+<13>Oct  9 20:29:32 mail01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|41|^|src=10.20.2.14^dst=203.0.113.77^srcPort=14016^dstPort=443^usrName=bob^sev=4
+<13>Oct  9 20:30:53 nta01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|42|x09|src=10.20.1.6	dst=203.0.113.9	srcPort=34079	dstPort=25	usrName=bob	sev=9
+<13>Oct  9 20:31:10 mail01 LEEF:1.0|ExampleCorp|MailGuard|3.1|MAIL_3|src=10.20.2.14	dst=198.51.100.4	srcPort=12265	dstPort=53	usrName=dave	sev=6
+<13>Oct  9 20:31:40 mail01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|41|^|src=10.20.1.6^dst=203.0.113.77^srcPort=44013^dstPort=443^usrName=bob^sev=7
+<13>Oct  9 20:32:08 mail01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|42|x09|src=10.20.3.30	dst=203.0.113.77	srcPort=63623	dstPort=25	usrName=dave	sev=4
+<13>Oct  9 20:32:44 mail01 LEEF:1.0|ExampleCorp|MailGuard|3.1|MAIL_2|src=10.20.2.14	dst=192.0.2.10	srcPort=10968	dstPort=25	usrName=bob	sev=10
+<13>Oct  9 20:33:52 mail01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|41|^|src=10.20.1.5^dst=203.0.113.9^srcPort=9303^dstPort=443^usrName=dave^sev=10
+<13>Oct  9 20:35:19 nta01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|42|x09|src=10.20.1.5	dst=203.0.113.77	srcPort=60934	dstPort=25	usrName=dave	sev=3
+<13>Oct  9 20:35:58 nta01 LEEF:1.0|ExampleCorp|MailGuard|3.1|MAIL_1|src=10.20.1.6	dst=203.0.113.77	srcPort=64419	dstPort=53	usrName=alice	sev=4
+<13>Oct  9 20:36:19 mail01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|41|^|src=10.20.1.6^dst=203.0.113.77^srcPort=48400^dstPort=53^usrName=dave^sev=4
+<13>Oct  9 20:37:15 nta01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|42|x09|src=10.20.3.30	dst=203.0.113.9	srcPort=50140	dstPort=53	usrName=carol	sev=2
+<13>Oct  9 20:38:05 nta01 LEEF:1.0|ExampleCorp|MailGuard|3.1|MAIL_0|src=10.20.3.30	dst=203.0.113.9	srcPort=19552	dstPort=443	usrName=dave	sev=10
+<13>Oct  9 20:38:24 mail01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|41|^|src=10.20.1.6^dst=198.51.100.4^srcPort=64995^dstPort=443^usrName=dave^sev=2
+<13>Oct  9 20:39:41 mail01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|42|x09|src=10.20.1.5	dst=192.0.2.10	srcPort=42408	dstPort=53	usrName=alice	sev=5
+<13>Oct  9 20:41:04 mail01 LEEF:1.0|ExampleCorp|MailGuard|3.1|MAIL_3|src=10.20.2.14	dst=192.0.2.10	srcPort=12194	dstPort=443	usrName=carol	sev=2
+<13>Oct  9 20:41:23 nta01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|41|^|src=10.20.2.14^dst=203.0.113.77^srcPort=50488^dstPort=443^usrName=carol^sev=10
+<13>Oct  9 20:42:16 nta01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|42|x09|src=10.20.1.6	dst=198.51.100.4	srcPort=57729	dstPort=53	usrName=dave	sev=4
+<13>Oct  9 20:42:43 nta01 LEEF:1.0|ExampleCorp|MailGuard|3.1|MAIL_2|src=10.20.1.5	dst=192.0.2.10	srcPort=17876	dstPort=443	usrName=carol	sev=1
+<13>Oct  9 20:44:04 nta01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|41|^|src=10.20.3.30^dst=203.0.113.9^srcPort=63092^dstPort=443^usrName=bob^sev=3
+<13>Oct  9 20:44:26 mail01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|42|x09|src=10.20.2.14	dst=198.51.100.4	srcPort=51354	dstPort=25	usrName=alice	sev=10
+<13>Oct  9 20:44:52 mail01 LEEF:1.0|ExampleCorp|MailGuard|3.1|MAIL_1|src=10.20.2.14	dst=203.0.113.9	srcPort=45276	dstPort=53	usrName=bob	sev=2
+<13>Oct  9 20:45:30 nta01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|41|^|src=10.20.2.14^dst=192.0.2.10^srcPort=16958^dstPort=25^usrName=bob^sev=8
+<13>Oct  9 20:45:47 mail01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|42|x09|src=10.20.1.6	dst=192.0.2.10	srcPort=60672	dstPort=53	usrName=carol	sev=1

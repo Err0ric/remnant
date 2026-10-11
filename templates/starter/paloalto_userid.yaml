@@ -1,0 +1,89 @@
+schema_version: 1
+id: paloalto_userid
+name: Palo Alto Networks User-ID
+version: 1.0.0
+author: starter-pack
+description: >-
+  PAN-OS USERID logs: IP-to-user mappings learned from a data source (domain controller,
+  GlobalProtect, captive portal, syslog). Login and logout mappings become Authentication
+  logon and logoff for that user and IP; tag registrations stay Base Events.
+category: identity
+vendor: paloalto
+classification_default: local_only
+
+envelope:
+  type: syslog
+  syslog: { rfc: auto, assume_year: rollover_safe, timezone: UTC, strip_relay_headers: true }
+
+match:
+  regex: '^\d+,\d{4}/\d{2}/\d{2} [\d:]+,[^,]*,USERID,'
+  min_confidence: 0.95
+
+payload:
+  format: csv
+  csv:
+    trailing: ignore
+    columns:
+      - "_"
+      - receive_time
+      - serial_number
+      - type
+      - subtype
+      - "_"
+      - generated_time
+      - virtual_system
+      - source_ip
+      - user
+      - data_source_name
+      - event_id
+      - repeat_count
+      - time_out_threshold
+      - source_port
+      - destination_port
+      - data_source
+      - data_source_type
+      - sequence_number
+      - action_flags
+      - device_group_hierarchy_level_1
+      - device_group_hierarchy_level_2
+      - device_group_hierarchy_level_3
+      - device_group_hierarchy_level_4
+      - virtual_system_name
+      - device_name
+
+transforms:
+  - { field: generated_time, op: timestamp, args: { format: "%Y/%m/%d %H:%M:%S" } }
+  - { field: source_port, op: to_int }
+
+mapping:
+  class_uid: 0
+  class_by:
+    field: subtype
+    values: { login: 3002, logout: 3002 }
+  fields:
+    time: { from: generated_time }
+    device_hostname: { from: device_name }
+    actor_user_name: { from: user }
+    src_endpoint_ip: { from: source_ip }
+    src_endpoint_port: { from: source_port }
+    message: { from: data_source_name }
+    activity_id: { from: subtype, map: { login: 1, logout: 2 }, default: 99 }
+    status_id: { from: subtype, map: { login: 1, logout: 1 }, default: 0 }
+
+tests:
+  - name: login mapping from a domain controller
+    input: "<14>Oct  9 20:41:12 pa-fw01 1,2026/10/09 20:41:12,012345678901,USERID,login,2561,2026/10/09 20:41:12,vsys1,10.20.1.5,example\\alice,dc01.example.internal,0,1,2700,0,0,ad-dc,syslog,7290000401,0x0,0,0,0,0,,pa-fw01"
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { actor_user_name: "example\\alice", src_endpoint_ip: 10.20.1.5, activity_id: 1, message: dc01.example.internal }
+  - name: logout mapping
+    input: "<14>Oct  9 20:42:00 pa-fw01 1,2026/10/09 20:42:00,012345678901,USERID,logout,2561,2026/10/09 20:42:00,vsys1,10.20.1.6,example\\bob,gp-gateway,0,1,0,0,0,globalprotect,globalprotect,7290000402,0x0,0,0,0,0,,pa-fw01"
+    expect:
+      parse_status: ok
+      fields: { activity_id: 2, status_id: 1 }
+  - name: tag registration is a base event
+    input: "<14>Oct  9 20:43:00 pa-fw01 1,2026/10/09 20:43:00,012345678901,USERID,register-tag,2561,2026/10/09 20:43:00,vsys1,,example\\carol,api,0,1,0,0,0,xml-api,xml-api,7290000403,0x0,0,0,0,0,,pa-fw01,1,,,,,,quarantine"
+    expect:
+      parse_status: ok
+      class_uid: 0

@@ -1,0 +1,97 @@
+schema_version: 1
+id: windows_evtx
+name: Windows .evtx files
+version: 1.0.0
+author: starter-pack
+description: >-
+  Native Windows event log files (Security.evtx, System.evtx, Sysmon, and others) copied
+  or exported to a watched folder. Each record is rendered to JSON by the evtx library,
+  and that JSON is the event's raw. EVTX keeps no rendered message text, so the message is
+  the label from the shared windows_eventid map when the event id is in it.
+category: identity          # mostly logon and account events; process and network too
+vendor: windows
+classification_default: local_only
+sigma:
+  logsource:
+    - {product: windows, service: "*"}
+    - {product: windows, category: "*"}
+
+envelope:
+  type: none
+
+framing:
+  mode: evtx
+
+match:
+  regex: '^\{"Event":\{.*"System":\{'
+  min_confidence: 0.95
+
+payload:
+  format: json
+  json: { root: "$" }
+
+transforms:
+  - { field: "Event.System.TimeCreated.#attributes.SystemTime", op: timestamp, args: { format: iso8601 } }
+  # EventID is a number, or {"#attributes": {"Qualifiers": ...}, "#text": n}; join skips the
+  # object form, so the key is "<channel>:<id>" either way.
+  - field: Event.System.Channel
+    op: join
+    args: { with: ["Event.System.EventID.#text", Event.System.EventID], into: eventid_key, sep: ":" }
+  - { field: Event.EventData.IpPort, op: to_int }
+  # Filtering platform events (5156, 5157): Source* is always the local side, so the
+  # initiator depends on Direction (%%14592 Inbound, %%14593 Outbound).
+  - field: Event.EventData.Direction
+    op: map
+    args: { into: wfp_dir, values: { "%%14592": in, "%%14593": out, Inbound: in, Outbound: out }, optional: true }
+  - { field: wfp_dir, op: pick, args: { from: { in: Event.EventData.DestAddress, out: Event.EventData.SourceAddress }, into: wfp_src_ip } }
+  - { field: wfp_dir, op: pick, args: { from: { in: Event.EventData.DestPort, out: Event.EventData.SourcePort }, into: wfp_src_port } }
+  - { field: wfp_dir, op: pick, args: { from: { in: Event.EventData.SourceAddress, out: Event.EventData.DestAddress }, into: wfp_dst_ip } }
+  - { field: wfp_dir, op: pick, args: { from: { in: Event.EventData.SourcePort, out: Event.EventData.DestPort }, into: wfp_dst_port } }
+  - { field: wfp_src_port, op: to_int }
+  - { field: wfp_dst_port, op: to_int }
+  # The audit keyword bits: 0x20000000000000 Audit Success, 0x10000000000000 Audit Failure.
+  # Other events leave status to the map (or unset).
+  - field: Event.System.Keywords
+    op: map
+    args: { into: outcome, values: { "0x8020000000000000": 1, "0x8010000000000000": 2 }, optional: true }
+
+mapping:
+  class_uid: 0
+  lookup:
+    field: eventid_key
+    table: windows_eventid
+    actor: { subject: [Event.EventData.SubjectUserName], target: [Event.EventData.TargetUserName] }
+  fields:
+    time: { from: "Event.System.TimeCreated.#attributes.SystemTime" }
+    device_hostname: { from: Event.System.Computer }
+    actor_process_name: { from: [Event.EventData.ParentProcessName, Event.EventData.ProcessName, Event.EventData.Application] }
+    src_endpoint_ip: { from: [Event.EventData.IpAddress, wfp_src_ip] }
+    src_endpoint_port: { from: [Event.EventData.IpPort, wfp_src_port] }
+    src_endpoint_hostname: { from: Event.EventData.WorkstationName }
+    dst_endpoint_ip: { from: wfp_dst_ip }
+    dst_endpoint_port: { from: wfp_dst_port }
+    status_id: { from: outcome }
+  # Windows level, the same in every Windows template (0 is "log always", used by audits).
+  severity:
+    from: Event.System.Level
+    map: { "0": 1, "1": 5, "2": 4, "3": 3, "4": 1, "5": 1 }
+
+tests:
+  - name: failed logon
+    input: '{"Event":{"#attributes":{"xmlns":"http://schemas.microsoft.com/win/2004/08/events/event"},"System":{"Provider":{"#attributes":{"Name":"Microsoft-Windows-Security-Auditing","Guid":"{54849625-5478-4994-a5ba-3e3b0328c30d}"}},"EventID":4625,"Version":0,"Level":0,"Task":12544,"Opcode":0,"Keywords":"0x8010000000000000","TimeCreated":{"#attributes":{"SystemTime":"2026-10-09T20:41:12.123456Z"}},"EventRecordID":41,"Correlation":null,"Execution":{"#attributes":{"ProcessID":4,"ThreadID":100}},"Channel":"Security","Computer":"DC01.corp.example","Security":null},"EventData":{"SubjectUserName":"-","TargetUserName":"bob","LogonType":"3","IpAddress":"203.0.113.9","IpPort":"51234","WorkstationName":"KIOSK-07"}}}'
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { activity_id: 1, status_id: 2, severity_id: 1, actor_user_name: bob, src_endpoint_ip: 203.0.113.9, src_endpoint_port: 51234, device_hostname: DC01.corp.example, time: "2026-10-09T20:41:12.123456+00:00", message: An account failed to log on }
+  - name: System event with Qualifiers, not in the map
+    input: '{"Event":{"#attributes":{"xmlns":"http://schemas.microsoft.com/win/2004/08/events/event"},"System":{"Provider":{"#attributes":{"Name":"Service Control Manager"}},"EventID":{"#attributes":{"Qualifiers":16384},"#text":7036},"Version":0,"Level":4,"Task":0,"Opcode":0,"Keywords":"0x8080000000000000","TimeCreated":{"#attributes":{"SystemTime":"2026-10-09T20:42:00Z"}},"EventRecordID":7,"Correlation":null,"Execution":{"#attributes":{"ProcessID":620,"ThreadID":700}},"Channel":"System","Computer":"FS01.corp.example","Security":null},"EventData":{"param1":"Print Spooler","param2":"running"}}}'
+    expect:
+      parse_status: ok
+      class_uid: 0
+      fields: { status_id: null, severity_id: 1, device_hostname: FS01.corp.example }
+  - name: service installed, label only, Qualifiers form joins to the map key
+    input: '{"Event":{"System":{"Provider":{"#attributes":{"Name":"Service Control Manager"}},"EventID":{"#attributes":{"Qualifiers":16384},"#text":7045},"Level":4,"Keywords":"0x8080000000000000","TimeCreated":{"#attributes":{"SystemTime":"2026-10-09T20:43:00Z"}},"Channel":"System","Computer":"FS01.corp.example"},"EventData":{"ServiceName":"BackupAgent","ImagePath":"C:\\Program Files\\Backup\\agent.exe"}}}'
+    expect:
+      parse_status: ok
+      class_uid: 0
+      fields: { message: A service was installed in the system }

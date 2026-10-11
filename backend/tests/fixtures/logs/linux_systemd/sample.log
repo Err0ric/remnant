@@ -1,0 +1,60 @@
+<30>Oct  9 20:01:20 bastion systemd[1]: Started apt-daily.timer - Example service 0.
+<27>Oct  9 20:01:27 bastion systemd[1]: postgresql@16-main.service: Failed with result 'exit-code'.
+<27>Oct  9 20:01:38 db-01 systemd[1]: backup.service: Main process exited, code=exited, status=1/FAILURE
+<30>Oct  9 20:01:42 db-01 systemd[1]: nginx.service: Main process exited, code=exited, status=0/SUCCESS
+<30>Oct  9 20:03:06 web-01 systemd[1]: Reached target Multi-User System.
+<30>Oct  9 20:03:10 db-01 systemd[1]: Reached target Multi-User System.
+<30>Oct  9 20:04:23 web-01 systemd[1]: Reached target Multi-User System.
+<30>Oct  9 20:05:42 web-01 systemd[1]: Stopped apt-daily.timer - Example service 7.
+<27>Oct  9 20:06:22 db-01 systemd[1]: apt-daily.timer: Main process exited, code=exited, status=1/FAILURE
+<30>Oct  9 20:06:40 db-01 systemd[1]: Stopped apt-daily.timer - Example service 9.
+<30>Oct  9 20:06:44 web-01 systemd[1]: Stopped apt-daily.timer - Example service 10.
+<27>Oct  9 20:07:52 db-01 systemd[1]: apt-daily.timer: Main process exited, code=exited, status=1/FAILURE
+<30>Oct  9 20:09:15 bastion systemd[1]: postgresql@16-main.service: Deactivated successfully.
+<30>Oct  9 20:09:24 db-01 systemd[1]: Started Session 13 of User carol.
+<30>Oct  9 20:10:27 web-01 systemd[1]: nginx.service: Deactivated successfully.
+<27>Oct  9 20:11:42 db-01 systemd[1]: backup.service: Failed with result 'exit-code'.
+<27>Oct  9 20:12:06 db-01 systemd[1]: postgresql@16-main.service: Main process exited, code=exited, status=1/FAILURE
+<30>Oct  9 20:13:32 bastion systemd[1]: Reached target Multi-User System.
+<30>Oct  9 20:14:20 web-01 systemd[1]: postgresql@16-main.service: Deactivated successfully.
+<30>Oct  9 20:15:45 db-01 systemd[1]: Reached target Multi-User System.
+<27>Oct  9 20:17:08 bastion systemd[1]: backup.service: Failed with result 'exit-code'.
+<30>Oct  9 20:18:15 bastion systemd[1]: Started Session 21 of User carol.
+<27>Oct  9 20:19:23 web-01 systemd[1]: postgresql@16-main.service: Failed with result 'exit-code'.
+<30>Oct  9 20:19:39 db-01 systemd[1]: nginx.service: Main process exited, code=exited, status=0/SUCCESS
+<27>Oct  9 20:20:30 db-01 systemd[1]: nginx.service: Failed with result 'exit-code'.
+<30>Oct  9 20:21:55 bastion systemd[1]: nginx.service: Deactivated successfully.
+<30>Oct  9 20:23:14 web-01 systemd[1]: postgresql@16-main.service: Deactivated successfully.
+<30>Oct  9 20:24:21 db-01 systemd[1]: apt-daily.timer: Deactivated successfully.
+<30>Oct  9 20:25:29 web-01 systemd[1]: Reached target Multi-User System.
+<30>Oct  9 20:25:54 web-01 systemd[1]: Started apt-daily.timer - Example service 29.
+<30>Oct  9 20:26:13 db-01 systemd[1]: Started backup.service - Example service 30.
+<30>Oct  9 20:26:45 db-01 systemd[1]: Reached target Multi-User System.
+<30>Oct  9 20:27:26 db-01 systemd[1]: Started apt-daily.timer - Example service 32.
+<30>Oct  9 20:28:24 db-01 systemd[1]: nginx.service: Deactivated successfully.
+<30>Oct  9 20:29:26 bastion systemd[1]: Started Session 34 of User dave.
+<30>Oct  9 20:29:58 bastion systemd[1]: Stopped postgresql@16-main.service - Example service 35.
+<30>Oct  9 20:30:12 db-01 systemd[1]: Reached target Multi-User System.
+<30>Oct  9 20:30:25 web-01 systemd[1]: postgresql@16-main.service: Deactivated successfully.
+<30>Oct  9 20:30:48 web-01 systemd[1]: Stopped backup.service - Example service 38.
+<30>Oct  9 20:32:16 web-01 systemd[1]: Started apt-daily.timer - Example service 39.
+<30>Oct  9 20:32:41 bastion systemd[1]: Started Session 40 of User carol.
+<27>Oct  9 20:33:55 bastion systemd[1]: apt-daily.timer: Main process exited, code=exited, status=1/FAILURE
+<27>Oct  9 20:34:14 web-01 systemd[1]: postgresql@16-main.service: Main process exited, code=exited, status=1/FAILURE
+<30>Oct  9 20:34:56 db-01 systemd[1]: nginx.service: Main process exited, code=exited, status=0/SUCCESS
+<30>Oct  9 20:35:18 bastion systemd[1]: postgresql@16-main.service: Main process exited, code=exited, status=0/SUCCESS
+<30>Oct  9 20:35:55 db-01 systemd[1]: backup.service: Main process exited, code=exited, status=0/SUCCESS
+<27>Oct  9 20:35:56 web-01 systemd[1]: backup.service: Failed with result 'exit-code'.
+<30>Oct  9 20:36:58 db-01 systemd[1]: Stopped apt-daily.timer - Example service 47.
+<30>Oct  9 20:37:58 db-01 systemd[1]: Reached target Multi-User System.
+<30>Oct  9 20:38:08 bastion systemd[1]: nginx.service: Deactivated successfully.
+<30>Oct  9 20:39:28 web-01 systemd[1]: nginx.service: Deactivated successfully.
+<27>Oct  9 20:39:43 web-01 systemd[1]: nginx.service: Main process exited, code=exited, status=1/FAILURE
+<30>Oct  9 20:40:54 db-01 systemd[1]: Started apt-daily.timer - Example service 52.
+<27>Oct  9 20:42:00 web-01 systemd[1]: apt-daily.timer: Main process exited, code=exited, status=1/FAILURE
+<30>Oct  9 20:43:21 db-01 systemd[1]: apt-daily.timer: Deactivated successfully.
+<30>Oct  9 20:43:46 db-01 systemd[1]: Stopped backup.service - Example service 55.
+<27>Oct  9 20:43:50 bastion systemd[1]: nginx.service: Main process exited, code=exited, status=1/FAILURE
+<30>Oct  9 20:44:04 bastion systemd[1]: Stopped nginx.service - Example service 57.
+<27>Oct  9 20:44:08 db-01 systemd[1]: postgresql@16-main.service: Failed with result 'exit-code'.
+<30>Oct  9 20:44:33 bastion systemd[1]: Started Session 59 of User dave.

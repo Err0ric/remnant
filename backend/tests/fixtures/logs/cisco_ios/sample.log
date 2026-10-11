@@ -1,0 +1,60 @@
+<189>100: sw01: *Oct  9 20:00:28.148 UTC: %SEC_LOGIN-5-LOGIN_SUCCESS: Login Success [user: bob] [Source: 192.0.2.10] [localport: 22] at 20:00:28 UTC Thu Oct 9 2026
+<189>Oct  9 20:00:33 sw01 101: Oct  9 20:00:33.102 UTC: %SEC_LOGIN-5-LOGIN_SUCCESS: Login Success [user: carol] [Source: 10.20.1.5] [localport: 22] at 20:00:33 UTC Thu Oct 9 2026
+<187>102: sw01: *Oct  9 20:02:02.967 UTC: %LINK-3-UPDOWN: Interface GigabitEthernet0/2, changed state to down
+<187>Oct  9 20:02:19 rtr01 103: Oct  9 20:02:19.537 UTC: %LINK-3-UPDOWN: Interface GigabitEthernet0/3, changed state to down
+<190>104: rtr01: *Oct  9 20:02:45.456 UTC: %SEC-6-IPACCESSLOGP: list 101 denied tcp 10.20.1.6(3328) -> 10.20.0.1(161), 1 packet
+<189>Oct  9 20:03:06 rtr01 105: Oct  9 20:03:06.449 UTC: %SEC_LOGIN-5-LOGIN_SUCCESS: Login Success [user: dave] [Source: 10.20.1.5] [localport: 22] at 20:03:06 UTC Thu Oct 9 2026
+<189>106: rtr01: *Oct  9 20:04:18.361 UTC: %SEC_LOGIN-5-LOGIN_SUCCESS: Login Success [user: bob] [Source: 192.0.2.10] [localport: 22] at 20:04:18 UTC Thu Oct 9 2026
+<190>Oct  9 20:05:22 sw01 107: Oct  9 20:05:22.171 UTC: %SEC-6-IPACCESSLOGP: list 101 denied tcp 10.20.1.5(39499) -> 10.20.0.1(23), 1 packet
+<188>108: rtr01: *Oct  9 20:05:59.337 UTC: %SEC_LOGIN-4-LOGIN_FAILED: Login failed [user: bob] [Source: 203.0.113.77] [localport: 22] [Reason: Login Authentication Failed] at 20:05:59 UTC Thu Oct 9 2026
+<190>Oct  9 20:06:54 rtr01 109: Oct  9 20:06:54.713 UTC: %SEC-6-IPACCESSLOGP: list 101 denied tcp 10.20.1.5(54284) -> 10.20.0.1(22), 1 packet
+<189>110: rtr01: *Oct  9 20:07:15.719 UTC: %SYS-5-CONFIG_I: Configured from console by alice on vty0 (10.20.2.14)
+<189>Oct  9 20:07:49 sw01 111: Oct  9 20:07:49.049 UTC: %SSH-5-SSH2_USERAUTH: User 'bob' authentication for SSH2 Session from 203.0.113.77 (tty = 0) using crypto cipher 'aes256-ctr', hmac 'hmac-sha2-256' Succeeded
+<189>112: rtr01: *Oct  9 20:08:14.603 UTC: %SEC_LOGIN-5-LOGIN_SUCCESS: Login Success [user: dave] [Source: 10.20.1.5] [localport: 22] at 20:08:14 UTC Thu Oct 9 2026
+<187>Oct  9 20:09:22 sw01 113: Oct  9 20:09:22.705 UTC: %LINK-3-UPDOWN: Interface GigabitEthernet0/1, changed state to down
+<189>114: sw01: *Oct  9 20:09:54.632 UTC: %SYS-5-CONFIG_I: Configured from console by bob on vty0 (10.20.3.30)
+<189>Oct  9 20:10:43 sw01 115: Oct  9 20:10:43.594 UTC: %SYS-5-CONFIG_I: Configured from console by bob on vty0 (10.20.2.14)
+<187>116: sw01: *Oct  9 20:12:11.841 UTC: %LINK-3-UPDOWN: Interface GigabitEthernet0/0, changed state to down
+<187>Oct  9 20:12:43 rtr01 117: Oct  9 20:12:43.990 UTC: %LINK-3-UPDOWN: Interface GigabitEthernet0/1, changed state to down
+<189>118: rtr01: *Oct  9 20:12:44.607 UTC: %SEC_LOGIN-5-LOGIN_SUCCESS: Login Success [user: carol] [Source: 203.0.113.77] [localport: 22] at 20:12:44 UTC Thu Oct 9 2026
+<188>Oct  9 20:13:43 rtr01 119: Oct  9 20:13:43.410 UTC: %SEC_LOGIN-4-LOGIN_FAILED: Login failed [user: carol] [Source: 203.0.113.77] [localport: 22] [Reason: Login Authentication Failed] at 20:13:43 UTC Thu Oct 9 2026
+<188>120: rtr01: *Oct  9 20:14:30.310 UTC: %SEC_LOGIN-4-LOGIN_FAILED: Login failed [user: bob] [Source: 10.20.2.14] [localport: 22] [Reason: Login Authentication Failed] at 20:14:30 UTC Thu Oct 9 2026
+<189>Oct  9 20:15:45 sw01 121: Oct  9 20:15:45.268 UTC: %SSH-5-SSH2_USERAUTH: User 'carol' authentication for SSH2 Session from 203.0.113.77 (tty = 0) using crypto cipher 'aes256-ctr', hmac 'hmac-sha2-256' Succeeded
+<189>122: rtr01: *Oct  9 20:15:50.622 UTC: %SEC_LOGIN-5-LOGIN_SUCCESS: Login Success [user: alice] [Source: 10.20.1.5] [localport: 22] at 20:15:50 UTC Thu Oct 9 2026
+<187>Oct  9 20:16:16 sw01 123: Oct  9 20:16:16.691 UTC: %LINK-3-UPDOWN: Interface GigabitEthernet0/3, changed state to down
+<189>124: rtr01: *Oct  9 20:17:08.325 UTC: %SEC_LOGIN-5-LOGIN_SUCCESS: Login Success [user: bob] [Source: 10.20.3.30] [localport: 22] at 20:17:08 UTC Thu Oct 9 2026
+<187>Oct  9 20:18:05 sw01 125: Oct  9 20:18:05.059 UTC: %LINK-3-UPDOWN: Interface GigabitEthernet0/1, changed state to down
+<189>126: rtr01: *Oct  9 20:18:38.016 UTC: %SYS-5-CONFIG_I: Configured from console by bob on vty0 (198.51.100.4)
+<189>Oct  9 20:18:54 rtr01 127: Oct  9 20:18:54.514 UTC: %SEC_LOGIN-5-LOGIN_SUCCESS: Login Success [user: carol] [Source: 10.20.1.6] [localport: 22] at 20:18:54 UTC Thu Oct 9 2026
+<190>128: rtr01: *Oct  9 20:20:10.185 UTC: %SEC-6-IPACCESSLOGP: list 101 denied tcp 10.20.1.6(13129) -> 10.20.0.1(22), 1 packet
+<189>Oct  9 20:20:42 sw01 129: Oct  9 20:20:42.999 UTC: %SEC_LOGIN-5-LOGIN_SUCCESS: Login Success [user: carol] [Source: 198.51.100.4] [localport: 22] at 20:20:42 UTC Thu Oct 9 2026
+<188>130: sw01: *Oct  9 20:22:01.009 UTC: %SEC_LOGIN-4-LOGIN_FAILED: Login failed [user: alice] [Source: 10.20.1.5] [localport: 22] [Reason: Login Authentication Failed] at 20:22:01 UTC Thu Oct 9 2026
+<187>Oct  9 20:23:07 rtr01 131: Oct  9 20:23:07.026 UTC: %LINK-3-UPDOWN: Interface GigabitEthernet0/3, changed state to down
+<189>132: rtr01: *Oct  9 20:24:29.942 UTC: %SSH-5-SSH2_USERAUTH: User 'dave' authentication for SSH2 Session from 192.0.2.10 (tty = 0) using crypto cipher 'aes256-ctr', hmac 'hmac-sha2-256' Succeeded
+<189>Oct  9 20:25:51 rtr01 133: Oct  9 20:25:51.658 UTC: %SEC_LOGIN-5-LOGIN_SUCCESS: Login Success [user: dave] [Source: 203.0.113.9] [localport: 22] at 20:25:51 UTC Thu Oct 9 2026
+<189>134: rtr01: *Oct  9 20:26:18.889 UTC: %SSH-5-SSH2_USERAUTH: User 'carol' authentication for SSH2 Session from 10.20.1.6 (tty = 0) using crypto cipher 'aes256-ctr', hmac 'hmac-sha2-256' Succeeded
+<189>Oct  9 20:27:09 rtr01 135: Oct  9 20:27:09.774 UTC: %SSH-5-SSH2_USERAUTH: User 'alice' authentication for SSH2 Session from 198.51.100.4 (tty = 0) using crypto cipher 'aes256-ctr', hmac 'hmac-sha2-256' Succeeded
+<189>136: sw01: *Oct  9 20:28:20.830 UTC: %SYS-5-CONFIG_I: Configured from console by bob on vty0 (10.20.3.30)
+<189>Oct  9 20:28:59 rtr01 137: Oct  9 20:28:59.547 UTC: %SYS-5-CONFIG_I: Configured from console by alice on vty0 (198.51.100.4)
+<189>138: sw01: *Oct  9 20:29:17.261 UTC: %SYS-5-CONFIG_I: Configured from console by carol on vty0 (10.20.3.30)
+<189>Oct  9 20:30:15 rtr01 139: Oct  9 20:30:15.156 UTC: %SEC_LOGIN-5-LOGIN_SUCCESS: Login Success [user: alice] [Source: 10.20.3.30] [localport: 22] at 20:30:15 UTC Thu Oct 9 2026
+<189>140: rtr01: *Oct  9 20:30:47.087 UTC: %SYS-5-CONFIG_I: Configured from console by alice on vty0 (203.0.113.9)
+<188>Oct  9 20:31:26 sw01 141: Oct  9 20:31:26.384 UTC: %SEC_LOGIN-4-LOGIN_FAILED: Login failed [user: carol] [Source: 192.0.2.10] [localport: 22] [Reason: Login Authentication Failed] at 20:31:26 UTC Thu Oct 9 2026
+<187>142: sw01: *Oct  9 20:31:29.577 UTC: %LINK-3-UPDOWN: Interface GigabitEthernet0/2, changed state to down
+<189>Oct  9 20:31:48 sw01 143: Oct  9 20:31:48.929 UTC: %SSH-5-SSH2_USERAUTH: User 'carol' authentication for SSH2 Session from 10.20.1.6 (tty = 0) using crypto cipher 'aes256-ctr', hmac 'hmac-sha2-256' Succeeded
+<190>144: rtr01: *Oct  9 20:32:37.616 UTC: %SEC-6-IPACCESSLOGP: list 101 denied tcp 10.20.1.5(44674) -> 10.20.0.1(23), 1 packet
+<187>Oct  9 20:33:52 sw01 145: Oct  9 20:33:52.015 UTC: %LINK-3-UPDOWN: Interface GigabitEthernet0/1, changed state to down
+<188>146: sw01: *Oct  9 20:35:11.902 UTC: %SEC_LOGIN-4-LOGIN_FAILED: Login failed [user: carol] [Source: 203.0.113.77] [localport: 22] [Reason: Login Authentication Failed] at 20:35:11 UTC Thu Oct 9 2026
+<189>Oct  9 20:35:14 rtr01 147: Oct  9 20:35:14.640 UTC: %SSH-5-SSH2_USERAUTH: User 'dave' authentication for SSH2 Session from 198.51.100.4 (tty = 0) using crypto cipher 'aes256-ctr', hmac 'hmac-sha2-256' Succeeded
+<189>148: rtr01: *Oct  9 20:35:22.081 UTC: %SSH-5-SSH2_USERAUTH: User 'carol' authentication for SSH2 Session from 203.0.113.77 (tty = 0) using crypto cipher 'aes256-ctr', hmac 'hmac-sha2-256' Succeeded
+<188>Oct  9 20:36:49 rtr01 149: Oct  9 20:36:49.704 UTC: %SEC_LOGIN-4-LOGIN_FAILED: Login failed [user: alice] [Source: 10.20.1.6] [localport: 22] [Reason: Login Authentication Failed] at 20:36:49 UTC Thu Oct 9 2026
+<187>150: rtr01: *Oct  9 20:37:10.413 UTC: %LINK-3-UPDOWN: Interface GigabitEthernet0/2, changed state to down
+<188>Oct  9 20:37:27 sw01 151: Oct  9 20:37:27.418 UTC: %SEC_LOGIN-4-LOGIN_FAILED: Login failed [user: dave] [Source: 10.20.2.14] [localport: 22] [Reason: Login Authentication Failed] at 20:37:27 UTC Thu Oct 9 2026
+<188>152: rtr01: *Oct  9 20:38:04.650 UTC: %SEC_LOGIN-4-LOGIN_FAILED: Login failed [user: dave] [Source: 10.20.1.5] [localport: 22] [Reason: Login Authentication Failed] at 20:38:04 UTC Thu Oct 9 2026
+<189>Oct  9 20:38:27 sw01 153: Oct  9 20:38:27.749 UTC: %SEC_LOGIN-5-LOGIN_SUCCESS: Login Success [user: carol] [Source: 10.20.1.6] [localport: 22] at 20:38:27 UTC Thu Oct 9 2026
+<187>154: sw01: *Oct  9 20:38:46.353 UTC: %LINK-3-UPDOWN: Interface GigabitEthernet0/2, changed state to down
+<189>Oct  9 20:38:58 sw01 155: Oct  9 20:38:58.367 UTC: %SSH-5-SSH2_USERAUTH: User 'alice' authentication for SSH2 Session from 10.20.3.30 (tty = 0) using crypto cipher 'aes256-ctr', hmac 'hmac-sha2-256' Succeeded
+<188>156: sw01: *Oct  9 20:39:58.227 UTC: %SEC_LOGIN-4-LOGIN_FAILED: Login failed [user: alice] [Source: 10.20.3.30] [localport: 22] [Reason: Login Authentication Failed] at 20:39:58 UTC Thu Oct 9 2026
+<190>Oct  9 20:40:58 rtr01 157: Oct  9 20:40:58.801 UTC: %SEC-6-IPACCESSLOGP: list 101 denied tcp 10.20.3.30(17506) -> 10.20.0.1(161), 1 packet
+<189>158: sw01: *Oct  9 20:41:28.417 UTC: %SEC_LOGIN-5-LOGIN_SUCCESS: Login Success [user: alice] [Source: 192.0.2.10] [localport: 22] at 20:41:28 UTC Thu Oct 9 2026
+<189>Oct  9 20:41:39 rtr01 159: Oct  9 20:41:39.458 UTC: %SSH-5-SSH2_USERAUTH: User 'alice' authentication for SSH2 Session from 10.20.1.5 (tty = 0) using crypto cipher 'aes256-ctr', hmac 'hmac-sha2-256' Succeeded

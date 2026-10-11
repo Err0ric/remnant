@@ -1,0 +1,280 @@
+import { QueryClient } from "@tanstack/react-query";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { mockApi, type MockAuth } from "./mockApi";
+
+async function openSources(auth: MockAuth = { mode: "open" }) {
+  window.history.replaceState(null, "", "/search");
+  const spy = mockApi("Codename", auth);
+  vi.resetModules();
+  const { loadBranding } = await import("@/lib/branding");
+  await loadBranding();
+  const { App } = await import("@/app/App");
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  render(<App initialTheme="dark" queryClient={client} />);
+  const nav = await screen.findByRole("navigation", { name: "Primary" });
+  await userEvent.click(within(nav).getByText("Sources"));
+  await screen.findByRole("heading", { level: 1, name: "Sources" });
+  return spy;
+}
+
+function posts(spy: ReturnType<typeof mockApi>, path: string) {
+  return spy.mock.calls.filter(
+    ([u, init]) => String(u).endsWith(path) && (init?.method ?? "GET") === "POST",
+  );
+}
+
+afterEach(() => vi.restoreAllMocks());
+
+describe("Sources page", () => {
+  it("discovers a folder and prefills the add form from a suggestion", async () => {
+    const spy = await openSources();
+    await userEvent.click(screen.getByRole("button", { name: "Discover" }));
+    const panel = screen.getByRole("region", { name: "Discover sources" });
+    expect(within(panel).getByLabelText("Folder")).toHaveValue("/logs");
+    await userEvent.click(within(panel).getByRole("button", { name: "Scan folder" }));
+    const row = (await within(panel).findByText("*/sshd.log")).closest("tr") as HTMLElement;
+    expect(within(row).getByText("192.0.2.10, 192.0.2.11")).toBeInTheDocument();
+    expect(within(row).getByText("matches 100% · parses 99%")).toBeInTheDocument();
+    expect(within(panel).getByText(/skipped: 2 compressed/)).toBeInTheDocument();
+    expect(within(panel).getByText(/also matches 2 other files/)).toBeInTheDocument();
+    // Log text is shown as text, never as markup.
+    expect(within(panel).getByText("<img src=x onerror=alert(1)>")).toBeInTheDocument();
+    expect(document.querySelector("img[src=x]")).toBeNull();
+    // Scanning creates nothing.
+    expect(posts(spy, "/api/sources")).toHaveLength(0);
+
+    await userEvent.click(within(row).getByRole("button", { name: "Add source for */sshd.log" }));
+    const form = screen.getByRole("form", { name: "Add source" });
+    // linux_sshd is already a source in the mock, so the suggestion does not collide.
+    expect(within(form).getByLabelText("Source ID")).toHaveValue("linux_sshd_2");
+    expect(within(form).getByLabelText("File pattern")).toHaveValue("*/sshd.log");
+    await within(form).findByRole("option", { name: "Linux sshd authentication" });
+    expect(within(form).getByLabelText("Parser")).toHaveValue("template:linux_sshd");
+  });
+
+  it("shows discovery errors from the server", async () => {
+    await openSources();
+    await userEvent.click(screen.getByRole("button", { name: "Discover" }));
+    const panel = screen.getByRole("region", { name: "Discover sources" });
+    const folder = within(panel).getByLabelText("Folder");
+    await userEvent.clear(folder);
+    await userEvent.type(folder, "/etc");
+    await userEvent.click(within(panel).getByRole("button", { name: "Scan folder" }));
+    expect(await within(panel).findByRole("alert")).toHaveTextContent("outside the allowed roots");
+  });
+
+  it("navigates from the side nav and shows status, counts, and data handling", async () => {
+    await openSources();
+    expect(window.location.pathname).toBe("/sources");
+    const nav = screen.getByRole("navigation", { name: "Primary" });
+    expect(within(nav).getByText("Sources")).toHaveAttribute("aria-current", "page");
+    const row = (await screen.findByText("linux_sshd")).closest("tr") as HTMLElement;
+    expect(within(row).getByText("Reading")).toBeInTheDocument();
+    expect(within(row).getByText("Local only")).toBeInTheDocument();
+    expect(await within(row).findByText("1,234")).toBeInTheDocument();
+    expect(within(row).getByText("2 files · **/*.log")).toBeInTheDocument();
+  });
+
+  it("lets an admin change a source's classification, explaining what it means", async () => {
+    const spy = await openSources();
+    const row = (await screen.findByText("linux_sshd")).closest("tr") as HTMLElement;
+    await userEvent.click(
+      within(row).getByRole("button", { name: "Change classification of linux_sshd" }),
+    );
+    expect(within(row).getByText(/Events already stored stay local only/)).toBeInTheDocument();
+    const save = within(row).getByRole("button", { name: "Save" });
+    expect(save).toBeDisabled(); // nothing changed yet
+    await userEvent.click(within(row).getAllByRole("radio")[1]!);
+    await userEvent.click(save);
+    expect(await within(row).findByText("Cloud allowed")).toBeInTheDocument();
+    const sent = spy.mock.calls.find(
+      ([u, init]) => String(u).endsWith("/api/sources/linux_sshd") && init?.method === "PATCH",
+    );
+    expect(JSON.parse(String(sent?.[1]?.body))).toEqual({ classification: "cloud_allowed" });
+  });
+
+  it("adds a Loki source after testing the connection, with the token sent once", async () => {
+    const spy = await openSources();
+    await userEvent.click(screen.getByRole("button", { name: "Add source" }));
+    const form = screen.getByRole("form", { name: "Add source" });
+    await userEvent.selectOptions(within(form).getByLabelText("Reads from"), "loki");
+    expect(within(form).queryByLabelText("File or folder")).toBeNull();
+    await userEvent.type(within(form).getByLabelText("Source ID"), "loki_fw");
+    await userEvent.type(within(form).getByLabelText("Loki URL"), "http://loki.internal:3100");
+    await userEvent.type(within(form).getByLabelText("Query"), '{{job="syslog"}');
+    await userEvent.selectOptions(within(form).getByLabelText("Sign-in"), "bearer");
+    await userEvent.type(within(form).getByLabelText("Token"), "tok-123");
+    await userEvent.click(within(form).getByRole("button", { name: "Test connection" }));
+    expect(await within(form).findByText(/Connected: 42 lines/)).toBeInTheDocument();
+    expect(within(form).getByText('{job="syslog", host="fw01"}')).toBeInTheDocument();
+    await userEvent.click(within(form).getByRole("button", { name: "Add source" }));
+    await screen.findByText("loki_fw");
+    const body = JSON.parse(String(posts(spy, "/api/sources").at(-1)?.[1]?.body)) as Record<
+      string,
+      unknown
+    >;
+    expect(body.kind).toBe("loki");
+    expect(body.path).toBe("");
+    expect(body.loki_secret).toBe("tok-123");
+    expect(body.loki).toMatchObject({
+      url: "http://loki.internal:3100",
+      auth: "bearer",
+      backfill_hours: 24,
+    });
+  });
+
+  it("defaults a new source to the Automatic parser", async () => {
+    const spy = await openSources();
+    await userEvent.click(screen.getByRole("button", { name: "Add source" }));
+    const form = screen.getByRole("form", { name: "Add source" });
+    expect(within(form).getByLabelText("Parser")).toHaveValue("auto:");
+    expect(within(form).getByText(/matched to the template that fits it/)).toBeInTheDocument();
+    await userEvent.type(within(form).getByLabelText("Source ID"), "host_syslog");
+    await userEvent.click(within(form).getByRole("button", { name: "Add source" }));
+    await screen.findByText("host_syslog");
+    const body = JSON.parse(String(posts(spy, "/api/sources").at(-1)?.[1]?.body)) as {
+      template_id: string;
+      format: string;
+    };
+    expect(body).toMatchObject({ template_id: "auto", format: "syslog" });
+  });
+
+  it("lets an admin change a source's parser, for new lines only", async () => {
+    const spy = await openSources();
+    const row = (await screen.findByText("linux_sshd")).closest("tr") as HTMLElement;
+    await userEvent.click(within(row).getByRole("button", { name: "Change parser of linux_sshd" }));
+    expect(within(row).getByText(/Only lines read from now on/)).toBeInTheDocument();
+    await userEvent.selectOptions(within(row).getByLabelText("Parser for linux_sshd"), "auto:");
+    await userEvent.click(within(row).getByRole("button", { name: "Save" }));
+    expect(await within(row).findByText("Automatic")).toBeInTheDocument();
+    const sent = spy.mock.calls.find(
+      ([u, init]) =>
+        String(u).endsWith("/api/sources/linux_sshd") &&
+        init?.method === "PATCH" &&
+        String(init.body).includes("template_id"),
+    );
+    expect(JSON.parse(String(sent?.[1]?.body))).toEqual({ template_id: "auto" });
+  });
+
+  it("adds a source parsed by a template", async () => {
+    const spy = await openSources();
+    await userEvent.click(screen.getByRole("button", { name: "Add source" }));
+    const form = screen.getByRole("form", { name: "Add source" });
+    await userEvent.type(within(form).getByLabelText("Source ID"), "bastion_auth");
+    const parser = within(form).getByLabelText("Parser");
+    await within(form).findByRole("option", { name: "Linux sshd authentication" });
+    await userEvent.selectOptions(parser, "template:linux_sshd");
+    expect(within(form).getByText(/OpenSSH server authentication/)).toBeInTheDocument();
+    await userEvent.click(within(form).getByRole("button", { name: "Add source" }));
+    await screen.findByText("bastion_auth");
+    const body = JSON.parse(String(posts(spy, "/api/sources").at(-1)?.[1]?.body)) as {
+      template_id: string;
+      format: string;
+    };
+    expect(body).toMatchObject({ template_id: "linux_sshd", format: "syslog" });
+  });
+
+  it("adds a source and shows server-side path errors", async () => {
+    const spy = await openSources();
+    await userEvent.click(screen.getByRole("button", { name: "Add source" }));
+    const form = screen.getByRole("form", { name: "Add source" });
+    expect(within(form).getByText("Must be inside: /logs")).toBeInTheDocument();
+    await userEvent.type(within(form).getByLabelText("Source ID"), "fw_traffic");
+    const path = within(form).getByLabelText("File or folder");
+    await userEvent.clear(path);
+    await userEvent.type(path, "/etc");
+    await userEvent.click(within(form).getByRole("button", { name: "Add source" }));
+    expect(await within(form).findByRole("alert")).toHaveTextContent("outside the allowed roots");
+
+    await userEvent.clear(path);
+    await userEvent.type(path, "/logs/fw");
+    await userEvent.click(within(form).getByRole("button", { name: "Add source" }));
+    expect(await screen.findByText("fw_traffic")).toBeInTheDocument();
+    expect(screen.queryByRole("form", { name: "Add source" })).not.toBeInTheDocument();
+    const body = JSON.parse(String(posts(spy, "/api/sources").at(-1)?.[1]?.body)) as {
+      path: string;
+      glob: string;
+    };
+    expect(body).toMatchObject({ path: "/logs/fw", glob: "**/*.log" });
+  });
+
+  it("checks the source ID before sending", async () => {
+    const spy = await openSources();
+    await userEvent.click(screen.getByRole("button", { name: "Add source" }));
+    const form = screen.getByRole("form", { name: "Add source" });
+    await userEvent.type(within(form).getByLabelText("Source ID"), "Bad-Name");
+    await userEvent.click(within(form).getByRole("button", { name: "Add source" }));
+    expect(within(form).getByRole("alert")).toHaveTextContent("lowercase letters");
+    expect(posts(spy, "/api/sources")).toHaveLength(0);
+  });
+
+  it("asks for confirmation before removing", async () => {
+    await openSources();
+    await userEvent.click(await screen.findByRole("button", { name: "Remove linux_sshd" }));
+    expect(screen.getByText(/Data already collected stays searchable/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Remove" }));
+    await waitFor(() => expect(screen.queryByText("linux_sshd")).not.toBeInTheDocument());
+  });
+
+  it("hides management actions from analysts", async () => {
+    await openSources({ mode: "login", signedIn: true, role: "analyst" });
+    await screen.findByText("linux_sshd");
+    expect(screen.queryByRole("button", { name: "Add source" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Remove/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Change parser/ })).not.toBeInTheDocument();
+  });
+});
+
+describe("Write a parser from Discover", () => {
+  it("opens a new draft filled in from a candidate no template fits", async () => {
+    await openSources();
+    await userEvent.click(screen.getByRole("button", { name: "Discover" }));
+    const panel = screen.getByRole("region", { name: "Discover sources" });
+    await userEvent.click(within(panel).getByRole("button", { name: "Scan folder" }));
+    await within(panel).findByText("notes.txt");
+    // A candidate a template fits offers no parser writing.
+    expect(
+      within(panel).queryByRole("button", { name: "Write a parser for */sshd.log" }),
+    ).not.toBeInTheDocument();
+    await userEvent.click(
+      within(panel).getByRole("button", { name: "Write a parser for notes.txt" }),
+    );
+    expect(await screen.findByRole("heading", { level: 1, name: "Templates" })).toBeInTheDocument();
+    const form = await screen.findByRole("form", { name: "New template draft" });
+    expect(within(form).getByLabelText("Template ID")).toHaveValue("notes");
+    expect(within(form).getByLabelText("File on this server")).toBeChecked();
+    expect(within(form).getByLabelText("File or folder")).toHaveValue("/logs");
+    expect(within(form).getByLabelText("File pattern")).toHaveValue("notes.txt");
+  });
+});
+
+describe("Source status", () => {
+  const base = {
+    state: "reading" as const,
+    files: 1,
+    last_pass_at: null,
+    last_event_at: null,
+    events_since_start: 0,
+    error: null,
+    records_skipped: 0,
+    files_waiting: 0,
+  };
+
+  it("says how many records could not be read, and nothing when none were lost", async () => {
+    const { SourceState } = await import("@/features/sources/SourceState");
+    const { rerender } = render(<SourceState status={base} />);
+    expect(screen.queryByText(/could not be read/)).not.toBeInTheDocument();
+    rerender(<SourceState status={{ ...base, records_skipped: 1 }} />);
+    expect(
+      screen.getByText("1 record could not be read (latest read); see the server log"),
+    ).toBeInTheDocument();
+    rerender(<SourceState status={{ ...base, records_skipped: 3 }} />);
+    expect(screen.getByText(/^3 records could not be read/)).toBeInTheDocument();
+    rerender(<SourceState status={{ ...base, files_waiting: 1 }} />);
+    expect(screen.getByText(/1 .evtx file looks partly copied/)).toBeInTheDocument();
+  });
+});

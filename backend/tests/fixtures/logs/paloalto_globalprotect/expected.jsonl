@@ -1,0 +1,10 @@
+{"activity_id": 2, "actor_user_name": "alice", "class_uid": 3002, "device_hostname": "pa-fw01", "parse_status": "ok", "src_endpoint_ip": "203.0.113.9", "status_id": 1, "time": "2026-10-09T20:00:43+00:00"}
+{"activity_id": 1, "actor_user_name": "alice", "class_uid": 3002, "device_hostname": "pa-fw01", "parse_status": "ok", "src_endpoint_ip": "198.51.100.4", "status_id": 1, "time": "2026-10-09T20:00:54+00:00"}
+{"activity_id": 2, "actor_user_name": "dave", "class_uid": 3002, "device_hostname": "pa-fw01", "parse_status": "ok", "src_endpoint_ip": "203.0.113.77", "status_id": 1, "time": "2026-10-09T20:01:29+00:00"}
+{"activity_id": 1, "actor_user_name": "alice", "class_uid": 3002, "device_hostname": "pa-fw01", "parse_status": "ok", "src_endpoint_ip": "192.0.2.10", "status_id": 1, "time": "2026-10-09T20:02:39+00:00"}
+{"activity_id": 1, "actor_user_name": "carol", "class_uid": 3002, "device_hostname": "pa-fw01", "parse_status": "ok", "src_endpoint_ip": "192.0.2.10", "status_id": 1, "time": "2026-10-09T20:03:29+00:00"}
+{"activity_id": 1, "actor_user_name": "bob", "class_uid": 3002, "device_hostname": "pa-fw01", "parse_status": "ok", "src_endpoint_ip": "203.0.113.9", "status_id": 1, "time": "2026-10-09T20:04:20+00:00"}
+{"activity_id": 1, "actor_user_name": "carol", "class_uid": 3002, "device_hostname": "pa-fw01", "parse_status": "ok", "src_endpoint_ip": "198.51.100.4", "status_id": 1, "time": "2026-10-09T20:04:47+00:00"}
+{"activity_id": 1, "actor_user_name": "carol", "class_uid": 3002, "device_hostname": "pa-fw01", "parse_status": "ok", "src_endpoint_ip": "198.51.100.4", "status_id": 1, "time": "2026-10-09T20:06:03+00:00"}
+{"activity_id": 1, "actor_user_name": "dave", "class_uid": 3002, "device_hostname": "pa-fw01", "parse_status": "ok", "src_endpoint_ip": "192.0.2.10", "status_id": 1, "time": "2026-10-09T20:07:20+00:00"}
+{"activity_id": 1, "actor_user_name": "dave", "class_uid": 3002, "device_hostname": "pa-fw01", "parse_status": "ok", "src_endpoint_ip": "203.0.113.77", "status_id": 2, "time": "2026-10-09T20:07:48+00:00"}

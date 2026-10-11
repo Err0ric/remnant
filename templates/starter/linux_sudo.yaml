@@ -1,0 +1,85 @@
+schema_version: 1
+id: linux_sudo
+name: Linux sudo
+version: 1.0.0
+author: starter-pack
+description: >-
+  sudo command runs and refusals (wrong password, not in sudoers, command not allowed) and
+  the pam_unix sudo session and auth lines. Runs map to Process Activity, refusals and
+  sessions to Authentication. The target account and command are kept in unmapped.
+category: identity
+vendor: linux
+classification_default: local_only
+sigma:
+  logsource:
+    - {product: linux}
+    - {product: linux, service: auth}
+    - {product: linux, service: sudo}
+
+envelope:
+  type: syslog
+  syslog: { rfc: auto, assume_year: rollover_safe, timezone: UTC, strip_relay_headers: true }
+
+match:
+  app_name: [sudo]
+  min_confidence: 0.9
+
+payload:
+  format: regex
+  regex:
+    patterns:
+      - '^\s*(?P<user>[^\s:]+) : (?P<event>\d+ incorrect password attempts?|user NOT in sudoers|command not allowed|a password is required|unknown user) ; (?P<rest>.*)$'
+      - '^\s*(?P<user>[^\s:]+) : (?P<event>TTY|PWD)=(?P<rest>.*)$'
+      - '^pam_unix\(sudo(?:-i)?:session\): session (?P<event>opened|closed) for user (?P<target_user>[^\s(]+)(?:\(uid=\d+\))?(?: by (?P<user>[^\s(]*)(?:\(uid=\d+\))?)?'
+      - '^pam_unix\(sudo(?:-i)?:auth\): (?P<event>authentication failure);(?P<rest>.*)$'
+
+transforms:
+  - { field: rest, op: regex_extract, args: { pattern: 'USER=([^;]+?)\s*(?:;|$)', into: target_user, optional: true } }
+  - { field: rest, op: regex_extract, args: { pattern: 'COMMAND=(.*)$', into: command, optional: true } }
+  - { field: rest, op: regex_extract, args: { pattern: 'ruser=(\S+)', into: ruser, optional: true } }
+  - { field: event, op: regex_extract, args: { pattern: '(incorrect password|user NOT in sudoers|command not allowed|a password is required|unknown user|TTY|PWD|opened|closed|authentication failure)', into: outcome, optional: true } }
+
+mapping:
+  class_uid: 3002          # Authentication; command runs are Process Activity below
+  class_by:
+    field: outcome
+    values: { TTY: 1007, PWD: 1007 }
+  fields:
+    actor_user_name: { from: user }
+    actor_process_name: { default: sudo }
+    activity_id: { from: outcome, map: { TTY: 1, PWD: 1, opened: 1, closed: 2 }, default: 1 }
+    status_id: { from: outcome, map: { TTY: 1, PWD: 1, opened: 1, closed: 1 }, default: 2 }
+  severity:
+    from: outcome
+    map: { "incorrect password": 3, "user NOT in sudoers": 4, "command not allowed": 3, "authentication failure": 3, TTY: 1, PWD: 1 }
+
+tests:
+  - name: command run as root
+    input: "<85>Oct  9 20:41:12 web-01 sudo[4411]:    alice : TTY=pts/0 ; PWD=/home/alice ; USER=root ; COMMAND=/usr/bin/systemctl restart nginx"
+    expect:
+      parse_status: ok
+      class_uid: 1007
+      fields: { actor_user_name: alice, status_id: 1, activity_id: 1, severity_id: 1, device_hostname: web-01 }
+  - name: incorrect password attempts
+    input: "<85>Oct  9 20:42:00 web-01 sudo[4420]:      bob : 3 incorrect password attempts ; TTY=pts/1 ; PWD=/home/bob ; USER=root ; COMMAND=/bin/cat /etc/shadow"
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { actor_user_name: bob, status_id: 2, severity_id: 3 }
+  - name: not in sudoers
+    input: "<85>Oct  9 20:43:00 db-01 sudo[4500]:    mallory : user NOT in sudoers ; TTY=pts/2 ; PWD=/tmp ; USER=root ; COMMAND=/bin/bash"
+    expect:
+      parse_status: ok
+      fields: { actor_user_name: mallory, status_id: 2, severity_id: 4 }
+  - name: pam session opened
+    input: "<86>Oct  9 20:41:12 web-01 sudo[4411]: pam_unix(sudo:session): session opened for user root(uid=0) by alice(uid=1000)"
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { actor_user_name: alice, activity_id: 1, status_id: 1 }
+  - name: no tty (cron or script)
+    input: "<85>Oct  9 20:44:00 db-01 sudo[4600]: deploy : PWD=/srv ; USER=postgres ; COMMAND=/usr/bin/pg_dump app"
+    expect:
+      parse_status: ok
+      class_uid: 1007
+      fields: { actor_user_name: deploy }

@@ -1,0 +1,113 @@
+schema_version: 1
+id: paloalto_globalprotect
+name: Palo Alto Networks GlobalProtect
+version: 1.0.0
+author: starter-pack
+description: >-
+  PAN-OS GLOBALPROTECT logs (PAN-OS 9.1.3 and later): portal and gateway
+  authentication, connection, and logout events as Authentication, with the client's
+  public IP and machine name.
+category: identity
+vendor: paloalto
+classification_default: local_only
+
+envelope:
+  type: syslog
+  syslog: { rfc: auto, assume_year: rollover_safe, timezone: UTC, strip_relay_headers: true }
+
+match:
+  regex: '^\d+,\d{4}/\d{2}/\d{2} [\d:]+,[^,]*,GLOBALPROTECT,'
+  min_confidence: 0.95
+
+payload:
+  format: csv
+  csv:
+    trailing: ignore
+    columns:
+      - "_"
+      - receive_time
+      - serial_number
+      - type
+      - subtype
+      - "_"
+      - generated_time
+      - virtual_system
+      - event_id
+      - stage
+      - authentication_method
+      - tunnel_type
+      - source_user
+      - source_region
+      - machine_name
+      - public_ip
+      - public_ipv6
+      - private_ip
+      - private_ipv6
+      - host_id
+      - client_serial_number
+      - client_version
+      - client_os
+      - client_os_version
+      - repeat_count
+      - reason
+      - error
+      - description
+      - status
+      - location
+      - login_duration
+      - connect_method
+      - error_code
+      - portal
+      - sequence_number
+      - action_flags
+      - high_resolution_timestamp
+      - selection_type
+      - response_time
+      - priority
+      - attempted_gateways
+      - gateway
+      - device_group_hierarchy_level_1
+      - device_group_hierarchy_level_2
+      - device_group_hierarchy_level_3
+      - device_group_hierarchy_level_4
+      - virtual_system_name
+      - device_name
+
+transforms:
+  - { field: generated_time, op: timestamp, args: { format: "%Y/%m/%d %H:%M:%S" } }
+
+mapping:
+  class_uid: 3002          # Authentication
+  fields:
+    time: { from: generated_time }
+    device_hostname: { from: device_name }
+    actor_user_name: { from: source_user }
+    src_endpoint_ip: { from: public_ip }
+    src_endpoint_hostname: { from: machine_name }
+    message: { from: event_id }
+    activity_id:
+      from: event_id
+      map: { portal-auth: 1, gateway-auth: 1, portal-prelogin: 1, gateway-prelogin: 1, gateway-connected: 1, gateway-register: 1, gateway-logout: 2, portal-getconfig: 99, gateway-getconfig: 99, gateway-hip-report: 99, gateway-hip-check: 99 }
+      default: 99
+    status_id: { from: status, map: { success: 1, failure: 2 }, default: 0 }
+  severity:
+    from: status
+    map: { success: 1, failure: 3 }
+
+tests:
+  - name: gateway auth success
+    input: "<14>Oct  9 20:41:12 pa-fw01 1,2026/10/09 20:41:12,012345678901,GLOBALPROTECT,0,2561,2026/10/09 20:41:12,vsys1,gateway-auth,login,LDAP,SSL,example\\alice,US,LAPTOP-ALICE,203.0.113.77,::,10.30.0.5,::,host-1,SN1,6.2.1,Microsoft Windows,10.0.22631,1,,,,success,,0,on-demand,0,gp-portal,7290000301,0x0,2026-10-09T20:41:12.001-07:00,,,,,,0,0,0,0,,pa-fw01"
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { actor_user_name: "example\\alice", src_endpoint_ip: 203.0.113.77, src_endpoint_hostname: LAPTOP-ALICE, status_id: 1, activity_id: 1 }
+  - name: portal auth failure
+    input: "<12>Oct  9 20:42:00 pa-fw01 1,2026/10/09 20:42:00,012345678901,GLOBALPROTECT,0,2561,2026/10/09 20:42:00,vsys1,portal-auth,login,LDAP,SSL,bob,US,,198.51.100.4,::,0.0.0.0,::,,,,,,1,,Authentication failed,Authentication failed: Invalid username or password,failure,,0,,0,gp-portal,7290000302,0x0,,,,,,,0,0,0,0,,pa-fw01"
+    expect:
+      parse_status: ok
+      fields: { actor_user_name: bob, status_id: 2, severity_id: 3 }
+  - name: gateway logout
+    input: "<14>Oct  9 20:43:00 pa-fw01 1,2026/10/09 20:43:00,012345678901,GLOBALPROTECT,0,2561,2026/10/09 20:43:00,vsys1,gateway-logout,logout,,SSL,example\\alice,US,LAPTOP-ALICE,203.0.113.77,::,10.30.0.5,::,host-1,SN1,6.2.1,Microsoft Windows,10.0.22631,1,client logout,,,success,,3600,on-demand,0,gp-portal,7290000303,0x0,,,,,,,0,0,0,0,,pa-fw01"
+    expect:
+      parse_status: ok
+      fields: { activity_id: 2, status_id: 1 }

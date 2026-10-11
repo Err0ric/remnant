@@ -1,0 +1,95 @@
+schema_version: 1
+id: windows_winlogbeat
+name: Windows events via Winlogbeat JSON
+version: 1.0.0
+author: starter-pack
+description: >-
+  Winlogbeat (7.x and 8.x) events written as JSON lines, for example by the file output or
+  a Logstash or Vector file sink. EventData sits under winlog.event_data. Class, activity,
+  and status come from the shared windows_eventid map; the rest of the document stays in
+  unmapped.
+category: identity          # mostly logon and account events; process and network too
+vendor: windows
+classification_default: local_only
+sigma:
+  logsource:
+    - {product: windows, service: "*"}
+    - {product: windows, category: "*"}
+
+envelope:
+  type: none
+
+match:
+  regex: '^\{.*"winlog"\s*:\s*\{'
+  min_confidence: 0.9
+
+payload:
+  format: json
+  json: { root: "$" }
+
+transforms:
+  - { field: "@timestamp", op: timestamp, args: { format: iso8601 } }
+  - { field: winlog.channel, op: join, args: { with: [winlog.event_id], into: eventid_key, sep: ":" } }
+  - { field: message, op: regex_extract, args: { pattern: '^\s*([^\r\n]+)', into: message_title, optional: true } }
+  - { field: winlog.event_data.IpPort, op: to_int }
+  # Filtering platform events (5156, 5157): Source* is always the local side, so the
+  # initiator depends on Direction (%%14592 Inbound, %%14593 Outbound).
+  - field: winlog.event_data.Direction
+    op: map
+    args: { into: wfp_dir, values: { "%%14592": in, "%%14593": out, Inbound: in, Outbound: out }, optional: true }
+  - { field: wfp_dir, op: pick, args: { from: { in: winlog.event_data.DestAddress, out: winlog.event_data.SourceAddress }, into: wfp_src_ip } }
+  - { field: wfp_dir, op: pick, args: { from: { in: winlog.event_data.DestPort, out: winlog.event_data.SourcePort }, into: wfp_src_port } }
+  - { field: wfp_dir, op: pick, args: { from: { in: winlog.event_data.SourceAddress, out: winlog.event_data.DestAddress }, into: wfp_dst_ip } }
+  - { field: wfp_dir, op: pick, args: { from: { in: winlog.event_data.SourcePort, out: winlog.event_data.DestPort }, into: wfp_dst_port } }
+  - { field: wfp_src_port, op: to_int }
+  - { field: wfp_dst_port, op: to_int }
+  # Outcome from the audit keyword; event.outcome wins when the shipper set it to success
+  # or failure ("unknown" changes nothing). Other events leave status to the map.
+  - field: winlog.keywords.0
+    op: map
+    args: { into: outcome, values: { "Audit Success": 1, "Audit Failure": 2 }, optional: true }
+  - field: event.outcome
+    op: map
+    args: { into: outcome, values: { success: 1, failure: 2 }, optional: true }
+
+mapping:
+  class_uid: 0
+  lookup:
+    field: eventid_key
+    table: windows_eventid
+    actor: { subject: [winlog.event_data.SubjectUserName], target: [winlog.event_data.TargetUserName] }
+  fields:
+    time: { from: "@timestamp" }
+    device_hostname: { from: [winlog.computer_name, host.name] }
+    actor_process_name: { from: [winlog.event_data.ParentProcessName, winlog.event_data.ProcessName, winlog.event_data.Application] }
+    src_endpoint_ip: { from: [winlog.event_data.IpAddress, wfp_src_ip] }
+    src_endpoint_port: { from: [winlog.event_data.IpPort, wfp_src_port] }
+    src_endpoint_hostname: { from: winlog.event_data.WorkstationName }
+    dst_endpoint_ip: { from: wfp_dst_ip }
+    dst_endpoint_port: { from: wfp_dst_port }
+    status_id: { from: outcome }
+    message: { from: message_title }     # first line; the map's label when there is none
+  # Windows level, the same in every Windows template; a failed audit shows in status_id.
+  severity:
+    from: log.level
+    map: { verbose: 1, information: 1, warning: 3, error: 4, critical: 5 }
+
+tests:
+  - name: failed network logon
+    input: '{"@timestamp":"2026-10-09T20:41:12.345Z","event":{"code":"4625","provider":"Microsoft-Windows-Security-Auditing","outcome":"failure"},"host":{"name":"dc01"},"log":{"level":"information"},"message":"An account failed to log on.\n\nSubject:\n\tAccount Name:\t\t-","winlog":{"channel":"Security","event_id":"4625","computer_name":"DC01.corp.example","keywords":["Audit Failure"],"event_data":{"SubjectUserName":"-","TargetUserName":"bob","LogonType":"3","IpAddress":"203.0.113.9","IpPort":"51234","WorkstationName":"KIOSK-07"}}}'
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { activity_id: 1, status_id: 2, severity_id: 1, actor_user_name: bob, src_endpoint_ip: 203.0.113.9, src_endpoint_port: 51234, device_hostname: DC01.corp.example, time: "2026-10-09T20:41:12.345000+00:00", message: An account failed to log on. }
+  - name: group member added, outcome from keywords only (7.x)
+    input: '{"@timestamp":"2026-10-09T20:42:00Z","log":{"level":"information"},"winlog":{"channel":"Security","event_id":4732,"computer_name":"DC01.corp.example","keywords":["Audit Success"],"event_data":{"SubjectUserName":"alice","MemberName":"CN=dave,OU=Staff,DC=corp,DC=example","TargetUserName":"Administrators"}}}'
+    expect:
+      parse_status: ok
+      class_uid: 3006
+      fields: { activity_id: 3, status_id: 1, actor_user_name: alice, message: A member was added to a security-enabled local group }
+  - name: blocked inbound connection, remote side is the source
+    input: '{"@timestamp":"2026-10-09T20:43:00Z","log":{"level":"information"},"winlog":{"channel":"Security","event_id":"5157","computer_name":"WS-0042.corp.example","keywords":["Audit Failure"],"event_data":{"Application":"\\device\\harddiskvolume3\\windows\\system32\\svchost.exe","Direction":"%%14592","SourceAddress":"10.20.1.5","SourcePort":"445","DestAddress":"198.51.100.4","DestPort":"51000"}}}'
+    expect:
+      parse_status: ok
+      class_uid: 4001
+      fields: { activity_id: 5, status_id: 2, src_endpoint_ip: 198.51.100.4, src_endpoint_port: 51000, dst_endpoint_ip: 10.20.1.5, dst_endpoint_port: 445 }

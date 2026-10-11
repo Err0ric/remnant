@@ -1,0 +1,125 @@
+"""Typed exceptions. The API layer maps these to HTTP responses."""
+
+
+class AppError(Exception):
+    """Base class for all application errors."""
+
+
+class ConfigError(AppError):
+    """Configuration is missing or invalid."""
+
+
+class QueryRejectedError(AppError):
+    """The guard refused a query (statement type, table, function, or parse)."""
+
+
+class QueryFailedError(AppError):
+    """The query was allowed but failed while running (bad column, type error)."""
+
+
+class QueryTimeoutError(AppError):
+    """The query ran longer than the configured timeout and was interrupted."""
+
+
+class SourceRejectedError(AppError):
+    """A source configuration was refused (path outside allowed roots, missing, duplicate)."""
+
+
+class NotFoundError(AppError):
+    """The requested object does not exist or is not visible to the caller."""
+
+
+class AuthRequiredError(AppError):
+    """No valid session or token was presented."""
+
+
+class ForbiddenError(AppError):
+    """Signed in, but the role does not allow this action."""
+
+
+class CsrfError(AppError):
+    """A cookie-authenticated write arrived without a matching CSRF token."""
+
+
+class SetupRequiredError(AppError):
+    """No administrator exists yet on a network bind; only setup is open."""
+
+
+class SetupInvalidError(AppError):
+    """The setup link is wrong, expired, or already used."""
+
+
+class SetupClosedError(AppError):
+    """An administrator already exists, so setup is permanently off."""
+
+
+class LoginFailedError(AppError):
+    """Wrong username or password. Deliberately does not say which."""
+
+
+class RateLimitedError(AppError):
+    """Too many failed attempts; retry later."""
+
+    def __init__(self, message: str, retry_after_s: int) -> None:
+        super().__init__(message)
+        self.retry_after_s = retry_after_s
+
+
+class ConflictError(AppError):
+    """The object already exists."""
+
+
+class LastAdminError(AppError):
+    """The change would leave no active administrator."""
+
+
+class FirstUserAdminError(AppError):
+    """The first account on an install without accounts must be an administrator."""
+
+
+class LinkInvalidError(AppError):
+    """An invite or reset link is wrong, expired, already used, or for a disabled account."""
+
+
+class InteractiveRequiredError(AppError):
+    """This action needs a signed-in browser session, not an API token."""
+
+
+class ParamInvalidError(AppError):
+    """A saved-search parameter is unknown, missing, or the wrong type."""
+
+
+class TemplateInvalidError(AppError):
+    """A template or draft does not validate, fails its tests, or cannot be approved."""
+
+
+class SearchInvalidError(AppError):
+    """A saved search definition is inconsistent (for example an undefined placeholder)."""
+
+
+class PayloadTooLargeError(AppError):
+    """An uploaded document is larger than allowed."""
+
+
+class ProviderError(AppError):
+    """The model provider failed, refused, or returned something invalid."""
+
+
+class ProviderConfigError(AppError):
+    """The provider cannot be used as configured (disabled, or a cloud URL without TLS)."""
+
+
+class ClassificationBlockedError(AppError):
+    """A cloud provider was asked to see data from local-only sources (SPEC 6.2)."""
+
+    def __init__(self, message: str, sources: list[str]) -> None:
+        super().__init__(message)
+        self.sources = sources
+
+
+class CloudAckRequiredError(AppError):
+    """Adding or pointing a provider at a cloud host needs an explicit acknowledgment."""
+
+
+class RuleRejectedError(AppError):
+    """A Sigma rule cannot be compiled or is refused as unsafe (ADR-0006)."""

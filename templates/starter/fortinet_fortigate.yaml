@@ -1,0 +1,88 @@
+schema_version: 1
+id: fortinet_fortigate
+name: Fortinet FortiGate
+version: 1.0.0
+author: starter-pack
+description: >-
+  FortiOS key=value syslog: traffic logs (forward, local) to Network Activity, user and
+  VPN login events to Authentication. Handles the bare <PRI> shape FortiGate sends and
+  eventtime in seconds, milliseconds, microseconds, or nanoseconds.
+category: network
+vendor: fortinet
+classification_default: local_only
+sigma:
+  logsource:
+    - {category: firewall}
+    - {product: fortinet, category: firewall}
+
+envelope:
+  type: syslog
+  syslog: { rfc: auto, assume_year: rollover_safe, timezone: UTC, strip_relay_headers: true }
+
+match:
+  regex: '(?:^|\s)logid="?\d{10}"?\s.*\btype="?\w+'
+  min_confidence: 0.9
+
+payload:
+  format: kv
+  kv: { pair_sep: " ", kv_sep: "=", quote: '"' }
+
+transforms:
+  - { field: eventtime, op: timestamp, args: { format: epoch_auto } }
+  - { field: srcport, op: to_int }
+  - { field: dstport, op: to_int }
+  # Outcome: traffic logs say it in action, event logs in status (which wins when present).
+  - field: action
+    op: map
+    args:
+      into: outcome
+      values: { accept: 1, close: 1, timeout: 1, server-rst: 1, client-rst: 1, start: 1, deny: 2, block: 2, blocked: 2, dropped: 2, ssl-login-fail: 2, ssl-login-success: 1, tunnel-up: 1, tunnel-down: 1 }
+      default: 0
+  - field: status
+    op: map
+    args: { into: outcome, values: { success: 1, failure: 2, failed: 2 }, default: 0 }
+
+mapping:
+  class_uid: 0
+  class_by:
+    field: subtype
+    values: { forward: 4001, local: 4001, multicast: 4001, sniffer: 4001, user: 3002, vpn: 3002 }
+  fields:
+    time: { from: eventtime }
+    device_hostname: { from: devname }
+    src_endpoint_ip: { from: srcip }
+    src_endpoint_port: { from: srcport }
+    dst_endpoint_ip: { from: dstip }
+    dst_endpoint_port: { from: dstport }
+    actor_user_name: { from: user }
+    status_id: { from: outcome }
+    message: { from: msg }
+  severity:
+    from: level
+    map: { emergency: 5, alert: 5, critical: 5, error: 4, warning: 3, notice: 2, information: 1, debug: 1 }
+
+tests:
+  - name: forward traffic accepted, bare PRI, nanosecond eventtime
+    input: '<189>date=2026-10-09 time=20:41:12 devname="FGT60F-HQ" devid="FGT60F0000000001" eventtime=1791578472123456789 tz="+0000" logid="0000000013" type="traffic" subtype="forward" level="notice" vd="root" srcip=10.20.1.5 srcport=51234 srcintf="internal" dstip=192.0.2.10 dstport=443 dstintf="wan1" sessionid=901 proto=6 action="close" policyid=1 service="HTTPS" sentbyte=1200 rcvdbyte=4500'
+    expect:
+      parse_status: ok
+      class_uid: 4001
+      fields: { device_hostname: FGT60F-HQ, src_endpoint_ip: 10.20.1.5, dst_endpoint_port: 443, status_id: 1, severity_id: 2, time: "2026-10-09T20:41:12.123456+00:00" }
+  - name: local traffic denied
+    input: '<188>date=2026-10-09 time=20:42:00 devname="FGT60F-HQ" eventtime=1791578520 logid="0001000014" type="traffic" subtype="local" level="warning" srcip=203.0.113.9 srcport=40022 dstip=192.0.2.1 dstport=22 action="deny" policyid=0'
+    expect:
+      parse_status: ok
+      class_uid: 4001
+      fields: { src_endpoint_ip: 203.0.113.9, status_id: 2, severity_id: 3 }
+  - name: SSL VPN login failure with message
+    input: '<189>Oct  9 20:43:00 fw-hq date=2026-10-09 time=20:43:00 devname="FGT60F-HQ" eventtime=1791578580000 logid="0101039426" type="event" subtype="vpn" level="alert" logdesc="SSL VPN login fail" action="ssl-login-fail" tunneltype="ssl-web" remip=198.51.100.4 user="bob" reason="sslvpn_login_permission_denied" msg="SSL user failed to logged in"'
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { actor_user_name: bob, status_id: 2, severity_id: 5, message: SSL user failed to logged in }
+  - name: admin login success via status
+    input: '<190>date=2026-10-09 time=20:44:00 devname="FGT60F-HQ" eventtime=1791578640 logid="0102043039" type="event" subtype="user" level="information" logdesc="Authentication success" srcip=10.20.1.6 user="alice" action="authentication" status="success" msg="User alice succeeded in authentication"'
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { actor_user_name: alice, status_id: 1, severity_id: 1 }

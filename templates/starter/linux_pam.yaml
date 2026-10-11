@@ -1,0 +1,92 @@
+schema_version: 1
+id: linux_pam
+name: Linux PAM and su
+version: 1.0.0
+author: starter-pack
+description: >-
+  PAM messages from login services other than sshd and sudo (su, login, cron, gdm, passwd,
+  polkit) and su's own success and failure lines: sessions, authentication failures,
+  password changes, and faillock lockouts.
+category: identity
+vendor: linux
+classification_default: local_only
+sigma:
+  logsource:
+    - {product: linux}
+    - {product: linux, service: auth}
+
+envelope:
+  type: syslog
+  syslog: { rfc: auto, assume_year: rollover_safe, timezone: UTC, strip_relay_headers: true }
+
+match:
+  app_name: [su, login, cron, CRON, gdm-password, passwd, polkit-agent-helper-1, systemd-user]
+  regex: '^pam_\w+\('
+  min_confidence: 0.8
+
+payload:
+  format: regex
+  regex:
+    patterns:
+      - '^pam_(?P<module>\w+)\((?P<service>[^:)]+):session\): session (?P<event>opened|closed) for user (?P<target_user>[^\s(]+)(?:\(uid=\d+\))?(?: by (?P<user>[^\s(]*)(?:\(uid=\d+\))?)?'
+      - '^pam_(?P<module>\w+)\((?P<service>[^:)]+):auth\): (?P<event>authentication failure);(?P<rest>.*)$'
+      - '^pam_unix\((?P<service>[^:)]+):auth\): (?P<event>check pass; user unknown)'
+      - '^pam_unix\((?P<service>[^:)]+):chauthtok\): (?P<event>password changed) for (?P<user>\S+)'
+      - '^pam_faillock\((?P<service>[^:)]+):auth\): (?P<event>Consecutive login failures) for user (?P<user>\S+) account temporarily locked'
+      - '^(?P<event>FAILED SU) \(to (?P<target_user>[^)]+)\) (?P<user>\S+) on (?P<tty>\S+)'
+      - '^\((?P<event>to) (?P<target_user>[^)]+)\) (?P<user>\S+) on (?P<tty>\S+)'
+
+transforms:
+  - { field: rest, op: regex_extract, args: { pattern: '(?:^|\s)user=(\S+)', into: user, optional: true } }
+  - { field: rest, op: regex_extract, args: { pattern: 'ruser=(\S*)', into: ruser, optional: true } }
+  - { field: rest, op: regex_extract, args: { pattern: 'rhost=(\S*)', into: rhost, optional: true } }
+
+mapping:
+  class_uid: 3002          # Authentication
+  class_by:
+    field: event
+    values: { "password changed": 3001, "Consecutive login failures": 3001 }
+  fields:
+    actor_user_name: { from: user }
+    src_endpoint_hostname: { from: rhost }
+    activity_id:
+      from: event
+      map: { opened: 1, closed: 2, "authentication failure": 1, "check pass; user unknown": 1, "FAILED SU": 1, to: 1, "password changed": 3, "Consecutive login failures": 9 }
+      default: 99
+    status_id:
+      from: event
+      map: { opened: 1, closed: 1, to: 1, "password changed": 1, "Consecutive login failures": 1 }
+      default: 2
+  severity:
+    from: event
+    map: { "authentication failure": 3, "check pass; user unknown": 3, "FAILED SU": 3, "Consecutive login failures": 4, "password changed": 2, opened: 1, closed: 1, to: 1 }
+
+tests:
+  - name: su authentication failure
+    input: "<85>Oct  9 20:41:12 web-01 su[5101]: pam_unix(su:auth): authentication failure; logname=bob uid=1001 euid=0 tty=pts/1 ruser=bob rhost=  user=root"
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { actor_user_name: root, status_id: 2, activity_id: 1, severity_id: 3 }
+  - name: cron session opened
+    input: "<86>Oct  9 20:45:01 db-01 CRON[6100]: pam_unix(cron:session): session opened for user root(uid=0) by (uid=0)"
+    expect:
+      parse_status: ok
+      fields: { status_id: 1, activity_id: 1, actor_process_name: CRON }
+  - name: password changed
+    input: "<86>Oct  9 20:50:00 web-01 passwd[7001]: pam_unix(passwd:chauthtok): password changed for carol"
+    expect:
+      parse_status: ok
+      class_uid: 3001
+      fields: { actor_user_name: carol, activity_id: 3, status_id: 1 }
+  - name: faillock lockout
+    input: "<84>Oct  9 20:51:00 bastion login[7100]: pam_faillock(login:auth): Consecutive login failures for user dave account temporarily locked"
+    expect:
+      parse_status: ok
+      class_uid: 3001
+      fields: { actor_user_name: dave, activity_id: 9, severity_id: 4 }
+  - name: failed su
+    input: "<85>Oct  9 20:52:00 web-01 su[7200]: FAILED SU (to root) bob on pts/1"
+    expect:
+      parse_status: ok
+      fields: { actor_user_name: bob, status_id: 2 }

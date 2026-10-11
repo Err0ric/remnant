@@ -1,0 +1,11 @@
+# paloalto_system fixtures
+
+| | |
+|---|---|
+| Source product | Palo Alto Networks PAN-OS 10.2 and 11.x, SYSTEM log |
+| Collector shape | Syslog server profile, BSD and IETF formats |
+| Generator | `scripts/fixtures/starter_pack.py paloalto_system` (seed per template) |
+| Field order | PAN-OS syslog field descriptions (docs.paloaltonetworks.com, PAN-OS 11.0, and 10.2 for traffic) |
+| Values | Serial 012345678901, device pa-fw01, RFC 1918 and RFC 5737 addresses, invented users |
+
+Lines carry 0, 20, or 40 extra trailing columns, as newer releases add them. The template keeps those in `_extra` without marking the line partial. Quoted cells with embedded commas are included. Pathological lines: 9,000 commas, an unterminated quote, impossible dates and ports, and a truncated line.

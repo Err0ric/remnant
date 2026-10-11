@@ -1,0 +1,111 @@
+schema_version: 1
+id: cisco_asa
+name: Cisco ASA
+version: 1.0.0
+author: starter-pack
+description: >-
+  Cisco ASA and FTD (LINA) syslog: connection build and teardown, ACL and inbound denies,
+  AAA, management login, and VPN session messages, by message id. Message ids the
+  template does not model are kept with their id and severity.
+category: network
+vendor: cisco
+classification_default: local_only
+sigma:
+  logsource:
+    - {category: firewall}
+    - {product: cisco, service: asa, category: firewall}
+
+envelope:
+  type: syslog
+  syslog: { rfc: auto, assume_year: rollover_safe, timezone: UTC, strip_relay_headers: true }
+
+match:
+  regex: '%(?:ASA|FTD)-\d-\d{6}:'
+  min_confidence: 0.95
+
+payload:
+  format: regex
+  regex:
+    patterns:
+      # 302013/302015 built, 302014/302016 teardown
+      - '%(?:ASA|FTD)-(?P<sev>\d)-(?P<msgid>30201[3-6]): (?P<event>Built|Teardown) (?:(?P<direction>inbound|outbound) )?(?P<proto>TCP|UDP) connection (?P<conn_id>\d+) for (?P<src_if>[^:\s]+):(?P<src_ip>[\da-fA-F:.]+)/(?P<src_port>\d+)(?: \([^)]*\))*? to (?P<dst_if>[^:\s]+):(?P<dst_ip>[\da-fA-F:.]+)/(?P<dst_port>\d+)(?P<rest>.*)$'
+      # 106023 Deny protocol src if:ip/port dst if:ip/port by access-group "acl"
+      - '%(?:ASA|FTD)-(?P<sev>\d)-(?P<msgid>106023): (?P<event>Deny) (?P<proto>\S+) src (?P<src_if>[^:\s]+):(?P<src_ip>[\da-fA-F:.]+)(?:/(?P<src_port>\d+))?(?: \([^)]*\))? dst (?P<dst_if>[^:\s]+):(?P<dst_ip>[\da-fA-F:.]+)(?:/(?P<dst_port>\d+))?(?: \([^)]*\))?(?: \(type \d+, code \d+\))? by access-group "(?P<acl>[^"]+)"'
+      # 106001 inbound TCP denied, 106006/106007 inbound UDP denied
+      - '%(?:ASA|FTD)-(?P<sev>\d)-(?P<msgid>106001): Inbound (?P<proto>TCP) connection (?P<event>denied) from (?P<src_ip>[\da-fA-F:.]+)/(?P<src_port>\d+) to (?P<dst_ip>[\da-fA-F:.]+)/(?P<dst_port>\d+) flags (?P<flags>.+?) on interface (?P<src_if>\S+)'
+      - '%(?:ASA|FTD)-(?P<sev>\d)-(?P<msgid>10600[67]): (?P<event>Deny) inbound (?P<proto>UDP) from (?P<src_ip>[\da-fA-F:.]+)/(?P<src_port>\d+) to (?P<dst_ip>[\da-fA-F:.]+)/(?P<dst_port>\d+)'
+      # 710003 to-the-box denied
+      - '%(?:ASA|FTD)-(?P<sev>\d)-(?P<msgid>710003): (?P<proto>TCP|UDP) access (?P<event>denied) by ACL from (?P<src_ip>[\da-fA-F:.]+)/(?P<src_port>\d+) to (?P<dst_if>[^:\s]+):(?P<dst_ip>[\da-fA-F:.]+)/(?P<dst_port>\S+)'
+      # 113004 / 113005 / 113015 AAA
+      - '%(?:ASA|FTD)-(?P<sev>\d)-(?P<msgid>1130(?:04|05|15)): AAA user (?P<aaa_type>\w+) (?P<event>Successful|Rejected)\s*:?\s*(?:reason = (?P<reason>[^:]+?)\s*:\s*)?(?:server = \s*(?P<server>[\w.:-]+)|local database)\s*[,:]\s*[Uu]ser = (?P<user>[^:,]+?)(?:\s*:\s*user IP = (?P<src_ip>[\da-fA-F:.]+))?\s*$'
+      # 605004 / 605005 management login
+      - '%(?:ASA|FTD)-(?P<sev>\d)-(?P<msgid>60500[45]): Login (?P<event>permitted|denied) from (?P<src_ip>[\da-fA-F:.]+)/(?P<src_port>\d+) to (?P<dst_if>[^:\s]+):(?P<dst_ip>[\da-fA-F:.]+)/(?P<service>\S+) for user "(?P<user>[^"]*)"'
+      # 611101 / 611102 user authentication
+      - '%(?:ASA|FTD)-(?P<sev>\d)-(?P<msgid>61110[12]): User authentication (?P<event>succeeded|failed): (?:IP address|Uname): .*?(?:IP address: (?P<src_ip>[\da-fA-F:.]+))?,?\s*Uname: (?P<user>\S+)'
+      # 722051 AnyConnect address assigned, 716001/716002 WebVPN session
+      - '%(?:ASA|FTD)-(?P<sev>\d)-(?P<msgid>722051): Group <(?P<group>[^>]*)> User <(?P<user>[^>]*)> IP <(?P<src_ip>[^>]*)> IPv4 Address <(?P<assigned_ip>[^>]*)>.*(?P<event>assigned) to session'
+      - '%(?:ASA|FTD)-(?P<sev>\d)-(?P<msgid>71600[12]): Group <?(?P<group>[^>\s]*)>? User <?(?P<user>[^>\s]*)>? IP <?(?P<src_ip>[^>\s]*)>? WebVPN session (?P<event>started|terminated)'
+      # 111008 command executed
+      - "%(?:ASA|FTD)-(?P<sev>\\d)-(?P<msgid>111008): User '?(?P<user>[^' ]+)'? (?P<event>executed) the '?(?P<command>.+?)'? command"
+      # anything else: keep id, severity, and text
+      - '%(?:ASA|FTD)-(?P<sev>\d)-(?P<msgid>\d{6}): (?P<text>.*)$'
+
+transforms:
+  - { field: src_port, op: to_int }
+  - { field: dst_port, op: to_int }
+
+mapping:
+  class_uid: 0
+  class_by:
+    field: msgid
+    values: { "302013": 4001, "302014": 4001, "302015": 4001, "302016": 4001, "106023": 4001, "106001": 4001, "106006": 4001, "106007": 4001, "710003": 4001, "113004": 3002, "113005": 3002, "113015": 3002, "605004": 3002, "605005": 3002, "611101": 3002, "611102": 3002, "722051": 3002, "716001": 3002, "716002": 3002 }
+  fields:
+    src_endpoint_ip: { from: src_ip }
+    src_endpoint_port: { from: src_port }
+    dst_endpoint_ip: { from: dst_ip }
+    dst_endpoint_port: { from: dst_port }
+    actor_user_name: { from: user }
+    activity_id:
+      from: event
+      map: { Built: 1, Teardown: 2, Deny: 5, denied: 5, Successful: 1, Rejected: 1, permitted: 1, succeeded: 1, failed: 1, assigned: 1, started: 1, terminated: 2 }
+      default: 99
+    status_id:
+      from: event
+      map: { Built: 1, Teardown: 1, Deny: 2, denied: 2, Successful: 1, Rejected: 2, permitted: 1, succeeded: 1, failed: 2, assigned: 1, started: 1, terminated: 1, executed: 1 }
+      default: 0
+    message: { from: msgid }
+  severity:
+    from: sev
+    map: { "0": 5, "1": 5, "2": 5, "3": 4, "4": 3, "5": 2, "6": 1, "7": 1 }
+
+tests:
+  - name: built inbound TCP with ASA timestamp
+    input: "<166>Oct 09 2026 20:41:12: %ASA-6-302013: Built inbound TCP connection 4711 for outside:203.0.113.9/40022 (203.0.113.9/40022) to inside:10.20.1.5/22 (10.20.1.5/22)"
+    expect:
+      parse_status: ok
+      class_uid: 4001
+      fields: { src_endpoint_ip: 203.0.113.9, src_endpoint_port: 40022, dst_endpoint_ip: 10.20.1.5, dst_endpoint_port: 22, activity_id: 1, status_id: 1, severity_id: 1, message: "302013", time: "2026-10-09T20:41:12+00:00" }
+  - name: ACL deny with device id
+    input: '<164>Oct  9 2026 20:42:00 asa01 : %ASA-4-106023: Deny tcp src outside:198.51.100.4/51000 dst inside:10.20.1.5/3389 by access-group "outside_access_in" [0x0, 0x0]'
+    expect:
+      parse_status: ok
+      class_uid: 4001
+      fields: { device_hostname: asa01, src_endpoint_ip: 198.51.100.4, dst_endpoint_port: 3389, status_id: 2, activity_id: 5, severity_id: 3 }
+  - name: AAA rejected without header
+    input: "<166>%ASA-6-113005: AAA user authentication Rejected : reason = AAA failure : server = 10.20.0.10 : user = bob : user IP = 203.0.113.77"
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { actor_user_name: bob, src_endpoint_ip: 203.0.113.77, status_id: 2 }
+  - name: management login permitted
+    input: '<166>Oct  9 20:44:00 asa01 %ASA-6-605005: Login permitted from 10.20.1.6/51000 to inside:10.20.0.1/ssh for user "alice"'
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { actor_user_name: alice, status_id: 1, src_endpoint_ip: 10.20.1.6 }
+  - name: unmodelled id keeps id and severity
+    input: "<165>Oct  9 20:45:00 asa01 %ASA-5-199999: Example message the template does not model"
+    expect:
+      parse_status: ok
+      class_uid: 0
+      fields: { message: "199999", severity_id: 2 }

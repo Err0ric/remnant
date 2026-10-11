@@ -1,0 +1,61 @@
+<30>Oct  9 20:01:18 ns2 unbound: [812:0] info: 10.20.1.5 intranet.example.internal. MX IN
+<30>Oct  9 20:02:12 ns2 unbound: [812:0] reply: 10.20.2.14 www.example.com. MX IN NOERROR 0.460515 1 241
+<30>Oct  9 20:03:09 ns2 unbound: [812:0] info: 10.20.1.5 www.example.com. A IN
+<30>Oct  9 20:04:27 ns2 unbound: [812:0] reply: 10.20.1.6 intranet.example.internal. A IN NOERROR 0.622075 1 208
+<30>Oct  9 20:04:49 ns2 unbound: [812:0] info: 10.20.3.30 mail.example.com. AAAA IN
+<30>Oct  9 20:06:02 ns2 unbound: [812:0] reply: 10.20.1.6 xj3k9q2v.example.org. AAAA IN NXDOMAIN 0.807027 1 390
+<30>Oct  9 20:06:38 ns2 unbound: [812:0] info: 10.20.1.6 xj3k9q2v.example.org. AAAA IN
+<30>Oct  9 20:07:18 ns2 unbound: [812:0] reply: 10.20.1.6 xj3k9q2v.example.org. AAAA IN NXDOMAIN 0.640754 1 113
+<30>Oct  9 20:08:38 ns2 unbound: [812:0] info: 10.20.2.14 xj3k9q2v.example.org. AAAA IN
+<30>Oct  9 20:10:07 ns2 unbound: [812:0] reply: 10.20.1.5 intranet.example.internal. A IN NOERROR 0.376911 1 116
+<30>Oct  9 20:10:58 ns2 unbound: [812:0] info: 10.20.2.14 www.example.com. MX IN
+<30>Oct  9 20:11:58 ns2 unbound: [812:0] reply: 10.20.1.6 xj3k9q2v.example.org. MX IN NXDOMAIN 0.787180 1 258
+<30>Oct  9 20:13:20 ns2 unbound: [812:0] info: 10.20.2.14 mail.example.com. AAAA IN
+<30>Oct  9 20:14:12 ns2 unbound: [812:0] reply: 10.20.1.6 intranet.example.internal. A IN NOERROR 0.891722 1 51
+<30>Oct  9 20:14:32 ns2 unbound: [812:0] info: 10.20.3.30 mail.example.com. AAAA IN
+<30>Oct  9 20:15:55 ns2 unbound: [812:0] reply: 10.20.2.14 www.example.com. A IN NOERROR 0.859699 1 60
+<30>Oct  9 20:17:16 ns2 unbound: [812:0] info: 10.20.2.14 www.example.com. A IN
+<30>Oct  9 20:17:36 ns2 unbound: [812:0] reply: 10.20.1.5 www.example.com. MX IN NOERROR 0.902031 1 44
+<30>Oct  9 20:18:06 ns2 unbound: [812:0] info: 10.20.1.6 xj3k9q2v.example.org. AAAA IN
+<30>Oct  9 20:19:10 ns2 unbound: [812:0] reply: 10.20.1.5 www.example.com. MX IN NOERROR 0.302053 1 171
+<30>Oct  9 20:19:25 ns2 unbound: [812:0] info: 10.20.1.5 mail.example.com. A IN
+<30>Oct  9 20:19:54 ns2 unbound: [812:0] reply: 10.20.1.6 www.example.com. MX IN NOERROR 0.921583 1 233
+<30>Oct  9 20:21:03 ns2 unbound: [812:0] info: 10.20.1.6 mail.example.com. MX IN
+<30>Oct  9 20:22:23 ns2 unbound: [812:0] reply: 10.20.1.6 intranet.example.internal. A IN NOERROR 0.964281 1 40
+<30>Oct  9 20:22:53 ns2 unbound: [812:0] info: 10.20.1.5 intranet.example.internal. AAAA IN
+<30>Oct  9 20:24:07 ns2 unbound: [812:0] reply: 10.20.3.30 www.example.com. AAAA IN NOERROR 0.532077 1 190
+<30>Oct  9 20:25:34 ns2 unbound: [812:0] info: 10.20.1.6 intranet.example.internal. AAAA IN
+<30>Oct  9 20:26:38 ns2 unbound: [812:0] reply: 10.20.1.5 xj3k9q2v.example.org. A IN NXDOMAIN 0.496685 1 250
+<30>Oct  9 20:26:56 ns2 unbound: [812:0] info: 10.20.1.5 intranet.example.internal. AAAA IN
+<30>Oct  9 20:27:48 ns2 unbound: [812:0] reply: 10.20.1.6 mail.example.com. AAAA IN NOERROR 0.751109 1 281
+<30>Oct  9 20:28:49 ns2 unbound: [812:0] info: 10.20.1.5 intranet.example.internal. A IN
+<30>Oct  9 20:29:47 ns2 unbound: [812:0] reply: 10.20.1.5 xj3k9q2v.example.org. A IN NXDOMAIN 0.717152 1 159
+<30>Oct  9 20:30:10 ns2 unbound: [812:0] info: 10.20.1.6 intranet.example.internal. A IN
+<30>Oct  9 20:31:10 ns2 unbound: [812:0] reply: 10.20.1.5 xj3k9q2v.example.org. A IN NXDOMAIN 0.761300 1 320
+<30>Oct  9 20:31:49 ns2 unbound: [812:0] info: 10.20.2.14 www.example.com. A IN
+<30>Oct  9 20:33:07 ns2 unbound: [812:0] reply: 10.20.1.6 intranet.example.internal. A IN NOERROR 0.222792 1 137
+<30>Oct  9 20:33:40 ns2 unbound: [812:0] info: 10.20.1.6 mail.example.com. A IN
+<30>Oct  9 20:34:05 ns2 unbound: [812:0] reply: 10.20.2.14 intranet.example.internal. A IN NOERROR 0.256771 1 229
+<30>Oct  9 20:35:27 ns2 unbound: [812:0] info: 10.20.1.6 xj3k9q2v.example.org. A IN
+<30>Oct  9 20:36:18 ns2 unbound: [812:0] reply: 10.20.2.14 intranet.example.internal. MX IN NOERROR 0.452399 1 203
+<30>Oct  9 20:37:43 ns2 unbound: [812:0] info: 10.20.3.30 intranet.example.internal. A IN
+<30>Oct  9 20:39:07 ns2 unbound: [812:0] reply: 10.20.1.5 mail.example.com. MX IN NOERROR 0.689890 1 77
+<30>Oct  9 20:39:36 ns2 unbound: [812:0] info: 10.20.2.14 www.example.com. A IN
+<30>Oct  9 20:41:01 ns2 unbound: [812:0] reply: 10.20.1.6 mail.example.com. A IN NOERROR 0.388704 1 227
+<30>Oct  9 20:42:23 ns2 unbound: [812:0] info: 10.20.2.14 www.example.com. AAAA IN
+<30>Oct  9 20:43:10 ns2 unbound: [812:0] reply: 10.20.1.5 intranet.example.internal. MX IN NOERROR 0.878823 1 255
+<30>Oct  9 20:43:26 ns2 unbound: [812:0] info: 10.20.1.5 intranet.example.internal. AAAA IN
+<30>Oct  9 20:43:49 ns2 unbound: [812:0] reply: 10.20.2.14 mail.example.com. MX IN NOERROR 0.942895 1 399
+<30>Oct  9 20:44:30 ns2 unbound: [812:0] info: 10.20.1.5 xj3k9q2v.example.org. A IN
+<30>Oct  9 20:44:58 ns2 unbound: [812:0] reply: 10.20.1.6 xj3k9q2v.example.org. MX IN NXDOMAIN 0.905905 1 147
+<30>Oct  9 20:46:07 ns2 unbound: [812:0] info: 10.20.3.30 xj3k9q2v.example.org. AAAA IN
+<30>Oct  9 20:46:48 ns2 unbound: [812:0] reply: 10.20.1.5 mail.example.com. A IN NOERROR 0.576035 1 222
+<30>Oct  9 20:47:53 ns2 unbound: [812:0] info: 10.20.2.14 mail.example.com. AAAA IN
+<30>Oct  9 20:48:25 ns2 unbound: [812:0] reply: 10.20.1.6 mail.example.com. MX IN NOERROR 0.319946 1 164
+<30>Oct  9 20:49:04 ns2 unbound: [812:0] info: 10.20.1.6 xj3k9q2v.example.org. MX IN
+<30>Oct  9 20:49:06 ns2 unbound: [812:0] reply: 10.20.1.5 www.example.com. AAAA IN NOERROR 0.904234 1 113
+<30>Oct  9 20:50:24 ns2 unbound: [812:0] info: 10.20.2.14 intranet.example.internal. AAAA IN
+<30>Oct  9 20:50:30 ns2 unbound: [812:0] reply: 10.20.2.14 www.example.com. A IN NOERROR 0.195053 1 386
+<30>Oct  9 20:50:52 ns2 unbound: [812:0] info: 10.20.1.5 intranet.example.internal. A IN
+<30>Oct  9 20:51:13 ns2 unbound: [812:0] reply: 10.20.3.30 intranet.example.internal. A IN NOERROR 0.668661 1 276
+<30>Oct  9 20:51:28 ns2 unbound: [812:0] notice: init module 0: validator

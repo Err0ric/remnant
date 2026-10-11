@@ -1,0 +1,53 @@
+# Default: published on 127.0.0.1 only. The app serves HTTPS inside the container
+# (self-signed on first start, see docs/install/tls.md): browse to https://127.0.0.1:8080.
+#
+# First start prints a one-time link that creates the administrator account:
+#   docker compose logs app | grep -A1 "one-time link"
+# For a team VM, set APP_BIND=0.0.0.0 (or the VM's IP) in .env so analysts can reach
+# it, and APP_PUBLIC_NAME to the name they type, so the link and certificate use it.
+
+services:
+  app:
+    build: .
+    image: app:dev
+    environment:
+      APP__SERVER__HOST: 0.0.0.0
+      APP__PATHS__ALLOWED_ROOTS: /logs
+      APP__PATHS__RULE_ROOTS: /rules
+      APP__SERVER__PUBLIC_NAMES: ${APP_PUBLIC_NAME:-localhost}
+    ports:
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-8080}:8080"
+    volumes:
+      - app-data:/srv/data
+      - ./config:/srv/config:ro
+      - ${LOGS_DIR:-./logs}:/logs:ro
+      # Sigma rule sets to import (for example a git clone of SigmaHQ/sigma), read only.
+      - ${RULES_DIR:-./rules}:/rules:ro
+    # rsyslog on Debian/Ubuntu writes files as group "adm" (gid 4), mode 0640.
+    # Joining that group lets the app read them without running as root.
+    group_add:
+      - "${LOGS_GID:-4}"
+    restart: unless-stopped
+
+  # Demo data: writes made-up logs into LOGS_DIR (24 h of history, then a live trickle).
+  # docker compose --profile demo up -d
+  loggen:
+    profiles: ["demo"]
+    image: python:3.12-slim
+    command: ["python", "/scripts/loggen.py", "--out", "/logs/demo", "--backfill", "3000", "--rate", "2"]
+    volumes:
+      - ./scripts:/scripts:ro
+      - ${LOGS_DIR:-./logs}:/logs
+    restart: unless-stopped
+
+  ollama:
+    profiles: ["ollama"]
+    image: ollama/ollama:latest
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+
+volumes:
+  app-data:
+  ollama-models:

@@ -1,0 +1,78 @@
+# Vocabulary that maps analyst language to OCSF columns (SPEC 5.7).
+# Each predicate is checked by the query guard at startup. Templates can add terms later.
+# Class and status ids follow OCSF 1.3.0. Predicates only match events whose template
+# maps these fields; generic JSON, CSV, and headerless syslog may need message or raw.
+schema_version: 1
+terms:
+  - term: failed login
+    aliases: [failed logon, failed sign-in, authentication failure, failed auth, bad password]
+    sql: "class_uid = 3002 AND status_id = 2"
+    note: OCSF Authentication events with status Failure
+  - term: successful login
+    aliases: [successful logon, sign-in, logged in, accepted login]
+    sql: "class_uid = 3002 AND status_id = 1"
+    note: OCSF Authentication events with status Success
+  - term: logout
+    aliases: [logoff, sign-out]
+    sql: "class_uid = 3002 AND activity_id = 2"
+  - term: authentication event
+    aliases: [auth event, login attempt, logon attempt]
+    sql: "class_uid = 3002"
+  - term: account change
+    aliases: [user created, user deleted, password change, group membership change]
+    sql: "class_uid = 3001"
+    note: OCSF Account Change
+  - term: network connection
+    aliases: [network traffic, firewall traffic, connection]
+    sql: "class_uid = 4001"
+    note: OCSF Network Activity
+  - term: dns query
+    aliases: [dns lookup, dns request, name resolution]
+    sql: "class_uid = 4003"
+    note: OCSF DNS Activity
+  - term: process started
+    aliases: [process launch, process creation, executed]
+    sql: "class_uid = 1007 AND activity_id = 1"
+    note: OCSF Process Activity, Launch
+  - term: identity and access event
+    aliases: [iam event]
+    sql: "category_uid = 3"
+  - term: network event
+    aliases: [network category]
+    sql: "category_uid = 4"
+  - term: high severity
+    aliases: [high or above, severe, important]
+    sql: "severity_id >= 4"
+    note: "OCSF severity: 1 informational, 2 low, 3 medium, 4 high, 5 critical, 6 fatal"
+  - term: critical
+    aliases: [critical severity]
+    sql: "severity_id >= 5"
+  - term: failed event
+    aliases: [failure, failed, unsuccessful]
+    sql: "status_id = 2"
+  - term: external source ip
+    aliases: [external ip, public ip, internet ip, from the internet]
+    sql: >-
+      src_endpoint_ip IS NOT NULL
+      AND NOT regexp_matches(src_endpoint_ip,
+      '^(10\.|127\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|169\.254\.|::1$|f[cd]|fe80:)')
+    note: Not RFC 1918, loopback, link-local, or IPv6 local
+  - term: internal source ip
+    aliases: [internal ip, private ip, lan ip]
+    sql: >-
+      regexp_matches(src_endpoint_ip,
+      '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)')
+  - term: unparsed
+    aliases: [could not parse, parse failure, raw only]
+    sql: "parse_status IN ('envelope_only', 'failed')"
+    note: Only the raw line and envelope fields are available for these events
+  - term: ssh
+    aliases: [sshd, secure shell]
+    sql: "actor_process_name = 'sshd'"
+  - term: sudo
+    aliases: [privilege escalation via sudo, sudo command]
+    sql: "actor_process_name = 'sudo'"
+  - term: event time
+    aliases: [when it happened, timestamp]
+    sql: "coalesce(time, time_observed) IS NOT NULL"
+    note: Use coalesce(time, time_observed) for ordering and time buckets

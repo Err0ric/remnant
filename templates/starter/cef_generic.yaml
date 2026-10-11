@@ -1,0 +1,58 @@
+schema_version: 1
+id: cef_generic
+name: CEF (generic)
+version: 1.0.0
+author: starter-pack
+description: >-
+  ArcSight Common Event Format over syslog from any vendor. Maps the standard endpoint,
+  user, and severity keys; everything else (device vendor and product, signature id, rt,
+  custom strings) stays in unmapped. Copy and add class_by on signature_id for a vendor.
+category: findings
+classification_default: local_only
+
+envelope:
+  type: syslog
+  syslog: { rfc: auto, assume_year: rollover_safe, timezone: UTC, strip_relay_headers: true }
+
+match:
+  regex: 'CEF:\d+\|'
+  min_confidence: 0.95
+
+payload:
+  format: cef
+
+transforms:
+  - { field: spt, op: to_int }
+  - { field: dpt, op: to_int }
+
+mapping:
+  class_uid: 0             # Base Event: generic CEF does not say what kind of event it is
+  fields:
+    src_endpoint_ip: { from: src }
+    src_endpoint_port: { from: spt }
+    src_endpoint_hostname: { from: shost }
+    dst_endpoint_ip: { from: dst }
+    dst_endpoint_port: { from: dpt }
+    dst_endpoint_hostname: { from: dhost }
+    actor_user_name: { from: suser }
+    message: { from: msg }
+  severity:
+    from: severity
+    map: { "0": 1, "1": 2, "2": 2, "3": 2, "4": 3, "5": 3, "6": 3, "7": 4, "8": 4, "9": 5, "10": 5, Low: 2, Medium: 3, High: 4, Very-High: 5, Unknown: 0 }
+
+tests:
+  - name: firewall deny with extension
+    input: "<132>Oct  9 20:41:12 fw01 CEF:0|ExampleCorp|EdgeWall|5.2|deny-100|Connection denied|7|src=203.0.113.9 spt=40022 dst=10.20.1.5 dpt=22 proto=TCP act=deny msg=Denied by rule 12"
+    expect:
+      parse_status: ok
+      fields: { src_endpoint_ip: 203.0.113.9, src_endpoint_port: 40022, dst_endpoint_port: 22, severity_id: 4, message: Denied by rule 12 }
+  - name: escaped pipe in name and text severity
+    input: "<132>Oct  9 20:42:00 ids01 CEF:0|ExampleCorp|Sensor\\|IDS|1.0|sig-77|Port scan \\| sweep|High|src=198.51.100.4 suser=scanner"
+    expect:
+      parse_status: ok
+      fields: { src_endpoint_ip: 198.51.100.4, actor_user_name: scanner, severity_id: 4 }
+  - name: 5424 with no extension keys
+    input: "<134>1 2026-10-09T20:43:00Z av01 avd - - - CEF:0|ExampleCorp|AV|9|clean|Scan finished|1|"
+    expect:
+      parse_status: ok
+      fields: { severity_id: 2, device_hostname: av01 }

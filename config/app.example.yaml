@@ -1,0 +1,18 @@
+# Copy to config/app.yaml. Every key can be overridden with APP__SECTION__KEY env vars.
+server:
+  host: 127.0.0.1      # anything other than loopback requires auth below
+  port: 8080
+
+auth:
+  # Set one of these to bind beyond localhost. Prefer env vars over YAML for secrets.
+  # password_hash: "$argon2id$..."
+  # api_token: (set via APP__AUTH__API_TOKEN instead)
+
+paths:
+  data_dir: data
+  allowed_roots: []    # folders sources may read from, e.g. [/logs]
+  rule_roots: []       # folders Sigma rules may be imported from, e.g. [/rules]
+
+schedules:
+  timezone: UTC        # cron times for scheduled searches and rules, e.g. America/Los_Angeles
+  lag_seconds: 120     # each run ends this long before its fire time, so late events still count

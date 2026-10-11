@@ -1,0 +1,96 @@
+schema_version: 1
+id: windows_nxlog_json
+name: Windows events via NXLog JSON
+version: 1.0.0
+author: starter-pack
+description: >-
+  NXLog im_msvistalog records written with to_json(), one object per line, either to a
+  file or forwarded inside a syslog message. EventData fields are top level (TargetUserName,
+  IpAddress, ...). Class, activity, and status come from the shared windows_eventid map;
+  everything else NXLog sends stays in unmapped.
+category: identity          # mostly logon and account events; process and network too
+vendor: windows
+classification_default: local_only
+sigma:
+  logsource:
+    - {product: windows, service: "*"}
+    - {product: windows, category: "*"}
+
+envelope:
+  type: syslog
+  optional: true            # files written by om_file have no syslog header
+  syslog: { rfc: auto, assume_year: rollover_safe, timezone: UTC, strip_relay_headers: true }
+  defaults: [time, device_hostname]   # the syslog tag is the event provider, not a process
+
+match:
+  regex: '^\{.*"EventID"\s*:\s*\d+.*"Channel"\s*:'
+  min_confidence: 0.9
+
+payload:
+  format: json
+  json: { root: "$" }
+
+transforms:
+  # NXLog writes EventTime as "2026-10-09 20:41:12" in the collector's local time, or as
+  # ISO 8601 with an offset in newer releases; set the source time zone for the first form.
+  - { field: EventTime, op: timestamp, args: { format: iso8601 } }
+  - { field: Channel, op: join, args: { with: [EventID], into: eventid_key, sep: ":" } }
+  - { field: Message, op: regex_extract, args: { pattern: '^\s*([^\r\n]+)', into: message_title, optional: true } }
+  - { field: IpPort, op: to_int }
+  # Filtering platform events (5156, 5157): Source* is always the local side, so the
+  # initiator depends on Direction (%%14592 Inbound, %%14593 Outbound).
+  - field: Direction
+    op: map
+    args: { into: wfp_dir, values: { "%%14592": in, "%%14593": out, Inbound: in, Outbound: out }, optional: true }
+  - { field: wfp_dir, op: pick, args: { from: { in: DestAddress, out: SourceAddress }, into: wfp_src_ip } }
+  - { field: wfp_dir, op: pick, args: { from: { in: DestPort, out: SourcePort }, into: wfp_src_port } }
+  - { field: wfp_dir, op: pick, args: { from: { in: SourceAddress, out: DestAddress }, into: wfp_dst_ip } }
+  - { field: wfp_dir, op: pick, args: { from: { in: SourcePort, out: DestPort }, into: wfp_dst_port } }
+  - { field: wfp_src_port, op: to_int }
+  - { field: wfp_dst_port, op: to_int }
+  # Audit outcome; other event types leave status to the map (or unset).
+  - field: EventType
+    op: map
+    args: { into: outcome, values: { AUDIT_SUCCESS: 1, AUDIT_FAILURE: 2 }, optional: true }
+
+mapping:
+  class_uid: 0
+  lookup:
+    field: eventid_key
+    table: windows_eventid
+    actor: { subject: [SubjectUserName], target: [TargetUserName] }
+  fields:
+    time: { from: EventTime }
+    device_hostname: { from: Hostname }
+    actor_process_name: { from: [ParentProcessName, ProcessName, Application] }
+    src_endpoint_ip: { from: [IpAddress, wfp_src_ip] }
+    src_endpoint_port: { from: [IpPort, wfp_src_port] }
+    src_endpoint_hostname: { from: WorkstationName }
+    dst_endpoint_ip: { from: wfp_dst_ip }
+    dst_endpoint_port: { from: wfp_dst_port }
+    status_id: { from: outcome }
+    message: { from: message_title }     # first line; the map's label when there is none
+  # Windows level, the same in every Windows template; a failed audit shows in status_id.
+  severity:
+    from: Severity
+    map: { DEBUG: 1, INFO: 1, WARNING: 3, ERROR: 4, CRITICAL: 5 }
+
+tests:
+  - name: failed logon from a file, no syslog header
+    input: '{"EventTime":"2026-10-09 20:41:12","Hostname":"DC01.corp.example","EventType":"AUDIT_FAILURE","Severity":"INFO","EventID":4625,"SourceName":"Microsoft-Windows-Security-Auditing","Channel":"Security","SubjectUserName":"-","TargetUserName":"bob","LogonType":"3","IpAddress":"203.0.113.9","IpPort":"51234","WorkstationName":"KIOSK-07","Message":"An account failed to log on."}'
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { activity_id: 1, status_id: 2, severity_id: 1, actor_user_name: bob, src_endpoint_ip: 203.0.113.9, src_endpoint_port: 51234, device_hostname: DC01.corp.example, time: "2026-10-09T20:41:12+00:00", message: An account failed to log on. }
+  - name: process creation forwarded over syslog
+    input: '<14>Oct  9 20:42:00 WS-0042 Microsoft-Windows-Security-Auditing[4]: {"EventTime":"2026-10-09T20:42:00.000000+00:00","Hostname":"WS-0042.corp.example","EventType":"AUDIT_SUCCESS","EventID":4688,"Channel":"Security","SubjectUserName":"carol","TargetUserName":"-","NewProcessName":"C:\\Windows\\System32\\cmd.exe","ParentProcessName":"C:\\Windows\\explorer.exe"}'
+    expect:
+      parse_status: ok
+      class_uid: 1007
+      fields: { activity_id: 1, status_id: 1, actor_user_name: carol, actor_process_name: 'C:\Windows\explorer.exe', device_hostname: WS-0042.corp.example }
+  - name: event id not in the map stays a Base Event
+    input: '{"EventTime":"2026-10-09 20:43:00","Hostname":"FS01","EventType":"INFO","Severity":"INFO","EventID":7036,"Channel":"System","Message":"The Print Spooler service entered the running state."}'
+    expect:
+      parse_status: ok
+      class_uid: 0
+      fields: { status_id: null, severity_id: 1, device_hostname: FS01 }

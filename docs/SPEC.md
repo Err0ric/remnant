@@ -1,0 +1,953 @@
+# PROJECT SPEC: Remnant
+
+Working codename: **Remnant**. May change before first public release. The name lives in one config constant (see `CLAUDE.md` section 2) so a rename is a one-line change.
+
+License: Apache 2.0.
+
+Status: Slice 1 (build). Version 0.3. Last updated 2026-10-10.
+
+### Internal flavor names (optional)
+
+| Feature | Plain label (default) | Flavor name | Where flavor may appear |
+|---|---|---|---|
+| Ask mode | Ask | Séance | Command palette hint, docs, release notes |
+| Saved searches | Saved searches | Grimoire | Same |
+| Parser template library | Templates | Ossuary | Same |
+
+Plain labels are the UI default. Flavor names are allowed only where they do not cost clarity: a parenthetical in docs, a palette alias, an easter egg. Nav items, buttons, API paths, and error messages use the plain label.
+
+---
+
+## 1. Problem statement
+
+Small security teams and solo practitioners own log data they cannot afford to search well. Commercial SIEMs price by ingest volume, open-source SIEMs demand a full-time engineer to keep running, and both assume you already know how to parse every source you have. The result is logs collected and never read.
+
+Remnant is a lightweight front end you strap onto log files you already have. It gives you:
+
+- A fast, local query engine (DuckDB) over a Parquet lake you control
+- A parser system where every log source is a reviewable YAML template mapped to OCSF
+- An LLM assistant that writes parsers and queries, explains filtered results, and drafts reports, without ever reading your whole dataset
+- Detection via Sigma rules against normalized events
+- A hard boundary between local-only data and cloud model providers
+
+### Target users
+
+| User | Situation | What they need |
+|---|---|---|
+| Solo security lead | One person covering everything at a 50 to 500 employee company | Answers from logs in minutes, not a platform to babysit |
+| Small IT/security team | 2 to 10 people, mixed skill, one shared VM | Individual accounts, shared saved searches, parsers someone else can review, per-user audit trail for compliance |
+| Homelab / student | Learning detection engineering | Real tooling on real logs without a license |
+| MSP or consultant | Drops into a client's log dump | Point at a folder, get queryable events same day |
+
+### Non-users (for now)
+
+- Enterprises needing multi-tenant RBAC, HA, or 24/7 streaming ingest at TB/day
+- Teams that need case management, SOAR, or ticketing built in
+
+---
+
+## 2. Goals and non-goals
+
+### Goals (v1)
+
+| # | Goal | Measure |
+|---|---|---|
+| G1 | Bring your own data | Any text log can be onboarded with a YAML template, no code change |
+| G2 | Bring your own model | Any OpenAI-compatible endpoint or Anthropic works through one interface |
+| G3 | Local-first | Fresh install only enables local providers; local-only data cannot reach a cloud provider |
+| G4 | Deterministic core | Query, parse, and detect without an LLM configured at all |
+| G5 | Cited AI | Every AI claim references event IDs that exist in the result set it was given |
+| G6 | Fast on a laptop | 50 GB Parquet lake, interactive queries, single container |
+| G7 | Auditable | Every LLM call logged with user, provider, model, prompt hash, data classification, and tokens |
+| G8 | Team-ready | Deploys as one VM for a security team: individual accounts, roles, per-source access, HTTPS by default. Also runs single-user on a laptop or VM |
+| G9 | CLI first-class | Common pulls (tail, query, saved search, ask) work from a terminal with the same guardrails as the web UI |
+
+### Non-goals (v1)
+
+- Native syslog network listener (UDP/TCP/TLS) - later slice
+- Agent-based endpoint collection
+- Case management, SOAR (alert routing moved into Slice 4 by D26; design in ADR-0007)
+- SSO (OIDC/SAML) and field-level masking (later; local accounts, roles, and per-source access are in v1)
+- Hosted/SaaS mode
+- Replacing Elastic, Splunk, Wazuh, or Graylog at scale
+- Autonomous LLM actions (the LLM proposes, the user approves)
+
+---
+
+## 3. Architecture overview
+
+### 3.1 Data flow
+
+```
+Files / folders (tail, watch)
+        |
+        v
++-------------------+
+| Ingest reader     |  framing (newline, octet-count), encoding repair, multiline join
++-------------------+
+        |
+        v
++-------------------+
+| Envelope parser   |  RFC 3164 | RFC 5424 | none  (syslog header, relay headers)
++-------------------+
+        |
+        v
++-------------------+
+| Payload parser    |  template-selected: regex | kv | csv | cef | leef | json | xml
++-------------------+
+        |
+        v
++-------------------+
+| OCSF normalizer   |  template mapping -> OCSF class fields + unmapped JSON + raw line
++-------------------+
+        |
+        v
++-------------------+
+| Writer            |  buffer -> Parquet (partitioned source/day) -> compaction
++-------------------+
+        |
+        v
++==================================+
+|  DuckDB query engine (read-only) |
++==================================+
+     |            |            |
+     v            v            v
+  Sigma       Query mode    Ask mode
+  (pySigma    (SQL editor,  (LLM drafts SQL,
+   DuckDB     saved         user sees and
+   backend)   searches)     approves)
+```
+
+### 3.2 Components
+
+| Component | Tech | Responsibility |
+|---|---|---|
+| API | Python 3.12, FastAPI, Pydantic v2 | REST + SSE, auth, orchestration |
+| Ingest | Python, watchfiles, pyarrow | Read, frame, parse, normalize, write Parquet |
+| Lake | Parquet on local disk | Event storage, `source=<id>/day=YYYY-MM-DD/` partitions |
+| Engine | DuckDB | All queries, Sigma evaluation, aggregations |
+| Metadata DB | SQLite | Users, sources, templates, saved searches, settings, LLM audit log |
+| Detect | pySigma + custom DuckDB backend | Sigma rule compile and run. Ships a compatibility field pipeline first (community rule field names mapped to OCSF columns), OCSF-native pipeline second. |
+| LLM | Custom thin agent loop | Provider interface, tool calls, classification gate, redaction |
+| EVTX (Slice 3) | `evtx` (Rust-backed PyPI package) | Native Windows event log files |
+| Web | React 18, TypeScript, Vite, Tailwind, shadcn/ui, TanStack Table + Query, CodeMirror 6 | SOC console UI |
+| Auth | Argon2 password hashes, server-side sessions in SQLite | Local accounts, roles, source groups, first-run admin setup |
+| CLI | Python (Typer), Textual for the TUI (Slice 6) | Thin client over the HTTP API; never reads the lake directly |
+| Install | Docker Compose on a VM (primary), `uv tool install` / `pipx`, systemd unit | One `app` service, optional `ollama` profile. Docker is optional |
+
+Sigma conversion (Slice 4, `detect/sigma_backend.py`, `detect/pipelines/compat.py`): pySigma 1.5 with our own `TextQueryBackend` subclass. A rule's detection becomes a DuckDB WHERE condition on the `events` view; the runner wraps it and the result passes the query guard like any other SQL. Fields resolve to a text expression: a few known fields to their place per transport (`EventID`, including the `#text` of an EVTX EventID that carries Qualifiers, `Channel`, `Provider_Name`, `Computer` to `device_hostname`), every other field to `coalesce()` over `unmapped` at the top level, `winlog.event_data`, and `Event.EventData`, so one compiled rule works on NXLog, Winlogbeat, and native .evtx. Field names outside `[A-Za-z0-9_.-]` refuse the rule. Values are written as SQL literals by the backend (quotes doubled, `%`, `_`, `\` escaped) and matched with `ILIKE ... ESCAPE` (case-insensitive, `|cased` uses `LIKE`); numbers compare as text; `NOT` is `NOT coalesce((...), false)` so a missing field never makes a filter drop an event; regexes use DuckDB's RE2 (linear time) and patterns RE2 cannot compile refuse the rule at conversion; keywords match `raw`.
+
+Rule scope (`detect/logsource.py`, ADR-0006 row 2): templates declare `sigma.logsource`, a list of `{product, service, category}` entries their events can satisfy. A rule applies to a template when one entry has every field the rule names with the same value; the entry may be more specific than the rule. `*` as a declared service or category stands for any value (the Windows templates declare `{product: windows, service: "*"}` and `{product: windows, category: "*"}`, because a Windows forwarder can carry any channel); product is always named. A rule with no product, service, or category runs nowhere. Starter declarations: Linux templates `product: linux` (plus `service: auth` and their own service), firewalls `category: firewall`, DNS templates `category: dns`, generic CEF, LEEF, and JSON templates none.
+
+Rule files (`detect/rules.py`): at most 512 KB (SigmaHQ's largest, the vulnerable drivers list, is about 290 KB), one YAML mapping loaded through `core/safeyaml.py`, no correlation rules or collections, a logsource with at least one of product, service, or category. Windows rules are narrowed the way pySigma's reference Windows and Sysmon pipelines do it, because Sigma leaves the log out of the detection: `service: X` requires X's channel, a Sysmon category requires the Sysmon channel and its event ids (process_creation is Sysmon 1), a PowerShell category its channel and event id. Services and categories with no known channel are refused rather than run loosely. A `process_creation` rule also matches Security 4688 events when every field it uses is one 4688 records (`Image`, `ParentImage`, `CommandLine`, `LogonId`, `Computer`; read as `NewProcessName`, `ParentProcessName`, `CommandLine`, `SubjectLogonId`): 471 of SigmaHQ's 1,182 Windows process creation rules. A rule using any other field (`OriginalFileName`, `Hashes`, `User`, `ParentCommandLine`, process ids) stays Sysmon only, so a filter on a field 4688 lacks can never silently stop filtering. Every compiled rule passes the query guard before it is accepted.
+
+Rule import (`detect/store.py`, `/api/rules`, ADR-0006 rows 1 and 5): an admin imports a file or folder under `paths.rule_roots` (`APP__PATHS__RULE_ROOTS`; Compose mounts `${RULES_DIR:-./rules}` read-only at `/rules`), kept separate from `allowed_roots` so a rule set is never watched as logs. Every `.yml`/`.yaml` file (hidden folders such as `.git` skipped; at most 10,000 files, 200 MB, 16 levels, 10 minutes) is opened with the log-file checks (regular file, still inside the roots when opened) and goes through `compile_rule`. Accepted files are stored in `rule_versions`, keyed by the sha256 of their exact bytes and immutable by trigger; `rules` points each rule id at the version last imported. New rules start disabled; re-importing keeps the enabled state and moves a changed rule to its new version; a second file with the same rule id in one import is refused. Refusals are kept per import with their reason. `POST /api/rules/import` and `POST /api/rules/enabled` are Admin only and audited (`rule.import`, `rule.enable`, `rule.disable`; a path outside the roots is audited as denied); every role can list rules and read a rule's YAML. Importing SigmaHQ `rules/` (3,142 files) takes about a minute and accepts 3,128.
+
+Rule runs (`detect/runner.py`, ADR-0006 rows 2, 5, 6): `POST /api/rules/{id}/run {start, end}` (Admin and Analyst; a disabled rule only by an Admin; range at most 366 days). The sources read are the caller's permitted sources whose template declares a logsource the rule applies to; with none, the run is recorded as `no_data` and reads nothing. The stored YAML of the pinned version is compiled again and both queries (count, then up to 1,000 event ids, earliest first) go through the engine's guard, read-only connection, and a 60 s limit. `rule_runs` records the version (sha256), who, range, status (`ok`, `no_data`, `failed`), count, elapsed time, and the sources read; `rule_matches` the stored event ids with time and source. Rows are never edited (trigger); pruning old runs is allowed. Every run is audited as `rule.run`. A run, and its matches, are shown only to callers who may read every source it read, and match lists are filtered by the caller's sources. Every run carries the rule's title and author for display (DRL 1.1). `GET /api/rules` also lists, per rule, the sources a run would read for the caller, so rules that can only report `no_data` are visible before they are run. The Detection rules page (`features/detect/`) lists rules with level, log source, author ("author not stated" when empty), sources, and state; admins import and enable or disable selected rules; admins and analysts run a rule over the last hour to 30 days; a run shows its title, author, count, sources read, and matches, with Open in Search seeding the Search page with `WHERE event_id IN (...)` (ids checked as UUIDs, at most 500).
+
+Compile rate (SigmaHQ release `r2026-07-01`, counted only when `compile_rule` accepts the rule and its condition executes against the real column set; `scripts/sigma_compile_rate.py`): `rules/linux` 210 of 210, `rules/windows` 2,389 of 2,403 (99.4%; refused: 8 for categories without a Sysmon event, `file_access` and `file_rename`, and 6 for services without a known channel, `iis-configuration`, `ldap`, `smbserver-connectivity`). Compiling is not matching: rules whose fields our templates do not produce (for example Sysmon process fields on Security logs) compile and run but find nothing until the compatibility pipeline maps them.
+
+### 3.3 Storage layout
+
+```
+data/
+  lake/
+    source=linux_auth/day=2026-10-09/part-0001.parquet
+    source=paloalto_traffic/day=2026-10-09/part-0001.parquet
+  meta.sqlite
+  templates/          user-approved templates (YAML)
+  sigma/              user rules
+config/
+  app.yaml
+```
+
+### 3.4 Event table schema (Parquet)
+
+Flattened subset of OCSF 1.3 as typed columns, plus escape hatches. Every event has all columns; unused ones are NULL.
+
+| Column | Type | Notes |
+|---|---|---|
+| `event_id` | UUID string | Generated at ingest. The citation key. |
+| `source_id` | string | Matches `sources` table |
+| `template_id` | string | Template that parsed it |
+| `template_version` | string | |
+| `time` | TIMESTAMPTZ | OCSF `time`, UTC |
+| `time_observed` | TIMESTAMPTZ | When ingested |
+| `class_uid` | int | OCSF class |
+| `category_uid` | int | |
+| `activity_id` | int | |
+| `severity_id` | int | 0 unknown .. 6 fatal |
+| `status_id` | int | |
+| `message` | string | OCSF message |
+| `actor_user_name`, `actor_process_name`, `actor_process_pid` | string/int | Flattened `actor.*` |
+| `src_endpoint_ip`, `src_endpoint_port`, `src_endpoint_hostname` | string/int/string | |
+| `dst_endpoint_ip`, `dst_endpoint_port`, `dst_endpoint_hostname` | | |
+| `device_hostname`, `device_ip` | string | The reporting device |
+| `unmapped` | JSON (string) | Parsed fields with no OCSF target |
+| `envelope` | JSON (string) | `{rfc, facility, severity, hostname, app_name, procid, msgid, relay_hops}` |
+| `raw` | string | Original line, bytes decoded with replacement, never modified |
+| `raw_bytes_invalid` | bool | True if non-UTF-8 bytes were replaced |
+| `parse_status` | string | `ok`, `partial`, `envelope_only`, `failed` |
+| `parse_errors` | string | Short reason when not `ok` |
+| `classification` | string | `local_only` or `cloud_allowed`, copied from source at ingest |
+| `owner_id` | string | Multi-user ready, v1 constant |
+
+Tradeoff flagged: flattening OCSF loses nested structure fidelity but makes DuckDB queries, Sigma field mapping, and the UI table trivially fast. `unmapped` keeps everything. Full OCSF JSON export can be reconstructed from columns + `unmapped` if ever needed.
+
+### 3.5 Ingest internals
+
+| Concern | Decision |
+|---|---|
+| Interface | `Reader -> Framer -> Parser -> Normalizer -> Writer`, each a class with one method. Background workers can slot in behind `Writer` later without touching parsers. |
+| Framing | Newline default. Octet-counted (`<len> <msg>`) auto-detected per file when first bytes match `^\d+ <`. |
+| Multiline | Template-declared `multiline.start` regex. Lines not matching start are appended to the previous event. Hard cap 64 KB per event. |
+| Truncated UDP | Lines over the source's `max_len` or ending mid-token are marked `parse_status=partial`, never dropped. |
+| Encoding | Decode UTF-8 with `errors="replace"`, set `raw_bytes_invalid`. Templates can declare `encoding: latin-1`. |
+| Relay headers | Envelope parser loops: if the MSG part itself begins with a valid syslog header, strip and count as `relay_hops`. Cap 3. |
+| RFC 3164 year | Per source: `assume_year: current` or `rollover_safe` (if parsed date is more than 7 days in the future, subtract a year). |
+| RFC 3164 timezone | Per source `timezone: UTC` default. Override to IANA zone. |
+| Buffering | Flush at 50k events or 5 seconds, whichever first. |
+| Compaction | Hourly job merges files under 32 MB within a partition into one file. Target 128 MB files. |
+| Retention | Per source `retention_days`. Nightly job deletes whole day partitions. |
+| Idempotency | File offset checkpoint in `meta.sqlite` per (source, path, inode). Rotation detected by inode change. |
+| Read errors | A file that cannot be read is skipped for that pass and the source shows `Cannot read N of M files (name: reason)`; its other files are still read. A file gone since it was listed (rotation) is not an error. EVTX records the chunk headers list but that cannot be read are logged and shown on the Sources page, counted from the latest read of each file (not a running total, so a record looked for again is not counted twice); a chunk header whose id range is wider than a chunk can hold is ignored and counted as unreadable. An .evtx shorter than its header says is shown as waiting and read as it is once its size has not changed for 10 minutes. Ids after the checkpoint that no chunk header lists, between two chunks (a chunk Windows was still writing when the file was copied), hold the checkpoint just before them, so they are read once the header catches up; if the same gap is still there after 10 minutes it is passed and counted as unreadable. Any other error in one file is reported for that file and never stops the pass. |
+| Generic message | The generic JSON and CSV parsers take `message` from a `message`, `Message`, `msg`, or `MSG` field; a row without one gets a `key=value` summary of its top-level values (time fields, empty and nested values left out, at most 300 characters). Every field stays in `unmapped`; `raw` is untouched. |
+| Hostile names and swaps | A file name that is not valid UTF-8 is checkpointed by its bytes (`fsbytes:<hex>`) and shown with U+FFFD; discovery and draft samples skip such names and count them. Every open checks where the descriptor really points (`/proc/self/fd`) against the allowed roots, so a parent folder swapped for a link after the path was checked is refused. |
+| EVTX budget | Per pass: 5,000 records, 256 chunks, and 32 MiB of rendered JSON; the highest ids wait for the next pass. |
+
+### 3.6 Deployment and access model
+
+**Deployment modes.** One codebase, two common shapes:
+
+| Mode | Typical setup | Access |
+|---|---|---|
+| Team VM (primary) | Linux VM next to the log collector, Docker Compose or systemd, analysts connect from their browsers and terminals | HTTPS, individual accounts, roles, source groups |
+| Single user | Laptop, homelab, or a personal VM | Same accounts model with one admin account. On a loopback bind with no users created, the app runs without login (local-only convenience) |
+
+Docker is optional everywhere.
+
+**First run.** When the app starts on a non-loopback address with no users, it enters setup-only mode: every route except setup is closed, and the log prints a one-time setup URL (random token, single use, 30 minute expiry, stored hashed). The setup page states clearly: *"You are creating the administrator account for this installation."* After the admin account exists the link is dead and normal login applies. There is no insecure-mode flag.
+
+**Roles (v1).**
+
+| Role | Can |
+|---|---|
+| Admin | Manage users, roles, source groups, sources, LLM providers, classification, retention. Everything an Analyst can |
+| Analyst | Query, Ask, saved searches (private and shared), explain, run Sigma rules, view permitted sources |
+| Auditor | Read-only: view permitted sources, run saved searches, view the audit log. No Ask, no provider calls, no edits |
+
+**Per-source access (source groups).** The source is the separation boundary, because the lake is already partitioned by source.
+
+- Groups are **not hardcoded**. Each installation builds its own, helped by discovery and auto-labeling (below). Admins can create, rename, merge, or delete any group
+- Admins grant groups to users; nothing is granted automatically
+- The engine builds each session's `events` view from the permitted sources only. Enforcement is server-side, in `engine/views.py`; the UI, CLI, Ask mode, Sigma runs, and the LLM gate all use that view
+- Saved searches run with the permissions of the user running them, not the author
+- Field-level masking is out of scope for v1
+
+**Source discovery and auto-labeling (Slice 3).** Suggestions only; an admin approves every one.
+
+| Step | How | LLM needed? |
+|---|---|---|
+| Discover | Admin points at a folder (for example a collector's `/var/log/remote/`). The engine walks it, groups files by host and naming pattern, samples each, and runs the deterministic envelope and format sniff (4.5) | No |
+| Match | Each candidate is matched against templates by `app_name` and regex confidence. Unmatched candidates go to the parser draft flow | No (drafting a new template can use a local LLM) |
+| Label | Each template declares a `category` derived from its OCSF class: `identity` (3xxx), `network` (4001, 4002), `dns` (4003), `system` (1xxx), `application` (6xxx), `findings` (2xxx). Vendor tags come from the template (`paloalto`, `windows`, `linux`) | No |
+| Suggest groups | Proposed groups = categories that have at least one source, plus vendor groups on request. Shown as a checklist: create group, add sources | No |
+| Flag sensitive | Optional hint: sources whose sampled values look like HR, payroll, or health systems (by template or hostname patterns) are suggested as `restricted`. Never auto-applied | Optional, local model only |
+
+Guardrails: discovery never grants access, never changes classification away from `local_only`, and every accepted suggestion is audited.
+
+Suggested groups (Slice 3): templates declare `category` (one of the six above, validated; empty for generic templates) and an optional `vendor`. `GET /api/groups/suggestions` (Admin) lists one suggestion per category and per vendor that has a configured source, with the sources not yet in a group of that name; listing changes nothing. `POST /api/groups/suggestions/accept {kind, key, source_ids}` re-derives the suggestion on the server, refuses any source outside it, creates the group if needed, and adds only the ticked sources: it never removes a source and never adds a person, so it grants no access by itself. Audited as `group.suggestion_accept` plus the usual group rows. The Users page shows it as a checklist, one button per suggestion.
+
+Implementation (Slice 3): `POST /api/sources/discover {path}` (Admin, audited as `source.discover` with success, failure, or denied) walks a folder under `allowed_roots`, checking every file's real path against the roots, within limits: 5,000 files, 50,000 directory entries, 4 folder levels, 200 candidates, 60 seconds. Hidden entries, compressed files, and rotated copies of a live file (`auth.log.1`, `auth.log-20261008`) are skipped and counted, because the watcher follows the live file across rotation. Files are grouped by the path the source will see (a symlink by its own name): the deepest non-date folder above each file is its host, so a collector's per-host folders become one candidate (`*/sshd.log`, or `syslog/*/sshd.log` when a parent folder is scanned) listing the hosts, folders above the host stay literal, a lone folder cannot be told from a category and is listed as a host, date folders and dates in names become `*`, and glob characters in real names are escaped. Each suggested glob is checked against the folder; any extra files it would reach are reported so the admin narrows it first. Each candidate is sampled (at most 200 lines and 512 KiB from up to 3 files on different hosts; `.evtx` through the EVTX reader), sniffed, and matched (`templates/matcher.py`): templates whose `match` block accepts at least 20% of the sample are run over it and ranked by their own `min_confidence`, then parse rate, then OCSF columns filled per line, so a vendor template outranks a generic one that also parses. Files are opened non-blocking and must be regular files on the open descriptor (ingest uses the same rule), so a FIFO or device swapped in cannot stall a thread. One scan runs at a time. The admin adds the source through the normal form.
+
+**Accountability.** Every query, saved search run, export, login, admin change, and LLM call is recorded with the user id in an append-only audit log (extends 6.4). Shared accounts are discouraged in the docs and there is no shared-login feature.
+
+**HTTPS.** On by default for non-loopback binds. First start generates a self-signed certificate in `data/tls/`; admins can supply their own cert and key or run behind a reverse proxy (documented). HTTP is allowed only on loopback.
+
+### 3.7 Connectors (Slice 7)
+
+A connector pulls events from an API on a schedule and feeds the same pipeline as files: raw JSON line, generic or template parse, OCSF columns, Parquet.
+
+| Concern | Decision |
+|---|---|
+| Shape | `connectors/<name>/` with a `Connector` protocol: `pull(checkpoint) -> (events, next_checkpoint)`. Runs in the ingest worker, never in request handlers |
+| Credentials | Stored in the settings store, encrypted with `data/.key`. Certificate auth preferred over secrets where the provider supports it. Never logged, never sent to an LLM |
+| Permissions | Read-only, least privilege, documented per connector with the exact consent screen the admin will see |
+| Checkpoints | Per connector and content type in `meta.sqlite`; replay-safe with de-duplication on the provider's event id |
+| Raw retention | The provider's JSON is stored unmodified in `raw`, so templates can be improved and re-run later |
+| Throttling | Honors provider rate limits and `Retry-After`; backoff with jitter; health shown on the Sources page |
+| Classification | Connector sources default to `local_only` like any source |
+
+Microsoft 365 was planned first (ADR-0002). Grafana Loki landed earlier, ahead of this slice (ADR-0011, D37), so a team can try the product on logs it already collects.
+
+**Loki source** (`ingest/connectors/loki.py`, source `kind: loki`): settings are the Loki root URL, a query that is a label selector plus at most 5 line filters (`|=`, `!=`, `|~`, `!~`; parsers and formatting stages refused), optional tenant (`X-Scope-OrgID`), sign-in (none, basic, bearer; the password or token encrypted with the install key, write-only), and `backfill_hours` (default 24). The ingest worker polls every 30 s with `GET /loki/api/v1/query_range` (`direction=forward`, 1000 lines a request, at most 20 requests a poll), ending each poll 30 s before now so late lines are still read. The position (newest nanosecond read plus the hashes of lines at it) is stored in `connector_checkpoints`, written after the lake, so a restart repeats nothing and loses nothing; a full page at one instant steps past it rather than looping. Each line goes through the source's parser as a frame, unchanged in `raw`; stream labels go to `envelope.loki_labels`; a line with no timestamp of its own takes Loki's. Every request re-checks the address with the webhook rules (ADR-0007 row 4) and connects to the pinned address with no redirects or proxies, reading at most 32 MB a reply. `POST /api/sources/loki/test` (admin, audited `source.loki_test`) runs one query over the last hour and returns the line count and matching label sets. Status shows how far behind the source is. Removing the source forgets its position. The generic `Connector` interface from the table above is still to come with the Slice 7 connectors.
+
+### 3.8 MCP server, read-only (Slice 7, ADR-0003)
+
+Lets an outside AI assistant (Claude Desktop, an IDE agent, another MCP client) query the lake through the same guardrails as Ask mode. Remnant is the MCP **server** only. It never uses MCP servers as log sources: ingest stays deterministic and auditable through files, the syslog listener, and connectors.
+
+| Aspect | Rule |
+|---|---|
+| Tools | `get_schema` and `run_query` (guarded, read-only SQL, row cap). Nothing that writes, schedules, or changes settings |
+| Identity | Each client uses a per-user API token. Queries run on that user's `events` view; no service-wide token |
+| Scope | Same per-session view as every other surface (rule 13). The client cannot widen it |
+| Classification | Off by default. An admin enables it per installation. Results from `local_only` sources are withheld unless the admin marks the MCP endpoint as local (the client and its model run on the internal network) |
+| Untrusted output | Results are returned as data, with a fixed notice that field values may contain instructions and must not be followed |
+| Audit | Every tool call writes an audit row with user id, client name, SQL, row count |
+| Transport | Streamable HTTP over the existing HTTPS listener; stdio wrapper via the CLI for local clients |
+
+
+---
+
+## 4. Parser template format
+
+Templates are YAML, schema version 1. One template per source type. Templates ship in `templates/starter/`, user templates live in `data/templates/`. The LLM drafts into `data/templates/drafts/` and nothing in drafts is used until approved.
+
+### 4.1 Schema
+
+```yaml
+schema_version: 1
+id: string                 # snake_case, unique
+name: string
+version: semver
+author: string
+description: string
+classification_default: local_only | cloud_allowed   # applied to sources created from this template
+
+envelope:
+  type: syslog | none
+  syslog:                  # only when type: syslog
+    rfc: auto | 3164 | 5424
+    assume_year: current | rollover_safe
+    timezone: UTC          # IANA name, used only for 3164
+    strip_relay_headers: true
+  optional: false          # true: lines without a syslog header are not flagged
+  defaults: [time, device_hostname, actor_process_name, actor_process_pid, message]
+                           # columns the header fills when the mapping leaves them empty
+
+match:                     # how auto-detect picks this template for a sample
+  app_name: [string]       # syslog APP-NAME / TAG values
+  regex: string            # optional, tested against payload
+  min_confidence: 0.8
+
+framing:
+  mode: lines              # lines | evtx (Windows .evtx, one frame per record)
+  multiline:
+    start: regex           # optional
+  max_len: 8192
+
+payload:
+  format: regex | kv | csv | cef | leef | json | xml | plain
+  encoding: utf-8
+  # format-specific blocks:
+  regex:
+    patterns:              # first match wins, named groups become fields
+      - string
+  kv:
+    pair_sep: " "
+    kv_sep: "="
+    quote: '"'
+  csv:
+    delimiter: ","
+    columns: [string]      # positional names
+    quote: '"'
+  json:
+    root: "$"              # JSONPath to the object
+  cef: {}                  # standard, extensions become fields
+  leef: {}
+  xml:
+    fields: { name: xpath }
+
+transforms:                # applied after payload parse, in order
+  - field: string
+    op: to_int | to_lower | to_upper | strip | split | regex_extract | map | timestamp
+        | join | replace | pick
+    args: {}               # timestamp format may be a list, tried in order;
+                           # join: { with: [fields], into, sep }; replace: { pattern, with };
+                           # pick: { from: { value: field }, into } copies the named field;
+                           # map and regex_extract take optional: true (no match, no change)
+
+mapping:
+  class_uid: int           # default OCSF class
+  class_by:                # optional override by field value
+    field: string
+    values: { "value": class_uid }
+  lookup:                  # optional shared table in templates/starter/maps/
+    field: string          # key field, e.g. "Security:4624"
+    table: string
+    actor: { subject: [string], target: [string] }   # optional, see 4.4
+  fields:
+    <ocsf_column>:
+      from: string | [string]   # parsed field, envelope.<x>, or a list: first with a value
+      map: { }             # optional value map
+      default: any
+  severity:
+    from: string
+    map: { }
+
+tests:                     # required, minimum 3
+  - name: string
+    input: string          # one full raw line
+    expect:
+      parse_status: ok
+      class_uid: int
+      fields: { column: value }
+```
+
+Validation rules enforced at load:
+
+- `id` unique across starter + user templates
+- Every `mapping.fields` key must be a known column from 3.4
+- At least 3 `tests`, all must pass before a template can be approved
+- `regex.patterns` compiled with a timeout guard (no catastrophic backtracking in tests)
+
+### 4.2 Example: syslog source (Linux sshd)
+
+```yaml
+schema_version: 1
+id: linux_sshd
+name: Linux sshd authentication
+version: 1.0.0
+author: starter-pack
+description: OpenSSH auth events via syslog (RFC 3164 or 5424)
+classification_default: local_only
+
+envelope:
+  type: syslog
+  syslog:
+    rfc: auto
+    assume_year: rollover_safe
+    timezone: UTC
+    strip_relay_headers: true
+
+match:
+  app_name: [sshd]
+  min_confidence: 0.9
+
+framing:
+  max_len: 4096
+
+payload:
+  format: regex
+  regex:
+    patterns:
+      - '^(?P<outcome>Accepted|Failed) (?P<method>\S+) for (?:invalid user )?(?P<user>\S+) from (?P<src_ip>[\da-fA-F:.]+) port (?P<src_port>\d+)'
+      - '^Invalid user (?P<user>\S+) from (?P<src_ip>[\da-fA-F:.]+) port (?P<src_port>\d+)'
+      - '^Disconnected from (?:authenticating |invalid )?user (?P<user>\S+) (?P<src_ip>[\da-fA-F:.]+) port (?P<src_port>\d+)'
+
+transforms:
+  - field: src_port
+    op: to_int
+
+mapping:
+  class_uid: 3002          # Authentication
+  fields:
+    time:            { from: envelope.timestamp }
+    device_hostname: { from: envelope.hostname }
+    actor_process_name: { from: envelope.app_name }
+    actor_process_pid:  { from: envelope.procid }
+    actor_user_name: { from: user }
+    src_endpoint_ip: { from: src_ip }
+    src_endpoint_port: { from: src_port }
+    activity_id:     { from: outcome, map: { Accepted: 1, Failed: 1 }, default: 99 }
+    status_id:       { from: outcome, map: { Accepted: 1, Failed: 2 }, default: 0 }
+    message:         { from: envelope.msg }
+  severity:
+    from: outcome
+    map: { Accepted: 1, Failed: 3 }
+
+tests:
+  - name: accepted publickey 3164
+    input: "Oct  9 20:41:12 bastion sshd[2231]: Accepted publickey for jordan from 10.20.1.5 port 51234 ssh2"
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { actor_user_name: jordan, src_endpoint_ip: 10.20.1.5, src_endpoint_port: 51234, status_id: 1 }
+  - name: failed password invalid user
+    input: "Oct  9 20:41:15 bastion sshd[2240]: Failed password for invalid user admin from 203.0.113.9 port 40022 ssh2"
+    expect:
+      parse_status: ok
+      fields: { actor_user_name: admin, src_endpoint_ip: 203.0.113.9, status_id: 2 }
+  - name: 5424 envelope
+    input: "<86>1 2026-10-09T20:41:12Z bastion sshd 2231 - - Accepted publickey for jordan from 10.20.1.5 port 51234 ssh2"
+    expect:
+      parse_status: ok
+      fields: { device_hostname: bastion, actor_user_name: jordan }
+```
+
+### 4.3 Example: non-syslog source (nginx access log)
+
+```yaml
+schema_version: 1
+id: nginx_access_combined
+name: nginx access log (combined format)
+version: 1.0.0
+author: starter-pack
+description: Plain file, combined log format, no syslog envelope
+classification_default: cloud_allowed
+
+envelope:
+  type: none
+
+match:
+  regex: '^\S+ \S+ \S+ \[[^\]]+\] "[A-Z]+ '
+  min_confidence: 0.8
+
+payload:
+  format: regex
+  regex:
+    patterns:
+      - '^(?P<src_ip>\S+) \S+ (?P<user>\S+) \[(?P<ts>[^\]]+)\] "(?P<method>[A-Z]+) (?P<path>\S+) (?P<proto>[^"]+)" (?P<status>\d{3}) (?P<bytes>\d+|-) "(?P<referer>[^"]*)" "(?P<ua>[^"]*)"'
+
+transforms:
+  - field: ts
+    op: timestamp
+    args: { format: "%d/%b/%Y:%H:%M:%S %z" }
+  - field: status
+    op: to_int
+  - field: bytes
+    op: to_int
+
+mapping:
+  class_uid: 4002          # HTTP Activity
+  fields:
+    time:            { from: ts }
+    src_endpoint_ip: { from: src_ip }
+    actor_user_name: { from: user }
+    status_id:       { from: status, map: { "200": 1, "301": 1, "302": 1, "403": 2, "404": 2, "500": 2 }, default: 0 }
+    message:         { from: path }
+  severity:
+    from: status
+    map: { "500": 3, "403": 2 }
+
+tests:
+  - name: 200 GET
+    input: '10.0.0.5 - - [09/Oct/2026:20:41:12 -0700] "GET /login HTTP/1.1" 200 512 "-" "Mozilla/5.0"'
+    expect: { parse_status: ok, class_uid: 4002, fields: { src_endpoint_ip: 10.0.0.5, status_id: 1 } }
+  - name: 403 POST
+    input: '203.0.113.9 - - [09/Oct/2026:20:41:15 -0700] "POST /admin HTTP/1.1" 403 128 "-" "curl/8.0"'
+    expect: { parse_status: ok, fields: { status_id: 2 } }
+  - name: dash bytes
+    input: '10.0.0.5 - jordan [09/Oct/2026:20:41:20 -0700] "HEAD /health HTTP/1.1" 200 - "-" "probe"'
+    expect: { parse_status: ok, fields: { actor_user_name: jordan } }
+```
+
+### 4.4 Starter template pack (Slice 3)
+
+| Template id | Envelope | Payload | OCSF class |
+|---|---|---|---|
+| `linux_sshd` | syslog | regex | 3002 Authentication |
+| `linux_sudo` | syslog | regex | 3002 / 1007 |
+| `linux_pam` | syslog | regex | 3002 |
+| `linux_systemd` | syslog | regex | 1007 Process, manager messages 0 |
+| `paloalto_traffic` | syslog | csv positional | 4001 Network Activity |
+| `paloalto_threat` | syslog | csv | 4001 + severity |
+| `paloalto_system` | syslog | csv | 3002 for admin auth-success / auth-fail, else 0 Base Event |
+| `paloalto_globalprotect` | syslog | csv | 3002 |
+| `paloalto_userid` | syslog | csv | 3002 logon / logoff for login / logout mappings, else 0 |
+| `fortinet_fortigate` | syslog | kv | 4001 / 3002 by `subtype` |
+| `unifi` | syslog | kv + regex | 4001 / 3002 |
+| `cisco_asa` | syslog | regex per `%ASA-n-xxxxxx` id | 4001 / 3002 |
+| `cisco_ios` | syslog | regex per `%FACILITY-n-MNEMONIC` | 3002 logins, 4001 ACL log, else 0 |
+| `cef_generic` | syslog | cef | 0 until a vendor copy adds `class_by` on `signature_id` |
+| `leef_generic` | syslog | leef | 0 until a vendor copy adds `class_by` on `event_id` |
+| `json_over_syslog` | syslog | json | 0 (the application defines meaning) |
+| `windows_nxlog_json` | syslog or none | json | by event id map (4624 -> 3002, 4688 -> 1007, etc.) |
+| `windows_snare` | syslog or none | regex over the tab-delimited record (user and addresses are inside the expanded message) | same map |
+| `windows_winlogbeat` | none | json | same map |
+| `windows_evtx` | none | json over records read natively (`framing.mode: evtx`) | same map |
+| `dns_bind` | syslog or none | regex | 4003 DNS Activity |
+| `dns_unbound` | syslog or none | regex | 4003 |
+| `dns_windows` | none | regex (debug log) | 4003 |
+
+All Windows templates share one lookup table, `templates/starter/maps/windows_eventid.yaml`, keyed `<channel>:<event id>`, so Sigma `logsource: product: windows` rules match regardless of transport. The table sets class, activity, and (where the event id decides it) status, plus which user is the actor: logon events take the Target* user, every other event the Subject* user, with no fallback between them; the other user field stays in `unmapped`. Status otherwise comes from the audit keyword (success or failure) and is left unset for non-audit events. Filtering platform events (5156, 5157) name the local side Source* in both directions, so templates pick the initiator by `Direction` (`%%14592` Inbound, `%%14593` Outbound). Sysmon events are not in the map until their field names are mapped. Templates reference it with `mapping.lookup` (`field`, `table`, optional `actor` refs); table values only fill columns the template left unset, and a `class_by` match still wins. Templates may limit which columns the syslog header fills with `envelope.defaults`, because Windows forwarders put the event provider in the tag.
+
+Native `.evtx` files are read by `ingest/evtx.py` with the `evtx` library (Rust). Each record is rendered to compact JSON by the library and that JSON is the frame, so it is the event's `raw` (the binary file stays the original). Records are read in record-id order after the checkpoint's last id. Chunk headers give each chunk's id range, so only chunks holding newer ids are parsed, at most 5,000 records and 256 chunks per pass. A file whose signature (size, file header, and every chunk header, so new or replaced records always change it; mtime is not used) matches the one saved after a complete read is not re-parsed, and a file shorter than its header declares is a copy in progress and waits for a later pass. Files are identified by content, not inode (copy tools replace files): the record at the checkpoint id is re-read, and if its digest differs (another host's log, or a cleared log reusing ids) or every id is below the checkpoint, the file is read from the start. A native parser panic ends that file's batch, never the ingest loop. Records the library cannot render are counted, logged, and skipped. EVTX stores no rendered message, so `message` is the map's label when the event id is in it.
+
+### 4.4.1 Automatic parser (ADR-0012, D38)
+
+A source's parser is a template id, the generic parser for its format, or **Automatic** (`template_id: auto`, syslog and JSON sources only; no template may use the id `auto`). Automatic picks one template per line, deterministically and with no model (`templates/router.py`):
+
+1. The syslog header is parsed with the source's settings. Templates whose `match.app_name` lists the line's APP-NAME/TAG are candidates; the first (by id) whose `match.regex` is absent or matches the payload wins.
+2. Otherwise templates with a `match.regex` and no `app_name` are tried against the payload (the whole line for `envelope.type: none`): approved user templates first, then starter templates with a `vendor`, then catch-alls with none (`cef_generic`, `leef_generic`, `json_over_syslog`). Each search has the template regex timeout; a timeout counts as no match.
+3. Otherwise the line takes the generic parser for the source's format.
+
+Only approved templates are considered, never drafts, and never templates with multiline framing (routing is per line). Each row's `template_id` records which parser read it (`generic_syslog` for the fallback). A routed template that understands nothing of the payload (`parse_status` `failed` or `envelope_only`) is replaced by the generic parser for that line, with `auto_fallback:<template_id>` added to `parse_errors`, so time, host, and message are still filled. The registry is read when each pass starts, so a newly approved template is used from the next pass. Sigma treats an Automatic source as declaring every routable template's logsources, and a rule run adds `template_id IN (...)` for that source's rows, so a rule only reads rows parsed by a template that declares its logsource (never generic rows).
+
+New drafts (blank skeleton or model-drafted) get a `match.app_name` naming the sample's syslog tag when at least 80% of sample lines share it (`templates/matcher.match_block`, no model), so an approved draft is routed to by Automatic sources; a model draft keeps a match block the admin already set. Admins change a source's parser with `PATCH /api/sources/{id}` (`template_id`, audited as `source.parser_change` with old and new values). Reading continues from the source's current position, so only lines read after the change use the new parser; stored events keep theirs. Re-parsing stored events is in `docs/BACKLOG.md`. New syslog and JSON sources default to Automatic in the Add source form.
+
+### 4.5 LLM-generated parser flow (Slice 3)
+
+1. User uploads or points at a sample file. Engine reads up to 200 lines.
+2. Deterministic envelope detection runs first: RFC 5424 regex, then RFC 3164 regex, then none. Reports confidence and detected `app_name` values. No LLM involved.
+3. Deterministic payload format sniff: JSON, CEF, LEEF, kv, csv, or plain. Reports confidence.
+4. If a starter template matches with confidence >= `min_confidence`, offer it. Stop.
+5. Otherwise the LLM receives: envelope result, format sniff, 20 payload samples (post-envelope strip, redaction applied if source is `cloud_allowed` and redaction enabled), the schema from 4.1, and the OCSF column list. It must return only the `payload`, `transforms`, `mapping`, and `tests` blocks.
+6. Engine merges LLM output with the deterministic envelope block, validates schema, runs the tests, and runs the template over all 200 sample lines. Shows parse rate and a field-by-field preview table.
+7. User edits in the YAML editor, re-runs preview, approves. Approval moves the file from `drafts/` to `data/templates/` and records `approved_by`, `approved_at`, and the LLM audit log id.
+
+Implementation (ADR-0005, accepted): drafts are Admin only. `POST /api/templates/drafts` starts a draft from an existing template (`from_template`, id line rewritten) or from a skeleton that passes its own tests, with a sample that is either a file or folder under `allowed_roots` (path plus glob) or up to 200 pasted lines (256 KiB, kept with the draft and deleted with it). `PUT` edits the YAML or sample, `POST .../preview` validates, runs the inline tests and a pathological check, and parses the sample (first 50 rows shown) without saving, returning the sha256 of the YAML it checked, and `POST .../approve {sha256}` refuses (409) a draft saved since that preview, re-runs the same checks, refuses starter ids and replacements that do not raise the version, writes `data/templates/<id>.yaml` atomically, reloads the registry (restoring the previous file if the loader disagrees), and records the approval (version, sha256 of the exact YAML, approver, time, LLM call id) in the append-only `template_approvals` table. `GET /api/templates/{id}/source` returns a template's YAML; `DELETE /api/templates/{id}` removes a user template not used by any source; the check and the removal share a lock with adding a source that names a template, so the two cannot interleave. Every change is audited. The model step (5) is `POST /api/templates/drafts/{id}/ai-draft {provider_id}` (`llm/parser_draft.py`, prompt `parser_draft.v1`): its reply replaces the draft YAML and the call id is kept for the approval record.
+
+A source with `classification: local_only` can only use a local provider for step 5. If none is configured, the UI shows the deterministic sniff result and an empty template skeleton to fill by hand.
+
+---
+
+## 5. Search modes
+
+Both modes run on the same engine, the same read-only connection, and the same guardrails.
+
+### 5.1 Query guardrails (both modes)
+
+| Guard | Implementation |
+|---|---|
+| Read-only | DuckDB connection opened `read_only=True` on the lake view |
+| Statement allowlist | Parse with `sqlglot`; only `SELECT` and `WITH ... SELECT`. Reject `ATTACH`, `COPY`, `INSTALL`, `LOAD`, `PRAGMA`, `SET`, `CREATE`, `EXPORT`, `CALL` |
+| No file access | `SET enable_external_access = false` on the connection; `read_csv`, `read_parquet`, `glob` unavailable to user SQL |
+| Row cap | Implicit `LIMIT 10000` added if absent; UI pages the rest |
+| Timeout | 30 s default, configurable |
+| Time range | UI always passes `time BETWEEN ? AND ?`; Ask mode is told the active range |
+
+### 5.2 Query mode
+
+- CodeMirror SQL editor with schema-aware autocomplete over `events` plus any saved views
+- Run, explain plan, export CSV/JSON
+- Results in TanStack Table with column chooser, sort, pin, cell copy, raw/parsed toggle
+- Parameters: `{{param}}` syntax, prompted at run time
+
+### 5.2.1 Simple search (ADR-0009, D35)
+
+A Search tab for people who do not write SQL, with no model involved. `POST /api/search/compile {text, top?}` turns Kibana/Lucene-style text into SQL plus parameters (`search/simple.py`); the client then runs it through `POST /api/query`, which accepts `params` for `$name` placeholders (bound by the driver, never formatted in), so the guard, the per-session view, and the audit apply as for any query.
+
+| Syntax | Meaning |
+|---|---|
+| `word`, `"a phrase"` | Appears in `raw` or `message`, ignoring case |
+| `field:value`, `field:"a b"` | Field equals the value, ignoring case for text |
+| `field:adm*`, `field:*` | Wildcard match (escaped `ILIKE`); the field has a value |
+| `field:>=400`, `time:<2026-10-10` | Numbers and times; a bare date means that whole UTC day |
+| `-term`, `NOT`, `AND`, `OR`, `( )` | Words side by side mean AND; upper-case operators only |
+| `\*`, `\:` | Backslash makes the next character literal |
+
+Field names: schema columns, the aliases `user`, `src_ip`, `dst_ip`, `src_port`, `dst_port`, `host`, `process`, `source`, `severity` (which also takes OCSF names: `severity:>=high`), and Sigma field names, resolved through the compatibility map (`EventID`, `TargetUserName`, ...) so they read `unmapped` as rules do; other names are looked up in `unmapped` with a note. Limits: 2048 characters, 50 terms, 20 levels of nesting. With `top`, the SQL counts the top 20 values of that field over the same search. Kusto KQL and SPL are not parsed; Ask translates them.
+
+### 5.3 Ask mode
+
+Ask is the "Ask in plain English" tab of the Search page (ADR-0008); the contract below is unchanged. Run copies the generated SQL into the SQL tab's editor and runs it there. The prompt (`ask.v2`) also accepts a Kusto KQL or SPL query as the question and translates it (ADR-0009).
+
+1. User types plain text. Context sent to the LLM: schema (columns, types, sample distinct values capped at 20 per low-cardinality column), active time range, selected sources, last 3 turns.
+2. LLM returns a structured response: `{sql, explanation, assumptions[]}`. The agent loop exposes exactly two tools: `get_schema()` and `preview_query(sql, limit=5)`. No other tools.
+3. UI shows the generated SQL in a diff-highlighted block. Nothing runs until the user clicks Run (setting `ask.auto_run: true` allows auto-run for `cloud_allowed` sources only).
+4. Follow-up refinement ("only failures", "group by source IP") edits the same conversation; each turn shows the new SQL.
+5. Any result can be saved as a search; the saved search records the final SQL, not the prompt.
+
+Ask mode never receives raw event rows except via `preview_query` (max 5 rows, redaction applied), and only when the source classification allows the provider.
+
+### 5.4 Saved search format
+
+Stored in `meta.sqlite`, importable and exportable as YAML.
+
+```yaml
+schema_version: 1
+id: failed_ssh_by_src
+name: Failed SSH logins by source IP
+description: Top sources of failed sshd auth in the selected window
+owner_id: local
+tags: [auth, ssh, brute-force]
+sources: [linux_auth]           # optional restriction
+mode: query                     # query | ask (origin only; always runs as SQL)
+sql: |
+  SELECT src_endpoint_ip, count(*) AS failures
+  FROM events
+  WHERE class_uid = 3002 AND status_id = 2
+    AND time BETWEEN {{start}} AND {{end}}
+    AND actor_process_name = 'sshd'
+  GROUP BY 1 ORDER BY 2 DESC
+  LIMIT {{top}}
+params:
+  - { name: top, type: int, default: 25 }
+  # start and end are always injected by the UI
+origin:
+  ask_prompt: "show me failed ssh logins grouped by source ip"   # optional, informational
+  llm_audit_id: 00000000-0000-0000-0000-000000000000           # optional
+  # simple_text: 'sshd "failed password"'   # optional: the Simple search the SQL came from
+created_at: 2026-10-09T20:41:00Z
+updated_at: 2026-10-09T20:41:00Z
+```
+
+### 5.5 Scheduled searches and dashboard (Slice 4)
+
+Any saved search can be put on a schedule; results land on a Dashboard page.
+
+| Aspect | Decision |
+|---|---|
+| What runs | The saved search's SQL. A prompt from Ask mode is turned into SQL once, reviewed, and saved; schedules never re-ask the LLM to write new SQL, so runs are deterministic and repeatable |
+| Schedule | Cron-style or presets (hourly, daily at 07:00, weekdays), in the installation's timezone. Time range per run: "last interval" by default, or a fixed lookback |
+| Who it runs as | The schedule owner, with permissions re-checked at every run. If the owner is disabled or loses access to a source, the schedule pauses and the dashboard says why |
+| Results | Each run stores row count, duration, a capped result sample (default 500 rows), and `sources_in_scope`. Keeps the last 30 runs per schedule (configurable) |
+| Conditions | Optional: flag a run when row count is above or below a threshold, or changed by more than N% from the previous run. Flags show on the dashboard; alert routing (email, Teams, Slack, webhook) is later |
+| Optional summary | Per schedule, an "explain results" summary can run after each run through the gate, with citations (5.3, 6.2). Off by default; local providers only unless every source in scope is `cloud_allowed` |
+| Dashboard | Grid of panels, one per schedule: last run time and status, row count, sparkline of counts across runs, flag badge, top rows, click through to the full result in Query mode. Personal and shared dashboards |
+| Access | A viewer only sees a panel if they can read every source in that run's `sources_in_scope`. Otherwise the panel shows "restricted" with no data |
+| Audit | Schedule create, edit, pause, delete, and every run are audited with the owner id |
+
+Implementation (`search/cron.py`, `search/schedules.py`, `/api/schedules`): a schedule targets a saved search (`kind: search`) or an imported Sigma rule (`kind: rule`). Cron is five fields (`*`, numbers, ranges, lists, steps; day of week 0 to 7; day of month OR day of week when both are set) or a preset (`hourly` 0 * * * *, `daily` 0 7 * * *, `weekdays` 0 7 * * 1-5), in `schedules.timezone` (default UTC); an expression that never fires within five years is refused. Ranges are half-open, [start, end). A run ends `schedules.lag_seconds` (default 120) before its fire time, or before now if the run is more than 5 minutes late, so events that arrive a little late are still inside some run; it starts `lookback_minutes` before its end, or by default where the last successful run ended (first run, or after more than 31 days: one interval of the schedule). A failed run does not move the start forward, so the next run covers its range again. The row count of a saved-search run is a `count(*)` over the search, not the size of the stored sample. The server checks every 30 s and runs at most 20 due schedules per check; a late server runs each missed schedule once, not once per missed slot. Admins and analysts create schedules; the owner or an admin may change, pause, resume, run now (audited `schedule.run_now`), or delete. Each run first re-checks the owner (exists, enabled, not an auditor; a schedule made in no-accounts local mode pauses once accounts exist), the target (saved search still visible to the owner and its SQL and parameter definitions unchanged, by sha256; rule present and enabled), and the owner's sources (any source the schedule read when made or resumed and now lost pauses it). Resuming takes a new snapshot of all three, so a change is accepted only on purpose. A paused run is recorded with its reason and audited as `schedule.pause`. Rule schedules run through the rule runner (so a `rule.run` row and audit exist too) and keep the match list as the sample. Runs keep row count, duration, sources read, up to `schedules.sample_rows` (500) rows, threshold flags (`above`, `below`, `change_pct` against the previous successful run), and the newest `schedules.keep_runs` (30) per schedule. Listing shows a viewer their own, shared, or (admins) all schedules; a run's numbers and rows are returned only when the viewer may read every source it read, otherwise it is marked `restricted`.
+
+UI: Detect > Schedules lists schedules (when, range, last run, state with the pause reason) with Run now, Pause or Resume, and Delete for the owner or an admin, and a New schedule form (saved search or enabled rule, preset or custom cron, range, flag, shared). General > Dashboard shows a panel per visible schedule: last run time, count (`text-kpi`), bars of the last 30 counts, flag badge and reason, the first 5 sample rows, and Open in Search (rule panels: the matched event ids; saved-search panels: the SQL with the run's range and the schedule's parameters filled in as literals, run as the viewer through the guard; offered only when the viewer can see the saved search). A run the viewer may not fully read shows "Restricted" and no data. Personal dashboards are the viewer's own and shared schedules; there is no separate dashboard object yet.
+
+Alert routing (ADR-0007, D33; `alerts/`, `/api/alert-targets`): targets are email (SMTP), Slack, Teams, or a generic webhook. Admins create, change, delete, and test them; analysts may list them (name, kind, host, health) to pick them for schedules. The URL (which carries the token), SMTP password, and webhook signing key are encrypted with the install key and never returned; a webhook's signing key is returned once, when it is created. Address rules, checked on save and again before every send, with the connection made to the approved address (no redirects, no proxies, 10 s, reply read at most 64 KB and not kept): Slack `https://hooks.slack.com`; Teams Workflows hosts only (`*.logic.azure.com`, `*.api.powerplatform.com`; connector URLs were retired in 2026); webhooks `https`, or `http` when every address is private or loopback; no credentials in URLs; link-local, AWS IPv6 metadata, unspecified, and multicast addresses always refused; SMTP needs STARTTLS or implicit TLS verified against the server name unless the relay is on this host. Alerts are summaries (what fired, kind, count, flag reason, range, and a link to `server.public_url`, or `https://<first public name>:<port>`); names are escaped per format (Slack text cannot mention or link, Teams cards cannot link, email HTML is escaped and the subject is one line); webhooks carry `X-Signature-256: sha256=<HMAC-SHA256 of "<timestamp>.<body>">` and `X-Signature-Timestamp`. A target that fails 10 times in a row is marked failing (still tried). Changes and test sends are audited (`alert_target.*`). Schedules carry up to 10 targets (`target_ids`, chosen by the owner, unknown ids refused). A schedule run queues one delivery per target when it is flagged, when a rule schedule without a threshold has at least one match, or when the schedule pauses itself (with the reason); a pause by a person, a quiet run, and on-demand rule runs send nothing. The schedule loop sends due deliveries every 30 s; a failure is retried after 1, 5, and 15 minutes, then the delivery is failed. `GET /api/schedules/{id}/deliveries` shows status, attempts, target name, and the last error (never the URL or the message); the newest 200 per schedule are kept. UI: Configuration > Alert targets (admins: add with kind-specific fields, URL entered as a hidden field, signing key shown once, Send test with the result, health, delete); the New schedule form lists targets to send alerts to; the Schedules page has an Alerts column that opens the schedule's delivery log.
+
+### 5.6 CLI
+
+A first-class alternative to the web UI for quick pulls. The CLI is a thin client over the HTTP API: same auth, same query guard, same source permissions, same classification gate, same audit log. It never opens the lake or `meta.sqlite` directly.
+
+| Command | Purpose | Slice |
+|---|---|---|
+| `remnant login` | Store an API token for a server (OS keychain, fallback file at 0600) | 1 |
+| `remnant tail <source> [-n 10] [-f]` | Last N events, optionally follow | 1 |
+| `remnant query "<sql>"` | Run SQL through the guard | 1 |
+| `remnant query --match '<simple search>'` | Run a Simple search (ADR-0009): compiled by the server, values bound, notes printed to stderr | 4 |
+| `--since 1h`, `--where "<expr>"`, `--format table\|json\|csv\|raw` | Quick filters and pipe-friendly output | 1 |
+| `remnant search <saved_search> [--param value]` | Run a saved search | 2 |
+| `remnant ask "<question>"` | LLM drafts SQL, CLI prints it and asks `Run? [y/N]`. Never auto-runs | 2 |
+| `remnant tui` | Interactive terminal UI: query box, results table, tail pane | 6 |
+
+Rules: tokens never accepted as a command-line argument (keeps them out of shell history); log content is printed with terminal control sequences stripped; `--format raw` prints the `raw` column only.
+
+The command name is the one place the codename is user-facing in scripts. If the product is renamed before release, the old command ships as an alias for one release.
+
+### 5.7 Natural-language accuracy (Slice 2 onward)
+
+The promise is "type what you need, get accurate results quickly." That is measured, not assumed.
+
+| Component | What it does |
+|---|---|
+| Eval harness | `backend/evals/nl_queries/`: 100 questions, a deterministic synthetic fixture lake, and reference SQL whose result is the expected answer. Runs per provider and model; reports exact-match rate, executable rate, latency. CI proves the harness (every reference runs, an oracle scores 100%, a wrong model scores 0%); model runs are on demand until a small local model is available in CI |
+| Semantic layer | A versioned YAML vocabulary that maps analyst language to OCSF: "failed login" = `class_uid 3002 AND status_id = 2`, "admin" = privileged role values per template, "external IP" = not RFC 1918. Supplied to the model with the schema; templates can extend it. Shipped as `llm/semantic/base.v1.yaml`; every predicate passes the guard at startup or the server refuses to start |
+| Verified examples | Saved searches marked "verified" become few-shot examples, retrieved by similarity to the question. Local to the installation. Only admins verify, only shared searches without parameters qualify, any edit clears the mark, and a user only gets examples they can already see |
+| Self-check loop | Generated SQL goes through the guard, then a `preview_query`. Empty results, parse errors, or implausible counts trigger up to two automatic refinements before the user sees the SQL. Every attempt is audited |
+| Answer view | Results plus a short summary with event-id citations (Slice 4 rules), and the assumptions list. The SQL is always one click away |
+| Model guidance | Published table of which local models pass which share of the eval suite, so users pick a model on evidence |
+
+Accuracy targets for v0.1 on the bundled suite: 90% executable, 75% exact on the reference local model, every answer showing its SQL.
+
+---
+
+### 5.8 Overview (ADR-0008)
+
+The landing page after login (and for `/` and unknown paths). `GET /api/overview` returns, read as the viewer: events per readable source per hour for the last 24 hours (through the guard and the per-session `events` view, by `coalesce(time, time_observed)`); per readable source, its ingest state, when it last received an event (`time_observed`, looked up over the last 7 days), files waiting, records skipped, and the error (replaced by a generic line for non-admins, as on the Sources page); rule runs with matches and flagged saved-search schedule runs from the last 24 hours, newest 20, leaving out any run that read a source the viewer cannot read; paused schedules the viewer can see, with the reason; and, for admins only, alert targets whose last send failed and deliveries that failed after every retry in the last 24 hours. Answers are cached per viewer and set of readable sources for 60 s; each computed answer writes one `overview.view` audit row with the sources read. A rule detection opens its matched events in Search; a flagged search opens the Dashboard.
+
+## 6. Model provider interface and classification gate
+
+### 6.1 Provider interface
+
+One Python protocol. Two implementations in v1.
+
+```python
+class Provider(Protocol):
+    id: str                      # "ollama-local", "anthropic"
+    locality: Literal["local", "cloud"]
+    def chat(self, messages, tools=None, response_schema=None, max_tokens=..., temperature=...) -> ProviderResponse: ...
+    def models(self) -> list[str]: ...
+    def health(self) -> ProviderHealth: ...
+```
+
+| Adapter | Covers | Locality rule |
+|---|---|---|
+| `OpenAICompatibleProvider` | Ollama, LM Studio, llama.cpp server, vLLM, OpenAI, Groq, Together, Mistral, OpenRouter | `local` only if `base_url` host resolves to loopback, link-local, RFC 1918, or a user-declared `trusted_local_hosts` entry. Everything else is `cloud`. |
+| `AnthropicProvider` | Anthropic Messages API | Always `cloud` |
+
+`AnthropicProvider` (`llm/providers/anthropic.py`, provider kind `anthropic`, chosen when the provider is added and fixed after): `POST {base_url}/messages` with `x-api-key` and `anthropic-version: 2023-06-01`; system turns go to the top-level `system` field; the gate's OpenAI-style tool specs become Messages tools (`name`, `description`, `input_schema`); an assistant tool request becomes `tool_use` blocks and tool results become `tool_result` blocks in one user turn; `stop_reason: max_tokens` is recorded as `truncated`; `GET {base_url}/models` lists models. Locality is `cloud` whatever the URL resolves to, so `https` and the cloud acknowledgment are always required and `local_only` data is always blocked. Both adapters share `llm/provider_http.py` (pinned address, no redirects, 64 KB cap). There is no JSON mode; the gate's `answer_json()` extracts and validates the answer as for other providers.
+
+**Thinking control** (`llm_providers.reasoning`, migration 25): for OpenAI-compatible providers an admin can set Thinking to Off, Low, Medium, or High, sent as `reasoning_effort` (`none` for Off); unset sends nothing and the model decides. Tested on Ollama 0.34.1 with qwen3.5:9b: a short JSON answer took 4.2 s and 360 tokens with the model default and 0.2 s and 6 tokens with Off, and an Ask-shaped request returned valid JSON in 1.9 s with Off where the default had run out of output tokens. The Anthropic adapter ignores it. When an answer is cut off at the output limit, the error says where to change it.
+
+Fresh install: provider list contains one disabled entry pointing at `http://ollama:11434` (compose profile) and `http://host.docker.internal:11434`. The settings page offers to add cloud providers behind a confirmation that explains the classification gate.
+
+### 6.2 Data classification gate
+
+Every source carries `classification: local_only | cloud_allowed`. Default on creation is `local_only`. Admins change it on the Sources page (`PATCH /api/sources/{id}`, audited `source.classify` with the old and new label); the form says what each label means. Only events ingested after the change take the new label, so moving to `cloud_allowed` does not release events already stored, while moving to `local_only` blocks cloud use of the source at once (by configuration). A block is shown where it happened (Ask, Explain, parser drafting) with the sources named, and recorded in `llm_calls` (`classification_result = blocked`), which the audit log viewer filters on.
+
+The gate sits in exactly one place: `llm/gate.py`, called by the agent loop before any provider call. It never lives in the UI.
+
+```
+request = {provider, purpose, sources_in_scope[], payload}
+if provider.locality == "cloud" and any(src.classification == "local_only" for src in sources_in_scope):
+    raise ClassificationBlocked(sources=...)   # hard block, logged, surfaced in UI
+if redaction.enabled and provider.locality == "cloud":
+    payload = redact(payload)                  # IPs, emails, usernames, hostnames per config
+audit_log.write(...)
+return provider.chat(payload)
+```
+
+`sources_in_scope` is derived from the query or the sample, never from a user-supplied list, so the UI cannot be tricked into under-reporting scope.
+
+Implementation rules (Slice 2, `llm/gate.py`):
+
+- `sources_in_scope` is every source folder in the lake that the caller's server-built scope reads, including sources removed from configuration that still hold data.
+- A source counts as `local_only` if its configuration says so, if it is not configured at all, or if any stored event in scope carries `classification != cloud_allowed` from ingest. Relabelling a source does not release events already stored under the stricter label (T8).
+- Event data reaches a model only through `data_message()`, which puts it under a `data` key and records the sources it came from. The gate adds those sources to the scope it checks, so data cannot travel under a narrower scope than it was read from. A declared source with no folder in the lake counts as `local_only`. Tool results, and any message whose JSON has a `data` key, are refused unless they declare their sources.
+- If the event-label check cannot run (for example a file without a `classification` column), every source in scope counts as `local_only`.
+- A cloud provider must use `https`. Plain `http` is refused when the provider is saved and again at call time.
+- Locality is decided once per call, and the adapter connects to the address that decision was made on (Host header and TLS name unchanged), so DNS rebinding cannot turn a local call into a cloud one. Local calls ignore proxy environment variables; a trusted local host name that does not resolve is treated as cloud.
+- The system message is always a versioned prompt file, named by the caller and read by the gate, plus a fixed notice that anything under `data` is untrusted. Caller messages may only be `user`, `assistant`, or `tool` turns.
+- Tools are accepted only for `ask`, by name, and the gate supplies the schemas for `get_schema` and `preview_query`; a tool call to anything not offered is rejected.
+- Responses with a schema are validated with Pydantic; a mismatch is rejected and recorded as `schema_invalid`. Before validation, `answer_json()` takes the one JSON answer out of common wrappers: leading `<think>` blocks from reasoning models, one code fence, or one object inside a sentence. Two candidate answers, or thinking that never closes, count as no answer. A reply cut off at the output limit is recorded as `truncated` with its own message. Ask allows 4096 output tokens so a reasoning model has room to think and answer.
+
+### 6.3 Redaction (Slice 5, ADR-0010, D36)
+
+Off by default. Logs reach a cloud model only from sources an admin marked `cloud_allowed`, through a provider an admin acknowledged as cloud; that is the consent, and the model then sees the log as it is. An admin can turn redaction on per cloud provider (`redact`, audited `provider.update`); local providers are never redacted.
+
+When on, for `ask`, `explain`, and `report` calls (`llm/redact.py`, applied in the gate after the classification check and before the audit row):
+
+| What | Becomes |
+|---|---|
+| `src_endpoint_ip`, `dst_endpoint_ip`, `device_ip` values | `IP_xxxxxxxx` |
+| `actor_user_name` values, email addresses anywhere | `USER_xxxxxxxx` |
+| `device_hostname`, `src_endpoint_hostname`, `dst_endpoint_hostname` values | `HOST_xxxxxxxx` |
+| IPv4 and IPv6 addresses anywhere in text (raw lines, messages, questions, earlier SQL, tool arguments) | `IP_xxxxxxxx` |
+| User and host names learned from those columns, wherever they appear in text (whole word, ignoring case, 3 characters or more) | their tokens |
+| Event ids, times, ports, numbers, source ids, column names, the prompt | unchanged |
+
+Tokens are 8 hex characters of HMAC-SHA256 over the kind and the normalized value (IPs canonical, names lower-cased), keyed with a key derived from the install key, so they are stable across calls and restarts. The reverse map exists for one call only, is never stored or logged, and is applied to the reply (text and tool arguments) before validation, so Ask SQL, explanations, and claims carry real values; tokens the model invents are left as they are. The audit row keeps the hashes of what was actually sent and received, `redaction_applied`, and `redaction_counts` (per kind, never values), shown in the audit log viewer. Parser drafting is not redacted (a parser must match the real line shape; samples are chosen by an admin). If the key is unavailable, the call is refused rather than sent unredacted.
+
+### 6.4 LLM audit log
+
+Table `llm_calls` in `meta.sqlite`:
+
+`id, ts, owner_id (the acting user), provider_id, model, locality, purpose (ask|parser_draft|explain|report), sources_in_scope (json), classification_result (allowed|blocked), redaction_applied (bool), prompt_sha256, prompt_tokens, completion_tokens, latency_ms, response_sha256, cited_event_ids (json), citation_check (pass|fail), error`
+
+Prompts and responses are stored in full only if `llm.store_bodies: true` (default false). Hashes are always stored.
+
+Also stored: `prompt_ref` (`<prompt file>@<sha256 prefix>`), `finished_at`, and `error` (`classification_blocked`, `cloud_without_tls`, `provider_disabled`, `request_invalid`, `provider_error`, `internal_error`, `schema_invalid`, `truncated`, `tool_not_offered`). The row is written before the provider is called, so a failed audit write stops the call (fail closed). It is completed once with the outcome and then frozen by trigger; deletes and `INSERT OR REPLACE` are refused (the same replace guard now covers `audit_log`). Citation results (Slice 4) are computed inside the gate before the row is completed.
+
+### 6.5 Audit log viewer (Slice 5)
+
+Configuration > Audit log, for admins and auditors only (`/api/audit/...`, analysts get 403). Two tabs: **Activity** (`audit_log`: time, user, action, outcome, address, and the detail as text) and **AI calls** (`llm_calls`: user, purpose, provider and model, locality, result, tokens, latency, prompt reference, sources in scope, redaction, citation check, and the hashes; prompt and response bodies are never returned, even when `llm.store_bodies` kept them). Filters: action prefix (activity) or purpose (AI calls), outcome (`blocked` for classification blocks), time, and a user picked from the list. Newest first, 100 per page, paged by id. Export CSV writes everything matching the filters, up to 50,000 rows, with the same formula escaping as query exports. Reading writes `audit.view` and exporting writes `audit.export`, each with the filters used. Both tables refuse updates and deletes by trigger (tested); there is no delete endpoint. Migration 21 adds indexes on `audit_log` time, action, and user.
+
+---
+
+## 7. Security threat model
+
+Assumptions: the app runs on a trusted host, the user is trusted, log content is hostile, model providers are honest-but-curious, and the network between app and provider may be observed.
+
+### 7.1 Threats and controls
+
+| ID | Threat | ATLAS | ATT&CK | Control | Slice |
+|---|---|---|---|---|---|
+| T1 | Log line contains instructions that hijack the LLM when it explains events or drafts a parser | AML.T0051.001 LLM Prompt Injection: Indirect | T1565 Data Manipulation, T1562.001 Impair Defenses | Event content is passed as structured data under a `data` key with explicit delimiters and a system instruction that content is untrusted. LLM has no write tools. Outputs are structured JSON validated against a schema; free text never becomes an action. | 2, 4 |
+| T2 | Injected instruction tries to make generated SQL exfiltrate or alter data | AML.T0051.001 | T1059 Command and Scripting Interpreter | Statement allowlist, read-only connection, `enable_external_access=false`, no `ATTACH`. SQL always shown before run. | 2 |
+| T3 | Sensitive logs sent to a cloud provider | AML.T0057 LLM Data Leakage | T1041 Exfiltration Over C2 Channel (analogous), T1567 Exfiltration Over Web Service | Classification gate in one code path, scope derived from query not user input, default `local_only`, fresh install has no cloud providers, redaction, audit log. | 5 |
+| T4 | LLM fabricates findings | AML.T0048.002 Societal Harm (misinformation, analogous), no direct ATT&CK | n/a | Citation requirement: response schema requires `event_ids[]` per claim; engine verifies every id exists in the result set handed to the LLM; failures are shown as "unverified" and logged `citation_check=fail`. | 4 |
+| T5 | LLM-drafted parser is malicious or broken (regex DoS, wrong mapping hides events) | AML.T0051.001, AML.T0043 Craft Adversarial Data | T1562.001 | Drafts are inert until approved. Regex compiled with timeout and tested against pathological inputs. Tests must pass. Approval recorded. Diff shown vs starter if replacing. | 3 |
+| T6 | Prompt or system instruction extraction | AML.T0056 LLM Meta Prompt Extraction | T1552 Unsecured Credentials (if secrets in prompt) | No secrets in prompts. System prompts are in the repo, not secret. Provider keys live in env / settings store, never in messages. | 2 |
+| T7 | Malicious model or provider endpoint (user points at a hostile OpenAI-compatible URL) | AML.T0010 AI Supply Chain Compromise, AML.T0040 AI Model Inference API Access | T1195 Supply Chain Compromise | Provider responses treated as untrusted: strict JSON schema, size caps, no code execution. Locality is computed from the URL, not declared by the user. TLS required for non-local. | 2 |
+| T8 | Local-only / cloud flag spoofed through API | AML.T0057 | T1565 | Classification is a server-side column copied at ingest; the API has no endpoint to reclassify events, only sources (re-ingest required). | 5 |
+| T9 | Web UI exposed on LAN without auth | n/a | T1190 Exploit Public-Facing Application, T1078 Valid Accounts | Non-loopback bind with no users enters setup-only mode (one-time, expiring, single-use setup link). No insecure flag. Argon2 passwords, per-user API tokens. HttpOnly, Secure, SameSite=Strict session cookie. CSRF token on all non-GET. Rate limit on login. HTTPS by default off loopback. | 1 |
+| T10 | Stored XSS from log content rendered in UI | n/a | T1189 Drive-by Compromise (analogous) | React escapes by default. Raw view uses a text node, never `dangerouslySetInnerHTML`. CSP: `default-src 'self'`, no inline scripts. | 1 |
+| T11 | Path traversal via source folder config | n/a | T1083 File and Directory Discovery, T1005 Data from Local System | Source paths must be under configured `allowed_roots`. Resolved with `realpath`, symlinks outside roots rejected. | 1 |
+| T12 | Dependency compromise | AML.T0010 | T1195.001 | Lockfiles (`uv.lock`, `pnpm-lock.yaml`), Dependabot, pinned base images, SBOM in release. | 6 |
+| T13 | Audit log tampering | n/a | T1070 Indicator Removal | Audit table is append-only via SQLite trigger; no delete endpoint; export to file supported. | 5 |
+| T14 | Denial of service via malformed log (huge line, multiline bomb, zip bomb style repetition) | n/a | T1499 Endpoint DoS | 64 KB event cap, 8 KB default `max_len`, 200-line sample cap, per-file read rate limits. | 1 |
+| T15 | Analyst reads sources they are not cleared for (directly, via Ask mode, via a shared saved search, or via the LLM) | AML.T0057 (when via LLM) | T1213 Data from Information Repositories, T1078 | Source groups enforced server-side in the per-session `events` view; every surface uses that view; saved searches run as the caller; gate receives scope from the view. Access changes audited. | 2 |
+| T16 | Setup link intercepted or reused to claim the admin account | n/a | T1078, T1550 Use Alternate Authentication Material | Link token is random, single use, expires in 30 minutes, stored hashed, printed only to the server log, invalidated once an admin exists. | 1 |
+| T17 | Log content injects terminal escape sequences into CLI output | n/a | T1059 (analogous) | CLI strips control sequences from all event fields before printing. | 1 |
+| T18 | Shared or orphaned accounts break attribution | n/a | T1078 | No shared-login feature, per-user audit, admin can disable users, API tokens per user and revocable. | 2 |
+| T19 | Scheduled search keeps running after the owner loses access, or runs with someone else's rights | n/a | T1078 | Runs as the owner, permissions re-checked each run, schedule pauses on loss of access, audited | 4 |
+| T20 | Dashboard panel leaks results to a viewer without access to the underlying sources | AML.T0057 (when a summary is shown) | T1213 | Panel visibility checked against `sources_in_scope` of the run for each viewer; restricted panels show no data | 4 |
+| T21 | Connector credentials stolen and used to read the tenant | n/a | T1528 Steal Application Access Token, T1552 Unsecured Credentials | Read-only least-privilege permissions, certificate auth preferred, secrets encrypted at rest, never logged or sent to an LLM, credential rotation documented | 7 |
+| T22 | Stored logs altered to hide activity | n/a | T1565.001 Stored Data Manipulation, T1070 Indicator Removal | Hash-chained partitions with periodic verification and an exportable integrity report | 8 |
+| T23 | An outside assistant reading results over MCP follows instructions planted in log fields, or sends `local_only` data to a cloud model | AML.T0051.001 LLM Prompt Injection: Indirect, AML.T0057 LLM Data Leakage | T1213 Data from Information Repositories | Read-only tools only; per-user token and scope; `local_only` results withheld unless the endpoint is marked local; data-not-instructions notice on every result; every call audited; off by default | 7 |
+
+### 7.2 Trust boundaries
+
+```
+[Log files: HOSTILE] -> ingest -> [Lake: data, not instructions]
+[Lake] -> engine -> [Result set: data] -> gate -> [Provider: honest-but-curious]
+[Provider response: UNTRUSTED] -> schema validation -> citation check -> [UI]
+[Browser] -> auth + CSRF -> [API]
+[MCP client: UNTRUSTED] -> per-user token -> [events view] -> classification check -> [Result set: data]
+```
+
+---
+
+### 7.3 AI feature mapping (CLAUDE.md security rule 12)
+
+| Feature | What the model sees | What the model can do | ATLAS | Controls |
+|---|---|---|---|---|
+| Ask mode (Slice 2) | Schema, up to 20 sample values per low-cardinality column, time range, up to 3 earlier turns, preview rows (5, values capped at 300 characters), all under `data` with declared sources | Return `{sql, explanation, assumptions}`; call `get_schema` and `preview_query` | AML.T0051.001 (values in logs, previews), AML.T0057 (scope sent to a cloud model), AML.T0056 (prompt is public, no secrets) | Gate classification check over declared sources; guard and read-only engine on every preview; 5-row cap; schema-validated answer; SQL shown, never run for the analyst; every call in `llm_calls`; auditors have no Ask |
+| Parser draft (Slice 3, ADR-0005) | The column list, the deterministic envelope result and format guess, up to 20 payloads (syslog header removed, 2,000 characters each) and 5 full lines, all sample data under `data` with declared sources: a pasted sample under the reserved id `draft_sample_local_only` (no source may use the `draft_sample` prefix, and the gate treats it as `local_only` regardless), a file sample under every source whose own path, glob, and symlink resolution would read each sampled file, plus the reserved id for any file no source reads | Return only `payload`, `transforms`, `mapping`, and `tests`; no tools | AML.T0051.001 (instructions in sample lines), AML.T0043 (crafted lines steering a regex or mapping), AML.T0057 (samples sent to a cloud model) | Admin only; one draft at a time; schema-validated reply with extra keys refused; id, envelope, version, and classification default set by the server; draft inert until a preview passes tests and the pathological check and an admin approves; regex timeouts; approval records the `llm_calls` id and whether the approved bytes are unchanged from the model's output; refusals link the audit row to the `llm_calls` row; every call audited |
+| Explain these events (Slice 4) | Up to 50 events the analyst picked, only those in sources they may read, each reduced to 16 columns (event id, source, time, class, activity, status, severity, message, actor user and process, source and destination address and port, device host, values cut at 500 characters) plus `raw` cut at 2,000, and an optional question of up to 500 characters, all under `data` with the events' sources declared | Return `{claims: [{text, event_ids}]}` (1 to 10 claims); no tools | AML.T0051.001 (instructions in the events steering the explanation), AML.T0057 (events sent to a cloud model); also T4 (7.1), a confident but false claim about the events, which citations and the verified label address | Admin and Analyst only; ids validated as UUIDs and fetched through the guard inside the caller's scope; gate classification over the events' sources; schema-validated answer; the gate records `cited_event_ids` and `citation_check` (pass only when at least one id is cited and every cited id was sent); each claim is marked verified only when it cites at least one sent id and nothing else, and the UI labels the rest "unverified"; answer shown as text, never run; one request per user at a time; every call in `llm_calls` and audited as `explain.request` |
+
+Explain in the UI: on Search and Ask results, an event's details offer "Select for Explain"; the results header offers "Explain N selected", or "Explain" for the first 50 rows when nothing is selected. Rule run panels offer "Explain matches". The panel picks an enabled provider (local first, with its badge) and an optional question, lists claims in order with each cited event (the last 12 characters of the id, since UUIDv7 ids share their leading time digits; a cited id that was not sent is shown in red), labels claims that fail the check "unverified", and offers "Open cited events in Search" (sent ids only) and "Download report (Markdown)": a report draft built in the browser from the answer, with every claim, its event id references, unverified claims marked, the events sent, the sources, and the `llm_calls` id. No report object is stored yet (Q2 stays open).
+
+## 8. Slice roadmap
+
+Each slice ships working end to end, with tests, before the next starts. Definition of done per slice is in `CLAUDE.md`.
+
+| Slice | Scope | Not in scope | Key risk |
+|---|---|---|---|
+| 0 | This spec, `CLAUDE.md`, design brief, repo skeleton, CI | Code | Over-designing |
+| 1 | Read JSON, CSV, and syslog files and folders with tail/watch. RFC 3164 and 5424 envelope parse. Raw line preserved. Parquet lake + compaction + retention. DuckDB read-only query. Query mode with SQL editor and results table. First-run admin setup, login, HTTPS by default (3.6, T9, T16). CLI `login`, `tail`, `query`. Windows JSON (NXLog, Winlogbeat) and Snare via generic JSON/CSV paths. | Any LLM. Templates beyond a built-in generic JSON, CSV, and syslog-envelope-only parser. | Framing and encoding edge cases eating the slice |
+| 2 | Provider interface, OpenAI-compatible adapter, Ollama in compose profile. Ask mode with visible SQL and approve-to-run. Saved searches with params, tags, YAML import/export, private or shared. Basic LLM audit log (hash level). Multi-user: invites, Admin/Analyst/Auditor roles, source groups, per-user audit (3.6, T15, T18). CLI `search`, `ask`. NL accuracy track (5.7): eval harness, semantic layer, verified examples, self-check loop. | Anthropic adapter (small, can land here if time allows). Redaction. | Local models producing bad SQL; mitigated by schema-rich prompt and preview tool |
+| 3 | Source discovery and auto-labeling with suggested groups (3.6). Starter template pack (4.4). Template engine with all payload formats. LLM-generated parser flow (4.5). Native EVTX via `evtx` library. Template test runner. | Sigma | Template count; ship fewer, tested, rather than all untested |
+| 4 | Sigma rule loading and pySigma DuckDB backend with the compatibility field pipeline (community `windows` and `linux` rule fields mapped to OCSF columns). Rule run on demand and on schedule. Scheduled saved searches and Dashboard page (5.5). Alert routing: email, Microsoft Teams, Slack, generic webhook. "Explain these events" with event-ID citations and citation verifier. | Alert routing. OCSF-native Sigma pipeline (later). | Compatibility pipeline coverage; measure against the SigmaHQ core rule set and report the compile rate |
+| 5 | Classification gate (6.2), redaction (6.3), full audit log (6.4), audit export. Anthropic adapter if not already done. | | Making the gate the only path; grep the codebase for direct provider calls |
+| 6 | Light mode, keyboard shortcuts, command palette polish, CLI `tui`, single-user and team VM install guides, docs site, rsyslog / syslog-ng / Vector pointing guides, tested-scale statement in README, first tagged release, SBOM. | | Scope creep |
+| 7 (v0.2) | Connector framework (3.7) with the Microsoft 365 connector first (ADR-0002): Office 365 Management Activity API and Microsoft Graph sign-ins, directory audits, and security alerts. Native UDP/TCP/TLS syslog listener. Read-only MCP server (3.8). Then Okta, Google Workspace, AWS CloudTrail. | Write-back or response actions | API throttling and latency; least-privilege app permissions |
+| 8 (v0.3) | Enrichment (GeoIP/ASN, threat intel feeds such as abuse.ch, MISP, OTX; asset and identity lookups). Log integrity: hash-chained partitions and verification. Storage tiering: older Parquet to S3-compatible object storage, queried in place. Case handoff to TheHive, DFIR-IRIS, or ticketing. | Built-in case management | Enrichment freshness and licensing of feeds |
+| Later | Background ingest workers. SSO (OIDC/SAML: Entra ID, Okta, Google). Field-level masking. Scheduled reports. | | |
+
+---
+
+## 9. Decisions log
+
+| # | Decision | Rationale | Date |
+|---|---|---|---|
+| D1 | ~~Single user v1~~ Superseded by D15 and D16. Kept: non-loopback always requires auth, no insecure flag | | 2026-10-09 |
+| D2 | Parquet lake + DuckDB engine, SQLite for metadata | Retention by partition delete, portable, no writer/reader contention | 2026-10-09 |
+| D3 | Target 50 GB single node, ingest behind an interface | Honest about scope, no premature workers | 2026-10-09 |
+| D4 | Windows via syslog/JSON in Slice 1, native EVTX in Slice 3 using `evtx` | Covers most collectors first; one OCSF map for all transports | 2026-10-09 |
+| D5 | Flattened OCSF columns + `unmapped` JSON | Query speed and Sigma mapping over nested fidelity | 2026-10-09 |
+| D6 | Custom thin agent loop, no LangChain or similar | Two tools, one gate, full control of what reaches the provider | 2026-10-09 |
+| D7 | pySigma with a custom DuckDB backend | Reuse the Sigma ecosystem; backend is a small subclass of the SQL backend | 2026-10-09 |
+| D8 | CodeMirror 6 over Monaco | 10x smaller, enough for SQL | 2026-10-09 |
+| D9 | `sqlglot` for SQL allowlisting | Real parser beats regex for statement classification | 2026-10-09 |
+| D10 | Working codename Remnant, held in one config constant | Rename before release must be a one-line change | 2026-10-10 |
+| D11 | Apache 2.0 license | Patent grant, matches OCSF/pySigma/DuckDB ecosystem, no friction for MSP and consultant users | 2026-10-10 |
+| D12 | Cloud provider badge stays purple | Purple is reserved as the single "data is leaving the box" signal | 2026-10-10 |
+| D13 | Sigma compatibility pipeline ships first, OCSF-native pipeline later | The value of Sigma is the existing community rule corpus | 2026-10-10 |
+| D14 | Optional flavor names (Séance, Grimoire, Ossuary) allowed only where clarity is not hurt | Plain labels in nav, buttons, API, errors | 2026-10-10 |
+| D15 | Primary deployment is a team VM; single-user on a laptop or VM is also supported; Docker optional | Real use is a security team on a VM next to the collector | 2026-10-10 |
+| D16 | Multi-user in v1: individual accounts, Admin/Analyst/Auditor roles, per-user audit | Compliance requires per-user attribution; shared logins are not acceptable | 2026-10-10 |
+| D17 | Per-source access via source groups, enforced server-side in the per-session events view | The lake is already partitioned by source, so the source is the natural boundary | 2026-10-10 |
+| D18 | First-run setup link creates the admin account, with explicit wording on the setup page (ADR-0001) | Secure by default without manual token setup | 2026-10-10 |
+| D19 | HTTPS by default off loopback, self-signed on first start, bring-your-own cert supported | Team access is always over the network | 2026-10-10 |
+| D20 | SSO later, local accounts in v1 | Keeps v1 shippable | 2026-10-10 |
+| D21 | CLI as a thin API client (tail, query in Slice 1; search, ask in Slice 2; TUI in Slice 6) | Quick pulls from a terminal with the same guardrails | 2026-10-10 |
+| D22 | Source groups are per-installation, suggested by discovery and OCSF-category auto-labeling, never auto-granted | Every environment is different; hardcoded groups would not fit | 2026-10-10 |
+| D23 | Saved searches can be scheduled; results show on a Dashboard. Schedules run saved SQL, never re-ask the LLM; run as the owner with permissions re-checked | Deterministic, auditable recurring checks | 2026-10-10 |
+| D24 | Visual direction "Workspace": Sentinel/Splunk-style shell (top bar, labeled grouped nav, breadcrumbs, command bar), dark first with a full light theme, blue accent, Source Sans 3 / Source Code Pro, event detail expands inline under the row, separate Investigation page pattern with KPI cards and a plain-language finding. Supersedes the teal SOC-console brief | A polished commercial look that reads well for a whole team, not just power users | 2026-10-10 |
+| D25 | NL accuracy is a measured feature: eval harness, semantic layer, verified examples, self-check loop (5.7) | The product promise depends on it; competitors are adding NL search, so accuracy is the differentiator | 2026-10-10 |
+| D26 | Alert routing (email, Teams, Slack, webhook) moves into Slice 4 | A SIEM that cannot notify is a search tool | 2026-10-10 |
+| D27 | Connector framework with Microsoft 365 first (Slice 7, ADR-0002) | Cloud identity and email logs are core for the target users | 2026-10-10 |
+| D28 | Enrichment, log integrity, storage tiering, and case handoff in Slice 8 | Answer quality, audit defensibility, and growth beyond one disk | 2026-10-10 |
+| D29 | Read-only MCP server in Slice 7 (ADR-0003); Remnant never consumes MCP servers as log sources | Lets teams query logs from the assistant they already use, without a second path around access control or the classification gate | 2026-10-10 |
+| D30 | The gate treats unconfigured sources and events stored as `local_only` as local-only, requires https for cloud providers, and writes its audit row before any call | Fails closed when configuration and stored data disagree, or when the audit cannot be written | 2026-10-10 |
+| D31 | Access defaults per ADR-0004: admins see all sources; ungrouped sources and ungrouped users see nothing; invite links; disable, never delete; the last admin is protected | Deny by default, attributable forever | 2026-10-10 |
+| D32 | Sigma per ADR-0006: rules imported by an admin from a folder as pinned snapshots (none bundled, none fetched); a rule runs only on sources whose template declares a matching logsource; fields without a column read from `unmapped`; case-insensitive; rule author and title on every match (DRL 1.1) | Local-first, fewer false positives, licence compliance | 2026-10-10 |
+| D33 | Alert routing per ADR-0007: admin-managed targets (email, Teams Workflows, Slack, webhook) with encrypted write-only secrets; summary-only alerts with a link back; alerts on flagged schedule runs, rule schedule matches, and self-pauses, never on on-demand runs; vendor host checks, pinned resolution, no redirects, metadata ranges refused, `http` only to private or loopback webhooks; HMAC-signed webhooks; 3 retries with visible failures | Keeps log content and attacker-written text out of chat and mail, limits SSRF, and makes silent alert failures visible | 2026-10-11 |
+| D34 | Search and Overview per ADR-0008: Ask is a tab of the Search page (Run copies the SQL into the editor and runs it; nothing runs without a click); a read-only Overview page is the landing page, built through the per-session view, one audit row per load | Asking in plain English is a way to search, not a separate tool; a home page shows whether ingest, detections, and alerts are healthy | 2026-10-11 |
+| D35 | Simple search per ADR-0009: a Search tab whose Kibana/Lucene-style text is compiled to SQL on the server without a model (names from the schema, aliases, and the Sigma field map only; values bound as parameters; wildcards as escaped `ILIKE`); Kusto KQL and SPL go through Ask; counts by Top values clicks; Simple is the first-time default tab | Searching works with no SQL and no AI provider, and typed or clicked text never becomes SQL text | 2026-10-11 |
+| D36 | Redaction per ADR-0010 as reviewed: off by default, because marking a source `cloud_allowed` is the explicit consent to send real log content; available per provider as an opt-in (columns and raw text, 8-hex HMAC tokens, per-call reverse map, counts audited) | Logs leave only by explicit choice, and then as they are; teams that want tokens can have them | 2026-10-11 |
+| D37 | Grafana Loki as a pull source per ADR-0011, built ahead of Slice 7 as the first connector: label selector plus line filters, 30 s polling with a lag, checkpoint by timestamp and line hash, 24 h back-fill by default, webhook address rules, encrypted credentials | Lets a team try the product on logs it already collects, with no new plumbing | 2026-10-11 |
+| D38 | Automatic parser per ADR-0012: a source's parser can be `auto`, which routes each line to one approved template by syslog app name, then payload regex (user templates, then vendor templates, then catch-alls), then the generic parser; a routed template that fails falls back to generic. Admins can change a source's parser; only new lines use it. Default for new syslog and JSON sources | Mixed streams (a host's syslog file, a Loki selector) are the common case; one template per source left most columns empty | 2026-10-11 |
+
+---
+
+## 10. Open questions
+
+| # | Question | Needed by |
+|---|---|---|
+| Q1 | OCSF version pin: 1.3 now, how do we handle column additions on upgrade? Proposal: additive migrations only, never rename. | Slice 1 |
+| Q2 | Report drafting format: Markdown export only, or also a stored report object? | Slice 4 or later |
+| Q3 | Should `cloud_allowed` be per source or per source plus field mask? | Slice 5 |
+| Q4 | Default access for a new source: all Analysts, or Admin-only until granted? Proposal: Admin-only (deny by default), with a one-click "grant to all analysts". | Slice 2 |
+| Q5 | Auditor role: can it see raw lines, or parsed fields only? | Slice 2 |

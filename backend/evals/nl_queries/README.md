@@ -1,0 +1,40 @@
+# Ask accuracy suite
+
+100 plain-English questions over a synthetic lake, each with a reference SQL query. It measures how often a model's Ask answer runs (executable) and returns the same result as the reference (exact). Targets for v0.1 (SPEC 5.7): 90% executable and 75% exact on the reference local model.
+
+## Data
+
+`fixture.py` builds about 2,100 events across four sources with fixed seeds:
+
+| Source | Shaped like | OCSF classes |
+|---|---|---|
+| `linux_auth` | OpenSSH 9 and sudo 1.9 through rsyslog, plus 15 headerless kernel lines | 3002 Authentication, 3003 Authorize Session |
+| `fw_edge` | A generic key=value edge firewall, one port scanner | 4001 Network Activity |
+| `dns` | A resolver query log with response codes in `unmapped` | 4003 DNS Activity |
+| `edr` | Process-start telemetry from five workstations | 1007 Process Activity |
+
+All values are synthetic. Public addresses come only from RFC 5737 ranges, internal ones from `10.0.0.0/8`, and every host, user and domain name is invented (`example.*` domains). OCSF columns are filled in directly, so the suite tests the model's SQL, not the parsers.
+
+## Run it
+
+```
+cd backend
+uv run python -m evals.nl_queries.run --base-url http://127.0.0.1:11434/v1 --model llama3.1:8b --out report.json
+# cloud: the key comes from an environment variable, never the command line
+OPENAI_API_KEY=... uv run python -m evals.nl_queries.run --base-url https://api.openai.com/v1 \
+    --model gpt-4o-mini --api-key-env OPENAI_API_KEY
+```
+
+The run is in-process and uses a temporary data folder. It goes through the real gate (classification and the `llm_calls` audit) and the real Ask agent with its self-check. The sources are marked cloud allowed because the data is synthetic.
+
+## Scoring
+
+A generated result counts as exact when some of its columns, one for each reference column, hold the same values. Extra columns, a different column order, and aliases are fine. Rows are compared as a multiset, except for `compare: ordered` questions (top N, first event), where order counts. Whole-number floats equal ints, and a UTC-midnight timestamp equals its date.
+
+## Results
+
+Record each run in the PR that changes Ask, and in the table below.
+
+| Model | Provider | Executable | Exact | Median s | Date |
+|---|---|---|---|---|---|
+| (pending first run on the homelab VM) | | | | | |

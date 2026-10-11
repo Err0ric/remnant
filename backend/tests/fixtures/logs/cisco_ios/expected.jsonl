@@ -1,0 +1,10 @@
+{"actor_user_name": "bob", "class_uid": 3002, "device_hostname": null, "parse_status": "ok", "severity_id": 2, "status_id": 1, "time": "2026-10-09T20:00:28.148000+00:00"}
+{"actor_user_name": "carol", "class_uid": 3002, "device_hostname": "sw01", "parse_status": "ok", "severity_id": 2, "status_id": 1, "time": "2026-10-09T20:00:33.102000+00:00"}
+{"class_uid": 0, "device_hostname": null, "parse_status": "ok", "severity_id": 4, "time": "2026-10-09T20:02:02.967000+00:00"}
+{"class_uid": 0, "device_hostname": "rtr01", "parse_status": "ok", "severity_id": 4, "time": "2026-10-09T20:02:19.537000+00:00"}
+{"class_uid": 4001, "device_hostname": null, "dst_endpoint_port": 161, "parse_status": "ok", "severity_id": 1, "src_endpoint_ip": "10.20.1.6", "time": "2026-10-09T20:02:45.456000+00:00"}
+{"actor_user_name": "dave", "class_uid": 3002, "device_hostname": "rtr01", "parse_status": "ok", "severity_id": 2, "status_id": 1, "time": "2026-10-09T20:03:06.449000+00:00"}
+{"actor_user_name": "bob", "class_uid": 3002, "device_hostname": null, "parse_status": "ok", "severity_id": 2, "status_id": 1, "time": "2026-10-09T20:04:18.361000+00:00"}
+{"class_uid": 4001, "device_hostname": "sw01", "dst_endpoint_port": 23, "parse_status": "ok", "severity_id": 1, "src_endpoint_ip": "10.20.1.5", "time": "2026-10-09T20:05:22.171000+00:00"}
+{"actor_user_name": "bob", "class_uid": 3002, "device_hostname": null, "parse_status": "ok", "severity_id": 3, "status_id": 2, "time": "2026-10-09T20:05:59.337000+00:00"}
+{"class_uid": 4001, "device_hostname": "rtr01", "dst_endpoint_port": 22, "parse_status": "ok", "severity_id": 1, "src_endpoint_ip": "10.20.1.5", "time": "2026-10-09T20:06:54.713000+00:00"}
