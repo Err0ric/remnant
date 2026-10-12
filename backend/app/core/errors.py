@@ -1,5 +1,7 @@
 """Typed exceptions. The API layer maps these to HTTP responses."""
 
+from typing import ClassVar
+
 
 class AppError(Exception):
     """Base class for all application errors."""
@@ -105,6 +107,10 @@ class ProviderError(AppError):
     """The model provider failed, refused, or returned something invalid."""
 
 
+class AnswerShapeError(ProviderError):
+    """The model replied, but not in the required JSON shape (a caller may ask once more)."""
+
+
 class ProviderConfigError(AppError):
     """The provider cannot be used as configured (disabled, or a cloud URL without TLS)."""
 
@@ -123,3 +129,43 @@ class CloudAckRequiredError(AppError):
 
 class RuleRejectedError(AppError):
     """A Sigma rule cannot be compiled or is refused as unsafe (ADR-0006)."""
+
+
+class SsoRequiredError(AppError):
+    """This account signs in with single sign-on; passwords are for administrators only."""
+
+
+class SsoRefusedError(AppError):
+    """A single sign-on attempt was refused (ADR-0013).
+
+    `code` is one of a fixed set the sign-in page turns into a message; `reason` is for the
+    audit log only and is never shown to the browser.
+    """
+
+    CODES = frozenset(
+        {
+            "expired",
+            "invalid",
+            "unavailable",
+            "denied",
+            "not_invited",
+            "disabled",
+            "not_in_group",
+            "too_many_groups",
+            "already_linked",
+            "off",
+        }
+    )
+
+    MESSAGES: ClassVar[dict[str, str]] = {
+        "off": "Single sign-on is not turned on for this server",
+        "unavailable": "The sign-in service cannot be reached right now. Try again shortly",
+    }
+
+    def __init__(self, code: str, reason: str) -> None:
+        if code not in self.CODES:
+            raise ValueError(f"unknown SSO refusal code {code!r}")
+        # str(exc) is what an API caller sees; the reason stays in the audit log.
+        super().__init__(self.MESSAGES.get(code, "Single sign-on did not complete"))
+        self.code = code
+        self.reason = reason

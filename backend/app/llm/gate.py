@@ -34,7 +34,12 @@ import structlog
 from pydantic import BaseModel, ValidationError
 
 from app.core.config import LLMConfig
-from app.core.errors import ClassificationBlockedError, ProviderConfigError, ProviderError
+from app.core.errors import (
+    AnswerShapeError,
+    ClassificationBlockedError,
+    ProviderConfigError,
+    ProviderError,
+)
 from app.core.ids import RESERVED_SOURCE_PREFIX, new_id
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.llm.locality import Endpoint, provider_endpoint
@@ -279,9 +284,11 @@ class LLMGate:
             except ValidationError as exc:
                 if response.truncated:
                     self._finish(row["call_id"], started, sent_back, "truncated")
-                    raise ProviderError(_truncated_message(record.reasoning)) from exc
+                    raise ProviderError(
+                        _truncated_message(record.reasoning, response, req.max_tokens)
+                    ) from exc
                 self._finish(row["call_id"], started, sent_back, "schema_invalid")
-                raise ProviderError("The model returned an answer in the wrong shape") from exc
+                raise AnswerShapeError("The model returned an answer in the wrong shape") from exc
         check: Literal["pass", "fail"] | None = None
         cited: list[str] | None = None
         if req.citable_event_ids is not None:
@@ -470,8 +477,21 @@ def _response_text(response: ProviderResponse) -> str:
     return _canonical({"text": response.text, "tool_calls": calls})
 
 
-def _truncated_message(reasoning: str | None) -> str:
-    """Says what to change, depending on whether thinking is already off."""
+def _truncated_message(reasoning: str | None, response: ProviderResponse, max_tokens: int) -> str:
+    """Says what to change. A reply cut off well short of its output limit means the model's
+    context window filled up (Ollama's is often 4096 tokens), not that it wrote too much."""
+    written = response.completion_tokens
+    if written is not None and written < max_tokens // 2:
+        used = (
+            f" (the question used {response.prompt_tokens} tokens)"
+            if response.prompt_tokens
+            else ""
+        )
+        return (
+            "The model ran out of context window before finishing the answer" + used + "."
+            " Raise the model's context length on the model server, for example"
+            " OLLAMA_CONTEXT_LENGTH=16384 for Ollama or num_ctx in a Modelfile"
+        )
     if reasoning == "none":
         return (
             "The model hit its output limit before finishing the answer, even with Thinking"
@@ -489,6 +509,20 @@ _THINKING = re.compile(r"\A\s*<(think|thinking|reasoning)>.*?</\1>", re.DOTALL |
 _OPEN_THINKING = re.compile(r"\A<(think|thinking|reasoning)>", re.IGNORECASE)
 _FENCE = re.compile(r"```[A-Za-z]*[ \t]*\n(.*?)\n?```", re.DOTALL)
 _MAX_OBJECT_STARTS = 32  # bounds the scan below on hostile or garbled replies
+
+
+_ESCAPE = re.compile(r"\\(.)", re.DOTALL)
+_JSON_ESCAPES = frozenset('"\\/bfnrtu')
+
+
+def _repair_escapes(text: str) -> str:
+    r"""Models often copy SQL regex like `'^10\.'` into a JSON string unescaped, which is
+    invalid JSON. Doubling a backslash that starts no valid JSON escape keeps the intended
+    text and changes nothing else."""
+    # Pairs are read left to right, so a valid "\\\\" is never split.
+    return _ESCAPE.sub(
+        lambda m: m.group(0) if m.group(1) in _JSON_ESCAPES else "\\\\" + m.group(1), text
+    )
 
 
 def answer_json(text: str) -> str:
@@ -510,6 +544,9 @@ def answer_json(text: str) -> str:
         return ""  # thinking was cut off: whatever JSON is inside it is not an answer
     if _is_json(rest):
         return rest
+    repaired = _repair_escapes(rest)
+    if repaired != rest and _is_json(repaired):
+        return repaired
     fences = _FENCE.findall(rest)
     if len(fences) == 1 and _is_json(fences[0]):
         return str(fences[0]).strip()

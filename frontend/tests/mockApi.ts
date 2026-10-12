@@ -87,6 +87,8 @@ export interface MockAuth {
   noAccounts?: boolean;
   /** The sign-out request fails on the server. */
   logoutFails?: boolean;
+  /** Single sign-on turned on, with this button label. */
+  sso?: string;
 }
 
 export const SOURCE = {
@@ -1037,7 +1039,13 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         mode: state.mode,
         user: state.mode === "login" && state.signedIn ? user : null,
         csrf_token: state.signedIn ? "csrf-1" : null,
+        sso: state.sso ? { label: state.sso, passwords_admins_only: true } : null,
       });
+    if (url.endsWith("/api/auth/sso/start")) {
+      if (!state.sso)
+        return json({ detail: "Single sign-on is not turned on", code: "sso_refused" }, 400);
+      return json({ url: "https://login.example.test/authorize?state=s" });
+    }
     if (url.endsWith("/api/setup")) {
       const body = JSON.parse(String(init?.body ?? "{}")) as { token: string };
       if (body.token !== "good-token")

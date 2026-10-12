@@ -4,6 +4,7 @@ import { Command, PageHeader } from "@/components/shell/PageHeader";
 import { ApiError, api, type SavedSearch, type User } from "@/lib/api";
 import { navigate } from "@/lib/route";
 import { seedSchedule } from "@/lib/scheduleSeed";
+import { takeSavedSeed } from "@/lib/savedSeed";
 import { SearchRunner } from "./SearchRunner";
 
 interface SavedSearchesPageProps {
@@ -22,7 +23,9 @@ function download(name: string, text: string) {
 export function SavedSearchesPage({ me }: SavedSearchesPageProps) {
   const client = useQueryClient();
   const searches = useQuery({ queryKey: ["searches"], queryFn: api.searches });
-  const [running, setRunning] = useState<SavedSearch | null>(null);
+  const [chosen, setRunning] = useState<SavedSearch | null>(null);
+  // A search picked in the command palette opens its runner once the list has loaded.
+  const [seeded, setSeeded] = useState(takeSavedSeed);
   const [confirming, setConfirming] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const file = useRef<HTMLInputElement>(null);
@@ -54,6 +57,7 @@ export function SavedSearchesPage({ me }: SavedSearchesPageProps) {
   });
 
   const list = searches.data ?? [];
+  const running = chosen ?? (seeded ? (list.find((s) => s.id === seeded) ?? null) : null);
   const error = [remove.error, importer.error, exporter.error, verifier.error].find(Boolean);
 
   return (
@@ -92,7 +96,14 @@ export function SavedSearchesPage({ me }: SavedSearchesPageProps) {
           </p>
         ) : null}
         {running ? (
-          <SearchRunner key={running.id} search={running} onClose={() => setRunning(null)} />
+          <SearchRunner
+            key={running.id}
+            search={running}
+            onClose={() => {
+              setRunning(null);
+              setSeeded(null);
+            }}
+          />
         ) : null}
         <section className="overflow-hidden rounded-card border border-border bg-surface">
           {list.length === 0 && !searches.isPending ? (

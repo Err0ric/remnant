@@ -121,3 +121,15 @@ def test_unknown_targets_are_refused_before_anything_is_made(lab: dict[str, Any]
     res = schedule(lab["admin"], lab["h"], kind="rule", target_id=WIN_ID, target_ids=["nope"])
     assert res.status_code == 400
     assert lab["admin"].get("/api/schedules").json() == []
+
+
+def test_a_source_that_goes_quiet_alerts_with_a_below_threshold(lab: dict[str, Any]) -> None:
+    """docs/install/quiet-sources.md: no new feature, a schedule flagged below 1."""
+    s = schedule(
+        lab["ana"], target_ids=[lab["target"]], lookback_minutes=60,
+        threshold_kind="below", threshold_value=1,
+    ).json()  # fmt: skip
+    run_now(lab, lab["ana"], s["schedule_id"])  # the lab's events are older than an hour
+    tick(lab)
+    doc = json.loads(lab["rx"].got[0][1])
+    assert (doc["kind"], doc["reason"]) == ("flag", "0 is below 1")

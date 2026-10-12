@@ -72,7 +72,7 @@ Fresh installs have no AI provider, and every source starts **local only**. For 
 
 - [ ] Do not add a cloud provider (OpenAI, Anthropic, or any hosted API) under **AI providers**
 - [ ] Leave every source **Local only**
-- [ ] Optional: a model on your own network (Ollama, LM Studio, vLLM) for Ask. Check it shows the **Local** badge after **Test**. For reasoning models such as Qwen 3.5, set **Thinking** to **Off**, or Ask can run out of output before it answers
+- [ ] Optional: a model on your own network (Ollama, LM Studio, vLLM) for Ask. Check it shows the **Local** badge after **Test**. For reasoning models such as Qwen 3.5, set **Thinking** to **Off**, or Ask can run out of output before it answers. On Ollama, also raise the context length (`OLLAMA_CONTEXT_LENGTH=16384` in the Ollama service environment); the default can be too small for Ask's prompt plus previews
 - [ ] Simple search, SQL, Sigma rules, and the Overview all work with no provider at all
 
 ## 5. Add the Loki source

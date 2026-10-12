@@ -23,6 +23,7 @@ from app.core.errors import (
     LinkInvalidError,
     NotFoundError,
     RateLimitedError,
+    SsoRequiredError,
 )
 from app.core.ids import new_id
 from app.meta.audit import AuditLog
@@ -42,6 +43,7 @@ class UserRecord:
     pending: bool
     created_at: str
     last_login_at: str | None
+    sso: bool = False  # signs in with single sign-on (ADR-0013)
 
 
 def _digest(token: str) -> str:
@@ -55,8 +57,10 @@ class UserAdmin:
         audit: AuditLog,
         limiter: LoginLimiter,
         clock: Callable[[], datetime],
+        password_allowed: Callable[[Role], bool] = lambda role: True,
     ) -> None:
         self._meta = meta
+        self._password_allowed = password_allowed
         self._audit = audit
         self._limiter = limiter
         self._clock = clock
@@ -67,7 +71,7 @@ class UserAdmin:
         with self._meta.connect() as con:
             rows = con.execute(
                 "SELECT user_id, username, role, disabled, password_hash, created_at,"
-                " last_login_at FROM users ORDER BY username COLLATE NOCASE"
+                " last_login_at, sso_subject FROM users ORDER BY username COLLATE NOCASE"
             ).fetchall()
         return [
             UserRecord(
@@ -75,9 +79,10 @@ class UserAdmin:
                 r["username"],
                 r["role"],
                 bool(r["disabled"]),
-                r["password_hash"] == PENDING_HASH,
+                r["password_hash"] == PENDING_HASH and r["sso_subject"] is None,
                 r["created_at"],
                 r["last_login_at"],
+                r["sso_subject"] is not None,
             )
             for r in rows
         ]
@@ -202,7 +207,7 @@ class UserAdmin:
             raise RateLimitedError("Too many attempts. Try again later.", wait)
         with self._meta.connect() as con:
             row = con.execute(
-                "SELECT t.user_id, t.purpose, t.expires_at, u.disabled FROM user_tokens t"
+                "SELECT t.user_id, t.purpose, t.expires_at, u.disabled, u.role FROM user_tokens t"
                 " JOIN users u ON u.user_id = t.user_id WHERE t.token_hash = ?",
                 (_digest(token),),
             ).fetchone()
@@ -211,6 +216,10 @@ class UserAdmin:
                 and datetime.fromisoformat(row["expires_at"]) > now
                 and not row["disabled"]
             )
+            if valid and not self._password_allowed(row["role"]):
+                raise SsoRequiredError(
+                    "This account signs in with single sign-on. Use the button on this page"
+                )
             if valid:
                 con.execute(
                     "UPDATE users SET password_hash = ? WHERE user_id = ?",

@@ -68,7 +68,9 @@ def make_lab(tmp_path: Path) -> dict[str, Any]:
         )
         for i in range(8):
             msg = INJECTION if i == 0 else f"{source} event {i}"
-            line = json.dumps({"time": f"2026-10-10T10:0{i}:00Z", "message": msg})
+            line = json.dumps(
+                {"time": f"2026-10-10T10:0{i}:00Z", "message": msg, f"{source}_key": f"v{i % 2}"}
+            )
             row = norm.normalize(DecodedLine(text=line, bytes_invalid=False, truncated=False))
             assert row is not None
             rows.append(row)
@@ -199,6 +201,8 @@ def test_analyst_context_and_previews_never_include_ungranted_sources(
     ask(login(lab, "ana"))
     first, second = lab["script"].seen
     assert "hr_payroll" not in json.dumps(data_of(first[2]))
+    keys = data_of(first[2])["unmapped_keys"]  # keys of `unmapped`, from permitted rows only
+    assert any(k.get("fw_edge_key") == ["v0", "v1"] for k in keys.values()), keys
     result = second[-1]
     assert result.role == "tool" and result.data_sources == ("fw_edge",)
     rows = data_of(result)["rows"]
@@ -235,10 +239,21 @@ def test_after_two_refinements_the_last_answer_is_returned_flagged(lab: dict[str
 
 
 def test_model_prose_instead_of_json_is_an_error(lab: dict[str, Any]) -> None:
-    lab["script"].replies = [ProviderResponse(text="Sure, try DROP TABLE events", model="m")]
+    prose = ProviderResponse(text="Sure, try DROP TABLE events", model="m")
+    lab["script"].replies = [prose, prose]  # asked once more, then given up
     res = ask(login(lab, "ana"))
     assert res.status_code == 502 and res.json()["code"] == "provider_error"
-    assert llm_rows(lab)[0]["error"] == "schema_invalid"
+    assert [r["error"] for r in llm_rows(lab)] == ["schema_invalid", "schema_invalid"]
+
+
+def test_a_badly_shaped_reply_is_asked_for_once_more(lab: dict[str, Any]) -> None:
+    lab["script"].replies = [ProviderResponse(text="Here you go: SELECT 1", model="m"), answer(SQL)]
+    res = ask(login(lab, "ana"))
+    assert res.status_code == 200, res.text
+    assert res.json()["sql"] == SQL
+    second = lab["script"].seen[1]
+    assert "not one JSON object" in second[-1].content
+    assert "Here you go" not in json.dumps([m.content for m in second])  # bad reply not echoed
 
 
 def test_cloud_provider_blocked_when_local_only_source_in_scope(lab: dict[str, Any]) -> None:

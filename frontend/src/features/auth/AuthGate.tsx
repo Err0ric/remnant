@@ -36,11 +36,12 @@ export function AuthGate({ children }: AuthGateProps) {
 
   const signedIn = (next: { user: User; csrf_token?: string }) => {
     setCsrfToken(next.csrf_token ?? null);
-    client.setQueryData<AuthState>(AUTH_KEY, {
+    client.setQueryData<AuthState>(AUTH_KEY, (prev) => ({
       mode: "login",
       user: next.user,
       csrf_token: next.csrf_token ?? null,
-    });
+      sso: prev?.sso ?? null,
+    }));
   };
 
   const signOut = async () => {
@@ -54,7 +55,12 @@ export function AuthGate({ children }: AuthGateProps) {
       setCsrfToken(null);
       // Drop every cached result from the old session, then show sign-in.
       client.removeQueries({ predicate: (q) => q.queryKey[0] !== AUTH_KEY[0] });
-      client.setQueryData<AuthState>(AUTH_KEY, { mode: "login", user: null, csrf_token: null });
+      client.setQueryData<AuthState>(AUTH_KEY, (prev) => ({
+        mode: "login",
+        user: null,
+        csrf_token: null,
+        sso: prev?.sso ?? null,
+      }));
     }
   };
 
@@ -70,6 +76,7 @@ export function AuthGate({ children }: AuthGateProps) {
   if (data.mode === "login" && !data.user) {
     return (
       <SignInPage
+        sso={data.sso ?? null}
         onDone={(next) => {
           setSignOutFailed(false);
           signedIn(next);

@@ -2,6 +2,7 @@
 
     uv run python -m evals.nl_queries.run --base-url http://127.0.0.1:11434/v1 \\
         --model llama3.1:8b [--api-key-env OPENAI_API_KEY] [--ids q001,q021] [--out report.json]
+        [--thinking none]   # reasoning models such as qwen3.5: same as Thinking Off
 
 Everything runs in-process against a temporary data folder holding only the synthetic
 fixture: the real gate (classification, audit), the real Ask agent, the real engine.
@@ -10,6 +11,7 @@ The API key is read from the named environment variable, never from the command 
 
 import argparse
 import json
+import logging
 import os
 import statistics
 import sys
@@ -137,6 +139,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--trusted-local-host", action="append", default=[])
     p.add_argument("--ids", help="Comma-separated question ids to run")
     p.add_argument("--out", type=Path, help="Write the full JSON report here")
+    p.add_argument(
+        "--thinking",
+        choices=["none", "low", "medium", "high"],
+        help="Sent as reasoning_effort, as the provider's Thinking setting does (none = Off)",
+    )
     args = p.parse_args(argv)
 
     key = os.environ.get(args.api_key_env) if args.api_key_env else None
@@ -151,9 +158,10 @@ def main(argv: list[str] | None = None) -> int:
     with tempfile.TemporaryDirectory(prefix="ask-eval-") as tmp:
         app = build_lab(Path(tmp), args.trusted_local_host)
         configure_logging("WARNING")  # keep per-call logs out of the progress lines
+        logging.getLogger("httpx").setLevel(logging.WARNING)  # one line per request otherwise
         store = app.state.providers
         rec = store.add("eval", args.base_url, args.model, key)
-        store.update(rec.provider_id, None, None, None, True, None, False)
+        store.update(rec.provider_id, None, None, None, True, None, False, reasoning=args.thinking)
         results = []
         for case in cases:
             r = run_case(app.state.ask, app.state.engine, rec.provider_id, scope, case)
@@ -161,7 +169,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{mark}{r.id} {r.seconds:>6.1f}s  {r.question}", file=sys.stderr)
             results.append(r)
 
-    summary = summarise(results, f"{args.model} @ {args.base_url}")
+    thinking = f", thinking {args.thinking}" if args.thinking else ""
+    summary = summarise(results, f"{args.model} @ {args.base_url}{thinking}")
     print(json.dumps(summary, indent=2))
     if args.out:
         report = {"summary": summary, "results": [asdict(r) for r in results]}

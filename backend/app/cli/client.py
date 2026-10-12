@@ -267,6 +267,11 @@ class Api:
         data: dict[str, Any] = self._call("POST", "/api/search/compile", {"text": text})
         return data
 
+    def sources(self) -> list[str]:
+        """Source ids this user can read (the server filters by source groups)."""
+        data: list[dict[str, Any]] = self._call("GET", "/api/sources")
+        return sorted(str(s["source_id"]) for s in data)
+
     def query(self, sql: str, **extra: Any) -> dict[str, Any]:
         body = {"sql": sql, **{k: v for k, v in extra.items() if v is not None}}
         data: dict[str, Any] = self._call("POST", "/api/query", body)

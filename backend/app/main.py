@@ -40,11 +40,13 @@ from app.api.templates import router as templates_router
 from app.api.tokens import router as tokens_router
 from app.api.users import router as users_router
 from app.auth.groups import GroupStore
+from app.auth.oidc import HttpFactory, OidcClient
 from app.auth.service import AuthService
 from app.auth.tls import resolve_tls
 from app.core.branding import PRODUCT_NAME
 from app.core.config import AppConfig, is_loopback_host, load_config
 from app.core.errors import (
+    AnswerShapeError,
     AuthRequiredError,
     ClassificationBlockedError,
     CloudAckRequiredError,
@@ -72,6 +74,8 @@ from app.core.errors import (
     SetupInvalidError,
     SetupRequiredError,
     SourceRejectedError,
+    SsoRefusedError,
+    SsoRequiredError,
     TemplateInvalidError,
 )
 from app.core.logging import configure_logging
@@ -116,6 +120,8 @@ _ERROR_STATUS: dict[type[Exception], tuple[int, str]] = {
     LastAdminError: (409, "last_admin"),
     FirstUserAdminError: (409, "first_user_admin"),
     LinkInvalidError: (403, "link_invalid"),
+    SsoRequiredError: (403, "sso_required"),
+    SsoRefusedError: (400, "sso_refused"),
     InteractiveRequiredError: (403, "interactive_required"),
     ParamInvalidError: (400, "param_invalid"),
     SearchInvalidError: (400, "search_invalid"),
@@ -124,6 +130,7 @@ _ERROR_STATUS: dict[type[Exception], tuple[int, str]] = {
     PayloadTooLargeError: (413, "too_large"),
     CloudAckRequiredError: (409, "cloud_ack_required"),
     ProviderError: (502, "provider_error"),
+    AnswerShapeError: (502, "provider_error"),
     ProviderConfigError: (400, "provider_invalid"),
     ClassificationBlockedError: (403, "classification_blocked"),
 }
@@ -221,7 +228,21 @@ class SpaStaticFiles(StaticFiles):
         return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
 
 
-def create_app(config: AppConfig | None = None) -> FastAPI:
+def sso_redirect_uri(config: AppConfig) -> str:
+    """Where the identity provider sends the browser back (ADR-0013)."""
+    base = public_url(config)
+    if base is None:
+        if not is_loopback_host(config.server.host):
+            raise ConfigError(
+                "Single sign-on needs the address people open: set APP__SERVER__PUBLIC_URL"
+                " or APP__SERVER__PUBLIC_NAMES"
+            )
+        base = f"http://localhost:{config.server.port}"
+    return f"{base}/api/auth/sso/callback"
+
+
+def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = None) -> FastAPI:
+    """`sso_http` replaces the HTTP client used to reach the identity provider (tests)."""
     config = config or AppConfig()
     configure_logging()  # idempotent; logs go to stderr as JSON, never stdout
     app = FastAPI(
@@ -241,7 +262,15 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     app.add_middleware(SecurityMiddleware, https=not loopback)
     app.state.config = config
     app.state.meta = meta
-    app.state.auth = AuthService(config, meta)
+    oidc = None
+    if config.sso.enabled:
+        oidc = OidcClient(
+            config.sso,
+            sso_redirect_uri(config),
+            lambda: app.state.auth.clock(),
+            **({"http": sso_http} if sso_http else {}),
+        )
+    app.state.auth = AuthService(config, meta, oidc)
     app.state.providers = ProviderStore(
         meta, SecretBox(config.paths.data_dir), lambda: app.state.auth.clock()
     )

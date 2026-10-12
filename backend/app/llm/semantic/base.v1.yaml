@@ -10,8 +10,8 @@ terms:
     note: OCSF Authentication events with status Failure
   - term: successful login
     aliases: [successful logon, sign-in, logged in, accepted login]
-    sql: "class_uid = 3002 AND status_id = 1"
-    note: OCSF Authentication events with status Success
+    sql: "class_uid = 3002 AND activity_id = 1 AND status_id = 1"
+    note: OCSF Authentication logon (activity 1) with status Success; logoffs also succeed, so the activity matters
   - term: logout
     aliases: [logoff, sign-out]
     sql: "class_uid = 3002 AND activity_id = 2"
@@ -26,6 +26,21 @@ terms:
     aliases: [network traffic, firewall traffic, connection]
     sql: "class_uid = 4001"
     note: OCSF Network Activity
+  - term: encoded powershell
+    aliases: [encoded command, powershell -enc, base64 powershell, obfuscated powershell]
+    sql: "lower(actor_process_name) = 'powershell.exe' AND (message ILIKE '%-enc%' OR message ILIKE '%-encodedcommand%')"
+    note: PowerShell launched with an encoded command line
+  - term: blocked connection
+    aliases: [denied connection, dropped connection, blocked by the firewall, firewall block]
+    sql: "class_uid = 4001 AND status_id = 2"
+    note: Network Activity the device refused
+  - term: allowed connection
+    aliases: [permitted connection, accepted connection, allowed by the firewall]
+    sql: "class_uid = 4001 AND status_id = 1"
+  - term: invalid username
+    aliases: [invalid user, unknown user, nonexistent account]
+    sql: "class_uid = 3002 AND message ILIKE '%invalid user%'"
+    note: sshd names the account it rejected; actor_user_name still holds the name tried
   - term: dns query
     aliases: [dns lookup, dns request, name resolution]
     sql: "class_uid = 4003"

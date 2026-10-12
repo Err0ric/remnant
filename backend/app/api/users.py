@@ -25,6 +25,7 @@ class UserOut(BaseModel):
     pending: bool
     created_at: str
     last_login_at: str | None
+    sso: bool = False
 
 
 class InviteRequest(BaseModel):
@@ -65,6 +66,7 @@ def _out(r: UserRecord) -> UserOut:
         pending=r.pending,
         created_at=r.created_at,
         last_login_at=r.last_login_at,
+        sso=r.sso,
     )
 
 

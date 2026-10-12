@@ -1,5 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import { CommandPalette } from "@/components/shell/CommandPalette";
+import { savedVersion, subscribeSaved } from "@/lib/savedSeed";
+import { seedVersion, subscribeSeed } from "@/lib/searchSeed";
 import { SideNav } from "@/components/shell/SideNav";
 import { AuthGate } from "@/features/auth/AuthGate";
 import { TopBar } from "@/components/shell/TopBar";
@@ -31,6 +34,21 @@ export function App({ initialTheme, queryClient }: AppProps) {
   );
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const page = usePage();
+  const [palette, setPalette] = useState(false);
+  // A handoff into Search or Saved searches remounts that page so it takes the handoff.
+  const searchKey = useSyncExternalStore(subscribeSeed, seedVersion);
+  const savedKey = useSyncExternalStore(subscribeSaved, savedVersion);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPalette((open) => !open);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const toggleTheme = () => {
     const next: Theme = theme === "dark" ? "light" : "dark";
@@ -47,7 +65,24 @@ export function App({ initialTheme, queryClient }: AppProps) {
         <AuthGate>
           {(user, signOut) => (
             <div className="flex min-h-full flex-col">
-              <TopBar theme={theme} onToggleTheme={toggleTheme} user={user} onSignOut={signOut} />
+              <TopBar
+                theme={theme}
+                onToggleTheme={toggleTheme}
+                user={user}
+                onSignOut={signOut}
+                onOpenPalette={() => setPalette(true)}
+              />
+              {palette ? (
+                <CommandPalette
+                  page={page}
+                  isAdmin={!user || user.role === "admin"}
+                  canAudit={!user || user.role !== "analyst"}
+                  canAsk={!user || user.role !== "auditor"}
+                  theme={theme}
+                  onToggleTheme={toggleTheme}
+                  onClose={() => setPalette(false)}
+                />
+              ) : null}
               <div className="flex min-h-0 flex-1 flex-wrap">
                 <SideNav
                   // Ask is a tab of Search (ADR-0008); /ask still works and opens it.
@@ -71,7 +106,7 @@ export function App({ initialTheme, queryClient }: AppProps) {
                       isAdmin={!user || user.role === "admin"}
                     />
                   ) : page === "saved" ? (
-                    <SavedSearchesPage me={user} />
+                    <SavedSearchesPage key={savedKey} me={user} />
                   ) : page === "me" && user ? (
                     <AccountPage me={user} />
                   ) : page === "providers" && (!user || user.role === "admin") ? (
@@ -89,7 +124,7 @@ export function App({ initialTheme, queryClient }: AppProps) {
                     <SourcesPage canManage={!user || user.role === "admin"} />
                   ) : (
                     <SearchPage
-                      key={page}
+                      key={`${page}:${searchKey}`}
                       canSave={!user || user.role !== "auditor"}
                       canAsk={!user || user.role !== "auditor"}
                       isAdmin={!user || user.role === "admin"}

@@ -172,7 +172,7 @@ def test_retention_per_source_and_default_for_unknown(tmp_path: Path) -> None:
     RetentionJob(
         lake, retention_days={"short": 7, "long": 365}, default_days=5, today=lambda: TODAY
     ).run()
-    assert sorted(p.name for p in lake.iterdir()) == ["source=long"]
+    assert sorted(p.name for p in lake.iterdir() if not p.name.startswith(".")) == ["source=long"]
 
 
 def test_retention_ignores_unexpected_names_and_symlinks(tmp_path: Path) -> None:
@@ -228,7 +228,7 @@ def test_maintenance_uses_source_retention_and_schedules(tmp_path: Path) -> None
         monotonic=lambda: clock[0],
     )
     m.tick()
-    assert sorted(p.name for p in lake.iterdir()) == ["source=app"]
+    assert sorted(p.name for p in lake.iterdir() if not p.name.startswith(".")) == ["source=app"]
 
     LakeWriter(lake).write(rows("gone", real_today - timedelta(days=400), 1))
     clock[0] += 3600

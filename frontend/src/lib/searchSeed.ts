@@ -4,14 +4,33 @@
  * through the server's guard like anything typed in the editor.
  */
 export interface SearchSeed {
-  sql: string;
+  /** SQL to open on the SQL tab over all time. */
+  sql?: string;
+  /** Sources to filter to; the server still limits them to the caller's own. */
+  sources?: string[];
 }
 
 let seed: SearchSeed | null = null;
+let version = 0;
+const listeners = new Set<() => void>();
 
 export function seedSearch(value: SearchSeed): void {
   seed = value;
+  version += 1; // remounts an open Search page so it takes the seed
+  listeners.forEach((l) => l());
 }
+
+export function subscribeSeed(callback: () => void): () => void {
+  listeners.add(callback);
+  return () => listeners.delete(callback);
+}
+
+export function seedVersion(): number {
+  return version;
+}
+
+/** Asks an open Search page to run what it shows (command palette "Run"). */
+export const RUN_SEARCH_EVENT = "app:run-search";
 
 export function takeSearchSeed(): SearchSeed | null {
   const value = seed;

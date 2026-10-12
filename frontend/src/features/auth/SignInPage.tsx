@@ -5,15 +5,20 @@ import { Field } from "./Field";
 import { FirstAdminLinkPanel } from "./FirstAdminLinkPanel";
 import { firstAdminLink, forgetFirstAdminLink } from "./firstAdminLink";
 import { FormError } from "./FormError";
-import { ApiError, api, type SignedIn } from "@/lib/api";
+import { SsoButton } from "./SsoButton";
+import { ApiError, api, type SignedIn, type SsoState } from "@/lib/api";
+import { ssoMessage, takeSsoCode } from "@/lib/sso";
 
 interface SignInPageProps {
   onDone: (signedIn: SignedIn) => void;
   /** Shown above the form, for example when the last sign-out failed. */
   notice?: string | null;
+  /** Single sign-on, when the server has it turned on. */
+  sso?: SsoState | null;
 }
 
-export function SignInPage({ onDone, notice = null }: SignInPageProps) {
+export function SignInPage({ onDone, notice = null, sso = null }: SignInPageProps) {
+  const [ssoCode] = useState(takeSsoCode);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [invite, setInvite] = useState(firstAdminLink);
@@ -36,6 +41,7 @@ export function SignInPage({ onDone, notice = null }: SignInPageProps) {
         ? "Too many failed attempts. Wait a few minutes and try again."
         : login.error.message
       : null;
+  const ssoError = ssoCode ? ssoMessage(ssoCode, sso?.label ?? "single sign-on") : null;
 
   return (
     <AuthCard title="Sign in">
@@ -53,6 +59,24 @@ export function SignInPage({ onDone, notice = null }: SignInPageProps) {
           {notice}
         </p>
       ) : null}
+      {ssoError ? (
+        <div className="mt-4">
+          <FormError message={ssoError} />
+        </div>
+      ) : null}
+      {sso ? (
+        <div className="mt-4 flex flex-col gap-3">
+          <SsoButton label={sso.label} />
+          <div className="flex items-center gap-3 text-sm text-text-muted" aria-hidden="true">
+            <span className="h-px flex-1 bg-border" />
+            or
+            <span className="h-px flex-1 bg-border" />
+          </div>
+          {sso.passwords_admins_only ? (
+            <p className="text-sm text-text-muted">Password sign-in is for administrators.</p>
+          ) : null}
+        </div>
+      ) : null}
       <form className="mt-4 flex flex-col gap-4" onSubmit={submit}>
         <Field
           label="Username"
@@ -60,7 +84,7 @@ export function SignInPage({ onDone, notice = null }: SignInPageProps) {
           value={username}
           onChange={(e) => setUsername(e.target.value)}
           required
-          autoFocus
+          autoFocus={!sso}
         />
         <Field
           label="Password"
@@ -74,9 +98,13 @@ export function SignInPage({ onDone, notice = null }: SignInPageProps) {
         <button
           type="submit"
           disabled={login.isPending}
-          className="h-9 rounded bg-accent text-sm font-semibold text-white hover:brightness-110 disabled:opacity-60"
+          className={
+            sso
+              ? "h-9 rounded border border-border-strong bg-surface text-sm font-semibold text-text hover:bg-surface-head disabled:opacity-60"
+              : "h-9 rounded bg-accent text-sm font-semibold text-white hover:brightness-110 disabled:opacity-60"
+          }
         >
-          {login.isPending ? "Signing in" : "Sign in"}
+          {login.isPending ? "Signing in" : sso ? "Sign in with password" : "Sign in"}
         </button>
       </form>
       <p className="mt-4 text-sm text-text-muted">

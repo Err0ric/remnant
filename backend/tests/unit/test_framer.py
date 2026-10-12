@@ -108,3 +108,29 @@ def test_decode_carries_truncation() -> None:
 def test_max_len_must_be_positive(max_len: int) -> None:
     with pytest.raises(ValueError):
         Framer(max_len=max_len)
+
+
+def test_one_big_chunk_and_many_small_chunks_frame_the_same() -> None:
+    """The framer keeps an offset into its buffer; chunk boundaries must not matter."""
+    import random
+
+    from app.ingest.framer import Framer
+
+    rng = random.Random(3)
+    lines = [
+        f"<13>Oct  9 20:00:{i % 60:02d} h app: line {i} " + "x" * rng.randint(0, 300)
+        for i in range(5000)
+    ]
+    lines[100] = "y" * 20_000  # overlong, truncated
+    data = ("\n".join(lines) + "\nlast without newline").encode()
+    whole = list(Framer(max_len=8192, mode="newline").frames([data]))
+    cuts = sorted(rng.sample(range(1, len(data)), 400))
+    pieces = [data[a:b] for a, b in zip([0, *cuts], [*cuts, len(data)], strict=True)]
+    split = list(Framer(max_len=8192, mode="newline").frames(pieces))
+    assert whole == split
+    assert len(whole) == 5001 and whole[100].truncated and whole[-1].data == b"last without newline"
+
+    octet = b"".join(f"{len(m)} {m}".encode() for m in ["<13>a", "<13>" + "z" * 9000, "<13>c"])
+    big = list(Framer(max_len=8192).frames([octet]))
+    small = list(Framer(max_len=8192).frames([octet[i : i + 7] for i in range(0, len(octet), 7)]))
+    assert big == small and [f.truncated for f in big] == [False, True, False]

@@ -9,9 +9,14 @@ interface TopBarProps {
   onToggleTheme: () => void;
   user?: User | null;
   onSignOut?: (() => void) | null;
+  onOpenPalette?: () => void;
 }
 
-export function TopBar({ theme, onToggleTheme, user, onSignOut }: TopBarProps) {
+function isMac(): boolean {
+  return /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+}
+
+export function TopBar({ theme, onToggleTheme, user, onSignOut, onOpenPalette }: TopBarProps) {
   const next = theme === "dark" ? "light" : "dark";
   return (
     <header className="flex h-11 shrink-0 flex-wrap items-center gap-4 border-b border-black/20 bg-top px-4 text-white">
@@ -42,17 +47,18 @@ export function TopBar({ theme, onToggleTheme, user, onSignOut }: TopBarProps) {
         |
       </span>
       <span className="text-sm text-white/75">Security workspace</span>
-      {/* Placeholder for the command palette (Slice 6). Shown as unavailable, not as a
-          field: it used to look typeable and did nothing. */}
-      <div
-        aria-disabled="true"
-        title="Command palette arrives in a later release"
-        className="ml-6 flex h-7 w-full max-w-[420px] cursor-default items-center gap-2 rounded border border-dashed border-white/15 px-2.5 text-sm text-white/40"
+      <button
+        type="button"
+        onClick={onOpenPalette}
+        aria-label="Open the command palette"
+        className="ml-6 flex h-7 w-full max-w-[420px] items-center gap-2 rounded border border-white/15 px-2.5 text-left text-sm text-white/60 hover:border-white/30 hover:text-white/80"
       >
         <Search size={14} aria-hidden />
-        Search sources, saved searches, users
-        <span className="ml-auto text-[11px]">Later</span>
-      </div>
+        Go to a page, saved search, or source
+        <kbd className="ml-auto rounded-badge border border-white/20 px-1 text-[11px] text-white/60">
+          {isMac() ? "⌘K" : "Ctrl K"}
+        </kbd>
+      </button>
       <span className="ml-auto flex items-center gap-3 text-sm text-white/75">
         <span className="rounded-badge border border-white/20 px-2 text-xs font-normal">
           {window.location.host}

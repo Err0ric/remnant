@@ -31,14 +31,20 @@ class Framer:
         self._flush_partial = flush_partial
 
     def frames(self, chunks: Iterable[bytes]) -> Iterator[Frame]:
-        """Yield frames from an iterable of byte chunks."""
+        """Yield frames from an iterable of byte chunks.
+
+        `pos` marks how far into `buf` has been consumed; the buffer is cut once per chunk
+        rather than after every message, so a large chunk costs linear time, not quadratic.
+        """
         mode = self._mode
         buf = b""
+        pos = 0
         discarding_line = False  # newline mode: skipping the tail of an overlong line
         skip_bytes = 0  # octet mode: bytes of an overlong message still to discard
 
         for chunk in chunks:
-            buf += chunk
+            buf = buf[pos:] + chunk if pos else buf + chunk
+            pos = 0
             if mode == "auto":
                 if len(buf) < _DETECT_BYTES:
                     continue
@@ -47,13 +53,13 @@ class Framer:
             while True:
                 if mode == "octet":
                     if skip_bytes:
-                        dropped = min(skip_bytes, len(buf))
-                        buf, skip_bytes = buf[dropped:], skip_bytes - dropped
+                        dropped = min(skip_bytes, len(buf) - pos)
+                        pos, skip_bytes = pos + dropped, skip_bytes - dropped
                         if skip_bytes:
                             break
-                    header = _OCTET_HEADER.match(buf)
+                    header = _OCTET_HEADER.match(buf, pos)
                     if header is None:
-                        if _PARTIAL_LEN.fullmatch(buf):
+                        if _PARTIAL_LEN.fullmatch(buf, pos):
                             break  # length digits still arriving
                         mode = "newline"  # not octet-counted after all
                         continue
@@ -63,34 +69,34 @@ class Framer:
                             break
                         yield Frame(buf[start : start + self._max_len], truncated=True)
                         skip_bytes = size - self._max_len
-                        buf = buf[start + self._max_len :]
+                        pos = start + self._max_len
                         continue
                     if len(buf) - start < size:
                         break
                     yield Frame(buf[start : start + size])
-                    buf = buf[start + size :]
+                    pos = start + size
                     continue
 
                 # newline mode
                 if discarding_line:
-                    nl = buf.find(b"\n")
+                    nl = buf.find(b"\n", pos)
                     if nl < 0:
-                        buf = b""
+                        pos = len(buf)
                         break
-                    buf, discarding_line = buf[nl + 1 :], False
-                nl = buf.find(b"\n")
+                    pos, discarding_line = nl + 1, False
+                nl = buf.find(b"\n", pos)
                 if nl < 0:
-                    if len(buf) > self._max_len:
-                        yield Frame(buf[: self._max_len], truncated=True)
-                        buf, discarding_line = b"", True
+                    if len(buf) - pos > self._max_len:
+                        yield Frame(buf[pos : pos + self._max_len], truncated=True)
+                        pos, discarding_line = len(buf), True
                     break
-                line, buf = buf[:nl].rstrip(b"\r"), buf[nl + 1 :]
+                line, pos = buf[pos:nl].rstrip(b"\r"), nl + 1
                 if len(line) > self._max_len:
                     yield Frame(line[: self._max_len], truncated=True)
                 elif line:
                     yield Frame(line)
 
-        yield from self._tail(buf, mode, discarding_line, skip_bytes)
+        yield from self._tail(buf[pos:], mode, discarding_line, skip_bytes)
 
     def _tail(
         self, buf: bytes, mode: FramingMode, discarding_line: bool, skip_bytes: int

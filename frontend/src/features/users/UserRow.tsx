@@ -48,6 +48,14 @@ export function UserRow({ user, groupNames, isSelf, onResetLink }: UserRowProps)
         <td className="px-3 py-2.5">
           <span className="font-mono">{user.username}</span>
           {isSelf ? <span className="ml-2 text-sm text-text-muted">(you)</span> : null}
+          {user.sso ? (
+            <span
+              className="ml-2 rounded-badge border border-border-strong px-1.5 text-xs text-text-secondary"
+              title="Signs in with single sign-on"
+            >
+              SSO
+            </span>
+          ) : null}
         </td>
         <td className="px-3 py-2.5">
           <select

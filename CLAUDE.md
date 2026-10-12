@@ -204,7 +204,7 @@ A slice is done when every box below is checked, demoed end to end from a fresh 
 - [x] Audit log records user id for queries, exports, logins, admin changes, and LLM calls
 - [x] Per-user API tokens for the CLI, revocable
 - [x] CLI: `search`, `ask` (prints SQL, `Run? [y/N]`, never auto-runs)
-- [ ] NL eval harness with at least 100 questions over fixture data; results reported per model in the PR (SPEC 5.7) (harness and 100 questions done; per-model results pending a run on the homelab VM)
+- [x] NL eval harness with at least 100 questions over fixture data; results reported per model in the PR (SPEC 5.7) (qwen3.5:9b, Thinking off, `ask.v4`: 99% executable, 87 to 88% exact over two runs, 2.0 s median; results in `backend/evals/nl_queries/README.md`)
 - [x] Semantic layer YAML loaded into Ask prompts; verified saved searches used as few-shot examples
 - [x] Self-check loop: guard plus preview, up to two automatic refinements, every attempt audited
 
@@ -239,12 +239,12 @@ A slice is done when every box below is checked, demoed end to end from a fresh 
 - [x] Anthropic adapter if not already landed (unit-tested against a fake server; not yet tried against the live API)
 
 ### Slice 6: polish and release
-- [ ] Light mode complete per `docs/DESIGN.md`
-- [ ] Command palette covers navigation, sources, saved searches, run, provider switch
-- [ ] CLI `tui` (Textual): query box, results table, tail pane
-- [ ] Install guides: team VM (Compose and systemd) and single user
-- [ ] README states tested scale (ingest rate, lake size, query latency on named hardware)
-- [ ] SBOM generated, images pinned, release tagged `v0.1.0`
+- [x] Light mode complete per `docs/DESIGN.md` (every page checked in light; all text tokens meet WCAG AA 4.5:1 in both themes)
+- [x] Command palette covers navigation, sources, saved searches, run, provider switch
+- [x] CLI `tui` (Textual): query box, results table, tail pane (baseline; optional `tui` extra)
+- [ ] Install guides: team VM (Compose and systemd) and single user (written in `docs/install/`; Compose and single-user tried; the systemd unit's command and environment tried, the unit itself pending a run on a real host)
+- [x] README states tested scale (ingest rate, lake size, query latency on named hardware) (2 vCPU cloud VM and 4 vCPU homelab container via `scripts/bench.py`)
+- [ ] SBOM generated, images pinned, release tagged `v0.1.0` (SBOM from lockfiles in every CI run via `scripts/sbom.py`; image digests and the tag pending)
 
 ### Slice 7 (v0.2): connectors
 - [ ] `Connector` protocol, scheduler in the ingest worker, checkpoints, de-duplication, backoff, health on the Sources page

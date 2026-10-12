@@ -5,7 +5,7 @@ import { api, type CompiledSearch, type QueryRequest, type QueryResult } from "@
 import { DEFAULT_SQL, rangeStart, type TimeRangeId } from "@/lib/search";
 import { navigate } from "@/lib/route";
 import { seedSchedule } from "@/lib/scheduleSeed";
-import { takeSearchSeed } from "@/lib/searchSeed";
+import { RUN_SEARCH_EVENT, takeSearchSeed } from "@/lib/searchSeed";
 import {
   addTerm,
   filterTerm,
@@ -53,8 +53,9 @@ export function SearchPage({
 }: SearchPageProps) {
   // A handoff from another page (rule matches) opens on the SQL tab over all time.
   const [seed] = useState(takeSearchSeed);
+  const sqlSeed = seed?.sql !== undefined;
   const [tabState, setTabState] = useState<SearchTab>(() =>
-    seed ? "sql" : (initialTab ?? storedTab()),
+    sqlSeed ? "sql" : (initialTab ?? storedTab()),
   );
   const tab: SearchTab = tabState === "ask" && !canAsk ? "simple" : tabState;
   const setTab = (t: SearchTab) => {
@@ -66,8 +67,8 @@ export function SearchPage({
   const [compiled, setCompiled] = useState<(CompiledSearch & { text: string }) | null>(null);
   const [sql, setSql] = useState(seed?.sql ?? DEFAULT_SQL);
   const [askAnswer, setAskAnswer] = useState<{ sql: string; question: string } | null>(null);
-  const [range, setRange] = useState<TimeRangeId>(seed ? "all" : "24h");
-  const [sources, setSources] = useState<string[]>([]);
+  const [range, setRange] = useState<TimeRangeId>(sqlSeed ? "all" : "24h");
+  const [sources, setSources] = useState<string[]>(seed?.sources ?? []);
   const [lastRun, setLastRun] = useState<Date | null>(null);
   const [saving, setSaving] = useState(false);
   // Schedule saves first (a schedule runs a saved search), then opens the schedule form.
@@ -137,9 +138,18 @@ export function SearchPage({
 
   // Run once on open so the page shows recent events immediately.
   useEffect(() => {
-    if (seed || tab === "sql") runSql(sql);
+    if (sqlSeed || tab === "sql") runSql(sql);
     else simple.mutate({ text: "" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // "Run" from the command palette runs whatever this page shows.
+  const runLatest = useRef(runCurrent);
+  runLatest.current = runCurrent;
+  useEffect(() => {
+    const onRun = () => runLatest.current();
+    window.addEventListener(RUN_SEARCH_EVENT, onRun);
+    return () => window.removeEventListener(RUN_SEARCH_EVENT, onRun);
   }, []);
 
   const actions = useMemo<FieldActions>(

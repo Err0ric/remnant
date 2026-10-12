@@ -391,6 +391,12 @@ def test_an_answer_cut_off_at_the_output_limit_says_so(lab: Lab) -> None:
     lab.reply[0] = ProviderResponse(text='{"sql": "SELE', model="m", truncated=True)
     with pytest.raises(ProviderError, match="even with Thinking set to Off"):
         lab.gate.call(request(lab, pid, [], response_model=Answer))
+    # Cut off after a handful of tokens: the context window filled, not the output limit.
+    lab.reply[0] = ProviderResponse(
+        text='{"sql": "SELE', model="m", truncated=True, prompt_tokens=4090, completion_tokens=6
+    )
+    with pytest.raises(ProviderError, match=r"context window.*4090 tokens.*OLLAMA_CONTEXT_LENGTH"):
+        lab.gate.call(request(lab, pid, [], response_model=Answer))
 
 
 def test_tools_only_for_ask_and_only_the_two_named(lab: Lab) -> None:
@@ -604,3 +610,15 @@ def test_citing_purposes_need_the_sent_ids_and_others_may_not_carry_them(lab: La
         lab.gate.call(request(lab, pid, [], citable_event_ids=SENT))
     assert [r["error"] for r in calls(lab)] == ["request_invalid"] * 2
     assert all(f.seen == [] for f in lab.fakes)
+
+
+def test_unescaped_backslashes_in_sql_are_repaired() -> None:
+    from app.llm.gate import answer_json
+
+    text = (
+        '{"sql": "SELECT 1 WHERE regexp_matches(ip, \'^(10\\.|192\\.168\\.)\')", "note": "a\\\\b"}'
+    )
+    fixed = json.loads(answer_json(text))
+    assert fixed["sql"] == "SELECT 1 WHERE regexp_matches(ip, '^(10\\.|192\\.168\\.)')"
+    assert fixed["note"] == "a\\b"  # a valid escaped backslash is left alone
+    assert answer_json('{"sql": "x"} and {"sql": "y"}') == '{"sql": "x"} and {"sql": "y"}'

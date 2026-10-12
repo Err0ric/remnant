@@ -20,6 +20,8 @@ All values are synthetic. Public addresses come only from RFC 5737 ranges, inter
 ```
 cd backend
 uv run python -m evals.nl_queries.run --base-url http://127.0.0.1:11434/v1 --model llama3.1:8b --out report.json
+# reasoning models (qwen3.5, deepseek-r1): --thinking none, the same as Thinking Off in AI providers
+uv run python -m evals.nl_queries.run --base-url http://127.0.0.1:11434/v1 --model qwen3.5:9b --thinking none --out qwen35-9b.json
 # cloud: the key comes from an environment variable, never the command line
 OPENAI_API_KEY=... uv run python -m evals.nl_queries.run --base-url https://api.openai.com/v1 \
     --model gpt-4o-mini --api-key-env OPENAI_API_KEY
@@ -35,6 +37,10 @@ A generated result counts as exact when some of its columns, one for each refere
 
 Record each run in the PR that changes Ask, and in the table below.
 
-| Model | Provider | Executable | Exact | Median s | Date |
-|---|---|---|---|---|---|
-| (pending first run on the homelab VM) | | | | | |
+| Model | Provider | Thinking | Executable | Exact | Median s | Date |
+|---|---|---|---|---|---|---|
+| qwen3.5:9b, `ask.v4` + answer-shape retry (#125), run 2 | Ollama 0.34.1, homelab VM (local), context 16384 | Off (`none`) | 99% | 87% | 2.04 (p90 3.27) | 2026-10-11 |
+| qwen3.5:9b, `ask.v4` + answer-shape retry (#125), run 1 | Ollama 0.34.1, homelab VM (local), context 16384 | Off (`none`) | 99% | 88% | 2.04 (p90 3.57) | 2026-10-11 |
+| qwen3.5:9b, `ask.v4` | Ollama 0.34.1, homelab VM (local), context 16384 | Off (`none`) | 95% | 85% | 1.98 | 2026-10-11 |
+| qwen3.5:9b, `ask.v3` | Ollama 0.34.1, homelab VM (local), context 16384 | Off (`none`) | 100% | 83% | 2.56 (p90 3.73) | 2026-10-11 |
+| qwen3.5:9b, `ask.v2` | Ollama 0.34.1, homelab VM (local), default context | Off (`none`) | 96% | 66% | 2.56 (p90 4.21) | 2026-10-11 |

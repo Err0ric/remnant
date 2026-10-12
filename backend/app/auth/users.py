@@ -1,6 +1,7 @@
 """User accounts in the metadata database."""
 
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
@@ -82,7 +83,11 @@ class UserStore:
             ).fetchone()
         return _user(row) if row else None
 
-    def authenticate(self, username: str, password: str) -> User | None:
+    def authenticate(
+        self, username: str, password: str, allowed: Callable[[Role], bool] | None = None
+    ) -> User | None:
+        """The user if the password matches. When `allowed` refuses the role, the user is
+        still returned (so the caller can say why) but nothing is recorded as a sign-in."""
         with self._meta.connect() as con:
             row = con.execute(
                 "SELECT user_id, username, role, disabled, password_hash FROM users"
@@ -94,6 +99,8 @@ class UserStore:
         user = _user(row)
         if user.disabled:
             return None
+        if allowed is not None and not allowed(user.role):
+            return user
         with self._meta.connect() as con:
             con.execute(
                 "UPDATE users SET last_login_at = ? WHERE user_id = ?",

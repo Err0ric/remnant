@@ -10,10 +10,10 @@ import os
 import re
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 from app.core.errors import ConfigError
 
@@ -46,6 +46,7 @@ class ServerConfig(_Strict):
     public_url: str | None = Field(default=None, max_length=300, pattern=r"^https?://[^\s]+$")
 
     _split_names = field_validator("public_names", mode="before")(_split_list)
+    _blank_url = field_validator("public_url", mode="before")(lambda v: v or None)
 
 
 class AuthConfig(_Strict):
@@ -53,6 +54,58 @@ class AuthConfig(_Strict):
     cli_token_days: int = Field(default=30, ge=1, le=365)
     login_max_failures: int = Field(default=5, ge=1, le=100)
     login_window_s: int = Field(default=300, ge=10, le=86400)
+
+
+_MULTI_TENANT = re.compile(r"/(common|organizations|consumers|\{tenantid\})(/|$)", re.IGNORECASE)
+
+
+class SsoConfig(_Strict):
+    """Optional OpenID Connect sign-in (ADR-0013). Off unless `enabled` is true."""
+
+    # Validation errors must never echo the client secret back into a log.
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    enabled: bool = False
+    # One tenant's issuer, e.g. https://login.microsoftonline.com/<tenant-id>/v2.0
+    issuer: str | None = Field(default=None, max_length=300)
+    client_id: str | None = Field(default=None, max_length=200)
+    client_secret: SecretStr | None = None
+    label: str = Field(default="Microsoft", min_length=1, max_length=40)
+    # Group object ids; when set, the ID token's groups claim must contain one of them.
+    required_groups: list[str] = Field(default_factory=list)
+    # With SSO on, who may still sign in with a password ("admins" is the break-glass path).
+    password_login: Literal["admins", "everyone"] = "admins"  # noqa: S105  # a policy name, not a secret
+
+    _split_groups = field_validator("required_groups", mode="before")(_split_list)
+    # Compose passes unset variables as empty strings.
+    _blank = field_validator("issuer", "client_id", "client_secret", mode="before")(
+        lambda v: v or None
+    )
+
+    @model_validator(mode="after")
+    def _complete(self) -> "SsoConfig":
+        if not self.enabled:
+            return self
+        missing = [
+            name
+            for name, value in (
+                ("issuer", self.issuer),
+                ("client_id", self.client_id),
+                ("client_secret", self.client_secret),
+            )
+            if not value
+        ]
+        if missing:
+            raise ValueError(f"SSO is enabled but {', '.join(missing)} is not set")
+        issuer = str(self.issuer)
+        if not issuer.startswith("https://"):
+            raise ValueError("the SSO issuer must be an https:// URL")
+        if _MULTI_TENANT.search(issuer):
+            raise ValueError(
+                "the SSO issuer must name one tenant (use the tenant id, not common,"
+                " organizations, or consumers)"
+            )
+        return self
 
 
 class PathsConfig(_Strict):
@@ -116,6 +169,7 @@ class SchedulesConfig(_Strict):
 class AppConfig(_Strict):
     server: ServerConfig = Field(default_factory=ServerConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
+    sso: SsoConfig = Field(default_factory=SsoConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)
     ingest: IngestConfig = Field(default_factory=IngestConfig)
     maintenance: MaintenanceConfig = Field(default_factory=MaintenanceConfig)

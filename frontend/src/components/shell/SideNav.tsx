@@ -1,70 +1,7 @@
 import type { MouseEvent } from "react";
 import { cn } from "@/lib/cn";
-import { navigate, pathFor, type PageId } from "@/lib/route";
-
-interface NavItem {
-  id: string;
-  label: string;
-  ready: boolean;
-  page?: PageId;
-  adminOnly?: boolean;
-  /** Admins and auditors (SPEC 3.6). */
-  auditOnly?: boolean;
-}
-
-interface NavGroup {
-  label: string;
-  items: NavItem[];
-}
-
-// Plain labels only (CLAUDE.md rule 12). Items not built yet stay visible but inert.
-const GROUPS: NavGroup[] = [
-  {
-    label: "General",
-    items: [
-      { id: "overview", label: "Overview", ready: true, page: "overview" },
-      { id: "dashboard", label: "Dashboard", ready: true, page: "dashboard" },
-    ],
-  },
-  {
-    label: "Investigate",
-    items: [
-      { id: "search", label: "Search", ready: true, page: "search" },
-      { id: "investigations", label: "Investigations", ready: false },
-      { id: "saved", label: "Saved searches", ready: true, page: "saved" },
-    ],
-  },
-  {
-    label: "Detect",
-    items: [
-      { id: "rules", label: "Detection rules", ready: true, page: "rules" },
-      { id: "schedules", label: "Schedules", ready: true, page: "schedules" },
-    ],
-  },
-  {
-    label: "Configuration",
-    items: [
-      { id: "sources", label: "Sources", ready: true, page: "sources" },
-      { id: "templates", label: "Templates", ready: true, page: "templates", adminOnly: true },
-      { id: "users", label: "Users and access", ready: true, page: "users", adminOnly: true },
-      {
-        id: "providers",
-        label: "AI providers",
-        ready: true,
-        page: "providers",
-        adminOnly: true,
-      },
-      {
-        id: "alerts",
-        label: "Alert targets",
-        ready: true,
-        page: "alerts",
-        adminOnly: true,
-      },
-      { id: "audit", label: "Audit log", ready: true, page: "audit", auditOnly: true },
-    ],
-  },
-];
+import { NAV_GROUPS as GROUPS } from "@/lib/nav";
+import { navigate, pathFor } from "@/lib/route";
 
 interface SideNavProps {
   active: string;

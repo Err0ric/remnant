@@ -481,6 +481,13 @@ MIGRATIONS: tuple[str, ...] = (
     ALTER TABLE llm_providers ADD COLUMN reasoning TEXT
         CHECK (reasoning IS NULL OR reasoning IN ('none', 'low', 'medium', 'high'));
     """,
+    # 26: optional single sign-on (ADR-0013): the provider identity bound through an invite.
+    """
+    ALTER TABLE users ADD COLUMN sso_issuer TEXT;
+    ALTER TABLE users ADD COLUMN sso_subject TEXT;
+    CREATE UNIQUE INDEX users_sso_identity ON users (sso_issuer, sso_subject)
+        WHERE sso_subject IS NOT NULL;
+    """,
 )
 
 

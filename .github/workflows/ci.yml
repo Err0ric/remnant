@@ -30,6 +30,12 @@ jobs:
       - run: uv run ruff check app tests evals
       - run: uv run mypy
       - run: uv run pytest -q
+      - name: SBOM (CycloneDX, runtime packages and base images)
+        run: uv run python ../scripts/sbom.py --out ../sbom.cdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.cdx.json
 
   frontend:
     runs-on: ubuntu-latest

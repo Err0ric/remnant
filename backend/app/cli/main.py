@@ -25,6 +25,7 @@ from app.cli.client import (
     store_token,
 )
 from app.cli.output import OutputFormat, clean, clean_block, render
+from app.cli.tailing import TAIL_COLUMNS, TailCursor
 from app.core.branding import PRODUCT_NAME
 
 app = typer.Typer(
@@ -39,7 +40,6 @@ client_factory: ClientFactory = default_client
 _SOURCE = re.compile(r"[a-z0-9][a-z0-9_]{0,63}")
 _SINCE = re.compile(r"(\d+)([smhd])")
 _UNITS = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
-TAIL_COLUMNS = "time, source_id, device_hostname, actor_process_name, message"
 
 ServerOpt = Annotated[
     str | None,
@@ -73,8 +73,8 @@ def _fail(exc: ApiError) -> None:
     raise typer.Exit(1)
 
 
-def _print(data: dict[str, Any], fmt: OutputFormat, reverse: bool = False) -> None:
-    rows = list(reversed(data["rows"])) if reverse else data["rows"]
+def _print(data: dict[str, Any], fmt: OutputFormat) -> None:
+    rows = data["rows"]
     if rows or fmt == "table":
         typer.echo(render(data["columns"], rows, fmt, shutil.get_terminal_size((160, 40)).columns))
     if fmt == "table":
@@ -336,53 +336,54 @@ def tail(
             "source ids are lowercase letters, digits, and _", param_hint="SOURCE"
         )
     api = _api(server)
-    cols = "raw" if fmt == "raw" else TAIL_COLUMNS
-    extra = f" AND ({where})" if where else ""
     start = _since(since)
-    # source is validated above; the server guard and sandbox apply to the whole query.
-    base = f"FROM events WHERE source_id = '{source}'{extra}"
+    cursor = TailCursor(
+        api,
+        source,
+        columns="raw" if fmt == "raw" else TAIL_COLUMNS,
+        where=where,
+        start=start.isoformat() if start else None,
+    )
     try:
-        data = api.query(
-            f"SELECT {cols}, time_observed AS _seen, event_id AS _id {base} "
-            f"ORDER BY coalesce(time, time_observed) DESC, time_observed DESC LIMIT {lines}",
-            start=start.isoformat() if start else None,
-        )
+        data = cursor.latest(lines)
     except ApiError as exc:
         _fail(exc)
         return
-    seen_ids = {r[-1] for r in data["rows"]}
-    newest = max((r[-2] for r in data["rows"]), default=None)
-    _print(_strip_cursor(data), fmt, reverse=True)
+    _print(data, fmt)
 
     while follow:
         time.sleep(interval)
-        since_clause = f" AND time_observed >= TIMESTAMPTZ '{_iso(newest)}'" if newest else ""
         try:
-            data = api.query(
-                f"SELECT {cols}, time_observed AS _seen, event_id AS _id {base}{since_clause} "
-                "ORDER BY time_observed, coalesce(time, time_observed) LIMIT 1000"
-            )
+            data = cursor.poll()
         except ApiError as exc:
             _fail(exc)
             return
-        fresh = [r for r in data["rows"] if r[-1] not in seen_ids]
-        if fresh:
-            seen_ids.update(r[-1] for r in fresh)
-            newest = max(r[-2] for r in fresh)
-            data["rows"] = fresh
-            out = _strip_cursor(data)
+        if data["rows"]:
             width = shutil.get_terminal_size((160, 40)).columns
-            typer.echo(render(out["columns"], out["rows"], fmt, width, header=False))
+            typer.echo(render(data["columns"], data["rows"], fmt, width, header=False))
 
 
-def _iso(value: str) -> str:
-    """Re-render a server timestamp so only a valid ISO value reaches the SQL text."""
-    return datetime.fromisoformat(value).isoformat()
-
-
-def _strip_cursor(data: dict[str, Any]) -> dict[str, Any]:
-    """Drop the helper columns (_seen, _id) used for follow mode."""
-    return {**data, "columns": data["columns"][:-2], "rows": [r[:-2] for r in data["rows"]]}
+@app.command()
+def tui(
+    source: Annotated[
+        str | None, typer.Option("--source", "-s", help="Source to follow in the tail pane")
+    ] = None,
+    since: SinceOpt = None,
+    interval: Annotated[float, typer.Option(help="Seconds between tail polls", min=0.5)] = 2.0,
+    server: ServerOpt = None,
+) -> None:
+    """Full-screen terminal view: query box, results table, and a live tail pane."""
+    if source is not None and not _SOURCE.fullmatch(source):
+        raise typer.BadParameter(
+            "source ids are lowercase letters, digits, and _", param_hint="--source"
+        )
+    try:
+        from app.cli.tui import Tui
+    except ImportError as exc:  # textual is an optional extra
+        typer.secho("The terminal UI needs the tui extra: uv sync --extra tui", err=True, fg="red")
+        raise typer.Exit(1) from exc
+    start = _since(since)
+    Tui(_api(server), source, start.isoformat() if start else None, interval).run()
 
 
 def main() -> None:

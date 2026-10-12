@@ -2,6 +2,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
 import { ApiError, api, type AskResponse, type AskTurn } from "@/lib/api";
 import { navigate } from "@/lib/route";
+import { setAskProvider, useAskProvider } from "@/lib/askProvider";
 import { AnswerPanel } from "@/features/ask/AnswerPanel";
 
 const MAX_TURNS = 3;
@@ -30,12 +31,16 @@ function askError(err: unknown): string {
  * Pasted Kusto KQL or SPL is a fair question too: the model translates it (ADR-0009).
  */
 export function AskPanel({ start, sources, isAdmin, onRun, onAnswer, pending }: AskPanelProps) {
-  const [providerId, setProviderId] = useState<string>("");
+  const providerId = useAskProvider();
   const [question, setQuestion] = useState("");
   const [turns, setTurns] = useState<AskTurn[]>([]);
   const [answer, setAnswer] = useState<AskResponse | null>(null);
   const providers = useQuery({ queryKey: ["ask-providers"], queryFn: api.askProviders });
-  const chosen = providerId || providers.data?.[0]?.provider_id || "";
+  // The remembered choice, while that provider is still enabled; else the first one.
+  const chosen =
+    providers.data?.find((p) => p.provider_id === providerId)?.provider_id ??
+    providers.data?.[0]?.provider_id ??
+    "";
 
   const ask = useMutation({
     mutationFn: (q: string) =>
@@ -98,7 +103,7 @@ export function AskPanel({ start, sources, isAdmin, onRun, onAnswer, pending }: 
           <select
             id="ask-provider"
             value={chosen}
-            onChange={(e) => setProviderId(e.target.value)}
+            onChange={(e) => setAskProvider(e.target.value)}
             disabled={!providers.data?.length}
             className="h-8 rounded border border-border-strong bg-surface px-2 text-sm"
           >

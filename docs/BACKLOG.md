@@ -6,7 +6,6 @@ Items noted during a slice that belong to a later slice. Move into the slice pla
 |---|---|---|
 | Pin Docker base images by digest | 6 | Slice 1 skeleton |
 | Self-hosted Lucide subset or tree-shake audit | 6 | Slice 1 skeleton |
-| Command palette (Ctrl+K) wired up; header shows a hint only | 6 | Slice 1 skeleton |
 | Investigate action on expanded rows wired to Investigation pages | 4 | Search UI PR |
 | Read-only MCP server (SPEC 3.8, ADR-0003) | 7 | Roadmap, 2026-10-10 |
 | Octet-counted framing for file sources (watcher reads newline-framed files; octet counting is a TCP framing, covered in the framer for the Slice 7 listener) | 7 | Slice 1 review |
@@ -31,3 +30,6 @@ Items noted during a slice that belong to a later slice. Move into the slice pla
 | Verification endpoint: an agent submits a claim with `event_ids` (and optionally its query); the server checks each id exists in the caller's view and returns the events, so agent reports are checked against the lake (the SPEC 7 citation check, offered to outside agents) | 7 | Review feedback, 2026-10-11 |
 | Outsider install test: someone other than the author installs from the GitHub README on a fresh host with no help, and every gap found is fixed in the install guide | 6 | Review feedback, 2026-10-11 |
 | Re-parse a source's stored events with its current parser (from `raw`) into new partitions, replacing the old rows; admin only, audited, with a dry-run count first (ADR-0012 row 8) | 6 | ADR-0012, 2026-10-11 |
+| CLI device-code sign-in for SSO users (OAuth device authorization grant), so `remnant login` works without creating a token in the web UI (ADR-0013 row 9) | 7 | ADR-0013, 2026-10-11 |
+| SAML 2.0 sign-in, only if an identity provider without OIDC is asked for (ADR-0013 row 1) | Later | ADR-0013, 2026-10-11 |
+| Built-in quiet-source check: per-source "expect events every N minutes" on the Sources page, one alert per source to chosen targets, cleared when events resume; proposed in ADR-0014 (waiting for review). Until then, a schedule flagged below 1 does it (docs/install/quiet-sources.md) | 7 | Overnight work, 2026-10-12 |

@@ -240,3 +240,4 @@ frontend/dist/
 !backend/tests/fixtures/logs/**
 !backend/tests/fixtures/mixed/
 !backend/tests/fixtures/mixed/**
+sbom.cdx.json

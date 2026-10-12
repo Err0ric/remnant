@@ -12,16 +12,16 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
-from app.core.errors import AppError, ProviderError
+from app.core.errors import AnswerShapeError, AppError, ProviderError
 from app.core.schema import COLUMNS
 from app.engine.duckdb import QueryEngine, QueryResult, QueryScope
 from app.llm.gate import GateRequest, LLMGate, data_message
 from app.llm.provider import ChatMessage, ToolCall
 from app.llm.semantic import Vocabulary
 
-PROMPT = "ask.v2"  # v2: translating Kusto KQL and SPL (ADR-0009 row 5)
+PROMPT = "ask.v4"  # v4: distinct counts, INTERSECT, hosts and ports; v3 answer shapes
 TOOLS = ["get_schema", "preview_query"]
 PREVIEW_ROWS = 5
 MAX_TOOL_ROUNDS = 4
@@ -45,10 +45,33 @@ PROFILE_COLUMNS = (
     "actor_process_name",
     "device_hostname",
 )
+RESHAPE_REMINDER = (
+    "Your last reply was not one JSON object in the required shape. Reply with only"
+    ' {"sql": "...", "explanation": "...", "assumptions": ["..."]} and nothing before or after'
+    " it. Inside JSON strings, write a backslash as two backslashes."
+)
 # Room for a reasoning model's thinking plus the answer; the reply is still capped at 64 KB.
 ASK_MAX_TOKENS = 4_096
 PROFILE_MAX_DISTINCT = 50  # columns with more distinct values are not sampled
 PROFILE_VALUES = 20
+UNMAPPED_KEYS = 30  # top-level keys of `unmapped` shown per question, most common first
+UNMAPPED_VALUES = 5  # sample values for a key with at most PROFILE_VALUES distinct values
+# Keys of the `unmapped` JSON per OCSF class, with how many distinct values each holds. The
+# key names come from log data and only ever travel as values, never into the SQL text.
+_UNMAPPED_SQL = (  # LIMIT 30 is UNMAPPED_KEYS, d <= 20 is PROFILE_VALUES
+    "WITH kv AS (SELECT class_uid, k, json_extract_string(unmapped, '$.' || k) AS v"
+    " FROM (SELECT class_uid, unmapped, unnest(json_keys(unmapped)) AS k FROM events"
+    " WHERE unmapped IS NOT NULL AND json_valid(unmapped))),"
+    " stats AS (SELECT class_uid, k, count(*) AS n, approx_count_distinct(v) AS d FROM kv"
+    " GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 30),"
+    " small AS (SELECT kv.class_uid, kv.k,"
+    " list(DISTINCT kv.v ORDER BY kv.v) FILTER (WHERE kv.v IS NOT NULL) AS vs"
+    " FROM kv JOIN stats ON kv.k = stats.k AND kv.class_uid IS NOT DISTINCT FROM stats.class_uid"
+    " WHERE stats.d <= 20 GROUP BY 1, 2)"
+    " SELECT s.class_uid, s.k, s.n, s.d, sm.vs FROM stats s"
+    " LEFT JOIN small sm ON s.k = sm.k AND s.class_uid IS NOT DISTINCT FROM sm.class_uid"
+    " ORDER BY s.n DESC"
+)
 
 
 class AskAnswer(BaseModel):
@@ -59,6 +82,26 @@ class AskAnswer(BaseModel):
     assumptions: list[Annotated[str, StringConstraints(max_length=500)]] = Field(
         default_factory=list, max_length=10
     )
+
+    # Small models get the prose fields loosely right: a string for the list, an over-long
+    # note, a null. Those are trimmed to fit; `sql` stays strict, since it is what runs.
+    @field_validator("explanation", mode="before")
+    @classmethod
+    def _explanation(cls, value: object) -> object:
+        if value is None:
+            return ""
+        return value[:4_000] if isinstance(value, str) else value
+
+    @field_validator("assumptions", mode="before")
+    @classmethod
+    def _assumptions(cls, value: object) -> object:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            value = [value] if value.strip() else []
+        if isinstance(value, list):
+            return [v[:500] if isinstance(v, str) else v for v in value[:10]]
+        return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,21 +194,33 @@ class AskAgent:
         call_ids: list[str],
         budget: list[int],
     ) -> AskAnswer:
-        for round_no in range(MAX_TOOL_ROUNDS + 1):
+        reshaped = False
+        round_no = 0
+        while round_no <= MAX_TOOL_ROUNDS:
             last = round_no == MAX_TOOL_ROUNDS
-            result = self._gate.call(
-                GateRequest(
-                    actor_id=actor_id,
-                    provider_id=provider_id,
-                    purpose="ask",
-                    scope=scope,
-                    prompt=PROMPT,
-                    messages=list(messages),
-                    tools=None if last else TOOLS,
-                    response_model=AskAnswer,
-                    max_tokens=ASK_MAX_TOKENS,
+            try:
+                result = self._gate.call(
+                    GateRequest(
+                        actor_id=actor_id,
+                        provider_id=provider_id,
+                        purpose="ask",
+                        scope=scope,
+                        prompt=PROMPT,
+                        messages=list(messages),
+                        tools=None if last else TOOLS,
+                        response_model=AskAnswer,
+                        max_tokens=ASK_MAX_TOKENS,
+                    )
                 )
-            )
+            except AnswerShapeError:
+                if reshaped:
+                    raise
+                # Asked once more with a reminder of the shape. The bad reply is not sent
+                # back (it is audited by the gate and may echo log content).
+                reshaped = True
+                messages.append(ChatMessage("user", RESHAPE_REMINDER))
+                continue
+            round_no += 1
             call_ids.append(result.call_id)
             calls = result.response.tool_calls
             if not calls:
@@ -224,6 +279,7 @@ class AskAgent:
         context = {
             "schema": _schema(),
             "sample_values": values,
+            "unmapped_keys": self._unmapped_keys(scope),
             "time_range": {"start": _iso(scope.start), "end": _iso(scope.end)},
             "sources": sources,
             "earlier_turns": [
@@ -231,6 +287,25 @@ class AskAgent:
             ],
         }
         return context, sources
+
+    def _unmapped_keys(self, scope: QueryScope) -> dict[str, dict[str, list[Any] | None]]:
+        """Per OCSF class, the top-level keys found in `unmapped`, with a few sample values
+        when a key has few distinct values (None when it has many). Best effort."""
+        try:
+            res = self._engine.run(
+                _UNMAPPED_SQL, scope, row_cap=UNMAPPED_KEYS, timeout_s=PROFILE_TIMEOUT_S
+            )
+        except AppError:
+            return {}
+        out: dict[str, dict[str, list[Any] | None]] = {}
+        for class_uid, key, _, distinct, vals in res.rows:
+            if not isinstance(key, str) or len(key) > 64:
+                continue
+            small = isinstance(vals, list) and int(distinct or 0) <= PROFILE_VALUES
+            sample = [_cell(v) for v in vals[:UNMAPPED_VALUES]] if small else None
+            label = "unclassified" if class_uid is None else str(class_uid)
+            out.setdefault(label, {})[key] = sample
+        return out
 
     def _check(
         self, sql: str, scope: QueryScope

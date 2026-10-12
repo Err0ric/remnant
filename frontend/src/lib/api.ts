@@ -97,10 +97,19 @@ export interface User {
   role: "admin" | "analyst" | "auditor";
 }
 
+/** Single sign-on, when the server has it turned on (ADR-0013). */
+export interface SsoState {
+  /** Button text, for example "Microsoft". */
+  label: string;
+  /** With SSO on, only administrators may use a password. */
+  passwords_admins_only: boolean;
+}
+
 export interface AuthState {
   mode: AuthMode;
   user: User | null;
   csrf_token: string | null;
+  sso?: SsoState | null;
 }
 
 export interface SignedIn {
@@ -292,6 +301,8 @@ export interface ManagedUser {
   pending: boolean;
   created_at: string;
   last_login_at: string | null;
+  /** Signs in with single sign-on. */
+  sso?: boolean;
 }
 
 /** A group suggested from template categories or vendors (SPEC 3.6). Never applied on its own. */
@@ -798,6 +809,12 @@ export const api = {
   login: (body: { username: string; password: string }) =>
     request<SignedIn>("/api/auth/login", post(body)),
   logout: () => request<void>("/api/auth/logout", { method: "POST" }),
+  /** Where to send the browser for single sign-on; a link token finishes an invite or reset. */
+  startSso: (linkToken?: string) =>
+    request<{ url: string }>(
+      "/api/auth/sso/start",
+      post(linkToken ? { link_token: linkToken } : {}),
+    ),
   sources: () => request<Source[]>("/api/sources"),
   templates: () => request<TemplateInfo[]>("/api/templates"),
   drafts: () => request<DraftInfo[]>("/api/templates/drafts"),

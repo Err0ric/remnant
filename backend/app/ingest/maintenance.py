@@ -5,6 +5,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from app.ingest.compaction import CompactionReport, Compactor
+from app.ingest.lakelock import lake_lock
 from app.ingest.retention import RetentionJob, RetentionReport
 from app.ingest.sources import SourceStore
 
@@ -38,7 +39,13 @@ class LakeMaintenance:
         return RetentionJob(self._lake, days, default_days=self._orphan_days).run()
 
     def tick(self) -> None:
-        """Run whichever job is due. Called from the server loop."""
+        """Run whichever job is due. Called from the server loop. While a backup holds
+        the lake lock, the jobs wait for the next tick."""
+        with lake_lock(self._lake, wait=False) as held:
+            if held:
+                self._run_due()
+
+    def _run_due(self) -> None:
         now = self._now()
         if self._last_retention is None or now - self._last_retention >= self._retention_every:
             self.apply_retention()

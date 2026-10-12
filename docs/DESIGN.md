@@ -39,8 +39,8 @@ Dark is the default. Light is a first-class theme with its own values, not an in
 | `--border` | `#272D38` | `#E1E4EA` | Default 1px borders and row dividers |
 | `--border-strong` | `#3A4250` | `#C3C9D4` | Inputs, secondary buttons |
 | `--text` | `#E6E9EF` | `#1D2330` | Primary text and data |
-| `--text-secondary` | `#A3ACBA` | `#5B6475` | Labels, breadcrumbs, metadata |
-| `--text-muted` | `#737D8C` | `#8A93A3` | Section labels, hints, NULL glyph |
+| `--text-secondary` | `#A3ACBA` | `#4B5263` | Labels, breadcrumbs, metadata |
+| `--text-muted` | `#838D9C` | `#646D7E` | Section labels, hints, NULL glyph |
 | `--accent` | `#2F6FE0` | `#1F5FBF` | Primary buttons (fill) |
 | `--accent-text` | `#7AAEFA` | `#1F5FBF` | Links, active nav text, command bar primary |
 | `--accent-subtle` | `rgba(76,141,246,0.16)` | `#E8F0FB` | Active nav item, filter chips |
@@ -245,7 +245,7 @@ The TUI gets its own mockups on the design canvas before it is built.
   --bg: #0F1115; --top: #0A0C10; --nav: #13161C; --surface: #161A21;
   --surface-head: #1A1F27; --surface-expand: #1B212B; --inset: #0B0D11;
   --border: #272D38; --border-strong: #3A4250;
-  --text: #E6E9EF; --text-secondary: #A3ACBA; --text-muted: #737D8C;
+  --text: #E6E9EF; --text-secondary: #A3ACBA; --text-muted: #838D9C;
   --accent: #2F6FE0; --accent-text: #7AAEFA; --accent-subtle: rgba(76,141,246,0.16);
   --row-selected: rgba(76,141,246,0.10); --focus-ring: #7AAEFA;
   --ok: #5FC9A0; --warn: #F0C46A; --danger: #F7899B;
@@ -254,7 +254,7 @@ The TUI gets its own mockups on the design canvas before it is built.
   --bg: #F3F4F6; --top: #1D2330; --nav: #FFFFFF; --surface: #FFFFFF;
   --surface-head: #F8F9FB; --surface-expand: #F6F9FE; --inset: #F3F5F8;
   --border: #E1E4EA; --border-strong: #C3C9D4;
-  --text: #1D2330; --text-secondary: #5B6475; --text-muted: #8A93A3;
+  --text: #1D2330; --text-secondary: #4B5263; --text-muted: #646D7E;
   --accent: #1F5FBF; --accent-text: #1F5FBF; --accent-subtle: #E8F0FB;
   --row-selected: #EEF4FD; --focus-ring: #1F5FBF;
   --ok: #1F7A5A; --warn: #8A5300; --danger: #B4162F;

@@ -5,10 +5,12 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 from app.auth.admin import UserAdmin
+from app.auth.oidc import OidcClient
 from app.auth.ratelimit import LoginLimiter
 from app.auth.sessions import SessionKind, SessionStore
 from app.auth.setup import SetupLink
-from app.auth.users import User, UserStore
+from app.auth.sso import SsoAccounts
+from app.auth.users import Role, User, UserStore
 from app.core.config import AppConfig, is_loopback_host
 from app.core.errors import (
     LoginFailedError,
@@ -23,7 +25,7 @@ Mode = Literal["open", "setup", "login"]
 
 
 class AuthService:
-    def __init__(self, config: AppConfig, meta: MetaDB) -> None:
+    def __init__(self, config: AppConfig, meta: MetaDB, oidc: OidcClient | None = None) -> None:
         self.users = UserStore(meta)
         self.sessions = SessionStore(meta)
         self.audit = AuditLog(meta)
@@ -38,8 +40,36 @@ class AuthService:
             self.audit,
             LoginLimiter(config.auth.login_max_failures, config.auth.login_window_s),
             lambda: self.clock(),
+            password_allowed=self.password_allowed,
         )
         self._has_users = False
+        # Optional single sign-on (ADR-0013); None when it is off.
+        self.sso = (
+            SsoAccounts(config.sso, oidc, meta, self.audit, lambda: self.clock())
+            if oidc is not None and config.sso.enabled
+            else None
+        )
+        limited = config.sso.password_login == "admins"  # noqa: S105  # a policy name
+        self.passwords_admins_only = self.sso is not None and limited
+        if self.passwords_admins_only:
+            self._end_password_sessions(meta)
+
+    def _end_password_sessions(self, meta: MetaDB) -> None:
+        """Passwords just stopped working for non-admins: end the browser sessions and CLI
+        tokens they got with one. Accounts never bound to SSO can only have those."""
+        with meta.connect() as con:
+            ended = con.execute(
+                "DELETE FROM sessions WHERE user_id IN (SELECT user_id FROM users"
+                " WHERE role != 'admin' AND sso_subject IS NULL)"
+            ).rowcount
+        if ended:
+            self.audit.write(
+                "auth.sessions_ended", "success", None, None, {"reason": "sso_on", "count": ended}
+            )
+
+    def password_allowed(self, role: Role) -> bool:
+        """With SSO on and passwords limited, only administrators keep one (break-glass)."""
+        return not self.passwords_admins_only or role == "admin"
 
     def mode(self) -> Mode:
         if not self._has_users:
@@ -83,14 +113,42 @@ class AuthService:
     ) -> tuple[User, str, str]:
         keys = [f"ip:{ip}", f"user:{username.lower()}"]
         self._reserve(keys)  # counted before the slow check, so parallel attempts cannot race it
-        user = self.users.authenticate(username, password)
+        user = self.users.authenticate(username, password, allowed=self.password_allowed)
         if user is None:
             self.audit.write("auth.login", "failure", None, ip, {"username": username[:100]})
-            raise LoginFailedError("Wrong username or password")
+            raise LoginFailedError(self._login_failed_message())
+        if not self.password_allowed(user.role):
+            # Same answer as a wrong password, and the attempt stays counted, so this path
+            # cannot confirm a guessed password (review, 2026-10-12).
+            self.audit.write(
+                "auth.login",
+                "failure",
+                user.user_id,
+                ip,
+                {"reason": "sso_required", "client": kind},
+            )
+            raise LoginFailedError(self._login_failed_message())
         self._limiter.success(keys)
         self.audit.write("auth.login", "success", user.user_id, ip, {"client": kind})
         token, csrf = self._start(user, kind, label)
         return user, token, csrf
+
+    def _login_failed_message(self) -> str:
+        if not self.passwords_admins_only:
+            return "Wrong username or password"
+        label = self.sso.label if self.sso else "single sign-on"
+        return (
+            "Wrong username or password. Only administrators sign in with a password here;"
+            f" everyone else uses {label}"
+        )
+
+    def start_sso_session(self, user: User, ip: str | None) -> tuple[str, str]:
+        """A browser session after a verified SSO sign-in, same as a password sign-in's."""
+        self._has_users = True
+        self.audit.write(
+            "auth.login", "success", user.user_id, ip, {"client": "browser", "method": "sso"}
+        )
+        return self._start(user, "browser")
 
     def logout(self, token: str, user: User, ip: str | None) -> None:
         self.sessions.revoke(token)
