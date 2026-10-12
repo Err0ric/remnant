@@ -2,9 +2,31 @@
 
 Local-first, LLM-assisted SIEM front end. Bring your own logs, bring your own model.
 
-> Status: early preview (Slices 1 to 5 built, Slice 6 polish in progress). Expect rough edges. "Remnant" is a working codename.
+> Status: early preview (Slices 1 to 5 built, Slice 6 polish nearly done). Expect rough edges. "Remnant" is a working codename.
 
 Point it at log files you already have. Templates parse them into OCSF columns in a Parquet lake, DuckDB queries them, Sigma detects on them, and an LLM (local by default) helps write parsers and queries and explains results with citations back to real events.
+
+![Overview: event volume per source, ingest health, flagged detections](docs/images/overview.png)
+
+| | |
+|---|---|
+| ![Simple search for failed SSH passwords](docs/images/search.png) | ![Dashboard of scheduled searches with flags](docs/images/dashboard.png) |
+| **Search.** Type `sshd "failed password"`, or SQL, or ask in plain English with a local model; the SQL is always shown before it runs | **Dashboard.** Scheduled searches and Sigma rules with thresholds, sparklines, and alerts to email, Teams, Slack, or a webhook |
+| ![Command palette](docs/images/command-palette.png) | ![Light theme](docs/images/overview-light.png) |
+| **Ctrl+K** goes to any page, saved search, or source | A complete light theme as well as dark |
+| ![Sign-in with Microsoft](docs/images/sign-in-sso.png) | ![Terminal UI](docs/images/terminal.png) |
+| Optional sign-in with Microsoft Entra ID or any OIDC provider | `remnant tui`: query, results, and a live tail in the terminal |
+
+Screenshots use made-up logs from `scripts/loggen.py`.
+
+## What it does
+
+- **Bring your own logs.** Files and folders (rsyslog, syslog-ng, Vector), JSON lines, CSV, Windows EVTX and forwarded events, or a Grafana Loki you already run. 24 starter parsers (Linux auth, Palo Alto, Fortinet, UniFi, Cisco ASA and IOS, CEF, LEEF, Windows, DNS) and an Automatic parser for mixed streams.
+- **Search three ways** over one engine: Simple search, SQL (read-only, guarded), or Ask in plain English.
+- **Detect** with imported SigmaHQ rules and scheduled searches; alert to email, Teams, Slack, or a signed webhook.
+- **Bring your own model.** Ollama, LM Studio, llama.cpp, vLLM, or any OpenAI-compatible API, plus Anthropic. Fresh installs allow local models only. Each source is Local only or Cloud allowed, and Local only data is blocked from cloud models in code.
+- **Treats log content as hostile.** The model never reads the whole dataset, never runs anything on its own, and every claim it makes cites event ids that are checked.
+- **Team ready.** Accounts, roles, per-source access, an append-only audit log, HTTPS by default, optional single sign-on, online backups.
 
 ## Docs
 

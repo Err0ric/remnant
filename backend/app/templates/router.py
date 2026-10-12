@@ -74,6 +74,10 @@ class AutoNormalizer:
             if candidates:
                 return candidates[0]
         for t in self._by_regex:
+            # A template that reads a syslog header cannot parse a line without one (a JSON
+            # lines file, a headerless line): those go to the generic parser for the format.
+            if env is None and t.envelope.type == "syslog":
+                continue
             if self._search(t, env, text):
                 return t
         return None

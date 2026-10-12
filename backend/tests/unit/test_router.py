@@ -120,3 +120,27 @@ def test_match_block_takes_a_dominant_tag_only() -> None:
     assert match_block(mixed) == {"min_confidence": 0.8}
     assert match_block(["no header here"] * 3) == {"min_confidence": 0.8}
     assert match_block([]) == {"min_confidence": 0.8}
+
+
+def test_json_lines_without_a_syslog_header_use_the_generic_json_parser() -> None:
+    """A JSON-lines file under Automatic was routed to json_over_syslog, which needs a
+    syslog header, and kept nothing but raw (found taking README screenshots)."""
+    auto = AutoNormalizer(
+        SourceSpec(source_id="web_app", format="json"),
+        REGISTRY.all(),
+        REGISTRY.starter_ids,
+        clock=lambda: NOW,
+        tables=REGISTRY.tables,
+    )
+    text = (
+        '{"timestamp": "2026-10-11T15:56:03Z", "level": "info", "client_ip": "198.51.100.11",'
+        ' "status": 301, "message": "HTTP 301"}'
+    )
+    row = auto.normalize(_line(text))
+    assert row is not None
+    assert row["template_id"].startswith("generic_")
+    assert row["message"] == "HTTP 301"
+    assert row["time"] is not None
+    # Over syslog, the same JSON still goes to the JSON template.
+    routed = _auto().normalize(_line(f"<14>1 2026-10-11T15:56:03Z web01 app 1 - - {text}"))
+    assert routed is not None and routed["template_id"] == "json_over_syslog"
