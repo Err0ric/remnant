@@ -88,6 +88,10 @@ cd backend && uv run python ../scripts/sbom.py --out ../sbom.cdx.json
 
 It is built from `uv.lock`, `pnpm-lock.yaml`, and the `Dockerfile`, so the same commit always gives the same file.
 
+## Security
+
+Report vulnerabilities privately; see [SECURITY.md](SECURITY.md).
+
 ## License
 
 Apache 2.0
