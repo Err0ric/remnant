@@ -306,3 +306,17 @@ def test_secret_never_returned_or_logged(
     assert SECRET not in out.out + out.err
     db = sqlite3.connect(tmp_path / "data" / "meta.sqlite")
     assert not any(SECRET in str(r) for r in db.execute("SELECT * FROM audit_log"))
+
+
+def test_authelia_style_groups_from_userinfo(tmp_path: Path, idp: FakeIdp) -> None:
+    """Authelia keeps groups out of the ID token by default and expects HTTP Basic."""
+    idp.auth_methods = ["client_secret_basic"]
+    idp.userinfo_only = {"groups", "preferred_username"}
+    c = server(tmp_path, idp, required_groups="siem-users", extra_scopes="groups")
+    link = invite(c, "jordan")
+    assert refusal(sso_sign_in(browser(c), idp, "sub-j", link, groups=["other"])) == (
+        "not_in_group"
+    )
+    b = browser(c)
+    assert sso_sign_in(b, idp, "sub-j", link, groups=["siem-users"]) == "/"
+    assert b.get("/api/auth/state").json()["user"]["username"] == "jordan"

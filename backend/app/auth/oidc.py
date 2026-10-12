@@ -16,7 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import quote_plus, urlencode
 
 import httpx
 import jwt
@@ -31,7 +31,8 @@ DISCOVERY_RETRY_S = 30  # after a failed discovery, fail fast for this long
 KEY_REFRESH_MIN_S = 60
 LEEWAY_S = 120
 ALGORITHMS = ["RS256", "ES256"]
-SCOPES = "openid profile"
+SCOPES = ("openid", "profile")
+AuthMethod = str  # "client_secret_basic" or "client_secret_post"
 MAX_RESPONSE_BYTES = 256 * 1024
 
 HttpFactory = Callable[[], httpx.Client]
@@ -56,6 +57,8 @@ class Endpoints:
     authorization: str
     token: str
     jwks: str
+    userinfo: str | None = None
+    auth_methods: tuple[str, ...] = ()  # token_endpoint_auth_methods_supported
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +91,11 @@ class OidcClient:
         self.issuer = config.issuer.rstrip("/")
         self._client_id = config.client_id
         self._secret = config.client_secret
+        self._scopes = " ".join(dict.fromkeys((*SCOPES, *config.extra_scopes)))
+        self._auth_method = config.token_auth_method
+        # Groups are needed only to check REQUIRED_GROUPS; then a provider that keeps them
+        # out of the ID token (Authelia, by default) is asked through UserInfo.
+        self._want_groups = bool(config.required_groups)
         self.redirect_uri = redirect_uri
         self._clock = clock
         self._http = http
@@ -121,7 +129,7 @@ class OidcClient:
                 "client_id": self._client_id,
                 "response_type": "code",
                 "redirect_uri": self.redirect_uri,
-                "scope": SCOPES,
+                "scope": self._scopes,
                 "state": state,
                 "nonce": nonce,
                 "code_challenge": _challenge(verifier),
@@ -139,8 +147,12 @@ class OidcClient:
         Returns the identity and the link token the flow was started with, if any.
         """
         flow = self.take_flow(state, cookie)
-        id_token = self._exchange(code, flow.verifier)
-        return self._verify(id_token, flow.nonce), flow.link_token
+        id_token, access_token = self._exchange(code, flow.verifier)
+        identity, claims = self._verify(id_token, flow.nonce)
+        missing_groups = self._want_groups and "groups" not in claims and identity.groups == ()
+        if (missing_groups or not identity.name) and access_token:
+            identity = self._with_userinfo(identity, access_token, missing_groups)
+        return identity, flow.link_token
 
     def take_flow(self, state: str, cookie: str | None) -> _Flow:
         """Remove and return the flow for `state` if it belongs to this browser and is live."""
@@ -154,22 +166,38 @@ class OidcClient:
             raise SsoRefusedError("invalid", "flow cookie missing or does not match")
         return flow
 
-    def _exchange(self, code: str, verifier: str) -> str:
+    def _method(self, endpoints: Endpoints) -> AuthMethod:
+        """How to send the client secret: as configured, or what the provider prefers."""
+        if self._auth_method != "auto":
+            return self._auth_method
+        offered = endpoints.auth_methods
+        if not offered or "client_secret_basic" in offered:
+            return "client_secret_basic"  # the OIDC default when a provider does not say
+        return "client_secret_post"
+
+    def _exchange(self, code: str, verifier: str) -> tuple[str, str | None]:
+        """The ID token and, if given, the access token (for UserInfo only)."""
         endpoints = self._discover()
         assert self._secret is not None
+        form = {
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": self.redirect_uri,
+            "code_verifier": verifier,
+        }
+        headers = {"Accept": "application/json"}
+        if self._method(endpoints) == "client_secret_basic":
+            # RFC 6749 2.3.1: both parts form-urlencoded before the Basic encoding.
+            pair = f"{quote_plus(self._client_id)}:{quote_plus(self._secret.get_secret_value())}"
+            headers["Authorization"] = "Basic " + base64.b64encode(pair.encode()).decode()
+        else:
+            form |= {"client_id": self._client_id, "client_secret": self._secret.get_secret_value()}
         try:
             with self._http() as client:
                 res = client.post(
                     endpoints.token,
-                    data={
-                        "grant_type": "authorization_code",
-                        "code": code,
-                        "redirect_uri": self.redirect_uri,
-                        "client_id": self._client_id,
-                        "client_secret": self._secret.get_secret_value(),
-                        "code_verifier": verifier,
-                    },
-                    headers={"Accept": "application/json"},
+                    data=form,
+                    headers=headers,
                 )
         except httpx.HTTPError as exc:
             raise SsoRefusedError("unavailable", f"token endpoint: {type(exc).__name__}") from exc
@@ -178,9 +206,38 @@ class OidcClient:
         if res.status_code != 200 or not isinstance(token, str):
             error = str(payload.get("error", res.status_code))[:100]
             raise SsoRefusedError("invalid", f"token endpoint refused the code: {error}")
-        return token
+        access = payload.get("access_token")
+        return token, access if isinstance(access, str) else None
 
-    def _verify(self, id_token: str, nonce: str) -> Identity:
+    def _with_userinfo(self, identity: Identity, access_token: str, groups: bool) -> Identity:
+        """Fill groups or the display name from UserInfo. Its `sub` must match the ID
+        token's (OIDC Core 5.3.2), or the answer is about someone else and is refused."""
+        endpoints = self._discover()
+        if endpoints.userinfo is None:
+            return identity
+        try:
+            with self._http() as client:
+                res = client.get(
+                    endpoints.userinfo,
+                    headers={
+                        "Authorization": f"Bearer {access_token}",
+                        "Accept": "application/json",
+                    },
+                )
+        except httpx.HTTPError as exc:
+            raise SsoRefusedError("unavailable", f"userinfo: {type(exc).__name__}") from exc
+        if res.status_code != 200:
+            raise SsoRefusedError("unavailable", f"userinfo answered {res.status_code}")
+        info = self._json(res, "userinfo")
+        if info.get("sub") != identity.subject:
+            raise SsoRefusedError("invalid", "userinfo is for another subject")
+        found = identity.groups
+        if groups and isinstance(info.get("groups"), list):
+            found = tuple(str(g) for g in info["groups"])
+        name = identity.name or str(info.get("preferred_username") or info.get("name") or "")
+        return Identity(identity.issuer, identity.subject, name[:200], found)
+
+    def _verify(self, id_token: str, nonce: str) -> tuple[Identity, dict[str, Any]]:
         try:
             header = jwt.get_unverified_header(id_token)
         except jwt.PyJWTError as exc:
@@ -218,7 +275,7 @@ class OidcClient:
         else:
             groups = ()
         name = str(claims.get("preferred_username") or claims.get("name") or "")[:200]
-        return Identity(str(claims["iss"]), str(claims["sub"]), name, groups)
+        return Identity(str(claims["iss"]), str(claims["sub"]), name, groups), claims
 
     # --- provider metadata ---------------------------------------------------------------
 
@@ -255,7 +312,15 @@ class OidcClient:
         values = [doc.get(f) for f in fields]
         if not all(isinstance(v, str) and v.startswith("https://") for v in values):
             raise SsoRefusedError("unavailable", "discovery endpoints must be https")
-        return Endpoints(issuer, *(str(v) for v in values))
+        userinfo = doc.get("userinfo_endpoint")
+        if not (isinstance(userinfo, str) and userinfo.startswith("https://")):
+            userinfo = None
+        methods = doc.get("token_endpoint_auth_methods_supported")
+        offered = (
+            tuple(m for m in methods if isinstance(m, str)) if isinstance(methods, list) else ()
+        )
+        auth_url, token_url, jwks_url = (str(v) for v in values)
+        return Endpoints(issuer, auth_url, token_url, jwks_url, userinfo, offered)
 
     def _key(self, kid: str) -> jwt.PyJWK:
         key = self._keys.get(kid)

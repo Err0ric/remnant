@@ -73,10 +73,24 @@ class SsoConfig(_Strict):
     label: str = Field(default="Microsoft", min_length=1, max_length=40)
     # Group object ids; when set, the ID token's groups claim must contain one of them.
     required_groups: list[str] = Field(default_factory=list)
+    # Scopes beyond "openid profile", e.g. "groups" for Authelia, Keycloak, or Authentik.
+    extra_scopes: list[str] = Field(default_factory=list, max_length=10)
+    # How the client secret reaches the token endpoint. "auto" uses HTTP Basic unless the
+    # provider's discovery document offers only client_secret_post.
+    token_auth_method: Literal["auto", "client_secret_basic", "client_secret_post"] = "auto"  # noqa: S105  # a method name
     # With SSO on, who may still sign in with a password ("admins" is the break-glass path).
     password_login: Literal["admins", "everyone"] = "admins"  # noqa: S105  # a policy name, not a secret
 
-    _split_groups = field_validator("required_groups", mode="before")(_split_list)
+    _split_groups = field_validator("required_groups", "extra_scopes", mode="before")(_split_list)
+
+    @field_validator("extra_scopes")
+    @classmethod
+    def _scope_names(cls, value: list[str]) -> list[str]:
+        for scope in value:
+            if not re.fullmatch(r"[A-Za-z0-9_.:/-]{1,64}", scope):
+                raise ValueError(f"not a scope name: {scope!r}")
+        return value
+
     # Compose passes unset variables as empty strings.
     _blank = field_validator("issuer", "client_id", "client_secret", mode="before")(
         lambda v: v or None

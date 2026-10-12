@@ -15,7 +15,7 @@ Point it at log files you already have. Templates parse them into OCSF columns i
 | ![Command palette](docs/images/command-palette.png) | ![Light theme](docs/images/overview-light.png) |
 | **Ctrl+K** goes to any page, saved search, or source | A complete light theme as well as dark |
 | ![Sign-in with Microsoft](docs/images/sign-in-sso.png) | ![Terminal UI](docs/images/terminal.png) |
-| Optional sign-in with Microsoft Entra ID or any OIDC provider | `remnant tui`: query, results, and a live tail in the terminal |
+| Optional sign-in with Microsoft Entra ID, Authelia, or any OIDC provider | `remnant tui`: query, results, and a live tail in the terminal |
 
 Screenshots use made-up logs from `scripts/loggen.py`.
 
@@ -97,7 +97,7 @@ Database changes apply at start and only ever add to what is there. Take a backu
 | [docs/install/homelab-test.md](docs/install/homelab-test.md) | A guided first run with made-up logs, every screen |
 | [docs/install/team-trial-loki.md](docs/install/team-trial-loki.md) | Reading from a Grafana Loki you already run |
 | [docs/ingest/](docs/ingest/) | Pointing rsyslog, syslog-ng, or Vector at the log folder |
-| [docs/install/sso-entra.md](docs/install/sso-entra.md) | Sign-in with Microsoft Entra ID or another OIDC provider |
+| [docs/install/sso-entra.md](docs/install/sso-entra.md), [sso-authelia.md](docs/install/sso-authelia.md) | Sign-in with Microsoft Entra ID, Authelia, or another OIDC provider |
 | [docs/install/backup.md](docs/install/backup.md) | Backups, restore, moving to a new server |
 | [docs/install/quiet-sources.md](docs/install/quiet-sources.md) | An alert when a source stops sending |
 | [docs/install/tls.md](docs/install/tls.md) | Using your own certificate |

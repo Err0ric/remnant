@@ -74,3 +74,15 @@ An independent review of the implementation (#135 to #138) found no critical or 
 | SSO-only accounts showed as "Invite pending" | Pending means no password and no SSO identity |
 
 Accepted as is: removing someone from the required group stops their next sign-in, but sessions (up to `session_hours`) and CLI tokens they already hold keep working until they expire. To cut access at once, use **Sign out everywhere** or disable the account. The setup guide says so.
+
+## Addendum, 2026-10-12: providers like Authelia
+
+Asked for by an early user running Authelia. Same design, three provider differences handled; no change to accounts, roles, or password rules.
+
+| Change | Why | Control |
+|---|---|---|
+| Client secret sent as HTTP Basic by default (`client_secret_basic`, the OIDC default), or in the form body when discovery offers only `client_secret_post`; `SSO_TOKEN_AUTH_METHOD` overrides | Authelia's clients expect Basic; Entra accepts both | Secret still only to the discovered https token endpoint; never in URLs or logs |
+| `SSO_EXTRA_SCOPES` (for example `groups`) | Authelia, Keycloak, and Authentik release groups only for a `groups` scope | Scope names validated; `openid profile` always sent |
+| Groups and display name read from UserInfo when the ID token lacks them, only when needed (`SSO_REQUIRED_GROUPS` set, or no name) | Authelia keeps `groups` and `preferred_username` out of the ID token by default | UserInfo called with the access token over https; its `sub` must equal the ID token's (OIDC Core 5.3.2) or the sign-in is refused; JSON only; the access token is used once and not stored |
+
+Guide: `docs/install/sso-authelia.md`. Tests: an Authelia-shaped fake provider (Basic only, groups only in UserInfo, a UserInfo for another subject).

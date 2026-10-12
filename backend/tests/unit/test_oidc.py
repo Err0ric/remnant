@@ -52,8 +52,9 @@ def test_round_trip_with_pkce_state_and_nonce(idp: FakeIdp, client: OidcClient) 
     assert identity.name == "jordan@corp.example"
     assert identity.groups == ()
     assert link == "invite-123"
-    # The secret goes only to the token endpoint, in the form body.
-    assert idp.token_requests[0]["client_secret"] == [SECRET]
+    # The secret goes only to the token endpoint, as HTTP Basic by default.
+    assert idp.token_requests[0]["_auth"][0].startswith("Basic ")
+    assert "client_secret" not in idp.token_requests[0]
     assert SECRET not in url
 
 
@@ -209,3 +210,76 @@ def test_odd_claim_names_do_not_crash(idp: FakeIdp, client: OidcClient) -> None:
     state, code = idp.approve(url, "sub-1")
     identity, _ = client.finish(state, code, cookie)
     assert identity.groups == ()
+
+
+# --- Authelia-shaped providers (ADR-0013 addendum) ------------------------------------
+
+
+def _client(idp: FakeIdp, clock: Clock, **sso: object) -> OidcClient:
+    config = SsoConfig(
+        enabled=True, issuer=ISSUER, client_id=CLIENT_ID, client_secret=SECRET, **sso
+    )
+    return OidcClient(config, REDIRECT, clock, http=idp.client)
+
+
+def _sign_in(idp: FakeIdp, client: OidcClient, sub: str = "sub-1", **claims: object):
+    url, cookie = client.begin()
+    state, code = idp.approve(url, sub, **claims)
+    return client.finish(state, code, cookie)[0]
+
+
+@pytest.mark.parametrize(
+    ("offered", "configured", "used"),
+    [
+        (None, "auto", "basic"),
+        (["client_secret_basic", "client_secret_post"], "auto", "basic"),
+        (["client_secret_post"], "auto", "post"),
+        (["client_secret_post", "client_secret_basic"], "client_secret_post", "post"),
+    ],
+)
+def test_secret_sent_the_way_the_provider_accepts(
+    idp: FakeIdp, clock: Clock, offered: list[str] | None, configured: str, used: str
+) -> None:
+    idp.auth_methods = offered
+    identity = _sign_in(idp, _client(idp, clock, token_auth_method=configured))
+    assert identity.subject == "sub-1"
+    request = idp.token_requests[-1]
+    assert ("client_secret" in request) == (used == "post")
+    assert request["_auth"][0].startswith("Basic ") == (used == "basic")
+
+
+def test_extra_scopes_are_requested(idp: FakeIdp, clock: Clock) -> None:
+    url, _ = _client(idp, clock, extra_scopes="groups,email").begin()
+    assert parse_qs(urlparse(url).query)["scope"] == ["openid profile groups email"]
+    with pytest.raises(ValidationError):
+        SsoConfig(
+            enabled=True, issuer=ISSUER, client_id="c", client_secret=SECRET,
+            extra_scopes=["groups openid"],
+        )  # fmt: skip
+
+
+def test_groups_only_in_userinfo_are_fetched_when_required(idp: FakeIdp, clock: Clock) -> None:
+    idp.userinfo_only = {"groups", "preferred_username"}
+    client = _client(idp, clock, required_groups="siem-users", extra_scopes="groups")
+    identity = _sign_in(idp, client, groups=["siem-users"], preferred_username="jordan")
+    assert identity.groups == ("siem-users",)
+    assert identity.name == "jordan"
+    assert idp.userinfo_calls == 1
+
+
+def test_userinfo_for_another_subject_is_refused(idp: FakeIdp, clock: Clock) -> None:
+    idp.userinfo_only = {"groups"}
+    idp.userinfo_sub = "someone-else"
+    client = _client(idp, clock, required_groups="siem-users")
+    with pytest.raises(SsoRefusedError) as exc:
+        _sign_in(idp, client, groups=["siem-users"], preferred_username="jordan")
+    assert exc.value.code == "invalid"
+
+
+def test_userinfo_not_called_when_the_id_token_has_what_is_needed(
+    idp: FakeIdp, clock: Clock
+) -> None:
+    identity = _sign_in(
+        idp, _client(idp, clock, required_groups="g"), groups=["g"], preferred_username="j"
+    )
+    assert identity.groups == ("g",) and idp.userinfo_calls == 0

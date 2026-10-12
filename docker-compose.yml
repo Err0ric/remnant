@@ -25,6 +25,8 @@ services:
       APP__SSO__LABEL: ${SSO_LABEL:-Microsoft}
       APP__SSO__REQUIRED_GROUPS: ${SSO_REQUIRED_GROUPS:-}
       APP__SSO__PASSWORD_LOGIN: ${SSO_PASSWORD_LOGIN:-admins}
+      APP__SSO__EXTRA_SCOPES: ${SSO_EXTRA_SCOPES:-}
+      APP__SSO__TOKEN_AUTH_METHOD: ${SSO_TOKEN_AUTH_METHOD:-auto}
     ports:
       - "${APP_BIND:-127.0.0.1}:${APP_PORT:-8080}:8080"
     volumes:

@@ -135,4 +135,6 @@ Set `SSO_ENABLED=false` (or remove the lines) and restart. Analysts then need pa
 
 ## Other providers
 
+Authelia has its own guide: [sso-authelia.md](sso-authelia.md).
+
 Any OpenID Connect provider with discovery works the same way: set `SSO_ISSUER` to its issuer URL, register `.../api/auth/sso/callback` as the redirect URI, and set `SSO_LABEL` to the button text (for example `Okta`). `SSO_REQUIRED_GROUPS` needs the provider to put a `groups` claim in the ID token; leave it empty otherwise.
