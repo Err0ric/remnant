@@ -28,20 +28,89 @@ Screenshots use made-up logs from `scripts/loggen.py`.
 - **Treats log content as hostile.** The model never reads the whole dataset, never runs anything on its own, and every claim it makes cites event ids that are checked.
 - **Team ready.** Accounts, roles, per-source access, an append-only audit log, HTTPS by default, optional single sign-on, online backups.
 
+## Quick start (Docker Compose)
+
+You need a Linux machine or VM with [Docker Engine and the Compose plugin](https://docs.docker.com/engine/install/), 2 vCPU, 4 GB RAM, and 20 GB of disk. A Proxmox LXC works (unprivileged, with `nesting` and `keyctl` on).
+
+**1. Get it and start it**
+
+```bash
+git clone https://github.com/Err0ric/remnant
+cd remnant
+cp .env.example .env
+docker compose up -d --build
+```
+
+**2. Create the administrator account.** The first start prints a one-time link (valid 30 minutes) and the certificate fingerprint:
+
+```bash
+docker compose logs app | grep -A1 "one-time link"
+docker compose logs app | grep "SHA-256"
+```
+
+Open the link, check that the fingerprint in the browser's certificate warning matches the log line, and create the administrator.
+
+**3. Add logs.** Put log files (or point a collector) in the folder set by `LOGS_DIR` in `.env` (default `./logs`); it appears in the app as `/logs`. Then **Configuration > Sources > Add source**, pick the folder, and leave the parser on **Automatic** (CSV files use **Generic: CSV with a header row**). To try it with made-up logs first:
+
+```bash
+docker compose --profile demo up -d     # 24 hours of synthetic logs in ./logs/demo, then a live trickle
+```
+
+The demo writes syslog, JSON, and CSV folders under `/logs/demo`; [homelab-test.md](docs/install/homelab-test.md) lists the three sources to add and what to try next.
+
+**4. Optional: a local model for Ask**
+
+```bash
+docker compose --profile ollama up -d
+docker compose exec ollama ollama pull qwen3.5:9b
+```
+
+Then **Configuration > AI providers**: edit **Local Ollama**, pick the model, set **Thinking** to **Off**, and **Enable**. Only local models are allowed until you choose otherwise.
+
+### Reach it from other machines
+
+By default it listens on `127.0.0.1:8080` only. For a team server, set these in `.env` and run `docker compose up -d` again:
+
+```
+APP_BIND=0.0.0.0
+APP_PUBLIC_NAME=siem.example.internal   # the name people type; used in links and the certificate
+LOGS_DIR=/var/log/remote                # where your collector writes
+LOGS_GID=4                              # group that can read those files (adm on Debian/Ubuntu)
+```
+
+Anything reachable from the network requires sign-in and HTTPS; there is no switch to turn that off.
+
+### Updating
+
+```bash
+git pull && docker compose up -d --build
+```
+
+Database changes apply at start and only ever add to what is there. Take a backup first: `docker compose exec -T app app-admin backup -o - > backup.tar.gz` ([details](docs/install/backup.md)).
+
+### More install options
+
+| Guide | For |
+|---|---|
+| [docs/install/team-vm.md](docs/install/team-vm.md) | A shared server: Docker Compose or a systemd service, accounts, roles, source access |
+| [docs/install/single-user.md](docs/install/single-user.md) | One person on a laptop, from source or Docker |
+| [docs/install/homelab-test.md](docs/install/homelab-test.md) | A guided first run with made-up logs, every screen |
+| [docs/install/team-trial-loki.md](docs/install/team-trial-loki.md) | Reading from a Grafana Loki you already run |
+| [docs/ingest/](docs/ingest/) | Pointing rsyslog, syslog-ng, or Vector at the log folder |
+| [docs/install/sso-entra.md](docs/install/sso-entra.md) | Sign-in with Microsoft Entra ID or another OIDC provider |
+| [docs/install/backup.md](docs/install/backup.md) | Backups, restore, moving to a new server |
+| [docs/install/quiet-sources.md](docs/install/quiet-sources.md) | An alert when a source stops sending |
+| [docs/install/tls.md](docs/install/tls.md) | Using your own certificate |
+
 ## Docs
 
 | Doc | What it covers |
 |---|---|
 | [docs/SPEC.md](docs/SPEC.md) | Architecture, schemas, threat model, roadmap, decisions |
 | [docs/DESIGN.md](docs/DESIGN.md) | UI tokens, typography, component patterns |
+| [docs/adr/](docs/adr/) | One file per design decision |
 | [CLAUDE.md](CLAUDE.md) | Build rules, conventions, tests, definition of done |
-| [docs/install/single-user.md](docs/install/single-user.md) | One person on a laptop or workstation, from source or Docker |
-| [docs/install/team-vm.md](docs/install/team-vm.md) | A shared server with accounts and roles, with Docker Compose or as a systemd service |
-| [docs/install/homelab-test.md](docs/install/homelab-test.md) | First run on one VM with made-up logs |
-| [docs/install/team-trial-loki.md](docs/install/team-trial-loki.md) | A team trial on a shared VM reading from Grafana Loki, with no data leaving the network |
-| [docs/install/sso-entra.md](docs/install/sso-entra.md) | Optional sign-in with Microsoft Entra ID (or another OIDC provider): invite first, group check, passwords kept for administrators |
-| [docs/install/backup.md](docs/install/backup.md) | Back up and restore the data folder while the server runs, nightly cron, moving to a new server |
-| [docs/ingest/](docs/ingest/) | Pointing rsyslog, syslog-ng, Vector, or Loki at the app |
+| [SECURITY.md](SECURITY.md) | Reporting a vulnerability |
 
 ## Development
 
@@ -53,9 +122,7 @@ make dev-frontend   # UI on http://127.0.0.1:5173 (proxies /api)
 make ci             # architecture checks, lint, types, tests, build
 ```
 
-Runs single-user on a laptop or VM, or as a shared team VM with individual accounts, roles, and per-source access. Anything reachable from the network requires login; there is no insecure mode. On first network-facing start, the server prints a one-time link to create the administrator account ([ADR-0001](docs/adr/ADR-0001-container-bind.md)).
-
-### Try it with your own logs (early preview)
+### Command line
 
 ```bash
 cd backend
@@ -72,17 +139,6 @@ uv sync --extra tui && uv run remnant tui --source linux_auth   # full-screen: q
 ```
 
 `app-admin ingest` does a one-off load; for continuous tailing add a source on the **Sources** page. The CLI only talks to the server API, with the same SQL guard as the web UI. Output formats: `table`, `json` (one object per line), `csv`, `raw`.
-
-### Docker
-
-```bash
-cp .env.example .env    # optional: LOGS_DIR, APP_PUBLIC_NAME
-docker compose up --build
-docker compose logs app | grep -A1 "one-time link"   # open it to create the admin account
-docker compose --profile ollama up    # with a local Ollama
-```
-
-The app serves HTTPS (self-signed on first start, fingerprint printed in the log) and is published on `127.0.0.1:8080` by default. The first start prints a single-use link, valid for 30 minutes, that creates the administrator account. Lost the admin password? `docker compose exec app app-admin reset-password <username>`. See [docs/install/tls.md](docs/install/tls.md) for your own certificate.
 
 ## Tested scale
 
