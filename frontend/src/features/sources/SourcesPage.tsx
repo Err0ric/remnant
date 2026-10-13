@@ -10,6 +10,7 @@ import { DiscoverPanel } from "./DiscoverPanel";
 import { ClassificationBadge } from "./ClassificationBadge";
 import { ClassificationEditor } from "./ClassificationEditor";
 import { LokiSummary } from "./LokiSummary";
+import { QuietAlert } from "./QuietAlert";
 import { SourceState } from "./SourceState";
 
 const COUNTS_SQL =
@@ -244,7 +245,14 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
                           )}
                         </td>
                         <td className="px-3 py-2.5">
-                          <SourceState status={s.status} />
+                          <div className="flex flex-col gap-0.5">
+                            <SourceState status={s.status} />
+                            <QuietAlert
+                              sourceId={s.source_id}
+                              quiet={s.quiet}
+                              canManage={canManage}
+                            />
+                          </div>
                         </td>
                         <td className="px-3 py-2.5 text-right font-mono tabular-nums">
                           {c ? c.events.toLocaleString() : "0"}

@@ -277,10 +277,27 @@ export interface SourceStatus {
   behind_s?: number | null;
 }
 
+/** Quiet-source alert state (ADR-0014); null when no alert is set. */
+export interface SourceQuiet {
+  quiet_after_s: number;
+  state: "ok" | "quiet";
+  quiet_since: string | null;
+  last_seen: string | null;
+}
+
+/** Admin view of a quiet-source alert, with its targets. */
+export interface SourceWatch extends SourceQuiet {
+  source_id: string;
+  target_ids: string[];
+  updated_at: string;
+  updated_by: string | null;
+}
+
 export interface Source extends SourceInput {
   classification: "local_only" | "cloud_allowed";
   enabled: boolean;
   status: SourceStatus;
+  quiet?: SourceQuiet | null;
 }
 
 export interface ColumnInfo {
@@ -559,6 +576,8 @@ export interface OverviewSourceHealth {
   files_waiting: number;
   records_skipped: number;
   error: string | null;
+  /** Set while the source's quiet-source alert is firing (ADR-0014). */
+  quiet_since?: string | null;
 }
 
 export interface OverviewDetection {
@@ -905,6 +924,13 @@ export const api = {
   /** null is the generic parser, "auto" the Automatic one (ADR-0012). New lines only. */
   setSourceParser: (id: string, templateId: string | null) =>
     request<Source>(`/api/sources/${encodeURIComponent(id)}`, patch({ template_id: templateId })),
+  sourceWatches: () => request<SourceWatch[]>("/api/sources/watches"),
+  /** null turns the alert off. Admins only; audited. */
+  setSourceWatch: (id: string, quietAfterS: number | null, targetIds: string[]) =>
+    request<SourceWatch | null>(
+      `/api/sources/${encodeURIComponent(id)}/watch`,
+      put({ quiet_after_s: quietAfterS, target_ids: targetIds }),
+    ),
   deleteSource: (id: string) =>
     request<void>(`/api/sources/${encodeURIComponent(id)}`, { method: "DELETE" }),
   meta: () => request<Meta>("/api/meta"),

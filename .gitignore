@@ -241,3 +241,4 @@ frontend/dist/
 !backend/tests/fixtures/mixed/
 !backend/tests/fixtures/mixed/**
 sbom.cdx.json
+offline-bundle/

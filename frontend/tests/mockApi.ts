@@ -210,6 +210,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
     rule_run_id: null,
     ...extra,
   });
+  const watches: Record<string, unknown>[] = [];
   const alertTargets: Record<string, unknown>[] = [
     {
       target_id: "t1",
@@ -691,6 +692,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
             files_waiting: 0,
             records_skipped: 0,
             error: "This source cannot be read right now. An administrator can see why.",
+            quiet_since: "2026-10-10T11:00:00+00:00",
           },
         ],
         detections: [
@@ -990,6 +992,38 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
           },
         ],
       });
+    }
+    if (url.endsWith("/api/sources/watches")) return json(watches);
+    if (/\/api\/sources\/[^/]+\/watch$/.test(url) && method === "PUT") {
+      const id = decodeURIComponent(url.split("/api/sources/")[1]?.split("/")[0] ?? "");
+      const body = JSON.parse(String(init?.body ?? "{}")) as {
+        quiet_after_s: number | null;
+        target_ids: string[];
+      };
+      const s = sources.find((x) => x.source_id === id);
+      if (!s) return json({ detail: "No such source", code: "not_found" }, 404);
+      const at = watches.findIndex((w) => w.source_id === id);
+      if (at >= 0) watches.splice(at, 1);
+      if (body.quiet_after_s === null) {
+        Object.assign(s, { quiet: null });
+        return json(null);
+      }
+      const quiet = {
+        quiet_after_s: body.quiet_after_s,
+        state: "ok",
+        quiet_since: null,
+        last_seen: "2026-10-10T12:00:00+00:00",
+      };
+      Object.assign(s, { quiet });
+      const w = {
+        ...quiet,
+        source_id: id,
+        target_ids: body.target_ids,
+        updated_at: "2026-10-10T12:00:00+00:00",
+        updated_by: "u1",
+      };
+      watches.push(w);
+      return json(w);
     }
     if (url.endsWith("/api/sources") && method === "GET") return json(sources);
     if (/\/api\/sources\/[^/]+$/.test(url) && method === "PATCH") {

@@ -35,6 +35,9 @@ export function App({ initialTheme, queryClient }: AppProps) {
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const page = usePage();
   const [palette, setPalette] = useState(false);
+  // Narrow screens: the side nav is hidden behind a Menu button; any navigation closes it.
+  const [menu, setMenu] = useState(false);
+  useEffect(() => setMenu(false), [page]);
   // A handoff into Search or Saved searches remounts that page so it takes the handoff.
   const searchKey = useSyncExternalStore(subscribeSeed, seedVersion);
   const savedKey = useSyncExternalStore(subscribeSaved, savedVersion);
@@ -71,6 +74,8 @@ export function App({ initialTheme, queryClient }: AppProps) {
                 user={user}
                 onSignOut={signOut}
                 onOpenPalette={() => setPalette(true)}
+                menuOpen={menu}
+                onToggleMenu={() => setMenu((open) => !open)}
               />
               {palette ? (
                 <CommandPalette
@@ -89,6 +94,7 @@ export function App({ initialTheme, queryClient }: AppProps) {
                   active={page === "ask" ? "search" : page}
                   isAdmin={!user || user.role === "admin"}
                   canAudit={!user || user.role !== "analyst"}
+                  open={menu}
                 />
                 <main className="flex min-w-0 flex-[999_1_560px] bg-bg">
                   {page === "rules" ? (

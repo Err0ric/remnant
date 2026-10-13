@@ -1,8 +1,27 @@
 # Get an alert when a source goes quiet
 
-A firewall that stops sending logs looks the same as a quiet network until you check. Schedules can already watch for this: a search that counts a source's events, run every hour, flagged when the count drops below 1, with an alert target.
+A firewall that stops sending logs looks the same as a quiet network until you check. The app watches for this itself (ADR-0014).
 
-Do this once per source you care about (firewalls, domain controllers, the VPN).
+## Built in (recommended)
+
+1. **Configuration > Alert targets**: add email, Teams, Slack, or a webhook, then **Send test**.
+2. **Configuration > Sources**: on the source's row, **Alert if quiet**. Pick how long without events counts as quiet (15 minutes to 7 days) and the targets, then **Save**.
+
+| What happens | Detail |
+|---|---|
+| Goes quiet | One alert, "No events received for 4 h", and the row shows **Quiet** in Sources and Overview |
+| Events resume | One alert, "Events arriving again after ..."; no repeats in between |
+| Measured on | When events were *received*, so a source sending old timestamps still counts as alive |
+| Restarts | The last received time is kept, so a restart neither resets nor fakes the clock |
+| Turning it on | The clock starts at save, so it never alerts the moment you save |
+| Who | Administrators only; every change, quiet, and resume is in the audit log (`source.quiet_alert_change`, `source.quiet`, `source.resumed`) |
+| Content | Source name, times, and counts only; never event content |
+
+Pick a period longer than the source's normal quiet stretch: a domain controller is never silent for an hour, but a VPN concentrator may be overnight.
+
+## With a schedule (older approach)
+
+Use this when you need a different test than "nothing at all", for example "fewer than 100 events an hour". Do it once per source.
 
 ## 1. An alert target (administrators, once)
 

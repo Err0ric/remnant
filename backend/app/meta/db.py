@@ -488,7 +488,36 @@ MIGRATIONS: tuple[str, ...] = (
     CREATE UNIQUE INDEX users_sso_identity ON users (sso_issuer, sso_subject)
         WHERE sso_subject IS NOT NULL;
     """,
+    # 27: alerts when a source goes quiet (ADR-0014).
+    """
+    CREATE TABLE source_watches (
+        source_id     TEXT PRIMARY KEY,
+        quiet_after_s INTEGER NOT NULL CHECK (quiet_after_s BETWEEN 300 AND 604800),
+        target_ids    TEXT NOT NULL DEFAULT '[]',
+        state         TEXT NOT NULL DEFAULT 'ok' CHECK (state IN ('ok', 'quiet')),
+        quiet_since   TEXT,
+        last_seen     TEXT,
+        created_at    TEXT NOT NULL,
+        updated_at    TEXT NOT NULL,
+        updated_by    TEXT
+    );
+    ALTER TABLE alert_deliveries ADD COLUMN source_id TEXT;
+    CREATE INDEX alert_deliveries_source ON alert_deliveries (source_id, created_at);
+    """,
 )
+
+
+def _statements(script: str) -> Iterator[str]:
+    """Split a migration into complete statements (trigger bodies stay whole)."""
+    buf = ""
+    for line in script.splitlines(keepends=True):
+        buf += line
+        if sqlite3.complete_statement(buf):
+            if buf.strip():
+                yield buf
+            buf = ""
+    if buf.strip():
+        yield buf  # an incomplete tail: let SQLite report the error
 
 
 class MetaDB:
@@ -519,7 +548,16 @@ class MetaDB:
                 con.close()
 
     def _migrate(self) -> None:
-        with self.connect() as con:
+        """Apply pending migrations in one write transaction.
+
+        BEGIN IMMEDIATE takes SQLite's write lock before reading which versions are done,
+        so a second process starting at the same moment waits and then finds nothing left
+        to do. Statements run one by one inside the transaction (executescript would commit
+        first), so a failure rolls everything back instead of leaving half a migration.
+        """
+        con = sqlite3.connect(self._path, timeout=60, isolation_level=None)
+        try:
+            con.execute("BEGIN IMMEDIATE")
             con.execute(
                 "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY)"
             )
@@ -527,5 +565,13 @@ class MetaDB:
             for version, script in enumerate(MIGRATIONS, start=1):
                 if version in done:
                     continue
-                con.executescript(script)
+                for statement in _statements(script):
+                    con.execute(statement)
                 con.execute("INSERT INTO schema_migrations (version) VALUES (?)", (version,))
+            con.execute("COMMIT")
+        except BaseException:
+            if con.in_transaction:
+                con.execute("ROLLBACK")
+            raise
+        finally:
+            con.close()

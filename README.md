@@ -96,6 +96,7 @@ Database changes apply at start and only ever add to what is there. Take a backu
 | [docs/install/single-user.md](docs/install/single-user.md) | One person on a laptop, from source or Docker |
 | [docs/install/homelab-test.md](docs/install/homelab-test.md) | A guided first run with made-up logs, every screen |
 | [docs/install/team-trial-loki.md](docs/install/team-trial-loki.md) | Reading from a Grafana Loki you already run |
+| [docs/install/offline.md](docs/install/offline.md) | Servers without internet access, or behind a proxy that breaks the build: build elsewhere, carry one folder |
 | [docs/ingest/](docs/ingest/) | Pointing rsyslog, syslog-ng, or Vector at the log folder |
 | [docs/install/sso-entra.md](docs/install/sso-entra.md), [sso-authelia.md](docs/install/sso-authelia.md) | Sign-in with Microsoft Entra ID, Authelia, or another OIDC provider |
 | [docs/install/backup.md](docs/install/backup.md) | Backups, restore, moving to a new server |
@@ -108,6 +109,7 @@ Database changes apply at start and only ever add to what is there. Take a backu
 |---|---|
 | [docs/SPEC.md](docs/SPEC.md) | Architecture, schemas, threat model, roadmap, decisions |
 | [docs/DESIGN.md](docs/DESIGN.md) | UI tokens, typography, component patterns |
+| [docs/api.md](docs/api.md) | API reference: every endpoint, tokens, errors, a curl example |
 | [docs/adr/](docs/adr/) | One file per design decision |
 | [CLAUDE.md](CLAUDE.md) | Build rules, conventions, tests, definition of done |
 | [SECURITY.md](SECURITY.md) | Reporting a vulnerability |
@@ -137,6 +139,8 @@ uv run remnant tail linux_auth -f --where "message LIKE 'Failed%'"
 uv run remnant query "SELECT device_hostname, count(*) FROM events GROUP BY 1" -o csv
 uv sync --extra tui && uv run remnant tui --source linux_auth   # full-screen: query box, results, live tail
 ```
+
+Scripts and other tools can call the same JSON API with a personal token: see [docs/api.md](docs/api.md).
 
 `app-admin ingest` does a one-off load; for continuous tailing add a source on the **Sources** page. The CLI only talks to the server API, with the same SQL guard as the web UI. Output formats: `table`, `json` (one object per line), `csv`, `raw`.
 

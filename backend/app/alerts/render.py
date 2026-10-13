@@ -14,8 +14,15 @@ import re
 from dataclasses import dataclass
 from typing import Any, Literal
 
-AlertKind = Literal["flag", "match", "pause", "test"]
-_LABEL = {"flag": "Flagged", "match": "Matches", "pause": "Paused", "test": "Test"}
+AlertKind = Literal["flag", "match", "pause", "test", "quiet", "resumed"]
+_LABEL = {
+    "flag": "Flagged",
+    "match": "Matches",
+    "pause": "Paused",
+    "test": "Test",
+    "quiet": "Source quiet",
+    "resumed": "Source resumed",
+}
 
 
 @dataclass(frozen=True, slots=True)

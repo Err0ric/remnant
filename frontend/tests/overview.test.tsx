@@ -33,7 +33,8 @@ describe("Overview", () => {
     expect(within(rows[1]!).getByText("linux_sshd")).toBeVisible(); // busiest first
     expect(within(volume).getByRole("img", { name: /^win_dc: 40 events/ })).toBeVisible();
     const ingest = screen.getByRole("region", { name: "Ingest health" });
-    expect(within(ingest).getByText("1 with errors")).toBeVisible();
+    expect(within(ingest).getByText("1 with errors · 1 quiet")).toBeVisible();
+    expect(within(ingest).getByText("Quiet")).toBeVisible(); // win_dc's quiet-source alert
     expect(within(ingest).getByText("Received 4 min ago")).toBeVisible();
     expect(within(ingest).getByText("Nothing received in 7 days")).toBeVisible();
     const paused = screen.getByRole("region", { name: "Paused schedules" });

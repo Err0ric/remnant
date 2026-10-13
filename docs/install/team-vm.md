@@ -29,6 +29,8 @@ git clone https://github.com/Err0ric/remnant /opt/remnant && cd /opt/remnant
 cp .env.example .env
 ```
 
+No internet access on the VM, or a proxy that breaks the build? Use [offline.md](offline.md) instead of the clone and build here.
+
 Edit `.env`:
 
 ```

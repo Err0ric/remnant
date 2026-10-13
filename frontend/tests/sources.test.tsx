@@ -278,3 +278,52 @@ describe("Source status", () => {
     expect(screen.getByText(/1 .evtx file looks partly copied/)).toBeInTheDocument();
   });
 });
+
+describe("Quiet-source alert (ADR-0014)", () => {
+  function puts(spy: ReturnType<typeof mockApi>) {
+    return spy.mock.calls.filter(
+      ([u, init]) => String(u).endsWith("/watch") && init?.method === "PUT",
+    );
+  }
+
+  it("lets an admin set a quiet period and targets, then turn it off", async () => {
+    const spy = await openSources();
+    const row = (await screen.findByText("linux_sshd")).closest("tr") as HTMLElement;
+    await userEvent.click(within(row).getByRole("button", { name: "Quiet alert for linux_sshd" }));
+    const box = within(row).getByRole("group", { name: "Quiet alert for linux_sshd" });
+    await userEvent.selectOptions(within(box).getByLabelText("Alert if no events for"), "14400");
+    await userEvent.click(await within(box).findByRole("checkbox", { name: "SOC Slack" }));
+    await userEvent.click(within(box).getByRole("button", { name: "Save" }));
+    const init = puts(spy)[0]?.[1];
+    expect(JSON.parse(String(init?.body))).toEqual({ quiet_after_s: 14400, target_ids: ["t1"] });
+    expect(await within(row).findByText("Alert after 4 hours quiet")).toBeInTheDocument();
+
+    await userEvent.click(within(row).getByRole("button", { name: "Quiet alert for linux_sshd" }));
+    const again = within(row).getByRole("group", { name: "Quiet alert for linux_sshd" });
+    expect(await within(again).findByRole("checkbox", { name: "SOC Slack" })).toBeChecked();
+    await userEvent.selectOptions(within(again).getByLabelText("Alert if no events for"), "off");
+    await userEvent.click(within(again).getByRole("button", { name: "Save" }));
+    expect(JSON.parse(String(puts(spy)[1]?.[1]?.body))).toEqual({
+      quiet_after_s: null,
+      target_ids: [],
+    });
+    expect(
+      await within(row).findByRole("button", { name: "Quiet alert for linux_sshd" }),
+    ).toHaveTextContent("Alert if quiet");
+  });
+
+  it("shows the quiet state to everyone and the setting only to admins", async () => {
+    const { QuietAlert } = await import("@/features/sources/QuietAlert");
+    const quiet = {
+      quiet_after_s: 3600,
+      state: "quiet" as const,
+      quiet_since: "2026-10-10T11:00:00+00:00",
+      last_seen: "2026-10-10T10:00:00+00:00",
+    };
+    const { rerender } = render(<QuietAlert sourceId="s" quiet={quiet} canManage={false} />);
+    expect(screen.getByText(/^Quiet: nothing received/)).toBeInTheDocument();
+    expect(screen.queryByRole("button")).toBeNull();
+    rerender(<QuietAlert sourceId="s" quiet={{ ...quiet, state: "ok" }} canManage={false} />);
+    expect(screen.queryByText(/^Quiet/)).toBeNull();
+  });
+});

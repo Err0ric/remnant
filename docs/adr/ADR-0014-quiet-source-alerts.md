@@ -1,6 +1,6 @@
 # ADR-0014: Built-in alerts when a source goes quiet
 
-Status: **Proposed** 2026-10-12 (waiting for the project owner's review).
+Status: **Accepted** 2026-10-12 (project owner). Recorded as SPEC D40; threats T29 and T30.
 
 ## Context
 

@@ -25,6 +25,8 @@ class SourceHealthOut(BaseModel):
     files_waiting: int
     records_skipped: int
     error: str | None
+    # Set while a quiet-source alert (ADR-0014) says nothing has arrived for too long.
+    quiet_since: str | None = None
 
 
 class DetectionOut(BaseModel):
@@ -85,4 +87,9 @@ async def overview(request: Request, user: CurrentUser) -> OverviewOut:
         )
     data = asdict(result)
     data.pop("sources_in_scope")
+    # Quiet state is read fresh on every call, not cached with the numbers above.
+    watches = await run_in_threadpool(request.app.state.quiet.all)
+    quiet = {w.source_id: w.quiet_since for w in watches if w.state == "quiet"}
+    for s in data["sources"]:
+        s["quiet_since"] = quiet.get(s["source_id"])
     return OverviewOut(**data)

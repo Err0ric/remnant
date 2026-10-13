@@ -83,6 +83,7 @@ from app.detect.runner import RuleRunner
 from app.detect.store import RuleStore
 from app.engine.duckdb import QueryEngine
 from app.ingest.maintenance import LakeMaintenance
+from app.ingest.quiet import QuietWatch
 from app.ingest.sources import SourceStore
 from app.ingest.watcher import IngestService
 from app.llm.agent import AskAgent
@@ -164,12 +165,18 @@ def public_url(config: AppConfig) -> str | None:
     return None
 
 
-async def _schedule_loop(schedules: ScheduleService, alerts: AlertDispatcher) -> None:
+async def _schedule_loop(
+    schedules: ScheduleService, alerts: AlertDispatcher, quiet: QuietWatch
+) -> None:
     while True:
         try:
             await asyncio.to_thread(schedules.tick)
         except Exception as exc:  # never fatal; retried next tick
             log.warning("schedules.failed", error=type(exc).__name__)
+        try:
+            await asyncio.to_thread(quiet.tick)
+        except Exception as exc:  # never fatal; retried next tick
+            log.warning("quiet_watch.failed", error=type(exc).__name__)
         try:
             await asyncio.to_thread(alerts.tick)
         except Exception as exc:  # never fatal; retried next tick
@@ -189,7 +196,9 @@ def _lifespan(config: AppConfig) -> Callable[[FastAPI], AbstractAsyncContextMana
             tasks.append(asyncio.create_task(_maintenance_loop(app.state.maintenance)))
         if config.schedules.enabled:
             tasks.append(
-                asyncio.create_task(_schedule_loop(app.state.schedules, app.state.alert_dispatcher))
+                asyncio.create_task(
+                    _schedule_loop(app.state.schedules, app.state.alert_dispatcher, app.state.quiet)
+                )
             )
         try:
             yield
@@ -323,6 +332,15 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         app.state.auth.audit,
         dispatcher=app.state.alert_dispatcher,
         link=app.state.public_url,
+    )
+    app.state.quiet = QuietWatch(
+        meta,
+        received=lambda: {sid: st.last_event_at for sid, st in app.state.ingest.status().items()},
+        source_ids=lambda: {s.source_id for s in app.state.sources.list()},
+        dispatcher=app.state.alert_dispatcher,
+        audit=app.state.auth.audit,
+        link=app.state.public_url,
+        clock=lambda: app.state.auth.clock(),
     )
     app.state.audit_reader = AuditReader(meta)
     app.state.overview = OverviewService(

@@ -4,18 +4,26 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+# A newer commit on the same PR cancels the older run.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
   architecture:
+    if: github.event_name != 'push' || !github.event.repository.private  # private dev repo: the PR run is the gate; public minutes are free
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: ./scripts/check-architecture.sh
 
   backend:
+    if: github.event_name != 'push' || !github.event.repository.private  # private dev repo: the PR run is the gate; public minutes are free
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -38,6 +46,7 @@ jobs:
           path: sbom.cdx.json
 
   frontend:
+    if: github.event_name != 'push' || !github.event.repository.private  # private dev repo: the PR run is the gate; public minutes are free
     runs-on: ubuntu-latest
     defaults:
       run:

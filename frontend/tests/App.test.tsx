@@ -60,6 +60,21 @@ describe("App shell", () => {
     await userEvent.click(screen.getByRole("button", { name: "Switch to light theme" }));
     expect(document.documentElement.dataset.theme).toBe("light");
   });
+
+  it("on narrow screens, the Menu button shows the nav and navigating hides it again", async () => {
+    await renderApp();
+    const nav = screen.getByRole("navigation", { name: "Primary" });
+    expect(nav).toHaveClass("hidden", "md:block");
+    await userEvent.click(screen.getByRole("button", { name: "Open menu" }));
+    expect(nav).not.toHaveClass("hidden");
+    expect(screen.getByRole("button", { name: "Close menu" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    await userEvent.click(within(nav).getByText("Saved searches"));
+    await screen.findByRole("heading", { level: 1, name: "Saved searches" });
+    expect(nav).toHaveClass("hidden");
+  });
 });
 
 describe("Search page", () => {

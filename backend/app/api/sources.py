@@ -9,7 +9,9 @@ from fastapi import APIRouter, Request, Response, status
 from pydantic import BaseModel, Field, SecretStr, model_validator
 from starlette.concurrency import run_in_threadpool
 
+from app.alerts.dispatch import AlertDispatcher
 from app.api.access import AdminUser, CurrentUser, client_ip
+from app.api.schedules import DeliveryOut
 from app.auth.service import AuthService
 from app.core.errors import NotFoundError, RateLimitedError
 from app.core.ids import AUTO_PARSER
@@ -17,6 +19,7 @@ from app.engine.views import permitted_sources
 from app.ingest.connectors.loki import LokiSettings
 from app.ingest.connectors.loki import test_connection as loki_test
 from app.ingest.discovery import DiscoveryReport, discover
+from app.ingest.quiet import MAX_QUIET_S, MIN_QUIET_S, QuietWatch, Watch
 from app.ingest.sources import SourceConfig, SourceStore
 from app.ingest.watcher import IngestService, SourceStatus, source_state
 from app.meta.db import MetaDB
@@ -49,8 +52,18 @@ class StatusOut(BaseModel):
     behind_s: float | None = None  # Loki sources: how far reading is behind now
 
 
+class QuietOut(BaseModel):
+    """Quiet-source alert state (ADR-0014). Targets are on the admin-only watch list."""
+
+    quiet_after_s: int
+    state: Literal["ok", "quiet"]
+    quiet_since: str | None
+    last_seen: str | None
+
+
 class SourceOut(SourceConfig):
     status: StatusOut
+    quiet: QuietOut | None = None
 
     @model_validator(mode="after")
     def _kind_fields(self) -> "SourceOut":
@@ -89,8 +102,13 @@ async def list_sources(request: Request, user: CurrentUser) -> list[SourceOut]:
         sources = [s for s in sources if s.source_id in set(allowed or [])]
     ingest: IngestService = request.app.state.ingest
     statuses = ingest.status()
+    watches = {w.source_id: w for w in await run_in_threadpool(_quiet(request).all)}
     out = [
-        SourceOut(**s.model_dump(), status=_status_out(s, statuses.get(s.source_id)))
+        SourceOut(
+            **s.model_dump(),
+            status=_status_out(s, statuses.get(s.source_id)),
+            quiet=_quiet_out(watches.get(s.source_id)),
+        )
         for s in sources
     ]
     if not admin:
@@ -298,3 +316,91 @@ async def update_source(
         )
     assert source is not None  # the validator requires at least one change
     return source
+
+
+# --- quiet-source alerts (ADR-0014) --------------------------------------------------------
+
+
+def _quiet(request: Request) -> QuietWatch:
+    quiet: QuietWatch = request.app.state.quiet
+    return quiet
+
+
+def _quiet_out(w: Watch | None) -> QuietOut | None:
+    if w is None:
+        return None
+    return QuietOut(
+        quiet_after_s=w.quiet_after_s,
+        state="quiet" if w.state == "quiet" else "ok",
+        quiet_since=w.quiet_since,
+        last_seen=w.last_seen,
+    )
+
+
+class WatchOut(QuietOut):
+    source_id: str
+    target_ids: list[str]
+    updated_at: str
+    updated_by: str | None
+
+
+class WatchIn(BaseModel):
+    # null turns the alert off for this source.
+    quiet_after_s: int | None = Field(ge=MIN_QUIET_S, le=MAX_QUIET_S)
+    target_ids: list[str] = Field(default_factory=list, max_length=10)
+
+
+def _watch_out(w: Watch) -> WatchOut:
+    base = _quiet_out(w)
+    assert base is not None
+    return WatchOut(
+        **base.model_dump(),
+        source_id=w.source_id,
+        target_ids=w.target_ids,
+        updated_at=w.updated_at,
+        updated_by=w.updated_by,
+    )
+
+
+@router.get("/sources/watches")
+async def list_watches(request: Request, _: AdminUser) -> list[WatchOut]:
+    """Every source's quiet alert setting, with its targets."""
+    return [_watch_out(w) for w in await run_in_threadpool(_quiet(request).all)]
+
+
+@router.put("/sources/{source_id}/watch")
+async def set_watch(
+    source_id: str, body: WatchIn, request: Request, user: AdminUser
+) -> WatchOut | None:
+    """Alert when this source receives nothing for `quiet_after_s`; null turns it off.
+    Audited as source.quiet_alert_change with the old and new setting."""
+    w = await run_in_threadpool(
+        _quiet(request).set,
+        source_id,
+        body.quiet_after_s,
+        body.target_ids,
+        user,
+        client_ip(request),
+    )
+    return _watch_out(w) if w else None
+
+
+@router.get("/sources/{source_id}/deliveries")
+async def watch_deliveries(source_id: str, request: Request, _: AdminUser) -> list[DeliveryOut]:
+    """Quiet and resumed alerts sent for this source, newest first (no message content)."""
+    dispatcher: AlertDispatcher = request.app.state.alert_dispatcher
+    rows = await run_in_threadpool(lambda: dispatcher.deliveries(source_id=source_id, limit=50))
+    return [
+        DeliveryOut(
+            delivery_id=d.delivery_id,
+            target_name=d.target_name,
+            kind=d.kind,
+            status=d.status,
+            attempts=d.attempts,
+            next_attempt_at=d.next_attempt_at,
+            last_error=d.last_error,
+            created_at=d.created_at,
+            sent_at=d.sent_at,
+        )
+        for d in rows
+    ]

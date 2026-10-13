@@ -15,6 +15,7 @@ caller may read now; matches are filtered by the caller's sources the same way.
 
 import json
 import sqlite3
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -36,6 +37,8 @@ from app.templates.validator import Template
 MAX_STORED_MATCHES = 1_000
 MAX_RANGE = timedelta(days=366)
 RUN_TIMEOUT_S = 60.0
+AUTO_SEEN_WINDOW = timedelta(days=30)
+AUTO_SEEN_TTL_S = 60.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +82,7 @@ class RuleRunner:
         self._engine = engine
         self._sources = sources
         self._templates = templates
+        self._seen_cache: dict[tuple[str, ...], tuple[float, dict[str, set[str]]]] = {}
         self._rules = rules
         self._audit = audit
 
@@ -126,7 +130,52 @@ class RuleRunner:
         if allowed is not None:
             permitted = set(allowed)
             declared = [(sid, d) for sid, d in declared if sid in permitted]
+        # An Automatic source could hold any routable template's rows, so _declared lists
+        # them all (right for running). For listing, show only templates it has actually
+        # used, or every Windows rule would name a Linux syslog source.
+        seen = self._auto_seen([sid for sid, _ in declared if sid in self._auto_ids()])
+        if seen is not None:
+            declared = [
+                (sid, self._seen_logsources(seen.get(sid, set())) if sid in seen else d)
+                for sid, d in declared
+            ]
         return {ls: [sid for sid, d in declared if applies(ls, d)] for ls in logsources}
+
+    def _auto_ids(self) -> set[str]:
+        return {s.source_id for s in self._sources.list() if s.template_id == AUTO_PARSER}
+
+    def _seen_logsources(self, template_ids: set[str]) -> list[LogSource]:
+        out: list[LogSource] = []
+        for tid in sorted(template_ids):
+            template = self._templates.get(tid)
+            if template is not None:
+                out.extend(_logsources(template))
+        return out
+
+    def _auto_seen(self, autos: list[str]) -> dict[str, set[str]] | None:
+        """Templates each Automatic source used in the last 30 days, cached for a minute.
+        None (list every routable template) when it cannot be read."""
+        if not autos:
+            return {}
+        key = tuple(sorted(autos))
+        now = time.monotonic()
+        cached = self._seen_cache.get(key)
+        if cached is not None and now - cached[0] < AUTO_SEEN_TTL_S:
+            return cached[1]
+        scope = QueryScope(sources=list(key), start=datetime.now(UTC) - AUTO_SEEN_WINDOW)
+        try:
+            result = self._engine.run(
+                "SELECT DISTINCT source_id, template_id FROM events WHERE template_id IS NOT NULL",
+                scope,
+                timeout_s=10,
+            )
+        except AppError:
+            return None
+        seen: dict[str, set[str]] = {sid: set() for sid in key}
+        for sid, tid in result.rows:
+            seen.setdefault(str(sid), set()).add(str(tid))
+        self._seen_cache[key] = (now, seen)
+        return seen
 
     def run(
         self, rule_id: str, user: User, start: datetime, end: datetime, ip: str | None

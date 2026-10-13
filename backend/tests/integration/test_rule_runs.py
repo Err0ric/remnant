@@ -229,3 +229,33 @@ def test_rules_on_an_automatic_source_read_only_rows_of_matching_templates(
     matches = lab["admin"].get(f"/api/rules/runs/{out['run_id']}/matches").json()
     from_mixed = [m for m in matches if m["source_id"] == "mixed"]
     assert len(from_mixed) == 1
+
+
+def test_the_rule_list_names_an_automatic_source_only_for_templates_it_used(
+    lab: dict[str, Any], tmp_path: Path
+) -> None:
+    """An Automatic source with only sshd lines is listed under Linux rules, not under
+    every Windows rule it could in theory hold."""
+    auto = tmp_path / "logs" / "auto_lin"
+    auto.mkdir()
+    (auto / "syslog").write_text(
+        "<38>Oct  9 20:02:25 db-01 sshd[13445]: Failed password for root from 192.0.2.7 port 4 ssh2\n"
+    )
+    res = lab["admin"].post(
+        "/api/sources",
+        json={
+            "source_id": "auto_lin",
+            "format": "syslog",
+            "path": str(auto),
+            "template_id": "auto",
+        },
+        headers=lab["h"],
+    )
+    assert res.status_code == 201, res.text
+    lab["app"].state.ingest.run_once()
+    listed = {r["rule_id"]: r["source_ids"] for r in lab["admin"].get("/api/rules").json()}
+    assert "auto_lin" in listed[LINUX_ID]
+    assert "auto_lin" not in listed[WIN_ID]
+    # Running still uses the full routable set, filtered per row (ADR-0012).
+    out = run(lab["admin"], LINUX_ID, lab["h"]).json()
+    assert "auto_lin" in out["sources_in_scope"]

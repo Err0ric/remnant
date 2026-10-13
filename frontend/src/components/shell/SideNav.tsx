@@ -7,11 +7,20 @@ interface SideNavProps {
   active: string;
   isAdmin: boolean;
   canAudit: boolean;
+  /** Narrow screens only: shown when the top bar's Menu button is pressed. */
+  open?: boolean;
 }
 
-export function SideNav({ active, isAdmin, canAudit }: SideNavProps) {
+export function SideNav({ active, isAdmin, canAudit, open = false }: SideNavProps) {
   return (
-    <nav aria-label="Primary" className="w-55 shrink-0 border-r border-border bg-nav px-2 py-3">
+    <nav
+      id="primary-nav"
+      aria-label="Primary"
+      className={cn(
+        "w-full shrink-0 border-b border-border bg-nav px-2 py-3 md:block md:w-55 md:border-b-0 md:border-r",
+        open ? "block" : "hidden",
+      )}
+    >
       {GROUPS.map((group) => (
         <div key={group.label} className="mb-3">
           <div className="px-2.5 py-1 text-xs text-text-muted">{group.label}</div>

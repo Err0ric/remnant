@@ -39,6 +39,18 @@ class Delivery:
     sent_at: str | None
 
 
+_DELIVERIES_BY_SCHEDULE = (
+    "SELECT d.*, t.name AS target_name FROM alert_deliveries d"
+    " LEFT JOIN alert_targets t ON t.target_id = d.target_id"
+    " WHERE d.schedule_id = ? ORDER BY d.created_at DESC LIMIT ?"
+)
+_DELIVERIES_BY_SOURCE = (
+    "SELECT d.*, t.name AS target_name FROM alert_deliveries d"
+    " LEFT JOIN alert_targets t ON t.target_id = d.target_id"
+    " WHERE d.source_id = ? ORDER BY d.created_at DESC LIMIT ?"
+)
+
+
 class AlertDispatcher:
     def __init__(
         self,
@@ -51,7 +63,12 @@ class AlertDispatcher:
         self._clock = clock
 
     def enqueue(
-        self, alert: Alert, target_ids: list[str], schedule_id: str | None, run_id: str | None
+        self,
+        alert: Alert,
+        target_ids: list[str],
+        schedule_id: str | None,
+        run_id: str | None,
+        source_id: str | None = None,
     ) -> list[str]:
         now = self._clock().astimezone(UTC).isoformat()
         ids = []
@@ -60,9 +77,9 @@ class AlertDispatcher:
                 did = new_id()
                 con.execute(
                     "INSERT INTO alert_deliveries (delivery_id, target_id, schedule_id, run_id,"
-                    " alert, status, attempts, next_attempt_at, created_at)"
-                    " VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, ?)",
-                    (did, tid, schedule_id, run_id, json.dumps(asdict(alert)), now, now),
+                    " source_id, alert, status, attempts, next_attempt_at, created_at)"
+                    " VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)",
+                    (did, tid, schedule_id, run_id, source_id, json.dumps(asdict(alert)), now, now),
                 )
                 ids.append(did)
             if schedule_id is not None:
@@ -130,14 +147,13 @@ class AlertDispatcher:
             ).fetchone()
         return int(n)
 
-    def deliveries(self, schedule_id: str, limit: int = 50) -> list[Delivery]:
+    def deliveries(
+        self, schedule_id: str | None = None, limit: int = 50, source_id: str | None = None
+    ) -> list[Delivery]:
+        """A schedule's deliveries, or (with `source_id`) a source's quiet alerts."""
+        sql = _DELIVERIES_BY_SOURCE if source_id is not None else _DELIVERIES_BY_SCHEDULE
         with self._meta.connect() as con:
-            rows = con.execute(
-                "SELECT d.*, t.name AS target_name FROM alert_deliveries d"
-                " LEFT JOIN alert_targets t ON t.target_id = d.target_id"
-                " WHERE d.schedule_id = ? ORDER BY d.created_at DESC LIMIT ?",
-                (schedule_id, limit),
-            ).fetchall()
+            rows = con.execute(sql, (source_id or schedule_id, limit)).fetchall()
         return [
             Delivery(
                 delivery_id=r["delivery_id"],

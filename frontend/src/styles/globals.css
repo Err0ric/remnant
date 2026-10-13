@@ -31,3 +31,11 @@
     animation: none !important;
   }
 }
+
+/* Phones: wide tables keep readable columns and scroll inside their panel instead of
+   squeezing every cell to one word. */
+@media (max-width: 767px) {
+  .overflow-x-auto > table {
+    min-width: 720px;
+  }
+}
