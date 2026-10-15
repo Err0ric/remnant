@@ -1,0 +1,10 @@
+{"actor_process_name": "npx", "actor_user_name": "alice", "class_uid": 5020, "device_hostname": "ws-0042", "message": "github", "parse_status": "ok", "time": "2026-10-14T17:00:37+00:00"}
+{"actor_process_name": "npx", "actor_user_name": "bob", "class_uid": 5020, "device_hostname": "lt-0107", "message": "filesystem", "parse_status": "ok", "time": "2026-10-14T17:00:43+00:00"}
+{"actor_user_name": "carol", "class_uid": 5020, "device_hostname": "ws-0311", "dst_endpoint_hostname": "mcp.atlassian.example", "message": "jira", "parse_status": "ok", "time": "2026-10-14T17:00:49+00:00"}
+{"actor_process_name": "uvx", "actor_user_name": "dave", "class_uid": 5020, "device_hostname": "lt-0220", "message": "slack", "parse_status": "ok", "time": "2026-10-14T17:01:21+00:00"}
+{"actor_user_name": "erin", "class_uid": 5020, "device_hostname": "ws-0418", "dst_endpoint_hostname": "mcp.paste-share.example", "message": "paste-share", "parse_status": "ok", "time": "2026-10-14T17:01:26+00:00"}
+{"actor_process_name": "docker", "actor_user_name": "alice", "class_uid": 5020, "device_hostname": "ws-0042", "message": "postgres", "parse_status": "ok", "time": "2026-10-14T17:02:01+00:00"}
+{"actor_process_name": "npx", "actor_user_name": "bob", "class_uid": 5020, "device_hostname": "lt-0107", "message": "github", "parse_status": "ok", "time": "2026-10-14T17:02:10+00:00"}
+{"actor_process_name": "npx", "actor_user_name": "carol", "class_uid": 5020, "device_hostname": "ws-0311", "message": "filesystem", "parse_status": "ok", "time": "2026-10-14T17:02:19+00:00"}
+{"actor_user_name": "dave", "class_uid": 5020, "device_hostname": "lt-0220", "dst_endpoint_hostname": "mcp.atlassian.example", "message": "jira", "parse_status": "ok", "time": "2026-10-14T17:02:50+00:00"}
+{"actor_process_name": "uvx", "actor_user_name": "erin", "class_uid": 5020, "device_hostname": "ws-0418", "message": "slack", "parse_status": "ok", "time": "2026-10-14T17:03:26+00:00"}

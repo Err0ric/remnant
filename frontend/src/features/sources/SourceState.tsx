@@ -23,6 +23,18 @@ export function SourceState({ status }: SourceStateProps) {
       {status.error ? (
         <span className="max-w-[320px] text-sm text-text-secondary">{status.error}</span>
       ) : null}
+      {status.warnings?.length ? (
+        <ul className="max-w-[320px] text-sm text-warn">
+          {status.warnings.map((w) => (
+            <li key={w}>{w}</li>
+          ))}
+        </ul>
+      ) : null}
+      {status.state === "error" && status.retry_at ? (
+        <span className="text-sm text-text-muted">
+          Next try {new Date(status.retry_at).toLocaleTimeString()}
+        </span>
+      ) : null}
       {status.files_waiting > 0 ? (
         <span className="max-w-[320px] text-sm text-text-secondary">
           {status.files_waiting === 1

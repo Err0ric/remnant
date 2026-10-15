@@ -6,7 +6,6 @@ Items noted during a slice that belong to a later slice. Move into the slice pla
 |---|---|---|
 | Pin Docker base images by digest | 6 | Slice 1 skeleton |
 | Self-hosted Lucide subset or tree-shake audit | 6 | Slice 1 skeleton |
-| Investigate action on expanded rows wired to Investigation pages | 4 | Search UI PR |
 | Read-only MCP server (SPEC 3.8, ADR-0003) | 7 | Roadmap, 2026-10-10 |
 | Octet-counted framing for file sources (watcher reads newline-framed files; octet counting is a TCP framing, covered in the framer for the Slice 7 listener) | 7 | Slice 1 review |
 | Per-partition classification summary written at ingest, so the gate's event-label check does not scan the `classification` column on every cloud call | 5 | Gate review, 2026-10-10 |
@@ -33,3 +32,8 @@ Items noted during a slice that belong to a later slice. Move into the slice pla
 | CLI device-code sign-in for SSO users (OAuth device authorization grant), so `remnant login` works without creating a token in the web UI (ADR-0013 row 9) | 7 | ADR-0013, 2026-10-11 |
 | SAML 2.0 sign-in, only if an identity provider without OIDC is asked for (ADR-0013 row 1) | Later | ADR-0013, 2026-10-11 |
 | Built-in quiet-source check: per-source "expect events every N minutes" on the Sources page, one alert per source to chosen targets, cleared when events resume; proposed in ADR-0014 (waiting for review). Until then, a schedule flagged below 1 does it (docs/install/quiet-sources.md) | 7 | Overnight work, 2026-10-12 |
+| Documentation site: one place for install, every integration (M365, Claude Code, agents, Loki, syslog relays, SSO), configuration, and operations, in the style of a vendor docs portal (left nav, breadcrumbs, search). Built from `docs/` with MkDocs Material and published on GitHub Pages (no domain needed); until then the guides live in `docs/install/` | Later | Owner request, 2026-10-14 |
+| PowerShell MCP inventory script: first run on a Windows machine (the Python version is tested; no PowerShell in CI) | 7 | AI usage PR, 2026-10-14 |
+| M365 and Anthropic connectors: first run against a live tenant and a live Admin API key; record any response shapes the fakes missed | 7 | Connector PR, 2026-10-14 |
+| Microsoft 365 consent link on the add-source form (`https://login.microsoftonline.com/{tenant}/adminconsent?client_id=...`) | 7 | Connector PR, 2026-10-14 |
+

@@ -1,0 +1,59 @@
+schema_version: 1
+id: mcp_inventory
+name: MCP server inventory (endpoint script)
+version: 1.0.0
+author: starter-pack
+description: >-
+  One line per MCP server found in an AI client's configuration on an endpoint, from
+  scripts/endpoint/mcp-inventory.ps1 or mcp_inventory.py (ADR-0015 row 6), read from a file or received
+  over OTLP. Names, transport, and the command or URL host only; the script never collects
+  arguments, environment, or headers. The server name is the message; the client, scope,
+  and config file stay in unmapped.
+category: application
+vendor: remnant
+classification_default: local_only
+
+envelope:
+  type: none
+
+match:
+  regex: '"event":"mcp_inventory"'
+  min_confidence: 0.95
+
+payload:
+  format: json
+  json: { root: "$" }
+
+transforms:
+  - { field: time, op: timestamp, args: { format: iso8601 } }
+
+mapping:
+  class_uid: 5020            # Software Inventory Info
+  fields:
+    time: { from: time }
+    device_hostname: { from: [host, attr.host, resource.host_name] }
+    actor_user_name: { from: [os_user, attr.os_user] }
+    actor_process_name: { from: [command, attr.command] }
+    dst_endpoint_hostname: { from: [url_host, attr.url_host] }
+    message: { from: [server, attr.server] }
+    activity_id: { default: 1 }
+
+tests:
+  - name: local stdio server from a file
+    input: '{"event":"mcp_inventory","time":"2026-10-14T17:00:00+00:00","host":"ws-0042","os_user":"alice","client":"claude_desktop","server":"github","transport":"stdio","command":"npx","url_host":null,"scope":"user","config":"C:/Users/alice/AppData/Roaming/Claude/claude_desktop_config.json"}'
+    expect:
+      parse_status: ok
+      class_uid: 5020
+      fields: { device_hostname: ws-0042, actor_user_name: alice, actor_process_name: npx, message: github, time: "2026-10-14T17:00:00+00:00" }
+  - name: remote server received over OTLP
+    input: '{"signal":"log","time":"2026-10-14T17:00:05+00:00","service":"remnant-mcp-inventory","event":"mcp_inventory","severity":null,"attr":{"event_name":"mcp_inventory","host":"lt-0107","os_user":"bob","client":"cursor","server":"paste-share","transport":"http","command":null,"url_host":"mcp.paste-share.example","scope":"user"},"body":null,"resource":{"service_name":"remnant-mcp-inventory"},"scope":null,"content":"dropped"}'
+    expect:
+      parse_status: ok
+      class_uid: 5020
+      fields: { device_hostname: lt-0107, actor_user_name: bob, dst_endpoint_hostname: mcp.paste-share.example, message: paste-share }
+  - name: server with no command or url
+    input: '{"event":"mcp_inventory","time":"2026-10-14T17:01:00Z","host":"ws-0311","os_user":"carol","client":"vscode","server":"postgres","transport":"stdio","command":null,"url_host":null,"scope":"workspace"}'
+    expect:
+      parse_status: ok
+      class_uid: 5020
+      fields: { device_hostname: ws-0311, actor_user_name: carol, message: postgres }

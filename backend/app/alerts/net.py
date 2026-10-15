@@ -14,9 +14,12 @@ in between cannot move an alert somewhere else.
 
 import ipaddress
 import socket
+import ssl
 from dataclasses import dataclass
 from typing import Literal
 from urllib.parse import urlsplit
+
+import httpx
 
 from app.core.errors import ParamInvalidError
 
@@ -128,3 +131,78 @@ def check_smtp_host(
             "SMTP needs TLS (STARTTLS or implicit) unless the relay is on this host"
         )
     return Destination(f"smtp://{host}:{port}", "smtp", host, port, str(addresses[0]), loopback)
+
+
+# --- outbound proxy and CA bundle (ADR-0018) -----------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class Egress:
+    """Outbound settings from `network` config (ADR-0018). The proxy is used only by the
+    fixed-host API connectors and Teams or Slack alerts; the CA bundle by both, proxied
+    or not."""
+
+    https_proxy: str | None = None
+    username: str | None = None
+    password: str | None = None
+    ca_bundle: str | None = None
+
+    def verify(self) -> ssl.SSLContext | bool:
+        if not self.ca_bundle:
+            return True
+        ctx = ssl.create_default_context()
+        ctx.load_verify_locations(cafile=self.ca_bundle)
+        return ctx
+
+    def proxy(self) -> httpx.Proxy | None:
+        if not self.https_proxy:
+            return None
+        auth = (self.username, self.password) if self.username and self.password else None
+        return httpx.Proxy(self.https_proxy, auth=auth)
+
+
+_egress = Egress()
+
+
+def configure_egress(egress: Egress) -> None:
+    """Set once at start-up (and by tests)."""
+    global _egress  # process-wide outbound settings, set at start-up
+    _egress = egress
+
+
+def egress() -> Egress:
+    return _egress
+
+
+def check_proxied(kind: Kind, url: str) -> Destination:
+    """The checks of check_url that need no DNS, for a request sent through the proxy:
+    https only, no credentials, and the kind's host rule. The proxy resolves the name."""
+    if len(url) > MAX_URL:
+        raise ParamInvalidError("The URL is too long")
+    try:
+        parts = urlsplit(url.strip())
+        port = parts.port or 443
+    except ValueError as exc:
+        raise ParamInvalidError("The URL is not valid") from exc
+    host = (parts.hostname or "").lower()
+    if parts.scheme != "https" or not host:
+        raise ParamInvalidError("Through the proxy, the URL must start with https://")
+    if parts.username is not None or parts.password is not None:
+        raise ParamInvalidError("Put no credentials in the URL")
+    if kind == "slack" and host != "hooks.slack.com":
+        raise ParamInvalidError("A Slack webhook URL must be on hooks.slack.com")
+    if kind == "teams" and not host.endswith(TEAMS_SUFFIXES):
+        raise ParamInvalidError(
+            "A Teams URL must be a Workflows webhook (Power Automate); connector URLs were retired"
+        )
+    if kind == "webhook":
+        raise ParamInvalidError("Generic webhooks are sent directly, not through the proxy")
+    return Destination(url.strip(), "https", host, port, "", False)
+
+
+def destination(kind: Kind, url: str) -> Destination:
+    """Where an alert goes: through the proxy for Teams and Slack when one is set (no
+    pin), else checked and pinned as usual."""
+    if kind in ("teams", "slack") and _egress.https_proxy:
+        return check_proxied(kind, url)
+    return check_url(kind, url)

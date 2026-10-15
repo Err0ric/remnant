@@ -84,8 +84,9 @@ class _Tok:
     pos: int = 0
 
 
-def compile_search(text: str, top: str | None = None) -> Compiled:
-    """SQL and parameters for `text`; with `top`, counts per value of that field instead."""
+def compile_search(text: str, top: str | None = None, select: str = RESULT_COLUMNS) -> Compiled:
+    """SQL and parameters for `text`; with `top`, counts per value of that field instead.
+    `select` is a fixed column list from the caller (facets use `*`), never user text."""
     if len(text) > MAX_TEXT:
         raise SearchInvalidError(f"The search is too long (over {MAX_TEXT} characters)")
     tokens = _tokenize(text)
@@ -96,10 +97,7 @@ def compile_search(text: str, top: str | None = None) -> Compiled:
     where = builder.where()
     clause = f"\nWHERE {where}" if where else ""
     if top is None:
-        sql = (
-            f"SELECT {RESULT_COLUMNS}\nFROM events{clause}\n"
-            "ORDER BY coalesce(time, time_observed) DESC"
-        )
+        sql = f"SELECT {select}\nFROM events{clause}\nORDER BY coalesce(time, time_observed) DESC"
     else:
         expr, _kind, label = builder.resolve(top.strip(), -1)
         sql = (

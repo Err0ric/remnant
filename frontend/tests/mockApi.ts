@@ -566,6 +566,242 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
           sent_at: null,
         },
       ]);
+    if (url.endsWith("/api/identities/domains") && method === "PUT") {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { domains: string[] };
+      return json(body.domains.map((d) => d.toLowerCase()));
+    }
+    if (url.endsWith("/api/identities/aliases") && method === "PUT") return json([]);
+    if (url.endsWith("/api/identities"))
+      return json({
+        domains: [],
+        aliases: [
+          {
+            alias: "jsmith",
+            person: "john.smith@example.com",
+            created_by: "u1",
+            created_at: "2026-10-15T06:00:00Z",
+          },
+        ],
+        domain_suggestions: [
+          { domain: "example.com", addresses: 3, shared: 2, examples: ["alice", "bob"] },
+        ],
+        alias_suggestions: [{ alias: "carol", person: "carol@example.com", hosts: ["ws-0311"] }],
+      });
+    if (url.includes("/api/entities/risk")) {
+      const r = (kind: string, value: string, high: number, rules: string[]) => ({
+        kind,
+        value,
+        score: 5 * high,
+        critical: 0,
+        high,
+        medium: 0,
+        low: 0,
+        flagged_runs: 0,
+        events: high,
+        rules,
+        search_sql: `SELECT * FROM events WHERE actor_user_name = '${value}'`,
+      });
+      return json({
+        users: [
+          r("user", "root", 4, ["SSH failed password"]),
+          r("user", "deploy", 1, ["SSH failed password"]),
+        ],
+        ips: [r("ip", "203.0.113.9", 4, ["SSH failed password"])],
+        hosts: [],
+        matches_considered: 5,
+        sources: ["linux_sshd"],
+      });
+    }
+    if (url.includes("/api/entities/graph")) {
+      const q = new URL(url, "https://x").searchParams;
+      const card = (id: string, lane: number, label: string, extra: object = {}) => ({
+        id,
+        lane,
+        label,
+        sublabel: "",
+        events: 4,
+        matches: 0,
+        max_severity: 0,
+        badges: [],
+        search_sql: `SELECT * FROM events WHERE message = '${label}'`,
+        group: "",
+        ...extra,
+      });
+      if (q.get("mode") === "ai")
+        return json({
+          mode: "ai",
+          lanes: ["People", "AI clients", "Tools and MCP servers", "Destinations"],
+          cards: [
+            card("0:alice@example.com", 0, "alice@example.com", { group: "People" }),
+            card("1:Claude Code", 1, "Claude Code"),
+            card("2:paste-share", 2, "paste-share", {
+              badges: ["Not approved"],
+              group: "MCP servers",
+            }),
+            card("2:Read", 2, "Read", { group: "Built-in tools" }),
+            card("3:svc:chatgpt", 3, "ChatGPT", {
+              sublabel: "OpenAI",
+              search_sql: null,
+              group: "AI services",
+            }),
+          ],
+          edges: [
+            { source: "0:alice@example.com", target: "1:Claude Code", events: 4 },
+            { source: "1:Claude Code", target: "2:paste-share", events: 2 },
+            { source: "1:Claude Code", target: "2:Read", events: 2 },
+          ],
+          more: [0, 0, 0, 0],
+          sources: ["claude"],
+        });
+      const value = q.get("value") ?? "";
+      return json({
+        mode: "entity",
+        lanes: ["Entity", "Sources", "Activities", "Targets"],
+        cards: [
+          card("0:root", 0, value, { sublabel: "User", matches: 4, badges: ["4 rule matches"] }),
+          card("1:linux_sshd", 1, "linux_sshd"),
+          card("2:3002|Failed password", 2, "Failed password", {
+            sublabel: "Authentication",
+            group: "Authentication",
+          }),
+          card("2:3002|Accepted publickey", 2, "Accepted publickey", {
+            sublabel: "Authentication",
+            group: "Authentication",
+          }),
+          card("3:bastion", 3, "bastion", { group: "Hosts" }),
+        ],
+        edges: [
+          { source: "0:root", target: "1:linux_sshd", events: 4 },
+          { source: "1:linux_sshd", target: "2:3002|Failed password", events: 3 },
+          { source: "1:linux_sshd", target: "2:3002|Accepted publickey", events: 1 },
+          { source: "2:3002|Failed password", target: "3:bastion", events: 3 },
+        ],
+        more: [0, 0, 0, 2],
+        sources: ["linux_sshd"],
+      });
+    }
+    if (url.includes("/api/ai/usage")) {
+      const svc = (id: string, name: string, status: string) => ({
+        id,
+        name,
+        vendor: "Vendor",
+        kind: "chat",
+        domains: [`${id}.example`],
+        status,
+        custom: false,
+        note: "",
+      });
+      return json({
+        services: [
+          {
+            service: svc("chatgpt", "ChatGPT", "not_approved"),
+            events: 120,
+            people: 3,
+            machines: 4,
+            first_seen: "2026-10-09T10:00:00+00:00",
+            last_seen: "2026-10-10T11:00:00+00:00",
+            top_people: ["alice", "bob"],
+            top_machines: [],
+          },
+          {
+            service: svc("claude", "Claude", "approved"),
+            events: 40,
+            people: 2,
+            machines: 2,
+            first_seen: null,
+            last_seen: "2026-10-10T11:30:00+00:00",
+            top_people: [],
+            top_machines: ["10.20.1.5"],
+          },
+        ],
+        mcp: [
+          {
+            name: "paste-share",
+            status: "unreviewed",
+            calls: 7,
+            people: 1,
+            machines: 1,
+            installs: 1,
+            clients: ["cursor"],
+            first_seen: null,
+            last_seen: "2026-10-10T11:00:00+00:00",
+            sources: ["inventory", "telemetry"],
+          },
+        ],
+        people: [
+          {
+            person: "alice@example.com",
+            cost_usd: 12.5,
+            tokens: 400000,
+            sessions: 9,
+            tool_calls: 120,
+            errors: 2,
+            sensitive: 1,
+            models: ["claude-opus-5-5"],
+          },
+        ],
+        sources_in_scope: ["dns", "claude"],
+      });
+    }
+    if (/\/api\/ai\/services\/[^/]+\/status$/.test(url) && method === "PUT") {
+      const id = decodeURIComponent(url.split("/api/ai/services/")[1]?.split("/")[0] ?? "");
+      const body = JSON.parse(String(init?.body ?? "{}")) as { status: string };
+      return json({
+        id,
+        name: id,
+        vendor: "",
+        kind: "chat",
+        domains: [],
+        status: body.status,
+        custom: false,
+        note: "",
+      });
+    }
+    if (url.endsWith("/api/ai/catalog")) return json([]);
+    if (url.endsWith("/api/ai/mcp-rules")) return json([]);
+    if (url.endsWith("/api/ai/watch") && method === "GET")
+      return json({
+        enabled: false,
+        include_unreviewed: false,
+        sensitive: true,
+        target_ids: [],
+        updated_at: null,
+        updated_by: null,
+      });
+    if (url.endsWith("/api/ai/watch") && method === "PUT")
+      return json({ ...JSON.parse(String(init?.body ?? "{}")), updated_at: "x", updated_by: "u1" });
+    if (url.endsWith("/api/search/presets"))
+      return json([
+        {
+          id: "failed_signins",
+          name: "Failed sign-ins",
+          description: "Windows 4625 and sshd failures",
+          text: 'EventID:4625 OR "failed password"',
+        },
+        {
+          id: "high_severity",
+          name: "High and critical severity",
+          description: "",
+          text: "severity:>=high",
+        },
+      ]);
+    if (url.endsWith("/api/search/facets")) {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { text?: string; columns?: string[] };
+      const all = [
+        { field: "source_id", values: [{ value: "linux_sshd", count: 1234 }] },
+        {
+          field: "src_endpoint_ip",
+          values: [
+            { value: "203.0.113.9", count: 40 },
+            { value: null, count: 3 },
+          ],
+        },
+        { field: "severity_id", values: [{ value: "4", count: 12 }] },
+      ];
+      const facets =
+        body.text !== undefined ? all : all.filter((f) => (body.columns ?? []).includes(f.field));
+      return json({ facets, elapsed_ms: 4 });
+    }
     if (url.endsWith("/api/search/compile")) {
       const body = JSON.parse(String(init?.body ?? "{}")) as { text: string; top?: string };
       if (body.text.includes("("))
@@ -1045,9 +1281,36 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         newest: "2026-10-12T11:59:00+00:00",
       });
     }
+    if (url.endsWith("/api/sources/api/test")) {
+      const body = JSON.parse(String(init?.body ?? "{}")) as {
+        kind: string;
+        credentials: { certificate_pem?: string };
+      };
+      if (body.kind === "m365")
+        return json({
+          feeds: {
+            "Management Activity API": "ok",
+            "Graph signins": "Sign-in logs need Entra ID P1 or P2 in this tenant",
+          },
+          thumbprint: body.credentials.certificate_pem
+            ? "A1B2C3D4E5F60718293A4B5C6D7E8F9012345678"
+            : null,
+        });
+      return json({ feeds: { usage: "ok" }, thumbprint: null });
+    }
+    if (url.includes("/api/sources/") && url.endsWith("/credentials") && method === "PUT")
+      return new Response(null, { status: 204 });
     if (url.endsWith("/api/sources") && method === "POST") {
-      const body = JSON.parse(String(init?.body ?? "{}")) as { path: string; kind?: string };
-      if (body.kind !== "loki" && !body.path.startsWith("/logs"))
+      const body = JSON.parse(String(init?.body ?? "{}")) as {
+        path: string;
+        kind?: string;
+        credentials?: unknown;
+      };
+      delete body.credentials; // write-only: the server never returns it
+      if (
+        !["loki", "otlp", "m365", "anthropic"].includes(body.kind ?? "") &&
+        !body.path.startsWith("/logs")
+      )
         return json(
           { detail: `Path is outside the allowed roots: ${body.path}`, code: "source_rejected" },
           400,
@@ -1058,6 +1321,8 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         status: { ...SOURCE.status, state: "waiting", files: 0 },
       };
       sources.push(created);
+      if (body.kind === "otlp")
+        return json({ ...created, otlp_token: "rmt_test_token_value" }, 201);
       return json(created, 201);
     }
     if (url.includes("/api/sources/") && method === "DELETE") {

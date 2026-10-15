@@ -37,7 +37,7 @@ describe("Audit log", () => {
     await vi.waitFor(() => expect(urls(spy, "user_id=u2").length).toBeGreaterThan(0));
     await userEvent.click(screen.getByRole("button", { name: /Details of query.run/ }));
     expect(screen.getByText(/"sql": "SELECT 1"/)).toBeVisible();
-    const nav = screen.getByRole("navigation", { name: "Primary" });
+    const nav = screen.getByRole("navigation", { name: "Settings" });
     expect(within(nav).getByText("Audit log")).toHaveAttribute("aria-current", "page");
   });
 

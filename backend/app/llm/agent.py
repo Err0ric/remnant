@@ -132,6 +132,8 @@ class AskAgent:
         self._gate = gate
         self._engine = engine
         self._vocabulary = vocabulary
+        # The versioned prompt file; the eval suite sets it to compare versions.
+        self.prompt = PROMPT
 
     def ask(
         self,
@@ -205,7 +207,7 @@ class AskAgent:
                         provider_id=provider_id,
                         purpose="ask",
                         scope=scope,
-                        prompt=PROMPT,
+                        prompt=self.prompt,
                         messages=list(messages),
                         tools=None if last else TOOLS,
                         response_model=AskAnswer,

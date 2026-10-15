@@ -388,3 +388,96 @@ questions:
   - id: q100
     question: Which users started processes on ws-01?
     sql: SELECT DISTINCT actor_user_name FROM events WHERE class_uid = 1007 AND device_hostname = 'ws-01'
+  # --- follow-ups and people (ask.v5) ---------------------------------------------------
+  # Each `history` is the conversation so far, as if the analyst asked and kept those
+  # queries. A person named casually matches every logged form of their name.
+  - id: f001
+    history:
+      - question: How many failed logins were there?
+        sql: SELECT count(*) FROM events WHERE class_uid = 3002 AND status_id = 2
+    question: ok show me all of these for alice
+    sql: >-
+      SELECT event_id FROM events WHERE class_uid = 3002 AND status_id = 2
+      AND lower(actor_user_name) IN ('alice', 'alice@example.com')
+  - id: f002
+    history:
+      - question: How many failed SSH logins were there for dave?
+        sql: >-
+          SELECT count(*) FROM events WHERE class_uid = 3002 AND status_id = 2
+          AND actor_process_name = 'sshd' AND actor_user_name = 'dave'
+    question: Break that down by host.
+    sql: >-
+      SELECT device_hostname, count(*) FROM events WHERE class_uid = 3002 AND status_id = 2
+      AND actor_process_name = 'sshd' AND actor_user_name = 'dave' GROUP BY 1
+  - id: f003
+    history:
+      - question: How many failed SSH logins were there?
+        sql: >-
+          SELECT count(*) FROM events WHERE class_uid = 3002 AND status_id = 2
+          AND actor_process_name = 'sshd'
+    question: Only the ones from 203.0.113.9
+    sql: >-
+      SELECT count(*) FROM events WHERE class_uid = 3002 AND status_id = 2
+      AND actor_process_name = 'sshd' AND src_endpoint_ip = '203.0.113.9'
+  - id: f004
+    history:
+      - question: How many sudo commands were denied?
+        sql: SELECT count(*) FROM events WHERE class_uid = 3003 AND status_id = 2
+    question: Which users?
+    sql: SELECT DISTINCT actor_user_name FROM events WHERE class_uid = 3003 AND status_id = 2
+  - id: f005
+    history:
+      - question: How many failed logins did carol have?
+        sql: >-
+          SELECT count(*) FROM events WHERE class_uid = 3002 AND status_id = 2
+          AND actor_user_name = 'carol'
+    question: What about successful ones?
+    sql: >-
+      SELECT count(*) FROM events WHERE class_uid = 3002 AND status_id = 1 AND activity_id = 1
+      AND actor_user_name = 'carol'
+  - id: f006
+    question: How many failed sign-ins did Steve have?
+    sql: >-
+      SELECT count(*) FROM events WHERE class_uid = 3002 AND status_id = 2
+      AND lower(actor_user_name) IN ('steve.jones@example.com', 'corp\steve.jones')
+  - id: f007
+    history:
+      - question: How many failed logins were there?
+        sql: SELECT count(*) FROM events WHERE class_uid = 3002 AND status_id = 2
+    question: ok show me all of these for Steve
+    sql: >-
+      SELECT event_id FROM events WHERE class_uid = 3002 AND status_id = 2
+      AND lower(actor_user_name) IN ('steve.jones@example.com', 'corp\steve.jones')
+  - id: f008
+    history:
+      - question: Show the sudo commands alice ran.
+        sql: >-
+          SELECT event_id, time, message FROM events WHERE class_uid = 3003
+          AND actor_user_name = 'alice' ORDER BY time LIMIT 100
+    question: On which hosts?
+    sql: >-
+      SELECT DISTINCT device_hostname FROM events WHERE class_uid = 3003
+      AND actor_user_name = 'alice'
+  - id: f009
+    history:
+      - question: Show failed logins for root.
+        sql: >-
+          SELECT event_id, time FROM events WHERE class_uid = 3002 AND status_id = 2
+          AND actor_user_name = 'root' ORDER BY time LIMIT 100
+    question: Count them.
+    sql: >-
+      SELECT count(*) FROM events WHERE class_uid = 3002 AND status_id = 2
+      AND actor_user_name = 'root'
+  - id: f010
+    history:
+      - question: How many failed logins were there?
+        sql: SELECT count(*) FROM events WHERE class_uid = 3002 AND status_id = 2
+      - question: Break that down by source IP.
+        sql: >-
+          SELECT src_endpoint_ip, count(*) FROM events WHERE class_uid = 3002 AND status_id = 2
+          GROUP BY 1
+    question: Just the top 3.
+    compare: ordered
+    sql: >-
+      SELECT src_endpoint_ip, count(*) FROM events WHERE class_uid = 3002 AND status_id = 2
+      GROUP BY 1 ORDER BY 2 DESC LIMIT 3

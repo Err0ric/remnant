@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { OptionalSection } from "@/components/forms/OptionalSection";
 import { ApiError, api, type AlertTargetInput, type AlertTargetKind } from "@/lib/api";
 
 interface TargetFormProps {
@@ -17,6 +18,12 @@ const HELP: Record<AlertTargetKind, string> = {
 };
 
 /** Admin: add an alert target. Secrets are write-only (ADR-0007). */
+const SECURITY_LABEL = {
+  starttls: "STARTTLS",
+  tls: "TLS",
+  none: "No TLS (relay on this host)",
+} as const;
+
 export function TargetForm({ onCreated, onCancel }: TargetFormProps) {
   const client = useQueryClient();
   const [kind, setKind] = useState<AlertTargetKind>("slack");
@@ -95,45 +102,6 @@ export function TargetForm({ onCreated, onCancel }: TargetFormProps) {
               />
             </label>
             <label className={field}>
-              <span className="text-text-secondary">Port</span>
-              <input
-                className={input}
-                type="number"
-                value={port}
-                onChange={(e) => setPort(e.target.value)}
-              />
-            </label>
-            <label className={field}>
-              <span className="text-text-secondary">Security</span>
-              <select
-                className={input}
-                value={security}
-                onChange={(e) => setSecurity(e.target.value as "starttls" | "tls" | "none")}
-              >
-                <option value="starttls">STARTTLS</option>
-                <option value="tls">TLS</option>
-                <option value="none">None (relay on this host only)</option>
-              </select>
-            </label>
-            <label className={field}>
-              <span className="text-text-secondary">User name (optional)</span>
-              <input
-                className={input}
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-              />
-            </label>
-            <label className={field}>
-              <span className="text-text-secondary">Password (optional)</span>
-              <input
-                className={input}
-                type="password"
-                autoComplete="new-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-            </label>
-            <label className={field}>
               <span className="text-text-secondary">From</span>
               <input className={input} value={from} onChange={(e) => setFrom(e.target.value)} />
             </label>
@@ -141,6 +109,55 @@ export function TargetForm({ onCreated, onCancel }: TargetFormProps) {
               <span className="text-text-secondary">To (comma separated)</span>
               <input className={input} value={to} onChange={(e) => setTo(e.target.value)} />
             </label>
+            <OptionalSection
+              title="Port, security, and sign-in"
+              span="col-span-full"
+              summary={[
+                `Port ${port}`,
+                SECURITY_LABEL[security],
+                username ? `Signs in as ${username}` : "No sign-in",
+              ].join(" · ")}
+            >
+              <label className={field}>
+                <span className="text-text-secondary">Port</span>
+                <input
+                  className={input}
+                  type="number"
+                  value={port}
+                  onChange={(e) => setPort(e.target.value)}
+                />
+              </label>
+              <label className={field}>
+                <span className="text-text-secondary">Security</span>
+                <select
+                  className={input}
+                  value={security}
+                  onChange={(e) => setSecurity(e.target.value as "starttls" | "tls" | "none")}
+                >
+                  <option value="starttls">STARTTLS</option>
+                  <option value="tls">TLS</option>
+                  <option value="none">None (relay on this host only)</option>
+                </select>
+              </label>
+              <label className={field}>
+                <span className="text-text-secondary">User name</span>
+                <input
+                  className={input}
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                />
+              </label>
+              <label className={field}>
+                <span className="text-text-secondary">Password</span>
+                <input
+                  className={input}
+                  type="password"
+                  autoComplete="new-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </label>
+            </OptionalSection>
           </>
         ) : (
           <label className={`${field} col-span-full`}>

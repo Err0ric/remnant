@@ -1,0 +1,63 @@
+schema_version: 1
+id: m365_signin
+name: Microsoft Entra sign-ins (Graph)
+version: 1.0.0
+author: starter-pack
+description: >-
+  Interactive and non-interactive sign-ins from Microsoft Graph auditLogs/signIns, pulled
+  by the Microsoft 365 connector (ADR-0002; needs Entra ID P1 or P2). Each line is Graph's
+  JSON, unchanged. The app signed in to is the message; status is success when
+  status.errorCode is 0. Location, device, client app, conditional access, and risk stay
+  in unmapped.
+category: identity
+vendor: microsoft
+classification_default: local_only
+
+envelope:
+  type: none
+
+match:
+  regex: '^\{(?=.*"userPrincipalName":)(?=.*"conditionalAccessStatus":)(?=.*"createdDateTime":")'
+  min_confidence: 0.95
+
+payload:
+  format: json
+  json: { root: "$" }
+
+transforms:
+  - { field: createdDateTime, op: timestamp, args: { format: iso8601 } }
+  - { field: status.errorCode, op: map, args: { into: outcome, values: { "0": 1 }, default: 2 } }
+
+mapping:
+  class_uid: 3002            # Authentication
+  fields:
+    time: { from: createdDateTime }
+    activity_id: { default: 1 }   # Logon
+    actor_user_name: { from: userPrincipalName }
+    src_endpoint_ip: { from: ipAddress }
+    device_hostname: { from: deviceDetail.displayName }
+    message: { from: appDisplayName }
+    status_id: { from: outcome }
+  severity:
+    from: riskLevelDuringSignIn
+    map: { low: 2, medium: 3, high: 4 }
+
+tests:
+  - name: successful sign-in
+    input: '{"id":"9a1c0000-0000-4000-8000-000000000001","createdDateTime":"2026-10-14T17:00:00Z","userDisplayName":"Alice","userPrincipalName":"alice@example.com","userId":"00000000-0000-4000-8000-00000000a001","appId":"00000003-0000-0ff1-ce00-000000000000","appDisplayName":"Office 365 SharePoint Online","ipAddress":"203.0.113.10","clientAppUsed":"Browser","conditionalAccessStatus":"success","isInteractive":true,"riskLevelDuringSignIn":"none","status":{"errorCode":0,"failureReason":"Other."},"deviceDetail":{"displayName":"WS-0042","operatingSystem":"Windows10"},"location":{"city":"Springfield","countryOrRegion":"US"}}'
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { actor_user_name: alice@example.com, src_endpoint_ip: 203.0.113.10, device_hostname: WS-0042, message: Office 365 SharePoint Online, status_id: 1, activity_id: 1, time: "2026-10-14T17:00:00+00:00" }
+  - name: risky failed sign-in
+    input: '{"id":"9a1c0000-0000-4000-8000-000000000002","createdDateTime":"2026-10-14T17:01:00Z","userPrincipalName":"bob@example.com","appDisplayName":"Azure Portal","ipAddress":"198.51.100.200","clientAppUsed":"Browser","conditionalAccessStatus":"failure","isInteractive":true,"riskLevelDuringSignIn":"high","status":{"errorCode":50126,"failureReason":"Invalid username or password."},"deviceDetail":{"displayName":""}}'
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { actor_user_name: bob@example.com, status_id: 2, severity_id: 4 }
+  - name: blocked by conditional access, fractional seconds
+    input: '{"id":"9a1c0000-0000-4000-8000-000000000003","createdDateTime":"2026-10-14T17:02:03.1234567Z","userPrincipalName":"carol@example.com","appDisplayName":"Microsoft Teams","ipAddress":"2001:db8::17","conditionalAccessStatus":"failure","isInteractive":false,"riskLevelDuringSignIn":"medium","status":{"errorCode":53003,"failureReason":"Access has been blocked by Conditional Access policies."}}'
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { actor_user_name: carol@example.com, src_endpoint_ip: "2001:db8::17", message: Microsoft Teams, status_id: 2, severity_id: 3 }

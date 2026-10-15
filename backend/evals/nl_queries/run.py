@@ -3,6 +3,7 @@
     uv run python -m evals.nl_queries.run --base-url http://127.0.0.1:11434/v1 \\
         --model llama3.1:8b [--api-key-env OPENAI_API_KEY] [--ids q001,q021] [--out report.json]
         [--thinking none]   # reasoning models such as qwen3.5: same as Thinking Off
+        [--prompt ask.v5]   # compare prompt versions on the same model
 
 Everything runs in-process against a temporary data folder holding only the synthetic
 fixture: the real gate (classification, audit), the real Ask agent, the real engine.
@@ -29,7 +30,7 @@ from app.core.config import load_config
 from app.core.errors import AppError
 from app.core.logging import configure_logging
 from app.engine.duckdb import QueryEngine, QueryScope
-from app.llm.agent import AskAgent
+from app.llm.agent import PROMPT, AskAgent, AskTurn
 from app.main import create_app
 from evals.nl_queries.compare import Compare, matches
 from evals.nl_queries.fixture import SOURCES, write_lake
@@ -44,6 +45,9 @@ class Case:
     question: str
     sql: str
     compare: Compare = "set"
+    # Follow-ups: the earlier turns of the conversation, each with its reference SQL, as
+    # if the analyst had asked and accepted them.
+    history: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(slots=True)
@@ -62,7 +66,10 @@ class CaseResult:
 
 def load_suite(path: Path = SUITE) -> tuple[list[Case], QueryScope]:
     doc = yaml.safe_load(path.read_text("utf-8"))
-    cases = [Case(**q) for q in doc["questions"]]
+    cases = [
+        Case(**{**q, "history": tuple((t["question"], t["sql"]) for t in q.get("history", []))})
+        for q in doc["questions"]
+    ]
     window = doc["window"]
     scope = QueryScope(
         sources=None,
@@ -96,7 +103,8 @@ def run_case(
     reference = engine.run(case.sql, scope)
     started = time.perf_counter()
     try:
-        outcome = agent.ask(ACTOR, provider_id, scope, case.question, [], [])
+        history = [AskTurn(q, sql) for q, sql in case.history]
+        outcome = agent.ask(ACTOR, provider_id, scope, case.question, history, [])
     except AppError as exc:
         out.seconds = round(time.perf_counter() - started, 2)
         out.error = f"{type(exc).__name__}: {str(exc)[:200]}"
@@ -144,6 +152,7 @@ def main(argv: list[str] | None = None) -> int:
         choices=["none", "low", "medium", "high"],
         help="Sent as reasoning_effort, as the provider's Thinking setting does (none = Off)",
     )
+    p.add_argument("--prompt", default=PROMPT, help=f"Ask prompt version (default {PROMPT})")
     args = p.parse_args(argv)
 
     key = os.environ.get(args.api_key_env) if args.api_key_env else None
@@ -162,6 +171,7 @@ def main(argv: list[str] | None = None) -> int:
         store = app.state.providers
         rec = store.add("eval", args.base_url, args.model, key)
         store.update(rec.provider_id, None, None, None, True, None, False, reasoning=args.thinking)
+        app.state.ask.prompt = args.prompt
         results = []
         for case in cases:
             r = run_case(app.state.ask, app.state.engine, rec.provider_id, scope, case)
@@ -170,7 +180,7 @@ def main(argv: list[str] | None = None) -> int:
             results.append(r)
 
     thinking = f", thinking {args.thinking}" if args.thinking else ""
-    summary = summarise(results, f"{args.model} @ {args.base_url}{thinking}")
+    summary = summarise(results, f"{args.model} @ {args.base_url}{thinking}, {args.prompt}")
     print(json.dumps(summary, indent=2))
     if args.out:
         report = {"summary": summary, "results": [asdict(r) for r in results]}

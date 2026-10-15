@@ -69,6 +69,101 @@ export interface QueryRequest {
 }
 
 /** POST /api/search/compile (ADR-0009): Simple search text as SQL plus parameters. */
+/** POST /api/search/facets (ADR-0016): top values per field for the search on screen. */
+export interface FacetRequest {
+  text?: string;
+  sql?: string;
+  params?: Record<string, string | number | boolean | null>;
+  columns?: string[];
+  start?: string;
+  sources?: string[];
+}
+
+export interface Facet {
+  field: string;
+  values: { value: string | null; count: number }[];
+}
+
+/** AI usage (ADR-0015). */
+export type AiStatus = "approved" | "not_approved" | "unreviewed";
+
+export interface AiService {
+  id: string;
+  name: string;
+  vendor: string;
+  kind: string;
+  domains: string[];
+  status: AiStatus;
+  custom: boolean;
+  note: string;
+}
+
+export interface AiServiceUse {
+  service: AiService;
+  events: number;
+  people: number;
+  machines: number;
+  first_seen: string | null;
+  last_seen: string | null;
+  top_people: string[];
+  top_machines: string[];
+}
+
+export interface AiMcpUse {
+  name: string;
+  status: AiStatus;
+  calls: number;
+  people: number;
+  machines: number;
+  installs: number;
+  clients: string[];
+  first_seen: string | null;
+  last_seen: string | null;
+  sources: string[];
+}
+
+export interface AiPerson {
+  person: string;
+  cost_usd: number;
+  tokens: number;
+  sessions: number;
+  tool_calls: number;
+  errors: number;
+  sensitive: number;
+  models: string[];
+}
+
+export interface AiUsage {
+  services: AiServiceUse[];
+  mcp: AiMcpUse[];
+  people: AiPerson[];
+  sources_in_scope: string[];
+}
+
+export interface AiMcpRule {
+  pattern: string;
+  status: "approved" | "not_approved";
+  note: string;
+  updated_at: string;
+  updated_by: string | null;
+}
+
+export interface AiWatch {
+  enabled: boolean;
+  include_unreviewed: boolean;
+  sensitive: boolean;
+  target_ids: string[];
+  updated_at: string | null;
+  updated_by: string | null;
+}
+
+export interface SearchPreset {
+  id: string;
+  name: string;
+  description: string;
+  text: string;
+}
+
 export interface CompiledSearch {
   sql: string;
   params: Record<string, string | number | boolean | null>;
@@ -137,12 +232,128 @@ export interface LokiTestResult {
   newest: string | null;
 }
 
+export type M365ContentType =
+  | "Audit.AzureActiveDirectory"
+  | "Audit.Exchange"
+  | "Audit.SharePoint"
+  | "Audit.General"
+  | "DLP.All";
+export type M365GraphFeed = "signins" | "directory_audits" | "alerts";
+
+/** Microsoft 365 connector settings (ADR-0002). */
+export interface M365Settings {
+  tenant_id: string;
+  client_id: string;
+  cloud: "commercial" | "gcc" | "gcc_high";
+  auth: "certificate" | "secret";
+  content_types: M365ContentType[];
+  graph: M365GraphFeed[];
+  backfill_hours: number;
+}
+
+export type AnthropicFeed =
+  "usage" | "cost" | "claude_code" | "analytics_users" | "compliance_activities";
+
+/** Anthropic Admin API connector settings (ADR-0015 row 10). */
+export interface AnthropicSettings {
+  key_type: "admin" | "analytics" | "compliance";
+  feeds: AnthropicFeed[];
+  backfill_days: number;
+}
+
+/** Write-only credentials for an API source; stored encrypted, never returned. */
+export interface ApiCredentials {
+  api_key?: string;
+  client_secret?: string;
+  certificate_pem?: string;
+  private_key_pem?: string;
+}
+
+export interface ApiTestResult {
+  /** Feed name to "ok" or why it failed. */
+  feeds: Record<string, string>;
+  /** Microsoft 365 certificates: the thumbprint Entra shows. */
+  thumbprint: string | null;
+}
+
+/** Entity risk (ADR-0016 row 4): the score and its parts. */
+export interface EntityRisk {
+  kind: "user" | "ip" | "host";
+  value: string;
+  score: number;
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+  flagged_runs: number;
+  events: number;
+  rules: string[];
+  search_sql: string;
+  /** Users: the logged names counted as this person. */
+  names?: string[];
+}
+
+export interface RiskResponse {
+  users: EntityRisk[];
+  ips: EntityRisk[];
+  hosts: EntityRisk[];
+  matches_considered: number;
+  sources: string[];
+}
+
+export interface GraphCard {
+  id: string;
+  lane: number;
+  label: string;
+  sublabel: string;
+  events: number;
+  matches: number;
+  max_severity: number;
+  badges: string[];
+  search_sql: string | null;
+  /** A heading inside the lane ("MCP servers"); empty for none. */
+  group: string;
+}
+
+/** Investigator lanes (ADR-0016 row 5). */
+export interface EntityGraph {
+  mode: "entity" | "ai";
+  lanes: string[];
+  cards: GraphCard[];
+  edges: { source: string; target: string; events: number }[];
+  more: number[];
+  sources: string[];
+}
+
+/** One person under several names (ADR-0018). */
+export interface IdentityAlias {
+  alias: string;
+  person: string;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface Identities {
+  domains: string[];
+  aliases: IdentityAlias[];
+  domain_suggestions: { domain: string; addresses: number; shared: number; examples: string[] }[];
+  alias_suggestions: { alias: string; person: string; hosts: string[] }[];
+}
+
+export type GraphKind = "user" | "ip" | "host" | "mcp" | "service";
+
+export type SourceKind = "file" | "loki" | "otlp" | "m365" | "anthropic";
+
 export interface SourceInput {
   source_id: string;
   format: SourceFormat;
-  /** file (default) or loki; a Loki source has an empty path and its settings in loki. */
-  kind?: "file" | "loki";
+  /** file (default), loki, otlp (pushed to the OTLP receiver), m365, or anthropic. */
+  kind?: SourceKind;
   loki?: LokiSettings | null;
+  m365?: M365Settings | null;
+  anthropic?: AnthropicSettings | null;
+  /** Write-only, for m365 and anthropic sources. */
+  credentials?: ApiCredentials;
   /** Write-only: a Loki password or token, stored encrypted. */
   loki_secret?: string;
   path: string;
@@ -273,8 +484,12 @@ export interface SourceStatus {
   records_skipped: number;
   /** .evtx files shorter than their header says, waiting for their size to settle. */
   files_waiting: number;
-  /** Loki sources: how far reading is behind now, in seconds. */
+  /** Loki and API sources: how far reading is behind now, in seconds. */
   behind_s?: number | null;
+  /** API sources: feeds that failed while the others worked. */
+  warnings?: string[];
+  /** API sources: when the next try is, after errors. */
+  retry_at?: string | null;
 }
 
 /** Quiet-source alert state (ADR-0014); null when no alert is set. */
@@ -294,6 +509,8 @@ export interface SourceWatch extends SourceQuiet {
 }
 
 export interface Source extends SourceInput {
+  /** OTLP sources: prompt and tool content kept instead of dropped (ADR-0015 row 4). */
+  otlp_keep_content?: boolean;
   classification: "local_only" | "cloud_allowed";
   enabled: boolean;
   status: SourceStatus;
@@ -913,9 +1130,26 @@ export const api = {
       put({ user_ids: userIds }),
     ),
   sourceSettings: () => request<{ allowed_roots: string[] }>("/api/sources/settings"),
-  addSource: (body: SourceInput) => request<Source>("/api/sources", post(body)),
+  addSource: (body: SourceInput) =>
+    request<Source & { otlp_token?: string | null }>("/api/sources", post(body)),
+  rotateOtlpToken: (id: string) =>
+    request<{ token: string }>(`/api/sources/${encodeURIComponent(id)}/otlp-token`, {
+      method: "POST",
+    }),
+  setKeepContent: (id: string, keep: boolean) =>
+    request<Source>(`/api/sources/${encodeURIComponent(id)}`, patch({ otlp_keep_content: keep })),
+  agentConfig: (id: string, os: "windows" | "linux") =>
+    requestText(`/api/sources/${encodeURIComponent(id)}/agent-config?os=${os}`),
   testLoki: (body: LokiSettings & { secret?: string }) =>
     request<LokiTestResult>("/api/sources/loki/test", post(body)),
+  testApiSource: (body: {
+    kind: "m365" | "anthropic";
+    m365?: M365Settings;
+    anthropic?: AnthropicSettings;
+    credentials: ApiCredentials;
+  }) => request<ApiTestResult>("/api/sources/api/test", post(body)),
+  replaceCredentials: (id: string, credentials: ApiCredentials) =>
+    request<void>(`/api/sources/${encodeURIComponent(id)}/credentials`, put(credentials)),
   discoverSources: (path: string) =>
     request<DiscoveryReport>("/api/sources/discover", post({ path })),
   /** Admins: change a source's label. Only new events take it (SPEC 6.2). */
@@ -937,6 +1171,46 @@ export const api = {
   health: () => request<Health>("/api/health"),
   /** Server-side CSV of the same query, audited as an export. */
   exportCsv: (body: QueryRequest) => request<string>("/api/query/export", post(body), true),
+  facets: (body: FacetRequest) =>
+    request<{ facets: Facet[]; elapsed_ms: number }>("/api/search/facets", post(body)),
+  searchPresets: () => request<SearchPreset[]>("/api/search/presets"),
+  identities: () => request<Identities>("/api/identities"),
+  setIdentityDomains: (domains: string[]) =>
+    request<string[]>("/api/identities/domains", put({ domains })),
+  setIdentityAlias: (alias: string, person: string | null) =>
+    request<IdentityAlias[]>("/api/identities/aliases", put({ alias, person })),
+  entityRisk: (start?: string) =>
+    request<RiskResponse>(
+      `/api/entities/risk${start ? `?start=${encodeURIComponent(start)}` : ""}`,
+    ),
+  entityGraph: (q: { mode: "entity" | "ai"; kind?: GraphKind; value?: string; start?: string }) => {
+    const p = new URLSearchParams({ mode: q.mode });
+    if (q.kind) p.set("kind", q.kind);
+    if (q.value) p.set("value", q.value);
+    if (q.start) p.set("start", q.start);
+    return request<EntityGraph>(`/api/entities/graph?${p.toString()}`);
+  },
+  aiUsage: (start?: string) =>
+    request<AiUsage>(`/api/ai/usage${start ? `?start=${encodeURIComponent(start)}` : ""}`),
+  aiCatalog: () => request<AiService[]>("/api/ai/catalog"),
+  setAiServiceStatus: (id: string, status: AiStatus) =>
+    request<AiService>(`/api/ai/services/${encodeURIComponent(id)}/status`, put({ status })),
+  addAiService: (body: {
+    id: string;
+    name: string;
+    vendor: string;
+    kind: string;
+    domains: string[];
+  }) => request<AiService>("/api/ai/services", post(body)),
+  deleteAiService: (id: string) =>
+    request<void>(`/api/ai/services/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  aiMcpRules: () => request<AiMcpRule[]>("/api/ai/mcp-rules"),
+  setAiMcpRule: (pattern: string, status: "approved" | "not_approved" | null) =>
+    request<AiMcpRule[]>("/api/ai/mcp-rules", put({ pattern, status })),
+  aiWatch: () => request<AiWatch>("/api/ai/watch"),
+  setAiWatch: (
+    body: Pick<AiWatch, "enabled" | "include_unreviewed" | "sensitive" | "target_ids">,
+  ) => request<AiWatch>("/api/ai/watch", put(body)),
   compileSearch: (text: string, top?: string) =>
     request<CompiledSearch>("/api/search/compile", post({ text, top })),
   query: (body: QueryRequest) =>

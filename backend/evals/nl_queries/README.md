@@ -1,6 +1,6 @@
 # Ask accuracy suite
 
-100 plain-English questions over a synthetic lake, each with a reference SQL query. It measures how often a model's Ask answer runs (executable) and returns the same result as the reference (exact). Targets for v0.1 (SPEC 5.7): 90% executable and 75% exact on the reference local model.
+100 plain-English questions, plus 10 follow-up conversations (`f001` to `f010`), over a synthetic lake, each with a reference SQL query. It measures how often a model's Ask answer runs (executable) and returns the same result as the reference (exact). Targets for v0.1 (SPEC 5.7): 90% executable and 75% exact on the reference local model.
 
 ## Data
 
@@ -29,13 +29,35 @@ OPENAI_API_KEY=... uv run python -m evals.nl_queries.run --base-url https://api.
 
 The run is in-process and uses a temporary data folder. It goes through the real gate (classification and the `llm_calls` audit) and the real Ask agent with its self-check. The sources are marked cloud allowed because the data is synthetic.
 
+## Follow-ups and prompt versions
+
+Follow-up cases carry `history`: the earlier questions and their reference SQL, sent as the
+conversation so far, the way the Search bar's Refine sends it. They cover "show me all of these
+for alice", "break that down by host", "count them", "what about successful ones", and person
+names logged in other forms (`Steve` as `steve.jones@example.com`, `Steve.Jones@example.com`,
+`CORP\steve.jones` in the `idp_signin` source).
+
+Compare prompt versions on the same model:
+
+```
+uv run python -m evals.nl_queries.run --base-url http://127.0.0.1:11434/v1 --model qwen3.5:9b \
+    --thinking none --prompt ask.v4 --out v4.json
+uv run python -m evals.nl_queries.run --base-url http://127.0.0.1:11434/v1 --model qwen3.5:9b \
+    --thinking none --prompt ask.v5 --out v5.json
+# follow-ups only, to iterate quickly
+uv run python -m evals.nl_queries.run ... --prompt ask.v5 --ids f001,f002,f003,f004,f005,f006,f007,f008,f009,f010
+```
+
+The server uses `llm.ask_prompt` (compose `ASK_PROMPT`, default `ask.v4`). Switch only when the
+newer version scores at least as well overall on your model.
+
 ## Scoring
 
 A generated result counts as exact when some of its columns, one for each reference column, hold the same values. Extra columns, a different column order, and aliases are fine. Rows are compared as a multiset, except for `compare: ordered` questions (top N, first event), where order counts. Whole-number floats equal ints, and a UTC-midnight timestamp equals its date.
 
 ## Results
 
-Record each run in the PR that changes Ask, and in the table below.
+Record each run in the PR that changes Ask, and in the table below. Rows dated before 2026-10-15 were measured on the 100 single questions, before the follow-ups and the `idp_signin` source were added; rerun `ask.v4` on the current suite to compare with `ask.v5`.
 
 | Model | Provider | Thinking | Executable | Exact | Median s | Date |
 |---|---|---|---|---|---|---|

@@ -16,7 +16,7 @@ async function openSources(auth: MockAuth = { mode: "open" }) {
   });
   render(<App initialTheme="dark" queryClient={client} />);
   const nav = await screen.findByRole("navigation", { name: "Primary" });
-  await userEvent.click(within(nav).getByText("Sources"));
+  await userEvent.click(within(nav).getByText("Settings")); // opens Sources first
   await screen.findByRole("heading", { level: 1, name: "Sources" });
   return spy;
 }
@@ -71,7 +71,9 @@ describe("Sources page", () => {
     await openSources();
     expect(window.location.pathname).toBe("/sources");
     const nav = screen.getByRole("navigation", { name: "Primary" });
-    expect(within(nav).getByText("Sources")).toHaveAttribute("aria-current", "page");
+    expect(within(nav).getByText("Settings")).toHaveAttribute("aria-current", "page");
+    const sub = screen.getByRole("navigation", { name: "Settings" });
+    expect(within(sub).getByText("Sources and connectors")).toHaveAttribute("aria-current", "page");
     const row = (await screen.findByText("linux_sshd")).closest("tr") as HTMLElement;
     expect(within(row).getByText("Reading")).toBeInTheDocument();
     expect(within(row).getByText("Local only")).toBeInTheDocument();
@@ -325,5 +327,133 @@ describe("Quiet-source alert (ADR-0014)", () => {
     expect(screen.queryByRole("button")).toBeNull();
     rerender(<QuietAlert sourceId="s" quiet={{ ...quiet, state: "ok" }} canManage={false} />);
     expect(screen.queryByText(/^Quiet/)).toBeNull();
+  });
+});
+
+describe("OTLP sources (ADR-0015)", () => {
+  it("adds an OTLP source and shows the token and Claude Code settings once", async () => {
+    const spy = await openSources();
+    await userEvent.click(screen.getByRole("button", { name: "Add source" }));
+    const form = screen.getByRole("form", { name: "Add source" });
+    await userEvent.type(within(form).getByLabelText("Source ID"), "claude_code");
+    await userEvent.selectOptions(within(form).getByLabelText("Reads from"), "otlp");
+    expect(within(form).queryByLabelText("File or folder")).toBeNull();
+    await userEvent.click(within(form).getByRole("button", { name: "Add source" }));
+    const panel = await screen.findByRole("region", { name: "Ingest token" });
+    expect(within(panel).getByLabelText("Token")).toHaveTextContent("rmt_test_token_value");
+    const settings = within(panel).getByLabelText("Claude Code managed settings (env block)");
+    expect(settings).toHaveTextContent('"OTEL_EXPORTER_OTLP_PROTOCOL": "http/json"');
+    expect(settings).toHaveTextContent("Authorization=Bearer rmt_test_token_value");
+    const body = JSON.parse(String(posts(spy, "/api/sources")[0]?.[1]?.body)) as Record<
+      string,
+      unknown
+    >;
+    expect(body).toMatchObject({ kind: "otlp", format: "json", template_id: "auto", path: "" });
+    await userEvent.click(within(panel).getByRole("button", { name: "Done" }));
+    expect(screen.queryByRole("region", { name: "Ingest token" })).toBeNull();
+    const row = (await screen.findByText("claude_code")).closest("tr") as HTMLElement;
+    expect(within(row).getByText(/OTLP receiver/)).toBeInTheDocument();
+    expect(
+      within(row).getByRole("checkbox", { name: /Keep prompt and tool content/ }),
+    ).not.toBeChecked();
+  });
+
+  it("adds a Microsoft 365 source with a certificate after a per-feed test", async () => {
+    const spy = await openSources();
+    await userEvent.click(screen.getByRole("button", { name: "Add source" }));
+    const form = screen.getByRole("form", { name: "Add source" });
+    await userEvent.type(within(form).getByLabelText("Source ID"), "m365");
+    await userEvent.selectOptions(within(form).getByLabelText("Reads from"), "m365");
+    expect(within(form).queryByLabelText("File or folder")).toBeNull();
+    const tenant = "11111111-2222-4333-8444-555555555555";
+    await userEvent.type(within(form).getByLabelText("Directory (tenant) ID"), tenant);
+    await userEvent.type(
+      within(form).getByLabelText("Application (client) ID"),
+      "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+    );
+    await userEvent.type(within(form).getByLabelText("Certificate (PEM)"), "CERT");
+    await userEvent.type(within(form).getByLabelText("Private key (PEM, unencrypted)"), "KEY");
+    await userEvent.click(within(form).getByLabelText(/DLP rule matches/));
+    await userEvent.click(within(form).getByRole("button", { name: "Test connection" }));
+    const result = await within(form).findByRole("status");
+    expect(
+      within(result).getByText("A1B2C3D4E5F60718293A4B5C6D7E8F9012345678"),
+    ).toBeInTheDocument();
+    expect(within(result).getByText(/need Entra ID P1 or P2/)).toBeInTheDocument();
+    await userEvent.click(within(form).getByRole("button", { name: "Add source" }));
+    const row = (await screen.findByText(tenant)).closest("tr") as HTMLElement;
+    expect(within(row).getByText("Microsoft 365")).toBeInTheDocument();
+    const body = JSON.parse(String(posts(spy, "/api/sources").at(-1)?.[1]?.body)) as Record<
+      string,
+      unknown
+    >;
+    expect(body).toMatchObject({
+      kind: "m365",
+      format: "json",
+      template_id: "auto",
+      path: "",
+      credentials: { certificate_pem: "CERT", private_key_pem: "KEY" },
+    });
+    expect((body.m365 as { content_types: string[] }).content_types).toContain("DLP.All");
+    expect(JSON.stringify(within(row).getByText(tenant).closest("td")?.textContent)).not.toContain(
+      "KEY",
+    );
+  });
+
+  it("adds an Anthropic source with the reports template and replaces its key later", async () => {
+    const spy = await openSources();
+    await userEvent.click(screen.getByRole("button", { name: "Add source" }));
+    const form = screen.getByRole("form", { name: "Add source" });
+    await userEvent.type(within(form).getByLabelText("Source ID"), "claude_admin");
+    await userEvent.selectOptions(within(form).getByLabelText("Reads from"), "anthropic");
+    await userEvent.type(within(form).getByLabelText("API key"), "sk-ant-admin01-x");
+    await userEvent.click(within(form).getByRole("button", { name: "Add source" }));
+    const row = (await screen.findByText("claude_admin")).closest("tr") as HTMLElement;
+    const body = JSON.parse(String(posts(spy, "/api/sources").at(-1)?.[1]?.body)) as Record<
+      string,
+      unknown
+    >;
+    expect(body).toMatchObject({
+      kind: "anthropic",
+      template_id: "anthropic_reports",
+      anthropic: { key_type: "admin", feeds: ["usage", "cost", "claude_code"] },
+      credentials: { api_key: "sk-ant-admin01-x" },
+    });
+    await userEvent.click(within(row).getByRole("button", { name: "Replace credentials" }));
+    const replace = within(row).getByRole("form", { name: /Replace credentials/ });
+    await userEvent.type(within(replace).getByLabelText("API key"), "sk-ant-admin01-new");
+    await userEvent.click(within(replace).getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(within(row).queryByRole("form", { name: /Replace credentials/ })).toBeNull(),
+    );
+    const put = spy.mock.calls.find(
+      ([u, init]) => String(u).endsWith("/credentials") && init?.method === "PUT",
+    );
+    expect(JSON.parse(String(put?.[1]?.body))).toEqual({ api_key: "sk-ant-admin01-new" });
+  });
+
+  it("keeps settings with defaults in a separate, labeled Optional block", async () => {
+    await openSources();
+    await userEvent.click(screen.getByRole("button", { name: "Add source" }));
+    const form = screen.getByRole("form", { name: "Add source" });
+    const block = within(form).getByText("Optional").closest("details") as HTMLElement;
+    expect(block).not.toHaveAttribute("open");
+    expect(
+      within(block).getByText(
+        /Parser: Automatic · Pattern: \*\*\/\*\.log · Time zone: UTC · Keep 30 days/,
+      ),
+    ).toBeInTheDocument();
+    expect(within(block).getByLabelText("Time zone")).toBeInTheDocument();
+    expect(within(block).queryByLabelText("Source ID")).toBeNull();
+    await userEvent.selectOptions(within(form).getByLabelText("Reads from"), "m365");
+    const blocks = within(form)
+      .getAllByText("Optional")
+      .map((el) => el.closest("details") as HTMLElement);
+    expect(blocks).toHaveLength(2);
+    expect(
+      within(blocks[0] as HTMLElement).getByText(/Cloud: Commercial · Feeds:/),
+    ).toBeInTheDocument();
+    expect(within(blocks[0] as HTMLElement).getByLabelText("Cloud")).toBeInTheDocument();
+    expect(within(form).getByLabelText("Directory (tenant) ID").closest("details")).toBeNull();
   });
 });

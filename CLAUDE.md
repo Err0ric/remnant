@@ -247,10 +247,13 @@ A slice is done when every box below is checked, demoed end to end from a fresh 
 - [ ] SBOM generated, images pinned, release tagged `v0.1.0` (SBOM from lockfiles in every CI run via `scripts/sbom.py`; image digests and the tag pending)
 
 ### Slice 7 (v0.2): connectors
-- [ ] `Connector` protocol, scheduler in the ingest worker, checkpoints, de-duplication, backoff, health on the Sources page
-- [ ] Microsoft 365 connector per ADR-0002: Management Activity API content types and Graph sign-ins, directory audits, alerts; setup guide with exact permissions; templates mapping to OCSF
+- [x] `Connector` protocol, scheduler in the ingest worker, checkpoints, de-duplication, backoff, health on the Sources page
+- [x] Microsoft 365 connector per ADR-0002: Management Activity API content types and Graph sign-ins, directory audits, alerts; setup guide with exact permissions; templates mapping to OCSF (tested against fake endpoints; live tenant pending)
 - [ ] Native syslog listener (UDP, TCP with octet counting, TLS)
 - [ ] Read-only MCP server per ADR-0003: `get_schema` and `run_query` only, per-user tokens, `local_only` results withheld unless the endpoint is marked local, every call audited, off by default
+- [x] AI usage visibility per ADR-0015: OTLP/HTTP JSON receiver with per-source tokens (content dropped by default); Claude Code telemetry template; AI service catalog and shadow-AI view; MCP inventory (telemetry and endpoint script) with allowlist; AI usage page; AI watch alerts; Anthropic usage, cost, Claude Code, analytics, and compliance activity connectors (connectors tested against a fake API; live key and the PowerShell script pending)
+- [x] Optional endpoint agent per ADR-0017: generated OpenTelemetry Collector configs per agent group, Windows XML and journald conversion at the receiver, install guide (configs tested by conversion of sample payloads; first run on real endpoints pending)
+- [x] Investigation per ADR-0016: AI toggle in the Search bar, facet sidebar, Suspicious presets, entity risk, investigator graph with AI flow mode
 - [ ] Okta, Google Workspace, AWS CloudTrail connectors
 
 ### Slice 8 (v0.3): enrichment, integrity, tiering

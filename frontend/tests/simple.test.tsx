@@ -30,7 +30,10 @@ afterEach(() => vi.restoreAllMocks());
 describe("Simple search", () => {
   it("is the first tab and sends its values as bound parameters", async () => {
     const { spy } = await renderAt("/search");
-    expect(await screen.findByRole("tab", { name: "Simple", selected: true })).toBeVisible();
+    expect(await screen.findByRole("tab", { name: "Search", selected: true })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Ask in plain English", pressed: false }),
+    ).toBeVisible();
     await screen.findByText("Failed password for invalid user oracle");
     await userEvent.type(screen.getByLabelText("Search text"), "oracle{Enter}");
     await vi.waitFor(() => expect(posts(spy, "/api/search/compile").at(-1)?.text).toBe("oracle"));
@@ -85,6 +88,23 @@ describe("Simple search", () => {
     expect(screen.queryByRole("button", { name: "Filter for raw" })).toBeNull();
   });
 
+  it("opens Investigations on a host from an expanded event", async () => {
+    const { spy } = await renderAt("/search");
+    const row = (await screen.findByText("Failed password for invalid user oracle")).closest(
+      "button",
+    );
+    await userEvent.click(row!);
+    await screen.findByText("Raw event");
+    expect(screen.queryByRole("button", { name: /Investigate linux_sshd/ })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Investigate bastion" }));
+    await screen.findByRole("heading", { level: 1, name: "Investigations" });
+    expect(window.location.pathname).toBe("/investigations");
+    await screen.findByRole("group", { name: /Investigation lanes/ });
+    const call = spy.mock.calls.find(([u]) => String(u).includes("/api/entities/graph"));
+    expect(String(call?.[0])).toContain("kind=host");
+    expect(String(call?.[0])).toContain("value=bastion");
+  });
+
   it("remembers the tab last used", async () => {
     const { view } = await renderAt("/search");
     await userEvent.click(await screen.findByRole("tab", { name: "SQL" }));
@@ -93,14 +113,21 @@ describe("Simple search", () => {
     expect(await screen.findByRole("tab", { name: "SQL", selected: true })).toBeVisible();
   });
 
-  it("has no Ask tab for auditors, and /ask opens Search on the Ask tab otherwise", async () => {
+  it("has no AI switch for auditors, and /ask opens Search with it on otherwise", async () => {
     const { view } = await renderAt("/ask", { mode: "login", signedIn: true, role: "auditor" });
-    expect(await screen.findByRole("tab", { name: "Simple", selected: true })).toBeVisible();
-    expect(screen.queryByRole("tab", { name: "Ask in plain English" })).toBeNull();
+    expect(await screen.findByRole("tab", { name: "Search", selected: true })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Ask in plain English" })).toBeNull();
     view.unmount();
     await renderAt("/ask");
     expect(await screen.findByRole("heading", { name: "Search", level: 1 })).toBeVisible();
-    expect(screen.getByRole("tab", { name: "Ask in plain English", selected: true })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Ask in plain English", pressed: true }),
+    ).toBeVisible();
+    // Switching it off goes back to Simple syntax.
+    await userEvent.click(
+      screen.getByRole("button", { name: "Ask in plain English", pressed: true }),
+    );
+    expect(screen.getByLabelText("Search text")).toBeVisible();
     const nav = screen.getByRole("navigation", { name: "Primary" });
     expect(within(nav).getByText("Search")).toHaveAttribute("aria-current", "page");
   });
@@ -127,5 +154,43 @@ describe("Simple search", () => {
     expect(
       await screen.findByText(/No event in this time range has a value in src_endpoint_ip/),
     ).toBeVisible();
+  });
+
+  it("fills the bar from a Suspicious preset and runs it", async () => {
+    const { spy } = await renderAt("/search");
+    await screen.findByText("Failed password for invalid user oracle");
+    await userEvent.selectOptions(
+      await screen.findByLabelText("Suspicious activity presets"),
+      "failed_signins",
+    );
+    expect(screen.getByLabelText("Search text")).toHaveValue('EventID:4625 OR "failed password"');
+    await vi.waitFor(() =>
+      expect(posts(spy, "/api/search/compile").at(-1)?.text).toBe(
+        'EventID:4625 OR "failed password"',
+      ),
+    );
+  });
+
+  it("counts fields for the whole result and filters from a click", async () => {
+    const { spy } = await renderAt("/search");
+    await screen.findByText("Failed password for invalid user oracle");
+    const fields = await screen.findByRole("complementary", { name: "Fields" });
+    const ips = await within(fields).findByRole("region", { name: /source ip/i });
+    expect(within(ips).getByText("40")).toBeVisible();
+    await userEvent.click(within(ips).getByRole("button", { name: /^203\.0\.113\.9/ }));
+    await vi.waitFor(() =>
+      expect(posts(spy, "/api/search/compile").at(-1)?.text).toBe('src_ip:"203.0.113.9"'),
+    );
+    await userEvent.click(within(ips).getByRole("button", { name: "Exclude (no value)" }));
+    await vi.waitFor(() =>
+      expect(posts(spy, "/api/search/compile").at(-1)?.text).toBe('src_ip:"203.0.113.9" src_ip:*'),
+    );
+    const facetBodies = () =>
+      spy.mock.calls
+        .filter(([u]) => String(u).endsWith("/api/search/facets"))
+        .map(([, init]) => JSON.parse(String(init?.body)) as { text?: string });
+    await vi.waitFor(() =>
+      expect(facetBodies().at(-1)?.text).toBe('src_ip:"203.0.113.9" src_ip:*'),
+    );
   });
 });

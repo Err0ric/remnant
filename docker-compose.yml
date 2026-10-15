@@ -27,6 +27,14 @@ services:
       APP__SSO__PASSWORD_LOGIN: ${SSO_PASSWORD_LOGIN:-admins}
       APP__SSO__EXTRA_SCOPES: ${SSO_EXTRA_SCOPES:-}
       APP__SSO__TOKEN_AUTH_METHOD: ${SSO_TOKEN_AUTH_METHOD:-auto}
+      # Ask prompt version; change only after the accuracy suite shows the new one is as good.
+      APP__LLM__ASK_PROMPT: ${ASK_PROMPT:-ask.v4}
+      # Optional outbound proxy for the Microsoft 365 and Anthropic sources and Teams or
+      # Slack alerts (docs/install/proxy.md). Unset: direct.
+      APP__NETWORK__HTTPS_PROXY: ${HTTPS_PROXY_URL:-}
+      APP__NETWORK__PROXY_USERNAME: ${PROXY_USERNAME:-}
+      APP__NETWORK__PROXY_PASSWORD: ${PROXY_PASSWORD:-}
+      APP__NETWORK__CA_BUNDLE: ${PROXY_CA_BUNDLE:-}
     ports:
       - "${APP_BIND:-127.0.0.1}:${APP_PORT:-8080}:8080"
     volumes:

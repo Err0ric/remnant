@@ -146,7 +146,7 @@ def test_secret_never_returned_or_logged_and_settings_hidden_from_analysts(
             "SELECT detail FROM audit_log WHERE action = 'source.create'"
         ).fetchone()[0]
         stored = db.execute("SELECT connector_secret_enc FROM sources").fetchone()[0]
-    assert SECRET not in detail and '"has_loki_secret":true' in detail
+    assert SECRET not in detail and '"has_secret":true' in detail
     assert SECRET not in stored
     a = (
         lab["admin"]

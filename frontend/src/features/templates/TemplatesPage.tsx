@@ -25,7 +25,7 @@ export function TemplatesPage() {
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       <PageHeader
-        crumbs={["Home", "Configuration", "Templates"]}
+        crumbs={["Home", "Settings", "Templates"]}
         title="Templates"
         meta={`${templates.data?.length ?? 0} available · ${drafts.data?.length ?? 0} drafts`}
         commands={

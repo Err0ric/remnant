@@ -51,7 +51,7 @@ export function AlertTargetsPage() {
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       <PageHeader
-        crumbs={["Home", "Configuration", "Alert targets"]}
+        crumbs={["Home", "Settings", "Alert targets"]}
         title="Alert targets"
         meta={`${list.length} ${list.length === 1 ? "target" : "targets"}`}
         commands={

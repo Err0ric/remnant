@@ -70,3 +70,44 @@ def test_triggers_survive_statement_splitting(tmp_path: Path) -> None:
         )
     with sqlite3.connect(path) as con, pytest.raises(sqlite3.DatabaseError, match="append-only"):
         con.execute("DELETE FROM audit_log")
+
+
+def test_source_kind_rebuild_keeps_rows_checkpoints_and_the_grant_trigger(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "meta.sqlite"
+    before = MIGRATIONS[:27]  # an install from before OTLP sources
+    monkeypatch.setattr(metadb, "MIGRATIONS", before)
+    MetaDB(path)
+    with sqlite3.connect(path) as con:
+        con.execute(
+            "INSERT INTO sources (source_id, format, path, glob, timezone, classification,"
+            " retention_days, enabled, created_at, kind)"
+            " VALUES ('fw', 'syslog', '/logs/fw', '*', 'UTC', 'local_only', 30, 1, 'x', 'file')"
+        )
+        con.execute(
+            "INSERT INTO checkpoints (source_id, path, inode, offset, updated_at)"
+            " VALUES ('fw', 'a.log', 1, 99, 'x')"
+        )
+        con.execute("INSERT INTO source_groups VALUES ('g1', 'Net', '', 'x')")
+        con.execute("INSERT INTO group_sources VALUES ('g1', 'fw')")
+    monkeypatch.setattr(metadb, "MIGRATIONS", MIGRATIONS)
+    db = MetaDB(path)
+    with db.connect() as con:
+        assert con.execute("SELECT kind, path FROM sources").fetchall()[0][:] == (
+            "file",
+            "/logs/fw",
+        )
+        assert con.execute("SELECT offset FROM checkpoints").fetchone()[0] == 99
+        con.execute(
+            "INSERT INTO sources (source_id, format, path, glob, timezone, classification,"
+            " retention_days, enabled, created_at, kind)"
+            " VALUES ('cc', 'json', '', '*', 'UTC', 'local_only', 30, 1, 'x', 'otlp')"
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            con.execute("UPDATE sources SET kind = 'bogus' WHERE source_id = 'cc'")
+    with db.connect() as con:
+        con.execute("DELETE FROM sources WHERE source_id = 'fw'")
+        # The grant trigger survived the rebuild, and checkpoints still cascade.
+        assert con.execute("SELECT count(*) FROM group_sources").fetchone()[0] == 0
+        assert con.execute("SELECT count(*) FROM checkpoints").fetchone()[0] == 0

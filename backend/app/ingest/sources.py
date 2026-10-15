@@ -1,7 +1,9 @@
 """Source configuration and the allowed-roots rule (CLAUDE.md security rule 6, SPEC T11)."""
 
 import errno
+import hashlib
 import os
+import secrets
 import stat
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,11 +20,15 @@ from pydantic import (
 
 from app.core.errors import NotFoundError, SourceRejectedError
 from app.core.ids import AUTO_PARSER, RESERVED_SOURCE_PREFIX
+from app.ingest.connectors.anthropic import AnthropicSettings
 from app.ingest.connectors.loki import LokiSettings
+from app.ingest.connectors.m365 import M365Settings
 from app.ingest.envelope import SyslogEnvelopeConfig
 from app.ingest.normalizer import SourceFormat, SourceSpec
 from app.meta.db import MetaDB
 from app.meta.secrets import SecretBox
+
+CONNECTOR_LABELS = {"loki": "Loki", "m365": "Microsoft 365", "anthropic": "Anthropic"}
 
 
 class SourceConfig(BaseModel):
@@ -31,10 +37,14 @@ class SourceConfig(BaseModel):
     source_id: str
     format: SourceFormat
     # file: a file or folder under allowed_roots. loki: lines pulled from Grafana Loki
-    # (ADR-0011), and `path` is empty.
-    kind: Literal["file", "loki"] = "file"
+    # (ADR-0011), and `path` is empty. otlp: records pushed to the OTLP receiver
+    # (ADR-0015), spooled by the server, and `path` is empty. m365 and anthropic: records
+    # pulled from Microsoft 365 (ADR-0002) or the Anthropic Admin APIs (ADR-0015 row 10).
+    kind: Literal["file", "loki", "otlp", "m365", "anthropic"] = "file"
     path: str = Field(default="", max_length=4096)
     loki: LokiSettings | None = None
+    m365: M365Settings | None = None
+    anthropic: AnthropicSettings | None = None
     glob: str = Field(default="*", min_length=1, max_length=200)
     timezone: str = "UTC"
     classification: Literal["local_only", "cloud_allowed"] = "local_only"
@@ -43,6 +53,8 @@ class SourceConfig(BaseModel):
     # Parse with this template (SPEC 4); None uses the generic parser for `format`;
     # `auto` picks a template per line (ADR-0012).
     template_id: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]{1,63}$")
+    # OTLP sources: keep prompt text and tool content instead of dropping it (ADR-0015 row 4).
+    otlp_keep_content: bool = False
 
     @field_validator("source_id")
     @classmethod
@@ -65,17 +77,31 @@ class SourceConfig(BaseModel):
 
     @model_validator(mode="after")
     def _kind_fields(self) -> "SourceConfig":
+        if self.kind != "otlp" and self.otlp_keep_content:
+            raise ValueError("Keeping prompt and tool content applies to OTLP sources only")
+        settings = {"loki": self.loki, "m365": self.m365, "anthropic": self.anthropic}
+        for kind, value in settings.items():
+            if value is not None and kind != self.kind:
+                raise ValueError(f"{CONNECTOR_LABELS[kind]} settings are only for that kind")
         if self.kind == "file":
             if not self.path:
                 raise ValueError("A file source needs a path")
-            if self.loki is not None:
-                raise ValueError("Loki settings are only for Loki sources")
-        else:
-            if self.loki is None:
-                raise ValueError("A Loki source needs its Loki settings")
-            if self.path:
-                raise ValueError("A Loki source has no path")
+            return self
+        if self.path:
+            raise ValueError(f"A {CONNECTOR_LABELS.get(self.kind, 'OTLP')} source has no path")
+        if self.kind == "otlp":
+            if self.format != "json":
+                raise ValueError("OTLP records are stored as JSON lines; use format json")
+        elif settings[self.kind] is None:
+            raise ValueError(f"A {CONNECTOR_LABELS[self.kind]} source needs its settings")
+        if self.kind in ("m365", "anthropic") and self.format != "json":
+            raise ValueError("API records are stored as JSON lines; use format json")
         return self
+
+    def connector_json(self) -> str | None:
+        """The connector settings stored in sources.connector."""
+        value = {"loki": self.loki, "m365": self.m365, "anthropic": self.anthropic}.get(self.kind)
+        return value.model_dump_json() if value is not None else None
 
     def spec(self, owner_id: str = "local") -> SourceSpec:
         return SourceSpec(
@@ -85,6 +111,10 @@ class SourceConfig(BaseModel):
             owner_id=owner_id,
             envelope=SyslogEnvelopeConfig(timezone=self.timezone),
         )
+
+
+def _loaded[M: BaseModel](cls: type[M], kind: str, row_kind: str, text: str | None) -> M | None:
+    return cls.model_validate_json(text) if row_kind == kind and text else None
 
 
 def resolve_source_path(path: Path | str, allowed_roots: list[Path]) -> Path:
@@ -166,6 +196,30 @@ def open_regular(path: Path, allowed_roots: list[Path]) -> BinaryIO:
         raise
 
 
+def spool_dir(spool_root: Path, source_id: str) -> Path:
+    """Where the OTLP receiver appends a source's records (ADR-0015 row 3)."""
+    return spool_root / source_id
+
+
+def spool_name(now: datetime) -> str:
+    """The spool file the receiver appends to in this UTC hour; names sort by time."""
+    return f"{now.astimezone(UTC):%Y%m%d%H}.jsonl"
+
+
+def spool_files(source: SourceConfig, spool_root: Path) -> list[Path]:
+    """An OTLP source's spool files, oldest first (their names sort by hour)."""
+    if source.kind != "otlp":
+        return []
+    folder = spool_dir(spool_root, source.source_id)
+    if not folder.is_dir():
+        return []
+    return [p for p in sorted(folder.glob("*.jsonl")) if p.is_file() and not p.is_symlink()]
+
+
+def hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
 def files_for(source: SourceConfig, allowed_roots: list[Path]) -> list[Path]:
     """Files a source covers right now. Every file is re-checked against the roots."""
     if source.kind != "file":
@@ -186,11 +240,21 @@ def files_for(source: SourceConfig, allowed_roots: list[Path]) -> list[Path]:
 
 class SourceStore:
     def __init__(
-        self, meta: MetaDB, allowed_roots: list[Path], box: SecretBox | None = None
+        self,
+        meta: MetaDB,
+        allowed_roots: list[Path],
+        box: SecretBox | None = None,
+        spool_root: Path | None = None,
     ) -> None:
         self._meta = meta
         self.allowed_roots = allowed_roots
         self._box = box
+        # Server-owned folder for OTLP spool files; readable by ingest, never configurable.
+        self.spool_root = spool_root
+
+    def read_roots(self) -> list[Path]:
+        """Roots ingest may open files under: the configured ones plus the spool."""
+        return [*self.allowed_roots, *([self.spool_root] if self.spool_root else [])]
 
     def add(self, source: SourceConfig, secret: str | None = None) -> SourceConfig:
         # Checked here, not in SourceConfig, so a row stored before the rule still loads.
@@ -203,7 +267,7 @@ class SourceStore:
         if secret and self._box is None:
             raise SourceRejectedError("Credentials cannot be stored on this server")
         secret_enc = self._box.encrypt(secret) if secret and self._box else None
-        connector = source.loki.model_dump_json() if source.loki else None
+        connector = source.connector_json()
         with self._meta.connect() as con:
             if con.execute(
                 "SELECT 1 FROM sources WHERE source_id = ?", (source.source_id,)
@@ -212,8 +276,8 @@ class SourceStore:
             con.execute(
                 "INSERT INTO sources (source_id, format, path, glob, timezone, classification,"
                 " retention_days, enabled, template_id, created_at, kind, connector,"
-                " connector_secret_enc)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " connector_secret_enc, otlp_keep_content)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     source.source_id,
                     source.format,
@@ -228,6 +292,7 @@ class SourceStore:
                     source.kind,
                     connector,
                     secret_enc,
+                    int(source.otlp_keep_content),
                 ),
             )
         return source
@@ -247,12 +312,69 @@ class SourceStore:
                 enabled=bool(r["enabled"]),
                 template_id=r["template_id"],
                 kind=r["kind"],
-                loki=LokiSettings.model_validate_json(r["connector"])
-                if r["kind"] == "loki" and r["connector"]
-                else None,
+                loki=_loaded(LokiSettings, "loki", r["kind"], r["connector"]),
+                m365=_loaded(M365Settings, "m365", r["kind"], r["connector"]),
+                anthropic=_loaded(AnthropicSettings, "anthropic", r["kind"], r["connector"]),
+                otlp_keep_content=bool(r["otlp_keep_content"]),
             )
             for r in rows
         ]
+
+    # --- OTLP ingest tokens (ADR-0015 row 3) ------------------------------------------
+
+    def issue_otlp_token(self, source_id: str) -> str:
+        """A new ingest token for an OTLP source, replacing any earlier one. Returned once;
+        only its SHA-256 is kept. Raises NotFoundError or SourceRejectedError."""
+        token = "rmt_" + secrets.token_urlsafe(32)
+        with self._meta.connect() as con:
+            row = con.execute(
+                "SELECT kind FROM sources WHERE source_id = ?", (source_id,)
+            ).fetchone()
+            if row is None:
+                raise NotFoundError("No such source")
+            if row["kind"] != "otlp":
+                raise SourceRejectedError("Ingest tokens are for OTLP sources only")
+            con.execute(
+                "UPDATE sources SET otlp_token_hash = ? WHERE source_id = ?",
+                (hash_token(token), source_id),
+            )
+        return token
+
+    def otlp_source_for(self, token: str) -> SourceConfig | None:
+        """The enabled OTLP source this token writes to, or None."""
+        if not token.startswith("rmt_") or len(token) > 200:
+            return None
+        with self._meta.connect() as con:
+            row = con.execute(
+                "SELECT source_id FROM sources WHERE otlp_token_hash = ? AND kind = 'otlp'",
+                (hash_token(token),),
+            ).fetchone()
+        if row is None:
+            return None
+        found = [s for s in self.list() if s.source_id == row["source_id"]]
+        return found[0] if found and found[0].enabled else None
+
+    def has_otlp_token(self, source_id: str) -> bool:
+        with self._meta.connect() as con:
+            row = con.execute(
+                "SELECT otlp_token_hash FROM sources WHERE source_id = ?", (source_id,)
+            ).fetchone()
+        return bool(row and row["otlp_token_hash"])
+
+    def set_keep_content(self, source_id: str, keep: bool) -> tuple[bool, SourceConfig]:
+        """The previous choice and the source after the change (ADR-0015 row 4)."""
+        found = [s for s in self.list() if s.source_id == source_id]
+        if not found:
+            raise NotFoundError("No such source")
+        if found[0].kind != "otlp":
+            raise SourceRejectedError("Keeping content applies to OTLP sources only")
+        with self._meta.connect() as con:
+            con.execute(
+                "UPDATE sources SET otlp_keep_content = ? WHERE source_id = ?",
+                (int(keep), source_id),
+            )
+        (source,) = [s for s in self.list() if s.source_id == source_id]
+        return found[0].otlp_keep_content, source
 
     def connector_secret(self, source_id: str) -> str | None:
         """Decrypted connector credential, for the ingest worker and the connection test."""
@@ -263,6 +385,16 @@ class SourceStore:
         if row is None or row["connector_secret_enc"] is None or self._box is None:
             return None
         return self._box.decrypt(row["connector_secret_enc"])
+
+    def set_connector_secret(self, source_id: str, secret: str) -> None:
+        """Replace an API source's stored credential (encrypted)."""
+        if self._box is None:
+            raise SourceRejectedError("Credentials cannot be stored on this server")
+        with self._meta.connect() as con:
+            con.execute(
+                "UPDATE sources SET connector_secret_enc = ? WHERE source_id = ?",
+                (self._box.encrypt(secret), source_id),
+            )
 
     def set_classification(
         self, source_id: str, classification: Literal["local_only", "cloud_allowed"]

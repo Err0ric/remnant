@@ -27,6 +27,20 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 
 ## Endpoints
 
+### Ai
+
+| Method | Path | What it does | Query | JSON body (`?` optional) |
+|---|---|---|---|---|
+| `GET` | `/api/ai/catalog` | Ai Catalog |  |  |
+| `GET` | `/api/ai/mcp-rules` | Mcp Rules |  |  |
+| `PUT` | `/api/ai/mcp-rules` | Set Mcp Rule |  | `pattern`: string<br>`status`: `approved` &#124; `not_approved`<br>`note`?: string |
+| `POST` | `/api/ai/services` | Add Service |  | `id`: string<br>`name`: string<br>`vendor`?: string<br>`kind`: `chat` &#124; `api` &#124; `coding` &#124; `agent_platform` &#124; `mcp_registry` &#124; `image` &#124; `meetings` &#124; `writing`<br>`domains`: list of string |
+| `DELETE` | `/api/ai/services/{service_id}` | Delete Service |  |  |
+| `PUT` | `/api/ai/services/{service_id}/status` | Set Service Status |  | `status`: `approved` &#124; `not_approved` &#124; `unreviewed`<br>`note`?: string |
+| `GET` | `/api/ai/usage` | Services, MCP servers, and Claude usage per person, from the sources the caller may read. Audited ai.view. | `?start` (optional): date-time<br>`?end` (optional): date-time |  |
+| `GET` | `/api/ai/watch` | Get Watch |  |  |
+| `PUT` | `/api/ai/watch` | Put Watch |  | `enabled`: boolean<br>`include_unreviewed`?: boolean<br>`sensitive`?: boolean<br>`target_ids`?: list of string |
+
 ### Alerts
 
 | Method | Path | What it does | Query | JSON body (`?` optional) |
@@ -81,6 +95,21 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | `PUT` | `/api/groups/{group_id}/members` | Set Group Members |  | `user_ids`: list of string |
 | `PUT` | `/api/groups/{group_id}/sources` | Set Group Sources |  | `source_ids`: list of string |
 
+### Identities
+
+| Method | Path | What it does | Query | JSON body (`?` optional) |
+|---|---|---|---|---|
+| `GET` | `/api/identities` | Current domains and aliases, and suggestions from the events in range (all sources: administrators only). | `?start` (optional): date-time |  |
+| `PUT` | `/api/identities/aliases` | Set Alias |  | `alias`: string<br>`person`?: string |
+| `PUT` | `/api/identities/domains` | Set Domains |  | `domains`: list of string |
+
+### Investigate
+
+| Method | Path | What it does | Query | JSON body (`?` optional) |
+|---|---|---|---|---|
+| `GET` | `/api/entities/graph` | Entity mode: Entity, Sources, Activities, Targets. AI flow: People, AI clients, Tools and MCP servers, Destinations; optionally for one person, MCP server, or service. | `?mode` (optional): `entity` &#124; `ai`<br>`?kind` (optional): `user` &#124; `ip` &#124; `host` &#124; `mcp` &#124; `service`<br>`?value` (optional): string<br>`?start` (optional): date-time<br>`?end` (optional): date-time |  |
+| `GET` | `/api/entities/risk` | Users, source IPs, and hosts ranked by rule matches and flagged schedule runs. | `?start` (optional): date-time<br>`?end` (optional): date-time |  |
+
 ### Meta
 
 | Method | Path | What it does | Query | JSON body (`?` optional) |
@@ -88,6 +117,13 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | `GET` | `/api/health` | Health |  |  |
 | `GET` | `/api/meta` | Meta |  |  |
 | `GET` | `/api/schema/columns` | Columns |  |  |
+
+### Otlp
+
+| Method | Path | What it does | Query | JSON body (`?` optional) |
+|---|---|---|---|---|
+| `POST` | `/api/otlp/v1/logs` | Otlp Logs |  |  |
+| `POST` | `/api/otlp/v1/metrics` | Otlp Metrics |  |  |
 
 ### Overview
 
@@ -112,6 +148,8 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | `POST` | `/api/query` | Run Query |  | `sql`: string<br>`start`?: date-time<br>`end`?: date-time<br>`sources`?: list of string<br>`params`?: object |
 | `POST` | `/api/query/export` | The same query as /query, returned as CSV and audited as an export (T18). |  | `sql`: string<br>`start`?: date-time<br>`end`?: date-time<br>`sources`?: list of string<br>`params`?: object |
 | `POST` | `/api/search/compile` | Simple search text to SQL and parameters (ADR-0009). Reads no data; the query that follows goes through /query, its guard, and its audit like any other. |  | `text`: string<br>`top`?: string |
+| `POST` | `/api/search/facets` | Counts of the top values of a few fixed fields for the search on screen, over the whole result (not just the page). Same scope, guard, and audit as /query. |  | `text`?: string<br>`sql`?: string<br>`params`?: object<br>`columns`?: list of string<br>`start`?: date-time<br>`end`?: date-time<br>`sources`?: list of string |
+| `GET` | `/api/search/presets` | Suspicious presets (ADR-0016 row 3): Simple search text to put in the bar. |  |  |
 
 ### Rules
 
@@ -159,14 +197,18 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | Method | Path | What it does | Query | JSON body (`?` optional) |
 |---|---|---|---|---|
 | `GET` | `/api/sources` | List Sources |  |  |
-| `POST` | `/api/sources` | Add Source |  | `source_id`: string<br>`format`: `syslog` &#124; `json` &#124; `csv`<br>`kind`?: `file` &#124; `loki`<br>`path`?: string<br>`loki`?: LokiSettings<br>`glob`?: string<br>`timezone`?: string<br>`classification`?: `local_only` &#124; `cloud_allowed`<br>`retention_days`?: integer<br>`enabled`?: boolean<br>`template_id`?: string<br>`loki_secret`?: password |
+| `POST` | `/api/sources` | Add Source |  | `source_id`: string<br>`format`: `syslog` &#124; `json` &#124; `csv`<br>`kind`?: `file` &#124; `loki` &#124; `otlp` &#124; `m365` &#124; `anthropic`<br>`path`?: string<br>`loki`?: LokiSettings<br>`m365`?: M365Settings<br>`anthropic`?: AnthropicSettings<br>`glob`?: string<br>`timezone`?: string<br>`classification`?: `local_only` &#124; `cloud_allowed`<br>`retention_days`?: integer<br>`enabled`?: boolean<br>`template_id`?: string<br>`otlp_keep_content`?: boolean<br>`loki_secret`?: password<br>`credentials`?: ApiCredentials |
+| `POST` | `/api/sources/api/test` | One small read per enabled feed with these settings, before the source is saved. Audited source.api_test with the kind and feeds, never the credentials. |  | `kind`: `m365` &#124; `anthropic`<br>`m365`?: M365Settings<br>`anthropic`?: AnthropicSettings<br>`credentials`?: ApiCredentials |
 | `POST` | `/api/sources/discover` | Suggest sources for a folder. Reads files only: creates and grants nothing. |  | `path`: string |
 | `POST` | `/api/sources/loki/test` | One small query with these settings, before a Loki source is saved (ADR-0011). |  | `url`: string<br>`query`: string<br>`tenant`?: string<br>`auth`?: `none` &#124; `basic` &#124; `bearer`<br>`username`?: string<br>`backfill_hours`?: integer<br>`secret`?: password |
 | `GET` | `/api/sources/settings` | Source Settings |  |  |
 | `GET` | `/api/sources/watches` | Every source's quiet alert setting, with its targets. |  |  |
-| `PATCH` | `/api/sources/{source_id}` | Change a source's classification (SPEC 6.2) or parser (ADR-0012). Only new events take either: events already stored keep their label, so relabelling never releases older data (T8), and keep the parser they were read with. |  | `classification`?: `local_only` &#124; `cloud_allowed`<br>`template_id`?: string |
+| `PATCH` | `/api/sources/{source_id}` | Change a source's classification (SPEC 6.2) or parser (ADR-0012). Only new events take either: events already stored keep their label, so relabelling never releases older data (T8), and keep the parser they were read with. |  | `classification`?: `local_only` &#124; `cloud_allowed`<br>`template_id`?: string<br>`otlp_keep_content`?: boolean |
 | `DELETE` | `/api/sources/{source_id}` | Delete Source |  |  |
+| `GET` | `/api/sources/{source_id}/agent-config` | OpenTelemetry Collector config for an agent group (ADR-0017 row 2). Holds no secret: the token is read from a file on the endpoint. Audited source.agent_config. | `?os` (optional): `windows` &#124; `linux` |  |
+| `PUT` | `/api/sources/{source_id}/credentials` | Replace an API source's credentials (a renewed certificate or a new key). Reading continues from the saved position. Audited source.credentials, never the values. |  | `api_key`?: password<br>`client_secret`?: password<br>`certificate_pem`?: string<br>`private_key_pem`?: password |
 | `GET` | `/api/sources/{source_id}/deliveries` | Quiet and resumed alerts sent for this source, newest first (no message content). |  |  |
+| `POST` | `/api/sources/{source_id}/otlp-token` | A new ingest token for an OTLP source; the old one stops working at once. Shown once, stored hashed, audited source.otlp_token (never the token). |  |  |
 | `PUT` | `/api/sources/{source_id}/watch` | Alert when this source receives nothing for `quiet_after_s`; null turns it off. Audited as source.quiet_alert_change with the old and new setting. |  | `quiet_after_s`: integer<br>`target_ids`?: list of string |
 
 ### Templates

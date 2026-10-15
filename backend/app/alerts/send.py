@@ -15,12 +15,12 @@ import socket
 import ssl
 from collections.abc import Callable
 from email.message import EmailMessage
-from typing import Any, Literal
+from typing import Literal
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
-from app.alerts.net import Destination
+from app.alerts.net import Destination, egress
 
 TIMEOUT = httpx.Timeout(10.0)
 MAX_REPLY = 64 * 1024
@@ -37,16 +37,28 @@ def post(
     headers: dict[str, str],
     transport: httpx.BaseTransport | None = None,
 ) -> int:
-    parts = urlsplit(dest.url)
-    literal = f"[{dest.pin}]" if ":" in dest.pin else dest.pin
-    target = urlunsplit(parts._replace(netloc=f"{literal}:{dest.port}"))
-    name = f"[{dest.host}]" if ":" in dest.host else dest.host
-    extensions: dict[str, Any] = {"sni_hostname": dest.host} if dest.scheme == "https" else {}
-    send_headers = {**headers, "Host": f"{name}:{dest.port}", "User-Agent": "alerts"}
+    out = egress()
+    proxy = out.proxy() if not dest.pin else None  # no pin: sent through the proxy
+    if proxy is not None:
+        # The proxy resolves the name (CONNECT host:443); TLS still checks the name.
+        target, extensions = dest.url, {}
+        send_headers = {**headers, "User-Agent": "alerts"}
+    else:
+        parts = urlsplit(dest.url)
+        literal = f"[{dest.pin}]" if ":" in dest.pin else dest.pin
+        target = urlunsplit(parts._replace(netloc=f"{literal}:{dest.port}"))
+        name = f"[{dest.host}]" if ":" in dest.host else dest.host
+        extensions = {"sni_hostname": dest.host} if dest.scheme == "https" else {}
+        send_headers = {**headers, "Host": f"{name}:{dest.port}", "User-Agent": "alerts"}
     try:
         with (
             httpx.Client(
-                timeout=TIMEOUT, follow_redirects=False, trust_env=False, transport=transport
+                timeout=TIMEOUT,
+                follow_redirects=False,
+                trust_env=False,
+                transport=transport,
+                proxy=proxy,
+                verify=out.verify(),
             ) as client,
             client.stream(
                 "POST", target, content=body, headers=send_headers, extensions=extensions

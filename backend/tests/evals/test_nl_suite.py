@@ -22,10 +22,11 @@ CASES, SCOPE = load_suite()
 BY_QUESTION = {c.question: c.sql for c in CASES}
 
 
-def test_suite_has_100_unique_questions() -> None:
-    assert len(CASES) == 100
-    assert len({c.id for c in CASES}) == 100
-    assert len(BY_QUESTION) == 100
+def test_suite_has_100_questions_and_10_follow_ups() -> None:
+    assert len(CASES) == 110
+    assert len({c.id for c in CASES}) == 110
+    assert len(BY_QUESTION) == 110
+    assert sum(1 for c in CASES if c.history) == 9  # f006 names a person with no history
 
 
 def test_fixture_is_deterministic_and_synthetic() -> None:
@@ -79,6 +80,34 @@ def test_oracle_scores_100_percent_through_the_real_agent(lab: Any) -> None:
     misses = [r.id for r in results if not r.exact]
     assert misses == []
     assert summary["exact_rate"] == 1.0 and summary["executable_rate"] == 1.0
+
+
+def test_follow_ups_send_the_earlier_turns_and_the_oracle_passes(lab: Any) -> None:
+    seen: list[str] = []
+
+    def answer(question: str) -> str:
+        return BY_QUESTION[question]
+
+    pid = _provider(lab, answer)
+    fake = lab.state.gate._factory
+
+    def spy(r: Any, s: Any, e: Any) -> Any:
+        inner = fake(r, s, e)
+        original = inner.chat
+
+        def chat(messages: list[ChatMessage], **kw: object) -> ProviderResponse:
+            seen.append("\n".join(m.content for m in messages))
+            return original(messages, **kw)
+
+        inner.chat = chat
+        return inner
+
+    lab.state.gate._factory = spy
+    follow = [c for c in CASES if c.id.startswith("f")]
+    results = [run_case(lab.state.ask, lab.state.engine, pid, SCOPE, c) for c in follow]
+    assert [r.id for r in results if not r.exact] == []
+    f010 = next(m for m in seen if "Just the top 3." in m)
+    assert "Break that down by source IP." in f010 and "GROUP BY 1" in f010
 
 
 def test_a_wrong_model_scores_zero_but_runs(lab: Any) -> None:

@@ -20,7 +20,14 @@ import { AlertTargetsPage } from "@/features/alerts/AlertTargetsPage";
 import { SchedulesPage } from "@/features/schedules/SchedulesPage";
 import { OverviewPage } from "@/features/overview/OverviewPage";
 import { AuditLogPage } from "@/features/audit/AuditLogPage";
+import { AiUsagePage } from "@/features/ai/AiUsagePage";
+import { InvestigatePage } from "@/features/investigate/InvestigatePage";
+import { IdentitiesPage } from "@/features/identities/IdentitiesPage";
+import { SetupPage } from "@/features/setup/SetupPage";
 import { usePage } from "@/lib/route";
+import { SETTINGS_IDS } from "@/lib/nav";
+import { cn } from "@/lib/cn";
+import { SettingsNav } from "@/components/shell/SettingsNav";
 import { applyTheme, type Theme } from "@/lib/theme";
 
 interface AppProps {
@@ -96,7 +103,19 @@ export function App({ initialTheme, queryClient }: AppProps) {
                   canAudit={!user || user.role !== "analyst"}
                   open={menu}
                 />
-                <main className="flex min-w-0 flex-[999_1_560px] bg-bg">
+                <main
+                  className={cn(
+                    "flex min-w-0 flex-[999_1_560px] bg-bg",
+                    SETTINGS_IDS.has(page) && "flex-col md:flex-row",
+                  )}
+                >
+                  {SETTINGS_IDS.has(page) ? (
+                    <SettingsNav
+                      active={page}
+                      isAdmin={!user || user.role === "admin"}
+                      canAudit={!user || user.role !== "analyst"}
+                    />
+                  ) : null}
                   {page === "rules" ? (
                     <RulesPage
                       isAdmin={!user || user.role === "admin"}
@@ -123,6 +142,14 @@ export function App({ initialTheme, queryClient }: AppProps) {
                     <TemplatesPage />
                   ) : page === "audit" && (!user || user.role !== "analyst") ? (
                     <AuditLogPage />
+                  ) : page === "ai" ? (
+                    <AiUsagePage isAdmin={!user || user.role === "admin"} />
+                  ) : page === "identities" && (!user || user.role === "admin") ? (
+                    <IdentitiesPage />
+                  ) : page === "setup" && (!user || user.role === "admin") ? (
+                    <SetupPage />
+                  ) : page === "investigate" ? (
+                    <InvestigatePage />
                   ) : page === "overview" ? (
                     <OverviewPage />
                   ) : page === "sources" ? (

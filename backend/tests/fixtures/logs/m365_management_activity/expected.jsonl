@@ -1,0 +1,10 @@
+{"actor_user_name": "alice@example.com", "class_uid": 6003, "message": "FileDownloaded", "parse_status": "ok", "src_endpoint_ip": "203.0.113.10", "time": "2026-10-14T17:01:26+00:00"}
+{"actor_user_name": "bob@example.com", "class_uid": 6003, "message": "FileAccessed", "parse_status": "ok", "src_endpoint_ip": "198.51.100.7", "time": "2026-10-14T17:02:40+00:00"}
+{"actor_user_name": "carol@example.com", "class_uid": 6003, "message": "MailItemsAccessed", "parse_status": "ok", "src_endpoint_ip": "203.0.113.44", "status_id": 1, "time": "2026-10-14T17:03:49+00:00"}
+{"actor_user_name": "dave@example.com", "class_uid": 6003, "message": "New-InboxRule", "parse_status": "ok", "src_endpoint_ip": "2001:db8::17", "status_id": 1, "time": "2026-10-14T17:04:47+00:00"}
+{"actor_user_name": "alice@example.com", "class_uid": 6003, "message": "UserLoggedIn", "parse_status": "ok", "src_endpoint_ip": "203.0.113.10", "status_id": 1, "time": "2026-10-14T17:05:12+00:00"}
+{"actor_user_name": "bob@example.com", "class_uid": 6003, "message": "UserLoginFailed", "parse_status": "ok", "src_endpoint_ip": "198.51.100.7", "status_id": 2, "time": "2026-10-14T17:06:00+00:00"}
+{"actor_user_name": "carol@example.com", "class_uid": 6003, "message": "CopilotInteraction", "parse_status": "ok", "src_endpoint_ip": "203.0.113.44", "time": "2026-10-14T17:06:10+00:00"}
+{"actor_user_name": "dave@example.com", "class_uid": 6003, "message": "DlpRuleMatch", "parse_status": "ok", "severity_id": 3, "time": "2026-10-14T17:06:52+00:00"}
+{"actor_user_name": "alice@example.com", "class_uid": 6003, "message": "MessageSent", "parse_status": "ok", "src_endpoint_ip": "203.0.113.10", "time": "2026-10-14T17:07:05+00:00"}
+{"actor_user_name": "bob@example.com", "class_uid": 6003, "message": "FileDownloaded", "parse_status": "ok", "src_endpoint_ip": "198.51.100.7", "time": "2026-10-14T17:07:39+00:00"}

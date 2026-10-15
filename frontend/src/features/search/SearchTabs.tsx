@@ -1,30 +1,22 @@
 import type { KeyboardEvent } from "react";
-import type { SearchTab } from "@/lib/simpleSearch";
+
+export type SearchArea = "search" | "sql";
 
 interface SearchTabsProps {
-  tab: SearchTab;
-  onTab: (tab: SearchTab) => void;
-  /** Auditors have no Ask (SPEC 3.6). */
-  canAsk: boolean;
+  active: SearchArea;
+  onSelect: (area: SearchArea) => void;
 }
 
-const LABELS: Record<SearchTab, string> = {
-  simple: "Simple",
-  ask: "Ask in plain English",
-  sql: "SQL",
-};
+const LABELS: Record<SearchArea, string> = { search: "Search", sql: "SQL" };
+const AREAS: SearchArea[] = ["search", "sql"];
 
-/** The three ways to write a search; one results table under all of them. */
-export function SearchTabs({ tab, onTab, canAsk }: SearchTabsProps) {
-  const tabs: SearchTab[] = canAsk ? ["simple", "ask", "sql"] : ["simple", "sql"];
+/** Search (Simple syntax, or plain English with the AI toggle) and SQL (ADR-0016 row 1). */
+export function SearchTabs({ active, onSelect }: SearchTabsProps) {
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
-    const i = tabs.indexOf(tab);
-    const next = tabs[(i + (e.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length];
-    if (next) {
-      onTab(next);
-      document.getElementById(`search-tab-${next}`)?.focus();
-    }
+    const next = active === "search" ? "sql" : "search";
+    onSelect(next);
+    document.getElementById(`search-tab-${next}`)?.focus();
   };
   return (
     <div
@@ -33,18 +25,18 @@ export function SearchTabs({ tab, onTab, canAsk }: SearchTabsProps) {
       onKeyDown={onKeyDown}
       className="flex gap-1 border-b border-border"
     >
-      {tabs.map((t) => (
+      {AREAS.map((t) => (
         <button
           key={t}
           id={`search-tab-${t}`}
           type="button"
           role="tab"
-          aria-selected={tab === t}
+          aria-selected={active === t}
           aria-controls={`search-panel-${t}`}
-          tabIndex={tab === t ? 0 : -1}
-          onClick={() => onTab(t)}
+          tabIndex={active === t ? 0 : -1}
+          onClick={() => onSelect(t)}
           className={`-mb-px border-b-2 px-3 py-1.5 text-sm ${
-            tab === t
+            active === t
               ? "border-accent font-semibold text-text"
               : "border-transparent text-text-secondary hover:text-text"
           }`}

@@ -45,7 +45,7 @@ export function ProvidersPage() {
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       <PageHeader
-        crumbs={["Home", "Configuration", "AI providers"]}
+        crumbs={["Home", "Settings", "AI providers"]}
         title="AI providers"
         meta={`${list.length} ${list.length === 1 ? "provider" : "providers"}`}
         commands={

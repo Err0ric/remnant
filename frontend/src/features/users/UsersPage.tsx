@@ -33,7 +33,7 @@ export function UsersPage({ me }: UsersPageProps) {
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       <PageHeader
-        crumbs={["Home", "Configuration", "Users and access"]}
+        crumbs={["Home", "Settings", "Users and access"]}
         title="Users and access"
         meta={`${list.length} ${list.length === 1 ? "user" : "users"}`}
         commands={

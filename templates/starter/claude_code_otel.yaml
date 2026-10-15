@@ -1,0 +1,70 @@
+schema_version: 1
+id: claude_code_otel
+name: Claude Code telemetry (OpenTelemetry)
+version: 1.0.0
+author: starter-pack
+description: >-
+  Claude Code logs and metrics received by the OTLP receiver (ADR-0015). One line per log
+  record (claude_code.user_prompt, tool_result, api_request, api_error, tool_decision, and
+  others) or metric data point (claude_code.cost.usage, token.usage, session.count, and
+  others). The person is user.email; tokens, cost, model, tool, MCP server and tool names,
+  session, and terminal stay in unmapped (attr.*). Prompt and tool content are dropped by
+  the receiver unless the source keeps them.
+category: application
+vendor: anthropic
+classification_default: local_only
+
+envelope:
+  type: none
+
+match:
+  regex: '^\{"signal":"(?:log|metric)".*"(?:event|metric)":"claude_code\.'
+  min_confidence: 0.95
+
+payload:
+  format: json
+  json: { root: "$" }
+
+transforms:
+  - { field: time, op: timestamp, args: { format: iso8601 } }
+  - field: attr.success
+    op: map
+    args: { into: outcome, values: { "true": 1, "True": 1, "false": 2, "False": 2 }, optional: true }
+  - field: attr.decision
+    op: map
+    args: { into: outcome, values: { accept: 1, reject: 2 }, optional: true }
+  - field: event
+    op: map
+    args: { into: outcome, values: { claude_code.api_error: 2, claude_code.api_refusal: 2, claude_code.api_retries_exhausted: 2 }, optional: true }
+
+mapping:
+  class_uid: 6003            # API Activity
+  fields:
+    time: { from: time }
+    actor_user_name: { from: [attr.user_email, resource.user_email] }
+    device_hostname: { from: [resource.host_name, attr.host_name] }
+    message: { from: [event, metric] }
+    status_id: { from: outcome }
+  severity:
+    from: event
+    map: { claude_code.api_error: 3, claude_code.api_refusal: 3, claude_code.api_retries_exhausted: 3 }
+
+tests:
+  - name: tool result from an MCP server
+    input: '{"signal":"log","time":"2026-10-14T18:02:11.412000+00:00","service":"claude-code","event":"claude_code.tool_result","severity":null,"attr":{"event_name":"tool_result","user_email":"alice@example.com","session_id":"s-01","tool_name":"mcp_tool","success":"true","duration_ms":412,"mcp_server_name":"github","mcp_tool_name":"search_issues"},"resource":{"service_name":"claude-code","host_name":"ws-0042"},"scope":null,"content":"dropped"}'
+    expect:
+      parse_status: ok
+      class_uid: 6003
+      fields: { actor_user_name: alice@example.com, device_hostname: ws-0042, message: claude_code.tool_result, status_id: 1, time: "2026-10-14T18:02:11.412000+00:00" }
+  - name: api error
+    input: '{"signal":"log","time":"2026-10-14T18:03:00+00:00","service":"claude-code","event":"claude_code.api_error","attr":{"event_name":"api_error","user_email":"bob@example.com","model":"claude-opus-5-5","status_code":529,"attempt":2},"resource":{"service_name":"claude-code"},"content":"dropped"}'
+    expect:
+      parse_status: ok
+      class_uid: 6003
+      fields: { actor_user_name: bob@example.com, message: claude_code.api_error, status_id: 2, severity_id: 3 }
+  - name: cost metric data point
+    input: '{"signal":"metric","time":"2026-10-14T18:05:00+00:00","service":"claude-code","metric":"claude_code.cost.usage","unit":"USD","kind":"sum","value":0.0731,"count":null,"sum":null,"temporality":1,"attr":{"user_email":"alice@example.com","model":"claude-opus-5-5","session_id":"s-01"},"resource":{"service_name":"claude-code"}}'
+    expect:
+      parse_status: ok
+      class_uid: 6003
+      fields: { actor_user_name: alice@example.com, message: claude_code.cost.usage }

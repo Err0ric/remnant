@@ -169,3 +169,7 @@ class SsoRefusedError(AppError):
         super().__init__(self.MESSAGES.get(code, "Single sign-on did not complete"))
         self.code = code
         self.reason = reason
+
+
+class UnsupportedMediaError(AppError):
+    """The request body is in a format this endpoint does not take (OTLP protobuf, say)."""

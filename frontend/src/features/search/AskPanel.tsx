@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import { ApiError, api, type AskResponse, type AskTurn } from "@/lib/api";
 import { navigate } from "@/lib/route";
 import { setAskProvider, useAskProvider } from "@/lib/askProvider";
@@ -16,6 +16,8 @@ interface AskPanelProps {
   /** The latest generated SQL and the first question, for Save; null after New question. */
   onAnswer: (answer: { sql: string; question: string } | null) => void;
   pending: boolean;
+  /** The AI switch, shown at the start of the question box. */
+  toggle?: ReactNode;
 }
 
 function askError(err: unknown): string {
@@ -30,7 +32,15 @@ function askError(err: unknown): string {
  * until the analyst clicks Run. Follow-ups refine the same conversation (last 3 turns).
  * Pasted Kusto KQL or SPL is a fair question too: the model translates it (ADR-0009).
  */
-export function AskPanel({ start, sources, isAdmin, onRun, onAnswer, pending }: AskPanelProps) {
+export function AskPanel({
+  start,
+  sources,
+  isAdmin,
+  onRun,
+  onAnswer,
+  pending,
+  toggle,
+}: AskPanelProps) {
   const providerId = useAskProvider();
   const [question, setQuestion] = useState("");
   const [turns, setTurns] = useState<AskTurn[]>([]);
@@ -89,12 +99,7 @@ export function AskPanel({ start, sources, isAdmin, onRun, onAnswer, pending }: 
   }, [ask.isPending]);
 
   return (
-    <div
-      id="search-panel-ask"
-      role="tabpanel"
-      aria-labelledby="search-tab-ask"
-      className="flex flex-col gap-2.5"
-    >
+    <div className="flex flex-col gap-2.5">
       <form aria-label="Ask a question" onSubmit={submit} className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <label htmlFor="ask-provider" className="text-text-secondary">
@@ -165,20 +170,23 @@ export function AskPanel({ start, sources, isAdmin, onRun, onAnswer, pending }: 
         <label htmlFor="ask-question" className="sr-only">
           Question
         </label>
-        <textarea
-          id="ask-question"
-          rows={2}
-          maxLength={2000}
-          value={question}
-          onChange={(e) => setQuestion(e.target.value)}
-          onKeyDown={onKeyDown}
-          placeholder={
-            turns.length
-              ? "Refine it: only failures, group by source IP, last hour only"
-              : "Which source IPs had the most failed SSH logins? Or paste a KQL or SPL query to translate."
-          }
-          className="rounded border border-border-strong bg-inset px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-focus-ring"
-        />
+        <div className="flex items-start gap-2">
+          {toggle}
+          <textarea
+            id="ask-question"
+            rows={2}
+            maxLength={2000}
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            onKeyDown={onKeyDown}
+            placeholder={
+              turns.length
+                ? "Refine it: show me these for alice, break that down by host, count them"
+                : "Which source IPs had the most failed SSH logins? Or paste a KQL or SPL query to translate."
+            }
+            className="min-w-0 flex-1 rounded border border-accent bg-inset px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-focus-ring"
+          />
+        </div>
         <div className="flex flex-wrap items-center gap-3">
           <button
             type="submit"

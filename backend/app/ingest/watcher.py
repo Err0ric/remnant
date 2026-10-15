@@ -15,10 +15,13 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
+import httpx
 import structlog
 
 from app.core.errors import ParamInvalidError, SourceRejectedError
 from app.core.ids import AUTO_PARSER
+from app.ingest.connectors import registry as api_connectors
+from app.ingest.connectors.base import ConnectorError, RetryLaterError, backoff
 from app.ingest.connectors.loki import (
     POLL_EVERY,
     LokiClient,
@@ -38,6 +41,8 @@ from app.ingest.sources import (
     files_for,
     open_regular,
     path_key,
+    spool_files,
+    spool_name,
 )
 from app.ingest.writer import LakeWriter
 from app.meta.db import MetaDB
@@ -71,8 +76,12 @@ class SourceStatus:
     records_skipped: int = 0
     # .evtx files shorter than their header says, still inside SHORT_EVTX_GRACE.
     files_waiting: int = 0
-    # Loki sources: how far the read position is behind now, in seconds.
+    # Loki and API sources: how far the read position is behind now, in seconds.
     behind_s: float | None = None
+    # API sources: feeds that failed while others worked (a missing license, a scope).
+    warnings: tuple[str, ...] = ()
+    # API sources: the next poll after errors or a provider's request to slow down.
+    retry_at: datetime | None = None
 
 
 SourceState = Literal["waiting", "reading", "error", "disabled"]
@@ -114,6 +123,10 @@ class IngestService:
         self._loki_polled: dict[str, datetime] = {}  # source id -> last poll
         # Tests swap this for a client with a fake transport.
         self.loki_client: Callable[[LokiSettings, str | None], LokiClient] = LokiClient
+        # API sources (m365, anthropic): last poll, failures in a row. Tests set a transport.
+        self._api_polled: dict[str, datetime] = {}
+        self._api_failures: dict[str, int] = {}
+        self.api_transport: httpx.BaseTransport | None = None
 
     def run_once(self) -> int:
         """One pass over every enabled source. Returns the number of events written.
@@ -145,7 +158,14 @@ class IngestService:
                         )
                     total += count
                     continue
-                paths = files_for(source, self._sources.allowed_roots)
+                if source.kind in api_connectors.API_KINDS:
+                    total += self._run_api(source, prev)
+                    continue
+                if source.kind == "otlp":
+                    spool = self._sources.spool_root
+                    paths = spool_files(source, spool) if spool else []
+                else:
+                    paths = files_for(source, self._sources.allowed_roots)
                 files = len(paths)
                 failed: list[str] = []
                 for path in paths:
@@ -162,6 +182,8 @@ class IngestService:
                         failed.append(f"{display_name(path.name)[:100]}: {type(exc).__name__}")
                 if failed:
                     error = f"Cannot read {len(failed)} of {files} files ({failed[0]})"
+                if source.kind == "otlp":
+                    paths = self._drop_read_spool(source, paths)
                 listed = {(source.source_id, path_key(p)) for p in paths}
                 self._prune(source.source_id, listed)
                 skipped = sum(n for key, n in self._skipped.items() if key in listed)
@@ -226,6 +248,96 @@ class IngestService:
             )
         return len(rows), result.behind.total_seconds()
 
+    def _run_api(self, source: SourceConfig, prev: SourceStatus) -> int:
+        """Poll an API source and record its status; errors back off (SPEC 3.7)."""
+        now = self._clock()
+        sid = source.source_id
+        if prev.retry_at is not None and now < prev.retry_at:
+            return 0
+        connector = api_connectors.for_source(
+            source, self._sources.connector_secret(sid), self.api_transport
+        )
+        last = self._api_polled.get(sid)
+        if last is not None and now - last < connector.poll_every:
+            return 0
+        self._api_polled[sid] = now
+        count, error, retry_at = 0, None, None
+        behind, warnings = prev.behind_s, prev.warnings
+        try:
+            pull = connector.pull(self._position(source), now)
+            count = self._write_api(source, pull.records)
+            self._save_position(sid, pull.checkpoint, now)
+            behind, warnings = pull.behind_s, tuple(w[:300] for w in pull.warnings[:10])
+            self._api_failures.pop(sid, None)
+        except ConnectorError as exc:
+            failures = self._api_failures.get(sid, 0) + 1
+            self._api_failures[sid] = failures
+            wait = exc.seconds if isinstance(exc, RetryLaterError) else None
+            retry_at = now + backoff(failures, connector.poll_every, wait)
+            error = str(exc)[:500]
+        with self._lock:
+            self._status[sid] = replace(
+                prev,
+                last_pass_at=now,
+                last_event_at=now if count else prev.last_event_at,
+                events_last_pass=count,
+                events_since_start=prev.events_since_start + count,
+                error=error,
+                behind_s=behind,
+                warnings=warnings,
+                retry_at=retry_at,
+            )
+        return count
+
+    def _write_api(self, source: SourceConfig, records: list[Any]) -> int:
+        """Each record is one line for the parser, written before the checkpoint moves."""
+        normalizer = self._normalizer(source)
+        rows: list[dict[str, Any]] = []
+        for rec in records:
+            data = rec.text.encode("utf-8", "replace")
+            frame = Frame(data=data[:MAX_LINE], truncated=len(data) > MAX_LINE)
+            row = normalizer.normalize(decode_frame(frame))
+            if row is None:
+                continue
+            if row.get("time") is None and rec.time is not None:
+                row["time"] = rec.time
+            rows.append(row)
+        if rows:
+            self._writer.write(rows)
+        return len(rows)
+
+    def _save_position(self, source_id: str, position: str, now: datetime) -> None:
+        with self._meta.connect() as con:
+            con.execute(
+                "INSERT INTO connector_checkpoints (source_id, position, updated_at)"
+                " VALUES (?, ?, ?) ON CONFLICT (source_id) DO UPDATE SET"
+                " position = excluded.position, updated_at = excluded.updated_at",
+                (source_id, position, now.isoformat()),
+            )
+
+    def _drop_read_spool(self, source: SourceConfig, paths: list[Path]) -> list[Path]:
+        """Delete spool files that are fully read and no longer written (an older hour),
+        so the spool holds only what ingest has not reached yet. Returns what is left."""
+        keep: list[Path] = []
+        current = spool_name(self._clock())
+        for path in paths:
+            try:
+                size = path.stat().st_size
+            except FileNotFoundError:
+                continue
+            cp = self._checkpoint(source.source_id, path_key(path))
+            if path.name < current and cp is not None and cp["offset"] >= size:
+                key = path_key(path)
+                path.unlink(missing_ok=True)
+                with self._meta.connect() as con:
+                    con.execute(
+                        "DELETE FROM checkpoints WHERE source_id = ? AND path = ?",
+                        (source.source_id, key),
+                    )
+                continue
+            keep.append(path)
+        return keep
+
     def _position(self, source: SourceConfig) -> str | None:
         with self._meta.connect() as con:
             row = con.execute(
@@ -260,7 +372,7 @@ class IngestService:
         if offset >= size:
             return 0
 
-        with open_regular(path, self._sources.allowed_roots) as fh:
+        with open_regular(path, self._sources.read_roots()) as fh:
             fh.seek(offset)
             data = fh.read(READ_LIMIT)
 
@@ -336,7 +448,7 @@ class IngestService:
         The checkpoint is dropped, and the file read from the start, when the record at the
         checkpoint id has different content or every id is below the checkpoint.
         """
-        with open_regular(path, self._sources.allowed_roots) as fh:
+        with open_regular(path, self._sources.read_roots()) as fh:
             stat = os.fstat(fh.fileno())
             signature = file_signature(fh)
             checkpoint = self._checkpoint(source.source_id, path_key(path))

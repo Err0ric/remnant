@@ -255,3 +255,14 @@ docker compose --profile demo down      # stop the generator
 docker compose --profile ollama down    # stop the model server
 docker compose down -v                  # remove everything, including the admin account
 ```
+
+## Demo lab: every source type at once
+
+To see every page with data (risk, the investigator, AI usage, Microsoft 365, Anthropic), load the synthetic fixtures into a fresh loopback install with no accounts:
+
+```bash
+python3 scripts/demo_lab.py --url http://127.0.0.1:8080 \
+  --logs /srv/logs/demo --rules /srv/rules/demo
+```
+
+`--logs` must be inside `allowed_roots` and `--rules` inside `rule_roots`. It adds one file source per starter template (29), imports and runs five Sigma rules, and sets a few AI review statuses. Everything is synthetic (example.com users, RFC 5737 addresses). Use a separate install for it, not the one holding real logs.

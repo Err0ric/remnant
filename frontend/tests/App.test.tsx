@@ -44,14 +44,21 @@ describe("App shell", () => {
       "Investigate",
       "Search",
       "Saved searches",
-      "Configuration",
-      "Users and access",
-      "Audit log",
+      "Detect",
+      "AI usage",
+      "Settings",
     ]) {
       expect(within(nav).getByText(label)).toBeInTheDocument();
     }
     expect(within(nav).getByText("Search")).toHaveAttribute("aria-current", "page");
     expect(within(nav).queryByText("Ask")).not.toBeInTheDocument(); // a tab of Search now
+    // Admin pages live in the Settings area, not on the main rail.
+    expect(within(nav).queryByText("Users and access")).not.toBeInTheDocument();
+    await userEvent.click(within(nav).getByText("Settings"));
+    const sub = screen.getByRole("navigation", { name: "Settings" });
+    for (const label of ["Data", "Access", "Integrations", "Users and access", "Audit log"]) {
+      expect(within(sub).getByText(label)).toBeInTheDocument();
+    }
     expect(screen.queryByText(/grimoire|seance|séance|ossuary/i)).not.toBeInTheDocument();
   });
 
@@ -155,7 +162,7 @@ describe("SQL editor and raw view", () => {
       true,
     );
     await userEvent.click(screen.getByRole("button", { name: "Parsed" }));
-    expect(screen.getByRole("table", { name: "Search results" })).toBeVisible();
+    expect(screen.getByRole("treegrid", { name: "Search results" })).toBeVisible();
   });
 
   it("explains when a query has no raw lines", async () => {
@@ -192,7 +199,7 @@ describe("Empty results", () => {
 describe("Results table controls", () => {
   it("sorts the shown rows by a header, then hides a column, then goes compact", async () => {
     await renderApp();
-    const table = await screen.findByRole("table", { name: "Search results" });
+    const table = await screen.findByRole("treegrid", { name: "Search results" });
     await screen.findByText("Failed password for invalid user oracle");
     const timeHeader = within(table).getByRole("columnheader", { name: "Time" });
     expect(timeHeader).toHaveAttribute("aria-sort", "none");

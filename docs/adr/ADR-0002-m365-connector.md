@@ -29,3 +29,11 @@ A built-in connector, registered by the customer's admin as a single-tenant Entr
 - Microsoft content can arrive with delays of minutes to hours; the Sources page shows last successful pull and lag.
 - Some data requires specific licensing (Entra ID P1/P2 for Graph sign-ins); the setup page detects and explains missing access instead of failing silently.
 - Threat T21 (SPEC 7): mitigated by read-only permissions, certificate auth, encryption at rest, and rotation guidance. Not AI-facing; no ATLAS impact beyond the existing classification gate for any LLM use of this data.
+
+## Implementation notes (2026-10-14)
+
+- Built as SPEC 3.7 describes. Directory audits map to Entity Management (3004), not Account Change (3001): they cover groups, apps, roles, and policies as well as accounts. Mailbox and file events map to API Activity (6003); File Activity (1001) waits for file path columns.
+- The add-source form lists the permission each feed needs and tests every feed before saving. A consent link is not generated; `docs/install/m365.md` gives the admin consent steps.
+- Outbound proxy and an extra CA bundle supported since ADR-0018 (`docs/install/proxy.md`).
+- Tested against fake Microsoft endpoints only; not yet run against a live tenant.
+

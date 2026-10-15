@@ -68,7 +68,10 @@ export function ResultsCard({ result, pending, runKey, canExplain = false }: Res
   };
   const columns = (result?.columns ?? []).filter((c) => c !== "event_id");
   return (
-    <section aria-label="Results" className="mx-5 mb-5 rounded border border-border bg-surface">
+    <section
+      aria-label="Results"
+      className="min-w-0 flex-1 rounded border border-border bg-surface"
+    >
       <div className="flex flex-wrap items-center gap-2 border-b border-border px-3.5 py-2.5">
         <span className="font-semibold">Results</span>
         <span className="text-sm text-text-secondary">

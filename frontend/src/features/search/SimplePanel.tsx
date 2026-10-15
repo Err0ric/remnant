@@ -1,5 +1,5 @@
-import { useState, type FormEvent } from "react";
-import type { CompiledSearch } from "@/lib/api";
+import { useState, type FormEvent, type ReactNode } from "react";
+import type { CompiledSearch, SearchPreset } from "@/lib/api";
 
 interface SimplePanelProps {
   text: string;
@@ -11,6 +11,11 @@ interface SimplePanelProps {
   pending: boolean;
   /** Fields the search filters on that have no value anywhere in the time range. */
   emptyColumns?: string[];
+  /** The AI switch, shown at the start of the bar. */
+  toggle?: ReactNode;
+  /** Suspicious presets (ADR-0016 row 3): picking one fills the bar and runs it. */
+  presets?: SearchPreset[];
+  onPreset?: (text: string) => void;
 }
 
 const EXAMPLES = [
@@ -29,6 +34,9 @@ export function SimplePanel({
   onEditAsSql,
   pending,
   emptyColumns = [],
+  toggle,
+  presets = [],
+  onPreset,
 }: SimplePanelProps) {
   const [showSql, setShowSql] = useState(false);
   const submit = (e: FormEvent) => {
@@ -36,23 +44,26 @@ export function SimplePanel({
     onRun();
   };
   return (
-    <div id="search-panel-simple" role="tabpanel" aria-labelledby="search-tab-simple">
+    <div>
       <form aria-label="Simple search" onSubmit={submit} className="flex flex-col gap-2">
         <div className="flex flex-wrap gap-2">
-          <label htmlFor="simple-search" className="sr-only">
-            Search text
-          </label>
-          <input
-            id="simple-search"
-            type="search"
-            value={text}
-            maxLength={2048}
-            onChange={(e) => onText(e.target.value)}
-            placeholder={`Words, "phrases", field:value, -field:value, OR, ( )`}
-            spellCheck={false}
-            autoComplete="off"
-            className="h-9 min-w-0 flex-[1_1_320px] rounded border border-border-strong bg-inset px-3 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-focus-ring"
-          />
+          <div className="flex min-w-0 flex-[1_1_240px] gap-2">
+            {toggle}
+            <label htmlFor="simple-search" className="sr-only">
+              Search text
+            </label>
+            <input
+              id="simple-search"
+              type="search"
+              value={text}
+              maxLength={2048}
+              onChange={(e) => onText(e.target.value)}
+              placeholder={`Words, "phrases", field:value, -field:value, OR, ( )`}
+              spellCheck={false}
+              autoComplete="off"
+              className="h-9 min-w-0 flex-1 rounded border border-border-strong bg-inset px-3 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-focus-ring"
+            />
+          </div>
           <button
             type="submit"
             disabled={pending}
@@ -62,6 +73,24 @@ export function SimplePanel({
           </button>
         </div>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-text-muted">
+          {presets.length && onPreset ? (
+            <select
+              aria-label="Suspicious activity presets"
+              value=""
+              onChange={(e) => {
+                const p = presets.find((x) => x.id === e.target.value);
+                if (p) onPreset(p.text);
+              }}
+              className="h-7 w-auto max-w-48 rounded border border-border-strong bg-surface px-1.5 text-sm text-text"
+            >
+              <option value="">Suspicious…</option>
+              {presets.map((p) => (
+                <option key={p.id} value={p.id} title={p.description}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          ) : null}
           <span>Try</span>
           {EXAMPLES.map((ex) => (
             <button

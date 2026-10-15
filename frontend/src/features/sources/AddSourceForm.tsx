@@ -1,15 +1,37 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { Field } from "@/features/auth/Field";
+import { ANTHROPIC_DEFAULTS, ApiSourceFields, M365_DEFAULTS } from "./ApiSourceFields";
 import { LokiFields } from "./LokiFields";
+import { OtlpTokenPanel } from "./OtlpSetup";
 import { ParserSelect } from "./ParserSelect";
-import { AUTO_PARSER, parserHelp } from "@/lib/parsers";
+import { AUTO_PARSER, parserHelp, parserName } from "@/lib/parsers";
+import { OptionalSection } from "@/components/forms/OptionalSection";
 import { FormError } from "@/features/auth/FormError";
-import { ApiError, api, type LokiSettings, type SourceFormat, type SourceInput } from "@/lib/api";
+import {
+  ApiError,
+  api,
+  type AnthropicSettings,
+  type ApiCredentials,
+  type LokiSettings,
+  type M365Settings,
+  type SourceFormat,
+  type SourceInput,
+  type SourceKind,
+} from "@/lib/api";
 
 const ID_PATTERN = /^[a-z0-9][a-z0-9_]{0,63}$/;
 
 const FORMATS: SourceFormat[] = ["syslog", "json", "csv"];
+
+const KIND_HELP: Record<SourceKind, string> = {
+  file: "Files are read as they grow; rotated files are followed.",
+  loki: "Lines are copied from Loki every 30 seconds and parsed like a file.",
+  otlp: "Senders push OTLP JSON with this source's token, which is shown once after you add it.",
+  m365: "Read every 5 minutes with a read-only app registration. See docs/install/m365.md for the exact permissions.",
+  anthropic:
+    "Reports are read every 5 minutes once each hour or day is final. No chat content is read.",
+};
 
 interface AddSourceFormProps {
   allowedRoots: string[];
@@ -31,7 +53,9 @@ export function AddSourceForm({ allowedRoots, initial, onDone }: AddSourceFormPr
     template_id: AUTO_PARSER,
     ...initial,
   });
-  const [kind, setKind] = useState<"file" | "loki">("file");
+  const [kind, setKind] = useState<SourceKind>("file");
+  // An OTLP source's token, shown once after it is made (ADR-0015 row 3).
+  const [created, setCreated] = useState<{ id: string; token: string } | null>(null);
   const [loki, setLoki] = useState<LokiSettings>({
     url: "",
     query: "",
@@ -39,6 +63,9 @@ export function AddSourceForm({ allowedRoots, initial, onDone }: AddSourceFormPr
     backfill_hours: 24,
   });
   const [lokiSecret, setLokiSecret] = useState("");
+  const [m365, setM365] = useState<M365Settings>(M365_DEFAULTS);
+  const [anthropic, setAnthropic] = useState<AnthropicSettings>(ANTHROPIC_DEFAULTS);
+  const [credentials, setCredentials] = useState<ApiCredentials>({});
   const [localError, setLocalError] = useState<string | null>(null);
   const templates = useQuery({
     queryKey: ["templates"],
@@ -50,10 +77,11 @@ export function AddSourceForm({ allowedRoots, initial, onDone }: AddSourceFormPr
 
   const add = useMutation({
     mutationFn: api.addSource,
-    onSuccess: async () => {
+    onSuccess: async (res) => {
       await client.invalidateQueries({ queryKey: ["source-list"] });
       await client.invalidateQueries({ queryKey: ["sources"] }); // Search filter list
-      onDone();
+      if (res.otlp_token) setCreated({ id: res.source_id, token: res.otlp_token });
+      else onDone();
     },
   });
 
@@ -66,6 +94,30 @@ export function AddSourceForm({ allowedRoots, initial, onDone }: AddSourceFormPr
       return;
     }
     setLocalError(null);
+    if (kind === "otlp") {
+      add.mutate({
+        ...form,
+        kind: "otlp",
+        format: "json",
+        template_id: form.template_id ?? "auto",
+        path: "",
+        glob: "*",
+      });
+      return;
+    }
+    if (kind === "m365" || kind === "anthropic") {
+      add.mutate({
+        ...form,
+        kind,
+        format: "json",
+        path: "",
+        glob: "*",
+        m365: kind === "m365" ? m365 : null,
+        anthropic: kind === "anthropic" ? anthropic : null,
+        credentials,
+      });
+      return;
+    }
     if (kind === "loki") {
       add.mutate({
         ...form,
@@ -81,6 +133,9 @@ export function AddSourceForm({ allowedRoots, initial, onDone }: AddSourceFormPr
   };
 
   const serverError = add.error instanceof ApiError ? add.error.message : null;
+  if (created) {
+    return <OtlpTokenPanel sourceId={created.id} token={created.token} onDone={onDone} />;
+  }
 
   return (
     <form
@@ -99,63 +154,117 @@ export function AddSourceForm({ allowedRoots, initial, onDone }: AddSourceFormPr
           required
         />
         <div className="flex flex-col gap-1">
-          <label htmlFor="source-parser" className="text-sm font-semibold">
-            Parser
-          </label>
-          <ParserSelect
-            id="source-parser"
-            templateId={form.template_id}
-            format={form.format}
-            templates={templates.data ?? []}
-            formats={FORMATS}
-            onChange={(templateId, format) =>
-              setForm((f) => ({ ...f, template_id: templateId, format }))
-            }
-          />
-          <p className="text-sm text-text-muted">
-            {parserHelp(form.template_id, templates.data ?? [])}
-          </p>
-        </div>
-        <div className="flex flex-col gap-1">
           <label htmlFor="source-kind" className="text-sm font-semibold">
             Reads from
           </label>
           <select
             id="source-kind"
             value={kind}
-            onChange={(e) => setKind(e.target.value as "file" | "loki")}
+            onChange={(e) => {
+              const next = e.target.value as SourceKind;
+              setKind(next);
+              setCredentials({});
+              if (next === "otlp" || next === "m365")
+                setForm((f) => ({ ...f, format: "json", template_id: AUTO_PARSER }));
+              if (next === "anthropic")
+                setForm((f) => ({ ...f, format: "json", template_id: "anthropic_reports" }));
+            }}
             className="h-9 rounded border border-border-strong bg-inset px-2 text-sm text-text"
           >
             <option value="file">A file or folder on this server</option>
             <option value="loki">Grafana Loki</option>
+            <option value="otlp">OpenTelemetry: Claude Code, endpoint agents, MCP inventory</option>
+            <option value="m365">Microsoft 365: audit, Entra sign-ins, alerts</option>
+            <option value="anthropic">Anthropic: usage, cost, Claude Code, audit</option>
           </select>
-          <p className="text-sm text-text-muted">
-            {kind === "loki"
-              ? "Lines are copied from Loki every 30 seconds and parsed like a file."
-              : "Files are read as they grow; rotated files are followed."}
-          </p>
+          <p className="text-sm text-text-muted">{KIND_HELP[kind]}</p>
         </div>
         {kind === "loki" ? (
           <LokiFields
+            part="required"
             value={loki}
             secret={lokiSecret}
             onChange={setLoki}
             onSecret={setLokiSecret}
           />
-        ) : (
-          <>
-            <Field
-              label="File or folder"
-              help={
-                allowedRoots.length
-                  ? `Must be inside: ${allowedRoots.join(", ")}`
-                  : "No folders are allowed yet. Set paths.allowed_roots on the server."
+        ) : kind === "m365" || kind === "anthropic" ? (
+          <ApiSourceFields
+            part="required"
+            kind={kind}
+            m365={m365}
+            anthropic={anthropic}
+            credentials={credentials}
+            onM365={setM365}
+            onAnthropic={setAnthropic}
+            onCredentials={setCredentials}
+          />
+        ) : kind === "otlp" ? null : (
+          <Field
+            label="File or folder"
+            help={
+              allowedRoots.length
+                ? `Must be inside: ${allowedRoots.join(", ")}`
+                : "No folders are allowed yet. Set paths.allowed_roots on the server."
+            }
+            value={form.path}
+            onChange={(e) => set("path", e.target.value)}
+            className="font-mono"
+            required
+          />
+        )}
+        {kind === "m365" || kind === "anthropic" ? (
+          <ApiSourceFields
+            part="optional"
+            kind={kind}
+            m365={m365}
+            anthropic={anthropic}
+            credentials={credentials}
+            onM365={setM365}
+            onAnthropic={setAnthropic}
+            onCredentials={setCredentials}
+          />
+        ) : null}
+        <OptionalSection
+          title={kind === "loki" ? "Sign-in, parsing, and retention" : "Parsing and retention"}
+          summary={[
+            `Parser: ${parserName(form.template_id, form.format, templates.data ?? [])}`,
+            kind === "file" ? `Pattern: ${form.glob}` : null,
+            kind === "loki" ? `Sign-in: ${loki.auth === "none" ? "none" : loki.auth}` : null,
+            kind === "file" || kind === "loki" ? `Time zone: ${form.timezone}` : null,
+            `Keep ${form.retention_days} days`,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+          defaultOpen={Boolean(initial?.template_id)}
+        >
+          <div className="flex flex-col gap-1">
+            <label htmlFor="source-parser" className="text-sm font-semibold">
+              Parser
+            </label>
+            <ParserSelect
+              id="source-parser"
+              templateId={form.template_id}
+              format={form.format}
+              templates={templates.data ?? []}
+              formats={FORMATS}
+              onChange={(templateId, format) =>
+                setForm((f) => ({ ...f, template_id: templateId, format }))
               }
-              value={form.path}
-              onChange={(e) => set("path", e.target.value)}
-              className="font-mono"
-              required
             />
+            <p className="text-sm text-text-muted">
+              {parserHelp(form.template_id, templates.data ?? [])}
+            </p>
+          </div>
+          {kind === "loki" ? (
+            <LokiFields
+              part="optional"
+              value={loki}
+              secret={lokiSecret}
+              onChange={setLoki}
+              onSecret={setLokiSecret}
+            />
+          ) : null}
+          {kind === "file" ? (
             <Field
               label="File pattern"
               help="For folders. **/*.log matches every .log file in all subfolders."
@@ -163,22 +272,36 @@ export function AddSourceForm({ allowedRoots, initial, onDone }: AddSourceFormPr
               onChange={(e) => set("glob", e.target.value)}
               className="font-mono"
             />
-          </>
-        )}
-        <Field
-          label="Time zone"
-          help="For syslog lines without a zone, e.g. America/Los_Angeles."
-          value={form.timezone}
-          onChange={(e) => set("timezone", e.target.value)}
-        />
-        <Field
-          label="Keep data for (days)"
-          type="number"
-          min={1}
-          max={3650}
-          value={form.retention_days}
-          onChange={(e) => set("retention_days", Number(e.target.value))}
-        />
+          ) : null}
+          {kind === "file" || kind === "loki" ? (
+            <Field
+              label="Time zone"
+              help="For syslog lines without a zone, e.g. America/Los_Angeles."
+              value={form.timezone}
+              onChange={(e) => set("timezone", e.target.value)}
+            />
+          ) : null}
+          <Field
+            label="Keep data for (days)"
+            type="number"
+            min={1}
+            max={3650}
+            value={form.retention_days}
+            onChange={(e) => set("retention_days", Number(e.target.value))}
+          />
+        </OptionalSection>
+        {kind === "m365" || kind === "anthropic" ? (
+          <ApiSourceFields
+            part="test"
+            kind={kind}
+            m365={m365}
+            anthropic={anthropic}
+            credentials={credentials}
+            onM365={setM365}
+            onAnthropic={setAnthropic}
+            onCredentials={setCredentials}
+          />
+        ) : null}
       </div>
       <p className="mt-3 text-sm text-text-muted">
         New sources are local only: their data is never sent to a cloud AI provider. An

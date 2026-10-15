@@ -16,6 +16,10 @@ export type PageId =
   | "schedules"
   | "dashboard"
   | "alerts"
+  | "ai"
+  | "investigate"
+  | "identities"
+  | "setup"
   | "audit";
 
 const PATHS: Record<PageId, string> = {
@@ -32,6 +36,10 @@ const PATHS: Record<PageId, string> = {
   schedules: "/schedules",
   dashboard: "/dashboard",
   alerts: "/alert-targets",
+  ai: "/ai",
+  investigate: "/investigations",
+  identities: "/identities",
+  setup: "/setup",
   audit: "/audit",
   account: "/account", // invite and reset links land here; works signed out
 };

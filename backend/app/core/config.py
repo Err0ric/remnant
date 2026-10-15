@@ -144,6 +144,9 @@ class LLMConfig(_Strict):
     trusted_local_hosts: list[str] = Field(default_factory=list)
     # Store full prompt and response bodies in llm_calls (SPEC 6.4). Hashes are always kept.
     store_bodies: bool = False
+    # Ask prompt version (a file in llm/prompts). Change only after the Ask accuracy suite
+    # (backend/evals/nl_queries) shows the new version at least as good on your model.
+    ask_prompt: str = Field(default="ask.v4", pattern=r"^ask\.v[0-9]+$")
 
     _split_hosts = field_validator("trusted_local_hosts", mode="before")(_split_list)
 
@@ -180,6 +183,45 @@ class SchedulesConfig(_Strict):
         return value
 
 
+class NetworkConfig(_Strict):
+    """Outbound proxy for the fixed-host API connectors and Teams or Slack alerts, and an
+    extra CA bundle for outbound TLS (ADR-0018). Credentials come from the environment."""
+
+    https_proxy: str | None = Field(default=None, max_length=300)
+    proxy_username: str | None = Field(default=None, max_length=200)
+    proxy_password: SecretStr | None = None
+    ca_bundle: Path | None = None
+
+    _blank = field_validator(
+        "https_proxy", "proxy_username", "proxy_password", "ca_bundle", mode="before"
+    )(lambda v: v or None)
+
+    @field_validator("https_proxy")
+    @classmethod
+    def _proxy_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        m = re.fullmatch(
+            r"(https?)://([^/@\s:]+|\[[0-9A-Fa-f:]+\])(?::(\d{1,5}))?/?", value.strip()
+        )
+        if not m:
+            raise ValueError(
+                "https_proxy must be http://host:port or https://host:port, with no user name"
+                " or password in it (set proxy_username and proxy_password instead)"
+            )
+        return value.strip().rstrip("/")
+
+    @model_validator(mode="after")
+    def _pair(self) -> "NetworkConfig":
+        if (self.proxy_username is None) != (self.proxy_password is None):
+            raise ValueError("set both proxy_username and proxy_password, or neither")
+        if self.proxy_username and not self.https_proxy:
+            raise ValueError("proxy_username is set but https_proxy is not")
+        if self.ca_bundle is not None and not self.ca_bundle.is_file():
+            raise ValueError(f"ca_bundle {self.ca_bundle} is not a file")
+        return self
+
+
 class AppConfig(_Strict):
     server: ServerConfig = Field(default_factory=ServerConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
@@ -189,6 +231,7 @@ class AppConfig(_Strict):
     maintenance: MaintenanceConfig = Field(default_factory=MaintenanceConfig)
     schedules: SchedulesConfig = Field(default_factory=SchedulesConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    network: NetworkConfig = Field(default_factory=NetworkConfig)
 
 
 def _env_overrides(environ: Mapping[str, str]) -> dict[str, Any]:

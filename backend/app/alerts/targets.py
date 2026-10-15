@@ -21,7 +21,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, StringConstraints, field_validator
 
-from app.alerts.net import check_smtp_host, check_url
+from app.alerts.net import check_smtp_host, destination
 from app.alerts.render import Alert, email_parts, signed_webhook, slack_payload, teams_payload
 from app.alerts.send import SendError, check_address, message, post, send_mail
 from app.core.errors import ConflictError, NotFoundError, ParamInvalidError
@@ -211,7 +211,7 @@ class TargetStore:
                 message(s.from_addr, s.to_addrs, subject, text, html),
             )
             return
-        dest = check_url(target.kind, secret["url"])
+        dest = destination(target.kind, secret["url"])
         if target.kind == "webhook":
             body, headers = signed_webhook(alert, secret["signing_key"], int(time.time()))
         else:
@@ -259,7 +259,7 @@ class TargetStore:
             return dest.host, email.model_dump(), ({"password": password} if password else {})
         if not url:
             raise ParamInvalidError("This target needs its webhook URL")
-        dest = check_url(kind, url)
+        dest = destination(kind, url)
         return dest.host, {}, {"url": dest.url}
 
 

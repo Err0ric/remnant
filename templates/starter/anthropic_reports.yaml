@@ -1,0 +1,53 @@
+schema_version: 1
+id: anthropic_reports
+name: Anthropic usage, cost, and audit (Admin APIs)
+version: 1.0.0
+author: starter-pack
+description: >-
+  Records pulled by the Anthropic connector (ADR-0015 row 10): API usage per hour, cost per
+  day, Claude Code usage per user per day, claude.ai analytics per user per day, and the
+  Compliance activity feed. Each line is {"feed": "anthropic.<feed>", ...} holding the
+  provider's object. The feed is the message, or the activity type for the audit feed;
+  tokens, cost, model, workspace, and key stay in unmapped. No chat content is read.
+category: application
+vendor: anthropic
+classification_default: local_only
+
+envelope:
+  type: none
+
+match:
+  regex: '^\{"feed":"anthropic\.'
+  min_confidence: 0.95
+
+payload:
+  format: json
+  json: { root: "$" }
+
+mapping:
+  class_uid: 6003            # API Activity
+  fields:
+    time: { from: [created_at, starting_at, date] }
+    actor_user_name: { from: [actor.email_address, actor.user_email, user.email_address, user_email, email, api_key_id] }
+    src_endpoint_ip: { from: [actor.ip_address, ip_address] }
+    message: { from: [type, feed] }
+
+tests:
+  - name: hourly API usage
+    input: '{"feed":"anthropic.usage","starting_at":"2026-10-14T16:00:00Z","ending_at":"2026-10-14T17:00:00Z","model":"claude-sonnet-5-5","workspace_id":"wrkspc_01","api_key_id":"apikey_01","uncached_input_tokens":1200,"output_tokens":800}'
+    expect:
+      parse_status: ok
+      class_uid: 6003
+      fields: { actor_user_name: apikey_01, message: anthropic.usage, time: "2026-10-14T16:00:00+00:00" }
+  - name: Claude Code per user
+    input: '{"feed":"anthropic.claude_code","date":"2026-10-13T00:00:00Z","actor":{"type":"user_actor","email_address":"alice@example.com"},"terminal_type":"vscode","core_metrics":{"num_sessions":4,"lines_of_code":{"added":310,"removed":42}}}'
+    expect:
+      parse_status: ok
+      class_uid: 6003
+      fields: { actor_user_name: alice@example.com, message: anthropic.claude_code }
+  - name: compliance activity
+    input: '{"feed":"anthropic.compliance_activities","id":"activity_01","created_at":"2026-10-14T17:30:00Z","type":"api_key_created","actor":{"type":"user_actor","email_address":"admin@example.com","ip_address":"203.0.113.5"}}'
+    expect:
+      parse_status: ok
+      class_uid: 6003
+      fields: { actor_user_name: admin@example.com, src_endpoint_ip: 203.0.113.5, message: api_key_created, time: "2026-10-14T17:30:00+00:00" }

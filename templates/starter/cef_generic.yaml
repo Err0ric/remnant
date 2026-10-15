@@ -1,7 +1,7 @@
 schema_version: 1
 id: cef_generic
 name: CEF (generic)
-version: 1.0.0
+version: 1.0.1
 author: starter-pack
 description: >-
   ArcSight Common Event Format over syslog from any vendor. Maps the standard endpoint,
@@ -35,7 +35,7 @@ mapping:
     dst_endpoint_port: { from: dpt }
     dst_endpoint_hostname: { from: dhost }
     actor_user_name: { from: suser }
-    message: { from: msg }
+    message: { from: [msg, name] }   # the CEF event Name when there is no msg
   severity:
     from: severity
     map: { "0": 1, "1": 2, "2": 2, "3": 2, "4": 3, "5": 3, "6": 3, "7": 4, "8": 4, "9": 5, "10": 5, Low: 2, Medium: 3, High: 4, Very-High: 5, Unknown: 0 }
@@ -56,3 +56,8 @@ tests:
     expect:
       parse_status: ok
       fields: { severity_id: 2, device_hostname: av01 }
+  - name: no msg extension, the event Name is the message
+    input: "<132>Oct  9 20:42:00 fw01 CEF:0|ExampleCorp|Sensor|1.0|sig-7|Port scan detected|8|src=203.0.113.77 dst=10.20.1.5"
+    expect:
+      parse_status: ok
+      fields: { message: Port scan detected, severity_id: 4, src_endpoint_ip: 203.0.113.77 }

@@ -1,7 +1,13 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Command, PageHeader } from "@/components/shell/PageHeader";
-import { api, type CompiledSearch, type QueryRequest, type QueryResult } from "@/lib/api";
+import {
+  api,
+  type CompiledSearch,
+  type FacetRequest,
+  type QueryRequest,
+  type QueryResult,
+} from "@/lib/api";
 import { DEFAULT_SQL, rangeStart, type TimeRangeId } from "@/lib/search";
 import { navigate } from "@/lib/route";
 import { seedSchedule } from "@/lib/scheduleSeed";
@@ -14,12 +20,14 @@ import {
   storedTab,
   type SearchTab,
 } from "@/lib/simpleSearch";
+import { AiToggle } from "./AiToggle";
 import { AskPanel } from "./AskPanel";
+import { FacetSidebar } from "./FacetSidebar";
 import { FieldActionsContext, type FieldActions } from "./fieldActions";
 import { FilterBar } from "./FilterBar";
 import { downloadCsv, ResultsCard } from "./ResultsCard";
 import { SaveSearchForm } from "./SaveSearchForm";
-import { SearchTabs } from "./SearchTabs";
+import { SearchTabs, type SearchArea } from "./SearchTabs";
 import { SimplePanel } from "./SimplePanel";
 import { SqlEditor } from "./SqlEditor";
 
@@ -33,7 +41,8 @@ interface SearchPageProps {
   initialTab?: SearchTab;
 }
 
-type Run = Pick<QueryRequest, "sql" | "params">;
+// `text` marks a run that came from a Simple search (for the facet counts); not sent.
+type Run = Pick<QueryRequest, "sql" | "params"> & { text?: string };
 // Field actions apply to text, number, and true/false columns; never to the raw line.
 const ACTION_TYPES = new Set(["string", "int", "bool"]);
 const NO_ACTIONS = new Set(["raw"]);
@@ -54,20 +63,32 @@ export function SearchPage({
   // A handoff from another page (rule matches) opens on the SQL tab over all time.
   const [seed] = useState(takeSearchSeed);
   const sqlSeed = seed?.sql !== undefined;
-  const [tabState, setTabState] = useState<SearchTab>(() =>
-    sqlSeed ? "sql" : (initialTab ?? storedTab()),
-  );
-  const tab: SearchTab = tabState === "ask" && !canAsk ? "simple" : tabState;
+  // Two tabs (ADR-0016 row 1): Search, with the AI switch choosing Simple or Ask, and SQL.
+  const [initial] = useState<SearchTab>(() => (sqlSeed ? "sql" : (initialTab ?? storedTab())));
+  const [area, setArea] = useState<SearchArea>(initial === "sql" ? "sql" : "search");
+  const [mode, setMode] = useState<"simple" | "ask">(initial === "ask" ? "ask" : "simple");
+  const searchMode = mode === "ask" && !canAsk ? "simple" : mode;
+  const tab: SearchTab = area === "sql" ? "sql" : searchMode;
   const setTab = (t: SearchTab) => {
-    setTabState(t);
+    if (t === "sql") setArea("sql");
+    else {
+      setArea("search");
+      setMode(t);
+    }
     storeTab(t);
   };
+  const [facetRequest, setFacetRequest] = useState<FacetRequest | null>(null);
+  const presets = useQuery({
+    queryKey: ["search-presets"],
+    queryFn: api.searchPresets,
+    staleTime: Infinity,
+  });
   const [text, setText] = useState("");
   // The last compiled Simple search and the text it came from (saved as the origin).
   const [compiled, setCompiled] = useState<(CompiledSearch & { text: string }) | null>(null);
   const [sql, setSql] = useState(seed?.sql ?? DEFAULT_SQL);
   const [askAnswer, setAskAnswer] = useState<{ sql: string; question: string } | null>(null);
-  const [range, setRange] = useState<TimeRangeId>(sqlSeed ? "all" : "24h");
+  const [range, setRange] = useState<TimeRangeId>(seed?.range ?? (sqlSeed ? "all" : "24h"));
   const [sources, setSources] = useState<string[]>(seed?.sources ?? []);
   const [lastRun, setLastRun] = useState<Date | null>(null);
   const [saving, setSaving] = useState(false);
@@ -86,20 +107,31 @@ export function SearchPage({
   const run = useMutation({
     mutationFn: (req: Run) => {
       const body: QueryRequest = {
-        ...req,
+        sql: req.sql,
+        params: req.params,
         start: rangeStart(range),
         sources: sources.length ? sources : undefined,
       };
       lastRequest.current = body;
       return api.query(body);
     },
-    onSuccess: () => setLastRun(new Date()),
+    onSuccess: (data, vars) => {
+      setLastRun(new Date());
+      const body = lastRequest.current;
+      if (!body) return;
+      const scope = { start: body.start, sources: body.sources };
+      setFacetRequest(
+        vars.text !== undefined
+          ? { text: vars.text, ...scope }
+          : { sql: body.sql, params: body.params, columns: data.columns, ...scope },
+      );
+    },
   });
   const simple = useMutation({
     mutationFn: (v: { text: string; top?: string }) => api.compileSearch(v.text, v.top),
     onSuccess: (c, v) => {
       if (!v.top) setCompiled({ ...c, text: v.text });
-      run.mutate({ sql: c.sql, params: c.params });
+      run.mutate({ sql: c.sql, params: c.params, text: v.top ? undefined : v.text });
     },
   });
   const exporter = useMutation({ mutationFn: downloadCsv });
@@ -240,35 +272,46 @@ export function SearchPage({
 
       <div className="flex flex-col gap-2.5 px-5 py-3">
         <FilterBar range={range} onRange={setRange} sources={sources} onSources={setSources} />
-        <SearchTabs tab={tab} onTab={setTab} canAsk={canAsk} />
+        <SearchTabs active={area} onSelect={(a) => setTab(a === "sql" ? "sql" : searchMode)} />
         {/* Panels stay mounted so a question and its turns survive a look at another tab. */}
-        <div hidden={tab !== "simple"}>
-          <SimplePanel
-            text={text}
-            onText={setText}
-            onRun={() => simple.mutate({ text })}
-            compiled={compiled}
-            emptyColumns={emptyColumns}
-            onEditAsSql={() => {
-              if (!compiled) return;
-              setSql(inlineParams(compiled));
-              setTab("sql");
-            }}
-            pending={pending}
-          />
-        </div>
-        {canAsk ? (
-          <div hidden={tab !== "ask"}>
-            <AskPanel
-              start={rangeStart(range)}
-              sources={sources}
-              isAdmin={isAdmin}
-              onRun={runAsk}
-              onAnswer={setAskAnswer}
-              pending={pending}
-            />
+        <div hidden={area !== "search"}>
+          <div id="search-panel-search" role="tabpanel" aria-labelledby="search-tab-search">
+            <div hidden={tab !== "simple"}>
+              <SimplePanel
+                toggle={canAsk ? <AiToggle on={false} onChange={() => setTab("ask")} /> : undefined}
+                presets={presets.data ?? []}
+                onPreset={(value) => {
+                  setText(value);
+                  simple.mutate({ text: value });
+                }}
+                text={text}
+                onText={setText}
+                onRun={() => simple.mutate({ text })}
+                compiled={compiled}
+                emptyColumns={emptyColumns}
+                onEditAsSql={() => {
+                  if (!compiled) return;
+                  setSql(inlineParams(compiled));
+                  setTab("sql");
+                }}
+                pending={pending}
+              />
+            </div>
+            {canAsk ? (
+              <div hidden={tab !== "ask"}>
+                <AskPanel
+                  start={rangeStart(range)}
+                  sources={sources}
+                  isAdmin={isAdmin}
+                  onRun={runAsk}
+                  onAnswer={setAskAnswer}
+                  pending={pending}
+                  toggle={<AiToggle on onChange={() => setTab("simple")} />}
+                />
+              </div>
+            ) : null}
           </div>
-        ) : null}
+        </div>
         {/* hidden goes on a plain wrapper: a display class such as flex would override it. */}
         <div hidden={tab !== "sql"}>
           <div
@@ -343,14 +386,28 @@ export function SearchPage({
         ) : null}
       </div>
 
-      <FieldActionsContext.Provider value={actions}>
-        <ResultsCard
-          result={result}
-          pending={pending}
-          runKey={(result?.executed_sql ?? "") + (lastRun?.getTime() ?? 0)}
-          canExplain={canSave}
+      <div className="mx-5 mb-5 flex flex-col gap-3 lg:flex-row">
+        <FacetSidebar
+          request={facetRequest}
+          onTerm={
+            facetRequest?.text !== undefined && tab === "simple"
+              ? (term) => {
+                  const next = addTerm(text, term);
+                  setText(next);
+                  simple.mutate({ text: next });
+                }
+              : null
+          }
         />
-      </FieldActionsContext.Provider>
+        <FieldActionsContext.Provider value={actions}>
+          <ResultsCard
+            result={result}
+            pending={pending}
+            runKey={(result?.executed_sql ?? "") + (lastRun?.getTime() ?? 0)}
+            canExplain={canSave}
+          />
+        </FieldActionsContext.Provider>
+      </div>
     </div>
   );
 }

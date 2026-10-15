@@ -64,6 +64,7 @@ const LABELS: Record<string, string> = {
   actor_process_pid: "PID",
   actor_user_name: "User",
   src_endpoint_ip: "Source IP",
+  dst_endpoint_hostname: "Destination host",
   src_endpoint_port: "Source port",
   dst_endpoint_ip: "Destination IP",
   dst_endpoint_port: "Destination port",

@@ -35,7 +35,9 @@ export function IngestPanel({ overview }: IngestPanelProps) {
               key={s.source_id}
               className="flex flex-wrap items-start gap-x-3 gap-y-1 border-t border-border py-1.5 first:border-0"
             >
-              <span className="min-w-[8rem] flex-1 font-mono">{s.source_id}</span>
+              <span title={s.source_id} className="min-w-[8rem] flex-1 truncate font-mono">
+                {s.source_id}
+              </span>
               <SourceState status={{ ...s, files: 0, last_pass_at: null, events_since_start: 0 }} />
               {s.quiet_since ? <span className="text-warn">Quiet</span> : null}
               <span

@@ -1,0 +1,62 @@
+schema_version: 1
+id: m365_directory_audit
+name: Microsoft Entra directory audits (Graph)
+version: 1.0.0
+author: starter-pack
+description: >-
+  Directory changes from Microsoft Graph auditLogs/directoryAudits, pulled by the Microsoft
+  365 connector (ADR-0002): users, groups, roles, apps, and policies. Each line is Graph's
+  JSON, unchanged. The activity is the message; the actor is the initiating user or app.
+  Target resources, category, and the service that logged it stay in unmapped.
+category: identity
+vendor: microsoft
+classification_default: local_only
+
+envelope:
+  type: none
+
+match:
+  regex: '^\{(?=.*"activityDisplayName":)(?=.*"loggedByService":)(?=.*"activityDateTime":")'
+  min_confidence: 0.95
+
+payload:
+  format: json
+  json: { root: "$" }
+
+transforms:
+  - { field: activityDateTime, op: timestamp, args: { format: iso8601 } }
+  - field: result
+    op: map
+    args: { into: outcome, values: { success: 1, failure: 2, timeout: 2 }, optional: true }
+
+mapping:
+  class_uid: 3004            # Entity Management
+  fields:
+    time: { from: activityDateTime }
+    actor_user_name: { from: [initiatedBy.user.userPrincipalName, initiatedBy.app.displayName] }
+    src_endpoint_ip: { from: initiatedBy.user.ipAddress }
+    message: { from: activityDisplayName }
+    status_id: { from: outcome }
+  severity:
+    from: activityDisplayName
+    map: { Add member to role: 3, Add eligible member to role: 3, Add service principal credentials: 3, Update conditional access policy: 3, Delete conditional access policy: 4, Add owner to application: 3 }
+
+tests:
+  - name: role assignment by a user
+    input: '{"id":"Directory_0001","category":"RoleManagement","correlationId":"c0000000-0000-4000-8000-000000000001","result":"success","resultReason":"","activityDisplayName":"Add member to role","activityDateTime":"2026-10-14T17:10:00Z","loggedByService":"Core Directory","operationType":"Assign","initiatedBy":{"user":{"userPrincipalName":"admin@example.com","ipAddress":"203.0.113.5"}},"targetResources":[{"displayName":"Global Administrator","type":"Role"}]}'
+    expect:
+      parse_status: ok
+      class_uid: 3004
+      fields: { actor_user_name: admin@example.com, src_endpoint_ip: 203.0.113.5, message: Add member to role, status_id: 1, severity_id: 3 }
+  - name: change by an app
+    input: '{"id":"Directory_0002","category":"UserManagement","result":"failure","activityDisplayName":"Update user","activityDateTime":"2026-10-14T17:11:00Z","loggedByService":"Core Directory","operationType":"Update","initiatedBy":{"app":{"displayName":"Provisioning Sync"}},"targetResources":[{"userPrincipalName":"bob@example.com","type":"User"}]}'
+    expect:
+      parse_status: ok
+      class_uid: 3004
+      fields: { actor_user_name: Provisioning Sync, message: Update user, status_id: 2 }
+  - name: conditional access policy deleted
+    input: '{"id":"Directory_0003","category":"Policy","result":"success","activityDisplayName":"Delete conditional access policy","activityDateTime":"2026-10-14T17:12:00Z","loggedByService":"Conditional Access","operationType":"Delete","initiatedBy":{"user":{"userPrincipalName":"carol@example.com","ipAddress":"198.51.100.20"}},"targetResources":[{"displayName":"Require MFA for admins","type":"Policy"}]}'
+    expect:
+      parse_status: ok
+      class_uid: 3004
+      fields: { actor_user_name: carol@example.com, severity_id: 4, time: "2026-10-14T17:12:00+00:00" }

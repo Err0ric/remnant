@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { OptionalSection } from "@/components/forms/OptionalSection";
 import { ApiError, api, type ScheduleInput, type ThresholdKind } from "@/lib/api";
 import { PRESETS } from "./schedule";
 
@@ -98,10 +99,6 @@ export function ScheduleForm({ onDone, initial = null }: ScheduleFormProps) {
           </select>
         </label>
         <label className={field}>
-          <span className="text-text-secondary">Name (optional)</span>
-          <input className={input} value={name} onChange={(e) => setName(e.target.value)} />
-        </label>
-        <label className={field}>
           <span className="text-text-secondary">When</span>
           <select className={input} value={preset} onChange={(e) => setPreset(e.target.value)}>
             {PRESETS.map((p) => (
@@ -123,6 +120,27 @@ export function ScheduleForm({ onDone, initial = null }: ScheduleFormProps) {
             />
           </label>
         ) : null}
+      </div>
+      <OptionalSection
+        title="Name, range, flags, and alerts"
+        span=""
+        defaultOpen
+        summary={[
+          `Range: ${LOOKBACKS.find((l) => l.value === lookback)?.label ?? lookback}`,
+          thresholdKind ? "Flags when the count crosses a threshold" : "Never flagged",
+          targetIds.length ? `Alerts to ${targetIds.length}` : "No alerts",
+          shared ? "Shared" : "Private",
+        ].join(" · ")}
+      >
+        <label className={field}>
+          <span className="text-text-secondary">Name</span>
+          <input
+            className={input}
+            value={name}
+            placeholder="The saved search or rule name"
+            onChange={(e) => setName(e.target.value)}
+          />
+        </label>
         <label className={field}>
           <span className="text-text-secondary">Time range of each run</span>
           <select className={input} value={lookback} onChange={(e) => setLookback(e.target.value)}>
@@ -159,40 +177,42 @@ export function ScheduleForm({ onDone, initial = null }: ScheduleFormProps) {
             ) : null}
           </div>
         </label>
-      </div>
-      <fieldset className="flex flex-col gap-1 text-sm">
-        <legend className="mb-1 text-text-secondary">Send alerts to</legend>
-        {(alertTargets.data ?? []).length ? (
-          <div className="flex flex-wrap gap-x-4 gap-y-1">
-            {(alertTargets.data ?? []).map((t) => (
-              <label key={t.target_id} className="flex items-center gap-1.5">
-                <input
-                  type="checkbox"
-                  checked={targetIds.includes(t.target_id)}
-                  onChange={(e) =>
-                    setTargetIds((prev) =>
-                      e.target.checked
-                        ? [...prev, t.target_id]
-                        : prev.filter((id) => id !== t.target_id),
-                    )
-                  }
-                />
-                {t.name}
-              </label>
-            ))}
-          </div>
-        ) : (
-          <span className="text-text-muted">No alert targets yet; an admin can add them.</span>
-        )}
-        <span className="text-text-muted">
-          Alerts go out when a run is flagged, when a rule schedule without a flag finds matches,
-          and when the schedule pauses itself.
-        </span>
-      </fieldset>
-      <label className="flex items-center gap-1.5 text-sm">
-        <input type="checkbox" checked={shared} onChange={(e) => setShared(e.target.checked)} />
-        Shared: other people see it on their dashboard (only runs on sources they can read)
-      </label>
+        <div className="flex flex-col gap-3 md:col-span-2">
+          <fieldset className="flex flex-col gap-1 text-sm">
+            <legend className="mb-1 text-text-secondary">Send alerts to</legend>
+            {(alertTargets.data ?? []).length ? (
+              <div className="flex flex-wrap gap-x-4 gap-y-1">
+                {(alertTargets.data ?? []).map((t) => (
+                  <label key={t.target_id} className="flex items-center gap-1.5">
+                    <input
+                      type="checkbox"
+                      checked={targetIds.includes(t.target_id)}
+                      onChange={(e) =>
+                        setTargetIds((prev) =>
+                          e.target.checked
+                            ? [...prev, t.target_id]
+                            : prev.filter((id) => id !== t.target_id),
+                        )
+                      }
+                    />
+                    {t.name}
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <span className="text-text-muted">No alert targets yet; an admin can add them.</span>
+            )}
+            <span className="text-text-muted">
+              Alerts go out when a run is flagged, when a rule schedule without a flag finds
+              matches, and when the schedule pauses itself.
+            </span>
+          </fieldset>
+          <label className="flex items-center gap-1.5 text-sm">
+            <input type="checkbox" checked={shared} onChange={(e) => setShared(e.target.checked)} />
+            Shared: other people see it on their dashboard (only runs on sources they can read)
+          </label>
+        </div>
+      </OptionalSection>
       <p className="text-sm text-text-secondary">
         Runs as you, with your access checked every run. If the saved search changes, the rule is
         disabled, or you lose access to a source, it pauses until you resume it.

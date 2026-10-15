@@ -29,7 +29,10 @@ afterEach(() => vi.restoreAllMocks());
 describe("Templates page", () => {
   it("creates a draft from pasted lines, previews it, and approves it", async () => {
     const { spy, nav } = await openApp();
-    await userEvent.click(within(nav).getByText("Templates"));
+    await userEvent.click(within(nav).getByText("Settings"));
+    await userEvent.click(
+      within(screen.getByRole("navigation", { name: "Settings" })).getByText("Templates"),
+    );
     await screen.findByRole("heading", { level: 1, name: "Templates" });
     expect(window.location.pathname).toBe("/templates");
 
@@ -63,7 +66,10 @@ describe("Templates page", () => {
 
   it("shows validation problems and keeps Approve off", async () => {
     const { nav } = await openApp();
-    await userEvent.click(within(nav).getByText("Templates"));
+    await userEvent.click(within(nav).getByText("Settings"));
+    await userEvent.click(
+      within(screen.getByRole("navigation", { name: "Settings" })).getByText("Templates"),
+    );
     await userEvent.click(await screen.findByRole("button", { name: "New draft" }));
     const form = screen.getByRole("form", { name: "New template draft" });
     await userEvent.type(within(form).getByLabelText("Template ID"), "broken_app");
@@ -79,7 +85,10 @@ describe("Templates page", () => {
 
   it("drafts with a model and marks the draft as model-written", async () => {
     const { spy, nav } = await openApp();
-    await userEvent.click(within(nav).getByText("Templates"));
+    await userEvent.click(within(nav).getByText("Settings"));
+    await userEvent.click(
+      within(screen.getByRole("navigation", { name: "Settings" })).getByText("Templates"),
+    );
     await userEvent.click(await screen.findByRole("button", { name: "New draft" }));
     const form = screen.getByRole("form", { name: "New template draft" });
     await userEvent.type(within(form).getByLabelText("Template ID"), "kv_app");
@@ -96,7 +105,10 @@ describe("Templates page", () => {
 
   it("explains a refused starter id", async () => {
     const { nav } = await openApp();
-    await userEvent.click(within(nav).getByText("Templates"));
+    await userEvent.click(within(nav).getByText("Settings"));
+    await userEvent.click(
+      within(screen.getByRole("navigation", { name: "Settings" })).getByText("Templates"),
+    );
     await userEvent.click(await screen.findByRole("button", { name: "New draft" }));
     const form = screen.getByRole("form", { name: "New template draft" });
     await userEvent.type(within(form).getByLabelText("Template ID"), "linux_sshd");

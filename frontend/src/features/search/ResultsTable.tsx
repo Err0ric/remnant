@@ -102,7 +102,8 @@ export function ResultsTable({
         className={cn("overflow-x-auto", view === "raw" && "hidden")}
         style={compact ? ({ "--row-h": "30px" } as CSSProperties) : undefined}
       >
-        <div role="table" aria-label="Search results" className="w-max min-w-full">
+        {/* A treegrid: rows expand to show the event (aria-expanded needs this role). */}
+        <div role="treegrid" aria-label="Search results" className="w-max min-w-full">
           <div
             role="row"
             className="grid border-b border-border bg-surface-head px-3.5 py-2 font-mono text-sm font-semibold text-text-secondary"
@@ -144,6 +145,7 @@ export function ResultsTable({
                 <button
                   type="button"
                   role="row"
+                  aria-level={1}
                   aria-expanded={isOpen}
                   onClick={() => setOpen(isOpen ? null : index)}
                   className={cn(
@@ -158,7 +160,7 @@ export function ResultsTable({
                   </span>
                   {visible.map(({ c, i }) => (
                     <span
-                      role="cell"
+                      role="gridcell"
                       key={c}
                       className={cn(
                         "truncate pr-4",
@@ -178,21 +180,25 @@ export function ResultsTable({
                 </button>
                 {isOpen ? (
                   <div
+                    role="row"
+                    aria-level={2}
                     className="sticky left-0"
                     style={paneWidth ? { width: paneWidth } : undefined}
                   >
-                    <EventDetail
-                      columns={result.columns}
-                      row={row}
-                      selection={
-                        selected && onToggleSelect && idIndex >= 0
-                          ? {
-                              selected: selected.has(String(row[idIndex])),
-                              toggle: () => onToggleSelect(String(row[idIndex])),
-                            }
-                          : undefined
-                      }
-                    />
+                    <div role="gridcell">
+                      <EventDetail
+                        columns={result.columns}
+                        row={row}
+                        selection={
+                          selected && onToggleSelect && idIndex >= 0
+                            ? {
+                                selected: selected.has(String(row[idIndex])),
+                                toggle: () => onToggleSelect(String(row[idIndex])),
+                              }
+                            : undefined
+                        }
+                      />
+                    </div>
                   </div>
                 ) : null}
               </Fragment>

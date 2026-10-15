@@ -19,16 +19,24 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import HTMLResponse, Response
 from starlette.types import Scope
 
+from app.ai.catalog import Catalog
+from app.ai.usage import Usage
+from app.ai.watch import AiWatch
 from app.alerts.dispatch import AlertDispatcher
+from app.alerts.net import Egress, configure_egress
 from app.alerts.targets import TargetStore
+from app.api.ai import router as ai_router
 from app.api.alerts import router as alerts_router
 from app.api.ask import router as ask_router
 from app.api.audit import router as audit_router
 from app.api.auth import router as auth_router
+from app.api.entities import router as entities_router
 from app.api.explain import router as explain_router
 from app.api.groups import router as groups_router
+from app.api.identities import router as identities_router
 from app.api.meta import router as meta_router
 from app.api.middleware import HostOriginMiddleware, SecurityMiddleware
+from app.api.otlp import router as otlp_router
 from app.api.overview import router as overview_router
 from app.api.providers import router as providers_router
 from app.api.query import router as query_router
@@ -77,12 +85,14 @@ from app.core.errors import (
     SsoRefusedError,
     SsoRequiredError,
     TemplateInvalidError,
+    UnsupportedMediaError,
 )
 from app.core.logging import configure_logging
 from app.detect.runner import RuleRunner
 from app.detect.store import RuleStore
 from app.engine.duckdb import QueryEngine
 from app.ingest.maintenance import LakeMaintenance
+from app.ingest.otlp import Spool
 from app.ingest.quiet import QuietWatch
 from app.ingest.sources import SourceStore
 from app.ingest.watcher import IngestService
@@ -90,11 +100,13 @@ from app.llm.agent import AskAgent
 from app.llm.explain import Explainer
 from app.llm.gate import LLMGate
 from app.llm.parser_draft import ParserDrafter, file_owners
+from app.llm.prompt_files import load_prompt
 from app.llm.registry import ProviderStore
 from app.llm.semantic import base_vocabulary
 from app.meta.audit import AuditReader
 from app.meta.db import MetaDB
 from app.meta.secrets import SecretBox
+from app.search.identity import IdentityStore
 from app.search.overview import OverviewService
 from app.search.saved import SavedSearchStore
 from app.search.schedules import ScheduleService
@@ -129,6 +141,7 @@ _ERROR_STATUS: dict[type[Exception], tuple[int, str]] = {
     TemplateInvalidError: (400, "template_invalid"),
     RuleRejectedError: (400, "rule_rejected"),
     PayloadTooLargeError: (413, "too_large"),
+    UnsupportedMediaError: (415, "unsupported_media"),
     CloudAckRequiredError: (409, "cloud_ack_required"),
     ProviderError: (502, "provider_error"),
     AnswerShapeError: (502, "provider_error"),
@@ -166,7 +179,7 @@ def public_url(config: AppConfig) -> str | None:
 
 
 async def _schedule_loop(
-    schedules: ScheduleService, alerts: AlertDispatcher, quiet: QuietWatch
+    schedules: ScheduleService, alerts: AlertDispatcher, quiet: QuietWatch, ai_watch: AiWatch
 ) -> None:
     while True:
         try:
@@ -177,6 +190,10 @@ async def _schedule_loop(
             await asyncio.to_thread(quiet.tick)
         except Exception as exc:  # never fatal; retried next tick
             log.warning("quiet_watch.failed", error=type(exc).__name__)
+        try:
+            await asyncio.to_thread(ai_watch.tick)
+        except Exception as exc:  # never fatal; retried next tick
+            log.warning("ai_watch.failed", error=type(exc).__name__)
         try:
             await asyncio.to_thread(alerts.tick)
         except Exception as exc:  # never fatal; retried next tick
@@ -197,7 +214,12 @@ def _lifespan(config: AppConfig) -> Callable[[FastAPI], AbstractAsyncContextMana
         if config.schedules.enabled:
             tasks.append(
                 asyncio.create_task(
-                    _schedule_loop(app.state.schedules, app.state.alert_dispatcher, app.state.quiet)
+                    _schedule_loop(
+                        app.state.schedules,
+                        app.state.alert_dispatcher,
+                        app.state.quiet,
+                        app.state.ai_watch,
+                    )
                 )
             )
         try:
@@ -254,6 +276,15 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     """`sso_http` replaces the HTTP client used to reach the identity provider (tests)."""
     config = config or AppConfig()
     configure_logging()  # idempotent; logs go to stderr as JSON, never stdout
+    net = config.network
+    configure_egress(
+        Egress(
+            https_proxy=net.https_proxy,
+            username=net.proxy_username,
+            password=net.proxy_password.get_secret_value() if net.proxy_password else None,
+            ca_bundle=str(net.ca_bundle) if net.ca_bundle else None,
+        )
+    )
     app = FastAPI(
         title=PRODUCT_NAME,
         docs_url=None,
@@ -296,9 +327,15 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     )
     app.state.explainer = Explainer(app.state.gate, app.state.engine)
     app.state.ask = AskAgent(app.state.gate, app.state.engine, base_vocabulary())
+    load_prompt(config.llm.ask_prompt)  # a missing prompt file stops start-up, not an Ask
+    app.state.ask.prompt = config.llm.ask_prompt
     app.state.sources = SourceStore(
-        meta, config.paths.allowed_roots, SecretBox(config.paths.data_dir)
+        meta,
+        config.paths.allowed_roots,
+        SecretBox(config.paths.data_dir),
+        spool_root=config.paths.data_dir / "spool",
     )
+    app.state.otlp_spool = Spool(config.paths.data_dir / "spool")
     app.state.rules = RuleStore(meta, app.state.auth.audit, config.paths.rule_roots)
     app.state.templates = TemplateRegistry(
         config.paths.starter_templates or STARTER_DIR, config.paths.data_dir / "templates"
@@ -342,6 +379,18 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         link=app.state.public_url,
         clock=lambda: app.state.auth.clock(),
     )
+    app.state.ai_catalog = Catalog(meta)
+    app.state.identities = IdentityStore(meta)
+    app.state.ai_usage = Usage(app.state.engine, app.state.ai_catalog)
+    app.state.ai_watch = AiWatch(
+        meta,
+        app.state.engine,
+        app.state.ai_catalog,
+        app.state.alert_dispatcher,
+        app.state.auth.audit,
+        app.state.public_url,
+        clock=lambda: app.state.auth.clock(),
+    )
     app.state.audit_reader = AuditReader(meta)
     app.state.overview = OverviewService(
         meta,
@@ -380,6 +429,10 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     app.include_router(auth_router, prefix="/api")
     app.include_router(query_router, prefix="/api")
     app.include_router(sources_router, prefix="/api")
+    app.include_router(otlp_router, prefix="/api")
+    app.include_router(ai_router, prefix="/api")
+    app.include_router(entities_router, prefix="/api")
+    app.include_router(identities_router, prefix="/api")
     app.include_router(users_router, prefix="/api")
     app.include_router(groups_router, prefix="/api")
     app.include_router(tokens_router, prefix="/api")

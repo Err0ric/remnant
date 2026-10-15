@@ -18,7 +18,7 @@ from app.ingest.writer import LakeWriter
 
 START = datetime(2026, 10, 1, tzinfo=UTC)
 END = datetime(2026, 10, 8, tzinfo=UTC)
-SOURCES = ("linux_auth", "fw_edge", "dns", "edr")
+SOURCES = ("linux_auth", "fw_edge", "dns", "edr", "idp_signin")
 
 USERS = ("alice", "bob", "carol", "dave", "erin", "svc_backup")
 SERVERS = ("bastion", "web-01", "web-02", "db-01")
@@ -301,12 +301,53 @@ def _edr(g: _Gen) -> None:
     )
 
 
+# Cloud identity provider sign-ins, where people appear as email addresses in mixed case
+# and a Windows form, so questions that name a person ("for Steve") test name matching.
+IDP_PEOPLE = {
+    "steve.jones@example.com": (
+        "steve.jones@example.com",
+        "Steve.Jones@example.com",
+        "CORP\\steve.jones",
+    ),
+    "alice@example.com": ("alice@example.com", "Alice@Example.com"),
+    "priya.n@example.com": ("priya.n@example.com",),
+}
+IDP_APPS = ("Office 365 Exchange Online", "Azure Portal", "Microsoft Teams")
+
+
+def _idp(g: _Gen, seed: int) -> None:
+    rng = random.Random(seed + 2)  # noqa: S311  # its own stream: earlier events stay identical
+    for person, forms in IDP_PEOPLE.items():
+        for i in range(30 if person.startswith("steve") else 20):
+            t = START + timedelta(seconds=rng.randrange(int((END - START).total_seconds())))
+            failed = rng.random() < (0.4 if person.startswith("steve") else 0.15)
+            name = forms[i % len(forms)]
+            app = rng.choice(IDP_APPS)
+            ip = rng.choice(OTHER_EXTERNAL)
+            g.add(
+                "idp_signin",
+                t,
+                json.dumps(
+                    {"userPrincipalName": name, "appDisplayName": app, "status": 2 if failed else 1}
+                ),
+                class_uid=3002,
+                category_uid=3,
+                activity_id=1,
+                status_id=2 if failed else 1,
+                severity_id=3 if failed else 1,
+                actor_user_name=name,
+                src_endpoint_ip=ip,
+                message=f"Sign-in to {app}",
+            )
+
+
 def build_rows(seed: int = 7) -> list[dict[str, Any]]:
     g = _Gen(seed)
     _auth(g)
     _firewall(g)
     _dns(g)
     _edr(g)
+    _idp(g, seed)
     return g.rows
 
 

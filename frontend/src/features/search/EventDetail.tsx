@@ -3,6 +3,8 @@ import { useContext } from "react";
 import { api, type Cell } from "@/lib/api";
 import { FieldActionsContext } from "./fieldActions";
 import { FieldButton } from "./FieldButton";
+import { ENTITY_COLUMNS, seedInvestigate, type InvestigateSeed } from "@/lib/investigateSeed";
+import { navigate } from "@/lib/route";
 import { eventSql, formatCell } from "@/lib/search";
 
 interface EventDetailProps {
@@ -153,6 +155,19 @@ export function EventDetail({ columns, row, selection }: EventDetailProps) {
                       title={`Top values of ${k}`}
                       onClick={() => actions.top(k)}
                     />
+                    {ENTITY_COLUMNS[k] ? (
+                      <FieldButton
+                        label="Investigate"
+                        title={`Investigate ${String(record[k])}`}
+                        onClick={() => {
+                          seedInvestigate({
+                            kind: ENTITY_COLUMNS[k] as InvestigateSeed["kind"],
+                            value: String(record[k]),
+                          });
+                          navigate("investigate");
+                        }}
+                      />
+                    ) : null}
                   </span>
                 ) : null}
               </dd>

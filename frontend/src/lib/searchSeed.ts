@@ -1,13 +1,17 @@
+import type { TimeRangeId } from "@/lib/search";
+
 /**
  * A one-shot handoff into Search (for example "Open in Search" from rule matches). Kept in
  * memory for this tab and taken once when the Search page opens; the SQL still runs
  * through the server's guard like anything typed in the editor.
  */
 export interface SearchSeed {
-  /** SQL to open on the SQL tab over all time. */
+  /** SQL to open on the SQL tab. */
   sql?: string;
   /** Sources to filter to; the server still limits them to the caller's own. */
   sources?: string[];
+  /** Time range to open with (Investigations passes its own); all time otherwise. */
+  range?: TimeRangeId;
 }
 
 let seed: SearchSeed | null = null;

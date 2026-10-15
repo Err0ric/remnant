@@ -93,6 +93,8 @@ Database changes apply at start and only ever add to what is there. Take a backu
 | Guide | For |
 |---|---|
 | [docs/install/team-vm.md](docs/install/team-vm.md) | A shared server: Docker Compose or a systemd service, accounts, roles, source access |
+| [docs/install/first-real-data.md](docs/install/first-real-data.md) | A first-week checklist on real logs: firewall syslog, Microsoft 365, rules, AI usage |
+| [docs/install/m365.md](docs/install/m365.md) | Microsoft 365 audit, Entra sign-ins, and alerts, with the exact permissions |
 | [docs/install/single-user.md](docs/install/single-user.md) | One person on a laptop, from source or Docker |
 | [docs/install/homelab-test.md](docs/install/homelab-test.md) | A guided first run with made-up logs, every screen |
 | [docs/install/team-trial-loki.md](docs/install/team-trial-loki.md) | Reading from a Grafana Loki you already run |
@@ -159,6 +161,18 @@ Measured with `scripts/bench.py` (synthetic syslog through the real ingest path 
 On a 4 vCPU Proxmox container (AMD Ryzen 9 5950X host, 8 GB RAM), the same run gave about 14,700 events/s; 16 to 19 ms for count, group by host, and failed logins by IP; 96 ms for the text search; and 110 ms for the latest 100 events.
 
 Run it on your own hardware with `cd backend && uv run python ../scripts/bench.py --events 1000000`. A Loki source reads at most 20,000 lines per 30 s poll (about 650 lines/s), well inside the ingest rate.
+
+Investigation pages read many events at once. On a 14 million event lake over 7 days (synthetic network, sign-in, and AI telemetry across 800 people, written straight to Parquet), on a 2 vCPU cloud container:
+
+| Page | Time |
+|---|---|
+| AI usage | 4.9 s |
+| Investigations, AI flow, everyone | 4.4 s |
+| Investigations, AI flow, one person | 4.8 s |
+| Investigations, one user's lanes | 3.0 s |
+| Settings, Identities (suggestions) | 6.4 s |
+
+Each stays under the 20 s query limit; shorter time ranges are proportionally faster.
 
 ## Software bill of materials
 

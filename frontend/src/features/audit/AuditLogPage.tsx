@@ -65,7 +65,7 @@ export function AuditLogPage() {
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       <PageHeader
-        crumbs={["Home", "Configuration", "Audit log"]}
+        crumbs={["Home", "Settings", "Audit log"]}
         title="Audit log"
         meta="Append-only · reading and exporting are recorded here too"
         commands={

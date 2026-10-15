@@ -30,3 +30,14 @@ export function parserHelp(
   if (templateId) return templates.find((t) => t.id === templateId)?.description ?? "";
   return "Generic parsing keeps time, host, and message, and every other field in unmapped.";
 }
+
+/** Short name of the parser in effect, for summaries. */
+export function parserName(
+  templateId: string | null | undefined,
+  format: string,
+  templates: TemplateInfo[] = [],
+): string {
+  if (templateId === AUTO_PARSER) return "Automatic";
+  if (templateId) return templates.find((t) => t.id === templateId)?.name ?? templateId;
+  return `Generic ${format}`;
+}

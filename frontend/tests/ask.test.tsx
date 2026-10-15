@@ -37,7 +37,9 @@ afterEach(() => vi.restoreAllMocks());
 describe("Ask", () => {
   it("shows the generated SQL and does not run it until Run query is clicked", async () => {
     const spy = await renderAt("/ask");
-    await screen.findByRole("tab", { name: "Ask in plain English", selected: true });
+    expect(
+      await screen.findByRole("button", { name: "Ask in plain English", pressed: true }),
+    ).toBeVisible();
     await askQuestion("failed logins by source ip");
     expect(await screen.findByText(/Checked: the query runs and returns rows/)).toBeInTheDocument();
     expect(screen.getByText(/turn 1/)).toBeInTheDocument();
@@ -52,7 +54,9 @@ describe("Ask", () => {
 
   it("also runs from the Run button beside the SQL, and only on click", async () => {
     const spy = await renderAt("/ask");
-    await screen.findByRole("tab", { name: "Ask in plain English", selected: true });
+    expect(
+      await screen.findByRole("button", { name: "Ask in plain English", pressed: true }),
+    ).toBeVisible();
     await askQuestion("failed logins by source ip");
     await screen.findByText(/Checked: the query runs and returns rows/);
     const generated = () =>

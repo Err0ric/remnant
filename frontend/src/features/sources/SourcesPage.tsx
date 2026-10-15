@@ -9,7 +9,9 @@ import { AddSourceForm } from "./AddSourceForm";
 import { DiscoverPanel } from "./DiscoverPanel";
 import { ClassificationBadge } from "./ClassificationBadge";
 import { ClassificationEditor } from "./ClassificationEditor";
+import { ApiSummary } from "./ApiSummary";
 import { LokiSummary } from "./LokiSummary";
+import { OtlpControls } from "./OtlpSetup";
 import { QuietAlert } from "./QuietAlert";
 import { SourceState } from "./SourceState";
 
@@ -115,7 +117,7 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       <PageHeader
-        crumbs={["Home", "Configuration", "Sources"]}
+        crumbs={["Home", "Settings", "Sources"]}
         title="Sources"
         meta={`${list.length} ${list.length === 1 ? "source" : "sources"}`}
         commands={
@@ -230,7 +232,15 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
                           ) : null}
                         </td>
                         <td className="px-3 py-2.5 font-mono text-sm">
-                          {s.kind === "loki" ? (
+                          {s.kind === "otlp" ? (
+                            <OtlpControls
+                              sourceId={s.source_id}
+                              keepContent={s.otlp_keep_content ?? false}
+                              canManage={canManage}
+                            />
+                          ) : s.kind === "m365" || s.kind === "anthropic" ? (
+                            <ApiSummary source={s} canManage={canManage} />
+                          ) : s.kind === "loki" ? (
                             <LokiSummary loki={s.loki ?? null} behind={s.status.behind_s ?? null} />
                           ) : (
                             <>

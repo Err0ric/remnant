@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
+import { OptionalSection } from "@/components/forms/OptionalSection";
 import { Field } from "@/features/auth/Field";
 import { FormError } from "@/features/auth/FormError";
 import { ApiError, api, type ProviderConfig, type ProviderInput } from "@/lib/api";
@@ -16,6 +17,14 @@ interface ProviderFormProps {
  * Add or edit a model provider. A cloud URL needs an explicit acknowledgment, which the
  * server asks for (409 cloud_ack_required); the key is write-only and never shown again.
  */
+const THINKING: Record<string, string> = {
+  default: "model default",
+  none: "off",
+  low: "low",
+  medium: "medium",
+  high: "high",
+};
+
 export function ProviderForm({ existing, models = [], onDone, onCancel }: ProviderFormProps) {
   const client = useQueryClient();
   const [kind, setKind] = useState<"openai_compat" | "anthropic">(
@@ -160,44 +169,63 @@ export function ProviderForm({ existing, models = [], onDone, onCancel }: Provid
           Remove the saved key
         </label>
       ) : null}
-      {existing && existing.kind !== "anthropic" ? (
-        <label className="mt-3 flex flex-col gap-1 text-sm">
-          <span className="font-semibold">Thinking</span>
-          <select
-            value={reasoning}
-            onChange={(e) => setReasoning(e.target.value)}
-            className="h-8 max-w-xs rounded border border-border-strong bg-surface px-2 text-sm"
+      {existing && (existing.kind !== "anthropic" || existing.locality === "cloud") ? (
+        <div className="mt-3">
+          <OptionalSection
+            title="Answer behavior"
+            summary={[
+              existing.kind !== "anthropic"
+                ? `Thinking: ${THINKING[reasoning] ?? reasoning}`
+                : null,
+              existing.locality === "cloud"
+                ? `Tokens for names and addresses: ${redact ? "on" : "off"}`
+                : null,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
           >
-            <option value="default">Model default</option>
-            <option value="none">Off</option>
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-          </select>
-          <span className="text-text-muted">
-            For reasoning models (Qwen 3, DeepSeek R1, gpt-oss). Off makes Ask answer in seconds and
-            stops long thinking from using up the answer; sent as reasoning_effort, so leave Model
-            default for servers that do not support it.
-          </span>
-        </label>
-      ) : null}
-      {existing?.locality === "cloud" ? (
-        <label className="mt-3 flex items-start gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={redact}
-            onChange={(e) => setRedact(e.target.checked)}
-            className="mt-1"
-          />
-          <span>
-            Send IP addresses, user names, host names, and emails as tokens
-            <span className="block text-text-muted">
-              Off by default: marking a source cloud allowed already means its logs may be sent as
-              they are. When on, the model sees tokens such as IP_1a2b3c4d, and answers come back
-              with the real values. Other free text in log lines is still sent.
-            </span>
-          </span>
-        </label>
+            {existing && existing.kind !== "anthropic" ? (
+              <label className="flex flex-col gap-1 text-sm md:col-span-2">
+                <span className="font-semibold">Thinking</span>
+                <select
+                  value={reasoning}
+                  onChange={(e) => setReasoning(e.target.value)}
+                  className="h-8 max-w-xs rounded border border-border-strong bg-surface px-2 text-sm"
+                >
+                  <option value="default">Model default</option>
+                  <option value="none">Off</option>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                </select>
+                <span className="text-text-muted">
+                  For reasoning models (Qwen 3, DeepSeek R1, gpt-oss). Off makes Ask answer in
+                  seconds and stops long thinking from using up the answer; sent as
+                  reasoning_effort, so leave Model default for servers that do not support it.
+                </span>
+              </label>
+            ) : null}
+            {existing?.locality === "cloud" ? (
+              <label className="flex items-start gap-2 text-sm md:col-span-2">
+                <input
+                  type="checkbox"
+                  checked={redact}
+                  onChange={(e) => setRedact(e.target.checked)}
+                  className="mt-1"
+                />
+                <span>
+                  Send IP addresses, user names, host names, and emails as tokens
+                  <span className="block text-text-muted">
+                    Off by default: marking a source cloud allowed already means its logs may be
+                    sent as they are. When on, the model sees tokens such as IP_1a2b3c4d, and
+                    answers come back with the real values. Other free text in log lines is still
+                    sent.
+                  </span>
+                </span>
+              </label>
+            ) : null}
+          </OptionalSection>
+        </div>
       ) : null}
       {needsAck ? (
         <div

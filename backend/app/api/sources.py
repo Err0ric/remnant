@@ -1,26 +1,35 @@
 """/api/sources: list, add, and remove file sources. Router only."""
 
+import shutil
 import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Request, Response, status
-from pydantic import BaseModel, Field, SecretStr, model_validator
+from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel, Field, SecretStr, ValidationError, model_validator
 from starlette.concurrency import run_in_threadpool
 
 from app.alerts.dispatch import AlertDispatcher
 from app.api.access import AdminUser, CurrentUser, client_ip
 from app.api.schedules import DeliveryOut
 from app.auth.service import AuthService
-from app.core.errors import NotFoundError, RateLimitedError
+from app.core.branding import PRODUCT_NAME
+from app.core.errors import NotFoundError, RateLimitedError, SourceRejectedError
 from app.core.ids import AUTO_PARSER
 from app.engine.views import permitted_sources
+from app.ingest.agent import AgentOs
+from app.ingest.agent import render as render_agent
+from app.ingest.connectors.anthropic import AnthropicSettings
+from app.ingest.connectors.base import ConnectorError
 from app.ingest.connectors.loki import LokiSettings
 from app.ingest.connectors.loki import test_connection as loki_test
+from app.ingest.connectors.m365 import M365Settings, check_certificate
+from app.ingest.connectors.registry import API_KINDS, probe, secret_text
 from app.ingest.discovery import DiscoveryReport, discover
 from app.ingest.quiet import MAX_QUIET_S, MIN_QUIET_S, QuietWatch, Watch
-from app.ingest.sources import SourceConfig, SourceStore
+from app.ingest.sources import SourceConfig, SourceStore, spool_dir
 from app.ingest.watcher import IngestService, SourceStatus, source_state
 from app.meta.db import MetaDB
 from app.templates.drafts import DraftStore
@@ -49,7 +58,9 @@ class StatusOut(BaseModel):
     error: str | None
     records_skipped: int
     files_waiting: int
-    behind_s: float | None = None  # Loki sources: how far reading is behind now
+    behind_s: float | None = None  # Loki and API sources: how far reading is behind now
+    warnings: list[str] = []  # API sources: feeds that failed while others worked
+    retry_at: datetime | None = None  # API sources: next try after errors
 
 
 class QuietOut(BaseModel):
@@ -89,6 +100,8 @@ def _status_out(source: SourceConfig, st: SourceStatus | None) -> StatusOut:
         records_skipped=st.records_skipped,
         files_waiting=st.files_waiting,
         behind_s=st.behind_s,
+        warnings=list(st.warnings),
+        retry_at=st.retry_at,
     )
 
 
@@ -116,6 +129,8 @@ async def list_sources(request: Request, user: CurrentUser) -> list[SourceOut]:
         for item in out:
             item.path = ""
             item.loki = None  # the Loki address and query are for administrators too
+            item.m365 = item.anthropic = None  # tenant and app ids likewise
+            item.status.warnings = []
             if item.status.error:
                 item.status.error = (
                     "This source cannot be read right now. An administrator can see why."
@@ -129,16 +144,54 @@ async def source_settings(request: Request, _: AdminUser) -> SourceSettings:
     return SourceSettings(allowed_roots=[str(p) for p in _store(request).allowed_roots])
 
 
+class ApiCredentials(BaseModel):
+    """Credentials for an API source: stored encrypted, never returned or logged.
+    Anthropic: api_key. Microsoft 365: certificate_pem and private_key_pem, or
+    client_secret, matching the source's auth setting."""
+
+    api_key: SecretStr | None = Field(default=None, max_length=512)
+    client_secret: SecretStr | None = Field(default=None, max_length=512)
+    certificate_pem: str | None = Field(default=None, max_length=16384)
+    private_key_pem: SecretStr | None = Field(default=None, max_length=16384)
+
+    def secret_for(self, source: SourceConfig) -> str:
+        if source.kind not in API_KINDS:
+            raise SourceRejectedError("Credentials of this kind are for API sources")
+        try:
+            return secret_text(
+                source.kind,
+                api_key=_plain(self.api_key),
+                client_secret=_plain(self.client_secret),
+                certificate_pem=self.certificate_pem,
+                private_key_pem=_plain(self.private_key_pem),
+                auth=source.m365.auth if source.m365 else "certificate",
+            )
+        except ConnectorError as exc:
+            raise SourceRejectedError(str(exc)) from None
+
+
+def _plain(value: SecretStr | None) -> str | None:
+    return value.get_secret_value() if value else None
+
+
 class SourceCreate(SourceConfig):
     # A Loki password or token (ADR-0011): stored encrypted, never returned or logged.
     loki_secret: SecretStr | None = Field(default=None, max_length=4096)
+    credentials: ApiCredentials | None = None  # m365 and anthropic sources
+
+
+class SourceCreated(SourceConfig):
+    # OTLP sources: the ingest token, shown this once (ADR-0015 row 3).
+    otlp_token: str | None = None
 
 
 @router.post("/sources", status_code=status.HTTP_201_CREATED)
-async def add_source(body: SourceCreate, request: Request, user: AdminUser) -> SourceConfig:
+async def add_source(body: SourceCreate, request: Request, user: AdminUser) -> SourceCreated:
     store = _store(request)
-    config = SourceConfig(**body.model_dump(exclude={"loki_secret"}))
+    config = SourceConfig(**body.model_dump(exclude={"loki_secret", "credentials"}))
     secret = body.loki_secret.get_secret_value() if body.loki_secret else None
+    if config.kind in API_KINDS:
+        secret = (body.credentials or ApiCredentials()).secret_for(config)
     if config.template_id in (None, AUTO_PARSER):
         created = await run_in_threadpool(store.add, config, secret)
     else:
@@ -149,15 +202,67 @@ async def add_source(body: SourceCreate, request: Request, user: AdminUser) -> S
         created = await run_in_threadpool(
             drafts.with_template, tid, lambda: store.add(config, secret)
         )
+    token = None
+    if created.kind == "otlp":
+        token = await run_in_threadpool(store.issue_otlp_token, created.source_id)
     await run_in_threadpool(
         _audit(request).audit.write,
         "source.create",
         "success",
         user.user_id,
         client_ip(request),
-        {**config.model_dump(), "has_loki_secret": secret is not None},
+        {**config.model_dump(), "has_secret": secret is not None},
     )
-    return created
+    return SourceCreated(**created.model_dump(), otlp_token=token)
+
+
+@router.get("/sources/{source_id}/agent-config")
+async def agent_config(
+    source_id: str, request: Request, user: AdminUser, os: AgentOs = "windows"
+) -> PlainTextResponse:
+    """OpenTelemetry Collector config for an agent group (ADR-0017 row 2). Holds no secret:
+    the token is read from a file on the endpoint. Audited source.agent_config."""
+    found = [s for s in await run_in_threadpool(_store(request).list) if s.source_id == source_id]
+    if not found:
+        raise NotFoundError("No such source")
+    if found[0].kind != "otlp":
+        raise SourceRejectedError("Agent configs are for OTLP sources")
+    base = request.app.state.public_url or str(request.base_url).rstrip("/")
+    text = render_agent(os, f"{base}/api/otlp", source_id, PRODUCT_NAME)
+    await run_in_threadpool(
+        _audit(request).audit.write,
+        "source.agent_config",
+        "success",
+        user.user_id,
+        client_ip(request),
+        {"source_id": source_id, "os": os},
+    )
+    name = f"{PRODUCT_NAME.lower()}-agent-{source_id}-{os}.yaml"
+    return PlainTextResponse(
+        text,
+        media_type="application/yaml",
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )
+
+
+class OtlpToken(BaseModel):
+    token: str
+
+
+@router.post("/sources/{source_id}/otlp-token")
+async def rotate_otlp_token(source_id: str, request: Request, user: AdminUser) -> OtlpToken:
+    """A new ingest token for an OTLP source; the old one stops working at once. Shown
+    once, stored hashed, audited source.otlp_token (never the token)."""
+    token = await run_in_threadpool(_store(request).issue_otlp_token, source_id)
+    await run_in_threadpool(
+        _audit(request).audit.write,
+        "source.otlp_token",
+        "success",
+        user.user_id,
+        client_ip(request),
+        {"source_id": source_id},
+    )
+    return OtlpToken(token=token)
 
 
 class LokiTest(LokiSettings):
@@ -192,6 +297,93 @@ async def test_loki(body: LokiTest, request: Request, user: AdminUser) -> LokiTe
             {"url": settings.url, "query": settings.query, "auth": settings.auth},
         )
     return LokiTestOut(**out)
+
+
+class ApiTest(BaseModel):
+    """Settings and credentials to try before an API source is saved."""
+
+    kind: Literal["m365", "anthropic"]
+    m365: M365Settings | None = None
+    anthropic: AnthropicSettings | None = None
+    credentials: ApiCredentials = ApiCredentials()
+
+
+class ApiTestOut(BaseModel):
+    feeds: dict[str, str]  # feed -> "ok" or why it failed
+    thumbprint: str | None = None  # Microsoft 365 certificates: the value Entra shows
+
+
+def _api_source(kind: Literal["m365", "anthropic"], body: ApiTest) -> SourceConfig:
+    try:
+        return SourceConfig(
+            source_id="connection_test",
+            format="json",
+            kind=kind,
+            m365=body.m365 if kind == "m365" else None,
+            anthropic=body.anthropic if kind == "anthropic" else None,
+        )
+    except ValidationError as exc:
+        msg = str(exc.errors()[0]["msg"]).removeprefix("Value error, ")
+        raise SourceRejectedError(msg) from None
+
+
+@router.post("/sources/api/test")
+async def test_api(body: ApiTest, request: Request, user: AdminUser) -> ApiTestOut:
+    """One small read per enabled feed with these settings, before the source is saved.
+    Audited source.api_test with the kind and feeds, never the credentials."""
+    config = _api_source(body.kind, body)
+    secret = body.credentials.secret_for(config)
+    ingest: IngestService = request.app.state.ingest
+    now = request.app.state.auth.clock()
+    settings = config.m365 or config.anthropic
+    if settings is None:
+        raise SourceRejectedError(f"Give the {body.kind} settings")
+    thumb = None
+    if body.credentials.certificate_pem and body.credentials.private_key_pem:
+        thumb = check_certificate(
+            body.credentials.certificate_pem, body.credentials.private_key_pem.get_secret_value()
+        )
+    outcome: Literal["success", "failure"] = "failure"
+    try:
+        feeds = await run_in_threadpool(
+            probe, body.kind, settings, secret, now, ingest.api_transport
+        )
+        outcome = "success" if feeds and all(v == "ok" for v in feeds.values()) else "failure"
+    except ConnectorError as exc:
+        raise SourceRejectedError(str(exc)) from None
+    finally:
+        await run_in_threadpool(
+            _audit(request).audit.write,
+            "source.api_test",
+            outcome,
+            user.user_id,
+            client_ip(request),
+            {"kind": body.kind, **settings.model_dump()},
+        )
+    return ApiTestOut(feeds=feeds, thumbprint=thumb)
+
+
+@router.put("/sources/{source_id}/credentials", status_code=status.HTTP_204_NO_CONTENT)
+async def replace_credentials(
+    source_id: str, body: ApiCredentials, request: Request, user: AdminUser
+) -> Response:
+    """Replace an API source's credentials (a renewed certificate or a new key). Reading
+    continues from the saved position. Audited source.credentials, never the values."""
+    store = _store(request)
+    found = [s for s in await run_in_threadpool(store.list) if s.source_id == source_id]
+    if not found:
+        raise NotFoundError("No such source")
+    secret = body.secret_for(found[0])
+    await run_in_threadpool(store.set_connector_secret, source_id, secret)
+    await run_in_threadpool(
+        _audit(request).audit.write,
+        "source.credentials",
+        "success",
+        user.user_id,
+        client_ip(request),
+        {"source_id": source_id},
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 class DiscoverIn(BaseModel):
@@ -245,8 +437,13 @@ async def discover_sources(body: DiscoverIn, request: Request, user: AdminUser) 
 
 @router.delete("/sources/{source_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_source(source_id: str, request: Request, user: AdminUser) -> Response:
-    if not await run_in_threadpool(_store(request).delete, source_id):
+    store = _store(request)
+    if not await run_in_threadpool(store.delete, source_id):
         raise NotFoundError(f"No source named {source_id}")
+    if store.spool_root is not None:  # records not yet read go with the source
+        await run_in_threadpool(
+            shutil.rmtree, spool_dir(store.spool_root, source_id), ignore_errors=True
+        )
     await run_in_threadpool(
         _audit(request).audit.write,
         "source.delete",
@@ -262,11 +459,15 @@ class SourcePatch(BaseModel):
     # Either or both. template_id null is the generic parser, `auto` the Automatic one.
     classification: Literal["local_only", "cloud_allowed"] | None = None
     template_id: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]{1,63}$")
+    # OTLP sources: keep prompt and tool content (ADR-0015 row 4).
+    otlp_keep_content: bool | None = None
 
     @model_validator(mode="after")
     def _something(self) -> "SourcePatch":
-        if not self.model_fields_set & {"classification", "template_id"}:
+        if not self.model_fields_set & {"classification", "template_id", "otlp_keep_content"}:
             raise ValueError("Nothing to change")
+        if "otlp_keep_content" in self.model_fields_set and self.otlp_keep_content is None:
+            raise ValueError("otlp_keep_content cannot be empty")
         if "classification" in self.model_fields_set and self.classification is None:
             raise ValueError("classification cannot be empty")
         return self
@@ -313,6 +514,17 @@ async def update_source(
             user.user_id,
             client_ip(request),
             {"source_id": source_id, "from": before, "to": body.classification},
+        )
+    if body.otlp_keep_content is not None:
+        keep = body.otlp_keep_content
+        before_keep, source = await run_in_threadpool(store.set_keep_content, source_id, keep)
+        await run_in_threadpool(
+            _audit(request).audit.write,
+            "source.otlp_content",
+            "success",
+            user.user_id,
+            client_ip(request),
+            {"source_id": source_id, "from": before_keep, "to": keep},
         )
     assert source is not None  # the validator requires at least one change
     return source

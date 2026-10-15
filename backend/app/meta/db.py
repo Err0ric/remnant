@@ -6,11 +6,53 @@ in `schema_migrations`. Additive only: never edit or reorder an applied script.
 
 import sqlite3
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-MIGRATIONS: tuple[str, ...] = (
+
+def _rebuild_kinds(
+    old: tuple[str, ...], new: tuple[str, ...]
+) -> Callable[[sqlite3.Connection], None]:
+    """A migration that widens the sources.kind CHECK. The CHECK was added as a column
+    constraint (migration 23), which SQLite cannot change in place, so the table is rebuilt
+    from its own current definition: same columns, rows, indexes, and triggers."""
+
+    def _quoted(kinds: tuple[str, ...]) -> str:
+        return "CHECK (kind IN (" + ", ".join(f"'{k}'" for k in kinds) + "))"
+
+    def migrate(con: sqlite3.Connection) -> None:
+        (table_sql,) = con.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'sources'"
+        ).fetchone()
+        if table_sql.count(_quoted(old)) != 1:
+            raise sqlite3.DatabaseError("sources.kind constraint not found where expected")
+        extras = [
+            r[0]
+            for r in con.execute(
+                "SELECT sql FROM sqlite_master WHERE tbl_name = 'sources'"
+                " AND type IN ('index', 'trigger') AND sql IS NOT NULL"
+            )
+        ]
+        head = table_sql.index("(")
+        new_sql = "CREATE TABLE sources_new " + table_sql[head:].replace(_quoted(old), _quoted(new))
+        con.execute(new_sql)
+        con.execute("INSERT INTO sources_new SELECT * FROM sources")
+        con.execute("DROP TABLE sources")
+        con.execute("ALTER TABLE sources_new RENAME TO sources")
+        for sql in extras:
+            con.execute(sql)
+
+    return migrate
+
+
+# Migration 28: allow kind 'otlp' (ADR-0015).
+_widen_source_kinds = _rebuild_kinds(("file", "loki"), ("file", "loki", "otlp"))
+
+
+Migration = str | Callable[[sqlite3.Connection], None]
+
+MIGRATIONS: tuple[Migration, ...] = (
     # 1: sources and file checkpoints
     """
     CREATE TABLE sources (
@@ -504,6 +546,77 @@ MIGRATIONS: tuple[str, ...] = (
     ALTER TABLE alert_deliveries ADD COLUMN source_id TEXT;
     CREATE INDEX alert_deliveries_source ON alert_deliveries (source_id, created_at);
     """,
+    # 28: OTLP sources (ADR-0015 row 3): kind 'otlp' (a table rebuild, see above).
+    _widen_source_kinds,
+    # 29: a hashed ingest token per OTLP source and the admin's choice to keep prompt and
+    # tool content (ADR-0015 row 4; off by default).
+    """
+    ALTER TABLE sources ADD COLUMN otlp_token_hash TEXT;
+    ALTER TABLE sources ADD COLUMN otlp_keep_content INTEGER NOT NULL DEFAULT 0;
+    CREATE UNIQUE INDEX sources_otlp_token ON sources (otlp_token_hash)
+        WHERE otlp_token_hash IS NOT NULL;
+    """,
+    # 30: AI usage visibility (ADR-0015 rows 1, 7, 9): review status of catalog services,
+    # services an admin added, MCP server rules, first sightings, and the AI watch.
+    """
+    CREATE TABLE ai_service_status (
+        service_id TEXT PRIMARY KEY,
+        status     TEXT NOT NULL CHECK (status IN ('approved', 'not_approved')),
+        note       TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL,
+        updated_by TEXT
+    );
+    CREATE TABLE ai_custom_services (
+        service_id TEXT PRIMARY KEY,
+        name       TEXT NOT NULL,
+        vendor     TEXT NOT NULL DEFAULT '',
+        kind       TEXT NOT NULL,
+        domains    TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        created_by TEXT
+    );
+    CREATE TABLE ai_mcp_rules (
+        pattern    TEXT PRIMARY KEY,
+        status     TEXT NOT NULL CHECK (status IN ('approved', 'not_approved')),
+        note       TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL,
+        updated_by TEXT
+    );
+    CREATE TABLE ai_sightings (
+        kind       TEXT NOT NULL CHECK (kind IN ('service', 'mcp', 'sensitive')),
+        name       TEXT NOT NULL,
+        subject    TEXT NOT NULL,
+        first_seen TEXT NOT NULL,
+        PRIMARY KEY (kind, name, subject)
+    );
+    CREATE TABLE ai_watch (
+        id                 INTEGER PRIMARY KEY CHECK (id = 1),
+        enabled            INTEGER NOT NULL DEFAULT 0,
+        include_unreviewed INTEGER NOT NULL DEFAULT 0,
+        sensitive          INTEGER NOT NULL DEFAULT 1,
+        target_ids         TEXT NOT NULL DEFAULT '[]',
+        cursor             TEXT,
+        updated_at         TEXT NOT NULL,
+        updated_by         TEXT
+    );
+    """,
+    # 31: Microsoft 365 and Anthropic API sources (ADR-0002, ADR-0015 row 10).
+    _rebuild_kinds(("file", "loki", "otlp"), ("file", "loki", "otlp", "m365", "anthropic")),
+    # 32: one person under several names (ADR-0018): organization domains and aliases.
+    """
+    CREATE TABLE identity_domains (
+        domain   TEXT PRIMARY KEY,
+        position INTEGER NOT NULL,
+        added_by TEXT,
+        added_at TEXT NOT NULL
+    );
+    CREATE TABLE identity_aliases (
+        alias      TEXT PRIMARY KEY COLLATE NOCASE,
+        person     TEXT NOT NULL,
+        created_by TEXT,
+        created_at TEXT NOT NULL
+    );
+    """,
 )
 
 
@@ -557,6 +670,9 @@ class MetaDB:
         """
         con = sqlite3.connect(self._path, timeout=60, isolation_level=None)
         try:
+            # Off (the default) so a table rebuild cannot cascade; it cannot change inside
+            # the transaction, so it is set first.
+            con.execute("PRAGMA foreign_keys = OFF")
             con.execute("BEGIN IMMEDIATE")
             con.execute(
                 "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY)"
@@ -565,8 +681,11 @@ class MetaDB:
             for version, script in enumerate(MIGRATIONS, start=1):
                 if version in done:
                     continue
-                for statement in _statements(script):
-                    con.execute(statement)
+                if callable(script):
+                    script(con)
+                else:
+                    for statement in _statements(script):
+                        con.execute(statement)
                 con.execute("INSERT INTO schema_migrations (version) VALUES (?)", (version,))
             con.execute("COMMIT")
         except BaseException:

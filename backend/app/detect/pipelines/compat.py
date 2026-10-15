@@ -78,7 +78,13 @@ def field_expression(name: str) -> str:
     if not _SAFE_FIELD.fullmatch(name):
         raise RuleRejectedError(f"Unsupported field name in rule: {name[:60]!r}")
     quoted = '"' + name + '"'  # a JSON path key; the name holds no quote or backslash
-    return _coalesce([p.format(q=quoted) for p in _EVENTDATA_PATHS])
+    paths = [_json(p.format(q=quoted)) for p in _EVENTDATA_PATHS]
+    parts = name.split(".")
+    if len(parts) > 1 and all(parts):
+        # A dotted name may also be a nested path (attr.sensitive_total in an OTLP record);
+        # the flat key, as written, is tried first.
+        paths.append(_json("$." + ".".join('"' + p + '"' for p in parts)))
+    return f"coalesce({', '.join(paths)})"
 
 
 def compat_pipeline() -> ProcessingPipeline:

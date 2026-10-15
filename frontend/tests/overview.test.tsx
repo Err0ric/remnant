@@ -7,9 +7,11 @@ import { mockApi, type MockAuth } from "./mockApi";
 async function renderAt(
   path: string,
   auth: MockAuth = { mode: "login", signedIn: true, role: "admin" },
+  tweak?: (spy: ReturnType<typeof mockApi>) => void,
 ) {
   window.history.replaceState(null, "", path);
   const spy = mockApi("Codename", auth);
+  tweak?.(spy);
   vi.resetModules();
   const { loadBranding } = await import("@/lib/branding");
   await loadBranding();
@@ -71,5 +73,38 @@ describe("Overview", () => {
     await renderAt("/schedules");
     await userEvent.click(await screen.findByRole("link", { name: "Codename overview" }));
     expect(await screen.findByRole("heading", { name: "Overview", level: 1 })).toBeVisible();
+  });
+
+  it("keeps the setup checklist in Settings, not on the Overview", async () => {
+    await renderAt("/overview");
+    await screen.findByRole("region", { name: "Event volume" });
+    expect(screen.queryByRole("region", { name: "Required steps" })).toBeNull();
+  });
+
+  it("lists setup steps in Settings, with optional steps kept apart", async () => {
+    // No alert targets yet: one core step is left.
+    await renderAt("/setup", undefined, (spy) => {
+      const real = spy.getMockImplementation();
+      spy.mockImplementation((url, init) =>
+        String(url).endsWith("/api/alert-targets") && (init?.method ?? "GET") === "GET"
+          ? Promise.resolve(new Response("[]", { headers: { "Content-Type": "application/json" } }))
+          : (real as typeof fetch)(url, init),
+      );
+    });
+    const core = await screen.findByRole("region", { name: "Required steps" });
+    expect(await within(core).findByText("1 of 4 left")).toBeVisible();
+    const add = within(core).getByRole("button", { name: "Add a log source" });
+    expect(add.closest("li")).toHaveTextContent("(done)");
+    const alerts = within(core).getByRole("button", { name: "Add an alert target" });
+    expect(alerts.closest("li")).toHaveTextContent("(to do)");
+    expect(screen.getByText("Optional").closest("details")).toHaveTextContent(
+      "Connect Microsoft 365",
+    );
+  });
+
+  it("keeps the setup checklist from analysts", async () => {
+    await renderAt("/setup", { mode: "login", signedIn: true, role: "analyst" });
+    await screen.findByRole("heading", { level: 1 });
+    expect(screen.queryByRole("region", { name: "Required steps" })).toBeNull();
   });
 });

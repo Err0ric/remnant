@@ -3,6 +3,8 @@ import { Field } from "@/features/auth/Field";
 import { ApiError, api, type LokiSettings } from "@/lib/api";
 
 interface LokiFieldsProps {
+  /** Required fields (address, query, test) or the optional ones (sign-in, tenant, backfill). */
+  part: "required" | "optional";
   value: LokiSettings;
   secret: string;
   onChange: (next: LokiSettings) => void;
@@ -10,12 +12,66 @@ interface LokiFieldsProps {
 }
 
 /** The Loki part of Add source (ADR-0011), with a connection test before saving. */
-export function LokiFields({ value, secret, onChange, onSecret }: LokiFieldsProps) {
+export function LokiFields({ part, value, secret, onChange, onSecret }: LokiFieldsProps) {
   const set = <K extends keyof LokiSettings>(key: K, v: LokiSettings[K]) =>
     onChange({ ...value, [key]: v });
   const test = useMutation({
     mutationFn: () => api.testLoki({ ...value, secret: secret || undefined }),
   });
+  if (part === "optional") {
+    return (
+      <>
+        <div className="flex flex-col gap-1">
+          <label htmlFor="loki-auth" className="text-sm font-semibold">
+            Sign-in
+          </label>
+          <select
+            id="loki-auth"
+            value={value.auth}
+            onChange={(e) => set("auth", e.target.value as LokiSettings["auth"])}
+            className="h-9 rounded border border-border-strong bg-inset px-2 text-sm text-text"
+          >
+            <option value="none">None</option>
+            <option value="basic">Username and password</option>
+            <option value="bearer">Bearer token</option>
+          </select>
+        </div>
+        {value.auth === "basic" ? (
+          <Field
+            label="Username"
+            value={value.username ?? ""}
+            onChange={(e) => set("username", e.target.value)}
+            autoComplete="off"
+          />
+        ) : null}
+        {value.auth !== "none" ? (
+          <Field
+            label={value.auth === "basic" ? "Password" : "Token"}
+            help="Stored encrypted. It is never shown again."
+            type="password"
+            value={secret}
+            onChange={(e) => onSecret(e.target.value)}
+            autoComplete="new-password"
+          />
+        ) : null}
+        <Field
+          label="Tenant"
+          help="Sent as X-Scope-OrgID, for multi-tenant Loki."
+          value={value.tenant ?? ""}
+          onChange={(e) => set("tenant", e.target.value || null)}
+          className="font-mono"
+        />
+        <Field
+          label="On first run, read back (hours)"
+          type="number"
+          min={0}
+          max={87600}
+          value={value.backfill_hours}
+          onChange={(e) => set("backfill_hours", Number(e.target.value))}
+        />
+      </>
+    );
+  }
   return (
     <>
       <Field
@@ -33,54 +89,6 @@ export function LokiFields({ value, secret, onChange, onSecret }: LokiFieldsProp
         onChange={(e) => set("query", e.target.value)}
         className="font-mono"
         required
-      />
-      <div className="flex flex-col gap-1">
-        <label htmlFor="loki-auth" className="text-sm font-semibold">
-          Sign-in
-        </label>
-        <select
-          id="loki-auth"
-          value={value.auth}
-          onChange={(e) => set("auth", e.target.value as LokiSettings["auth"])}
-          className="h-9 rounded border border-border-strong bg-inset px-2 text-sm text-text"
-        >
-          <option value="none">None</option>
-          <option value="basic">Username and password</option>
-          <option value="bearer">Bearer token</option>
-        </select>
-      </div>
-      {value.auth === "basic" ? (
-        <Field
-          label="Username"
-          value={value.username ?? ""}
-          onChange={(e) => set("username", e.target.value)}
-          autoComplete="off"
-        />
-      ) : null}
-      {value.auth !== "none" ? (
-        <Field
-          label={value.auth === "basic" ? "Password" : "Token"}
-          help="Stored encrypted. It is never shown again."
-          type="password"
-          value={secret}
-          onChange={(e) => onSecret(e.target.value)}
-          autoComplete="new-password"
-        />
-      ) : null}
-      <Field
-        label="Tenant (optional)"
-        help="Sent as X-Scope-OrgID, for multi-tenant Loki."
-        value={value.tenant ?? ""}
-        onChange={(e) => set("tenant", e.target.value || null)}
-        className="font-mono"
-      />
-      <Field
-        label="On first run, read back (hours)"
-        type="number"
-        min={0}
-        max={87600}
-        value={value.backfill_hours}
-        onChange={(e) => set("backfill_hours", Number(e.target.value))}
       />
       <div className="flex flex-col gap-2 md:col-span-2">
         <div className="flex flex-wrap items-center gap-3">
