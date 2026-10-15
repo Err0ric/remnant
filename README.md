@@ -2,7 +2,7 @@
 
 Local-first, LLM-assisted SIEM front end. Bring your own logs, bring your own model.
 
-> Status: early preview (Slices 1 to 5 built, Slice 6 polish nearly done). Expect rough edges. "Remnant" is a working codename.
+> Status: early preview (Slices 1 to 6 built; Slice 7 connectors, AI usage, and Investigations underway). Expect rough edges. "Remnant" is a working codename.
 
 Point it at log files you already have. Templates parse them into OCSF columns in a Parquet lake, DuckDB queries them, Sigma detects on them, and an LLM (local by default) helps write parsers and queries and explains results with citations back to real events.
 
@@ -14,16 +14,21 @@ Point it at log files you already have. Templates parse them into OCSF columns i
 | **Search.** Type `sshd "failed password"`, or SQL, or ask in plain English with a local model; the SQL is always shown before it runs | **Dashboard.** Scheduled searches and Sigma rules with thresholds, sparklines, and alerts to email, Teams, Slack, or a webhook |
 | ![Command palette](docs/images/command-palette.png) | ![Light theme](docs/images/overview-light.png) |
 | **Ctrl+K** goes to any page, saved search, or source | A complete light theme as well as dark |
+| ![Investigations: who uses which AI tools, MCP servers, and services](docs/images/investigations.png) | ![AI usage: AI services seen in network logs, with review status](docs/images/ai-usage.png) |
+| **Investigations.** Rank risky users, addresses, and hosts, then follow one, or the organization's AI use, across lanes; select a card to light its path | **AI usage.** AI services seen in DNS and firewall logs, Claude Code telemetry, and MCP servers, each marked Approved or Not approved |
 | ![Sign-in with Microsoft](docs/images/sign-in-sso.png) | ![Terminal UI](docs/images/terminal.png) |
 | Optional sign-in with Microsoft Entra ID, Authelia, or any OIDC provider | `remnant tui`: query, results, and a live tail in the terminal |
 
-Screenshots use made-up logs from `scripts/loggen.py`.
+Screenshots use made-up logs from `scripts/loggen.py` and `scripts/demo_lab.py`.
 
 ## What it does
 
 - **Bring your own logs.** Files and folders (rsyslog, syslog-ng, Vector), JSON lines, CSV, Windows EVTX and forwarded events, or a Grafana Loki you already run. 24 starter parsers (Linux auth, Palo Alto, Fortinet, UniFi, Cisco ASA and IOS, CEF, LEEF, Windows, DNS) and an Automatic parser for mixed streams.
+- **Connect cloud services.** Microsoft 365 (audit logs, Entra sign-ins, directory audits, alerts), the Anthropic admin API (usage, cost, Claude Code), and an OpenTelemetry receiver for Claude Code and endpoint agents. Works through an outbound proxy if you need one.
 - **Search three ways** over one engine: Simple search, SQL (read-only, guarded), or Ask in plain English.
 - **Detect** with imported SigmaHQ rules and scheduled searches; alert to email, Teams, Slack, or a signed webhook.
+- **Investigate.** Users, addresses, and hosts ranked by rule matches; one entity's sources, activities, and targets in lanes; one person counted once across `alice`, `CORP\alice`, and `alice@example.com`.
+- **See AI use.** Which AI services, clients, and MCP servers people use, from logs you already have; mark each Approved or Not approved and alert on the rest.
 - **Bring your own model.** Ollama, LM Studio, llama.cpp, vLLM, or any OpenAI-compatible API, plus Anthropic. Fresh installs allow local models only. Each source is Local only or Cloud allowed, and Local only data is blocked from cloud models in code.
 - **Treats log content as hostile.** The model never reads the whole dataset, never runs anything on its own, and every claim it makes cites event ids that are checked.
 - **Team ready.** Accounts, roles, per-source access, an append-only audit log, HTTPS by default, optional single sign-on, online backups.
@@ -50,7 +55,7 @@ docker compose logs app | grep "SHA-256"
 
 Open the link, check that the fingerprint in the browser's certificate warning matches the log line, and create the administrator.
 
-**3. Add logs.** Put log files (or point a collector) in the folder set by `LOGS_DIR` in `.env` (default `./logs`); it appears in the app as `/logs`. Then **Configuration > Sources > Add source**, pick the folder, and leave the parser on **Automatic** (CSV files use **Generic: CSV with a header row**). To try it with made-up logs first:
+**3. Add logs.** Put log files (or point a collector) in the folder set by `LOGS_DIR` in `.env` (default `./logs`); it appears in the app as `/logs`. Then **Settings > Sources and connectors > Add source**, pick the folder, and leave the parser on **Automatic** (CSV files use **Generic: CSV with a header row**). To try it with made-up logs first:
 
 ```bash
 docker compose --profile demo up -d     # 24 hours of synthetic logs in ./logs/demo, then a live trickle
@@ -65,7 +70,7 @@ docker compose --profile ollama up -d
 docker compose exec ollama ollama pull qwen3.5:9b
 ```
 
-Then **Configuration > AI providers**: edit **Local Ollama**, pick the model, set **Thinking** to **Off**, and **Enable**. Only local models are allowed until you choose otherwise.
+Then **Settings > AI providers**: edit **Local Ollama**, pick the model, set **Thinking** to **Off**, and **Enable**. Only local models are allowed until you choose otherwise.
 
 ### Reach it from other machines
 
@@ -95,6 +100,8 @@ Database changes apply at start and only ever add to what is there. Take a backu
 | [docs/install/team-vm.md](docs/install/team-vm.md) | A shared server: Docker Compose or a systemd service, accounts, roles, source access |
 | [docs/install/first-real-data.md](docs/install/first-real-data.md) | A first-week checklist on real logs: firewall syslog, Microsoft 365, rules, AI usage |
 | [docs/install/m365.md](docs/install/m365.md) | Microsoft 365 audit, Entra sign-ins, and alerts, with the exact permissions |
+| [docs/install/ai-usage.md](docs/install/ai-usage.md) | Seeing AI use: network logs, [Claude Code telemetry](docs/install/claude-code-telemetry.md), [MCP inventory](docs/install/mcp-inventory.md), [endpoint agent](docs/install/endpoint-agent.md), [Anthropic admin API](docs/install/anthropic-admin-api.md) |
+| [docs/install/proxy.md](docs/install/proxy.md) | An outbound HTTPS proxy for the cloud connectors and Teams or Slack alerts |
 | [docs/install/single-user.md](docs/install/single-user.md) | One person on a laptop, from source or Docker |
 | [docs/install/homelab-test.md](docs/install/homelab-test.md) | A guided first run with made-up logs, every screen |
 | [docs/install/team-trial-loki.md](docs/install/team-trial-loki.md) | Reading from a Grafana Loki you already run |

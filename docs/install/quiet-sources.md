@@ -4,8 +4,8 @@ A firewall that stops sending logs looks the same as a quiet network until you c
 
 ## Built in (recommended)
 
-1. **Configuration > Alert targets**: add email, Teams, Slack, or a webhook, then **Send test**.
-2. **Configuration > Sources**: on the source's row, **Alert if quiet**. Pick how long without events counts as quiet (15 minutes to 7 days) and the targets, then **Save**.
+1. **Settings > Alert targets**: add email, Teams, Slack, or a webhook, then **Send test**.
+2. **Settings > Sources and connectors**: on the source's row, **Alert if quiet**. Pick how long without events counts as quiet (15 minutes to 7 days) and the targets, then **Save**.
 
 | What happens | Detail |
 |---|---|
@@ -25,7 +25,7 @@ Use this when you need a different test than "nothing at all", for example "fewe
 
 ## 1. An alert target (administrators, once)
 
-**Configuration > Alert targets**: add email, Teams, Slack, or a webhook, then **Send test**. See SPEC section 5.5 (Alert routing) for what each kind needs.
+**Settings > Alert targets**: add email, Teams, Slack, or a webhook, then **Send test**. See SPEC section 5.5 (Alert routing) for what each kind needs.
 
 ## 2. A saved search for the source
 

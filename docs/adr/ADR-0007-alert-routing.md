@@ -38,7 +38,7 @@ Also, SPEC section 2 still lists "alert routing" under non-goals for v1, which D
 
 - Meta tables (additive): alert targets (secrets encrypted), schedule-to-target links, deliveries.
 - A delivery worker in the server next to the schedule loop.
-- UI: Configuration > Alert targets (admin), a target picker on the schedule form, delivery status on the Schedules page.
+- UI: Settings > Alert targets (admin), a target picker on the schedule form, delivery status on the Schedules page.
 - SPEC section 2 non-goals line updated; SPEC 5.5 gains an alerting paragraph.
 
 ## ATT&CK

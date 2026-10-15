@@ -84,6 +84,6 @@ sudo ufw allow from 192.0.2.0/24 to any port 601 proto tcp
 
 ## 5. Add the folder in Remnant
 
-Same as the rsyslog guide, step 4: `LOGS_DIR=/var/log/remote` in `.env`, then **Configuration > Sources > Add source** with format **Syslog**, path `/logs`, file pattern `**/*.log`.
+Same as the rsyslog guide, step 4: `LOGS_DIR=/var/log/remote` in `.env`, then **Settings > Sources and connectors > Add source** with format **Syslog**, path `/logs`, file pattern `**/*.log`.
 
 Rotation: the logrotate example in [rsyslog.md](rsyslog.md) step 5 works here too; replace the `postrotate` command with `syslog-ng-ctl reopen`.

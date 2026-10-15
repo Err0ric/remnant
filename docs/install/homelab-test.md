@@ -48,8 +48,8 @@ docker compose --profile demo up -d
 
 This writes 24 hours of made-up logs into `/var/log/remote/demo`, then a few new events per second.
 
-- [ ] **Configuration > Sources > Discover**, scan `/logs/demo`: 6 candidates, with sudo and systemd each listing 3 hosts and matched at 100%. Discover only suggests; nothing is searchable until a source is added
-- [ ] **Configuration > Sources > Add source**, three times (use these IDs; Part 3 refers to them):
+- [ ] **Settings > Sources and connectors > Discover**, scan `/logs/demo`: 6 candidates, with sudo and systemd each listing 3 hosts and matched at 100%. Discover only suggests; nothing is searchable until a source is added
+- [ ] **Settings > Sources and connectors > Add source**, three times (use these IDs; Part 3 refers to them):
 
 | Source ID | Parser | File or folder | File pattern |
 |---|---|---|---|
@@ -97,7 +97,7 @@ ORDER BY time DESC;
 
 No AI provider is needed for this part. The demo firewall has no matching template (Discover said so), so give it one.
 
-- [ ] **Configuration > Templates > New draft**: Template ID `demo_firewall`, sample from a file: File or folder `/logs/demo/syslog`, File pattern `*/filterlog.log`
+- [ ] **Settings > Templates > New draft**: Template ID `demo_firewall`, sample from a file: File or folder `/logs/demo/syslog`, File pattern `*/filterlog.log`
 - [ ] The draft opens as a skeleton that keeps each line as `message`, with 3 tests built from the sample
 - [ ] In the YAML, replace the `payload` block and the `fields` under `mapping` with:
 
@@ -235,14 +235,14 @@ Then run something:
 
 ## Part 10: alerts (10 min)
 
-1. **Configuration > Alert targets > Add target**: a Slack or Teams Workflows webhook, an SMTP server, or a webhook on your network (for example ntfy: `http://<ntfy host>/<topic>` works over http because the address is private).
+1. **Settings > Alert targets > Add target**: a Slack or Teams Workflows webhook, an SMTP server, or a webhook on your network (for example ntfy: `http://<ntfy host>/<topic>` works over http because the address is private).
 2. **Send test**. The result shows next to the target.
 3. On **Schedules**, create a schedule and tick the target under **Send alerts to**; **Run now** a rule schedule that has matches.
 
 - [ ] The message is a summary (what fired, count, why, link) with no log lines in it
 - [ ] The **Alerts** column on Schedules shows the delivery as Sent
 - [ ] A wrong URL is refused when saving (for example a Slack URL on another host)
-- [ ] An analyst can pick targets on their schedules but cannot see Configuration > Alert targets
+- [ ] An analyst can pick targets on their schedules but cannot see Settings > Alert targets
 
 ## Report back
 

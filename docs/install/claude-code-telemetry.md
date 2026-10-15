@@ -15,7 +15,7 @@ An administrator can choose **Keep prompt and tool content** on the source. Leav
 
 ## 1. Create the source (Remnant admin)
 
-**Configuration > Sources > Add source**, Source ID `claude_code`, **Reads from: OpenTelemetry**, Parser **Automatic**. Copy the token from the panel that appears (it is shown once) and the managed-settings block.
+**Settings > Sources and connectors > Add source**, Source ID `claude_code`, **Reads from: OpenTelemetry**, Parser **Automatic**. Copy the token from the panel that appears (it is shown once) and the managed-settings block.
 
 ## 2. Push the settings to Claude Code (IT)
 

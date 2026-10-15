@@ -79,7 +79,7 @@ Remnant treats every line as untrusted input, but a flood of fake lines still co
 1. Give Remnant read access:
    - Docker: set `LOGS_DIR=/var/log/remote` in `.env`. It is mounted read-only at `/logs`, and the container joins group `adm` (`LOGS_GID=4`) because rsyslog on Debian and Ubuntu writes files as `syslog:adm`, mode 0640. On other distributions check with `stat -c %g /var/log/remote/*/*.log` and set `LOGS_GID` to match.
    - Without Docker: set `APP__PATHS__ALLOWED_ROOTS=/var/log/remote` and add the service account to the group: `sudo usermod -aG adm <user>`.
-2. **Configuration > Sources > Add source**: format **Syslog**, path `/logs` (Docker) or `/var/log/remote`, file pattern `**/*.log`.
+2. **Settings > Sources and connectors > Add source**: format **Syslog**, path `/logs` (Docker) or `/var/log/remote`, file pattern `**/*.log`.
 3. Status shows **Reading** within a few seconds; new lines are picked up as rsyslog writes them.
 
 ## 5. Rotation
