@@ -105,7 +105,7 @@ Shown as a filled badge with a text label, never color alone.
 
 ```
 +-------------------------------------------------------------------------------+
-| [logo] Remnant | Security workspace   [ global search (Ctrl+K) ]  host  theme  ? (EH) |  44px top bar
+| [logo] Remnant | Security workspace  [ Jump to  Ctrl K ]     env  theme  user  sign out |  48px top bar
 +------------------+------------------------------------------------------------+
 | General          | Home > Investigate > Search                                |
 |   Overview       | Search                                       (page title)  |
@@ -126,8 +126,8 @@ Shown as a filled badge with a text label, never color alone.
 +------------------+------------------------------------------------------------+
 ```
 
-- **Top bar** is dark in both themes. Contains product mark, workspace label, global search (opens the command palette), host or environment badge, theme toggle, help, and user menu.
-- **Left nav** is 220px, labeled, grouped by section (General, Investigate, Detect, Configuration). Items hidden by role (an Auditor sees no Configuration items they cannot use). Collapses to an icon rail below 1100px and stacks on phones.
+- **Top bar** is dark in both themes, 48px, and stays in view on scroll. Contains product mark, workspace label, a compact **Jump to** button with the shortcut (it opens the command palette, so it is styled as a button, not a text field), an optional environment label (`server.environment_label`, for example "Lab"; hidden when unset, never the raw host or IP), theme toggle, and user menu.
+- **Left nav** is 220px, labeled, grouped by section (General, Investigate, Detect, Configuration). Items hidden by role (an Auditor sees no Configuration items they cannot use). Collapses to an icon rail below 1100px and stacks on phones. From tablet width up it stays in view under the top bar, and **Settings** is pinned to its foot below a divider, out of the way of daily work. A page with tabs (AI usage, Health) lists them under its nav item while it is open, indented on a hairline; the tab lives in the URL (`/ai#agents`) so nav links, Back, and the command palette (`AI usage › Agents`) all reach it.
 - **Page header**: breadcrumb, title, then a command bar of text buttons. The primary command is in accent text; destructive commands are never in the command bar.
 
 ---

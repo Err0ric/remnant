@@ -44,9 +44,17 @@ class ServerConfig(_Strict):
     # The address people open in a browser, for links in alerts (ADR-0007). When unset,
     # built from the first public name and the port, or omitted on loopback.
     public_url: str | None = Field(default=None, max_length=300, pattern=r"^https?://[^\s]+$")
+    # Optional label shown in the top bar, for example "Production" or "Lab", so people can
+    # tell installs apart. Shown before sign-in too, so keep it free of anything sensitive.
+    environment_label: str | None = Field(default=None, max_length=24, pattern=r"^[\w .()-]+$")
+    # Address-space cap for the server process in MB, so an oversized query fails instead
+    # of the process being killed (D58). 0: 75% of the machine's or container's memory.
+    memory_limit_mb: int = Field(default=0, ge=0, le=1_048_576)
 
     _split_names = field_validator("public_names", mode="before")(_split_list)
-    _blank_url = field_validator("public_url", mode="before")(lambda v: v or None)
+    _blank_url = field_validator("public_url", "environment_label", mode="before")(
+        lambda v: v or None
+    )
 
 
 class AuthConfig(_Strict):
@@ -157,6 +165,8 @@ class MaintenanceConfig(_Strict):
     retention_interval_s: float = Field(default=86400, ge=60)
     # Retention for data whose source was removed from the configuration.
     orphan_retention_days: int = Field(default=30, ge=1, le=3650)
+    # Full log integrity verification (ADR-0022): re-hashes every lake file.
+    integrity_interval_s: float = Field(default=86400, ge=300)
 
 
 class SchedulesConfig(_Strict):

@@ -5,6 +5,8 @@ accounts is setup-only and prints a one-time setup link; otherwise sign-in is re
 """
 
 import asyncio
+import os
+import resource
 import socket
 import sys
 from collections.abc import AsyncIterator, Callable
@@ -25,6 +27,7 @@ from app.ai.watch import AiWatch
 from app.alerts.dispatch import AlertDispatcher
 from app.alerts.net import Egress, configure_egress
 from app.alerts.targets import TargetStore
+from app.api.addresses import router as addresses_router
 from app.api.ai import router as ai_router
 from app.api.alerts import router as alerts_router
 from app.api.ask import router as ask_router
@@ -33,7 +36,11 @@ from app.api.auth import router as auth_router
 from app.api.entities import router as entities_router
 from app.api.explain import router as explain_router
 from app.api.groups import router as groups_router
+from app.api.health_page import router as health_page_router
 from app.api.identities import router as identities_router
+from app.api.integrity import router as integrity_router
+from app.api.mcp import router as mcp_router
+from app.api.meta import app_version
 from app.api.meta import router as meta_router
 from app.api.middleware import HostOriginMiddleware, SecurityMiddleware
 from app.api.otlp import router as otlp_router
@@ -50,7 +57,7 @@ from app.api.users import router as users_router
 from app.auth.groups import GroupStore
 from app.auth.oidc import HttpFactory, OidcClient
 from app.auth.service import AuthService
-from app.auth.tls import resolve_tls
+from app.auth.tls import ensure_self_signed, resolve_tls
 from app.core.branding import PRODUCT_NAME
 from app.core.config import AppConfig, is_loopback_host, load_config
 from app.core.errors import (
@@ -88,9 +95,12 @@ from app.core.errors import (
     UnsupportedMediaError,
 )
 from app.core.logging import configure_logging
+from app.core.memory import server_budget_mb
 from app.detect.runner import RuleRunner
 from app.detect.store import RuleStore
 from app.engine.duckdb import QueryEngine
+from app.ingest.integrity import IntegrityLedger
+from app.ingest.listener import SyslogListeners
 from app.ingest.maintenance import LakeMaintenance
 from app.ingest.otlp import Spool
 from app.ingest.quiet import QuietWatch
@@ -103,9 +113,13 @@ from app.llm.parser_draft import ParserDrafter, file_owners
 from app.llm.prompt_files import load_prompt
 from app.llm.registry import ProviderStore
 from app.llm.semantic import base_vocabulary
+from app.mcp.server import McpServer
+from app.mcp.settings import McpSettingsStore
 from app.meta.audit import AuditReader
 from app.meta.db import MetaDB
 from app.meta.secrets import SecretBox
+from app.ops.integrity import IntegrityService
+from app.search.health import HealthService
 from app.search.identity import IdentityStore
 from app.search.overview import OverviewService
 from app.search.saved import SavedSearchStore
@@ -161,6 +175,11 @@ async def _ingest_loop(service: IngestService, interval_s: float) -> None:
 
 
 async def _maintenance_loop(maintenance: LakeMaintenance) -> None:
+    try:  # once at start: any file whose footer does not read is moved aside
+        await asyncio.to_thread(maintenance.sweep_all)
+        await asyncio.to_thread(maintenance.baseline)
+    except Exception as exc:  # never fatal
+        log.warning("maintenance.sweep_failed", error=type(exc).__name__)
     while True:
         try:
             await asyncio.to_thread(maintenance.tick)
@@ -179,7 +198,11 @@ def public_url(config: AppConfig) -> str | None:
 
 
 async def _schedule_loop(
-    schedules: ScheduleService, alerts: AlertDispatcher, quiet: QuietWatch, ai_watch: AiWatch
+    schedules: ScheduleService,
+    alerts: AlertDispatcher,
+    quiet: QuietWatch,
+    ai_watch: AiWatch,
+    health: HealthService,
 ) -> None:
     while True:
         try:
@@ -195,10 +218,25 @@ async def _schedule_loop(
         except Exception as exc:  # never fatal; retried next tick
             log.warning("ai_watch.failed", error=type(exc).__name__)
         try:
+            await asyncio.to_thread(health.tick)
+        except Exception as exc:  # never fatal; retried next tick
+            log.warning("device_watch.failed", error=type(exc).__name__)
+        try:
             await asyncio.to_thread(alerts.tick)
         except Exception as exc:  # never fatal; retried next tick
             log.warning("alerts.failed", error=type(exc).__name__)
         await asyncio.sleep(30)
+
+
+async def _listener_loop(listeners: SyslogListeners, sources: SourceStore) -> None:
+    """Keep the syslog listeners in step with the sources (ADR-0021): a new, changed,
+    disabled, or deleted listener source takes effect within a few seconds."""
+    while True:
+        try:
+            await listeners.reconcile(await asyncio.to_thread(sources.list))
+        except Exception as exc:  # the loop must survive one bad pass
+            log.warning("syslog_listener.reconcile_failed", error=type(exc).__name__)
+        await asyncio.sleep(5)
 
 
 def _lifespan(config: AppConfig) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
@@ -219,8 +257,13 @@ def _lifespan(config: AppConfig) -> Callable[[FastAPI], AbstractAsyncContextMana
                         app.state.alert_dispatcher,
                         app.state.quiet,
                         app.state.ai_watch,
+                        app.state.health,
                     )
                 )
+            )
+        if config.ingest.enabled:
+            tasks.append(
+                asyncio.create_task(_listener_loop(app.state.listeners, app.state.sources))
             )
         try:
             yield
@@ -230,6 +273,7 @@ def _lifespan(config: AppConfig) -> Callable[[FastAPI], AbstractAsyncContextMana
             for task in tasks:
                 with suppress(asyncio.CancelledError):
                     await task
+            await app.state.listeners.close()
 
     return lifespan
 
@@ -293,6 +337,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         lifespan=_lifespan(config),
     )
     lake_dir = config.paths.data_dir / "lake"
+    app.state.lake_dir = lake_dir
     meta = MetaDB(config.paths.data_dir / "meta.sqlite")
     loopback = is_loopback_host(config.server.host)
     # Inner first: the host check runs inside the security headers, so its refusals carry them.
@@ -316,7 +361,13 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     )
     app.state.searches = SavedSearchStore(meta, lambda: app.state.auth.clock())
     app.state.groups = GroupStore(meta, app.state.auth.audit, lambda: app.state.auth.clock())
-    app.state.engine = QueryEngine(lake_dir)
+    budget = server_budget_mb(config.server.memory_limit_mb)
+    app.state.engine = QueryEngine(
+        lake_dir,
+        # A third of the server's budget per query, so two can run with room for ingest.
+        memory_mb=max(256, budget // 3) if budget else None,
+        threads=min(4, os.cpu_count() or 1),
+    )
     app.state.gate = LLMGate(
         meta,
         app.state.providers,
@@ -336,6 +387,14 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         spool_root=config.paths.data_dir / "spool",
     )
     app.state.otlp_spool = Spool(config.paths.data_dir / "spool")
+    app.state.sources.web_port = config.server.port
+    app.state.mcp_settings = McpSettingsStore(meta)
+    app.state.mcp = McpServer(app.state.engine, meta, app.state.auth.audit, app_version())
+    app.state.listeners = SyslogListeners(
+        config.paths.data_dir / "spool",
+        config.server.host,
+        lambda: _listener_tls(config),
+    )
     app.state.rules = RuleStore(meta, app.state.auth.audit, config.paths.rule_roots)
     app.state.templates = TemplateRegistry(
         config.paths.starter_templates or STARTER_DIR, config.paths.data_dir / "templates"
@@ -379,6 +438,15 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         link=app.state.public_url,
         clock=lambda: app.state.auth.clock(),
     )
+    app.state.health = HealthService(
+        meta,
+        app.state.engine,
+        otlp_sources=lambda: [s.source_id for s in app.state.sources.list() if s.kind == "otlp"],
+        dispatcher=app.state.alert_dispatcher,
+        audit=app.state.auth.audit,
+        link=app.state.public_url,
+        clock=lambda: app.state.auth.clock(),
+    )
     app.state.ai_catalog = Catalog(meta)
     app.state.identities = IdentityStore(meta)
     app.state.ai_usage = Usage(app.state.engine, app.state.ai_catalog)
@@ -415,22 +483,42 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         app.state.drafts,
         file_owners(app.state.sources.list, config.paths.allowed_roots),
     )
+    app.state.integrity = IntegrityLedger(meta, lake_dir)
     app.state.ingest = IngestService(
-        app.state.sources, meta, lake_dir, templates=app.state.templates
+        app.state.sources,
+        meta,
+        lake_dir,
+        templates=app.state.templates,
+        events=app.state.integrity,
     )
+    app.state.ingest.listener_errors = lambda: {
+        sid: st.error for sid, st in app.state.listeners.status().items() if st.error
+    }
     app.state.maintenance = LakeMaintenance(
         lake_dir,
         app.state.sources,
         orphan_retention_days=config.maintenance.orphan_retention_days,
         compaction_interval_s=config.maintenance.compaction_interval_s,
         retention_interval_s=config.maintenance.retention_interval_s,
+        integrity=app.state.integrity,
+        integrity_interval_s=config.maintenance.integrity_interval_s,
     )
+    app.state.integrity_service = IntegrityService(
+        meta,
+        app.state.integrity,
+        app.state.auth.audit,
+        SecretBox(config.paths.data_dir).install_key,
+        dispatcher=app.state.alert_dispatcher,
+        link=app.state.public_url,
+    )
+    app.state.maintenance.on_verified = app.state.integrity_service.seal
     app.include_router(meta_router, prefix="/api")
     app.include_router(auth_router, prefix="/api")
     app.include_router(query_router, prefix="/api")
     app.include_router(sources_router, prefix="/api")
     app.include_router(otlp_router, prefix="/api")
     app.include_router(ai_router, prefix="/api")
+    app.include_router(mcp_router, prefix="/api")
     app.include_router(entities_router, prefix="/api")
     app.include_router(identities_router, prefix="/api")
     app.include_router(users_router, prefix="/api")
@@ -445,6 +533,9 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     app.include_router(alerts_router, prefix="/api")
     app.include_router(schedules_router, prefix="/api")
     app.include_router(overview_router, prefix="/api")
+    app.include_router(health_page_router, prefix="/api")
+    app.include_router(integrity_router, prefix="/api")
+    app.include_router(addresses_router, prefix="/api")
     app.include_router(audit_router, prefix="/api")
 
     async def app_error(_: Request, exc: Exception) -> JSONResponse:
@@ -465,6 +556,15 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     return app
 
 
+def _listener_tls(config: AppConfig) -> tuple[Path, Path] | None:
+    """The web interface's certificate for TLS syslog (ADR-0021 row 6); on a loopback bind,
+    the generated self-signed one."""
+    tls = resolve_tls(config) or ensure_self_signed(
+        config.paths.data_dir / "tls", config.server.public_names
+    )
+    return tls.cert, tls.key
+
+
 def run() -> None:
     import uvicorn
 
@@ -476,6 +576,11 @@ def run() -> None:
         print(f"error: {exc}", file=sys.stderr)
         raise SystemExit(2) from exc
 
+    budget = server_budget_mb(config.server.memory_limit_mb)
+    if budget is not None and sys.platform.startswith("linux"):
+        # An oversized query then fails with an error, not a kernel kill of the server (D58).
+        resource.setrlimit(resource.RLIMIT_AS, (budget << 20, budget << 20))
+        print(f"Memory limit: {budget} MB (server.memory_limit_mb)")
     scheme = "https" if tls else "http"
     print(f"{PRODUCT_NAME} listening on {scheme}://{config.server.host}:{config.server.port}")
     if tls is not None and tls.self_signed:

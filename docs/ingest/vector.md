@@ -2,7 +2,7 @@
 
 Vector receives syslog and writes files; Remnant tails the folder.
 
-**Status: config checked against the Vector 0.60 reference docs and vector.dev (2026-10-10), not yet run.** Vector releases could not be downloaded in the build environment. Run it once on the homelab VM ([homelab test plan](../install/homelab-test.md), part 4) and update this line with the version and date.
+**Status: tested with Vector 0.59.0 on Ubuntu 24.04 (2026-10-17).** The `release-checks` workflow runs the config below as written: UDP and TCP syslog land in one file per sender with each line unchanged.
 
 ## 1. Receive and write one file per sender
 

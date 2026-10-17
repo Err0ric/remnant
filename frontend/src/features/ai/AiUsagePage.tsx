@@ -1,16 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type KeyboardEvent, type ReactNode } from "react";
 import { Command, PageHeader } from "@/components/shell/PageHeader";
-import { ApiError, api, type AiStatus } from "@/lib/api";
+import { ApiError, api, type AiStatus, type DataLevel } from "@/lib/api";
 import { rangeStart, TIME_RANGES, type TimeRangeId } from "@/lib/search";
-import { navigate } from "@/lib/route";
+import { navigate, useSectionTab } from "@/lib/route";
+import { AgentsCard } from "./AgentsCard";
 import { AiSettings } from "./AiSettings";
 import { StatusBadge, StatusPicker } from "./StatusBadge";
 
-type Tab = "services" | "mcp" | "people" | "settings";
+type Tab = "services" | "agents" | "mcp" | "people" | "settings";
 const LABELS: Record<Tab, string> = {
   services: "Services",
-  mcp: "Agents and MCP",
+  agents: "Agents",
+  mcp: "MCP servers",
   people: "Claude usage",
   settings: "Review and alerts",
 };
@@ -23,6 +25,13 @@ const KIND: Record<string, string> = {
   image: "Image and voice",
   meetings: "Meetings",
   writing: "Writing",
+};
+
+const LEVELS: DataLevel[] = ["public", "internal", "confidential"];
+const LEVEL_LABEL: Record<DataLevel, string> = {
+  public: "Public",
+  internal: "Internal",
+  confidential: "Confidential",
 };
 
 function when(iso: string | null): string {
@@ -39,7 +48,6 @@ interface AiUsagePageProps {
 /** AI usage (ADR-0015 row 8): services, agents and MCP servers, and Claude usage. */
 export function AiUsagePage({ isAdmin }: AiUsagePageProps) {
   const client = useQueryClient();
-  const [tab, setTab] = useState<Tab>("services");
   const [range, setRange] = useState<TimeRangeId>("7d");
   const usage = useQuery({
     queryKey: ["ai-usage", range],
@@ -48,6 +56,10 @@ export function AiUsagePage({ isAdmin }: AiUsagePageProps) {
   });
   const setService = useMutation({
     mutationFn: (v: { id: string; status: AiStatus }) => api.setAiServiceStatus(v.id, v.status),
+    onSuccess: () => void client.invalidateQueries({ queryKey: ["ai-usage"] }),
+  });
+  const setLevel = useMutation({
+    mutationFn: (v: { id: string; level: DataLevel | null }) => api.setAiDataLevel(v.id, v.level),
     onSuccess: () => void client.invalidateQueries({ queryKey: ["ai-usage"] }),
   });
   const setMcp = useMutation({
@@ -59,8 +71,9 @@ export function AiUsagePage({ isAdmin }: AiUsagePageProps) {
     },
   });
   const tabs: Tab[] = isAdmin
-    ? ["services", "mcp", "people", "settings"]
-    : ["services", "mcp", "people"];
+    ? ["services", "agents", "mcp", "people", "settings"]
+    : ["services", "agents", "mcp", "people"];
+  const [tab, setTab] = useSectionTab<Tab>(tabs);
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
     const i = tabs.indexOf(tab);
@@ -175,6 +188,7 @@ export function AiUsagePage({ isAdmin }: AiUsagePageProps) {
                 <tr className="border-b border-border text-text-secondary">
                   <th className={TH}>Service</th>
                   <th className={TH}>Review</th>
+                  <th className={TH}>Allowed data</th>
                   <th className={`${TH} text-right`}>People</th>
                   <th className={`${TH} text-right`}>Machines</th>
                   <th className={`${TH} text-right`}>Events</th>
@@ -200,6 +214,32 @@ export function AiUsagePage({ isAdmin }: AiUsagePageProps) {
                         />
                       ) : (
                         <StatusBadge status={u.service.status} />
+                      )}
+                    </td>
+                    <td className={TD}>
+                      {isAdmin ? (
+                        <select
+                          aria-label={`Allowed data for ${u.service.name}`}
+                          value={u.service.data_level ?? ""}
+                          onChange={(e) =>
+                            setLevel.mutate({
+                              id: u.service.id,
+                              level: (e.target.value || null) as DataLevel | null,
+                            })
+                          }
+                          className="h-8 rounded border border-border-strong bg-inset px-2 text-sm"
+                        >
+                          <option value="">Not set</option>
+                          {LEVELS.map((l) => (
+                            <option key={l} value={l}>
+                              {LEVEL_LABEL[l]}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span className="text-text-secondary">
+                          {u.service.data_level ? LEVEL_LABEL[u.service.data_level] : "Not set"}
+                        </span>
                       )}
                     </td>
                     <td className={`${TD} text-right font-mono tabular-nums`}>{u.people}</td>
@@ -336,6 +376,8 @@ export function AiUsagePage({ isAdmin }: AiUsagePageProps) {
             </table>
           </Card>
         ) : null}
+
+        {tab === "agents" ? <AgentsCard /> : null}
 
         {tab === "settings" && isAdmin ? <AiSettings /> : null}
       </div>

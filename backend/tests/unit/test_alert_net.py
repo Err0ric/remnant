@@ -93,3 +93,17 @@ def test_smtp_needs_tls_except_on_loopback(monkeypatch: pytest.MonkeyPatch) -> N
         check_smtp_host("smtp.example.net", 25, "none")
     with pytest.raises(ParamInvalidError, match="not allowed"):
         check_smtp_host("meta.example.net", 587, "starttls")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://[64:ff9b::a9fe:a9fe]/latest/meta-data",  # NAT64 form of 169.254.169.254
+        "https://[2002:a9fe:a9fe::1]/latest/meta-data",  # 6to4 form
+        "https://[::ffff:169.254.169.254]/latest/meta-data",
+        "http://100.100.100.200/latest/meta-data",  # Alibaba Cloud metadata
+    ],
+)
+def test_metadata_addresses_in_other_forms_are_refused(url: str) -> None:
+    with pytest.raises(ParamInvalidError, match="not allowed"):
+        check_url("webhook", url)

@@ -9,7 +9,7 @@ Items noted during a slice that belong to a later slice. Move into the slice pla
 | Read-only MCP server (SPEC 3.8, ADR-0003) | 7 | Roadmap, 2026-10-10 |
 | Octet-counted framing for file sources (watcher reads newline-framed files; octet counting is a TCP framing, covered in the framer for the Slice 7 listener) | 7 | Slice 1 review |
 | Per-partition classification summary written at ingest, so the gate's event-label check does not scan the `classification` column on every cloud call | 5 | Gate review, 2026-10-10 |
-| Hash chain over `llm_calls` and `audit_log` rows (tamper evidence beyond triggers) | 8 | Gate review, 2026-10-10 |
+| Hash chain over `llm_calls` rows (`audit_log` is chained since D59) | 8 | Gate review, 2026-10-10 |
 | Cache Ask sample values per scope for a few minutes instead of 10 GROUP BY scans per question | 6 | Ask review, 2026-10-10 |
 | DNS query name and type columns (`query_hostname`, `query_type`, additive schema change); DNS templates use `message` and `unmapped` until then | 3 | Starter batch 2 |
 | Vendor CEF and LEEF templates with `class_by` on signature or event id | 3 | Starter batch 1 |
@@ -36,4 +36,8 @@ Items noted during a slice that belong to a later slice. Move into the slice pla
 | PowerShell MCP inventory script: first run on a Windows machine (the Python version is tested; no PowerShell in CI) | 7 | AI usage PR, 2026-10-14 |
 | M365 and Anthropic connectors: first run against a live tenant and a live Admin API key; record any response shapes the fakes missed | 7 | Connector PR, 2026-10-14 |
 | Microsoft 365 consent link on the add-source form (`https://login.microsoftonline.com/{tenant}/adminconsent?client_id=...`) | 7 | Connector PR, 2026-10-14 |
-
+| Active checks for watched devices (ping, TCP port): **not planned**. Uptime is an uptime monitor's job; ingest its alerts as a source instead (ADR-0019 row 6) | n/a | Health page, 2026-10-15 |
+| Salesforce connector (event log files, login history, setup audit trail; Einstein and Agentforce AI audit needs Data Cloud). Later, when asked for | Later | Owner question, 2026-10-15 |
+| README screenshots still to add: Ask follow-ups (needs a model), Identities, Sources with Microsoft 365 (needs a tenant). The rest were refreshed 2026-10-17 with the new shell | 6 | README review, 2026-10-15 |
+| Okta, Google Workspace, and AWS CloudTrail connectors (Slice 7 list). Each needs a sign-in choice first (Okta API token or OAuth service app; Google service account with domain-wide delegation; CloudTrail from the S3 bucket or the LookupEvents API) | Later | Owner, 2026-10-17: not needed now |
+| Object-storage tier for older partitions, queried in place (Slice 8). Deferred by the owner 2026-10-17: querying S3 in place needs DuckDB external access, which rule 7 turns off on every query connection. Needs an ADR for a separate, non-user connection first; a NAS mount used as the lake path covers small installs meanwhile | Later | Slice 8 planning, 2026-10-17 |

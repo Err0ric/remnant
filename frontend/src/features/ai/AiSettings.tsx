@@ -68,7 +68,20 @@ function WatchSettings() {
             checked={value.sensitive}
             onChange={(e) => set({ sensitive: e.target.checked })}
           />
-          <span>Alert on sensitive-data signals (keys, card numbers, SSNs)</span>
+          <span>
+            Alert on sensitive-data signals (keys, card numbers, SSNs), unless the service is set to
+            allow Confidential data
+          </span>
+        </label>
+        <label className="flex items-center gap-2 pl-6">
+          <input
+            type="checkbox"
+            checked={value.agents ?? false}
+            onChange={(e) => set({ agents: e.target.checked })}
+          />
+          <span>
+            Alert when an AI agent changes: a new tool, MCP server, or model, or a busy hour
+          </span>
         </label>
         <div className="flex flex-col gap-1 pl-6">
           <span className="text-text-secondary">Send to</span>

@@ -7,23 +7,10 @@ injection guidance). Numbers stay numbers.
 
 import csv
 import io
-import json
 from collections.abc import Sequence
 from typing import Any
 
-_FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
-
-
-def _cell(value: Any) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, dict | list):
-        text = json.dumps(value)
-    elif isinstance(value, str):
-        text = value
-    else:
-        return str(value)
-    return "'" + text if text.startswith(_FORMULA_START) else text
+from app.core.csvsafe import csv_cell as _cell
 
 
 def to_csv(columns: Sequence[str], rows: Sequence[Sequence[Any]]) -> str:

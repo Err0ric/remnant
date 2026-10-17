@@ -34,7 +34,7 @@ from defusedxml import DefusedXmlException
 
 from app.ai.sensitive import scan
 from app.core.errors import ParamInvalidError
-from app.ingest.sources import spool_name
+from app.ingest.sources import SPOOL_SUFFIX, spool_name
 
 MAX_BODY = 4 * 1024 * 1024  # bytes, after decompression
 MAX_RECORDS = 2000  # log records plus data points in one request
@@ -429,11 +429,13 @@ def lines(records: Iterable[dict[str, Any] | NativeLine]) -> list[bytes]:
 
 
 class Spool:
-    """Appends whole lines to `<root>/<source_id>/<hour>.jsonl`, one writer at a time per
-    source, so the ingest worker (which only reads complete lines) never sees half of one."""
+    """Appends whole records to `<root>/<source_id>/<hour>.<suffix>`, one writer at a time
+    per source, so the ingest worker (which only reads complete records) never sees half of
+    one. `kind` is the source kind: OTLP JSON lines, or syslog records (ADR-0021 row 2)."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, kind: str = "otlp") -> None:
         self._root = root
+        self._kind = kind
         self._locks: dict[str, threading.Lock] = {}
         self._guard = threading.Lock()
 
@@ -445,7 +447,8 @@ class Spool:
         folder = self._root / source_id
         if not folder.is_dir():
             return 0
-        return sum(p.stat().st_size for p in folder.glob("*.jsonl") if p.is_file())
+        pattern = f"*{SPOOL_SUFFIX[self._kind]}"
+        return sum(p.stat().st_size for p in folder.glob(pattern) if p.is_file())
 
     def append(self, source_id: str, chunk: list[bytes], now: datetime) -> int:
         if not chunk:
@@ -455,9 +458,20 @@ class Spool:
             if self.waiting(source_id) > SPOOL_CAP:
                 raise SpoolFullError(source_id)
             folder.mkdir(parents=True, exist_ok=True, mode=0o700)
-            path = folder / spool_name(now)
-            with open(_open_append(path), "ab", closefd=True) as fh:
-                fh.write(b"".join(chunk))
+            path = folder / spool_name(now, self._kind)
+            fd = _open_append(path)
+            try:
+                start = os.fstat(fd).st_size
+                data = memoryview(b"".join(chunk))
+                try:
+                    while data:
+                        data = data[os.write(fd, data) :]
+                except OSError:
+                    # A short write (disk full) must not leave half a record for the reader.
+                    os.ftruncate(fd, start)
+                    raise
+            finally:
+                os.close(fd)
         return len(chunk)
 
 

@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from app.ai.agents import agents
 from app.ai.catalog import Catalog
 from app.ai.usage import HOST_EXPR, MACHINE_EXPR, MCP_EXPR, NO_MCP_NAMES, WHO_EXPR, _values
 from app.alerts.dispatch import AlertDispatcher
@@ -29,6 +30,7 @@ from app.meta.db import MetaDB
 MAX_TARGETS = 10
 BATCH = 20_000  # rows read per check; the cursor moves past what was read
 LOOKBACK_FIRST_RUN = timedelta(hours=1)
+AGENT_CHECK_EVERY = timedelta(hours=1)
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +41,7 @@ class WatchSettings:
     target_ids: list[str]
     updated_at: str | None
     updated_by: str | None
+    agents: bool = False  # alert when an AI agent changes (ADR-0020 row 3)
 
 
 def _ts(value: datetime) -> str:
@@ -76,6 +79,7 @@ class AiWatch:
             list(json.loads(r["target_ids"])),
             r["updated_at"],
             r["updated_by"],
+            bool(r["agents"]),
         )
 
     def configure(
@@ -86,6 +90,7 @@ class AiWatch:
         target_ids: list[str],
         actor: str,
         ip: str | None,
+        agents: bool = False,
     ) -> WatchSettings:
         wanted = sorted(set(target_ids))
         if len(wanted) > MAX_TARGETS:
@@ -98,11 +103,12 @@ class AiWatch:
                 raise ParamInvalidError("Unknown alert target")
             con.execute(
                 "INSERT INTO ai_watch (id, enabled, include_unreviewed, sensitive, target_ids,"
-                " cursor, updated_at, updated_by) VALUES (1, ?, ?, ?, ?, ?, ?, ?)"
+                " cursor, updated_at, updated_by, agents) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)"
                 " ON CONFLICT (id) DO UPDATE SET enabled = excluded.enabled,"
                 " include_unreviewed = excluded.include_unreviewed,"
                 " sensitive = excluded.sensitive, target_ids = excluded.target_ids,"
-                " updated_at = excluded.updated_at, updated_by = excluded.updated_by",
+                " updated_at = excluded.updated_at, updated_by = excluded.updated_by,"
+                " agents = excluded.agents",
                 (
                     int(enabled),
                     int(include_unreviewed),
@@ -111,6 +117,7 @@ class AiWatch:
                     now,  # first run starts from now: no flood of old sightings
                     now,
                     actor,
+                    int(agents),
                 ),
             )
         after = self.settings()
@@ -169,6 +176,11 @@ class AiWatch:
         if fresh_ai:
             self._alert("ai_new", fresh_ai, s.target_ids, since, now)
             sent += 1
+        # Claude Code sends to the Anthropic API; a service cleared for Confidential data
+        # (ADR-0020 row 4) is where sensitive data may go, so it is not an alert.
+        api = services.get("anthropic_api")
+        if api is not None and api.data_level == "confidential":
+            sensitive = {}
         if sensitive and s.sensitive:
             lines = [
                 f"{who}: " + ", ".join(f"{c} x{n}" for c, n in sorted(cats.items()))
@@ -178,7 +190,49 @@ class AiWatch:
             sent += 1
         with self._meta.connect() as con:
             con.execute("UPDATE ai_watch SET cursor = ? WHERE id = 1", (newest.isoformat(),))
+        if s.agents:
+            sent += self._agents(s, now)
         return sent
+
+    def _agents(self, s: WatchSettings, now: datetime) -> int:
+        """Hourly: one alert listing agent changes not alerted before (ADR-0020 row 3)."""
+        with self._meta.connect() as con:
+            row = con.execute("SELECT agents_checked_at FROM ai_watch WHERE id = 1").fetchone()
+        last = _parse(row["agents_checked_at"] if row else None)
+        if last is not None and now - last < AGENT_CHECK_EVERY:
+            return 0
+        lines: list[str] = []
+        for a in agents(self._engine, None, now):
+            if a.state != "changed":
+                continue
+            who = f" ({', '.join(a.owners)})" if a.owners else ""
+            for item in a.new_items:
+                if self._agent_first(a.agent, item["kind"], item["name"], now):
+                    lines.append(f"{a.label}{who}: new {item['kind']} {item['name']}")
+            if a.recent_peak is not None and self._agent_first(
+                a.agent, "busy hour", now.date().isoformat(), now
+            ):
+                lines.append(
+                    f"{a.label}{who}: {a.recent_peak} events in an hour"
+                    f" (usual busiest {a.usual_peak})"
+                )
+        with self._meta.connect() as con:
+            con.execute(
+                "UPDATE ai_watch SET agents_checked_at = ? WHERE id = 1", (now.isoformat(),)
+            )
+        if not lines:
+            return 0
+        self._alert("ai_agent", lines, s.target_ids, now - AGENT_CHECK_EVERY, now)
+        return 1
+
+    def _agent_first(self, agent: str, kind: str, item: str, now: datetime) -> bool:
+        with self._meta.connect() as con:
+            cur = con.execute(
+                "INSERT OR IGNORE INTO ai_agent_items (agent, item_kind, item, first_seen)"
+                " VALUES (?, ?, ?, ?)",
+                (agent[:300], kind[:40], item[:200], now.isoformat()),
+            )
+            return cur.rowcount == 1
 
     def _first(self, kind: str, name: str, subject: str, now: datetime) -> bool:
         with self._meta.connect() as con:
@@ -194,7 +248,7 @@ class AiWatch:
     ) -> None:
         detail = "; ".join(lines[:5]) + (f"; and {len(lines) - 5} more" if len(lines) > 5 else "")
         self._audit.write(
-            "ai.sighting" if kind == "ai_new" else "ai.sensitive",
+            {"ai_new": "ai.sighting", "ai_agent": "ai.agent_change"}.get(kind, "ai.sensitive"),
             "success",
             None,
             None,
@@ -203,7 +257,11 @@ class AiWatch:
         if not targets:
             return
         alert = Alert(
-            kind="ai_new" if kind == "ai_new" else "ai_sensitive",
+            kind="ai_new"
+            if kind == "ai_new"
+            else "ai_agent"
+            if kind == "ai_agent"
+            else "ai_sensitive",
             title="AI watch",
             detail=detail,
             count=len(lines),
@@ -265,4 +323,5 @@ def _plain(s: WatchSettings) -> dict[str, Any]:
         "include_unreviewed": s.include_unreviewed,
         "sensitive": s.sensitive,
         "targets": s.target_ids,
+        "agents": s.agents,
     }

@@ -1,11 +1,11 @@
 """Write event rows to the Parquet lake, partitioned by source and day (SPEC 3.3).
 
 Layout: <lake>/source=<source_id>/day=YYYY-MM-DD/part-<uuid7>.parquet
-Files are written to a temporary name and renamed, so readers never see a
-half-written file. Buffering, compaction, and retention sit outside this class.
+Files are written to a temporary name, flushed to disk, and renamed (durable.publish),
+so readers never see a half-written file, even after a power cut. Buffering,
+compaction, and retention sit outside this class.
 """
 
-import os
 from collections import defaultdict
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -13,16 +13,18 @@ from pathlib import Path
 from typing import Any
 
 import pyarrow as pa
-import pyarrow.parquet as pq
 
 from app.core.ids import uuid7
 from app.core.jsonsafe import clean_text
 from app.core.schema import COLUMN_NAMES, arrow_schema
+from app.ingest.durable import publish
+from app.ingest.integrity import LakeEvents, NoEvents
 
 
 class LakeWriter:
-    def __init__(self, lake_dir: Path) -> None:
+    def __init__(self, lake_dir: Path, events: LakeEvents | None = None) -> None:
         self._lake = lake_dir
+        self._events = events or NoEvents()
         self._schema = arrow_schema()
 
     def write(self, rows: Sequence[dict[str, Any]]) -> list[Path]:
@@ -40,10 +42,8 @@ class LakeWriter:
                 schema=self._schema,
             )
             final = folder / f"part-{uuid7().hex}.parquet"
-            tmp = folder / f".{final.name}.tmp"
-            pq.write_table(table, tmp, compression="zstd")
-            os.replace(tmp, final)
-            written.append(final)
+            written.append(publish(table, final))
+        self._events.added(written)  # the integrity ledger (ADR-0022)
         return written
 
 

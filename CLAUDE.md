@@ -186,7 +186,7 @@ A slice is done when every box below is checked, demoed end to end from a fresh 
 - [x] Parquet partitioned by `source/day`; compaction and retention jobs run and are tested
 - [x] Query mode: SQL editor, guard enforced, results table with raw/parsed toggle, export CSV
 - [x] Envelope test matrix and ingest integration test pass
-- [ ] `docs/ingest/` has rsyslog, syslog-ng, and Vector guides that were actually tried once (rsyslog and syslog-ng tried; Vector pending on the homelab VM)
+- [x] `docs/ingest/` has rsyslog, syslog-ng, and Vector guides that were actually tried once (rsyslog and syslog-ng on the homelab; Vector 0.59.0 on an Ubuntu 24.04 VM by `release-checks.yml`)
 - [x] CLI: `login` (keychain token), `tail -n/-f`, `query`, `--since`, `--where`, `--format table|json|csv|raw`, control sequences stripped
 
 ### Slice 2: provider + Ask mode + saved searches + team access
@@ -242,24 +242,25 @@ A slice is done when every box below is checked, demoed end to end from a fresh 
 - [x] Light mode complete per `docs/DESIGN.md` (every page checked in light; all text tokens meet WCAG AA 4.5:1 in both themes)
 - [x] Command palette covers navigation, sources, saved searches, run, provider switch
 - [x] CLI `tui` (Textual): query box, results table, tail pane (baseline; optional `tui` extra)
-- [ ] Install guides: team VM (Compose and systemd) and single user (written in `docs/install/`; Compose and single-user tried; the systemd unit's command and environment tried, the unit itself pending a run on a real host)
+- [x] Install guides: team VM (Compose and systemd) and single user (Compose and single-user tried on the homelab; the systemd unit, copied from the guide, installed and run on an Ubuntu 24.04 VM by `release-checks.yml`: setup link, HTTPS health, restart, and a syslog message ingested and queried under the sandbox, `systemd-analyze security` 1.4 OK)
 - [x] README states tested scale (ingest rate, lake size, query latency on named hardware) (2 vCPU cloud VM and 4 vCPU homelab container via `scripts/bench.py`)
-- [ ] SBOM generated, images pinned, release tagged `v0.1.0` (SBOM from lockfiles in every CI run via `scripts/sbom.py`; image digests and the tag pending)
+- [x] SBOM generated, images pinned, release tagged `v0.1.0` (SBOM from lockfiles in every CI run via `scripts/sbom.py`; base images, compose images, and workflow actions pinned by digest or commit and enforced by `check-architecture.sh`; tagged 2026-10-17 on the owner's go-ahead)
 
 ### Slice 7 (v0.2): connectors
 - [x] `Connector` protocol, scheduler in the ingest worker, checkpoints, de-duplication, backoff, health on the Sources page
 - [x] Microsoft 365 connector per ADR-0002: Management Activity API content types and Graph sign-ins, directory audits, alerts; setup guide with exact permissions; templates mapping to OCSF (tested against fake endpoints; live tenant pending)
-- [ ] Native syslog listener (UDP, TCP with octet counting, TLS)
-- [ ] Read-only MCP server per ADR-0003: `get_schema` and `run_query` only, per-user tokens, `local_only` results withheld unless the endpoint is marked local, every call audited, off by default
+- [x] Native syslog listener (UDP, TCP with octet counting, TLS) per ADR-0021 (tested with real sockets in the suite and a live server; first device on the homelab pending)
+- [x] Read-only MCP server per ADR-0003: `get_schema` and `run_query` only, per-user tokens, `local_only` results withheld unless the endpoint is marked local, every call audited, off by default (tested in the suite and against the official MCP Python client; Claude Desktop and Claude Code against the homelab pending)
 - [x] AI usage visibility per ADR-0015: OTLP/HTTP JSON receiver with per-source tokens (content dropped by default); Claude Code telemetry template; AI service catalog and shadow-AI view; MCP inventory (telemetry and endpoint script) with allowlist; AI usage page; AI watch alerts; Anthropic usage, cost, Claude Code, analytics, and compliance activity connectors (connectors tested against a fake API; live key and the PowerShell script pending)
 - [x] Optional endpoint agent per ADR-0017: generated OpenTelemetry Collector configs per agent group, Windows XML and journald conversion at the receiver, install guide (configs tested by conversion of sample payloads; first run on real endpoints pending)
+- [x] Health page per ADR-0019: one view of sources, connectors, per-machine agents, watched devices (seen in events, never contacted), alert targets, and schedules; silence and volume-drop alerts for watched devices
 - [x] Investigation per ADR-0016: AI toggle in the Search bar, facet sidebar, Suspicious presets, entity risk, investigator graph with AI flow mode
-- [ ] Okta, Google Workspace, AWS CloudTrail connectors
+- [ ] Okta, Google Workspace, AWS CloudTrail connectors (deferred by the owner 2026-10-17; in `docs/BACKLOG.md`)
 
 ### Slice 8 (v0.3): enrichment, integrity, tiering
 - [ ] GeoIP/ASN and threat intel enrichment at query time, with feed freshness shown
-- [ ] Hash-chained partitions, scheduled verification, integrity report export
-- [ ] Object-storage tier for older partitions, queried in place
+- [x] Hash-chained partitions, scheduled verification, integrity report export (per ADR-0022: a ledger of every lake file plus an audit row chain, daily and on-demand checks, signed seals with optional off-server copies, signed JSON report)
+- [ ] Object-storage tier for older partitions, queried in place (deferred by the owner 2026-10-17; in `docs/BACKLOG.md`)
 - [ ] Case handoff to TheHive / DFIR-IRIS / webhook
 
 ## 8. How to work in a session

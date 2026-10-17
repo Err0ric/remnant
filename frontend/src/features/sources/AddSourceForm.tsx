@@ -18,6 +18,7 @@ import {
   type SourceFormat,
   type SourceInput,
   type SourceKind,
+  type SyslogSettings,
 } from "@/lib/api";
 
 const ID_PATTERN = /^[a-z0-9][a-z0-9_]{0,63}$/;
@@ -31,6 +32,14 @@ const KIND_HELP: Record<SourceKind, string> = {
   m365: "Read every 5 minutes with a read-only app registration. See docs/install/m365.md for the exact permissions.",
   anthropic:
     "Reports are read every 5 minutes once each hour or day is final. No chat content is read.",
+  syslog:
+    "Devices send syslog to this server on the port below. In Docker, publish the port too (docs/install/syslog-listener.md).",
+};
+
+const DEFAULT_PORT: Record<SyslogSettings["protocol"], number> = {
+  udp: 5514,
+  tcp: 5514,
+  tls: 6514,
 };
 
 interface AddSourceFormProps {
@@ -66,6 +75,12 @@ export function AddSourceForm({ allowedRoots, initial, onDone }: AddSourceFormPr
   const [m365, setM365] = useState<M365Settings>(M365_DEFAULTS);
   const [anthropic, setAnthropic] = useState<AnthropicSettings>(ANTHROPIC_DEFAULTS);
   const [credentials, setCredentials] = useState<ApiCredentials>({});
+  const [syslog, setSyslog] = useState<SyslogSettings>({
+    protocol: "udp",
+    port: DEFAULT_PORT.udp,
+    allowed_senders: [],
+  });
+  const [senders, setSenders] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
   const templates = useQuery({
     queryKey: ["templates"],
@@ -118,6 +133,23 @@ export function AddSourceForm({ allowedRoots, initial, onDone }: AddSourceFormPr
       });
       return;
     }
+    if (kind === "syslog") {
+      add.mutate({
+        ...form,
+        kind: "syslog",
+        format: "syslog",
+        path: "",
+        glob: "*",
+        syslog: {
+          ...syslog,
+          allowed_senders: senders
+            .split(/[\s,]+/)
+            .map((x) => x.trim())
+            .filter(Boolean),
+        },
+      });
+      return;
+    }
     if (kind === "loki") {
       add.mutate({
         ...form,
@@ -144,7 +176,7 @@ export function AddSourceForm({ allowedRoots, initial, onDone }: AddSourceFormPr
       className="rounded-card border border-border bg-surface p-4"
     >
       <h2 className="mb-3 text-base font-semibold">Add source</h2>
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <Field
           label="Source ID"
           help="Used in queries, e.g. linux_auth or paloalto_traffic. Cannot be changed later."
@@ -166,12 +198,14 @@ export function AddSourceForm({ allowedRoots, initial, onDone }: AddSourceFormPr
               setCredentials({});
               if (next === "otlp" || next === "m365")
                 setForm((f) => ({ ...f, format: "json", template_id: AUTO_PARSER }));
+              if (next === "syslog") setForm((f) => ({ ...f, format: "syslog" }));
               if (next === "anthropic")
                 setForm((f) => ({ ...f, format: "json", template_id: "anthropic_reports" }));
             }}
             className="h-9 rounded border border-border-strong bg-inset px-2 text-sm text-text"
           >
             <option value="file">A file or folder on this server</option>
+            <option value="syslog">Syslog sent over the network (UDP, TCP, TLS)</option>
             <option value="loki">Grafana Loki</option>
             <option value="otlp">OpenTelemetry: Claude Code, endpoint agents, MCP inventory</option>
             <option value="m365">Microsoft 365: audit, Entra sign-ins, alerts</option>
@@ -198,6 +232,47 @@ export function AddSourceForm({ allowedRoots, initial, onDone }: AddSourceFormPr
             onAnthropic={setAnthropic}
             onCredentials={setCredentials}
           />
+        ) : kind === "syslog" ? (
+          <div className="flex flex-col gap-1">
+            <span id="listener-label" className="text-sm font-semibold">
+              Listen on
+            </span>
+            <div className="flex gap-2" role="group" aria-labelledby="listener-label">
+              <select
+                aria-label="Protocol"
+                value={syslog.protocol}
+                onChange={(e) => {
+                  const protocol = e.target.value as SyslogSettings["protocol"];
+                  // Follow the usual port for the protocol until the admin picks one.
+                  setSyslog((v) => ({
+                    ...v,
+                    protocol,
+                    port: v.port === DEFAULT_PORT[v.protocol] ? DEFAULT_PORT[protocol] : v.port,
+                  }));
+                }}
+                className="h-9 rounded border border-border-strong bg-inset px-2 text-sm text-text"
+              >
+                <option value="udp">UDP</option>
+                <option value="tcp">TCP</option>
+                <option value="tls">TLS (encrypted TCP)</option>
+              </select>
+              <input
+                aria-label="Port"
+                type="number"
+                min={1024}
+                max={65535}
+                required
+                value={syslog.port}
+                onChange={(e) => setSyslog((v) => ({ ...v, port: Number(e.target.value) }))}
+                className="h-9 w-28 rounded border border-border-strong bg-inset px-2 font-mono text-sm text-text"
+              />
+            </div>
+            <p className="text-sm text-text-muted">
+              {syslog.protocol === "tls"
+                ? "Uses this server's certificate. Senders must trust it."
+                : "Plain text on the network. Use TLS when logs cross networks you do not control."}
+            </p>
+          </div>
         ) : kind === "otlp" ? null : (
           <Field
             label="File or folder"
@@ -230,7 +305,14 @@ export function AddSourceForm({ allowedRoots, initial, onDone }: AddSourceFormPr
             `Parser: ${parserName(form.template_id, form.format, templates.data ?? [])}`,
             kind === "file" ? `Pattern: ${form.glob}` : null,
             kind === "loki" ? `Sign-in: ${loki.auth === "none" ? "none" : loki.auth}` : null,
-            kind === "file" || kind === "loki" ? `Time zone: ${form.timezone}` : null,
+            kind === "file" || kind === "loki" || kind === "syslog"
+              ? `Time zone: ${form.timezone}`
+              : null,
+            kind === "syslog"
+              ? senders.trim()
+                ? "Senders: listed"
+                : "Senders: private networks"
+              : null,
             `Keep ${form.retention_days} days`,
           ]
             .filter(Boolean)
@@ -273,7 +355,27 @@ export function AddSourceForm({ allowedRoots, initial, onDone }: AddSourceFormPr
               className="font-mono"
             />
           ) : null}
-          {kind === "file" || kind === "loki" ? (
+          {kind === "syslog" ? (
+            <div className="flex flex-col gap-1">
+              <label htmlFor="listener-senders" className="text-sm font-semibold">
+                Allowed senders
+              </label>
+              <textarea
+                id="listener-senders"
+                aria-describedby="listener-senders-help"
+                rows={3}
+                value={senders}
+                onChange={(e) => setSenders(e.target.value)}
+                placeholder="192.168.1.0/24"
+                className="rounded border border-border-strong bg-inset px-2 py-1.5 font-mono text-sm text-text"
+              />
+              <p id="listener-senders-help" className="text-sm text-text-muted">
+                Addresses or networks, one per line. Empty accepts private networks only. Messages
+                from anywhere else are dropped and counted.
+              </p>
+            </div>
+          ) : null}
+          {kind === "file" || kind === "loki" || kind === "syslog" ? (
             <Field
               label="Time zone"
               help="For syslog lines without a zone, e.g. America/Los_Angeles."

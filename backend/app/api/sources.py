@@ -28,6 +28,7 @@ from app.ingest.connectors.loki import test_connection as loki_test
 from app.ingest.connectors.m365 import M365Settings, check_certificate
 from app.ingest.connectors.registry import API_KINDS, probe, secret_text
 from app.ingest.discovery import DiscoveryReport, discover
+from app.ingest.listener import ListenerStatus, SyslogListeners
 from app.ingest.quiet import MAX_QUIET_S, MIN_QUIET_S, QuietWatch, Watch
 from app.ingest.sources import SourceConfig, SourceStore, spool_dir
 from app.ingest.watcher import IngestService, SourceStatus, source_state
@@ -49,6 +50,27 @@ def _audit(request: Request) -> AuthService:
     return auth
 
 
+class SenderOut(BaseModel):
+    address: str
+    count: int
+    last_seen: datetime | None
+    allowed: bool
+
+
+class ListenerOut(BaseModel):
+    """A syslog listener source's socket (ADR-0021). Senders are for administrators."""
+
+    protocol: str
+    port: int
+    listening: bool
+    received: int
+    dropped_not_allowed: int
+    dropped_full: int
+    connections: int
+    last_message_at: datetime | None
+    senders: list[SenderOut] = []
+
+
 class StatusOut(BaseModel):
     state: Literal["waiting", "reading", "error", "disabled"]
     files: int
@@ -61,6 +83,7 @@ class StatusOut(BaseModel):
     behind_s: float | None = None  # Loki and API sources: how far reading is behind now
     warnings: list[str] = []  # API sources: feeds that failed while others worked
     retry_at: datetime | None = None  # API sources: next try after errors
+    listener: ListenerOut | None = None  # syslog listener sources
 
 
 class QuietOut(BaseModel):
@@ -105,6 +128,24 @@ def _status_out(source: SourceConfig, st: SourceStatus | None) -> StatusOut:
     )
 
 
+def _listener_out(st: ListenerStatus) -> ListenerOut:
+    senders = sorted(st.senders.items(), key=lambda kv: -kv[1].count)[:50]
+    return ListenerOut(
+        protocol=st.protocol,
+        port=st.port,
+        listening=st.listening,
+        received=st.received,
+        dropped_not_allowed=st.dropped_not_allowed,
+        dropped_full=st.dropped_full,
+        connections=st.connections,
+        last_message_at=st.last_message_at,
+        senders=[
+            SenderOut(address=a, count=v.count, last_seen=v.last_seen, allowed=v.allowed)
+            for a, v in senders
+        ],
+    )
+
+
 @router.get("/sources")
 async def list_sources(request: Request, user: CurrentUser) -> list[SourceOut]:
     sources = await run_in_threadpool(_store(request).list)
@@ -116,6 +157,8 @@ async def list_sources(request: Request, user: CurrentUser) -> list[SourceOut]:
     ingest: IngestService = request.app.state.ingest
     statuses = ingest.status()
     watches = {w.source_id: w for w in await run_in_threadpool(_quiet(request).all)}
+    listeners: SyslogListeners = request.app.state.listeners
+    sockets = listeners.status()
     out = [
         SourceOut(
             **s.model_dump(),
@@ -124,6 +167,10 @@ async def list_sources(request: Request, user: CurrentUser) -> list[SourceOut]:
         )
         for s in sources
     ]
+    for item in out:
+        sock = sockets.get(item.source_id) if item.kind == "syslog" else None
+        if sock is not None:
+            item.status.listener = _listener_out(sock)
     if not admin:
         # The server's folder layout is for administrators only.
         for item in out:
@@ -131,6 +178,8 @@ async def list_sources(request: Request, user: CurrentUser) -> list[SourceOut]:
             item.loki = None  # the Loki address and query are for administrators too
             item.m365 = item.anthropic = None  # tenant and app ids likewise
             item.status.warnings = []
+            if item.status.listener is not None:
+                item.status.listener.senders = []  # addresses on the network: admins only
             if item.status.error:
                 item.status.error = (
                     "This source cannot be read right now. An administrator can see why."

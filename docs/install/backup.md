@@ -80,3 +80,7 @@ Copy the files off the host with whatever you already use for that (a NAS share,
 2. Install on the new server (team-vm.md), but do not open the setup link.
 3. Stop the new server, restore the backup with `--replace`, start it again.
 4. If the new server has a different name, set `APP_PUBLIC_NAME` (and update the redirect URI in Entra if you use [single sign-on](sso-entra.md)). Delete `tls/` in the data folder before starting if you want a new self-signed certificate for the new name.
+
+## Damaged files after a crash
+
+Events are flushed to disk before a file is published, so a power cut leaves either a complete file or none. A file found empty or unreadable anyway (written by a version before this, or a disk fault) is moved to `data/quarantine/<source>/<day>/`, outside what searches read, and the Health page shows how many under **Sources > Data folder**. Nothing there is deleted automatically. Empty files hold nothing and can be removed; for anything else, check the disk, and restore the day from a backup if it matters.

@@ -17,6 +17,22 @@ def test_meta_serves_product_name_from_constant() -> None:
     body = client.get("/api/meta").json()
     assert body["product_name"] == PRODUCT_NAME
     assert body["ocsf_version"]
+    assert body["environment_label"] is None
+
+
+def test_meta_serves_environment_label(tmp_path: Path) -> None:
+    import pytest
+    from pydantic import ValidationError
+
+    from app.core.config import AppConfig, PathsConfig, ServerConfig
+
+    config = AppConfig(
+        server=ServerConfig(environment_label="Lab"), paths=PathsConfig(data_dir=tmp_path)
+    )
+    assert TestClient(create_app(config)).get("/api/meta").json()["environment_label"] == "Lab"
+    assert ServerConfig(environment_label="").environment_label is None
+    with pytest.raises(ValidationError):
+        ServerConfig(environment_label="<script>")
 
 
 def test_schema_columns_match_schema_module() -> None:

@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useContext } from "react";
 import { api, type Cell } from "@/lib/api";
 import { FieldActionsContext } from "./fieldActions";
+import { AddressHolders } from "./AddressHolders";
 import { FieldButton } from "./FieldButton";
 import { ENTITY_COLUMNS, seedInvestigate, type InvestigateSeed } from "@/lib/investigateSeed";
 import { navigate } from "@/lib/route";
@@ -75,6 +76,19 @@ export function EventDetail({ columns, row, selection }: EventDetailProps) {
   const raw = record.raw;
   const actions = useContext(FieldActionsContext);
   const local = record.classification === "local_only";
+  // The header's Investigate opens the first person, address, or host on the event.
+  const focusKey = ["actor_user_name", "src_endpoint_ip", "device_hostname"].find(
+    (k) => typeof record[k] === "string" && record[k] !== "" && ENTITY_COLUMNS[k],
+  );
+  const focus: InvestigateSeed | null = focusKey
+    ? {
+        kind: ENTITY_COLUMNS[focusKey] as InvestigateSeed["kind"],
+        value: String(record[focusKey]),
+      }
+    : null;
+  const srcIp = typeof record.src_endpoint_ip === "string" ? record.src_endpoint_ip : "";
+  const when = typeof record.time === "string" ? record.time : null;
+  const nobody = !record.actor_user_name;
 
   return (
     <div className="border-b border-border bg-surface-expand py-3.5 pl-12 pr-3.5">
@@ -109,14 +123,19 @@ export function EventDetail({ columns, row, selection }: EventDetailProps) {
               {selection.selected ? "Selected for Explain" : "Select for Explain"}
             </button>
           ) : null}
-          <button
-            type="button"
-            disabled
-            title="Investigations arrive in a later release"
-            className="h-7 cursor-default rounded border border-border px-3 text-text-muted"
-          >
-            Investigate
-          </button>
+          {focus ? (
+            <button
+              type="button"
+              title={`Investigate ${focus.value}`}
+              onClick={() => {
+                seedInvestigate(focus);
+                navigate("investigate");
+              }}
+              className="h-7 rounded border border-border-strong px-3 text-text hover:bg-surface-head"
+            >
+              Investigate
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={() => void navigator.clipboard?.writeText(JSON.stringify(record, null, 2))}
@@ -129,6 +148,7 @@ export function EventDetail({ columns, row, selection }: EventDetailProps) {
       {full.isLoading ? (
         <div className="mb-2 text-sm text-text-muted">Loading full event…</div>
       ) : null}
+      {srcIp && nobody && eventId ? <AddressHolders ip={srcIp} at={when} /> : null}
       <div className="flex flex-wrap gap-5">
         <dl className="m-0 grid min-w-0 flex-[1_1_420px] grid-cols-[150px_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-sm">
           {fields.map((k) => (

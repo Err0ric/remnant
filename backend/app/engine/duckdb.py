@@ -51,8 +51,13 @@ class QueryEngine:
         default_limit: int = DEFAULT_LIMIT,
         max_limit: int = MAX_LIMIT,
         timeout_s: float = 30.0,
+        memory_mb: int | None = None,
+        threads: int | None = None,
     ) -> None:
         self._lake = lake_dir
+        # Per query: DuckDB spills or fails past this, instead of growing without bound.
+        self._memory_mb = memory_mb
+        self._threads = threads
         self._default_limit = default_limit
         self._max_limit = max_limit
         self._timeout_s = timeout_s
@@ -83,6 +88,11 @@ class QueryEngine:
             columns = [d[0] for d in cursor.description or []]
         except duckdb.InterruptException as exc:
             raise QueryTimeoutError(f"Query exceeded {limit_s:g}s and was stopped") from exc
+        except (duckdb.OutOfMemoryException, MemoryError) as exc:
+            raise QueryFailedError(
+                "The query needs more memory than this server allows. Narrow the time range "
+                "or the sources, or aggregate before returning rows"
+            ) from exc
         except duckdb.Error as exc:
             raise QueryFailedError(self._scrub(str(exc).splitlines()[0])[:300]) from exc
         finally:
@@ -149,6 +159,10 @@ class QueryEngine:
         dirs = self._source_dirs(scope)
         con = duckdb.connect(":memory:")
         con.execute("SET TimeZone = 'UTC'")
+        if self._memory_mb:
+            con.execute(f"SET memory_limit = '{int(self._memory_mb)}MB'")
+        if self._threads:
+            con.execute(f"SET threads = {int(self._threads)}")
         if dirs:
             globs = ", ".join(_sql_str(str(d / "**" / "*.parquet")) for d in dirs)
             base = f"read_parquet([{globs}], hive_partitioning = false, union_by_name = true)"

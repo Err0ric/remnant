@@ -31,7 +31,7 @@ export function OverviewPage() {
         ) : null}
         {overview.isPending ? <p className="text-sm text-text-secondary">Loading…</p> : null}
         {o ? (
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,360px),1fr))] gap-3">
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,360px),1fr))] items-start gap-3">
             <VolumePanel overview={o} />
             <IngestPanel overview={o} />
             <DetectionsPanel overview={o} />

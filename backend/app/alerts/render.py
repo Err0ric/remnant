@@ -14,7 +14,21 @@ import re
 from dataclasses import dataclass
 from typing import Any, Literal
 
-AlertKind = Literal["flag", "match", "pause", "test", "quiet", "resumed", "ai_new", "ai_sensitive"]
+AlertKind = Literal[
+    "flag",
+    "match",
+    "pause",
+    "test",
+    "quiet",
+    "resumed",
+    "ai_new",
+    "ai_sensitive",
+    "ai_agent",
+    "device_quiet",
+    "device_resumed",
+    "integrity_failed",
+    "integrity_seal",
+]
 _LABEL = {
     "flag": "Flagged",
     "match": "Matches",
@@ -24,6 +38,11 @@ _LABEL = {
     "resumed": "Source resumed",
     "ai_new": "AI use not approved",
     "ai_sensitive": "Sensitive data to AI",
+    "ai_agent": "AI agent changed",
+    "device_quiet": "Device silent",
+    "device_resumed": "Device seen again",
+    "integrity_failed": "Log integrity check failed",
+    "integrity_seal": "Daily integrity seal",
 }
 
 

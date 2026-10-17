@@ -11,6 +11,8 @@ import re
 from collections.abc import Sequence
 from typing import Any, Literal
 
+from app.core.csvsafe import neutralize
+
 OutputFormat = Literal["table", "json", "csv", "raw"]
 
 _ANSI = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])")
@@ -56,7 +58,9 @@ def render(
         writer = csv.writer(buf, lineterminator="\n")
         if header:
             writer.writerow(columns)
-        writer.writerows([[clean(v) if v is not None else "" for v in row] for row in rows])
+        # Values are cleaned of terminal escapes, then made spreadsheet-safe: a log line
+        # starting with = or @ must not run as a formula when the file is opened.
+        writer.writerows([[_csv(v) for v in row] for row in rows])
         return buf.getvalue().rstrip("\n")
     if fmt == "raw":
         idx = columns.index("raw") if "raw" in columns else 0
@@ -94,3 +98,11 @@ def _safe_json(value: Any) -> Any:
     if isinstance(value, str):
         return clean(value) if (_ANSI.search(value) or _CONTROL.search(value)) else value
     return value
+
+
+def _csv(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool | int | float):
+        return str(value)  # numbers stay numbers, negative ones included
+    return neutralize(clean(value))

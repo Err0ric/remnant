@@ -135,6 +135,20 @@ export function SearchPage({
     },
   });
   const exporter = useMutation({ mutationFn: downloadCsv });
+  // A field click in SQL or Ask mode: the server adds the filter to the SQL on screen
+  // (as a syntax tree, value quoted), the editor shows it, and it runs like any query.
+  const refine = useMutation({
+    mutationFn: (v: { field: string; value: string | null; exclude: boolean }) => {
+      const body = lastRequest.current;
+      if (!body) throw new Error("Run a search first");
+      return api.refineQuery({ sql: body.sql, ...v }).then((r) => ({ ...r, params: body.params }));
+    },
+    onSuccess: (r) => {
+      setSql(r.sql);
+      setTab("sql");
+      run.mutate({ sql: r.sql, params: r.params });
+    },
+  });
   // Fields a Simple search filters on that have no value anywhere in the scope: a filter
   // on them silently matches nothing (often because a generic parser left the value in
   // the raw line). One count per column, through the same guarded query path.
@@ -379,6 +393,11 @@ export function SearchPage({
             {exporter.error instanceof Error ? exporter.error.message : "Export failed"}
           </div>
         ) : null}
+        {refine.isError ? (
+          <div role="alert" className={ALERT}>
+            {refine.error instanceof Error ? refine.error.message : "Could not add the filter"}
+          </div>
+        ) : null}
         {run.isError ? (
           <div role="alert" className={ALERT}>
             {run.error instanceof Error ? run.error.message : "Query failed"}
@@ -390,12 +409,20 @@ export function SearchPage({
         <FacetSidebar
           request={facetRequest}
           onTerm={
-            facetRequest?.text !== undefined && tab === "simple"
+            // The results on screen came from a Simple search: refine that search, even
+            // when the Ask or SQL tab has been opened since (the results are still its).
+            facetRequest?.text !== undefined
               ? (term) => {
-                  const next = addTerm(text, term);
+                  const next = addTerm(facetRequest.text ?? "", term);
                   setText(next);
+                  setTab("simple");
                   simple.mutate({ text: next });
                 }
+              : null
+          }
+          onRefine={
+            facetRequest?.sql !== undefined
+              ? (field, value, exclude) => refine.mutate({ field, value, exclude })
               : null
           }
         />

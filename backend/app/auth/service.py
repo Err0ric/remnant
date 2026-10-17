@@ -24,6 +24,9 @@ from app.meta.db import MetaDB
 Mode = Literal["open", "setup", "login"]
 
 
+ACCOUNT_FACTOR = 10
+
+
 class AuthService:
     def __init__(self, config: AppConfig, meta: MetaDB, oidc: OidcClient | None = None) -> None:
         self.users = UserStore(meta)
@@ -33,6 +36,11 @@ class AuthService:
         self.loopback = is_loopback_host(config.server.host)
         self._auth = config.auth
         self._limiter = LoginLimiter(config.auth.login_max_failures, config.auth.login_window_s)
+        # Per account, from any address: a much higher bar, so slow guessing spread over
+        # many addresses still stops, but one address cannot lock someone else out (D58).
+        self._account_limiter = LoginLimiter(
+            config.auth.login_max_failures * ACCOUNT_FACTOR, config.auth.login_window_s
+        )
         self._setup = SetupLink()
         # Own limiter for link redemption, so link guessing and login guessing are counted apart.
         self.admin = UserAdmin(
@@ -111,8 +119,10 @@ class AuthService:
         ip: str | None,
         label: str | None = None,
     ) -> tuple[User, str, str]:
-        keys = [f"ip:{ip}", f"user:{username.lower()}"]
+        name = username.lower()
+        keys = [f"ip:{ip}", f"user-ip:{name}|{ip}"]
         self._reserve(keys)  # counted before the slow check, so parallel attempts cannot race it
+        self._reserve_account(name, keys)
         user = self.users.authenticate(username, password, allowed=self.password_allowed)
         if user is None:
             self.audit.write("auth.login", "failure", None, ip, {"username": username[:100]})
@@ -129,6 +139,7 @@ class AuthService:
             )
             raise LoginFailedError(self._login_failed_message())
         self._limiter.success(keys)
+        self._account_limiter.success([f"user:{name}"])
         self.audit.write("auth.login", "success", user.user_id, ip, {"client": kind})
         token, csrf = self._start(user, kind, label)
         return user, token, csrf
@@ -170,6 +181,11 @@ class AuthService:
 
     def _reserve(self, keys: list[str]) -> None:
         wait = self._limiter.reserve(keys, self._now_s())
+        if wait:
+            raise RateLimitedError("Too many failed attempts. Try again later.", wait)
+
+    def _reserve_account(self, name: str, keys: list[str]) -> None:
+        wait = self._account_limiter.reserve([f"user:{name}"], self._now_s())
         if wait:
             raise RateLimitedError("Too many failed attempts. Try again later.", wait)
 

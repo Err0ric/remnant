@@ -1,8 +1,10 @@
 """`remnant` command-line client (SPEC 5.6): login, query, tail, search, ask."""
 
 import getpass
+import json
 import re
 import shutil
+import sys
 import time
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
@@ -384,6 +386,51 @@ def tui(
         raise typer.Exit(1) from exc
     start = _since(since)
     Tui(_api(server), source, start.isoformat() if start else None, interval).run()
+
+
+@app.command()
+def mcp(server: ServerOpt = None) -> None:
+    """Read-only MCP server for local AI clients, over stdin and stdout (ADR-0003).
+
+    Relays each JSON-RPC line to the server with this computer's token. Point a client
+    such as Claude Desktop at this command. Nothing but MCP messages is written to stdout.
+    """
+    api = _api(server)
+    session: str | None = None
+    for line in sys.stdin.buffer:
+        if not line.strip():
+            continue
+        try:
+            status, body, sid = api.mcp(line.strip(), session)
+        except ApiError as exc:
+            status, body, sid = 0, b"", None
+            typer.echo(f"mcp: {exc}", err=True)
+        session = sid or session
+        if status == 200 and body:
+            sys.stdout.buffer.write(body.replace(b"\n", b"") + b"\n")
+            sys.stdout.buffer.flush()
+        elif status not in (200, 202):
+            reply = _mcp_error(line, status, body)
+            if reply is not None:
+                sys.stdout.buffer.write(reply + b"\n")
+                sys.stdout.buffer.flush()
+
+
+def _mcp_error(line: bytes, status: int, body: bytes) -> bytes | None:
+    """A JSON-RPC error for a request the server refused (off, no access, unreachable)."""
+    try:
+        request = json.loads(line)
+    except ValueError:
+        return None
+    if not isinstance(request, dict) or request.get("id") is None:
+        return None  # a notification gets no reply, even on failure
+    try:
+        detail = str(json.loads(body).get("detail", "")) if body else ""
+    except (ValueError, AttributeError):
+        detail = ""
+    message = detail or ("Cannot reach the server" if status == 0 else f"HTTP {status}")
+    error = {"code": -32000, "message": message[:300]}
+    return json.dumps({"jsonrpc": "2.0", "id": request["id"], "error": error}).encode()
 
 
 def main() -> None:

@@ -27,19 +27,27 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 
 ## Endpoints
 
+### Addresses
+
+| Method | Path | What it does | Query | JSON body (`?` optional) |
+|---|---|---|---|---|
+| `GET` | `/api/addresses/{ip}` | People and machines seen with this address in the 12 hours up to `at` (default now), newest first. | `?at` (optional): date-time |  |
+
 ### Ai
 
 | Method | Path | What it does | Query | JSON body (`?` optional) |
 |---|---|---|---|---|
+| `GET` | `/api/ai/agents` | AI agents (Claude Code per machine and person, MCP clients per machine, API keys) and what changed in the last 24 hours against the 30 days before, from the sources the caller may read. Audited ai.view. |  |  |
 | `GET` | `/api/ai/catalog` | Ai Catalog |  |  |
 | `GET` | `/api/ai/mcp-rules` | Mcp Rules |  |  |
 | `PUT` | `/api/ai/mcp-rules` | Set Mcp Rule |  | `pattern`: string<br>`status`: `approved` &#124; `not_approved`<br>`note`?: string |
 | `POST` | `/api/ai/services` | Add Service |  | `id`: string<br>`name`: string<br>`vendor`?: string<br>`kind`: `chat` &#124; `api` &#124; `coding` &#124; `agent_platform` &#124; `mcp_registry` &#124; `image` &#124; `meetings` &#124; `writing`<br>`domains`: list of string |
 | `DELETE` | `/api/ai/services/{service_id}` | Delete Service |  |  |
+| `PUT` | `/api/ai/services/{service_id}/data-level` | The most sensitive data allowed to this service (ADR-0020 row 4). Audited as ai.service_change. |  | `data_level`: `public` &#124; `internal` &#124; `confidential` |
 | `PUT` | `/api/ai/services/{service_id}/status` | Set Service Status |  | `status`: `approved` &#124; `not_approved` &#124; `unreviewed`<br>`note`?: string |
 | `GET` | `/api/ai/usage` | Services, MCP servers, and Claude usage per person, from the sources the caller may read. Audited ai.view. | `?start` (optional): date-time<br>`?end` (optional): date-time |  |
 | `GET` | `/api/ai/watch` | Get Watch |  |  |
-| `PUT` | `/api/ai/watch` | Put Watch |  | `enabled`: boolean<br>`include_unreviewed`?: boolean<br>`sensitive`?: boolean<br>`target_ids`?: list of string |
+| `PUT` | `/api/ai/watch` | Put Watch |  | `enabled`: boolean<br>`include_unreviewed`?: boolean<br>`sensitive`?: boolean<br>`target_ids`?: list of string<br>`agents`?: boolean |
 
 ### Alerts
 
@@ -95,6 +103,15 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | `PUT` | `/api/groups/{group_id}/members` | Set Group Members |  | `user_ids`: list of string |
 | `PUT` | `/api/groups/{group_id}/sources` | Set Group Sources |  | `source_ids`: list of string |
 
+### Health
+
+| Method | Path | What it does | Query | JSON body (`?` optional) |
+|---|---|---|---|---|
+| `GET` | `/api/health-checks` | Watched devices and per-machine agents, from the sources the caller may read. Audited as health.view. |  |  |
+| `POST` | `/api/health-checks/devices` | Watch a device by IP address or host name; `silence_s` 300 to 86400. Audited as device_watch.change. |  | `name`: string<br>`match`: string<br>`silence_s`: integer<br>`target_ids`?: list of string |
+| `PUT` | `/api/health-checks/devices/{device_id}` | Change a watched device. Audited as device_watch.change. |  | `name`: string<br>`match`: string<br>`silence_s`: integer<br>`target_ids`?: list of string |
+| `DELETE` | `/api/health-checks/devices/{device_id}` | Stop watching a device. Audited as device_watch.change. |  |  |
+
 ### Identities
 
 | Method | Path | What it does | Query | JSON body (`?` optional) |
@@ -103,12 +120,28 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | `PUT` | `/api/identities/aliases` | Set Alias |  | `alias`: string<br>`person`?: string |
 | `PUT` | `/api/identities/domains` | Set Domains |  | `domains`: list of string |
 
+### Integrity
+
+| Method | Path | What it does | Query | JSON body (`?` optional) |
+|---|---|---|---|---|
+| `GET` | `/api/integrity` | Latest seal with its findings, the last 30 days of seals, and the settings. Audited as integrity.view. |  |  |
+| `GET` | `/api/integrity/report` | The signed integrity report for the last `days` days (ADR-0022 row 7). Audited as integrity.report. | `?days` (optional): integer |  |
+| `PUT` | `/api/integrity/settings` | Where failures and the optional daily seal are sent. Targets must exist. |  | `target_ids`?: list of string<br>`send_seals`?: boolean |
+| `POST` | `/api/integrity/verify` | Run a verification now, under the lake lock so compaction and retention wait. Sealed, audited, and alerted the same way as the scheduled run. |  |  |
+
 ### Investigate
 
 | Method | Path | What it does | Query | JSON body (`?` optional) |
 |---|---|---|---|---|
 | `GET` | `/api/entities/graph` | Entity mode: Entity, Sources, Activities, Targets. AI flow: People, AI clients, Tools and MCP servers, Destinations; optionally for one person, MCP server, or service. | `?mode` (optional): `entity` &#124; `ai`<br>`?kind` (optional): `user` &#124; `ip` &#124; `host` &#124; `mcp` &#124; `service`<br>`?value` (optional): string<br>`?start` (optional): date-time<br>`?end` (optional): date-time |  |
 | `GET` | `/api/entities/risk` | Users, source IPs, and hosts ranked by rule matches and flagged schedule runs. | `?start` (optional): date-time<br>`?end` (optional): date-time |  |
+
+### Mcp
+
+| Method | Path | What it does | Query | JSON body (`?` optional) |
+|---|---|---|---|---|
+| `GET` | `/api/mcp/settings` | Get Mcp Settings |  |  |
+| `PUT` | `/api/mcp/settings` | Put Mcp Settings |  | `enabled`: boolean<br>`endpoint_local`: boolean |
 
 ### Meta
 
@@ -147,6 +180,7 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 |---|---|---|---|---|
 | `POST` | `/api/query` | Run Query |  | `sql`: string<br>`start`?: date-time<br>`end`?: date-time<br>`sources`?: list of string<br>`params`?: object |
 | `POST` | `/api/query/export` | The same query as /query, returned as CSV and audited as an export (T18). |  | `sql`: string<br>`start`?: date-time<br>`end`?: date-time<br>`sources`?: list of string<br>`params`?: object |
+| `POST` | `/api/query/refine` | The SQL on screen with one facet filter added (ADR-0016 row 2). Reads no data; the caller runs the result like any query, through the guard and the audit log. |  | `sql`: string<br>`field`: string<br>`value`?: string<br>`exclude`?: boolean |
 | `POST` | `/api/search/compile` | Simple search text to SQL and parameters (ADR-0009). Reads no data; the query that follows goes through /query, its guard, and its audit like any other. |  | `text`: string<br>`top`?: string |
 | `POST` | `/api/search/facets` | Counts of the top values of a few fixed fields for the search on screen, over the whole result (not just the page). Same scope, guard, and audit as /query. |  | `text`?: string<br>`sql`?: string<br>`params`?: object<br>`columns`?: list of string<br>`start`?: date-time<br>`end`?: date-time<br>`sources`?: list of string |
 | `GET` | `/api/search/presets` | Suspicious presets (ADR-0016 row 3): Simple search text to put in the bar. |  |  |
@@ -197,7 +231,7 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | Method | Path | What it does | Query | JSON body (`?` optional) |
 |---|---|---|---|---|
 | `GET` | `/api/sources` | List Sources |  |  |
-| `POST` | `/api/sources` | Add Source |  | `source_id`: string<br>`format`: `syslog` &#124; `json` &#124; `csv`<br>`kind`?: `file` &#124; `loki` &#124; `otlp` &#124; `m365` &#124; `anthropic`<br>`path`?: string<br>`loki`?: LokiSettings<br>`m365`?: M365Settings<br>`anthropic`?: AnthropicSettings<br>`glob`?: string<br>`timezone`?: string<br>`classification`?: `local_only` &#124; `cloud_allowed`<br>`retention_days`?: integer<br>`enabled`?: boolean<br>`template_id`?: string<br>`otlp_keep_content`?: boolean<br>`loki_secret`?: password<br>`credentials`?: ApiCredentials |
+| `POST` | `/api/sources` | Add Source |  | `source_id`: string<br>`format`: `syslog` &#124; `json` &#124; `csv`<br>`kind`?: `file` &#124; `loki` &#124; `otlp` &#124; `m365` &#124; `anthropic` &#124; `syslog`<br>`path`?: string<br>`loki`?: LokiSettings<br>`m365`?: M365Settings<br>`anthropic`?: AnthropicSettings<br>`syslog`?: SyslogSettings<br>`glob`?: string<br>`timezone`?: string<br>`classification`?: `local_only` &#124; `cloud_allowed`<br>`retention_days`?: integer<br>`enabled`?: boolean<br>`template_id`?: string<br>`otlp_keep_content`?: boolean<br>`loki_secret`?: password<br>`credentials`?: ApiCredentials |
 | `POST` | `/api/sources/api/test` | One small read per enabled feed with these settings, before the source is saved. Audited source.api_test with the kind and feeds, never the credentials. |  | `kind`: `m365` &#124; `anthropic`<br>`m365`?: M365Settings<br>`anthropic`?: AnthropicSettings<br>`credentials`?: ApiCredentials |
 | `POST` | `/api/sources/discover` | Suggest sources for a folder. Reads files only: creates and grants nothing. |  | `path`: string |
 | `POST` | `/api/sources/loki/test` | One small query with these settings, before a Loki source is saved (ADR-0011). |  | `url`: string<br>`query`: string<br>`tenant`?: string<br>`auth`?: `none` &#124; `basic` &#124; `bearer`<br>`username`?: string<br>`backfill_hours`?: integer<br>`secret`?: password |

@@ -3,7 +3,7 @@ import { Search } from "lucide-react";
 import { useMemo, useState, type KeyboardEvent } from "react";
 import { api } from "@/lib/api";
 import { setAskProvider, useAskProvider } from "@/lib/askProvider";
-import { visibleNav } from "@/lib/nav";
+import { visibleNav, visibleSections } from "@/lib/nav";
 import { arrange, readRecent, rememberRecent, type PaletteItem } from "@/lib/palette";
 import { navigate, type PageId } from "@/lib/route";
 import { openSavedSearch } from "@/lib/savedSeed";
@@ -49,13 +49,21 @@ export function CommandPalette({
   });
 
   const items = useMemo<PaletteItem[]>(() => {
-    const out: PaletteItem[] = visibleNav(isAdmin, canAudit).map((n) => ({
-      key: `nav:${n.id}`,
-      section: "Navigate",
-      label: n.label,
-      aliases: n.aliases,
-      run: () => navigate(n.page as PageId),
-    }));
+    const out: PaletteItem[] = visibleNav(isAdmin, canAudit).flatMap((n): PaletteItem[] => [
+      {
+        key: `nav:${n.id}`,
+        section: "Navigate",
+        label: n.label,
+        aliases: n.aliases,
+        run: () => navigate(n.page as PageId),
+      },
+      ...visibleSections(n, isAdmin).map((x): PaletteItem => ({
+        key: `nav:${n.id}:${x.id}`,
+        section: "Navigate",
+        label: `${n.label} › ${x.label}`,
+        run: () => navigate(n.page as PageId, x.id),
+      })),
+    ]);
     if (canAsk) {
       out.push({
         key: "nav:ask",

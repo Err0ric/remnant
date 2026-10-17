@@ -133,6 +133,55 @@ def _check_functions(tree: exp.Expression) -> None:
         name = func.name if isinstance(func, exp.Anonymous) else func.sql_name()
         if _DENIED_FUNCTION.match(name or ""):
             raise QueryRejectedError(f"Function not allowed: {name.lower()}")
+        _check_size(func, (name or "").lower())
+
+
+# Functions that build a value or a row set from a number in the query. A literal past
+# these sizes is refused up front; anything computed is left to the engine's memory limit
+# and the server's address-space limit (D58).
+MAX_SERIES_ROWS = 100_000_000
+MAX_BUILT_LENGTH = 10_000_000
+
+
+def _number(node: exp.Expression | None) -> float | None:
+    if isinstance(node, exp.Neg):
+        inner = _number(node.this)
+        return -inner if inner is not None else None
+    if isinstance(node, exp.Literal) and not node.is_string:
+        try:
+            return float(node.this)
+        except ValueError:
+            return None
+    return None
+
+
+def _check_size(func: exp.Func, name: str) -> None:
+    if isinstance(func, exp.GenerateSeries):
+        start, end = _number(func.args.get("start")), _number(func.args.get("end"))
+        step = _number(func.args.get("step")) if func.args.get("step") is not None else 1.0
+        if func.args.get("start") is not None and func.args.get("end") is None:
+            start, end = 0.0, start  # range(n)
+        if start is not None and end is not None and step:
+            if abs(end - start) / abs(step) > MAX_SERIES_ROWS:
+                raise QueryRejectedError(
+                    f"Series too large: at most {MAX_SERIES_ROWS:,} rows from range or "
+                    "generate_series"
+                )
+        return
+    sizes: list[exp.Expression | None] = []
+    if isinstance(func, exp.Repeat):
+        sizes = [func.args.get("times")]
+    elif isinstance(func, exp.Pad):
+        sizes = [func.args.get("expression")]
+    elif name in ("list_resize", "array_resize") and isinstance(func, exp.Anonymous):
+        sizes = func.expressions[1:2]
+    for size in sizes:
+        n = _number(size)
+        if n is not None and n > MAX_BUILT_LENGTH:
+            raise QueryRejectedError(
+                f"Value too large: {name or 'this function'} may build at most "
+                f"{MAX_BUILT_LENGTH:,} items"
+            )
 
 
 def _apply_limit(tree: exp.Query, default_limit: int, max_limit: int) -> GuardedQuery:

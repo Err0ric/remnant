@@ -617,6 +617,98 @@ MIGRATIONS: tuple[Migration, ...] = (
         created_at TEXT NOT NULL
     );
     """,
+    # 33: watched devices on the Health page (ADR-0019).
+    """
+    CREATE TABLE device_watches (
+        device_id   TEXT PRIMARY KEY,
+        name        TEXT NOT NULL,
+        match       TEXT NOT NULL UNIQUE,
+        silence_s   INTEGER NOT NULL CHECK (silence_s BETWEEN 300 AND 86400),
+        target_ids  TEXT NOT NULL DEFAULT '[]',
+        state       TEXT NOT NULL DEFAULT 'ok' CHECK (state IN ('ok', 'quiet')),
+        quiet_since TEXT,
+        created_by  TEXT,
+        created_at  TEXT NOT NULL,
+        updated_at  TEXT NOT NULL
+    );
+    """,
+    # 34: allowed data levels for AI services, agent deviation alerts (ADR-0020 rows 2 to 4).
+    """
+    CREATE TABLE ai_service_labels (
+        service_id TEXT PRIMARY KEY,
+        data_level TEXT NOT NULL CHECK (data_level IN ('public', 'internal', 'confidential')),
+        updated_at TEXT NOT NULL,
+        updated_by TEXT
+    );
+    CREATE TABLE ai_agent_items (
+        agent      TEXT NOT NULL,
+        item_kind  TEXT NOT NULL,
+        item       TEXT NOT NULL,
+        first_seen TEXT NOT NULL,
+        PRIMARY KEY (agent, item_kind, item)
+    );
+    ALTER TABLE ai_watch ADD COLUMN agents INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE ai_watch ADD COLUMN agents_checked_at TEXT;
+    """,
+    # 35: allow kind 'syslog', the native syslog listener (ADR-0021).
+    _rebuild_kinds(
+        ("file", "loki", "otlp", "m365", "anthropic"),
+        ("file", "loki", "otlp", "m365", "anthropic", "syslog"),
+    ),
+    # 36: the read-only MCP server's settings, one row, off until an admin turns it on
+    # (ADR-0003).
+    """
+    CREATE TABLE mcp_settings (
+        id             INTEGER PRIMARY KEY CHECK (id = 1),
+        enabled        INTEGER NOT NULL DEFAULT 0,
+        endpoint_local INTEGER NOT NULL DEFAULT 0,
+        updated_at     TEXT,
+        updated_by     TEXT
+    );
+    """,
+    # 37: log integrity (ADR-0022): the lake ledger, seals, and the audit chain.
+    """
+    CREATE TABLE lake_ledger (
+        seq       INTEGER PRIMARY KEY AUTOINCREMENT,
+        at        TEXT NOT NULL,
+        op        TEXT NOT NULL CHECK (op IN ('add', 'remove', 'baseline', 'adopt')),
+        path      TEXT NOT NULL,
+        sha256    TEXT NOT NULL,
+        size      INTEGER NOT NULL,
+        reason    TEXT NOT NULL DEFAULT '',
+        prev_hash TEXT NOT NULL,
+        hash      TEXT NOT NULL
+    );
+    CREATE INDEX lake_ledger_path ON lake_ledger (path, seq);
+    CREATE TRIGGER lake_ledger_no_delete BEFORE DELETE ON lake_ledger
+    BEGIN SELECT RAISE(ABORT, 'the integrity ledger is append-only'); END;
+    CREATE TRIGGER lake_ledger_no_update BEFORE UPDATE ON lake_ledger
+    BEGIN SELECT RAISE(ABORT, 'the integrity ledger is append-only'); END;
+    CREATE TABLE integrity_seals (
+        seal_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+        at          TEXT NOT NULL,
+        status      TEXT NOT NULL,
+        lake_head   TEXT NOT NULL,
+        lake_seq    INTEGER NOT NULL,
+        audit_head  TEXT NOT NULL,
+        audit_rows  INTEGER NOT NULL,
+        files       INTEGER NOT NULL,
+        failures    INTEGER NOT NULL,
+        warnings    INTEGER NOT NULL,
+        findings    TEXT NOT NULL DEFAULT '[]',
+        signature   TEXT NOT NULL
+    );
+    CREATE TRIGGER integrity_seals_no_delete BEFORE DELETE ON integrity_seals
+    BEGIN SELECT RAISE(ABORT, 'seals are append-only'); END;
+    CREATE TABLE integrity_settings (
+        id          INTEGER PRIMARY KEY CHECK (id = 1),
+        target_ids  TEXT NOT NULL DEFAULT '[]',
+        send_seals  INTEGER NOT NULL DEFAULT 0,
+        updated_at  TEXT,
+        updated_by  TEXT
+    );
+    ALTER TABLE audit_log ADD COLUMN chain_hash TEXT;
+    """,
 )
 
 

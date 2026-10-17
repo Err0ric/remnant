@@ -5,20 +5,21 @@ Usage numbers come from the caller's own events view and reading them is audited
 """
 
 from dataclasses import fields
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from fastapi import APIRouter, Request, Response, status
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from app.ai.catalog import Catalog, Service, ServiceDef
+from app.ai.agents import agents
+from app.ai.catalog import Catalog, DataLevel, Service, ServiceDef
 from app.ai.usage import Usage
 from app.ai.watch import AiWatch
 from app.api.access import AdminUser, CurrentUser, client_ip
 from app.auth.service import AuthService
 from app.auth.users import User
-from app.engine.duckdb import QueryScope
+from app.engine.duckdb import QueryEngine, QueryScope
 from app.engine.views import permitted_sources, scope_sources
 from app.meta.db import MetaDB
 
@@ -36,6 +37,7 @@ class ServiceOut(BaseModel):
     status: Status
     custom: bool
     note: str
+    data_level: DataLevel | None = None
 
 
 class ServiceUseOut(BaseModel):
@@ -100,6 +102,7 @@ def _service_out(s: Service) -> ServiceOut:
         status=s.status,
         custom=s.custom,
         note=s.note,
+        data_level=s.data_level,
     )
 
 
@@ -256,6 +259,7 @@ class WatchOut(BaseModel):
     target_ids: list[str]
     updated_at: str | None
     updated_by: str | None
+    agents: bool = False
 
 
 class WatchIn(BaseModel):
@@ -263,6 +267,7 @@ class WatchIn(BaseModel):
     include_unreviewed: bool = False
     sensitive: bool = True
     target_ids: list[str] = Field(default_factory=list, max_length=10)
+    agents: bool = False
 
 
 @router.get("/ai/watch")
@@ -282,5 +287,71 @@ async def put_watch(body: WatchIn, request: Request, user: AdminUser) -> WatchOu
         body.target_ids,
         user.user_id,
         client_ip(request),
+        body.agents,
     )
     return WatchOut(**_slots(s))
+
+
+class DataLevelIn(BaseModel):
+    data_level: DataLevel | None  # null clears it
+
+
+@router.put("/ai/services/{service_id}/data-level")
+async def set_data_level(
+    service_id: str, body: DataLevelIn, request: Request, user: AdminUser
+) -> ServiceOut:
+    """The most sensitive data allowed to this service (ADR-0020 row 4). Audited as
+    ai.service_change."""
+    before = await run_in_threadpool(
+        _catalog(request).set_data_level, service_id, body.data_level, user.user_id
+    )
+    await run_in_threadpool(
+        _audit(request).audit.write,
+        "ai.service_change",
+        "success",
+        user.user_id,
+        client_ip(request),
+        {"service_id": service_id, "data_level": {"from": before, "to": body.data_level}},
+    )
+    (svc,) = [s for s in await run_in_threadpool(_catalog(request).services) if s.id == service_id]
+    return _service_out(svc)
+
+
+class AgentItemOut(BaseModel):
+    kind: str
+    name: str
+
+
+class AgentOut(BaseModel):
+    kind: str
+    agent: str
+    label: str
+    owners: list[str]
+    machine: str | None
+    first_seen: str
+    last_seen: str
+    events_24h: int
+    state: str
+    new_items: list[AgentItemOut]
+    usual_peak: int | None
+    recent_peak: int | None
+
+
+@router.get("/ai/agents")
+async def ai_agents(request: Request, user: CurrentUser) -> list[AgentOut]:
+    """AI agents (Claude Code per machine and person, MCP clients per machine, API keys)
+    and what changed in the last 24 hours against the 30 days before, from the sources
+    the caller may read. Audited ai.view."""
+    meta: MetaDB = request.app.state.meta
+    allowed = await run_in_threadpool(permitted_sources, meta, user)
+    engine: QueryEngine = request.app.state.engine
+    rows = await run_in_threadpool(agents, engine, allowed, datetime.now(UTC))
+    await run_in_threadpool(
+        _audit(request).audit.write,
+        "ai.view",
+        "success",
+        user.user_id,
+        client_ip(request),
+        {"sources_in_scope": allowed, "view": "agents"},
+    )
+    return [AgentOut(**_slots(a)) for a in rows]

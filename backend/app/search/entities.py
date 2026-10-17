@@ -11,7 +11,7 @@ from __future__ import annotations
 import ipaddress
 import json
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from app.ai.catalog import Catalog
@@ -24,8 +24,10 @@ from app.ai.usage import (
     WHO_EXPR,
     catalog_values,
 )
+from app.core.errors import ParamInvalidError
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.meta.db import MetaDB
+from app.search.addresses import OBS_SQL, address_ctes, join_addr, lookup
 from app.search.identity import IdentityMap, key_sql
 
 EntityKind = Literal["user", "ip", "host"]
@@ -430,6 +432,17 @@ def entity_graph(
     b = _Builder(["Entity", "Sources", "Activities", "Targets"])
     root = b.card(0, "root", label, 0)
     b.cards[root].sublabel = {"user": "User", "ip": "IP address", "host": "Host"}[kind]
+    if kind == "ip":
+        # Who had the address most recently in the range (ADR-0020 row 1).
+        at = scope.end or datetime.now(UTC)
+        try:
+            holders = lookup(engine, QueryScope(scope.sources), value, at)
+        except ParamInvalidError:
+            holders = []
+        names = [h.name for h in holders if h.kind == "user"][:1]
+        names += [h.name for h in holders if h.kind == "host"][:1]
+        if names:
+            b.cards[root].sublabel = f"IP address · {', '.join(names)}"
     b.cards[root].search_sql = search_sql(literal)
     for source_id, class_uid, activity, target, n, m, sev in result.rows:
         n, m, sev = int(n), int(m), int(sev or 0)
@@ -468,8 +481,14 @@ def ai_sql(pairs_sql: str, where: str, pre: str = "true") -> str:
     """`pre` filters events early in each branch; `{m}` in it is that branch's machine."""
     cc_pre = pre.replace("{m}", "device_hostname")
     net_pre = pre.replace("{m}", MACHINE_EXPR)
+    if pre != "true":
+        # Rows that name only an address are kept when the address was this person's
+        # (logon and User-ID events), so resolution below can name them (ADR-0020 row 1).
+        theirs = "SELECT ip FROM addr_user WHERE list_contains($names, lower(who))"
+        net_pre = f"(({net_pre}) OR ({WHO_EXPR} IS NULL AND src_endpoint_ip IN ({theirs})))"
     return f"""
 WITH cat(service_id, domain) AS (VALUES {pairs_sql}),
+{OBS_SQL},
 cc AS (
   SELECT {WHO_EXPR} AS who, 'Claude Code' AS client,
          coalesce({MCP_EXPR},
@@ -490,19 +509,25 @@ inv AS (
 ),
 net AS (
   SELECT {WHO_EXPR} AS who, 'Browser or app' AS client, CAST(NULL AS VARCHAR) AS tool,
-         {HOST_EXPR} AS host, 0 AS sens,
-         coalesce(nullif(src_endpoint_hostname, ''), src_endpoint_ip, device_hostname)
-           AS machine
+         {HOST_EXPR} AS host, 0 AS sens, nullif(src_endpoint_hostname, '') AS shost,
+         nullif(src_endpoint_ip, '') AS ip, device_hostname AS dev,
+         coalesce(time, time_observed) AS t
   FROM events
   WHERE template_id NOT IN ('claude_code_otel', 'mcp_inventory') AND {net_pre}
 ),
 {HOST_MATCH_SQL.format(src="net")},
 netm AS (SELECT net.*, hm.service_id FROM net JOIN hm USING (host)),
+{address_ctes("netm", "who IS NULL OR shost IS NULL", obs=False)},
+netr AS (
+  SELECT client, tool, sens, service_id, coalesce(who, addr.rwho) AS who,
+         coalesce(shost, addr.rhost, netm.ip, dev) AS machine
+  FROM netm {join_addr("netm")}
+),
 flow AS (
   SELECT coalesce(who, machine) AS person, client, tool, dest, sens, mcp FROM cc
   UNION ALL SELECT coalesce(who, machine), client, tool, dest, sens, mcp FROM inv
   UNION ALL SELECT coalesce(who, machine), client, tool, 'svc:' || service_id, sens, false
-  FROM netm
+  FROM netr
 )
 SELECT person, client, tool, dest, count(*) AS n, coalesce(sum(sens), 0) AS sens,
        bool_or(mcp) AS mcp

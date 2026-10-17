@@ -79,3 +79,37 @@ def test_audited(lab: dict[str, Any]) -> None:
             "SELECT outcome FROM audit_log WHERE action = 'query.facets' ORDER BY rowid DESC"
         ).fetchone()
     assert row[0] == "success"
+
+
+def test_sql_mode_click_adds_a_quoted_filter_that_runs(lab: dict[str, Any]) -> None:
+    sql = "SELECT time, source_id, message FROM events ORDER BY time DESC LIMIT 500"
+    res = lab["admin"].post(
+        "/api/query/refine",
+        json={"sql": sql, "field": "source_id", "value": "lin_auth"},
+        headers=lab["h"],
+    )
+    assert res.status_code == 200, res.text
+    refined = res.json()["sql"]
+    assert "source_id = 'lin_auth'" in refined and "LIMIT 500" in refined
+    rows = lab["admin"].post("/api/query", json={"sql": refined}, headers=lab["h"]).json()["rows"]
+    assert rows and {r[1] for r in rows} == {"lin_auth"}
+
+    out = lab["admin"].post(
+        "/api/query/refine",
+        json={"sql": sql, "field": "actor_user_name", "value": "x' OR 1=1 --", "exclude": True},
+        headers=lab["h"],
+    )
+    assert "IS DISTINCT FROM 'x'' OR 1=1 --'" in out.json()["sql"]  # a literal, never SQL
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"sql": "SELECT * FROM events", "field": "raw", "value": "x"},
+        {"sql": "SELECT 1 UNION SELECT 2", "field": "source_id", "value": "x"},
+        {"sql": "SELECT * FROM events; SELECT 1", "field": "source_id", "value": "x"},
+    ],
+)
+def test_refine_refuses_other_fields_and_shapes(lab: dict[str, Any], body: dict[str, Any]) -> None:
+    res = lab["admin"].post("/api/query/refine", json=body, headers=lab["h"])
+    assert res.status_code == 400

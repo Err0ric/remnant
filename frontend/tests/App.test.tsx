@@ -71,7 +71,7 @@ describe("App shell", () => {
   it("on narrow screens, the Menu button shows the nav and navigating hides it again", async () => {
     await renderApp();
     const nav = screen.getByRole("navigation", { name: "Primary" });
-    expect(nav).toHaveClass("hidden", "md:block");
+    expect(nav).toHaveClass("hidden", "md:flex");
     await userEvent.click(screen.getByRole("button", { name: "Open menu" }));
     expect(nav).not.toHaveClass("hidden");
     expect(screen.getByRole("button", { name: "Close menu" })).toHaveAttribute(

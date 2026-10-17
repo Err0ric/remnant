@@ -1,5 +1,5 @@
 import { QueryClient } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mockApi, type MockAuth } from "./mockApi";
@@ -52,6 +52,30 @@ describe("Audit log", () => {
     URL.revokeObjectURL = vi.fn();
     await userEvent.click(screen.getByRole("button", { name: "Export CSV" }));
     await vi.waitFor(() => expect(urls(spy, "/api/audit/llm-calls/export").length).toBe(1));
+  });
+
+  it("shows integrity findings to auditors and lets admins verify and choose targets", async () => {
+    await renderAt("/audit#integrity", auditor);
+    expect(await screen.findByText("Failed")).toBeVisible();
+    const findings = screen.getByRole("region", { name: "Findings" });
+    expect(within(findings).getByText("Changed")).toBeVisible();
+    expect(within(findings).getByText(/part-0001.parquet/)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Verify now" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Integrity alerts" })).toBeNull();
+    cleanup();
+
+    const spy = await renderAt("/audit#integrity", {
+      mode: "login",
+      signedIn: true,
+      role: "admin",
+    });
+    await userEvent.click(await screen.findByRole("button", { name: "Verify now" }));
+    await vi.waitFor(() => expect(urls(spy, "/api/integrity/verify").length).toBe(1));
+    await userEvent.click(
+      screen.getByRole("checkbox", { name: "Send a daily seal to these targets" }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => expect(urls(spy, "/api/integrity/settings").length).toBe(1));
   });
 
   it("is not offered to analysts", async () => {

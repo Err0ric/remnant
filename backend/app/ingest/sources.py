@@ -24,11 +24,20 @@ from app.ingest.connectors.anthropic import AnthropicSettings
 from app.ingest.connectors.loki import LokiSettings
 from app.ingest.connectors.m365 import M365Settings
 from app.ingest.envelope import SyslogEnvelopeConfig
+from app.ingest.listener_settings import SyslogSettings
 from app.ingest.normalizer import SourceFormat, SourceSpec
 from app.meta.db import MetaDB
 from app.meta.secrets import SecretBox
 
-CONNECTOR_LABELS = {"loki": "Loki", "m365": "Microsoft 365", "anthropic": "Anthropic"}
+CONNECTOR_LABELS = {
+    "loki": "Loki",
+    "m365": "Microsoft 365",
+    "anthropic": "Anthropic",
+    "syslog": "Syslog listener",
+}
+# Kinds whose records the server receives and spools for ingest, with their file suffix.
+SPOOL_SUFFIX = {"otlp": ".jsonl", "syslog": ".syslog"}
+SourceKind = Literal["file", "loki", "otlp", "m365", "anthropic", "syslog"]
 
 
 class SourceConfig(BaseModel):
@@ -40,11 +49,13 @@ class SourceConfig(BaseModel):
     # (ADR-0011), and `path` is empty. otlp: records pushed to the OTLP receiver
     # (ADR-0015), spooled by the server, and `path` is empty. m365 and anthropic: records
     # pulled from Microsoft 365 (ADR-0002) or the Anthropic Admin APIs (ADR-0015 row 10).
-    kind: Literal["file", "loki", "otlp", "m365", "anthropic"] = "file"
+    # syslog: messages received on a port (ADR-0021), spooled like OTLP; `path` is empty.
+    kind: SourceKind = "file"
     path: str = Field(default="", max_length=4096)
     loki: LokiSettings | None = None
     m365: M365Settings | None = None
     anthropic: AnthropicSettings | None = None
+    syslog: SyslogSettings | None = None
     glob: str = Field(default="*", min_length=1, max_length=200)
     timezone: str = "UTC"
     classification: Literal["local_only", "cloud_allowed"] = "local_only"
@@ -79,7 +90,12 @@ class SourceConfig(BaseModel):
     def _kind_fields(self) -> "SourceConfig":
         if self.kind != "otlp" and self.otlp_keep_content:
             raise ValueError("Keeping prompt and tool content applies to OTLP sources only")
-        settings = {"loki": self.loki, "m365": self.m365, "anthropic": self.anthropic}
+        settings = {
+            "loki": self.loki,
+            "m365": self.m365,
+            "anthropic": self.anthropic,
+            "syslog": self.syslog,
+        }
         for kind, value in settings.items():
             if value is not None and kind != self.kind:
                 raise ValueError(f"{CONNECTOR_LABELS[kind]} settings are only for that kind")
@@ -94,13 +110,20 @@ class SourceConfig(BaseModel):
                 raise ValueError("OTLP records are stored as JSON lines; use format json")
         elif settings[self.kind] is None:
             raise ValueError(f"A {CONNECTOR_LABELS[self.kind]} source needs its settings")
+        if self.kind == "syslog" and self.format != "syslog":
+            raise ValueError("A syslog listener source uses format syslog")
         if self.kind in ("m365", "anthropic") and self.format != "json":
             raise ValueError("API records are stored as JSON lines; use format json")
         return self
 
     def connector_json(self) -> str | None:
         """The connector settings stored in sources.connector."""
-        value = {"loki": self.loki, "m365": self.m365, "anthropic": self.anthropic}.get(self.kind)
+        value = {
+            "loki": self.loki,
+            "m365": self.m365,
+            "anthropic": self.anthropic,
+            "syslog": self.syslog,
+        }.get(self.kind)
         return value.model_dump_json() if value is not None else None
 
     def spec(self, owner_id: str = "local") -> SourceSpec:
@@ -197,23 +220,24 @@ def open_regular(path: Path, allowed_roots: list[Path]) -> BinaryIO:
 
 
 def spool_dir(spool_root: Path, source_id: str) -> Path:
-    """Where the OTLP receiver appends a source's records (ADR-0015 row 3)."""
+    """Where the OTLP receiver or the syslog listener appends a source's records."""
     return spool_root / source_id
 
 
-def spool_name(now: datetime) -> str:
+def spool_name(now: datetime, kind: str = "otlp") -> str:
     """The spool file the receiver appends to in this UTC hour; names sort by time."""
-    return f"{now.astimezone(UTC):%Y%m%d%H}.jsonl"
+    return f"{now.astimezone(UTC):%Y%m%d%H}{SPOOL_SUFFIX[kind]}"
 
 
 def spool_files(source: SourceConfig, spool_root: Path) -> list[Path]:
-    """An OTLP source's spool files, oldest first (their names sort by hour)."""
-    if source.kind != "otlp":
+    """A spooled source's files, oldest first (their names sort by hour)."""
+    if source.kind not in SPOOL_SUFFIX:
         return []
     folder = spool_dir(spool_root, source.source_id)
     if not folder.is_dir():
         return []
-    return [p for p in sorted(folder.glob("*.jsonl")) if p.is_file() and not p.is_symlink()]
+    pattern = f"*{SPOOL_SUFFIX[source.kind]}"
+    return [p for p in sorted(folder.glob(pattern)) if p.is_file() and not p.is_symlink()]
 
 
 def hash_token(token: str) -> str:
@@ -251,6 +275,8 @@ class SourceStore:
         self._box = box
         # Server-owned folder for OTLP spool files; readable by ingest, never configurable.
         self.spool_root = spool_root
+        # The web interface's TCP port, which a syslog listener may not take.
+        self.web_port: int | None = None
 
     def read_roots(self) -> list[Path]:
         """Roots ingest may open files under: the configured ones plus the spool."""
@@ -264,6 +290,8 @@ class SourceStore:
             )
         if source.kind == "file":
             resolve_source_path(source.path, self.allowed_roots)
+        if source.syslog is not None:
+            self._check_port(source.source_id, source.syslog)
         if secret and self._box is None:
             raise SourceRejectedError("Credentials cannot be stored on this server")
         secret_enc = self._box.encrypt(secret) if secret and self._box else None
@@ -297,6 +325,19 @@ class SourceStore:
             )
         return source
 
+    def _check_port(self, source_id: str, settings: SyslogSettings) -> None:
+        """One listener per port and transport (ADR-0021 row 1); never the web port."""
+        if self.web_port is not None and settings.port == self.web_port:
+            raise SourceRejectedError(f"Port {settings.port} is the web interface's port")
+        udp = settings.protocol == "udp"
+        for other in self.list():
+            if other.source_id == source_id or other.syslog is None:
+                continue
+            if other.syslog.port == settings.port and (other.syslog.protocol == "udp") == udp:
+                raise SourceRejectedError(
+                    f"Port {settings.port} is already used by source {other.source_id}"
+                )
+
     def list(self) -> list[SourceConfig]:
         with self._meta.connect() as con:
             rows = con.execute("SELECT * FROM sources ORDER BY source_id").fetchall()
@@ -315,6 +356,7 @@ class SourceStore:
                 loki=_loaded(LokiSettings, "loki", r["kind"], r["connector"]),
                 m365=_loaded(M365Settings, "m365", r["kind"], r["connector"]),
                 anthropic=_loaded(AnthropicSettings, "anthropic", r["kind"], r["connector"]),
+                syslog=_loaded(SyslogSettings, "syslog", r["kind"], r["connector"]),
                 otlp_keep_content=bool(r["otlp_keep_content"]),
             )
             for r in rows

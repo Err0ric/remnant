@@ -36,9 +36,28 @@ describe("AI usage (ADR-0015)", () => {
     expect(JSON.parse(String(put?.[1]?.body))).toEqual({ status: "approved" });
   });
 
+  it("lists agents with what changed and sets a service's allowed data", async () => {
+    const spy = await openAi();
+    const table = await screen.findByRole("region", { name: "AI services seen in network logs" });
+    const row = within(table).getByText("ChatGPT").closest("tr") as HTMLElement;
+    await userEvent.selectOptions(
+      within(row).getByLabelText("Allowed data for ChatGPT"),
+      "internal",
+    );
+    const put = spy.mock.calls.find(
+      ([u, i]) => String(u).endsWith("/api/ai/services/chatgpt/data-level") && i?.method === "PUT",
+    );
+    expect(JSON.parse(String(put?.[1]?.body))).toEqual({ data_level: "internal" });
+    await userEvent.click(screen.getByRole("tab", { name: "Agents" }));
+    const agents = await screen.findByRole("table", { name: "Agents" });
+    expect(within(agents).getByText("Claude Code on ws-0042")).toBeVisible();
+    expect(within(agents).getByText("Changed")).toBeVisible();
+    expect(within(agents).getByText("paste-share")).toBeVisible();
+  });
+
   it("shows MCP servers and Claude usage with sensitive-data signals", async () => {
     await openAi();
-    await userEvent.click(screen.getByRole("tab", { name: "Agents and MCP" }));
+    await userEvent.click(screen.getByRole("tab", { name: "MCP servers" }));
     const mcp = await screen.findByRole("region", { name: "MCP servers" });
     expect(within(mcp).getByText("paste-share")).toBeVisible();
     expect(within(mcp).getByText("inventory, telemetry")).toBeVisible();
@@ -47,6 +66,22 @@ describe("AI usage (ADR-0015)", () => {
     const row = within(people).getByText("alice@example.com").closest("tr") as HTMLElement;
     expect(within(row).getByText("12.50")).toBeVisible();
     expect(within(row).getByText("1 signal")).toBeVisible();
+  });
+
+  it("lists its tabs in the left nav and keeps the open one in the URL", async () => {
+    await openAi();
+    const nav = screen.getByRole("navigation", { name: "Primary" });
+    const sections = within(nav).getByRole("list", { name: "AI usage sections" });
+    expect(within(sections).getByText("Services")).toHaveAttribute("aria-current", "location");
+    await userEvent.click(within(sections).getByText("MCP servers"));
+    expect(window.location.hash).toBe("#mcp");
+    expect(screen.getByRole("tab", { name: "MCP servers" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await userEvent.click(screen.getByRole("tab", { name: "Agents" }));
+    expect(window.location.hash).toBe("#agents");
+    expect(within(sections).getByText("Agents")).toHaveAttribute("aria-current", "location");
   });
 
   it("gives analysts read-only status and no settings", async () => {

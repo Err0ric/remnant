@@ -26,6 +26,7 @@ Kind = Literal[
     "chat", "api", "coding", "agent_platform", "mcp_registry", "image", "meetings", "writing"
 ]
 Status = Literal["approved", "not_approved", "unreviewed"]
+DataLevel = Literal["public", "internal", "confidential"]
 DOMAIN = re.compile(r"^(?=.{3,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
 MCP_PATTERN = re.compile(r"^[A-Za-z0-9_.@/:-]{1,120}\*?$")
 
@@ -59,6 +60,8 @@ class Service:
     status: Status
     custom: bool
     note: str
+    # The most sensitive data allowed to this service (ADR-0020 row 4); None if not set.
+    data_level: DataLevel | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +95,10 @@ class Catalog:
     def services(self) -> list[Service]:
         with self._meta.connect() as con:
             status = {r["service_id"]: r for r in con.execute("SELECT * FROM ai_service_status")}
+            levels = {
+                r["service_id"]: r["data_level"]
+                for r in con.execute("SELECT * FROM ai_service_labels")
+            }
             custom = con.execute("SELECT * FROM ai_custom_services ORDER BY name").fetchall()
         defs = [(d, False) for d in shipped()]
         for r in custom:
@@ -120,6 +127,7 @@ class Catalog:
                     row["status"] if row else "unreviewed",
                     is_custom,
                     row["note"] if row else "",
+                    levels.get(d.id),
                 )
             )
         return out
@@ -147,6 +155,25 @@ class Catalog:
                 )
         return before
 
+    def set_data_level(self, service_id: str, level: DataLevel | None, actor: str) -> str | None:
+        """Returns the previous level."""
+        known = {s.id: s for s in self.services()}
+        if service_id not in known:
+            raise NotFoundError("No such AI service")
+        before = known[service_id].data_level
+        with self._meta.connect() as con:
+            if level is None:
+                con.execute("DELETE FROM ai_service_labels WHERE service_id = ?", (service_id,))
+            else:
+                con.execute(
+                    "INSERT INTO ai_service_labels (service_id, data_level, updated_at, updated_by)"
+                    " VALUES (?, ?, ?, ?) ON CONFLICT (service_id) DO UPDATE"
+                    " SET data_level = excluded.data_level, updated_at = excluded.updated_at,"
+                    " updated_by = excluded.updated_by",
+                    (service_id, level, _now(), actor),
+                )
+        return before
+
     def add_custom(self, d: ServiceDef, actor: str) -> None:
         if d.id in {s.id for s in self.services()}:
             raise ParamInvalidError("A service with this id already exists")
@@ -163,6 +190,7 @@ class Catalog:
                 "DELETE FROM ai_custom_services WHERE service_id = ?", (service_id,)
             ).rowcount
             con.execute("DELETE FROM ai_service_status WHERE service_id = ?", (service_id,))
+            con.execute("DELETE FROM ai_service_labels WHERE service_id = ?", (service_id,))
         if not n:
             raise NotFoundError("Only services added here can be removed")
 

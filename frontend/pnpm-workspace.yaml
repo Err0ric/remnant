@@ -1,3 +1,9 @@
 # Supply chain: never resolve a package version published less than 14 days ago
 # (minutes). New releases get time for the community to spot a compromised publish.
 minimumReleaseAge: 20160
+
+# Dev and build tooling only (nothing here ships in the web bundle): raise transitive
+# packages past advisories that `pnpm audit` reports, once the fix is old enough.
+overrides:
+  source-map-js: ">=1.2.2"
+  postcss-selector-parser: ">=7.1.6"

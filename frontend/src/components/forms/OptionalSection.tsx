@@ -38,7 +38,7 @@ export function OptionalSection({
         <span className="font-semibold">{title}</span>
         <span className="min-w-0 text-text-muted">{summary}</span>
       </summary>
-      <div className="grid gap-4 border-t border-dashed border-border-strong p-3 md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 border-t border-dashed border-border-strong p-3 md:grid-cols-2">
         {children}
       </div>
     </details>

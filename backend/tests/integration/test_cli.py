@@ -219,3 +219,49 @@ def test_query_needs_sql_or_match_but_not_both(runner: CliRunner) -> None:
     assert run(runner, "query", "SELECT 1", "--match", "x")[0] == 2
     code, _, err = run(runner, "query", "--match", "(a")
     assert code != 0 and "never closed" in err
+
+
+def test_mcp_stdio_bridge_relays_messages_and_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    n = Normalizer(SourceSpec(source_id="linux_auth", format="syslog"), clock=lambda: NOW)
+    LakeWriter(tmp_path / "lake").write(
+        [r for f in Framer().frames([LOG]) if (r := n.normalize(decode_frame(f)))]
+    )
+    app = create_app(load_config(Path("missing.yaml"), {"APP__PATHS__DATA_DIR": str(tmp_path)}))
+    monkeypatch.setattr(cli, "client_factory", lambda creds: TestClient(app))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+    lines = [
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"clientInfo": {"name": "t"}},
+        },
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {"name": "run_query", "arguments": {"sql": "SELECT count(*) FROM events"}},
+        },
+    ]
+    stdin = "\n".join(json.dumps(m) for m in lines) + "\n"
+    off = CliRunner().invoke(cli.app, ["mcp"], input=stdin)
+    replies = [json.loads(x) for x in off.stdout.splitlines()]
+    assert [r["id"] for r in replies] == [1, 2]  # the notification gets no reply
+    assert "MCP server is off" in replies[0]["error"]["message"]
+
+    app.state.mcp_settings.save(True, True, "test")
+    on = CliRunner().invoke(cli.app, ["mcp"], input=stdin)
+    replies = [json.loads(x) for x in on.stdout.splitlines()]
+    assert replies[0]["result"]["serverInfo"]["name"]
+    out = json.loads(replies[1]["result"]["content"][0]["text"])
+    assert out["rows"] == [[3]] and out["sources_read"] == ["linux_auth"]
+
+
+def test_csv_output_cannot_run_spreadsheet_formulas() -> None:
+    from app.cli.output import render
+
+    text = render(["message", "n"], [['=HYPERLINK("http://203.0.113.5/","x")', -5]], "csv")
+    assert text.splitlines()[1] == '"\'=HYPERLINK(""http://203.0.113.5/"",""x"")",-5'

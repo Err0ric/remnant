@@ -23,6 +23,7 @@ from app.core.config import load_config
 from app.core.errors import NotFoundError
 from app.ingest.envelope import SyslogEnvelopeConfig
 from app.ingest.framer import Framer
+from app.ingest.integrity import IntegrityLedger
 from app.ingest.normalizer import Normalizer, SourceFormat, SourceSpec
 from app.ingest.records import decode_frame
 from app.ingest.writer import LakeWriter
@@ -61,7 +62,9 @@ def ingest(
             "envelope": SyslogEnvelopeConfig(timezone=timezone),
         }
     )
-    writer = LakeWriter(config.paths.data_dir / "lake")
+    lake = config.paths.data_dir / "lake"
+    # Recorded in the integrity ledger like the server's own writes (ADR-0022).
+    writer = LakeWriter(lake, IntegrityLedger(MetaDB(config.paths.data_dir / "meta.sqlite"), lake))
     total = 0
     for path in files:
         normalizer = Normalizer(spec)

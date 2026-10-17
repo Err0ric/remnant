@@ -2,6 +2,8 @@
 server:
   host: 127.0.0.1      # anything other than loopback requires auth below
   port: 8080
+  # environment_label: Lab   # optional top bar label to tell installs apart; shown before sign-in
+  # memory_limit_mb: 0       # address-space cap; 0 = 75% of the machine or container memory
 
 auth:
   # Set one of these to bind beyond localhost. Prefer env vars over YAML for secrets.

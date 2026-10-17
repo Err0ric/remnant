@@ -12,6 +12,7 @@ from typing import Any
 
 from app.ai.catalog import DOMAIN, Catalog, Service, Status
 from app.engine.duckdb import QueryEngine, QueryScope
+from app.search.addresses import address_ctes, join_addr
 from app.search.identity import IdentityMap
 
 TIMEOUT_S = 20.0
@@ -106,20 +107,30 @@ catalog_values = _values
 
 
 def services_sql(pairs: list[tuple[str, str]]) -> str:
+    """Use per service. Rows that name only an address get the person and machine that
+    had it at the time, from logon and User-ID events (ADR-0020 row 1)."""
     return f"""
 WITH h AS (
-  SELECT {HOST_EXPR} AS host, {WHO_EXPR} AS who, {MACHINE_EXPR} AS machine,
-         coalesce(time, time_observed) AS t
+  SELECT {HOST_EXPR} AS host, {WHO_EXPR} AS who0,
+         nullif(src_endpoint_hostname, '') AS shost, nullif(src_endpoint_ip, '') AS ip,
+         device_hostname AS dev, coalesce(time, time_observed) AS t
   FROM events
   WHERE coalesce({", ".join(_CANDIDATES)}) IS NOT NULL
 ),
 cat(service_id, domain) AS (VALUES {_values(pairs)}),
-{HOST_MATCH_SQL.format(src="h")}
+{HOST_MATCH_SQL.format(src="h")},
+hj AS (SELECT h.*, hm.service_id FROM h JOIN hm USING (host)),
+{address_ctes("hj", "who0 IS NULL OR shost IS NULL")},
+r AS (
+  SELECT service_id, t, coalesce(who0, addr.rwho) AS who,
+         coalesce(shost, addr.rhost, hj.ip, dev) AS machine
+  FROM hj {join_addr("hj")}
+)
 SELECT service_id, count(*) AS events, count(DISTINCT who) AS people,
        count(DISTINCT machine) AS machines, min(t) AS first_seen, max(t) AS last_seen,
        list_slice(list(DISTINCT who ORDER BY who) FILTER (WHERE who IS NOT NULL), 1, 5) AS top,
        list_slice(list(DISTINCT machine ORDER BY machine) FILTER (WHERE machine IS NOT NULL), 1, 5)
-FROM h JOIN hm USING (host)
+FROM r
 GROUP BY 1 ORDER BY 2 DESC
 LIMIT 500"""  # noqa: S608  # fixed SQL text; domains checked against DOMAIN in _values
 

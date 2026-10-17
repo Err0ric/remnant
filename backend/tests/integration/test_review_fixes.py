@@ -119,3 +119,32 @@ def test_limiter_forgets_expired_keys() -> None:
         limiter.reserve([f"user:{i}"], now=float(i))
     assert limiter.size() <= 100
     assert limiter.reserve(["user:new"], now=10_000.0) == 0
+
+
+# --- D58: one address cannot lock someone else out ------------------------------------
+
+
+def test_failures_from_one_address_do_not_lock_out_the_account_elsewhere(tmp_path: Path) -> None:
+    auth = app_for(tmp_path).state.auth
+    auth.users.create("jordan", PASSWORD, "analyst")
+    for _ in range(5):
+        with pytest.raises(LoginFailedError):
+            auth.login("jordan", "wrong password!", "browser", "203.0.113.66")
+    with pytest.raises(RateLimitedError):
+        auth.login("jordan", PASSWORD, "browser", "203.0.113.66")  # the attacker's address
+    user, _, _ = auth.login("jordan", PASSWORD, "browser", "192.0.2.10")  # the real person
+    assert user.username == "jordan"
+
+
+def test_guessing_spread_over_many_addresses_still_stops(tmp_path: Path) -> None:
+    auth = app_for(tmp_path).state.auth
+    auth.users.create("jordan", PASSWORD, "analyst")
+    limited = 0
+    for i in range(80):
+        try:
+            auth.login("jordan", "wrong password!", "browser", f"198.51.100.{i}")
+        except RateLimitedError:
+            limited += 1
+        except LoginFailedError:
+            pass
+    assert limited == 80 - 50  # 10 times the per-address limit, then refused

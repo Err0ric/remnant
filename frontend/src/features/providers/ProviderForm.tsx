@@ -84,7 +84,7 @@ export function ProviderForm({ existing, models = [], onDone, onCancel }: Provid
       <h2 className="mb-3 text-base font-semibold">
         {existing ? `Edit ${existing.name}` : "Add provider"}
       </h2>
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <label className="flex flex-col gap-1 text-sm md:col-span-2">
           <span className="text-text-secondary">API</span>
           <select

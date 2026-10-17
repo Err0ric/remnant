@@ -60,7 +60,7 @@ export function NewDraftForm({
       className="rounded-card border border-border bg-surface p-4"
     >
       <h2 className="mb-3 text-base font-semibold">New template draft</h2>
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <Field
           label="Template ID"
           help="Used by sources, e.g. hq_firewall. Starter template IDs are taken."

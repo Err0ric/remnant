@@ -17,6 +17,7 @@ from app.engine.export import to_csv
 from app.engine.views import permitted_sources, scope_sources
 from app.meta.db import MetaDB
 from app.search.presets import presets
+from app.search.refine import refine_sql
 from app.search.simple import MAX_TEXT, compile_search
 
 router = APIRouter(tags=["query"])
@@ -241,6 +242,27 @@ async def search_facets(body: FacetRequest, request: Request, user: CurrentUser)
         facets=[Facet(field=c, values=v) for c, v in grouped.items() if v],
         elapsed_ms=result.elapsed_ms,
     )
+
+
+class RefineRequest(BaseModel):
+    sql: str = Field(min_length=1, max_length=20_000)
+    field: str = Field(max_length=64)
+    value: str | None = Field(default=None, max_length=4096)
+    exclude: bool = False
+
+
+class RefineResponse(BaseModel):
+    sql: str
+
+
+@router.post("/query/refine")
+async def query_refine(body: RefineRequest, _: CurrentUser) -> RefineResponse:
+    """The SQL on screen with one facet filter added (ADR-0016 row 2). Reads no data; the
+    caller runs the result like any query, through the guard and the audit log."""
+    sql = await run_in_threadpool(
+        refine_sql, body.sql, body.field, body.value, body.exclude, FACET_COLUMNS
+    )
+    return RefineResponse(sql=sql)
 
 
 class PresetOut(BaseModel):

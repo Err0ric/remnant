@@ -2,7 +2,7 @@
 
 Local-first, LLM-assisted SIEM front end. Bring your own logs, bring your own model.
 
-> Status: early preview (Slices 1 to 6 built; Slice 7 connectors, AI usage, and Investigations underway). Expect rough edges. "Remnant" is a working codename.
+> Status: early preview (Slices 1 to 7 built; Okta, Google Workspace, and AWS CloudTrail connectors deferred). Expect rough edges. "Remnant" is a working codename.
 
 Point it at log files you already have. Templates parse them into OCSF columns in a Parquet lake, DuckDB queries them, Sigma detects on them, and an LLM (local by default) helps write parsers and queries and explains results with citations back to real events.
 
@@ -16,6 +16,8 @@ Point it at log files you already have. Templates parse them into OCSF columns i
 | **Ctrl+K** goes to any page, saved search, or source | A complete light theme as well as dark |
 | ![Investigations: who uses which AI tools, MCP servers, and services](docs/images/investigations.png) | ![AI usage: AI services seen in network logs, with review status](docs/images/ai-usage.png) |
 | **Investigations.** Rank risky users, addresses, and hosts, then follow one, or the organization's AI use, across lanes; select a card to light its path | **AI usage.** AI services seen in DNS and firewall logs, Claude Code telemetry, and MCP servers, each marked Approved or Not approved |
+| ![Health: watched devices with their last 24 hours](docs/images/health.png) | ![MCP server settings for AI assistants](docs/images/mcp-server.png) |
+| **Health.** Every source, connector, agent, and alert target, plus watched devices that alert when they go quiet in the logs | **MCP server.** Claude Code, Claude Desktop, and other assistants query the logs read-only, as the person who connects them |
 | ![Sign-in with Microsoft](docs/images/sign-in-sso.png) | ![Terminal UI](docs/images/terminal.png) |
 | Optional sign-in with Microsoft Entra ID, Authelia, or any OIDC provider | `remnant tui`: query, results, and a live tail in the terminal |
 
@@ -23,12 +25,14 @@ Screenshots use made-up logs from `scripts/loggen.py` and `scripts/demo_lab.py`.
 
 ## What it does
 
-- **Bring your own logs.** Files and folders (rsyslog, syslog-ng, Vector), JSON lines, CSV, Windows EVTX and forwarded events, or a Grafana Loki you already run. 24 starter parsers (Linux auth, Palo Alto, Fortinet, UniFi, Cisco ASA and IOS, CEF, LEEF, Windows, DNS) and an Automatic parser for mixed streams.
+- **Bring your own logs.** Syslog sent straight to Remnant over UDP, TCP, or TLS, files and folders (rsyslog, syslog-ng, Vector), JSON lines, CSV, Windows EVTX and forwarded events, or a Grafana Loki you already run. 24 starter parsers (Linux auth, Palo Alto, Fortinet, UniFi, Cisco ASA and IOS, CEF, LEEF, Windows, DNS) and an Automatic parser for mixed streams.
 - **Connect cloud services.** Microsoft 365 (audit logs, Entra sign-ins, directory audits, alerts), the Anthropic admin API (usage, cost, Claude Code), and an OpenTelemetry receiver for Claude Code and endpoint agents. Works through an outbound proxy if you need one.
 - **Search three ways** over one engine: Simple search, SQL (read-only, guarded), or Ask in plain English.
 - **Detect** with imported SigmaHQ rules and scheduled searches; alert to email, Teams, Slack, or a signed webhook.
+- **Know it is working.** A Health page for every source, connector, agent, and alert target, plus watched devices (sensors, collectors, firewalls) that alert when they go silent in the logs.
 - **Investigate.** Users, addresses, and hosts ranked by rule matches; one entity's sources, activities, and targets in lanes; one person counted once across `alice`, `CORP\alice`, and `alice@example.com`.
 - **See AI use.** Which AI services, clients, and MCP servers people use, from logs you already have; mark each Approved or Not approved and alert on the rest.
+- **Ask from your own assistant.** A read-only MCP server (off by default) lets Claude Code, Claude Desktop, or another MCP client read the schema and run guarded SQL with a personal token; local-only sources stay out unless the client runs on your network.
 - **Bring your own model.** Ollama, LM Studio, llama.cpp, vLLM, or any OpenAI-compatible API, plus Anthropic. Fresh installs allow local models only. Each source is Local only or Cloud allowed, and Local only data is blocked from cloud models in code.
 - **Treats log content as hostile.** The model never reads the whole dataset, never runs anything on its own, and every claim it makes cites event ids that are checked.
 - **Team ready.** Accounts, roles, per-source access, an append-only audit log, HTTPS by default, optional single sign-on, online backups.
@@ -106,10 +110,14 @@ Database changes apply at start and only ever add to what is there. Take a backu
 | [docs/install/homelab-test.md](docs/install/homelab-test.md) | A guided first run with made-up logs, every screen |
 | [docs/install/team-trial-loki.md](docs/install/team-trial-loki.md) | Reading from a Grafana Loki you already run |
 | [docs/install/offline.md](docs/install/offline.md) | Servers without internet access, or behind a proxy that breaks the build: build elsewhere, carry one folder |
+| [docs/install/syslog-listener.md](docs/install/syslog-listener.md) | Sending syslog straight to Remnant over UDP, TCP, or TLS |
 | [docs/ingest/](docs/ingest/) | Pointing rsyslog, syslog-ng, or Vector at the log folder |
+| [docs/install/mcp-server.md](docs/install/mcp-server.md) | Querying the logs from Claude Code, Claude Desktop, or another MCP client |
 | [docs/install/sso-entra.md](docs/install/sso-entra.md), [sso-authelia.md](docs/install/sso-authelia.md) | Sign-in with Microsoft Entra ID, Authelia, or another OIDC provider |
 | [docs/install/backup.md](docs/install/backup.md) | Backups, restore, moving to a new server |
+| [docs/install/integrity.md](docs/install/integrity.md) | Log integrity checks, seals, and the integrity report |
 | [docs/install/quiet-sources.md](docs/install/quiet-sources.md) | An alert when a source stops sending |
+| [docs/install/health.md](docs/install/health.md) | The Health page: sources, connectors, agents, watched devices, alert targets |
 | [docs/install/tls.md](docs/install/tls.md) | Using your own certificate |
 
 ## Docs

@@ -28,7 +28,14 @@ MAX_URL = 2_048
 TEAMS_SUFFIXES = (".logic.azure.com", ".api.powerplatform.com")
 _REFUSED = tuple(
     ipaddress.ip_network(n)
-    for n in ("169.254.0.0/16", "fe80::/10", "fd00:ec2::254/128", "0.0.0.0/8", "::/128")
+    for n in (
+        "169.254.0.0/16",
+        "fe80::/10",
+        "fd00:ec2::254/128",
+        "0.0.0.0/8",
+        "::/128",
+        "100.100.100.200/32",  # Alibaba Cloud instance metadata
+    )
 )
 _PRIVATE = tuple(
     ipaddress.ip_network(n)
@@ -48,9 +55,19 @@ class Destination:
     private: bool  # every address is private or loopback
 
 
+_NAT64 = ipaddress.ip_network("64:ff9b::/96")
+
+
 def _norm(ip: Address) -> Address:
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
-        return ip.ipv4_mapped
+    """The IPv4 address behind IPv4-mapped, NAT64, and 6to4 forms, so the rules below
+    cannot be sidestepped by writing a refused IPv4 address as IPv6."""
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.ipv4_mapped is not None:
+            return ip.ipv4_mapped
+        if ip in _NAT64:
+            return ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+        if ip.sixtofour is not None:
+            return ip.sixtofour
     return ip
 
 

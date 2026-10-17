@@ -48,11 +48,20 @@ async function request<T>(path: string, init?: RequestInit, asText = false): Pro
   return (await res.json()) as T;
 }
 
+/** The read-only MCP server's settings (ADR-0003). */
+export interface McpSettings {
+  enabled: boolean;
+  endpoint_local: boolean;
+  updated_at: string | null;
+  path: string;
+}
+
 export interface Meta {
   product_name: string;
   version: string;
   ocsf_version: string;
   schema_version: number;
+  environment_label?: string | null;
 }
 
 export interface Health {
@@ -96,6 +105,8 @@ export interface AiService {
   status: AiStatus;
   custom: boolean;
   note: string;
+  /** The most sensitive data allowed to the service (ADR-0020 row 4). */
+  data_level?: DataLevel | null;
 }
 
 export interface AiServiceUse {
@@ -155,6 +166,8 @@ export interface AiWatch {
   target_ids: string[];
   updated_at: string | null;
   updated_by: string | null;
+  /** Alert when an AI agent changes (ADR-0020 row 3). */
+  agents?: boolean;
 }
 
 export interface SearchPreset {
@@ -325,6 +338,112 @@ export interface EntityGraph {
   sources: string[];
 }
 
+/** An AI agent and what changed (ADR-0020 rows 2 and 3). */
+export interface AiAgent {
+  kind: string;
+  agent: string;
+  label: string;
+  owners: string[];
+  machine: string | null;
+  first_seen: string;
+  last_seen: string;
+  events_24h: number;
+  state: "new" | "changed" | "usual";
+  new_items: { kind: string; name: string }[];
+  usual_peak: number | null;
+  recent_peak: number | null;
+}
+
+export type DataLevel = "public" | "internal" | "confidential";
+
+/** Who had an address at a time (ADR-0020 row 1). */
+export interface AddressHolders {
+  ip: string;
+  at: string;
+  max_age_hours: number;
+  holders: { kind: "user" | "host"; name: string; last_seen: string; events: number }[];
+}
+
+/** Health page (ADR-0019). */
+export type HealthState = "healthy" | "attention" | "unhealthy" | "unknown";
+
+export interface WatchedDevice {
+  device_id: string;
+  name: string;
+  /** IP address or host name, lower case. */
+  match: string;
+  silence_s: number;
+  /** Administrators only; empty for others. */
+  target_ids: string[];
+  state: HealthState;
+  reason: string | null;
+  last_seen: string | null;
+  /** Events per hour, oldest first, 24 values. */
+  hourly: number[];
+}
+
+export interface AgentHealth {
+  kind: string;
+  source_id: string;
+  machine: string;
+  last_seen: string | null;
+  events_24h: number;
+  state: HealthState;
+  reason: string | null;
+}
+
+export interface IntegrityFinding {
+  severity: "failure" | "warning";
+  kind: string;
+  path: string;
+  detail: string;
+}
+
+export interface IntegritySeal {
+  seal_id: number;
+  at: string;
+  status: "verified" | "warnings" | "failed";
+  lake_head: string;
+  lake_seq: number;
+  audit_head: string;
+  audit_rows: number;
+  files: number;
+  failures: number;
+  warnings: number;
+  findings: IntegrityFinding[];
+  signature: string;
+  signature_ok: boolean;
+}
+
+export interface IntegritySettings {
+  target_ids: string[];
+  send_seals: boolean;
+  updated_at: string | null;
+}
+
+export interface IntegrityStatus {
+  latest: IntegritySeal | null;
+  history: IntegritySeal[];
+  lake_head: string;
+  lake_entries: number;
+  interval_s: number;
+  settings: IntegritySettings;
+}
+
+export interface HealthChecks {
+  devices: WatchedDevice[];
+  agents: AgentHealth[];
+  /** Damaged lake files moved to data/quarantine (SPEC D51). */
+  quarantined_files?: number;
+}
+
+export interface WatchedDeviceInput {
+  name: string;
+  match: string;
+  silence_s: number;
+  target_ids: string[];
+}
+
 /** One person under several names (ADR-0018). */
 export interface IdentityAlias {
   alias: string;
@@ -342,7 +461,35 @@ export interface Identities {
 
 export type GraphKind = "user" | "ip" | "host" | "mcp" | "service";
 
-export type SourceKind = "file" | "loki" | "otlp" | "m365" | "anthropic";
+export type SourceKind = "file" | "loki" | "otlp" | "m365" | "anthropic" | "syslog";
+
+/** A syslog listener source's socket (ADR-0021). */
+export interface SyslogSettings {
+  protocol: "udp" | "tcp" | "tls";
+  port: number;
+  /** Addresses or networks; empty means private, loopback, and link-local only. */
+  allowed_senders: string[];
+}
+
+export interface ListenerSender {
+  address: string;
+  count: number;
+  last_seen: string | null;
+  allowed: boolean;
+}
+
+export interface ListenerStatus {
+  protocol: string;
+  port: number;
+  listening: boolean;
+  received: number;
+  dropped_not_allowed: number;
+  dropped_full: number;
+  connections: number;
+  last_message_at: string | null;
+  /** Administrators only; empty for other viewers. */
+  senders: ListenerSender[];
+}
 
 export interface SourceInput {
   source_id: string;
@@ -352,6 +499,7 @@ export interface SourceInput {
   loki?: LokiSettings | null;
   m365?: M365Settings | null;
   anthropic?: AnthropicSettings | null;
+  syslog?: SyslogSettings | null;
   /** Write-only, for m365 and anthropic sources. */
   credentials?: ApiCredentials;
   /** Write-only: a Loki password or token, stored encrypted. */
@@ -490,6 +638,8 @@ export interface SourceStatus {
   warnings?: string[];
   /** API sources: when the next try is, after errors. */
   retry_at?: string | null;
+  /** Syslog listener sources: the socket and who is sending (ADR-0021). */
+  listener?: ListenerStatus | null;
 }
 
 /** Quiet-source alert state (ADR-0014); null when no alert is set. */
@@ -1171,9 +1321,40 @@ export const api = {
   health: () => request<Health>("/api/health"),
   /** Server-side CSV of the same query, audited as an export. */
   exportCsv: (body: QueryRequest) => request<string>("/api/query/export", post(body), true),
+  refineQuery: (body: { sql: string; field: string; value: string | null; exclude: boolean }) =>
+    request<{ sql: string }>("/api/query/refine", post(body)),
+  mcpSettings: () => request<McpSettings>("/api/mcp/settings"),
+  saveMcpSettings: (body: { enabled: boolean; endpoint_local: boolean }) =>
+    request<McpSettings>("/api/mcp/settings", put(body)),
   facets: (body: FacetRequest) =>
     request<{ facets: Facet[]; elapsed_ms: number }>("/api/search/facets", post(body)),
   searchPresets: () => request<SearchPreset[]>("/api/search/presets"),
+  healthChecks: () => request<HealthChecks>("/api/health-checks"),
+  integrity: () => request<IntegrityStatus>("/api/integrity"),
+  verifyIntegrity: () => request<IntegritySeal>("/api/integrity/verify", post({})),
+  integrityReport: (days: number) =>
+    request<Record<string, unknown>>(`/api/integrity/report?days=${days}`),
+  saveIntegritySettings: (body: { target_ids: string[]; send_seals: boolean }) =>
+    request<IntegritySettings>("/api/integrity/settings", put(body)),
+  aiAgents: () => request<AiAgent[]>("/api/ai/agents"),
+  setAiDataLevel: (id: string, level: DataLevel | null) =>
+    request<AiService>(
+      `/api/ai/services/${encodeURIComponent(id)}/data-level`,
+      put({ data_level: level }),
+    ),
+  addressHolders: (ip: string, at?: string) =>
+    request<AddressHolders>(
+      `/api/addresses/${encodeURIComponent(ip)}${at ? `?at=${encodeURIComponent(at)}` : ""}`,
+    ),
+  addWatchedDevice: (body: WatchedDeviceInput) =>
+    request<{ device_id: string }>("/api/health-checks/devices", post(body)),
+  changeWatchedDevice: (id: string, body: WatchedDeviceInput) =>
+    request<{ device_id: string }>(
+      `/api/health-checks/devices/${encodeURIComponent(id)}`,
+      put(body),
+    ),
+  removeWatchedDevice: (id: string) =>
+    request<void>(`/api/health-checks/devices/${encodeURIComponent(id)}`, { method: "DELETE" }),
   identities: () => request<Identities>("/api/identities"),
   setIdentityDomains: (domains: string[]) =>
     request<string[]>("/api/identities/domains", put({ domains })),

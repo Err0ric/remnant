@@ -7,6 +7,8 @@ only ever a filter inside this scope, never a grant.
 """
 
 from app.auth.users import User
+from app.core.ids import RESERVED_SOURCE_PREFIX
+from app.engine.duckdb import QueryEngine, QueryScope
 from app.meta.db import MetaDB
 
 
@@ -33,3 +35,27 @@ def scope_sources(allowed: list[str] | None, requested: list[str] | None) -> lis
         return list(allowed)
     permitted = set(allowed)
     return [s for s in requested if s in permitted]
+
+
+def not_cloud_allowed(meta: MetaDB, engine: QueryEngine, scope: QueryScope) -> list[str]:
+    """Sources in scope that may not leave for a model outside the internal network: not
+    marked cloud_allowed now, or holding any event that was not cloud_allowed at ingest,
+    or a draft sample. When the lake cannot be checked, every source in scope counts."""
+    sources = engine.sources_in(scope)
+    if not sources:
+        return []
+    with meta.connect() as con:
+        labels = {
+            r[0]: r[1]
+            for r in con.execute("SELECT source_id, classification FROM sources").fetchall()
+        }
+    by_config = {
+        s
+        for s in sources
+        if labels.get(s, "local_only") != "cloud_allowed" or s.startswith(RESERVED_SOURCE_PREFIX)
+    }
+    try:
+        by_events = set(engine.local_only_sources(scope))
+    except Exception:  # cannot prove the data is cloud_allowed: treat it as not
+        by_events = set(sources)
+    return sorted(by_config | by_events)

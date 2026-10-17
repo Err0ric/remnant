@@ -2,7 +2,7 @@
 
 from importlib.metadata import PackageNotFoundError, version
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
 from app.api.access import current_user
@@ -12,7 +12,7 @@ from app.core.schema import COLUMNS, OCSF_VERSION, SCHEMA_VERSION
 router = APIRouter(tags=["meta"])
 
 
-def _app_version() -> str:
+def app_version() -> str:
     try:
         return version("app")
     except PackageNotFoundError:
@@ -36,6 +36,7 @@ class Meta(BaseModel):
     version: str
     ocsf_version: str
     schema_version: int
+    environment_label: str | None = None
 
 
 @router.get("/health")
@@ -44,12 +45,14 @@ async def health() -> Health:
 
 
 @router.get("/meta")
-async def meta() -> Meta:
+async def meta(request: Request) -> Meta:
+    config = getattr(request.app.state, "config", None)
     return Meta(
         product_name=PRODUCT_NAME,
-        version=_app_version(),
+        version=app_version(),
         ocsf_version=OCSF_VERSION,
         schema_version=SCHEMA_VERSION,
+        environment_label=config.server.environment_label if config else None,
     )
 
 

@@ -56,7 +56,7 @@ export function GroupsSection() {
       <div className="flex flex-col gap-3 p-3">
         {creating ? (
           <form aria-label="New group" onSubmit={submit} className="flex flex-col gap-3">
-            <div className="grid gap-3 md:grid-cols-2">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <Field label="Name" value={name} onChange={(e) => setName(e.target.value)} />
               <Field
                 label="Description"

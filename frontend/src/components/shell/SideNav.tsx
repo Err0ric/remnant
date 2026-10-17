@@ -1,7 +1,13 @@
 import type { MouseEvent } from "react";
 import { cn } from "@/lib/cn";
-import { NAV_GROUPS as GROUPS, SETTINGS_IDS, visibleSettings, type NavItem } from "@/lib/nav";
-import { navigate, pathFor, type PageId } from "@/lib/route";
+import {
+  NAV_GROUPS as GROUPS,
+  SETTINGS_IDS,
+  visibleSections,
+  visibleSettings,
+  type NavItem,
+} from "@/lib/nav";
+import { navigate, pathFor, useSection, type PageId } from "@/lib/route";
 
 interface SideNavProps {
   active: string;
@@ -30,7 +36,43 @@ function itemClass(current: boolean, ready: boolean): string {
   );
 }
 
-function Item({ item, active }: { item: NavItem; active: string }) {
+function Item({ item, active, isAdmin }: { item: NavItem; active: string; isAdmin: boolean }) {
+  const section = useSection();
+  const sections = item.id === active ? visibleSections(item, isAdmin) : [];
+  const current = sections.some((x) => x.id === section) ? section : sections[0]?.id;
+  return (
+    <>
+      {link(item, active)}
+      {sections.length > 0 && item.page ? (
+        <ul aria-label={`${item.label} sections`} className="mb-1 ml-3 border-l border-border pl-2">
+          {sections.map((x) => (
+            <li key={x.id}>
+              <a
+                href={`${pathFor(item.page as PageId)}#${x.id}`}
+                onClick={(e) => {
+                  if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+                  e.preventDefault();
+                  navigate(item.page as PageId, x.id);
+                }}
+                aria-current={x.id === current ? "location" : undefined}
+                className={cn(
+                  "block rounded px-2.5 py-1 text-sm no-underline",
+                  x.id === current
+                    ? "font-semibold text-accent-text"
+                    : "text-text-secondary hover:bg-surface-head hover:text-text",
+                )}
+              >
+                {x.label}
+              </a>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </>
+  );
+}
+
+function link(item: NavItem, active: string) {
   return (
     <a
       href={item.page ? pathFor(item.page) : undefined}
@@ -63,7 +105,8 @@ export function SideNav({ active, isAdmin, canAudit, open = false }: SideNavProp
       id="primary-nav"
       aria-label="Primary"
       className={cn(
-        "w-full shrink-0 border-b border-border bg-nav px-2 py-3 md:block md:w-55 md:border-b-0 md:border-r",
+        // From md up the rail stays in view under the top bar, with Settings pinned to its foot.
+        "w-full shrink-0 border-b border-border bg-nav px-2 py-3 md:sticky md:top-12 md:flex md:h-[calc(100dvh-3rem)] md:w-55 md:flex-col md:self-start md:overflow-y-auto md:border-b-0 md:border-r",
         open ? "block" : "hidden",
       )}
     >
@@ -73,12 +116,12 @@ export function SideNav({ active, isAdmin, canAudit, open = false }: SideNavProp
           {group.items
             .filter((item) => (isAdmin || !item.adminOnly) && (canAudit || !item.auditOnly))
             .map((item) => (
-              <Item key={item.id} item={item} active={active} />
+              <Item key={item.id} item={item} active={active} isAdmin={isAdmin} />
             ))}
         </div>
       ))}
       {first ? (
-        <div className="border-t border-border pt-3">
+        <div className="border-t border-border pt-3 md:mt-auto">
           <a
             href={pathFor(first)}
             onClick={go(first)}

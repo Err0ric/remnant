@@ -2,6 +2,7 @@ import { useInfiniteQuery, useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 import { Command, PageHeader } from "@/components/shell/PageHeader";
 import { ApiError, api, type AuditEvent, type AuditLlmCall } from "@/lib/api";
+import { useSectionTab } from "@/lib/route";
 import { ActivityTable } from "./ActivityTable";
 import { AiCallsTable } from "./AiCallsTable";
 import {
@@ -10,6 +11,7 @@ import {
   type AuditFilterState,
   type AuditLog,
 } from "./AuditFilterBar";
+import { IntegrityPanel } from "./IntegrityPanel";
 
 const PAGE = 100;
 const EMPTY: AuditFilterState = { text: "", outcome: "", range: "24h", user: null };
@@ -23,9 +25,17 @@ function save(text: string, name: string) {
   URL.revokeObjectURL(url);
 }
 
-/** Audit log (Slice 5): admins and auditors read and export the append-only trail. */
-export function AuditLogPage() {
-  const [log, setLog] = useState<AuditLog>("activity");
+const TABS = ["activity", "ai", "integrity"] as const;
+
+interface AuditLogPageProps {
+  isAdmin: boolean;
+}
+
+/** Audit log (Slice 5): admins and auditors read and export the append-only trail, and
+ * check the integrity of the lake and of the trail itself (ADR-0022). */
+export function AuditLogPage({ isAdmin }: AuditLogPageProps) {
+  const [tab, setTab] = useSectionTab(TABS);
+  const log: AuditLog = tab === "ai" ? "ai" : "activity";
   const [filters, setFilters] = useState<AuditFilterState>(EMPTY);
   const apiFilters = toApiFilters(filters);
   // The time window is fixed when the filters change, not on every render.
@@ -33,7 +43,7 @@ export function AuditLogPage() {
 
   const activity = useInfiniteQuery({
     queryKey: ["audit", ...key],
-    enabled: log === "activity",
+    enabled: tab === "activity",
     initialPageParam: undefined as number | undefined,
     queryFn: ({ pageParam }) => api.auditEvents(apiFilters, pageParam),
     getNextPageParam: (last: AuditEvent[]) =>
@@ -41,7 +51,7 @@ export function AuditLogPage() {
   });
   const calls = useInfiniteQuery({
     queryKey: ["audit", ...key],
-    enabled: log === "ai",
+    enabled: tab === "ai",
     initialPageParam: undefined as { ts: string; id: string } | undefined,
     queryFn: ({ pageParam }) => api.auditCalls(apiFilters, pageParam),
     getNextPageParam: (last: AuditLlmCall[]) => {
@@ -69,12 +79,14 @@ export function AuditLogPage() {
         title="Audit log"
         meta="Append-only · reading and exporting are recorded here too"
         commands={
-          <Command
-            label={exporter.isPending ? "Exporting…" : "Export CSV"}
-            primary
-            onClick={() => exporter.mutate()}
-            disabled={exporter.isPending || count === 0}
-          />
+          tab === "integrity" ? undefined : (
+            <Command
+              label={exporter.isPending ? "Exporting…" : "Export CSV"}
+              primary
+              onClick={() => exporter.mutate()}
+              disabled={exporter.isPending || count === 0}
+            />
+          )
         }
       />
       <div className="flex flex-col gap-2.5 px-5 py-3">
@@ -83,19 +95,20 @@ export function AuditLogPage() {
             [
               ["activity", "Activity"],
               ["ai", "AI calls"],
+              ["integrity", "Integrity"],
             ] as const
           ).map(([id, label]) => (
             <button
               key={id}
               type="button"
               role="tab"
-              aria-selected={log === id}
+              aria-selected={tab === id}
               onClick={() => {
-                setLog(id);
+                setTab(id);
                 setFilters({ ...filters, text: "", outcome: "" });
               }}
               className={`-mb-px border-b-2 px-3 py-1.5 text-sm ${
-                log === id
+                tab === id
                   ? "border-accent font-semibold text-text"
                   : "border-transparent text-text-secondary hover:text-text"
               }`}
@@ -104,8 +117,10 @@ export function AuditLogPage() {
             </button>
           ))}
         </div>
-        <AuditFilterBar log={log} value={filters} onChange={setFilters} />
-        {query.error || exporter.error ? (
+        {tab === "integrity" ? null : (
+          <AuditFilterBar log={log} value={filters} onChange={setFilters} />
+        )}
+        {tab !== "integrity" && (query.error || exporter.error) ? (
           <p role="alert" className="text-sm text-danger">
             {(query.error ?? exporter.error) instanceof ApiError
               ? (query.error ?? exporter.error)?.message
@@ -113,34 +128,38 @@ export function AuditLogPage() {
           </p>
         ) : null}
       </div>
-      <section
-        aria-label="Audit entries"
-        className="mx-5 mb-5 rounded border border-border bg-surface"
-      >
-        {query.isPending ? (
-          <p className="px-3 py-6 text-center text-sm text-text-secondary">Loading…</p>
-        ) : count === 0 ? (
-          <p className="px-3 py-6 text-center text-sm text-text-secondary">
-            Nothing matches these filters. Try a longer time range.
-          </p>
-        ) : log === "activity" ? (
-          <ActivityTable rows={eventRows} onUser={onUser} />
-        ) : (
-          <AiCallsTable rows={callRows} onUser={onUser} />
-        )}
-        {query.hasNextPage ? (
-          <div className="border-t border-border px-3 py-2 text-center">
-            <button
-              type="button"
-              onClick={() => void query.fetchNextPage()}
-              disabled={query.isFetchingNextPage}
-              className="rounded px-3 py-1 text-sm text-accent-text hover:bg-surface-head"
-            >
-              {query.isFetchingNextPage ? "Loading…" : "Load older entries"}
-            </button>
-          </div>
-        ) : null}
-      </section>
+      {tab === "integrity" ? (
+        <IntegrityPanel isAdmin={isAdmin} />
+      ) : (
+        <section
+          aria-label="Audit entries"
+          className="mx-5 mb-5 rounded border border-border bg-surface"
+        >
+          {query.isPending ? (
+            <p className="px-3 py-6 text-center text-sm text-text-secondary">Loading…</p>
+          ) : count === 0 ? (
+            <p className="px-3 py-6 text-center text-sm text-text-secondary">
+              Nothing matches these filters. Try a longer time range.
+            </p>
+          ) : log === "activity" ? (
+            <ActivityTable rows={eventRows} onUser={onUser} />
+          ) : (
+            <AiCallsTable rows={callRows} onUser={onUser} />
+          )}
+          {query.hasNextPage ? (
+            <div className="border-t border-border px-3 py-2 text-center">
+              <button
+                type="button"
+                onClick={() => void query.fetchNextPage()}
+                disabled={query.isFetchingNextPage}
+                className="rounded px-3 py-1 text-sm text-accent-text hover:bg-surface-head"
+              >
+                {query.isFetchingNextPage ? "Loading…" : "Load older entries"}
+              </button>
+            </div>
+          ) : null}
+        </section>
+      )}
     </div>
   );
 }

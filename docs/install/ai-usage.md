@@ -32,3 +32,11 @@ Alerts go to the targets you pick (Teams, Slack, email, webhook) as summaries, n
 - **People** comes from user names in the logs (firewall User-ID, telemetry email). DNS logs have only the client address, so for those the **Who** column lists machines.
 - **Claude Code cost** is Claude Code's own estimate (`claude_code.cost.usage`, delta temporality, the default).
 - Anyone who can see a source sees its AI numbers; put AI-related sources in a source group limited to the people who review them.
+
+## Agents
+
+**AI usage > Agents** lists Claude Code per person (with the machine it last ran on), MCP setups per machine and client, and Anthropic API keys, with their owner. Each is compared with its own last 30 days: a tool, MCP server, or model first used in the last 24 hours, or an hour more than three times busier than its usual busiest, marks it **Changed**. An agent first seen in the last 24 hours is **New agent**. To be told, turn on **Alert when an AI agent changes** under **Review and alerts**; each change is alerted once.
+
+## Allowed data
+
+Next to each service's review status, **Allowed data** (Public, Internal, Confidential) records the most sensitive data that may go to it. Sensitive-data alerts are skipped for a service set to Confidential, so a sanctioned tool cleared for that data does not alert on every key or card number.

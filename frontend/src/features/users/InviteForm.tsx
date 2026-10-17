@@ -53,7 +53,7 @@ export function InviteForm({ onInvited, onCancel, firstAccount = false }: Invite
       className="rounded-card border border-border bg-surface p-4"
     >
       <h2 className="mb-3 text-base font-semibold">Invite user</h2>
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <Field
           label="Username"
           help="What they type to sign in. Use one account per person; there are no shared logins."

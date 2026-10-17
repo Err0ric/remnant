@@ -25,6 +25,8 @@ import pyarrow.parquet as pq
 
 from app.core.ids import uuid7
 from app.core.schema import arrow_schema
+from app.ingest.durable import publish, quarantine, readable
+from app.ingest.integrity import LakeEvents, NoEvents
 
 MANIFEST_SUFFIX = ".compact.json"
 _PARTITION = re.compile(r"day=(\d{4}-\d{2}-\d{2})")
@@ -46,8 +48,10 @@ class Compactor:
         target_bytes: int = 128 << 20,
         min_files_open_day: int = 16,
         today: Callable[[], date] = lambda: datetime.now(UTC).date(),
+        events: LakeEvents | None = None,
     ) -> None:
         self._lake = lake_dir
+        self._events = events or NoEvents()
         self._small = small_bytes
         self._target = target_bytes
         self._min_open = max(2, min_files_open_day)
@@ -75,6 +79,9 @@ class Compactor:
             ]
             if len(small) < (2 if closed else self._min_open):
                 continue
+            small = [p for p in small if self._usable(p)]
+            if len(small) < (2 if closed else self._min_open):
+                continue
             touched = False
             for batch in self._batches(small):
                 if len(batch) < 2:
@@ -86,6 +93,14 @@ class Compactor:
                 touched = True
             report.partitions += int(touched)
         return report
+
+    def _usable(self, path: Path) -> bool:
+        """A damaged file is moved aside instead of failing the whole run."""
+        why = readable(path)
+        if why is None:
+            return True
+        quarantine(self._lake, path, why, self._events)
+        return False
 
     def _batches(self, files: list[Path]) -> list[list[Path]]:
         batches: list[list[Path]] = []
@@ -107,15 +122,14 @@ class Compactor:
         tables = [self._conform(pq.read_table(p)) for p in inputs]
         merged = pa.concat_tables(tables).sort_by([("time", "ascending")])
         final = folder / f"part-{uuid7().hex}.parquet"
-        tmp = folder / f".{final.name}.tmp"
-        pq.write_table(merged, tmp, compression="zstd")
         manifest = folder / f"{final.stem}{MANIFEST_SUFFIX}"
-        manifest.write_text(
-            json.dumps({"output": final.name, "inputs": [p.name for p in inputs]}),
-            encoding="utf-8",
-        )
-        os.replace(tmp, final)
-        return final
+        with manifest.open("w", encoding="utf-8") as fh:
+            json.dump({"output": final.name, "inputs": [p.name for p in inputs]}, fh)
+            fh.flush()
+            os.fsync(fh.fileno())
+        published = publish(merged, final)
+        self._events.added([published])
+        return published
 
     def _conform(self, table: pa.Table) -> pa.Table:
         """Fit an older file to the current schema (migrations are additive only)."""
@@ -128,6 +142,8 @@ class Compactor:
         return pa.Table.from_arrays(columns, schema=self._schema)
 
     def _finish(self, folder: Path, output: str, inputs: list[str]) -> None:
+        gone = [folder / n for n in inputs if n != output and (folder / n).is_file()]
+        self._events.removed(gone, f"compacted into {output}")
         for name in inputs:
             if name != output:
                 (folder / name).unlink(missing_ok=True)

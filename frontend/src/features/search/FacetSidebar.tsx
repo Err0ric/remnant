@@ -7,8 +7,10 @@ import { filterTerm } from "@/lib/simpleSearch";
 interface FacetSidebarProps {
   /** The search behind the results on screen; null before the first run. */
   request: FacetRequest | null;
-  /** Adds a term to the Simple search and runs it; null in SQL mode (counts only). */
+  /** Adds a term to the Simple search and runs it; null in SQL mode. */
   onTerm: ((term: string) => void) | null;
+  /** SQL and Ask mode: adds the filter to the SQL on screen and runs it. */
+  onRefine?: ((field: string, value: string | null, exclude: boolean) => void) | null;
 }
 
 // Simple-search names for the facet columns (the short aliases where one exists).
@@ -56,7 +58,7 @@ function storedOpen(): boolean {
 }
 
 /** Top values of a few fields for the whole result, from the server (ADR-0016 row 2). */
-export function FacetSidebar({ request, onTerm }: FacetSidebarProps) {
+export function FacetSidebar({ request, onTerm, onRefine = null }: FacetSidebarProps) {
   const [open, setOpenState] = useState(storedOpen);
   const setOpen = (v: boolean) => {
     setOpenState(v);
@@ -75,8 +77,12 @@ export function FacetSidebar({ request, onTerm }: FacetSidebarProps) {
     placeholderData: (previous) => previous,
   });
 
+  const clickable = onTerm !== null || onRefine !== null;
   const pick = (field: string, value: string | null, exclude: boolean) => {
-    if (!onTerm) return;
+    if (!onTerm) {
+      onRefine?.(field, value, exclude);
+      return;
+    }
     const name = SEARCH_NAME[field] ?? field;
     if (value === null || value === "") onTerm(`${exclude ? "" : "-"}${name}:*`);
     else onTerm(filterTerm(name, value, exclude));
@@ -102,7 +108,7 @@ export function FacetSidebar({ request, onTerm }: FacetSidebarProps) {
       <div className="flex items-center gap-2 border-b border-border bg-surface-head px-3 py-2">
         <h2 className="text-sm font-semibold">Fields</h2>
         <span className="truncate text-xs font-normal text-text-muted">
-          {onTerm ? "click to filter" : "counts only"}
+          {clickable ? "click to filter" : "counts only"}
         </span>
         <button
           type="button"
@@ -147,9 +153,9 @@ export function FacetSidebar({ request, onTerm }: FacetSidebarProps) {
                       <li key={v.value ?? "\u0000"} className="group flex items-center gap-1">
                         <button
                           type="button"
-                          disabled={!onTerm}
+                          disabled={!clickable}
                           onClick={(e: MouseEvent) => pick(f.field, v.value, e.altKey)}
-                          title={onTerm ? `Filter to ${text}` : text}
+                          title={clickable ? `Filter to ${text}` : text}
                           className="relative flex min-w-0 flex-1 items-center gap-2 rounded px-1.5 py-0.5 text-left text-sm enabled:hover:bg-surface-head disabled:cursor-default"
                         >
                           <span
@@ -166,7 +172,7 @@ export function FacetSidebar({ request, onTerm }: FacetSidebarProps) {
                             {v.count.toLocaleString()}
                           </span>
                         </button>
-                        {onTerm ? (
+                        {clickable ? (
                           <button
                             type="button"
                             onClick={() => pick(f.field, v.value, true)}

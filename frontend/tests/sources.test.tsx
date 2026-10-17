@@ -358,6 +358,41 @@ describe("OTLP sources (ADR-0015)", () => {
     ).not.toBeChecked();
   });
 
+  it("adds a syslog listener with protocol, port, and allowed senders", async () => {
+    const spy = await openSources();
+    await userEvent.click(screen.getByRole("button", { name: "Add source" }));
+    const form = screen.getByRole("form", { name: "Add source" });
+    await userEvent.type(within(form).getByLabelText("Source ID"), "firewall");
+    await userEvent.selectOptions(within(form).getByLabelText("Reads from"), "syslog");
+    expect(within(form).queryByLabelText("File or folder")).toBeNull();
+    expect(within(form).getByLabelText("Port")).toHaveValue(5514);
+    await userEvent.selectOptions(within(form).getByLabelText("Protocol"), "tls");
+    expect(within(form).getByLabelText("Port")).toHaveValue(6514); // follows the protocol
+    await userEvent.click(within(form).getByText("Parsing and retention"));
+    await userEvent.type(
+      within(form).getByLabelText("Allowed senders"),
+      "192.168.1.0/24{enter}10.0.0.5",
+    );
+    await userEvent.click(within(form).getByRole("button", { name: "Add source" }));
+    await waitFor(() => expect(posts(spy, "/api/sources")).toHaveLength(1));
+    const body = JSON.parse(String(posts(spy, "/api/sources")[0]?.[1]?.body)) as Record<
+      string,
+      unknown
+    >;
+    expect(body).toMatchObject({
+      kind: "syslog",
+      format: "syslog",
+      path: "",
+      syslog: { protocol: "tls", port: 6514, allowed_senders: ["192.168.1.0/24", "10.0.0.5"] },
+    });
+    const row = (await screen.findByText("firewall")).closest("tr") as HTMLElement;
+    expect(within(row).getByText("Syslog TLS")).toBeInTheDocument();
+    expect(within(row).getByText(/1,200 received, 4 refused/)).toBeInTheDocument();
+    await userEvent.click(within(row).getByText("Senders (2)"));
+    const senders = within(row).getByRole("list", { name: "Senders" });
+    expect(within(senders).getByText("Refused")).toBeVisible();
+  });
+
   it("adds a Microsoft 365 source with a certificate after a per-feed test", async () => {
     const spy = await openSources();
     await userEvent.click(screen.getByRole("button", { name: "Add source" }));

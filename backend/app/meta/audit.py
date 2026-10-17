@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
 
+from app.core.chain import GENESIS, audit_hash
 from app.meta.db import MetaDB
 
 Outcome = Literal["success", "failure", "denied"]
@@ -26,18 +27,26 @@ class AuditLog:
         ip: str | None = None,
         detail: dict[str, Any] | None = None,
     ) -> None:
+        content = (
+            datetime.now(UTC).isoformat(),
+            user_id,
+            action,
+            outcome,
+            ip,
+            json.dumps(detail or {}, default=str, separators=(",", ":")),
+        )
         with self._meta.connect() as con:
+            # Each row chains to the one before it (ADR-0022 row 4). MetaDB serializes
+            # connections in this process, so the previous hash cannot change in between.
+            prev = con.execute(
+                "SELECT chain_hash FROM audit_log WHERE chain_hash IS NOT NULL"
+                " ORDER BY audit_id DESC LIMIT 1"
+            ).fetchone()
+            chain = audit_hash(prev[0] if prev else GENESIS, content)
             con.execute(
-                "INSERT INTO audit_log (ts, user_id, action, outcome, ip, detail)"
-                " VALUES (?, ?, ?, ?, ?, ?)",
-                (
-                    datetime.now(UTC).isoformat(),
-                    user_id,
-                    action,
-                    outcome,
-                    ip,
-                    json.dumps(detail or {}, default=str, separators=(",", ":")),
-                ),
+                "INSERT INTO audit_log (ts, user_id, action, outcome, ip, detail, chain_hash)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (*content, chain),
             )
 
 

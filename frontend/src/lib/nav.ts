@@ -10,6 +10,19 @@ export interface NavItem {
   auditOnly?: boolean;
   /** Other words the command palette matches, including flavor names (CLAUDE.md rule 12). */
   aliases?: string[];
+  /** Tabs of the page, listed under it in the left nav (URL `#id`). */
+  sections?: NavSection[];
+}
+
+export interface NavSection {
+  id: string;
+  label: string;
+  adminOnly?: boolean;
+}
+
+/** Sections this user can open (the page applies the same rule to its tabs). */
+export function visibleSections(item: NavItem, isAdmin: boolean): NavSection[] {
+  return (item.sections ?? []).filter((s) => isAdmin || !s.adminOnly);
 }
 
 export interface NavGroup {
@@ -23,6 +36,20 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "General",
     items: [
       { id: "overview", label: "Overview", ready: true, page: "overview" },
+      {
+        id: "health",
+        label: "Health",
+        ready: true,
+        page: "health",
+        aliases: ["status", "sensors", "agents", "watched devices", "connectors health"],
+        sections: [
+          { id: "sources", label: "Sources" },
+          { id: "connectors", label: "Connectors" },
+          { id: "agents", label: "Agents" },
+          { id: "devices", label: "Watched devices" },
+          { id: "alerts", label: "Alerts and schedules" },
+        ],
+      },
       { id: "dashboard", label: "Dashboard", ready: true, page: "dashboard" },
     ],
   },
@@ -51,6 +78,13 @@ export const NAV_GROUPS: NavGroup[] = [
         ready: true,
         page: "ai",
         aliases: ["shadow ai", "mcp servers", "claude usage", "dlp"],
+        sections: [
+          { id: "services", label: "Services" },
+          { id: "agents", label: "Agents" },
+          { id: "mcp", label: "MCP servers" },
+          { id: "people", label: "Claude usage" },
+          { id: "settings", label: "Review and alerts", adminOnly: true },
+        ],
       },
     ],
   },
@@ -91,7 +125,14 @@ export const SETTINGS_GROUPS: NavGroup[] = [
         adminOnly: true,
         aliases: ["aliases", "duplicate names", "people", "organization domains"],
       },
-      { id: "audit", label: "Audit log", ready: true, page: "audit", auditOnly: true },
+      {
+        id: "audit",
+        label: "Audit log",
+        ready: true,
+        page: "audit",
+        auditOnly: true,
+        aliases: ["integrity", "tamper check", "hash chain", "seal"],
+      },
     ],
   },
   {
@@ -111,6 +152,14 @@ export const SETTINGS_GROUPS: NavGroup[] = [
         page: "alerts",
         adminOnly: true,
         aliases: ["teams", "slack", "email", "webhook"],
+      },
+      {
+        id: "mcp",
+        label: "MCP server",
+        ready: true,
+        page: "mcp",
+        adminOnly: true,
+        aliases: ["model context protocol", "claude desktop", "ai assistant", "claude code"],
       },
     ],
   },

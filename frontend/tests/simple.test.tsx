@@ -193,4 +193,34 @@ describe("Simple search", () => {
       expect(facetBodies().at(-1)?.text).toBe('src_ip:"203.0.113.9" src_ip:*'),
     );
   });
+
+  it("in SQL mode, a field click adds the filter to the SQL and runs it", async () => {
+    const { spy } = await renderAt("/search");
+    await screen.findByText("Failed password for invalid user oracle");
+    await userEvent.click(screen.getByRole("tab", { name: "SQL" }));
+    await userEvent.click(screen.getByRole("button", { name: "Run query" }));
+    const fields = await screen.findByRole("complementary", { name: "Fields" });
+    expect(await within(fields).findByText("click to filter")).toBeVisible();
+    const src = await within(fields).findByRole("region", { name: /^source$/i });
+    await userEvent.click(within(src).getByRole("button", { name: /^linux_sshd/ }));
+    await vi.waitFor(() =>
+      expect(posts(spy, "/api/query").at(-1)?.sql).toMatch(/WHERE source_id = 'linux_sshd'$/),
+    );
+    const refine = posts(spy, "/api/query/refine").at(-1) as Body & { field?: string };
+    expect(refine.field).toBe("source_id");
+  });
+
+  it("a field click still filters after switching to Ask before asking anything", async () => {
+    const { spy } = await renderAt("/search");
+    await screen.findByText("Failed password for invalid user oracle");
+    await userEvent.click(screen.getAllByLabelText("Ask in plain English")[0] as HTMLElement);
+    const fields = await screen.findByRole("complementary", { name: "Fields" });
+    expect(within(fields).getByText("click to filter")).toBeVisible();
+    const src = await within(fields).findByRole("region", { name: /^source$/i });
+    await userEvent.click(within(src).getByRole("button", { name: /^linux_sshd/ }));
+    await vi.waitFor(() =>
+      expect(posts(spy, "/api/search/compile").at(-1)?.text).toBe('source:"linux_sshd"'),
+    );
+    expect(screen.getByLabelText("Search text")).toHaveValue('source:"linux_sshd"');
+  });
 });

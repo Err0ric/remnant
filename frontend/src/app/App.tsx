@@ -23,7 +23,9 @@ import { AuditLogPage } from "@/features/audit/AuditLogPage";
 import { AiUsagePage } from "@/features/ai/AiUsagePage";
 import { InvestigatePage } from "@/features/investigate/InvestigatePage";
 import { IdentitiesPage } from "@/features/identities/IdentitiesPage";
+import { McpPage } from "@/features/settings/McpPage";
 import { SetupPage } from "@/features/setup/SetupPage";
+import { HealthPage } from "@/features/health/HealthPage";
 import { usePage } from "@/lib/route";
 import { SETTINGS_IDS } from "@/lib/nav";
 import { cn } from "@/lib/cn";
@@ -141,13 +143,17 @@ export function App({ initialTheme, queryClient }: AppProps) {
                   ) : page === "templates" && (!user || user.role === "admin") ? (
                     <TemplatesPage />
                   ) : page === "audit" && (!user || user.role !== "analyst") ? (
-                    <AuditLogPage />
+                    <AuditLogPage isAdmin={!user || user.role === "admin"} />
                   ) : page === "ai" ? (
                     <AiUsagePage isAdmin={!user || user.role === "admin"} />
                   ) : page === "identities" && (!user || user.role === "admin") ? (
                     <IdentitiesPage />
+                  ) : page === "mcp" && (!user || user.role === "admin") ? (
+                    <McpPage />
                   ) : page === "setup" && (!user || user.role === "admin") ? (
                     <SetupPage />
+                  ) : page === "health" ? (
+                    <HealthPage isAdmin={!user || user.role === "admin"} />
                   ) : page === "investigate" ? (
                     <InvestigatePage />
                   ) : page === "overview" ? (

@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
+from app.ingest.integrity import LakeEvents, NoEvents
+
 _SOURCE = re.compile(r"source=([a-z0-9][a-z0-9_]{0,63})")
 _DAY = re.compile(r"day=(\d{4}-\d{2}-\d{2})")
 
@@ -29,8 +31,10 @@ class RetentionJob:
         retention_days: Mapping[str, int],
         default_days: int = 30,
         today: Callable[[], date] = lambda: datetime.now(UTC).date(),
+        events: LakeEvents | None = None,
     ) -> None:
         self._lake = lake_dir
+        self._events = events or NoEvents()
         self._days = dict(retention_days)
         self._default = default_days
         self._today = today
@@ -55,6 +59,9 @@ class RetentionJob:
                 except ValueError:
                     continue
                 if day < cutoff:
+                    files = [p for p in day_dir.glob("part-*.parquet") if p.is_file()]
+                    days_kept = self._days.get(src.group(1), self._default)
+                    self._events.removed(files, f"retention: older than {days_kept} days")
                     shutil.rmtree(day_dir)
                     deleted += 1
             if deleted:

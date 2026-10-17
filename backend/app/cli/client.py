@@ -214,6 +214,20 @@ class Api:
             return res.text
         return None if res.status_code == 204 else res.json()
 
+    def mcp(self, message: bytes, session_id: str | None) -> tuple[int, bytes, str | None]:
+        """Forward one MCP JSON-RPC message (ADR-0003) as is. Returns the status, the body,
+        and the session id the server named, for the stdio bridge to relay unchanged."""
+        headers = {"Content-Type": "application/json", "Accept": "application/json"}
+        if session_id:
+            headers["Mcp-Session-Id"] = session_id
+        try:
+            res = self._client.post("/api/mcp", content=message, headers=headers)
+        except httpx.HTTPError as exc:
+            if _is_cert_failure(exc):
+                raise UntrustedCertificateError(0, "The server certificate is not trusted") from exc
+            raise ApiError(0, f"Cannot reach server: {exc}") from exc
+        return res.status_code, res.content, res.headers.get("mcp-session-id")
+
     def auth_state(self) -> dict[str, Any]:
         data: dict[str, Any] = self._call("GET", "/api/auth/state")
         return data

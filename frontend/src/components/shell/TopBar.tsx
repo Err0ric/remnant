@@ -1,7 +1,7 @@
 import { LogOut, Menu, Moon, Search, Sun, X } from "lucide-react";
 import type { User } from "@/lib/api";
 import { navigate } from "@/lib/route";
-import { PRODUCT_NAME } from "@/lib/branding";
+import { ENVIRONMENT_LABEL, PRODUCT_NAME } from "@/lib/branding";
 import type { Theme } from "@/lib/theme";
 
 interface TopBarProps {
@@ -29,7 +29,7 @@ export function TopBar({
 }: TopBarProps) {
   const next = theme === "dark" ? "light" : "dark";
   return (
-    <header className="flex h-11 shrink-0 items-center gap-3 border-b border-black/20 bg-top px-4 text-white md:gap-4">
+    <header className="sticky top-0 z-30 flex h-12 shrink-0 items-center gap-3 border-b border-black/20 bg-top px-4 text-white md:gap-5">
       {onToggleMenu ? (
         <button
           type="button"
@@ -37,23 +37,23 @@ export function TopBar({
           aria-label={menuOpen ? "Close menu" : "Open menu"}
           aria-expanded={menuOpen}
           aria-controls="primary-nav"
-          className="-ml-1 flex h-7 w-7 items-center justify-center rounded hover:bg-white/10 md:hidden"
+          className="-ml-1 flex h-8 w-8 items-center justify-center rounded hover:bg-white/10 md:hidden"
         >
-          {menuOpen ? <X size={16} aria-hidden /> : <Menu size={16} aria-hidden />}
+          {menuOpen ? <X size={18} aria-hidden /> : <Menu size={18} aria-hidden />}
         </button>
       ) : null}
       <a
         href="/overview"
         aria-label={`${PRODUCT_NAME} overview`}
-        className="flex items-center gap-2 font-semibold text-white no-underline"
+        className="flex items-center gap-2 text-md text-white no-underline"
         onClick={(e) => {
           e.preventDefault();
           navigate("overview");
         }}
       >
         <svg
-          width="18"
-          height="18"
+          width="22"
+          height="22"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
@@ -68,30 +68,36 @@ export function TopBar({
       <span className="hidden text-white/40 lg:inline" aria-hidden="true">
         |
       </span>
-      <span className="hidden text-sm text-white/75 lg:inline">Security workspace</span>
+      <span className="hidden text-base text-white/75 lg:inline">Security workspace</span>
       <button
         type="button"
         onClick={onOpenPalette}
         aria-label="Open the command palette"
-        className="flex h-7 w-7 shrink-0 items-center justify-center gap-2 rounded border border-white/15 text-left text-sm text-white/60 hover:border-white/30 hover:text-white/80 sm:w-full sm:max-w-[420px] sm:shrink sm:justify-start sm:px-2.5 lg:ml-6"
+        title="Jump to a page, saved search, source, or action"
+        className="flex h-8 shrink-0 items-center gap-2 rounded border border-white/15 bg-white/5 px-2.5 text-base text-white/75 hover:border-white/30 hover:bg-white/10 hover:text-white lg:ml-4"
       >
-        <Search size={14} aria-hidden />
-        <span className="hidden truncate sm:inline">Go to a page, saved search, or source</span>
-        <kbd className="ml-auto hidden rounded-badge border border-white/20 px-1 text-[11px] text-white/60 md:inline">
+        <Search size={16} aria-hidden />
+        <span className="hidden sm:inline">Jump to</span>
+        <kbd className="hidden rounded-badge border border-white/20 px-1 text-[11px] text-white/60 md:inline">
           {isMac() ? "⌘K" : "Ctrl K"}
         </kbd>
       </button>
-      <span className="ml-auto flex shrink-0 items-center gap-2 text-sm text-white/75 sm:gap-3">
-        <span className="hidden rounded-badge border border-white/20 px-2 text-xs font-normal xl:inline">
-          {window.location.host}
-        </span>
+      <span className="ml-auto flex shrink-0 items-center gap-2 text-base text-white/75 sm:gap-3">
+        {ENVIRONMENT_LABEL ? (
+          <span
+            className="hidden rounded-badge border border-white/20 px-2 text-xs font-normal sm:inline"
+            title="Set by the administrator (server.environment_label)"
+          >
+            {ENVIRONMENT_LABEL}
+          </span>
+        ) : null}
         <button
           type="button"
           onClick={onToggleTheme}
           aria-label={`Switch to ${next} theme`}
-          className="flex h-7 items-center gap-1.5 rounded border border-white/20 px-2.5 hover:bg-white/10"
+          className="flex h-8 items-center gap-1.5 rounded border border-white/20 px-2.5 hover:bg-white/10"
         >
-          {theme === "dark" ? <Sun size={14} aria-hidden /> : <Moon size={14} aria-hidden />}
+          {theme === "dark" ? <Sun size={16} aria-hidden /> : <Moon size={16} aria-hidden />}
           <span className="hidden sm:inline">{theme === "dark" ? "Light" : "Dark"}</span>
         </button>
         {user && onSignOut ? (
@@ -111,9 +117,9 @@ export function TopBar({
             <button
               type="button"
               onClick={onSignOut}
-              className="flex h-7 items-center gap-1.5 rounded border border-white/20 px-2.5 hover:bg-white/10"
+              className="flex h-8 items-center gap-1.5 rounded border border-white/20 px-2.5 hover:bg-white/10"
             >
-              <LogOut size={14} aria-hidden />
+              <LogOut size={16} aria-hidden />
               <span className="sr-only sm:not-sr-only">Sign out</span>
             </button>
           </>

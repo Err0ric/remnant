@@ -6,6 +6,7 @@ inode change (rename) or a file shorter than the checkpoint (copytruncate).
 Delivery is at-least-once: the checkpoint advances after the lake write.
 """
 
+import errno
 import json
 import os
 import threading
@@ -32,9 +33,11 @@ from app.ingest.connectors.loki import (
 from app.ingest.connectors.loki import poll as loki_poll
 from app.ingest.evtx import EvtxReader, file_signature
 from app.ingest.framer import Framer
+from app.ingest.integrity import LakeEvents
 from app.ingest.normalizer import Normalizer
 from app.ingest.records import DecodedLine, Frame, decode_frame
 from app.ingest.sources import (
+    SPOOL_SUFFIX,
     SourceConfig,
     SourceStore,
     display_name,
@@ -56,6 +59,8 @@ log = structlog.get_logger(__name__)
 # has not changed for this long it is read as it is (a truncated transfer would otherwise
 # never be ingested), and the chunks it lacks are simply not there.
 SHORT_EVTX_GRACE = timedelta(minutes=10)
+SYSLOG_MAX_MESSAGE = 65_536  # the listener never spools a longer message
+SPOOL_HEADER_MAX = 256  # bytes: a syslog spool record header is far shorter
 READ_LIMIT = 8 << 20  # bytes per file per pass, so one huge file cannot starve the rest
 MAX_LINE = 65_536
 
@@ -106,11 +111,12 @@ class IngestService:
         lake_dir: Path,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         templates: TemplateRegistry | None = None,
+        events: LakeEvents | None = None,
     ) -> None:
         self._sources = sources
         self._templates = templates
         self._meta = meta
-        self._writer = LakeWriter(lake_dir)
+        self._writer = LakeWriter(lake_dir, events)
         self._evtx = EvtxReader(max_len=MAX_LINE)
         self._clock = clock
         self._status: dict[str, SourceStatus] = {}
@@ -120,6 +126,8 @@ class IngestService:
         # (source, path key) -> (gap, first seen) for .evtx files held before an id gap
         self._gaps: dict[tuple[str, str], tuple[tuple[int, int], datetime]] = {}
         self._lock = threading.Lock()
+        # Set by the app: source id -> why its syslog listener is not listening.
+        self.listener_errors: Callable[[], dict[str, str]] | None = None
         self._loki_polled: dict[str, datetime] = {}  # source id -> last poll
         # Tests swap this for a client with a fake transport.
         self.loki_client: Callable[[LokiSettings, str | None], LokiClient] = LokiClient
@@ -161,7 +169,7 @@ class IngestService:
                 if source.kind in api_connectors.API_KINDS:
                     total += self._run_api(source, prev)
                     continue
-                if source.kind == "otlp":
+                if source.kind in SPOOL_SUFFIX:
                     spool = self._sources.spool_root
                     paths = spool_files(source, spool) if spool else []
                 else:
@@ -182,7 +190,7 @@ class IngestService:
                         failed.append(f"{display_name(path.name)[:100]}: {type(exc).__name__}")
                 if failed:
                     error = f"Cannot read {len(failed)} of {files} files ({failed[0]})"
-                if source.kind == "otlp":
+                if source.kind in SPOOL_SUFFIX:
                     paths = self._drop_read_spool(source, paths)
                 listed = {(source.source_id, path_key(p)) for p in paths}
                 self._prune(source.source_id, listed)
@@ -319,7 +327,7 @@ class IngestService:
         """Delete spool files that are fully read and no longer written (an older hour),
         so the spool holds only what ingest has not reached yet. Returns what is left."""
         keep: list[Path] = []
-        current = spool_name(self._clock())
+        current = spool_name(self._clock(), source.kind)
         for path in paths:
             try:
                 size = path.stat().st_size
@@ -354,9 +362,15 @@ class IngestService:
 
     def status(self) -> dict[str, SourceStatus]:
         with self._lock:
-            return dict(self._status)
+            out = dict(self._status)
+        # A syslog listener that cannot bind its port is this source's error (ADR-0021).
+        for sid, error in (self.listener_errors() if self.listener_errors else {}).items():
+            out[sid] = replace(out.get(sid) or SourceStatus(), error=error)
+        return out
 
     def _ingest_file(self, source: SourceConfig, path: Path) -> int:
+        if source.kind == "syslog":
+            return self._ingest_syslog_spool(source, path)
         if self._framing(source) == "evtx":
             return self._ingest_evtx(source, path)
         stat = path.stat()
@@ -428,6 +442,66 @@ class IngestService:
         self._save_checkpoint(
             source.source_id, path_key(path), inode, offset + consumed, csv_header, skipping
         )
+        return len(rows)
+
+    def _ingest_syslog_spool(self, source: SourceConfig, path: Path) -> int:
+        """Records the syslog listener spooled (ADR-0021 row 2): a JSON header line with the
+        message length, sender, and truncation flag, then the message bytes and a newline.
+        Only whole records are read; the checkpoint stops at the last one."""
+        stat = path.stat()
+        inode, size = stat.st_ino, stat.st_size
+        checkpoint = self._checkpoint(source.source_id, path_key(path))
+        offset = 0
+        if checkpoint is not None and checkpoint["inode"] == inode and checkpoint["offset"] <= size:
+            offset = checkpoint["offset"]
+        if offset >= size:
+            return 0
+        with open_regular(path, self._sources.read_roots()) as fh:
+            fh.seek(offset)
+            data = fh.read(READ_LIMIT + SPOOL_HEADER_MAX)
+        normalizer = self._normalizer(source)
+        rows: list[dict[str, Any]] = []
+        pos = 0
+        damaged = False
+        while pos < len(data):
+            nl = data.find(b"\n", pos, pos + SPOOL_HEADER_MAX)
+            if nl < 0:
+                damaged = len(data) - pos >= SPOOL_HEADER_MAX  # no header where one must be
+                break
+            try:
+                head = json.loads(data[pos:nl])
+                n, sender, cut = int(head["n"]), head.get("ip"), bool(head.get("t"))
+            except (ValueError, KeyError, TypeError):
+                damaged = True
+                break
+            if not 0 <= n <= SYSLOG_MAX_MESSAGE or not (
+                sender is None or (isinstance(sender, str) and len(sender) <= 45)
+            ):
+                damaged = True
+                break
+            end = nl + 1 + n
+            if end + 1 > len(data):
+                break  # the rest of this record is not written or read yet
+            if data[end : end + 1] != b"\n":
+                damaged = True
+                break
+            line = decode_frame(Frame(data=data[nl + 1 : end], truncated=cut))
+            pos = end + 1
+            row = normalizer.normalize(line)
+            if row is None:
+                continue
+            if row.get("device_ip") is None and isinstance(sender, str):
+                row["device_ip"] = sender  # what the network saw (ADR-0021 row 5)
+            rows.append(row)
+        if rows:
+            self._writer.write(rows)
+        self._save_checkpoint(source.source_id, path_key(path), inode, offset + pos, None, False)
+        if damaged:
+            # Never resync inside message bodies: senders control those bytes and could
+            # plant a header there. Set the rest of the file aside and say so.
+            path.rename(path.with_name(path.name + ".damaged"))
+            log.warning("syslog_spool_damaged", source_id=source.source_id)
+            raise OSError(errno.EIO, "spool file damaged after a crash or full disk; set aside")
         return len(rows)
 
     def _framing(self, source: SourceConfig) -> str:

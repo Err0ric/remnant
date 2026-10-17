@@ -20,6 +20,8 @@ export type PageId =
   | "investigate"
   | "identities"
   | "setup"
+  | "health"
+  | "mcp"
   | "audit";
 
 const PATHS: Record<PageId, string> = {
@@ -40,6 +42,8 @@ const PATHS: Record<PageId, string> = {
   investigate: "/investigations",
   identities: "/identities",
   setup: "/setup",
+  health: "/health",
+  mcp: "/mcp-server",
   audit: "/audit",
   account: "/account", // invite and reset links land here; works signed out
 };
@@ -54,9 +58,11 @@ export function pathFor(page: PageId): string {
   return PATHS[page];
 }
 
-export function navigate(page: PageId) {
-  if (window.location.pathname === PATHS[page]) return;
-  window.history.pushState(null, "", PATHS[page]);
+/** Opens a page; `section` picks one of its tabs (kept in the URL as `#section`). */
+export function navigate(page: PageId, section?: string) {
+  const target = PATHS[page] + (section ? `#${section}` : "");
+  if (window.location.pathname + window.location.hash === target) return;
+  window.history.pushState(null, "", target);
   window.dispatchEvent(new Event(CHANGE));
 }
 
@@ -71,4 +77,25 @@ function subscribe(callback: () => void) {
 
 export function usePage(): PageId {
   return useSyncExternalStore(subscribe, () => pageFromPath(window.location.pathname));
+}
+
+function currentHash(): string {
+  return window.location.hash.replace(/^#/, "");
+}
+
+/** The section named in the URL (`/ai#agents`), or "" when there is none. */
+export function useSection(): string {
+  return useSyncExternalStore(subscribe, currentHash);
+}
+
+/** A page's tab, kept in the URL so the left nav can link to it and Back works.
+ * Unknown or missing sections fall back to the first allowed tab. */
+export function useSectionTab<T extends string>(allowed: readonly T[]): [T, (next: T) => void] {
+  const hash = useSection();
+  const tab = (allowed as readonly string[]).includes(hash) ? (hash as T) : (allowed[0] as T);
+  const set = (next: T) => {
+    window.history.replaceState(null, "", `${window.location.pathname}#${next}`);
+    window.dispatchEvent(new Event(CHANGE));
+  };
+  return [tab, set];
 }

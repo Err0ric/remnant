@@ -115,6 +115,19 @@ export const SOURCE = {
 export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "open" }) {
   const state = { ...auth };
   const sources: Record<string, unknown>[] = [{ ...SOURCE }];
+  const watched: Record<string, unknown>[] = [
+    {
+      device_id: "d0",
+      name: "Site B network sensor",
+      match: "10.40.2.21",
+      silence_s: 900,
+      target_ids: [],
+      state: "unhealthy",
+      reason: "Silent 47 min (allowed 15 min)",
+      last_seen: "2026-10-10T11:13:00+00:00",
+      hourly: Array(24).fill(3),
+    },
+  ];
   const users: Record<string, unknown>[] = [
     {
       user_id: "u1",
@@ -612,6 +625,53 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         sources: ["linux_sshd"],
       });
     }
+    if (url.endsWith("/api/ai/agents") && method === "GET")
+      return json([
+        {
+          kind: "Claude Code",
+          agent: "cc|ws-0042|alice@example.com",
+          label: "Claude Code on ws-0042",
+          owners: ["alice@example.com"],
+          machine: "ws-0042",
+          first_seen: "2026-09-20T10:00:00+00:00",
+          last_seen: "2026-10-10T11:30:00+00:00",
+          events_24h: 42,
+          state: "changed",
+          new_items: [{ kind: "MCP server", name: "paste-share" }],
+          usual_peak: null,
+          recent_peak: null,
+        },
+      ]);
+    if (url.endsWith("/api/health-checks") && method === "GET")
+      return json({
+        devices: watched,
+        agents: [
+          {
+            kind: "OpenTelemetry",
+            source_id: "claude",
+            machine: "ws-0042",
+            last_seen: "2026-10-08T09:00:00+00:00",
+            events_24h: 0,
+            state: "attention",
+            reason: "Last reported 2 d ago",
+          },
+        ],
+      });
+    if (url.endsWith("/api/health-checks/devices") && method === "POST") {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      watched.push({
+        device_id: `d${watched.length + 1}`,
+        name: body.name,
+        match: String(body.match).toLowerCase(),
+        silence_s: body.silence_s,
+        target_ids: body.target_ids,
+        state: "unknown",
+        reason: "Not seen in the last 24 hours",
+        last_seen: null,
+        hourly: Array(24).fill(0),
+      });
+      return json({ device_id: `d${watched.length}` }, 201);
+    }
     if (url.includes("/api/entities/graph")) {
       const q = new URL(url, "https://x").searchParams;
       const card = (id: string, lane: number, label: string, extra: object = {}) => ({
@@ -785,6 +845,21 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
           text: "severity:>=high",
         },
       ]);
+    if (url.endsWith("/api/mcp/settings")) {
+      if (method === "PUT") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, boolean>;
+        return json({ ...body, updated_at: "2026-10-16T22:00:00Z", path: "/api/mcp" });
+      }
+      return json({ enabled: false, endpoint_local: false, updated_at: null, path: "/api/mcp" });
+    }
+    if (url.endsWith("/api/query/refine")) {
+      const body = JSON.parse(String(init?.body ?? "{}")) as {
+        sql: string;
+        field: string;
+        value: string | null;
+      };
+      return json({ sql: `${body.sql}\nWHERE ${body.field} = '${body.value ?? ""}'` });
+    }
     if (url.endsWith("/api/search/facets")) {
       const body = JSON.parse(String(init?.body ?? "{}")) as { text?: string; columns?: string[] };
       const all = [
@@ -830,6 +905,48 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
           ? ["Foo is not a column, so it is looked up in unmapped fields"]
           : [],
         columns: body.text.includes("src_ip:") ? ["src_endpoint_ip"] : [],
+      });
+    }
+    if (url.includes("/api/integrity")) {
+      const seal = (id: number, status: string, at: string) => ({
+        seal_id: id,
+        at,
+        status,
+        lake_head: "a".repeat(64),
+        lake_seq: 120,
+        audit_head: "b".repeat(64),
+        audit_rows: 900,
+        files: 42,
+        failures: status === "failed" ? 1 : 0,
+        warnings: 0,
+        findings:
+          status === "failed"
+            ? [
+                {
+                  severity: "failure",
+                  kind: "changed",
+                  path: "source=lin_auth/day=2026-10-09/part-0001.parquet",
+                  detail: "SHA-256 0011, recorded 2233",
+                },
+              ]
+            : [],
+        signature: "c".repeat(64),
+        signature_ok: true,
+      });
+      if (url.endsWith("/api/integrity/verify") && method === "POST")
+        return json(seal(3, "verified", "2026-10-10T12:00:00+00:00"));
+      if (url.includes("/api/integrity/report"))
+        return json({ seals: [], signature: "d".repeat(64) });
+      if (url.endsWith("/api/integrity/settings") && method === "PUT")
+        return json({ ...JSON.parse(String(init?.body ?? "{}")), updated_at: null });
+      const latest = seal(2, "failed", "2026-10-10T11:00:00+00:00");
+      return json({
+        latest,
+        history: [latest, seal(1, "verified", "2026-10-09T11:00:00+00:00")],
+        lake_head: "a".repeat(64),
+        lake_entries: 120,
+        interval_s: 86400,
+        settings: { target_ids: [], send_seals: false, updated_at: null },
       });
     }
     if (url.includes("/api/audit/")) {
@@ -1308,7 +1425,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       };
       delete body.credentials; // write-only: the server never returns it
       if (
-        !["loki", "otlp", "m365", "anthropic"].includes(body.kind ?? "") &&
+        !["loki", "otlp", "m365", "anthropic", "syslog"].includes(body.kind ?? "") &&
         !body.path.startsWith("/logs")
       )
         return json(
@@ -1318,7 +1435,28 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       const created = {
         ...SOURCE,
         ...body,
-        status: { ...SOURCE.status, state: "waiting", files: 0 },
+        status: {
+          ...SOURCE.status,
+          state: "waiting",
+          files: 0,
+          listener:
+            body.kind === "syslog"
+              ? {
+                  protocol: "tls",
+                  port: 6514,
+                  listening: true,
+                  received: 1200,
+                  dropped_not_allowed: 4,
+                  dropped_full: 0,
+                  connections: 1,
+                  last_message_at: "2026-10-16T20:00:00Z",
+                  senders: [
+                    { address: "192.168.1.1", count: 1200, last_seen: null, allowed: true },
+                    { address: "203.0.113.9", count: 4, last_seen: null, allowed: false },
+                  ],
+                }
+              : null,
+        },
       };
       sources.push(created);
       if (body.kind === "otlp")

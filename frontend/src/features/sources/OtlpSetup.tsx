@@ -36,7 +36,7 @@ async function copy(text: string): Promise<boolean> {
   }
 }
 
-function CopyBlock({ label, text }: { label: string; text: string }) {
+export function CopyBlock({ label, text }: { label: string; text: string }) {
   const [done, setDone] = useState(false);
   return (
     <div className="flex flex-col gap-1">

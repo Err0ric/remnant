@@ -41,5 +41,19 @@ if grep -rn "dangerouslySetInnerHTML" frontend/src ; then
   fail=1
 fi
 
+# Security rule 11: base images by digest, workflow actions by commit.
+if grep -nE '^FROM ' Dockerfile | grep -v '@sha256:' ; then
+  echo "error: Dockerfile base image not pinned by digest" >&2
+  fail=1
+fi
+if grep -nE '^\s+image: ' docker-compose.yml | grep -vE '@sha256:|image: app:' ; then
+  echo "error: compose image not pinned by digest" >&2
+  fail=1
+fi
+if grep -nE '^\s+(- )?uses: ' .github/workflows/*.yml | grep -vE '@[0-9a-f]{40}( |$)' ; then
+  echo "error: workflow action not pinned to a commit" >&2
+  fail=1
+fi
+
 [ "$fail" -eq 0 ] && echo "architecture checks passed"
 exit "$fail"

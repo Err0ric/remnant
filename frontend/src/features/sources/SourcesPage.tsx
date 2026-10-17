@@ -10,6 +10,7 @@ import { DiscoverPanel } from "./DiscoverPanel";
 import { ClassificationBadge } from "./ClassificationBadge";
 import { ClassificationEditor } from "./ClassificationEditor";
 import { ApiSummary } from "./ApiSummary";
+import { ListenerSummary } from "./ListenerSummary";
 import { LokiSummary } from "./LokiSummary";
 import { OtlpControls } from "./OtlpSetup";
 import { QuietAlert } from "./QuietAlert";
@@ -240,6 +241,11 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
                             />
                           ) : s.kind === "m365" || s.kind === "anthropic" ? (
                             <ApiSummary source={s} canManage={canManage} />
+                          ) : s.kind === "syslog" ? (
+                            <ListenerSummary
+                              settings={s.syslog ?? null}
+                              listener={s.status.listener ?? null}
+                            />
                           ) : s.kind === "loki" ? (
                             <LokiSummary loki={s.loki ?? null} behind={s.status.behind_s ?? null} />
                           ) : (
