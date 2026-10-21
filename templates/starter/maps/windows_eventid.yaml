@@ -1,0 +1,65 @@
+schema_version: 1
+id: windows_eventid
+description: >-
+  Windows event id to OCSF, shared by the NXLog, Snare, Winlogbeat, and EVTX templates so
+  one event classifies the same way whatever carried it. Keys are "<channel>:<event id>".
+  Activity ids checked against OCSF 1.x: Authentication 3002 (1 Logon, 2 Logoff,
+  3 Authentication Ticket, 4 Service Ticket Request, 5 Service Ticket Renew, 6 Preauth),
+  Account Change 3001 (1 Create, 2 Enable, 3 Password Change, 4 Password Reset, 5 Disable,
+  6 Delete, 9 Lock, 99 Other), Group Management 3006 (3 Add User, 4 Remove User,
+  5 Delete, 6 Create), Process Activity 1007 (1 Launch, 2 Terminate), Network Activity
+  4001 (1 Open, 5 Refuse). status_id is set only where the event id alone decides it;
+  otherwise the template takes it from the audit keyword. Entries with class_uid 0 have
+  no OCSF class yet and only supply a readable message. actor: target marks logon events,
+  where the user logging on is in Target*; everywhere else the acting user is in Subject*
+  and the account or group acted on stays in unmapped (TargetUserName). Sysmon is not
+  mapped yet: its events use different field names (Image, SourceIp, User), so a class
+  without those fields would mislead; see docs/BACKLOG.md.
+
+entries:
+  # Logon and logoff
+  "Security:4624": { class_uid: 3002, actor: target, activity_id: 1, status_id: 1, label: An account was successfully logged on }
+  "Security:4625": { class_uid: 3002, actor: target, activity_id: 1, status_id: 2, label: An account failed to log on }
+  "Security:4634": { class_uid: 3002, actor: target, activity_id: 2, label: An account was logged off }
+  "Security:4647": { class_uid: 3002, actor: target, activity_id: 2, label: User initiated logoff }
+  "Security:4648": { class_uid: 3002, actor: target, activity_id: 1, label: A logon was attempted using explicit credentials }
+  # Kerberos and NTLM on domain controllers
+  "Security:4768": { class_uid: 3002, actor: target, activity_id: 3, label: A Kerberos authentication ticket (TGT) was requested }
+  "Security:4769": { class_uid: 3002, actor: target, activity_id: 4, label: A Kerberos service ticket was requested }
+  "Security:4770": { class_uid: 3002, actor: target, activity_id: 5, label: A Kerberos service ticket was renewed }
+  "Security:4771": { class_uid: 3002, actor: target, activity_id: 6, status_id: 2, label: Kerberos pre-authentication failed }
+  "Security:4776": { class_uid: 3002, actor: target, activity_id: 1, label: The computer attempted to validate the credentials for an account }
+  # Processes
+  "Security:4688": { class_uid: 1007, activity_id: 1, label: A new process has been created }
+  "Security:4689": { class_uid: 1007, activity_id: 2, label: A process has exited }
+  # User accounts
+  "Security:4720": { class_uid: 3001, activity_id: 1, label: A user account was created }
+  "Security:4722": { class_uid: 3001, activity_id: 2, label: A user account was enabled }
+  "Security:4723": { class_uid: 3001, activity_id: 3, label: An attempt was made to change an account's password }
+  "Security:4724": { class_uid: 3001, activity_id: 4, label: An attempt was made to reset an account's password }
+  "Security:4725": { class_uid: 3001, activity_id: 5, label: A user account was disabled }
+  "Security:4726": { class_uid: 3001, activity_id: 6, label: A user account was deleted }
+  "Security:4738": { class_uid: 3001, activity_id: 99, label: A user account was changed }
+  "Security:4740": { class_uid: 3001, activity_id: 9, label: A user account was locked out }
+  "Security:4767": { class_uid: 3001, activity_id: 99, label: A user account was unlocked }
+  # Security groups (global, local, universal)
+  "Security:4727": { class_uid: 3006, activity_id: 6, label: A security-enabled global group was created }
+  "Security:4728": { class_uid: 3006, activity_id: 3, label: A member was added to a security-enabled global group }
+  "Security:4729": { class_uid: 3006, activity_id: 4, label: A member was removed from a security-enabled global group }
+  "Security:4730": { class_uid: 3006, activity_id: 5, label: A security-enabled global group was deleted }
+  "Security:4731": { class_uid: 3006, activity_id: 6, label: A security-enabled local group was created }
+  "Security:4732": { class_uid: 3006, activity_id: 3, label: A member was added to a security-enabled local group }
+  "Security:4733": { class_uid: 3006, activity_id: 4, label: A member was removed from a security-enabled local group }
+  "Security:4734": { class_uid: 3006, activity_id: 5, label: A security-enabled local group was deleted }
+  "Security:4754": { class_uid: 3006, activity_id: 6, label: A security-enabled universal group was created }
+  "Security:4756": { class_uid: 3006, activity_id: 3, label: A member was added to a security-enabled universal group }
+  "Security:4757": { class_uid: 3006, activity_id: 4, label: A member was removed from a security-enabled universal group }
+  "Security:4758": { class_uid: 3006, activity_id: 5, label: A security-enabled universal group was deleted }
+  # Windows Filtering Platform
+  "Security:5156": { class_uid: 4001, activity_id: 1, status_id: 1, label: The Windows Filtering Platform has permitted a connection }
+  "Security:5157": { class_uid: 4001, activity_id: 5, status_id: 2, label: The Windows Filtering Platform has blocked a connection }
+  # No OCSF class yet (see docs/BACKLOG.md); kept for a readable message
+  "Security:1102": { class_uid: 0, label: The audit log was cleared }
+  "Security:4697": { class_uid: 0, label: A service was installed in the system }
+  "Security:4698": { class_uid: 0, label: A scheduled task was created }
+  "System:7045": { class_uid: 0, label: A service was installed in the system }

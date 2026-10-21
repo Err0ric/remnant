@@ -1,0 +1,57 @@
+schema_version: 1
+id: leef_generic
+name: LEEF (generic)
+version: 1.0.0
+author: starter-pack
+description: >-
+  IBM Log Event Extended Format 1.0 and 2.0 over syslog. Maps the predefined endpoint,
+  user, and severity attributes; vendor, product, EventID, devTime, and custom keys stay
+  in unmapped. Copy and add class_by on event_id for a vendor.
+category: findings
+classification_default: local_only
+
+envelope:
+  type: syslog
+  syslog: { rfc: auto, assume_year: rollover_safe, timezone: UTC, strip_relay_headers: true }
+
+match:
+  regex: 'LEEF:[12]\.0\|'
+  min_confidence: 0.95
+
+payload:
+  format: leef
+
+transforms:
+  - { field: srcPort, op: to_int }
+  - { field: dstPort, op: to_int }
+  - { field: sev, op: to_int }
+
+mapping:
+  class_uid: 0             # Base Event
+  fields:
+    src_endpoint_ip: { from: src }
+    src_endpoint_port: { from: srcPort }
+    dst_endpoint_ip: { from: dst }
+    dst_endpoint_port: { from: dstPort }
+    actor_user_name: { from: usrName }
+    device_ip: { from: identSrc }
+  severity:
+    from: sev
+    map: { "1": 1, "2": 2, "3": 2, "4": 3, "5": 3, "6": 3, "7": 4, "8": 4, "9": 5, "10": 5 }
+
+tests:
+  - name: LEEF 1.0 tab separated
+    input: "<13>Oct  9 20:41:12 mail01 LEEF:1.0|ExampleCorp|MailGuard|3.1|MAIL_BLOCK|src=198.51.100.4\tdst=10.20.1.9\tusrName=carol\tsev=6"
+    expect:
+      parse_status: ok
+      fields: { src_endpoint_ip: 198.51.100.4, actor_user_name: carol, severity_id: 3 }
+  - name: LEEF 2.0 caret delimiter
+    input: "<13>Oct  9 20:42:00 nta01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|41|^|src=10.20.1.5^dst=203.0.113.9^srcPort=51000^dstPort=443^sev=8"
+    expect:
+      parse_status: ok
+      fields: { dst_endpoint_port: 443, src_endpoint_port: 51000, severity_id: 4 }
+  - name: LEEF 2.0 hex tab delimiter
+    input: "<13>Oct  9 20:43:00 nta01 LEEF:2.0|ExampleCorp|FlowWatch|2.0|42|x09|src=10.20.1.6\tdst=192.0.2.10\tsev=2"
+    expect:
+      parse_status: ok
+      fields: { src_endpoint_ip: 10.20.1.6, severity_id: 2 }

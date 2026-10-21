@@ -1,0 +1,58 @@
+schema_version: 1
+id: m365_alert
+name: Microsoft security alerts (Graph)
+version: 1.0.0
+author: starter-pack
+description: >-
+  Alerts from Microsoft Graph security/alerts_v2 (Defender XDR, Entra ID Protection,
+  Purview DLP, and other Microsoft detection sources), pulled by the Microsoft 365 connector
+  (ADR-0002). Each line is Graph's JSON, unchanged. The title is the message; severity
+  follows Microsoft's. Evidence, status, and the detection source stay in unmapped.
+category: findings
+vendor: microsoft
+classification_default: local_only
+
+envelope:
+  type: none
+
+match:
+  regex: '^\{(?=.*"detectionSource":)(?=.*"serviceSource":)(?=.*"createdDateTime":")'
+  min_confidence: 0.95
+
+payload:
+  format: json
+  json: { root: "$" }
+
+transforms:
+  - { field: createdDateTime, op: timestamp, args: { format: iso8601 } }
+
+mapping:
+  class_uid: 2004            # Detection Finding
+  fields:
+    time: { from: createdDateTime }
+    actor_user_name: { from: [evidence.0.userAccount.userPrincipalName, assignedTo] }
+    device_hostname: { from: evidence.0.deviceDnsName }
+    message: { from: title }
+  severity:
+    from: severity
+    map: { informational: 1, low: 2, medium: 3, high: 4 }
+
+tests:
+  - name: high alert with a user
+    input: '{"id":"da0000000000000000_1","title":"Suspicious inbox forwarding rule","severity":"high","status":"new","category":"Exfiltration","serviceSource":"microsoftDefenderForOffice365","detectionSource":"microsoftDefenderForOffice365","createdDateTime":"2026-10-14T17:20:00Z","evidence":[{"@odata.type":"#microsoft.graph.security.userEvidence","userAccount":{"userPrincipalName":"alice@example.com"}}]}'
+    expect:
+      parse_status: ok
+      class_uid: 2004
+      fields: { actor_user_name: alice@example.com, message: Suspicious inbox forwarding rule, severity_id: 4, time: "2026-10-14T17:20:00+00:00" }
+  - name: medium alert on a device
+    input: '{"id":"da0000000000000000_2","title":"Suspicious PowerShell command line","severity":"medium","status":"inProgress","serviceSource":"microsoftDefenderForEndpoint","detectionSource":"antivirus","createdDateTime":"2026-10-14T17:21:00Z","evidence":[{"@odata.type":"#microsoft.graph.security.deviceEvidence","deviceDnsName":"ws-0042.corp.example"}]}'
+    expect:
+      parse_status: ok
+      class_uid: 2004
+      fields: { device_hostname: ws-0042.corp.example, severity_id: 3 }
+  - name: informational DLP alert with no evidence
+    input: '{"id":"da0000000000000000_3","title":"DLP policy match: credit card numbers","severity":"informational","status":"resolved","serviceSource":"microsoftDataLossPrevention","detectionSource":"dataLossPrevention","createdDateTime":"2026-10-14T17:22:00Z","evidence":[]}'
+    expect:
+      parse_status: ok
+      class_uid: 2004
+      fields: { message: "DLP policy match: credit card numbers", severity_id: 1 }

@@ -1,0 +1,124 @@
+schema_version: 1
+id: windows_snare
+name: Windows events via Snare
+version: 1.1.0
+author: starter-pack
+description: >-
+  Snare for Windows (and NXLog to_snare) tab-delimited MSWinEventLog records, over syslog
+  or in a file. Fields in order: hostname, MSWinEventLog, criticality, log name, Snare
+  counter, date, event id, source, user, SID type, event log type, computer, category,
+  data, expanded message, then optional counter and checksum. Snare puts the event data
+  in the expanded message, so user and source address are read from it.
+category: identity          # mostly logon and account events; process and network too
+vendor: windows
+classification_default: local_only
+sigma:
+  logsource:
+    - {product: windows, service: "*"}
+    - {product: windows, category: "*"}
+
+envelope:
+  type: syslog
+  optional: true            # file output has no syslog header
+  syslog: { rfc: auto, assume_year: rollover_safe, timezone: UTC, strip_relay_headers: true }
+  defaults: [time, device_hostname]   # the syslog tag is the event provider, not a process
+
+match:
+  regex: 'MSWinEventLog\t\d+\t'
+  min_confidence: 0.95
+
+payload:
+  format: regex
+  regex:
+    patterns:
+      - '^(?:(?P<host>[^\t]+)\t)?MSWinEventLog\t(?P<criticality>\d+)\t(?P<log_name>[^\t]*)\t(?P<snare_counter>\d*)\t(?P<event_time>[^\t]*)\t(?P<event_id>\d+)\t(?P<provider>[^\t]*)\t(?P<user>[^\t]*)\t(?P<sid_type>[^\t]*)\t(?P<event_log_type>[^\t]*)\t(?P<computer>[^\t]*)\t(?P<category>[^\t]*)\t(?P<data>[^\t]*)\t(?P<expanded>[^\t]*)(?:\t(?P<trailer>.*))?$'
+
+transforms:
+  # Agent local time, as "Fri Oct 09 20:41:12 2026": set the source time zone to match.
+  - { field: event_time, op: timestamp, args: { format: '%a %b %d %H:%M:%S %Y' } }
+  - { field: log_name, op: join, args: { with: [event_id], into: eventid_key, sep: ":" } }
+  - { field: user, op: replace, args: { pattern: '^N/A$', with: "" } }
+  # The first "Account Name:" is the Subject; the last one is the target (the account
+  # logging on, or the account that was created or changed).
+  - { field: expanded, op: regex_extract, args: { pattern: '(?<!Network )Account Name:\s+(\S+)', into: subject_user, optional: true } }
+  # "Network Account Name:" (4624 on newer Windows) is not the account logging on.
+  - { field: expanded, op: regex_extract, args: { pattern: '(?s).*(?<!Network )Account Name:\s+(\S+)', into: target_user, optional: true } }
+  # Logon events: the client is "Source Network Address" and the "Source Port" after it.
+  - { field: expanded, op: regex_extract, args: { pattern: 'Source Network Address:\s+(\S+)', into: logon_ip, optional: true } }
+  - { field: expanded, op: regex_extract, args: { pattern: 'Source Network Address:\s+\S+\s+Source Port:\s+(\d+)', into: logon_port, optional: true } }
+  # Kerberos (4768, 4769, 4771) names the client "Client Address" and "Client Port", kept
+  # as written (::ffff:10.0.0.5), the same value the JSON transports carry in IpAddress.
+  - { field: expanded, op: regex_extract, args: { pattern: 'Client Address:\s+(\S+)', into: client_ip, optional: true } }
+  - { field: expanded, op: regex_extract, args: { pattern: 'Client Port:\s+(\d+)', into: client_port, optional: true } }
+  # 4776 names the account as "Logon Account:".
+  - { field: expanded, op: regex_extract, args: { pattern: 'Logon Account:\s+(\S+)', into: logon_account, optional: true } }
+  # Filtering platform events (5156, 5157): "Source" is always the local side, so the
+  # initiator depends on Direction.
+  - { field: expanded, op: regex_extract, args: { pattern: 'Direction:\s+(Inbound|Outbound)\b', into: direction, optional: true } }
+  - { field: expanded, op: regex_extract, args: { pattern: 'Source Address:\s+(\S+)', into: local_ip, optional: true } }
+  - { field: expanded, op: regex_extract, args: { pattern: 'Source Port:\s+(\d+)', into: local_port, optional: true } }
+  - { field: expanded, op: regex_extract, args: { pattern: 'Destination Address:\s+(\S+)', into: remote_ip, optional: true } }
+  - { field: expanded, op: regex_extract, args: { pattern: 'Destination Port:\s+(\d+)', into: remote_port, optional: true } }
+  - { field: direction, op: pick, args: { from: { Inbound: remote_ip, Outbound: local_ip }, into: wfp_src_ip } }
+  - { field: direction, op: pick, args: { from: { Inbound: remote_port, Outbound: local_port }, into: wfp_src_port } }
+  - { field: direction, op: pick, args: { from: { Inbound: local_ip, Outbound: remote_ip }, into: wfp_dst_ip } }
+  - { field: direction, op: pick, args: { from: { Inbound: local_port, Outbound: remote_port }, into: wfp_dst_port } }
+  - { field: expanded, op: regex_extract, args: { pattern: 'Workstation Name:\s+(\S+)', into: workstation, optional: true } }
+  - { field: expanded, op: regex_extract, args: { pattern: '^\s*(.{1,200}?\.)(?=\s|$)', into: message_title, optional: true } }
+  # Paths may hold spaces: a value runs to the next "Label:" in the message.
+  - { field: expanded, op: regex_extract, args: { pattern: 'Creator Process Name:\s+(.+?)(?=\s{1,8}[A-Z][A-Za-z ]{0,40}:\s|\s{0,8}$)', into: parent_process, optional: true } }
+  - { field: expanded, op: regex_extract, args: { pattern: 'Application Name:\s+(.+?)(?=\s{1,8}[A-Z][A-Za-z ]{0,40}:\s|\s{0,8}$)', into: application, optional: true } }
+  - { field: logon_port, op: to_int }
+  - { field: client_port, op: to_int }
+  - { field: wfp_src_port, op: to_int }
+  - { field: wfp_dst_port, op: to_int }
+  - field: event_log_type
+    op: map
+    args: { into: outcome, values: { "Success Audit": 1, "Failure Audit": 2 }, optional: true }
+
+mapping:
+  class_uid: 0
+  lookup:
+    field: eventid_key
+    table: windows_eventid
+    actor: { subject: [subject_user, user], target: [target_user, logon_account] }
+  fields:
+    time: { from: event_time }
+    device_hostname: { from: [computer, host] }
+    actor_process_name: { from: [parent_process, application] }
+    src_endpoint_ip: { from: [logon_ip, client_ip, wfp_src_ip] }
+    src_endpoint_port: { from: [logon_port, client_port, wfp_src_port] }
+    src_endpoint_hostname: { from: workstation }
+    dst_endpoint_ip: { from: wfp_dst_ip }
+    dst_endpoint_port: { from: wfp_dst_port }
+    status_id: { from: outcome }
+    message: { from: message_title }
+  # Windows level, the same in every Windows template; a failed audit shows in status_id.
+  severity:
+    from: event_log_type
+    map: { "Success Audit": 1, "Failure Audit": 1, Information: 1, Warning: 3, Error: 4 }
+
+tests:
+  - name: failed logon over syslog
+    input: "<13>Oct  9 20:41:12 DC01.corp.example MSWinEventLog\t1\tSecurity\t4402\tFri Oct 09 20:41:12 2026\t4625\tMicrosoft-Windows-Security-Auditing\tN/A\tN/A\tFailure Audit\tDC01.corp.example\tLogon\t\tAn account failed to log on.    Subject:   Security ID:  S-1-0-0   Account Name:  -   Account Domain:  -    Logon Type:   3    Account For Which Logon Failed:   Security ID:  S-1-0-0   Account Name:  bob   Account Domain:  CORP    Network Information:   Workstation Name: KIOSK-07   Source Network Address: 203.0.113.9   Source Port:  51234\t1022"
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { activity_id: 1, status_id: 2, severity_id: 1, actor_user_name: bob, src_endpoint_ip: 203.0.113.9, src_endpoint_port: 51234, src_endpoint_hostname: KIOSK-07, device_hostname: DC01.corp.example, time: "2026-10-09T20:41:12+00:00", message: An account failed to log on. }
+  - name: file line with the hostname field, user from the Snare user column
+    input: "FS01\tMSWinEventLog\t0\tSystem\t88\tFri Oct 09 20:42:00 2026\t7045\tService Control Manager\tCORP\\carol\tUser\tInformation\tFS01\tNone\t\tA service was installed in the system.  Service Name:  BackupAgent\t89"
+    expect:
+      parse_status: ok
+      class_uid: 0
+      fields: { status_id: null, actor_user_name: 'CORP\carol', device_hostname: FS01, message: A service was installed in the system. }
+  - name: user account created
+    input: "<13>Oct  9 20:43:00 DC01 MSWinEventLog\t1\tSecurity\t4403\tFri Oct 09 20:43:00 2026\t4720\tMicrosoft-Windows-Security-Auditing\tN/A\tN/A\tSuccess Audit\tDC01.corp.example\tUser Account Management\t\tA user account was created.    Subject:   Account Name:  alice    New Account:   Account Name:  erin\t1023"
+    expect:
+      parse_status: ok
+      class_uid: 3001
+      fields: { activity_id: 1, status_id: 1, actor_user_name: alice }
+  - name: Kerberos ticket request reads the client address
+    input: "<13>Oct  9 20:44:00 DC01 MSWinEventLog\t1\tSecurity\t4404\tFri Oct 09 20:44:00 2026\t4768\tMicrosoft-Windows-Security-Auditing\tN/A\tN/A\tFailure Audit\tDC01.corp.example\tKerberos Authentication Service\t\tA Kerberos authentication ticket (TGT) was requested.    Account Information:   Account Name:  dave    Network Information:   Client Address:  ::ffff:10.20.2.14   Client Port:  49812\t1024"
+    expect:
+      parse_status: ok
+      fields: { src_endpoint_ip: '::ffff:10.20.2.14', src_endpoint_port: 49812, status_id: 2 }

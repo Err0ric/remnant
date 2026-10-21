@@ -1,0 +1,86 @@
+schema_version: 1
+id: cisco_ios
+name: Cisco IOS and IOS XE
+version: 1.0.0
+author: starter-pack
+description: >-
+  Cisco IOS and IOS XE %FACILITY-SEVERITY-MNEMONIC syslog: login success and failure,
+  SSH authentication, ACL log hits, and configuration changes, with or without the
+  sequence number, origin hostname, and service timestamps. Other mnemonics are kept
+  with facility, mnemonic, and severity.
+category: network
+vendor: cisco
+classification_default: local_only
+
+envelope:
+  type: syslog
+  syslog: { rfc: auto, assume_year: rollover_safe, timezone: UTC, strip_relay_headers: true }
+
+match:
+  regex: '%[A-Z0-9_]+-\d-[A-Z0-9_]+:'
+  min_confidence: 0.9
+
+payload:
+  format: regex
+  regex:
+    patterns:
+      - '^(?:\d+: )*(?:[\w.-]+: )?[*.]?(?:(?P<ts>[A-Z][a-z]{2}\s+\d{1,2}(?: \d{4})? \d{2}:\d{2}:\d{2}(?:\.\d+)?(?: [A-Z]{2,5})?): )?%(?P<facility>SEC_LOGIN)-(?P<sev>\d)-(?P<mnemonic>LOGIN_SUCCESS|LOGIN_FAILED): Login (?:Success|failed) \[user: (?P<user>[^\]]*)\] \[Source: (?P<src_ip>[^\]]+)\] \[localport: (?P<dst_port>\d+)\](?: \[Reason: (?P<reason>[^\]]*)\])?'
+      - "^(?:\\d+: )*(?:[\\w.-]+: )?[*.]?(?:(?P<ts>[A-Z][a-z]{2}\\s+\\d{1,2}(?: \\d{4})? \\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?: [A-Z]{2,5})?): )?%(?P<facility>SSH)-(?P<sev>\\d)-(?P<mnemonic>SSH2_USERAUTH): User '(?P<user>[^']*)' authentication for SSH2 Session from (?P<src_ip>[\\da-fA-F:.]+) .*?(?P<outcome>Succeeded|Failed)"
+      - '^(?:\d+: )*(?:[\w.-]+: )?[*.]?(?:(?P<ts>[A-Z][a-z]{2}\s+\d{1,2}(?: \d{4})? \d{2}:\d{2}:\d{2}(?:\.\d+)?(?: [A-Z]{2,5})?): )?%(?P<facility>SEC|IPACL)-(?P<sev>\d)-(?P<mnemonic>IPACCESSLOGP|IPACCESSLOGDP|IPACCESSLOGNP): list (?P<acl>\S+) (?P<action>permitted|denied) (?P<proto>\S+) (?P<src_ip>[\da-fA-F:.]+)\((?P<src_port>\d+)\)(?: \([^)]*\))? -> (?P<dst_ip>[\da-fA-F:.]+)\((?P<dst_port>\d+)\)'
+      - '^(?:\d+: )*(?:[\w.-]+: )?[*.]?(?:(?P<ts>[A-Z][a-z]{2}\s+\d{1,2}(?: \d{4})? \d{2}:\d{2}:\d{2}(?:\.\d+)?(?: [A-Z]{2,5})?): )?%(?P<facility>SYS)-(?P<sev>\d)-(?P<mnemonic>CONFIG_I): Configured from (?P<config_source>\S+) by (?P<user>\S+)(?: on \S+)?(?: \((?P<src_ip>[\da-fA-F:.]+)\))?'
+      - '^(?:\d+: )*(?:[\w.-]+: )?[*.]?(?:(?P<ts>[A-Z][a-z]{2}\s+\d{1,2}(?: \d{4})? \d{2}:\d{2}:\d{2}(?:\.\d+)?(?: [A-Z]{2,5})?): )?%(?P<facility>[A-Z0-9_]+)-(?P<sev>\d)-(?P<mnemonic>[A-Z0-9_]+): (?P<text>.*)$'
+
+transforms:
+  - { field: ts, op: timestamp, args: { format: bsd } }
+  - { field: src_port, op: to_int }
+  - { field: dst_port, op: to_int }
+
+mapping:
+  class_uid: 0
+  class_by:
+    field: mnemonic
+    values: { LOGIN_SUCCESS: 3002, LOGIN_FAILED: 3002, SSH2_USERAUTH: 3002, IPACCESSLOGP: 4001, IPACCESSLOGDP: 4001, IPACCESSLOGNP: 4001 }
+  fields:
+    time: { from: ts }
+    src_endpoint_ip: { from: src_ip }
+    src_endpoint_port: { from: src_port }
+    dst_endpoint_ip: { from: dst_ip }
+    dst_endpoint_port: { from: dst_port }
+    actor_user_name: { from: user }
+    message: { from: mnemonic }
+    activity_id: { from: mnemonic, map: { LOGIN_SUCCESS: 1, LOGIN_FAILED: 1, SSH2_USERAUTH: 1, IPACCESSLOGP: 6, IPACCESSLOGDP: 6, IPACCESSLOGNP: 6 } }
+    status_id: { from: mnemonic, map: { LOGIN_SUCCESS: 1, LOGIN_FAILED: 2 } }
+  severity:
+    from: sev
+    map: { "0": 5, "1": 5, "2": 5, "3": 4, "4": 3, "5": 2, "6": 1, "7": 1 }
+
+tests:
+  - name: login success, sequence number and origin host, no syslog header
+    input: "<189>123: rtr01: *Oct  9 20:41:12.123: %SEC_LOGIN-5-LOGIN_SUCCESS: Login Success [user: alice] [Source: 10.20.1.6] [localport: 22] at 20:41:12 UTC Thu Oct 9 2026"
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { actor_user_name: alice, src_endpoint_ip: 10.20.1.6, dst_endpoint_port: 22, status_id: 1, severity_id: 2, time: "2026-10-09T20:41:12.123000+00:00" }
+  - name: login failed through rsyslog
+    input: "<188>Oct  9 20:42:00 rtr01 45: Oct  9 20:42:00.456 UTC: %SEC_LOGIN-4-LOGIN_FAILED: Login failed [user: admin] [Source: 203.0.113.9] [localport: 22] [Reason: Login Authentication Failed] at 20:42:00 UTC Thu Oct 9 2026"
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { actor_user_name: admin, status_id: 2, severity_id: 3, device_hostname: rtr01 }
+  - name: ACL log
+    input: "<190>Oct  9 20:43:00 rtr01 46: Oct  9 20:43:00.789 UTC: %SEC-6-IPACCESSLOGP: list 101 denied tcp 198.51.100.4(51000) -> 10.20.1.5(22), 1 packet"
+    expect:
+      parse_status: ok
+      class_uid: 4001
+      fields: { src_endpoint_ip: 198.51.100.4, dst_endpoint_port: 22 }
+  - name: config change
+    input: "<189>Oct  9 20:44:00 rtr01 47: Oct  9 20:44:00.000 UTC: %SYS-5-CONFIG_I: Configured from console by alice on vty0 (10.20.1.6)"
+    expect:
+      parse_status: ok
+      class_uid: 0
+      fields: { actor_user_name: alice, src_endpoint_ip: 10.20.1.6, message: CONFIG_I }
+  - name: link down is kept
+    input: "<187>Oct  9 20:45:00 sw01 48: Oct  9 20:45:00.000 UTC: %LINK-3-UPDOWN: Interface GigabitEthernet0/1, changed state to down"
+    expect:
+      parse_status: ok
+      fields: { message: UPDOWN, severity_id: 4 }

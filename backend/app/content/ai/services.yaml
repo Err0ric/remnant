@@ -1,0 +1,41 @@
+# AI service catalog (ADR-0015 row 1). A destination host matches a service when it equals
+# one of its domains or ends with "." plus the domain; the longest matching domain wins, so
+# api.openai.com is "OpenAI API", not ChatGPT. Admins add their own entries and mark any
+# service Approved or Not approved in the app; everything starts Unreviewed.
+# kind: chat | api | coding | agent_platform | mcp_registry | image | meetings | writing
+- {id: chatgpt, name: ChatGPT, vendor: OpenAI, kind: chat, domains: [chatgpt.com, chat.openai.com, oaiusercontent.com, openai.com]}
+- {id: openai_api, name: OpenAI API, vendor: OpenAI, kind: api, domains: [api.openai.com]}
+- {id: claude, name: Claude, vendor: Anthropic, kind: chat, domains: [claude.ai, claude.com]}
+- {id: anthropic_api, name: "Anthropic API (Claude Code, apps)", vendor: Anthropic, kind: api, domains: [api.anthropic.com]}
+- {id: gemini, name: Gemini, vendor: Google, kind: chat, domains: [gemini.google.com, aistudio.google.com, bard.google.com]}
+- {id: google_ai_api, name: Gemini API, vendor: Google, kind: api, domains: [generativelanguage.googleapis.com]}
+- {id: microsoft_copilot, name: Microsoft Copilot, vendor: Microsoft, kind: chat, domains: [copilot.microsoft.com, copilot.cloud.microsoft]}
+- {id: github_copilot, name: GitHub Copilot, vendor: GitHub, kind: coding, domains: [githubcopilot.com, copilot-proxy.githubusercontent.com]}
+- {id: perplexity, name: Perplexity, vendor: Perplexity, kind: chat, domains: [perplexity.ai]}
+- {id: deepseek, name: DeepSeek, vendor: DeepSeek, kind: chat, domains: [deepseek.com]}
+- {id: mistral, name: "Mistral (Le Chat, API)", vendor: Mistral AI, kind: chat, domains: [mistral.ai]}
+- {id: meta_ai, name: Meta AI, vendor: Meta, kind: chat, domains: [meta.ai]}
+- {id: grok, name: Grok, vendor: xAI, kind: chat, domains: [grok.com, x.ai]}
+- {id: qwen, name: Qwen Chat, vendor: Alibaba, kind: chat, domains: [qwen.ai, chat.qwen.ai]}
+- {id: kimi, name: Kimi, vendor: Moonshot AI, kind: chat, domains: [kimi.com, kimi.moonshot.cn]}
+- {id: poe, name: Poe, vendor: Quora, kind: chat, domains: [poe.com]}
+- {id: character_ai, name: Character.AI, vendor: Character.AI, kind: chat, domains: [character.ai]}
+- {id: huggingface, name: Hugging Face, vendor: Hugging Face, kind: api, domains: [huggingface.co, hf.co]}
+- {id: openrouter, name: OpenRouter, vendor: OpenRouter, kind: api, domains: [openrouter.ai]}
+- {id: groq, name: Groq, vendor: Groq, kind: api, domains: [groq.com]}
+- {id: together, name: Together AI, vendor: Together AI, kind: api, domains: [together.ai, together.xyz]}
+- {id: cohere, name: Cohere, vendor: Cohere, kind: api, domains: [cohere.com, cohere.ai]}
+- {id: cursor, name: Cursor, vendor: Anysphere, kind: coding, domains: [cursor.com, cursor.sh]}
+- {id: windsurf, name: Windsurf (Codeium), vendor: Windsurf, kind: coding, domains: [windsurf.com, codeium.com]}
+- {id: replit, name: Replit, vendor: Replit, kind: agent_platform, domains: [replit.com]}
+- {id: lovable, name: Lovable, vendor: Lovable, kind: agent_platform, domains: [lovable.dev]}
+- {id: v0, name: v0, vendor: Vercel, kind: agent_platform, domains: [v0.dev, v0.app]}
+- {id: bolt, name: Bolt, vendor: StackBlitz, kind: agent_platform, domains: [bolt.new]}
+- {id: smithery, name: Smithery (MCP registry), vendor: Smithery, kind: mcp_registry, domains: [smithery.ai]}
+- {id: mcp_so, name: mcp.so (MCP directory), vendor: mcp.so, kind: mcp_registry, domains: [mcp.so]}
+- {id: glama, name: Glama (MCP registry), vendor: Glama, kind: mcp_registry, domains: [glama.ai]}
+- {id: midjourney, name: Midjourney, vendor: Midjourney, kind: image, domains: [midjourney.com]}
+- {id: elevenlabs, name: ElevenLabs, vendor: ElevenLabs, kind: image, domains: [elevenlabs.io]}
+- {id: otter, name: Otter.ai, vendor: Otter.ai, kind: meetings, domains: [otter.ai]}
+- {id: fireflies, name: Fireflies.ai, vendor: Fireflies.ai, kind: meetings, domains: [fireflies.ai]}
+- {id: deepl, name: DeepL, vendor: DeepL, kind: writing, domains: [deepl.com]}

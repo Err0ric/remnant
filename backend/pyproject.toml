@@ -1,0 +1,90 @@
+[project]
+name = "app"
+version = "0.3.0"
+description = "Local-first, LLM-assisted SIEM front end (backend). Product name lives in app.core.branding."
+license = "Apache-2.0"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.8",
+    "pyyaml>=6.0",
+    "pyarrow>=21",
+    "duckdb>=1.4",
+    "sqlglot>=30",
+    "pytz>=2025.2",
+    "typer>=0.16",
+    "httpx>=0.28.1",
+    "cryptography>=43",
+    "argon2-cffi>=23",
+    "keyring>=25",
+    "structlog>=24",
+    "regex>=2024.9,<2026.9",
+    "defusedxml>=0.7.1",
+    "evtx>=0.13.1,<0.14",
+    "pysigma>=1.5,<2",
+    "pyjwt>=2.9",
+    "maxminddb>=3.2.0",
+]
+
+[project.optional-dependencies]
+# Terminal UI for `remnant tui`; kept out of the server image.
+tui = ["textual>=3"]
+
+[project.scripts]
+app-server = "app.main:run"
+app-admin = "app.admin:main"
+remnant = "app.cli.main:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "httpx>=0.27",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "types-PyYAML>=6.0",
+    "types-regex<2026.9",
+    "types-defusedxml>=0.7.0.20260504",
+    "textual>=3",
+    "mmdb-writer>=0.2.7",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+# Supply chain: never resolve a release uploaded less than 14 days ago, so a compromised
+# publish has time to be caught. Matches frontend/pnpm-workspace.yaml.
+exclude-newer = "14 days"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "templates: template fixture suite",
+    "integration: integration tests",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "N", "RUF"]
+ignore = ["S101"]  # assert is fine in tests
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "E501"]  # fixture log lines are long by nature
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+files = ["app", "evals"]
+
+[[tool.mypy.overrides]]
+# pyarrow ships no type information; treat it as Any at the boundary.
+module = ["pyarrow", "pyarrow.*"]
+ignore_missing_imports = true

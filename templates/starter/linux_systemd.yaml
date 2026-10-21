@@ -1,0 +1,85 @@
+schema_version: 1
+id: linux_systemd
+name: Linux systemd
+version: 1.0.0
+author: starter-pack
+description: >-
+  systemd unit lifecycle (started, stopped, failed, exited with status) and user session
+  scopes as Process Activity; other manager messages (targets, mounts, slices, startup)
+  are kept as Base Events so nothing is lost.
+category: system
+vendor: linux
+classification_default: local_only
+sigma:
+  logsource:
+    - {product: linux}
+    - {product: linux, service: syslog}
+
+envelope:
+  type: syslog
+  syslog: { rfc: auto, assume_year: rollover_safe, timezone: UTC, strip_relay_headers: true }
+
+match:
+  app_name: [systemd]
+  min_confidence: 0.9
+
+payload:
+  format: regex
+  regex:
+    patterns:
+      - '^(?P<event>Started|Stopped) [Ss]ession (?P<session>\S+) of [Uu]ser (?P<user>[^\s.]+(?:\.[^\s.]+)*)\.?$'
+      - '^(?P<unit>[\w@.\\-]+\.(?:service|timer|socket|mount|scope|path|swap|device)): (?P<event>Main process exited), code=(?P<code>\w+), status=(?P<exit_status>\S+?)\.?$'
+      - '^(?P<unit>[\w@.\\-]+\.(?:service|timer|socket|mount|scope|path|swap|device)): (?P<event>Failed with result|Deactivated successfully|Succeeded|Scheduled restart job|Consumed|Start request repeated too quickly)(?P<detail>.*?)\.?$'
+      - '^(?P<event>Started|Starting|Stopped|Stopping|Reloaded|Reloading|Failed to start) (?P<unit>[\w@.\\-]+\.(?:service|timer|socket|mount|scope|path|swap|device|target|slice))(?: - (?P<description>.*?))?\.?$'
+      - '^(?P<event>Started|Starting|Stopped|Stopping|Reloaded|Reloading|Failed to start) (?P<description>.+?)\.?$'
+      - '^(?P<event>Reached target|Startup finished|Listening on|Closed|Mounted|Unmounted|Created slice|Removed slice|Finished|Mounting|Unmounting) ?(?P<detail>.*?)\.?$'
+
+transforms:
+  - { field: exit_status, op: regex_extract, args: { pattern: '/(\w+)$', into: exit_word, optional: true } }
+  - field: event
+    op: map
+    args:
+      into: outcome
+      values: { Started: 1, Starting: 1, Stopped: 1, Stopping: 1, Reloaded: 1, Reloading: 1, "Deactivated successfully": 1, Succeeded: 1, "Failed with result": 2, "Failed to start": 2, "Start request repeated too quickly": 2, "Main process exited": 0 }
+      default: 0
+  - { field: exit_word, op: map, args: { into: outcome, values: { SUCCESS: 1 }, default: 2 } }
+
+mapping:
+  class_uid: 0             # Base Event for manager messages
+  class_by:
+    field: event
+    values: { Started: 1007, Starting: 1007, Stopped: 1007, Stopping: 1007, Reloaded: 1007, Reloading: 1007, "Failed to start": 1007, "Main process exited": 1007, "Failed with result": 1007, "Deactivated successfully": 1007, Succeeded: 1007, "Scheduled restart job": 1007, "Start request repeated too quickly": 1007 }
+  fields:
+    actor_user_name: { from: user }
+    activity_id:
+      from: event
+      map: { Started: 1, Starting: 1, Stopped: 2, Stopping: 2, "Main process exited": 2, "Failed with result": 2, "Deactivated successfully": 2, Succeeded: 2, "Failed to start": 1 }
+      default: 99
+    status_id: { from: outcome }
+  severity:
+    from: outcome
+    map: { "1": 1, "2": 3 }
+
+tests:
+  - name: unit started, systemd 249+ form
+    input: "<30>Oct  9 20:41:12 web-01 systemd[1]: Started nginx.service - A high performance web server and a reverse proxy server."
+    expect:
+      parse_status: ok
+      class_uid: 1007
+      fields: { activity_id: 1, status_id: 1, actor_process_name: systemd }
+  - name: main process exited with failure
+    input: "<27>Oct  9 20:42:00 web-01 systemd[1]: nginx.service: Main process exited, code=exited, status=1/FAILURE"
+    expect:
+      parse_status: ok
+      class_uid: 1007
+      fields: { activity_id: 2, status_id: 2, severity_id: 3 }
+  - name: user session scope
+    input: "<30>Oct  9 20:43:00 web-01 systemd[1]: Started Session 12 of User alice."
+    expect:
+      parse_status: ok
+      fields: { actor_user_name: alice, activity_id: 1 }
+  - name: target reached is a base event
+    input: "<30>Oct  9 20:44:00 web-01 systemd[1]: Reached target Multi-User System."
+    expect:
+      parse_status: ok
+      class_uid: 0

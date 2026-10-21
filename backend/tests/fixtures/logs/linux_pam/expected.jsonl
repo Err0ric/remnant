@@ -1,0 +1,10 @@
+{"activity_id": 9, "actor_user_name": "bob", "class_uid": 3001, "device_hostname": "web-01", "parse_status": "ok", "time": "2026-10-09T20:00:58+00:00"}
+{"actor_user_name": "alice", "class_uid": 3002, "device_hostname": "web-01", "parse_status": "ok", "status_id": 1, "time": "2026-10-09T20:01:43+00:00"}
+{"actor_user_name": "root", "class_uid": 3002, "device_hostname": "web-01", "parse_status": "ok", "status_id": 2, "time": "2026-10-09T20:02:24+00:00"}
+{"actor_user_name": "bob", "class_uid": 3002, "device_hostname": "bastion", "parse_status": "ok", "status_id": 1, "time": "2026-10-09T20:03:20+00:00"}
+{"actor_user_name": "root", "class_uid": 3002, "device_hostname": "bastion", "parse_status": "ok", "status_id": 2, "time": "2026-10-09T20:04:36+00:00"}
+{"activity_id": 1, "class_uid": 3002, "device_hostname": "db-01", "parse_status": "ok", "status_id": 1, "time": "2026-10-09T20:04:51+00:00"}
+{"activity_id": 1, "class_uid": 3002, "device_hostname": "bastion", "parse_status": "ok", "status_id": 1, "time": "2026-10-09T20:06:10+00:00"}
+{"activity_id": 3, "actor_user_name": "carol", "class_uid": 3001, "device_hostname": "db-01", "parse_status": "ok", "time": "2026-10-09T20:06:50+00:00"}
+{"actor_user_name": "bob", "class_uid": 3002, "device_hostname": "bastion", "parse_status": "ok", "status_id": 2, "time": "2026-10-09T20:07:25+00:00"}
+{"actor_user_name": "root", "class_uid": 3002, "device_hostname": "bastion", "parse_status": "ok", "status_id": 2, "time": "2026-10-09T20:08:09+00:00"}

@@ -1,0 +1,10 @@
+{"actor_user_name": "alice@example.com", "class_uid": 3004, "message": "Update user", "parse_status": "ok", "src_endpoint_ip": "203.0.113.10", "status_id": 1}
+{"actor_user_name": "bob@example.com", "class_uid": 3004, "message": "Add member to group", "parse_status": "ok", "src_endpoint_ip": "198.51.100.7", "status_id": 1}
+{"actor_user_name": "carol@example.com", "class_uid": 3004, "message": "Add member to role", "parse_status": "ok", "severity_id": 3, "src_endpoint_ip": "203.0.113.44", "status_id": 1}
+{"actor_user_name": "dave@example.com", "class_uid": 3004, "message": "Add service principal credentials", "parse_status": "ok", "severity_id": 3, "src_endpoint_ip": "203.0.113.10", "status_id": 1}
+{"actor_user_name": "Provisioning Sync", "class_uid": 3004, "message": "Update conditional access policy", "parse_status": "ok", "severity_id": 3, "status_id": 1}
+{"actor_user_name": "bob@example.com", "class_uid": 3004, "message": "Reset user password", "parse_status": "ok", "src_endpoint_ip": "203.0.113.44", "status_id": 1}
+{"actor_user_name": "carol@example.com", "class_uid": 3004, "message": "Update user", "parse_status": "ok", "src_endpoint_ip": "203.0.113.10", "status_id": 1}
+{"actor_user_name": "dave@example.com", "class_uid": 3004, "message": "Add member to group", "parse_status": "ok", "src_endpoint_ip": "198.51.100.7", "status_id": 1}
+{"actor_user_name": "alice@example.com", "class_uid": 3004, "message": "Add member to role", "parse_status": "ok", "severity_id": 3, "src_endpoint_ip": "203.0.113.44", "status_id": 2}
+{"actor_user_name": "Provisioning Sync", "class_uid": 3004, "message": "Add service principal credentials", "parse_status": "ok", "severity_id": 3, "status_id": 1}

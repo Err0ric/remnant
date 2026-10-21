@@ -1,0 +1,10 @@
+{"activity_id": 2, "actor_user_name": "example\\alice", "class_uid": 3002, "device_hostname": "pa-fw01", "parse_status": "ok", "time": "2026-10-09T20:01:28+00:00"}
+{"activity_id": 2, "actor_user_name": "example\\alice", "class_uid": 3002, "device_hostname": "pa-fw01", "parse_status": "ok", "time": "2026-10-09T20:02:25+00:00"}
+{"activity_id": 1, "actor_user_name": "example\\dave", "class_uid": 3002, "device_hostname": "pa-fw01", "parse_status": "ok", "time": "2026-10-09T20:03:14+00:00"}
+{"activity_id": 1, "actor_user_name": "example\\alice", "class_uid": 3002, "device_hostname": "pa-fw01", "parse_status": "ok", "time": "2026-10-09T20:03:21+00:00"}
+{"actor_user_name": "example\\carol", "class_uid": 0, "device_hostname": "pa-fw01", "parse_status": "ok", "time": "2026-10-09T20:04:31+00:00"}
+{"activity_id": 1, "actor_user_name": "example\\carol", "class_uid": 3002, "device_hostname": "pa-fw01", "parse_status": "ok", "time": "2026-10-09T20:05:47+00:00"}
+{"activity_id": 1, "actor_user_name": "example\\dave", "class_uid": 3002, "device_hostname": "pa-fw01", "parse_status": "ok", "time": "2026-10-09T20:06:52+00:00"}
+{"activity_id": 1, "actor_user_name": "example\\carol", "class_uid": 3002, "device_hostname": "pa-fw01", "parse_status": "ok", "time": "2026-10-09T20:06:53+00:00"}
+{"activity_id": 1, "actor_user_name": "example\\carol", "class_uid": 3002, "device_hostname": "pa-fw01", "parse_status": "ok", "time": "2026-10-09T20:06:57+00:00"}
+{"activity_id": 2, "actor_user_name": "example\\alice", "class_uid": 3002, "device_hostname": "pa-fw01", "parse_status": "ok", "time": "2026-10-09T20:07:00+00:00"}

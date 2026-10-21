@@ -1,0 +1,126 @@
+schema_version: 1
+id: paloalto_traffic
+name: Palo Alto Networks traffic
+version: 1.0.0
+author: starter-pack
+description: >-
+  PAN-OS TRAFFIC logs over syslog (BSD or IETF), CSV in the documented field order
+  (PAN-OS 10.2 and 11.x). Columns past Device Name are kept in unmapped _extra, so newer
+  releases that append fields still parse. Generated Time is read in the source's time zone.
+category: network
+vendor: paloalto
+classification_default: local_only
+sigma:
+  logsource:
+    - {category: firewall}
+    - {product: paloalto, category: firewall}
+
+envelope:
+  type: syslog
+  syslog: { rfc: auto, assume_year: rollover_safe, timezone: UTC, strip_relay_headers: true }
+
+match:
+  regex: '^\d+,\d{4}/\d{2}/\d{2} [\d:]+,[^,]*,TRAFFIC,'
+  min_confidence: 0.95
+
+payload:
+  format: csv
+  csv:
+    trailing: ignore
+    columns:
+      - "_"
+      - receive_time
+      - serial_number
+      - type
+      - subtype
+      - "_"
+      - generated_time
+      - source_address
+      - destination_address
+      - nat_source_ip
+      - nat_destination_ip
+      - rule_name
+      - source_user
+      - destination_user
+      - application
+      - virtual_system
+      - source_zone
+      - destination_zone
+      - inbound_interface
+      - outbound_interface
+      - log_action
+      - "_"
+      - session_id
+      - repeat_count
+      - source_port
+      - destination_port
+      - nat_source_port
+      - nat_destination_port
+      - flags
+      - protocol
+      - action
+      - bytes
+      - bytes_sent
+      - bytes_received
+      - packets
+      - start_time
+      - elapsed_time
+      - category
+      - "_"
+      - sequence_number
+      - action_flags
+      - source_country
+      - destination_country
+      - "_"
+      - packets_sent
+      - packets_received
+      - session_end_reason
+      - device_group_hierarchy_level_1
+      - device_group_hierarchy_level_2
+      - device_group_hierarchy_level_3
+      - device_group_hierarchy_level_4
+      - virtual_system_name
+      - device_name
+
+transforms:
+  - { field: generated_time, op: timestamp, args: { format: "%Y/%m/%d %H:%M:%S" } }
+  - { field: source_port, op: to_int }
+  - { field: destination_port, op: to_int }
+
+mapping:
+  class_uid: 4001          # Network Activity
+  fields:
+    time: { from: generated_time }
+    device_hostname: { from: device_name }
+    src_endpoint_ip: { from: source_address }
+    src_endpoint_port: { from: source_port }
+    dst_endpoint_ip: { from: destination_address }
+    dst_endpoint_port: { from: destination_port }
+    actor_user_name: { from: source_user }
+    message: { from: application }
+    activity_id: { from: subtype, map: { start: 1, end: 2, deny: 5, drop: 5 }, default: 6 }
+    status_id:
+      from: action
+      map: { allow: 1, deny: 2, drop: 2, drop ICMP: 2, drop-icmp: 2, reset both: 2, reset-both: 2, reset client: 2, reset-client: 2, reset server: 2, reset-server: 2 }
+      default: 0
+  severity:
+    from: action
+    map: { allow: 1, deny: 2, drop: 2, reset-both: 2, reset-client: 2, reset-server: 2 }
+
+tests:
+  - name: allowed session end, BSD header
+    input: "<14>Oct  9 20:41:12 pa-fw01 1,2026/10/09 20:41:12,012345678901,TRAFFIC,end,2561,2026/10/09 20:41:11,10.20.1.5,192.0.2.10,203.0.113.2,192.0.2.10,allow-web,example\\alice,,ssl,vsys1,trust,untrust,ethernet1/2,ethernet1/1,default,,5004,1,51234,443,40123,443,0x400019,tcp,allow,6578,1234,5344,22,2026/10/09 20:40:59,10,computer-and-internet-info,,7290000001,0x0,10.0.0.0-10.255.255.255,United States,,12,10,tcp-fin,0,0,0,0,,pa-fw01,from-policy,,,0,,0,,N/A,0,0,0,0,b0a2,0,0,0,0,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,2026-10-09T20:41:11.123-07:00"
+    expect:
+      parse_status: ok
+      class_uid: 4001
+      fields: { src_endpoint_ip: 10.20.1.5, dst_endpoint_port: 443, actor_user_name: "example\\alice", status_id: 1, activity_id: 2, message: ssl, device_hostname: pa-fw01, time: "2026-10-09T20:41:11+00:00" }
+  - name: denied at session start
+    input: "<14>Oct  9 20:42:00 pa-fw01 1,2026/10/09 20:42:00,012345678901,TRAFFIC,deny,2561,2026/10/09 20:42:00,203.0.113.9,192.0.2.10,0.0.0.0,0.0.0.0,block-rdp,,,ms-rdp,vsys1,untrust,dmz,ethernet1/1,,default,,0,1,40022,3389,0,0,0x0,tcp,deny,60,60,0,1,2026/10/09 20:42:00,0,any,,7290000002,0x0,United States,10.0.0.0-10.255.255.255,,1,0,policy-deny,0,0,0,0,,pa-fw01,from-policy"
+    expect:
+      parse_status: ok
+      fields: { src_endpoint_ip: 203.0.113.9, status_id: 2, activity_id: 5, severity_id: 2 }
+  - name: IETF header
+    input: "<14>1 2026-10-09T20:43:00Z pa-fw01 - - - - 1,2026/10/09 20:43:00,012345678901,TRAFFIC,start,2561,2026/10/09 20:43:00,10.20.1.6,192.0.2.20,203.0.113.2,192.0.2.20,allow-dns,,,dns,vsys1,trust,untrust,ethernet1/2,ethernet1/1,default,,6001,1,53000,53,40124,53,0x400000,udp,allow,90,90,0,1,2026/10/09 20:43:00,0,any,,7290000003,0x0,10.0.0.0-10.255.255.255,United States,,1,0,n/a,0,0,0,0,,pa-fw01,from-policy"
+    expect:
+      parse_status: ok
+      fields: { activity_id: 1, dst_endpoint_port: 53, status_id: 1 }

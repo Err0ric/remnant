@@ -1,0 +1,181 @@
+name: release-checks
+
+# Runs by hand before a release, and on PRs that change the Dockerfile, the compose file,
+# the systemd guide, or this file. Not on every PR: it builds images and installs a service.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - Dockerfile
+      - docker-compose.yml
+      - docs/install/team-vm.md
+      - docs/ingest/vector.md
+      - .github/workflows/release-checks.yml
+
+permissions:
+  contents: read
+
+jobs:
+  # Digests and build dates of the base images and actions, for pinning (CLAUDE.md
+  # security rule 11: nothing newer than 14 days).
+  digests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Image digests
+        run: |
+          for ref in node:22-alpine ghcr.io/astral-sh/uv:0.8-python3.12-bookworm-slim \
+                     python:3.12-slim-bookworm python:3.12-slim ollama/ollama:latest; do
+            digest=$(docker buildx imagetools inspect "$ref" --format '{{json .Manifest.Digest}}' | tr -d '"')
+            created=$(docker buildx imagetools inspect "$ref" --format '{{json .Image}}' \
+              | jq -r '(."linux/amd64" // .).created // "unknown"')
+            echo "::notice title=image::$ref $digest $created"
+          done
+      - name: Ollama releases at least 14 days old
+        run: |
+          cutoff=$(date -u -d '14 days ago' +%Y-%m-%dT%H:%M:%S)
+          curl -fsS "https://hub.docker.com/v2/repositories/ollama/ollama/tags?page_size=100&ordering=last_updated" \
+            | jq -r --arg c "$cutoff" '.results[] | select(.name|test("^[0-9]+\\.[0-9]+\\.[0-9]+$")) | select(.tag_last_pushed < $c) | "\(.name) \(.digest) \(.tag_last_pushed)"' \
+            | head -3 | while read -r tag digest pushed; do
+                echo "::notice title=ollama::$tag $digest $pushed"; done
+      - name: Action commits
+        run: |
+          for a in actions/checkout:v4 actions/upload-artifact:v4 actions/setup-node:v4 \
+                   astral-sh/setup-uv:v6 pnpm/action-setup:v4; do
+            repo=${a%%:*}; tag=${a##*:}
+            sha=$(git ls-remote "https://github.com/$repo" "refs/tags/$tag^{}" "refs/tags/$tag" \
+              | sort -k2 | tail -1 | cut -f1)
+            echo "::notice title=action::$repo $tag $sha"
+          done
+
+  # The image runs with the hardened compose settings: read-only root, no capabilities,
+  # no privilege escalation. It must reach the setup page and ingest a syslog message.
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - name: Build and start with the compose file
+        run: |
+          cat > .env <<'EOF'
+          APP_BIND=127.0.0.1
+          APP_PUBLIC_NAME=ci.example.internal
+          EOF
+          docker compose up -d --build
+          for i in $(seq 1 60); do
+            docker compose logs app 2>&1 | grep -q "one-time link" && break; sleep 2; done
+          docker compose logs app | tail -20
+          docker compose logs app | grep -q "one-time link"
+      - name: Hardening is in effect
+        run: |
+          id=$(docker compose ps -q app)
+          docker inspect "$id" --format '{{.HostConfig.ReadonlyRootfs}} {{.HostConfig.CapDrop}} {{.HostConfig.SecurityOpt}} {{.Config.User}}'
+          test "$(docker inspect "$id" --format '{{.HostConfig.ReadonlyRootfs}}')" = "true"
+          docker compose exec -T app sh -c 'touch /srv/x 2>/dev/null && echo writable || echo read-only' | grep -q read-only
+          docker compose exec -T app sh -c 'touch /srv/data/probe && rm /srv/data/probe && touch /tmp/probe'
+          curl -sk https://127.0.0.1:8080/api/health | grep -q ok
+      - name: Logs
+        if: always()
+        run: docker compose logs app | tail -50
+
+  # The systemd install from docs/install/team-vm.md, unit file taken from the guide itself.
+  systemd:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1  # v4
+        with:
+          package_json_file: frontend/package.json
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
+        with:
+          node-version: 22
+      - name: Install as the guide says
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sudo env UV_INSTALL_DIR=/usr/local/bin sh
+          sudo useradd --system --home /var/lib/remnant --shell /usr/sbin/nologin remnant
+          sudo install -d -o remnant -g remnant -m 0750 /var/lib/remnant
+          sudo install -d -m 0755 /etc/remnant /var/log/remote
+          sudo cp -r "$GITHUB_WORKSPACE" /opt/remnant
+          cd /opt/remnant/frontend && sudo pnpm install --frozen-lockfile && sudo pnpm build
+          cd /opt/remnant/backend && sudo env UV_PYTHON_INSTALL_DIR=/opt/remnant/.python uv sync --frozen --no-dev
+          sudo tee /etc/remnant/remnant.env >/dev/null <<'EOF'
+          APP__SERVER__HOST=0.0.0.0
+          APP__SERVER__PORT=8080
+          APP__SERVER__PUBLIC_NAMES=ci.example.internal
+          APP__SERVER__STATIC_DIR=/opt/remnant/frontend/dist
+          APP__PATHS__DATA_DIR=/var/lib/remnant
+          APP__PATHS__ALLOWED_ROOTS=/var/log/remote
+          APP__PATHS__STARTER_TEMPLATES=/opt/remnant/templates/starter
+          PYTHONUNBUFFERED=1
+          EOF
+          sudo chown root:remnant /etc/remnant/remnant.env && sudo chmod 0640 /etc/remnant/remnant.env
+          # The unit file exactly as docs/install/team-vm.md shows it.
+          awk '/^`\/etc\/systemd\/system\/remnant.service`:/{f=1;next} f&&/^```ini/{p=1;next} p&&/^```/{exit} p' \
+            /opt/remnant/docs/install/team-vm.md | sudo tee /etc/systemd/system/remnant.service
+          grep -q '^ExecStart=' /etc/systemd/system/remnant.service
+      - name: Start, reach the setup page, and check the sandbox
+        run: |
+          sudo systemctl daemon-reload && sudo systemctl enable --now remnant
+          for i in $(seq 1 60); do
+            sudo journalctl -u remnant | grep -q "one-time link" && break; sleep 2; done
+          sudo journalctl -u remnant --no-pager | tail -20
+          sudo journalctl -u remnant | grep -q "one-time link"
+          curl -sk https://127.0.0.1:8080/api/health | grep -q ok
+          systemctl show remnant -p User -p NoNewPrivileges -p ProtectSystem
+          echo "::notice title=systemd::$(sudo systemd-analyze security remnant --no-pager | tail -1)"
+          sudo systemctl restart remnant && sleep 5 && systemctl is-active remnant
+      - name: Ingest and query under the sandbox (loopback, single-user mode)
+        run: |
+          sudo sed -i 's/^APP__SERVER__HOST=.*/APP__SERVER__HOST=127.0.0.1/' /etc/remnant/remnant.env
+          sudo systemctl restart remnant
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8080/api/health && break; sleep 2; done
+          curl -sf -H 'content-type: application/json' -d \
+            '{"source_id":"ci_syslog","kind":"syslog","format":"syslog","template_id":"auto","syslog":{"protocol":"udp","port":5514}}' \
+            http://127.0.0.1:8080/api/sources
+          sleep 8
+          logger -n 127.0.0.1 -P 5514 -d "<38>Oct 17 10:00:00 ci sshd[1]: Failed password for root from 203.0.113.9 port 2222 ssh2"
+          for i in $(seq 1 30); do
+            n=$(curl -sf -H 'content-type: application/json' \
+              -d '{"sql":"SELECT count(*) FROM events WHERE source_id = '"'"'ci_syslog'"'"'"}' \
+              http://127.0.0.1:8080/api/query | jq '.rows[0][0]')
+            [ "$n" = "1" ] && break; sleep 3; done
+          echo "::notice title=systemd-ingest::events=$n"
+          test "$n" = "1"
+          sudo journalctl -u remnant --no-pager | grep -iE "error|denied|EPERM" | tail -5 || true
+
+  # docs/ingest/vector.md: the config from the guide receives UDP and TCP syslog and writes
+  # each line, unchanged, to one file per sender.
+  vector:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - name: Install Vector (test tool only; nothing here ships)
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSfL https://sh.vector.dev | bash -s -- -y --prefix "$HOME/.vector"
+          echo "$HOME/.vector/bin" >> "$GITHUB_PATH"
+      - name: Run the guide's config
+        run: |
+          vector --version
+          echo "::notice title=vector::$(vector --version)"
+          awk '/^`\/etc\/vector\/vector.yaml`:/{f=1;next} f&&/^```yaml/{p=1;next} p&&/^```/{exit} p' \
+            docs/ingest/vector.md > vector.yaml
+          grep -q remnant_files vector.yaml
+          sudo mkdir -p /var/log/remote /var/lib/vector  # the deb package creates data_dir; the install script does not
+          if ! sudo "$(command -v vector)" validate vector.yaml > validate.log 2>&1; then
+            echo "::error title=vector-validate::$(tr '\n' ' ' < validate.log | cut -c1-1500)"
+            exit 1
+          fi
+          sudo "$(command -v vector)" --config vector.yaml > vector.log 2>&1 &
+          for i in $(seq 1 30); do ss -lun | grep -q ':514 ' && ss -ltn | grep -q ':514 ' && break; sleep 1; done
+          line='<38>Oct 17 10:00:00 ci sshd[1]: Failed password for root from 203.0.113.9 port 2222 ssh2'
+          logger -n 127.0.0.1 -P 514 -d --rfc3164 "vector udp check" || true
+          printf '%s\n' "$line" > /dev/udp/127.0.0.1/514
+          printf '%s\n' "$line tcp" > /dev/tcp/127.0.0.1/514
+          sleep 5
+          sudo find /var/log/remote -type f -print -exec cat {} \;
+          f=$(sudo find /var/log/remote -name syslog.log | head -1)
+          test -n "$f"
+          sudo grep -qxF "$line" "$f"
+          sudo grep -qxF "$line tcp" "$f"
+          echo "::notice title=vector-file::$f has both lines unchanged"
+      - name: Vector log
+        if: always()
+        run: cat vector.log || true

@@ -1,0 +1,91 @@
+schema_version: 1
+id: paloalto_system
+name: Palo Alto Networks system
+version: 1.0.0
+author: starter-pack
+description: >-
+  PAN-OS SYSTEM logs over syslog (general, ha, vpn, userid, globalprotect, routing, and
+  the rest). Administrator sign-in events (auth-success, auth-fail) map to
+  Authentication; everything else is a Base Event with the description as message.
+category: system
+vendor: paloalto
+classification_default: local_only
+
+envelope:
+  type: syslog
+  syslog: { rfc: auto, assume_year: rollover_safe, timezone: UTC, strip_relay_headers: true }
+
+match:
+  regex: '^\d+,\d{4}/\d{2}/\d{2} [\d:]+,[^,]*,SYSTEM,'
+  min_confidence: 0.95
+
+payload:
+  format: csv
+  csv:
+    trailing: ignore
+    columns:
+      - "_"
+      - receive_time
+      - serial_number
+      - type
+      - subtype
+      - "_"
+      - generated_time
+      - virtual_system
+      - event_id
+      - object
+      - "_"
+      - "_"
+      - module
+      - severity
+      - description
+      - sequence_number
+      - action_flags
+      - device_group_hierarchy_level_1
+      - device_group_hierarchy_level_2
+      - device_group_hierarchy_level_3
+      - device_group_hierarchy_level_4
+      - virtual_system_name
+      - device_name
+
+transforms:
+  - { field: generated_time, op: timestamp, args: { format: "%Y/%m/%d %H:%M:%S" } }
+  - { field: description, op: regex_extract, args: { pattern: "User '([^']+)'", into: user, optional: true } }
+  - { field: description, op: regex_extract, args: { pattern: 'from ([\da-fA-F:.]+)', into: from_ip, optional: true } }
+
+mapping:
+  class_uid: 0             # Base Event
+  class_by:
+    field: event_id
+    values: { auth-success: 3002, auth-fail: 3002 }
+  fields:
+    time: { from: generated_time }
+    device_hostname: { from: device_name }
+    actor_user_name: { from: user }
+    src_endpoint_ip: { from: from_ip }
+    message: { from: description }
+    status_id: { from: event_id, map: { auth-success: 1, auth-fail: 2 } }
+    activity_id: { from: event_id, map: { auth-success: 1, auth-fail: 1 } }
+  severity:
+    from: severity
+    map: { informational: 1, low: 2, medium: 3, high: 4, critical: 5 }
+
+tests:
+  - name: admin login failure
+    input: "<12>Oct  9 20:41:12 pa-fw01 1,2026/10/09 20:41:12,012345678901,SYSTEM,auth,0,2026/10/09 20:41:12,,auth-fail,,0,0,general,medium,\"failed authentication for user 'admin'. Reason: Invalid username/password. From: 203.0.113.9.\",7290000201,0x0,0,0,0,0,,pa-fw01"
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { status_id: 2, severity_id: 3, device_hostname: pa-fw01 }
+  - name: admin login success
+    input: "<14>Oct  9 20:42:00 pa-fw01 1,2026/10/09 20:42:00,012345678901,SYSTEM,general,0,2026/10/09 20:42:00,,auth-success,,0,0,general,informational,\"User 'alice' logged in via Web from 10.20.1.6 using https\",7290000202,0x0,0,0,0,0,,pa-fw01"
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { actor_user_name: alice, src_endpoint_ip: 10.20.1.6, status_id: 1, severity_id: 1 }
+  - name: HA state change is a base event
+    input: "<12>Oct  9 20:43:00 pa-fw01 1,2026/10/09 20:43:00,012345678901,SYSTEM,ha,0,2026/10/09 20:43:00,,state-change,,0,0,general,high,\"HA Group 1: Moved from state Active to state Passive\",7290000203,0x0,0,0,0,0,,pa-fw01,0,0,2026-10-09T20:43:00.001-07:00"
+    expect:
+      parse_status: ok
+      class_uid: 0
+      fields: { severity_id: 4, message: "HA Group 1: Moved from state Active to state Passive" }

@@ -1,0 +1,60 @@
+<166>Oct 09 2026 20:01:01: %ASA-6-302013: Built inbound TCP connection 9000 for outside:203.0.113.9/10255 (203.0.113.9/10255) to inside:10.20.3.30/3389 (10.20.3.30/3389)
+<166>Oct  9 20:01:19 asa01 %ASA-6-302013: Built inbound TCP connection 9001 for outside:203.0.113.9/47653 (203.0.113.9/47653) to inside:10.20.1.6/22 (10.20.1.6/22)
+<166>Oct  9 20:01:24 asa01 %ASA-6-302014: Teardown TCP connection 9002 for outside:203.0.113.9/16173 to inside:10.20.1.6/3389 duration 0:00:02 bytes 7435 TCP FINs
+<166>Oct 09 2026 20:02:17: %ASA-6-113005: AAA user authentication Rejected : reason = AAA failure : server = 10.20.0.10 : user = dave : user IP = 198.51.100.4
+<166>Oct  9 20:02:43 asa01 %ASA-4-106023: Deny tcp src outside:198.51.100.4/26710 dst inside:10.20.2.14/443 by access-group "outside_access_in" [0x0, 0x0]
+<166>Oct  9 20:03:15 asa01 %ASA-6-113005: AAA user authentication Rejected : reason = AAA failure : server = 10.20.0.10 : user = alice : user IP = 198.51.100.4
+<166>Oct 09 2026 20:03:39: %ASA-6-302013: Built inbound TCP connection 9006 for outside:203.0.113.77/14384 (203.0.113.77/14384) to inside:10.20.1.6/22 (10.20.1.6/22)
+<166>Oct  9 20:04:28 asa01 %ASA-5-199999: Example message the template does not model
+<166>Oct  9 20:05:25 asa01 %ASA-5-199999: Example message the template does not model
+<166>Oct 09 2026 20:06:13: %ASA-6-605005: Login permitted from 10.20.2.14/43025 to inside:10.20.0.1/ssh for user "dave"
+<166>Oct  9 20:06:47 asa01 %ASA-6-302013: Built inbound TCP connection 9010 for outside:203.0.113.77/22935 (203.0.113.77/22935) to inside:10.20.2.14/3389 (10.20.2.14/3389)
+<166>Oct  9 20:07:49 asa01 %ASA-6-113004: AAA user authentication Successful : server =  10.20.0.10 : user = alice
+<166>Oct 09 2026 20:08:29: %ASA-5-199999: Example message the template does not model
+<166>Oct  9 20:08:33 asa01 %ASA-6-302014: Teardown TCP connection 9013 for outside:203.0.113.77/44905 to inside:10.20.1.5/443 duration 0:00:13 bytes 4766 TCP FINs
+<166>Oct  9 20:09:57 asa01 %ASA-4-106023: Deny tcp src outside:198.51.100.4/30829 dst inside:10.20.1.5/22 by access-group "outside_access_in" [0x0, 0x0]
+<166>Oct 09 2026 20:10:40: %ASA-5-199999: Example message the template does not model
+<166>Oct  9 20:10:56 asa01 %ASA-6-113005: AAA user authentication Rejected : reason = AAA failure : server = 10.20.0.10 : user = alice : user IP = 203.0.113.77
+<166>Oct  9 20:11:22 asa01 %ASA-6-302014: Teardown TCP connection 9017 for outside:203.0.113.77/47781 to inside:10.20.1.6/22 duration 0:00:17 bytes 7893 TCP FINs
+<166>Oct 09 2026 20:12:26: %ASA-6-302013: Built inbound TCP connection 9018 for outside:203.0.113.77/65344 (203.0.113.77/65344) to inside:10.20.2.14/3389 (10.20.2.14/3389)
+<166>Oct  9 20:13:48 asa01 %ASA-6-113004: AAA user authentication Successful : server =  10.20.0.10 : user = dave
+<166>Oct  9 20:13:52 asa01 %ASA-5-199999: Example message the template does not model
+<166>Oct 09 2026 20:14:23: %ASA-4-106023: Deny tcp src outside:203.0.113.9/25612 dst inside:10.20.1.5/3389 by access-group "outside_access_in" [0x0, 0x0]
+<166>Oct  9 20:15:21 asa01 %ASA-4-106023: Deny tcp src outside:198.51.100.4/9684 dst inside:10.20.1.5/22 by access-group "outside_access_in" [0x0, 0x0]
+<166>Oct  9 20:16:40 asa01 %ASA-6-113005: AAA user authentication Rejected : reason = AAA failure : server = 10.20.0.10 : user = carol : user IP = 203.0.113.9
+<166>Oct 09 2026 20:17:04: %ASA-6-605005: Login permitted from 10.20.3.30/15896 to inside:10.20.0.1/ssh for user "bob"
+<166>Oct  9 20:18:23 asa01 %ASA-6-605005: Login permitted from 10.20.2.14/48013 to inside:10.20.0.1/ssh for user "carol"
+<166>Oct  9 20:19:11 asa01 %ASA-6-302014: Teardown TCP connection 9026 for outside:203.0.113.9/49838 to inside:10.20.2.14/22 duration 0:00:26 bytes 4895 TCP FINs
+<166>Oct 09 2026 20:20:00: %ASA-6-605005: Login permitted from 10.20.1.5/56934 to inside:10.20.0.1/ssh for user "alice"
+<166>Oct  9 20:20:55 asa01 %ASA-6-605005: Login permitted from 10.20.1.6/17113 to inside:10.20.0.1/ssh for user "carol"
+<166>Oct  9 20:21:50 asa01 %ASA-6-302014: Teardown TCP connection 9029 for outside:203.0.113.77/61272 to inside:10.20.1.6/443 duration 0:00:29 bytes 719 TCP FINs
+<166>Oct 09 2026 20:22:51: %ASA-6-302013: Built inbound TCP connection 9030 for outside:203.0.113.77/36179 (203.0.113.77/36179) to inside:10.20.2.14/22 (10.20.2.14/22)
+<166>Oct  9 20:23:38 asa01 %ASA-6-113004: AAA user authentication Successful : server =  10.20.0.10 : user = dave
+<166>Oct  9 20:24:04 asa01 %ASA-6-605005: Login permitted from 10.20.1.6/22126 to inside:10.20.0.1/ssh for user "carol"
+<166>Oct 09 2026 20:24:52: %ASA-6-605005: Login permitted from 10.20.1.6/5346 to inside:10.20.0.1/ssh for user "dave"
+<166>Oct  9 20:25:50 asa01 %ASA-6-113004: AAA user authentication Successful : server =  10.20.0.10 : user = alice
+<166>Oct  9 20:26:10 asa01 %ASA-6-113004: AAA user authentication Successful : server =  10.20.0.10 : user = alice
+<166>Oct 09 2026 20:26:59: %ASA-4-106023: Deny tcp src outside:203.0.113.77/20714 dst inside:10.20.2.14/22 by access-group "outside_access_in" [0x0, 0x0]
+<166>Oct  9 20:27:39 asa01 %ASA-6-113005: AAA user authentication Rejected : reason = AAA failure : server = 10.20.0.10 : user = bob : user IP = 192.0.2.10
+<166>Oct  9 20:29:00 asa01 %ASA-5-199999: Example message the template does not model
+<166>Oct 09 2026 20:29:25: %ASA-6-605005: Login permitted from 10.20.2.14/60416 to inside:10.20.0.1/ssh for user "dave"
+<166>Oct  9 20:30:52 asa01 %ASA-4-106023: Deny tcp src outside:192.0.2.10/21248 dst inside:10.20.2.14/443 by access-group "outside_access_in" [0x0, 0x0]
+<166>Oct  9 20:32:19 asa01 %ASA-6-113004: AAA user authentication Successful : server =  10.20.0.10 : user = alice
+<166>Oct 09 2026 20:33:33: %ASA-5-199999: Example message the template does not model
+<166>Oct  9 20:34:15 asa01 %ASA-6-605005: Login permitted from 10.20.1.5/53224 to inside:10.20.0.1/ssh for user "alice"
+<166>Oct  9 20:34:47 asa01 %ASA-4-106023: Deny tcp src outside:192.0.2.10/10244 dst inside:10.20.3.30/22 by access-group "outside_access_in" [0x0, 0x0]
+<166>Oct 09 2026 20:35:28: %ASA-4-106023: Deny tcp src outside:203.0.113.9/15794 dst inside:10.20.3.30/3389 by access-group "outside_access_in" [0x0, 0x0]
+<166>Oct  9 20:36:25 asa01 %ASA-5-199999: Example message the template does not model
+<166>Oct  9 20:37:26 asa01 %ASA-5-199999: Example message the template does not model
+<166>Oct 09 2026 20:38:54: %ASA-6-605005: Login permitted from 10.20.2.14/16434 to inside:10.20.0.1/ssh for user "alice"
+<166>Oct  9 20:39:40 asa01 %ASA-6-113004: AAA user authentication Successful : server =  10.20.0.10 : user = dave
+<166>Oct  9 20:40:34 asa01 %ASA-6-302014: Teardown TCP connection 9050 for outside:198.51.100.4/45861 to inside:10.20.1.5/443 duration 0:00:50 bytes 736 TCP FINs
+<166>Oct 09 2026 20:41:27: %ASA-6-605005: Login permitted from 10.20.3.30/9932 to inside:10.20.0.1/ssh for user "carol"
+<166>Oct  9 20:41:58 asa01 %ASA-6-113004: AAA user authentication Successful : server =  10.20.0.10 : user = bob
+<166>Oct  9 20:43:13 asa01 %ASA-5-199999: Example message the template does not model
+<166>Oct 09 2026 20:44:13: %ASA-6-113004: AAA user authentication Successful : server =  10.20.0.10 : user = dave
+<166>Oct  9 20:44:54 asa01 %ASA-5-199999: Example message the template does not model
+<166>Oct  9 20:45:38 asa01 %ASA-6-113004: AAA user authentication Successful : server =  10.20.0.10 : user = carol
+<166>Oct 09 2026 20:46:00: %ASA-5-199999: Example message the template does not model
+<166>Oct  9 20:47:26 asa01 %ASA-4-106023: Deny tcp src outside:192.0.2.10/13911 dst inside:10.20.3.30/22 by access-group "outside_access_in" [0x0, 0x0]
+<166>Oct  9 20:47:39 asa01 %ASA-6-113005: AAA user authentication Rejected : reason = AAA failure : server = 10.20.0.10 : user = bob : user IP = 203.0.113.77

@@ -1,0 +1,61 @@
+<84>Oct  9 20:00:58 web-01 login[2547]: pam_faillock(login:auth): Consecutive login failures for user bob account temporarily locked
+<86>Oct  9 20:01:43 web-01 su[49469]: (to root) alice on pts/1
+<85>Oct  9 20:02:24 web-01 su[18646]: pam_unix(su:auth): authentication failure; logname=bob uid=1001 euid=0 tty=pts/1 ruser=bob rhost=  user=root
+<86>Oct  9 20:03:20 bastion su[37175]: (to root) bob on pts/3
+<85>Oct  9 20:04:36 bastion su[38823]: pam_unix(su:auth): authentication failure; logname=alice uid=1001 euid=0 tty=pts/1 ruser=alice rhost=  user=root
+<86>Oct  9 20:04:51 db-01 login[28624]: pam_unix(login:session): session opened for user carol(uid=1000) by LOGIN(uid=0)
+<86>Oct  9 20:06:10 bastion CRON[46769]: pam_unix(cron:session): session opened for user root(uid=0) by (uid=0)
+<86>Oct  9 20:06:50 db-01 passwd[13088]: pam_unix(passwd:chauthtok): password changed for carol
+<85>Oct  9 20:07:25 bastion su[19319]: FAILED SU (to root) bob on pts/0
+<85>Oct  9 20:08:09 bastion su[29305]: pam_unix(su:auth): authentication failure; logname=bob uid=1001 euid=0 tty=pts/1 ruser=bob rhost=  user=root
+<86>Oct  9 20:09:14 bastion CRON[28484]: pam_unix(cron:session): session opened for user root(uid=0) by (uid=0)
+<86>Oct  9 20:09:38 db-01 su[27035]: (to root) dave on pts/3
+<84>Oct  9 20:09:42 db-01 login[27031]: pam_faillock(login:auth): Consecutive login failures for user carol account temporarily locked
+<86>Oct  9 20:10:50 db-01 su[50646]: (to root) dave on pts/1
+<86>Oct  9 20:11:36 db-01 passwd[6935]: pam_unix(passwd:chauthtok): password changed for alice
+<86>Oct  9 20:11:44 web-01 passwd[52198]: pam_unix(passwd:chauthtok): password changed for dave
+<85>Oct  9 20:11:57 web-01 su[27257]: pam_unix(su:auth): authentication failure; logname=bob uid=1001 euid=0 tty=pts/1 ruser=bob rhost=  user=root
+<85>Oct  9 20:13:07 db-01 su[12232]: pam_unix(su:auth): authentication failure; logname=bob uid=1001 euid=0 tty=pts/1 ruser=bob rhost=  user=root
+<86>Oct  9 20:13:53 db-01 CRON[12721]: pam_unix(cron:session): session opened for user root(uid=0) by (uid=0)
+<85>Oct  9 20:14:02 bastion su[30070]: pam_unix(su:auth): authentication failure; logname=bob uid=1001 euid=0 tty=pts/1 ruser=bob rhost=  user=root
+<85>Oct  9 20:15:25 bastion su[53160]: FAILED SU (to root) bob on pts/0
+<86>Oct  9 20:15:38 bastion su[43963]: (to root) bob on pts/1
+<85>Oct  9 20:15:57 web-01 su[27918]: pam_unix(su:auth): authentication failure; logname=bob uid=1001 euid=0 tty=pts/1 ruser=bob rhost=  user=root
+<85>Oct  9 20:16:13 bastion su[3832]: FAILED SU (to root) dave on pts/3
+<86>Oct  9 20:17:41 db-01 CRON[39308]: pam_unix(cron:session): session opened for user root(uid=0) by (uid=0)
+<86>Oct  9 20:17:50 bastion su[32206]: (to root) dave on pts/1
+<85>Oct  9 20:19:08 bastion su[52391]: pam_unix(su:auth): authentication failure; logname=carol uid=1001 euid=0 tty=pts/1 ruser=carol rhost=  user=root
+<86>Oct  9 20:20:30 db-01 login[2192]: pam_unix(login:session): session closed for user alice
+<86>Oct  9 20:21:05 web-01 login[7373]: pam_unix(login:session): session closed for user carol
+<86>Oct  9 20:22:32 web-01 login[6009]: pam_unix(login:session): session closed for user alice
+<86>Oct  9 20:23:35 web-01 CRON[36023]: pam_unix(cron:session): session opened for user root(uid=0) by (uid=0)
+<86>Oct  9 20:23:48 web-01 CRON[2528]: pam_unix(cron:session): session opened for user root(uid=0) by (uid=0)
+<86>Oct  9 20:24:33 bastion login[41530]: pam_unix(login:session): session closed for user dave
+<86>Oct  9 20:25:53 web-01 login[3508]: pam_unix(login:session): session closed for user bob
+<85>Oct  9 20:26:56 web-01 su[14317]: FAILED SU (to root) bob on pts/2
+<85>Oct  9 20:28:25 bastion su[4220]: FAILED SU (to root) dave on pts/3
+<86>Oct  9 20:28:57 bastion CRON[31438]: pam_unix(cron:session): session opened for user root(uid=0) by (uid=0)
+<85>Oct  9 20:30:23 web-01 su[18450]: pam_unix(su:auth): authentication failure; logname=alice uid=1001 euid=0 tty=pts/1 ruser=alice rhost=  user=root
+<86>Oct  9 20:31:04 bastion su[12686]: (to root) bob on pts/2
+<86>Oct  9 20:31:10 web-01 login[33686]: pam_unix(login:session): session closed for user alice
+<85>Oct  9 20:31:11 db-01 su[19158]: FAILED SU (to root) alice on pts/0
+<86>Oct  9 20:31:41 web-01 su[56468]: (to root) dave on pts/1
+<86>Oct  9 20:32:25 db-01 CRON[10164]: pam_unix(cron:session): session opened for user root(uid=0) by (uid=0)
+<86>Oct  9 20:33:43 db-01 passwd[47065]: pam_unix(passwd:chauthtok): password changed for alice
+<85>Oct  9 20:35:03 bastion su[12500]: FAILED SU (to root) alice on pts/0
+<85>Oct  9 20:36:09 bastion su[19275]: FAILED SU (to root) carol on pts/1
+<86>Oct  9 20:37:17 db-01 CRON[17990]: pam_unix(cron:session): session opened for user root(uid=0) by (uid=0)
+<85>Oct  9 20:38:23 web-01 su[55966]: FAILED SU (to root) carol on pts/3
+<86>Oct  9 20:39:27 db-01 login[54566]: pam_unix(login:session): session opened for user dave(uid=1000) by LOGIN(uid=0)
+<85>Oct  9 20:39:37 db-01 su[58291]: FAILED SU (to root) carol on pts/1
+<86>Oct  9 20:39:44 db-01 login[47332]: pam_unix(login:session): session opened for user bob(uid=1000) by LOGIN(uid=0)
+<85>Oct  9 20:40:51 db-01 su[16462]: pam_unix(su:auth): authentication failure; logname=carol uid=1001 euid=0 tty=pts/1 ruser=carol rhost=  user=root
+<84>Oct  9 20:41:38 bastion login[13901]: pam_faillock(login:auth): Consecutive login failures for user bob account temporarily locked
+<86>Oct  9 20:41:41 bastion CRON[35550]: pam_unix(cron:session): session opened for user root(uid=0) by (uid=0)
+<86>Oct  9 20:41:50 web-01 su[53864]: (to root) alice on pts/2
+<86>Oct  9 20:42:55 web-01 CRON[12689]: pam_unix(cron:session): session opened for user root(uid=0) by (uid=0)
+<84>Oct  9 20:44:15 db-01 login[27999]: pam_faillock(login:auth): Consecutive login failures for user carol account temporarily locked
+<86>Oct  9 20:44:22 bastion su[22116]: (to root) carol on pts/1
+<86>Oct  9 20:44:23 web-01 CRON[45505]: pam_unix(cron:session): session opened for user root(uid=0) by (uid=0)
+<85>Oct  9 20:45:04 web-01 su[4759]: pam_unix(su:auth): authentication failure; logname=bob uid=1001 euid=0 tty=pts/1 ruser=bob rhost=  user=root
+<86>Oct  9 20:45:43 web-01 su[2]: + pts/1 alice:root

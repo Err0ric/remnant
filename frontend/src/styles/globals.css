@@ -1,0 +1,52 @@
+@import "./tokens.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-bg font-sans text-base text-text antialiased;
+    font-variant-numeric: tabular-nums;
+  }
+  :focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 1px;
+  }
+  ::selection {
+    background: var(--accent-subtle);
+  }
+}
+
+@layer components {
+  /* An hour much quieter than usual (Overview heatmap): stripes, so it never relies on color. */
+  .hatch {
+    background-image: repeating-linear-gradient(
+      135deg,
+      var(--text-muted) 0 1px,
+      transparent 1px 4px
+    );
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+/* Phones: wide tables keep readable columns and scroll inside their panel instead of
+   squeezing every cell to one word. */
+@media (max-width: 767px) {
+  .overflow-x-auto > table {
+    min-width: 720px;
+  }
+}

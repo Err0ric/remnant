@@ -1,0 +1,63 @@
+# Suspicious presets (ADR-0016 row 3): plain Simple searches, shown under Search >
+# Suspicious. Picking one fills the search bar, where it can be read and edited.
+# Every entry must compile (tests/unit/test_presets.py). No em dashes in names.
+- id: failed_signins
+  name: Failed sign-ins
+  description: Windows 4625, sshd and PAM failures, and OCSF authentication failures
+  text: 'EventID:4625 OR "failed password" OR "authentication failure" OR (class_uid:3002 status_id:2)'
+- id: lockouts
+  name: Account lockouts
+  description: Windows 4740 and PAM tally or faillock messages
+  text: 'EventID:4740 OR "account locked" OR faillock'
+- id: privileged_groups
+  name: Changes to privileged groups
+  description: Members added to security-enabled global, local, or universal groups
+  text: 'EventID:4728 OR EventID:4732 OR EventID:4756'
+- id: new_accounts
+  name: New accounts
+  description: Windows 4720 and Linux useradd
+  text: 'EventID:4720 OR "new user:"'
+- id: sudo_root
+  name: sudo to root
+  description: Commands run as root through sudo
+  text: 'process:sudo "USER=root"'
+- id: explicit_credentials
+  name: Sign-ins with explicit credentials
+  description: Windows 4648, often seen with runas and lateral movement
+  text: 'EventID:4648'
+- id: services_and_tasks
+  name: New services and scheduled tasks
+  description: Windows 7045, 4697, and 4698
+  text: 'EventID:7045 OR EventID:4697 OR EventID:4698'
+- id: log_cleared
+  name: Audit log cleared
+  description: Windows 1102 (Security) and 104 (System)
+  text: 'EventID:1102 OR EventID:104'
+- id: firewall_denies
+  name: Firewall denies
+  description: Network activity the firewall blocked
+  text: 'class_uid:4001 status_id:2'
+- id: high_severity
+  name: High and critical severity
+  description: Anything a parser marked high or above
+  text: 'severity:>=high'
+- id: parse_failures
+  name: Lines that failed to parse
+  description: A format change, a new device, or tampering; worth a look when it spikes
+  text: 'parse_status:failed'
+- id: ai_sensitive
+  name: Sensitive data sent to AI tools
+  description: Claude Code prompts or tool input with keys, card numbers, or SSNs (text not stored)
+  text: 'attr.sensitive_total:>0'
+- id: ai_tool_failures
+  name: Failed AI tool calls
+  description: Claude Code tool calls, including MCP tools, that failed or were rejected
+  text: 'template_id:claude_code_otel status_id:2'
+- id: threat_intel_matches
+  name: Threat intel matches
+  description: Source or destination address or host name in an enabled threat intel list
+  text: 'intel:listed'
+- id: botnet_c2
+  name: Botnet command and control
+  description: Traffic to or from addresses listed as botnet C2
+  text: 'intel:"botnet C2"'

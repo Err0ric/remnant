@@ -1,0 +1,57 @@
+schema_version: 1
+id: json_over_syslog
+name: JSON over syslog
+version: 1.0.0
+author: starter-pack
+description: >-
+  Applications that send one JSON object per syslog message, with or without an @cee:
+  cookie. The message, user, and endpoint keys most loggers use are mapped; every other
+  key stays in unmapped and can be queried with json_extract_string.
+category: application
+classification_default: local_only
+
+envelope:
+  type: syslog
+  syslog: { rfc: auto, assume_year: rollover_safe, timezone: UTC, strip_relay_headers: true }
+
+match:
+  regex: '^(?:@cee:\s*)?\{'
+  min_confidence: 0.8
+
+payload:
+  format: json
+  json: { root: "$" }
+
+transforms:
+  - { field: src_port, op: to_int }
+  - { field: dst_port, op: to_int }
+
+mapping:
+  class_uid: 0             # Base Event: the application decides what the event means
+  fields:
+    message: { from: msg }
+    actor_user_name: { from: user }
+    src_endpoint_ip: { from: src_ip }
+    src_endpoint_port: { from: src_port }
+    dst_endpoint_ip: { from: dst_ip }
+    dst_endpoint_port: { from: dst_port }
+  severity:
+    from: level
+    map: { debug: 1, info: 1, notice: 2, warning: 3, warn: 3, error: 4, err: 4, critical: 5, crit: 5, alert: 5, emergency: 5, fatal: 5 }
+
+tests:
+  - name: cee cookie with nested object
+    input: '<134>Oct  9 20:41:12 app01 billing[311]: @cee: {"msg": "payment failed", "level": "error", "user": "alice", "order": {"id": 991, "total": 12.5}}'
+    expect:
+      parse_status: ok
+      fields: { message: payment failed, actor_user_name: alice, severity_id: 4 }
+  - name: plain JSON with endpoints
+    input: '<134>1 2026-10-09T20:42:00Z app01 api 312 - - {"msg": "login", "level": "info", "src_ip": "10.20.1.5", "src_port": "51234", "user": "bob"}'
+    expect:
+      parse_status: ok
+      fields: { src_endpoint_ip: 10.20.1.5, src_endpoint_port: 51234, severity_id: 1 }
+  - name: not JSON keeps the envelope
+    input: "<134>Oct  9 20:43:00 app01 api[312]: starting worker pool"
+    expect:
+      parse_status: envelope_only
+      fields: { device_hostname: app01 }

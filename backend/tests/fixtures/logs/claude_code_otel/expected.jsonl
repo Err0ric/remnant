@@ -1,0 +1,10 @@
+{"actor_user_name": "alice@example.com", "class_uid": 6003, "device_hostname": "ws-0042", "message": "claude_code.user_prompt", "parse_status": "ok", "time": "2026-10-14T17:02:00+00:00"}
+{"actor_user_name": "alice@example.com", "class_uid": 6003, "device_hostname": "ws-0042", "message": "claude_code.api_request", "parse_status": "ok", "time": "2026-10-14T17:02:03+00:00"}
+{"actor_user_name": "alice@example.com", "class_uid": 6003, "device_hostname": "ws-0042", "message": "claude_code.tool_decision", "parse_status": "ok", "status_id": 1, "time": "2026-10-14T17:02:05+00:00"}
+{"actor_user_name": "alice@example.com", "class_uid": 6003, "device_hostname": "ws-0042", "message": "claude_code.tool_result", "parse_status": "ok", "status_id": 1, "time": "2026-10-14T17:02:06+00:00"}
+{"actor_user_name": "alice@example.com", "class_uid": 6003, "message": "claude_code.cost.usage", "parse_status": "ok"}
+{"actor_user_name": "alice@example.com", "class_uid": 6003, "message": "claude_code.token.usage", "parse_status": "ok"}
+{"actor_user_name": "bob@example.com", "class_uid": 6003, "device_hostname": "lt-0107", "message": "claude_code.user_prompt", "parse_status": "ok", "time": "2026-10-14T17:09:05+00:00"}
+{"actor_user_name": "bob@example.com", "class_uid": 6003, "device_hostname": "lt-0107", "message": "claude_code.api_request", "parse_status": "ok", "time": "2026-10-14T17:09:08+00:00"}
+{"actor_user_name": "bob@example.com", "class_uid": 6003, "device_hostname": "lt-0107", "message": "claude_code.tool_decision", "parse_status": "ok", "status_id": 1, "time": "2026-10-14T17:09:10+00:00"}
+{"actor_user_name": "bob@example.com", "class_uid": 6003, "device_hostname": "lt-0107", "message": "claude_code.tool_result", "parse_status": "ok", "status_id": 1, "time": "2026-10-14T17:09:11+00:00"}

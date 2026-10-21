@@ -1,0 +1,66 @@
+<38>Oct  9 20:01:06 web-01 sshd[57737]: Connection closed by invalid user ubuntu 198.51.100.4 port 57179 [preauth]
+<38>Oct  9 20:02:25 db-01 sshd[13445]: Accepted publickey for deploy from 10.20.2.14 port 53708 ssh2: ED25519 SHA256:Zm9v
+<38>Oct  9 20:03:34 bastion sshd[7168]: Invalid user oracle from 203.0.113.9 port 20907
+<38>Oct  9 20:04:58 db-01 sshd[42579]: Accepted publickey for deploy from 10.20.1.6 port 40046 ssh2: ED25519 SHA256:Zm9v
+<38>Oct  9 20:05:06 db-01 sshd[41341]: pam_unix(sshd:session): session opened for user alice by (uid=0)
+<38>Oct  9 20:05:48 bastion sshd[13465]: Accepted publickey for alice from 10.20.1.6 port 40320 ssh2: ED25519 SHA256:Zm9v
+<38>Oct  9 20:06:26 web-01 sshd[39729]: Disconnected from user bob 10.20.2.14 port 13824
+<38>Oct  9 20:07:19 web-01 sshd[1301]: pam_unix(sshd:session): session closed for user deploy
+<38>Oct  9 20:07:49 db-01 sshd[62058]: Disconnected from user carol 10.20.1.6 port 6476
+<86>1 2026-10-09T20:08:03Z db-01 sshd 19942 - - Accepted publickey for alice from 10.20.1.6 port 5626 ssh2: ED25519 SHA256:Zm9v
+<38>Oct  9 20:08:04 web-01 sshd[26330]: Accepted publickey for alice from 10.20.2.14 port 63810 ssh2: ED25519 SHA256:Zm9v
+<38>Oct  9 20:08:55 bastion sshd[14744]: Accepted publickey for deploy from 10.20.2.14 port 31825 ssh2: ED25519 SHA256:Zm9v
+<38>Oct  9 20:09:30 web-01 sshd[5786]: Connection closed by invalid user oracle 203.0.113.77 port 42275 [preauth]
+<38>Oct  9 20:09:46 web-01 sshd[6711]: Failed password for alice from 198.51.100.4 port 22820 ssh2
+<38>Oct  9 20:10:46 bastion sshd[17147]: pam_unix(sshd:session): session opened for user alice by (uid=0)
+<38>Oct  9 20:11:52 web-01 sshd[12644]: pam_unix(sshd:session): session closed for user bob
+<38>Oct  9 20:12:42 bastion sshd[48965]: Disconnected from user deploy 10.20.2.14 port 9607
+<38>Oct  9 20:13:58 bastion sshd[26877]: Invalid user admin from 198.51.100.4 port 14974
+<86>1 2026-10-09T20:15:16Z web-01 sshd 58990 - - Accepted publickey for bob from 10.20.1.6 port 14833 ssh2: ED25519 SHA256:Zm9v
+<38>Oct  9 20:16:13 db-01 sshd[38811]: Accepted publickey for bob from 10.20.1.5 port 3783 ssh2: ED25519 SHA256:Zm9v
+<38>Oct  9 20:17:03 web-01 sshd[1627]: Disconnected from user carol 10.20.1.6 port 41022
+<38>Oct  9 20:18:20 bastion sshd[5868]: Accepted publickey for bob from 10.20.1.5 port 14703 ssh2: ED25519 SHA256:Zm9v
+<38>Oct  9 20:19:22 web-01 sshd[25359]: Connection closed by invalid user oracle 203.0.113.77 port 30725 [preauth]
+<38>Oct  9 20:19:42 db-01 sshd[9895]: Disconnected from user bob 10.20.2.14 port 26327
+<38>Oct  9 20:20:07 web-01 sshd[60534]: Accepted publickey for bob from 10.20.2.14 port 54619 ssh2: ED25519 SHA256:Zm9v
+<38>Oct  9 20:21:09 bastion sshd[49458]: pam_unix(sshd:session): session closed for user bob
+<38>Oct  9 20:21:14 db-01 sshd[6144]: Invalid user admin from 203.0.113.9 port 4130
+<38>Oct  9 20:22:08 db-01 sshd[64090]: Failed password for deploy from 198.51.100.4 port 16648 ssh2
+<38>Oct  9 20:22:17 db-01 sshd[33178]: Failed password for bob from 203.0.113.77 port 35107 ssh2
+<38>Oct  9 20:22:45 bastion sshd[15968]: Invalid user admin from 198.51.100.4 port 37682
+<38>Oct  9 20:23:43 bastion sshd[50085]: Accepted publickey for carol from 10.20.1.6 port 5556 ssh2: ED25519 SHA256:Zm9v
+<38>Oct  9 20:24:51 bastion sshd[4962]: Accepted publickey for carol from 10.20.1.6 port 12574 ssh2: ED25519 SHA256:Zm9v
+<38>Oct  9 20:25:49 db-01 sshd[64770]: Accepted publickey for carol from 10.20.1.5 port 7065 ssh2: ED25519 SHA256:Zm9v
+<38>Oct  9 20:25:52 web-01 sshd[44052]: pam_unix(sshd:session): session opened for user bob by (uid=0)
+<38>Oct  9 20:25:55 web-01 sshd[60651]: Failed password for carol from 203.0.113.9 port 46962 ssh2
+<38>Oct  9 20:26:35 db-01 sshd[42692]: Accepted publickey for alice from 10.20.2.14 port 32627 ssh2: ED25519 SHA256:Zm9v
+<86>1 2026-10-09T20:27:23Z web-01 sshd 9952 - - Accepted publickey for deploy from 10.20.2.14 port 5956 ssh2: ED25519 SHA256:Zm9v
+<38>Oct  9 20:28:09 db-01 sshd[3914]: pam_unix(sshd:session): session closed for user bob
+<38>Oct  9 20:28:13 bastion sshd[45901]: Invalid user admin from 198.51.100.4 port 60061
+<38>Oct  9 20:29:28 web-01 sshd[38539]: Accepted publickey for deploy from 10.20.1.6 port 41981 ssh2: ED25519 SHA256:Zm9v
+<38>Oct  9 20:29:43 bastion sshd[40902]: Accepted publickey for alice from 10.20.2.14 port 6280 ssh2: ED25519 SHA256:Zm9v
+<38>Oct  9 20:31:12 web-01 sshd[58658]: Invalid user test from 198.51.100.4 port 48747
+<38>Oct  9 20:32:18 db-01 sshd[30999]: Invalid user admin from 203.0.113.77 port 31342
+<38>Oct  9 20:32:48 bastion sshd[21331]: Connection closed by invalid user ubuntu 203.0.113.9 port 6773 [preauth]
+<38>Oct  9 20:32:50 db-01 sshd[8398]: Invalid user ubuntu from 198.51.100.4 port 52138
+<86>1 2026-10-09T20:33:12Z web-01 sshd 20728 - - Accepted publickey for bob from 10.20.2.14 port 45466 ssh2: ED25519 SHA256:Zm9v
+<38>Oct  9 20:34:04 web-01 sshd[44253]: Invalid user oracle from 198.51.100.4 port 33681
+<38>Oct  9 20:34:32 db-01 sshd[17423]: Accepted publickey for deploy from 10.20.1.5 port 42585 ssh2: ED25519 SHA256:Zm9v
+<38>Oct  9 20:34:50 web-01 sshd[15390]: Connection closed by invalid user test 203.0.113.9 port 61369 [preauth]
+<38>Oct  9 20:34:59 bastion sshd[33536]: Failed password for alice from 203.0.113.77 port 55883 ssh2
+<38>Oct  9 20:35:35 web-01 sshd[54861]: Accepted publickey for deploy from 10.20.1.6 port 8418 ssh2: ED25519 SHA256:Zm9v
+<38>Oct  9 20:36:16 bastion sshd[55453]: Invalid user ubuntu from 203.0.113.77 port 26094
+<38>Oct  9 20:36:26 db-01 sshd[55992]: Disconnected from user deploy 10.20.1.6 port 65382
+<38>Oct  9 20:37:02 bastion sshd[19227]: Disconnected from user alice 10.20.2.14 port 40840
+<38>Oct  9 20:37:20 db-01 sshd[24213]: Failed password for alice from 203.0.113.77 port 43575 ssh2
+<38>Oct  9 20:37:39 web-01 sshd[30807]: Accepted publickey for carol from 10.20.1.5 port 2644 ssh2: ED25519 SHA256:Zm9v
+<38>Oct  9 20:38:48 bastion sshd[42233]: Accepted publickey for alice from 10.20.2.14 port 30284 ssh2: ED25519 SHA256:Zm9v
+<38>Oct  9 20:39:14 db-01 sshd[42937]: Disconnected from user alice 10.20.2.14 port 25186
+<38>Oct  9 20:39:16 bastion sshd[54991]: Invalid user oracle from 203.0.113.77 port 17803
+<38>Oct  9 20:39:51 web-01 sshd[36051]: pam_unix(sshd:session): session opened for user bob by (uid=0)
+<38>Oct  9 20:40:20 web-01 sshd[36369]: pam_unix(sshd:session): session closed for user bob
+<38>Oct  9 20:41:19 bastion sshd[27901]: pam_unix(sshd:session): session closed for user bob
+<38>Oct  9 20:42:01 bastion sshd[41995]: Accepted publickey for carol from 10.20.1.6 port 25718 ssh2: ED25519 SHA256:Zm9v
+<86>1 2026-10-09T20:42:33Z db-01 sshd 14427 - - Accepted publickey for alice from 10.20.1.5 port 48336 ssh2: ED25519 SHA256:Zm9v
+<38>Oct  9 20:43:23 bastion sshd[811]: Timeout before authentication for 198.51.100.4 port 4022
+<38>Oct  9 20:43:35 bastion sshd[812]: Server listening on 0.0.0.0 port 22.

@@ -1,0 +1,52 @@
+schema_version: 1
+id: nginx_access_combined
+name: nginx access log (combined format)
+version: 1.0.0
+author: starter-pack
+description: Plain file, combined log format, no syslog envelope
+classification_default: cloud_allowed
+
+envelope:
+  type: none
+
+match:
+  regex: '^\S+ \S+ \S+ \[[^\]]+\] "[A-Z]+ '
+  min_confidence: 0.8
+
+payload:
+  format: regex
+  regex:
+    patterns:
+      - '^(?P<src_ip>\S+) \S+ (?P<user>\S+) \[(?P<ts>[^\]]+)\] "(?P<method>[A-Z]+) (?P<path>\S+) (?P<proto>[^"]+)" (?P<status>\d{3}) (?P<bytes>\d+|-) "(?P<referer>[^"]*)" "(?P<ua>[^"]*)"'
+
+transforms:
+  - field: ts
+    op: timestamp
+    args: { format: "%d/%b/%Y:%H:%M:%S %z" }
+  - field: status
+    op: to_int
+  - field: bytes
+    op: to_int
+
+mapping:
+  class_uid: 4002          # HTTP Activity
+  fields:
+    time:            { from: ts }
+    src_endpoint_ip: { from: src_ip }
+    actor_user_name: { from: user }
+    status_id:       { from: status, map: { "200": 1, "301": 1, "302": 1, "403": 2, "404": 2, "500": 2 }, default: 0 }
+    message:         { from: path }
+  severity:
+    from: status
+    map: { "500": 3, "403": 2 }
+
+tests:
+  - name: 200 GET
+    input: '10.0.0.5 - - [09/Oct/2026:20:41:12 -0700] "GET /login HTTP/1.1" 200 512 "-" "Mozilla/5.0"'
+    expect: { parse_status: ok, class_uid: 4002, fields: { src_endpoint_ip: 10.0.0.5, status_id: 1 } }
+  - name: 403 POST
+    input: '203.0.113.9 - - [09/Oct/2026:20:41:15 -0700] "POST /admin HTTP/1.1" 403 128 "-" "curl/8.0"'
+    expect: { parse_status: ok, fields: { status_id: 2 } }
+  - name: dash bytes
+    input: '10.0.0.5 - jordan [09/Oct/2026:20:41:20 -0700] "HEAD /health HTTP/1.1" 200 - "-" "probe"'
+    expect: { parse_status: ok, fields: { actor_user_name: jordan } }

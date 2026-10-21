@@ -1,0 +1,76 @@
+schema_version: 1
+id: m365_management_activity
+name: Microsoft 365 audit (Management Activity API)
+version: 1.0.0
+author: starter-pack
+description: >-
+  Unified audit records from the Office 365 Management Activity API, pulled by the
+  Microsoft 365 connector (ADR-0002): Audit.AzureActiveDirectory, Audit.Exchange,
+  Audit.SharePoint, Audit.General (includes Copilot interactions, RecordType 261), and
+  DLP.All (DlpRuleMatch). Each line is Microsoft's JSON, unchanged. The operation is the
+  message; Workload, RecordType, ObjectId, and the Copilot and DLP details stay in unmapped.
+category: identity
+vendor: microsoft
+classification_default: local_only
+
+envelope:
+  type: none
+
+match:
+  regex: '^\{(?=.*"CreationTime":")(?=.*"RecordType":\d)(?=.*"Workload":")'
+  min_confidence: 0.95
+
+payload:
+  format: json
+  json: { root: "$" }
+
+transforms:
+  - { field: CreationTime, op: timestamp, args: { format: iso8601 } }
+  - field: ResultStatus
+    op: map
+    args: { into: outcome, values: { Succeeded: 1, Success: 1, success: 1, "True": 1, PartiallySucceeded: 1, Failed: 2, Failure: 2, failure: 2, "False": 2 }, optional: true }
+  - { field: ClientIP, op: regex_extract, args: { pattern: '^(?|\[([0-9A-Fa-f:.]+)\](?::\d+)?|(\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?|([0-9A-Fa-f:]*:[0-9A-Fa-f:.]*))$', into: client_ip, optional: true } }
+
+mapping:
+  class_uid: 6003            # API Activity
+  fields:
+    time: { from: CreationTime }
+    actor_user_name: { from: UserId }
+    src_endpoint_ip: { from: [client_ip, ClientIPAddress, ActorIpAddress] }
+    message: { from: Operation }
+    status_id: { from: outcome }
+  severity:
+    from: Operation
+    map: { DlpRuleMatch: 3, DLPRuleMatch: 3, AlertTriggered: 3, Add member to role.: 3, Add service principal credentials.: 3 }
+
+tests:
+  - name: SharePoint file download
+    input: '{"CreationTime":"2026-10-14T17:00:04","Id":"6b2f3a10-0000-4000-8000-000000000001","Operation":"FileDownloaded","OrganizationId":"00000000-0000-4000-8000-0000000000aa","RecordType":6,"UserKey":"i:0h.f|membership|alice@example.com","UserType":0,"Version":1,"Workload":"SharePoint","ClientIP":"203.0.113.10","ObjectId":"https://contoso.example/sites/finance/q3.xlsx","UserId":"alice@example.com"}'
+    expect:
+      parse_status: ok
+      class_uid: 6003
+      fields: { actor_user_name: alice@example.com, src_endpoint_ip: 203.0.113.10, message: FileDownloaded, time: "2026-10-14T17:00:04+00:00" }
+  - name: Copilot interaction
+    input: '{"CreationTime":"2026-10-14T17:02:11","Id":"6b2f3a10-0000-4000-8000-000000000002","Operation":"CopilotInteraction","RecordType":261,"UserType":0,"Version":1,"Workload":"Copilot","UserId":"bob@example.com","ClientIP":"198.51.100.7:52114","CopilotEventData":{"AppHost":"Word","Contexts":[{"Id":"https://contoso.example/sites/hr/policy.docx","Type":"docx"}]}}'
+    expect:
+      parse_status: ok
+      class_uid: 6003
+      fields: { actor_user_name: bob@example.com, src_endpoint_ip: 198.51.100.7, message: CopilotInteraction }
+  - name: DLP rule match
+    input: '{"CreationTime":"2026-10-14T17:05:00","Id":"6b2f3a10-0000-4000-8000-000000000003","Operation":"DlpRuleMatch","RecordType":13,"UserType":0,"Version":1,"Workload":"Exchange","UserId":"carol@example.com","PolicyDetails":[{"PolicyName":"PII","Rules":[{"RuleName":"SSN","Severity":"High"}]}]}'
+    expect:
+      parse_status: ok
+      class_uid: 6003
+      fields: { actor_user_name: carol@example.com, message: DlpRuleMatch, severity_id: 3 }
+  - name: failed Entra logon
+    input: '{"CreationTime":"2026-10-14T17:06:00","Id":"6b2f3a10-0000-4000-8000-000000000004","Operation":"UserLoginFailed","RecordType":15,"ResultStatus":"Failed","UserType":0,"Version":1,"Workload":"AzureActiveDirectory","ClientIP":"203.0.113.99","UserId":"dave@example.com"}'
+    expect:
+      parse_status: ok
+      class_uid: 6003
+      fields: { actor_user_name: dave@example.com, message: UserLoginFailed, status_id: 2 }
+  - name: IPv6 with and without a port
+    input: '{"CreationTime":"2026-10-14T17:07:00","Id":"6b2f3a10-0000-4000-8000-000000000005","Operation":"MailItemsAccessed","RecordType":50,"ResultStatus":"Succeeded","UserType":0,"Version":1,"Workload":"Exchange","ClientIP":"[2001:db8::5]:443","UserId":"erin@example.com"}'
+    expect:
+      parse_status: ok
+      class_uid: 6003
+      fields: { src_endpoint_ip: "2001:db8::5", status_id: 1 }

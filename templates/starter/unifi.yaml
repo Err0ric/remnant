@@ -1,0 +1,66 @@
+schema_version: 1
+id: unifi
+name: UniFi gateway firewall
+version: 1.0.0
+author: starter-pack
+description: >-
+  UniFi Security Gateway and UniFi OS gateway (UDM, UXG) firewall rule logs: iptables
+  key=value fields after a [RULE-...] tag. The rule letter gives the action (A accept,
+  D drop, R reject).
+category: network
+vendor: ubiquiti
+classification_default: local_only
+sigma:
+  logsource:
+    - {category: firewall}
+
+envelope:
+  type: syslog
+  syslog: { rfc: auto, assume_year: rollover_safe, timezone: UTC, strip_relay_headers: true }
+
+match:
+  regex: '\[[A-Z0-9_]+-[^\]]+\]\s?(?:DESCR="[^"]*" )?IN='
+  min_confidence: 0.9
+
+payload:
+  format: regex
+  regex:
+    patterns:
+      - '^(?:kernel: )?(?:\[\s*\d+\.\d+\] )?\[(?P<rule>[^\]]+)\]\s?(?:DESCR="(?P<descr>[^"]*)" )?IN=(?P<in_if>\S*) OUT=(?P<out_if>\S*) (?:MAC=(?P<mac>\S*) )?SRC=(?P<src_ip>[\da-fA-F:.]+) DST=(?P<dst_ip>[\da-fA-F:.]+) (?P<ipfields>.*?)PROTO=(?P<proto>\S+)(?: SPT=(?P<src_port>\d+) DPT=(?P<dst_port>\d+))?'
+
+transforms:
+  - { field: rule, op: regex_extract, args: { pattern: '(?:^|-)([ADR])(?:-|$)', into: action } }
+  - { field: src_port, op: to_int }
+  - { field: dst_port, op: to_int }
+
+mapping:
+  class_uid: 4001          # Network Activity
+  fields:
+    src_endpoint_ip: { from: src_ip }
+    src_endpoint_port: { from: src_port }
+    dst_endpoint_ip: { from: dst_ip }
+    dst_endpoint_port: { from: dst_port }
+    activity_id: { default: 6 }    # Traffic
+    status_id: { from: action, map: { A: 1, D: 2, R: 2 }, default: 0 }
+    message: { from: rule }
+  severity:
+    from: action
+    map: { A: 1, D: 2, R: 2 }
+
+tests:
+  - name: USG WAN_IN drop
+    input: '<4>Oct  9 20:41:12 USG-Pro kernel: [WAN_IN-2000-D]IN=eth2 OUT=eth0 MAC=00:00:5e:00:53:01:00:00:5e:00:53:02:08:00 SRC=203.0.113.9 DST=10.20.1.5 LEN=60 TOS=0x00 PREC=0x00 TTL=52 ID=4321 DF PROTO=TCP SPT=40022 DPT=22 WINDOW=64240 RES=0x00 SYN URGP=0'
+    expect:
+      parse_status: ok
+      class_uid: 4001
+      fields: { src_endpoint_ip: 203.0.113.9, dst_endpoint_port: 22, status_id: 2, message: WAN_IN-2000-D }
+  - name: UniFi OS accept with DESCR
+    input: '<4>Oct  9 20:42:00 UDM-SE [LAN_IN-A-4000] DESCR="Allow IoT to NAS" IN=br20 OUT=br10 MAC=00:00:5e:00:53:03:00:00:5e:00:53:04:08:00 SRC=10.20.2.14 DST=10.20.1.9 LEN=52 TOS=00 PREC=0x00 TTL=63 ID=0 DF PROTO=TCP SPT=51000 DPT=445 SEQ=1 ACK=0 WINDOW=64240 SYN URGP=0'
+    expect:
+      parse_status: ok
+      fields: { status_id: 1, src_endpoint_port: 51000, dst_endpoint_ip: 10.20.1.9 }
+  - name: ICMP has no ports
+    input: '<4>Oct  9 20:43:00 USG-Pro kernel: [WAN_LOCAL-default-D]IN=eth2 OUT= MAC=00:00:5e:00:53:01 SRC=198.51.100.4 DST=192.0.2.1 LEN=84 TOS=0x00 PREC=0x00 TTL=55 ID=0 PROTO=ICMP TYPE=8 CODE=0 ID=1 SEQ=1'
+    expect:
+      parse_status: ok
+      fields: { src_endpoint_ip: 198.51.100.4, status_id: 2, dst_endpoint_port: null }

@@ -1,0 +1,10 @@
+{"actor_user_name": "apikey_00", "class_uid": 6003, "message": "anthropic.usage", "parse_status": "ok", "time": "2026-10-14T16:00:00+00:00"}
+{"class_uid": 6003, "message": "anthropic.cost", "parse_status": "ok", "time": "2026-10-13T00:00:00+00:00"}
+{"actor_user_name": "carol@example.com", "class_uid": 6003, "message": "anthropic.claude_code", "parse_status": "ok", "time": "2026-10-13T00:00:00+00:00"}
+{"actor_user_name": "dave@example.com", "class_uid": 6003, "message": "anthropic.analytics_users", "parse_status": "ok", "time": "2026-10-13T00:00:00+00:00"}
+{"actor_user_name": "admin@example.com", "class_uid": 6003, "message": "org_settings_updated", "parse_status": "ok", "src_endpoint_ip": "198.51.100.7", "time": "2026-10-14T17:04:00+00:00"}
+{"actor_user_name": "apikey_02", "class_uid": 6003, "message": "anthropic.usage", "parse_status": "ok", "time": "2026-10-14T15:00:00+00:00"}
+{"class_uid": 6003, "message": "anthropic.cost", "parse_status": "ok", "time": "2026-10-12T00:00:00+00:00"}
+{"actor_user_name": "dave@example.com", "class_uid": 6003, "message": "anthropic.claude_code", "parse_status": "ok", "time": "2026-10-12T00:00:00+00:00"}
+{"actor_user_name": "alice@example.com", "class_uid": 6003, "message": "anthropic.analytics_users", "parse_status": "ok", "time": "2026-10-12T00:00:00+00:00"}
+{"actor_user_name": "admin@example.com", "class_uid": 6003, "message": "org_settings_updated", "parse_status": "ok", "src_endpoint_ip": "203.0.113.10", "time": "2026-10-14T17:09:00+00:00"}

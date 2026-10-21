@@ -1,0 +1,60 @@
+<132>1 2026-10-09T20:00:17Z fw01 edgewall - - - CEF:0|ExampleCorp|Sensor\|IDS|1.0|sig-0|Policy allowed|6|src=203.0.113.9 spt=39823 dst=10.20.1.5 dpt=443 suser=carol msg=Rule 0 matched for host\=edge
+<132>Oct  9 20:00:31 fw01 CEF:0|ExampleSec|Proxy|7.1|sig-1|Policy allowed|3|src=198.51.100.4 spt=30159 dst=10.20.2.14 dpt=22 suser=alice msg=Rule 1 matched for host\=edge
+<132>Oct  9 20:00:36 fw01 CEF:0|ExampleCorp|EdgeWall|5.2|sig-2|Connection denied|5|src=192.0.2.10 spt=2307 dst=10.20.3.30 dpt=3389 suser=bob msg=Rule 2 matched for host\=edge
+<132>Oct  9 20:02:01 fw01 CEF:0|ExampleSec|Proxy|7.1|sig-3|Malware blocked|5|src=203.0.113.77 spt=41721 dst=10.20.1.6 dpt=80 suser=carol msg=Rule 3 matched for host\=edge
+<132>Oct  9 20:02:25 fw01 CEF:0|ExampleCorp|Sensor\|IDS|1.0|sig-4|Policy allowed|9|src=203.0.113.9 spt=12665 dst=10.20.3.30 dpt=3389 suser=bob msg=Rule 4 matched for host\=edge
+<132>1 2026-10-09T20:02:30Z fw01 edgewall - - - CEF:0|ExampleCorp|EdgeWall|5.2|sig-5|Connection denied|1|src=203.0.113.77 spt=39185 dst=10.20.1.6 dpt=22 suser=dave msg=Rule 5 matched for host\=edge
+<132>Oct  9 20:03:40 fw01 CEF:0|ExampleSec|Proxy|7.1|sig-6|Malware blocked|1|src=203.0.113.77 spt=54806 dst=10.20.2.14 dpt=443 suser=carol msg=Rule 6 matched for host\=edge
+<132>Oct  9 20:04:11 fw01 CEF:0|ExampleCorp|Sensor\|IDS|1.0|sig-0|Connection denied|1|src=192.0.2.10 spt=17959 dst=10.20.1.6 dpt=80 suser=dave msg=Rule 7 matched for host\=edge
+<132>Oct  9 20:04:19 fw01 CEF:0|ExampleCorp|Sensor\|IDS|1.0|sig-1|Policy allowed|2|src=198.51.100.4 spt=62986 dst=10.20.1.5 dpt=3389 suser=alice msg=Rule 8 matched for host\=edge
+<132>Oct  9 20:04:27 fw01 CEF:0|ExampleSec|Proxy|7.1|sig-2|Connection denied|3|src=192.0.2.10 spt=2555 dst=10.20.3.30 dpt=80 suser=bob msg=Rule 9 matched for host\=edge
+<132>1 2026-10-09T20:04:32Z fw01 edgewall - - - CEF:0|ExampleSec|Proxy|7.1|sig-3|Policy allowed|6|src=192.0.2.10 spt=23708 dst=10.20.1.5 dpt=22 suser=bob msg=Rule 10 matched for host\=edge
+<132>Oct  9 20:04:44 fw01 CEF:0|ExampleCorp|EdgeWall|5.2|sig-4|Malware blocked|7|src=203.0.113.77 spt=36955 dst=10.20.3.30 dpt=80 suser=bob msg=Rule 11 matched for host\=edge
+<132>Oct  9 20:05:41 fw01 CEF:0|ExampleCorp|EdgeWall|5.2|sig-5|Port scan \| sweep|6|src=198.51.100.4 spt=17608 dst=10.20.1.6 dpt=22 suser=alice msg=Rule 12 matched for host\=edge
+<132>Oct  9 20:06:36 fw01 CEF:0|ExampleCorp|Sensor\|IDS|1.0|sig-6|Port scan \| sweep|1|src=192.0.2.10 spt=59690 dst=10.20.1.6 dpt=3389 suser=carol msg=Rule 13 matched for host\=edge
+<132>Oct  9 20:07:19 fw01 CEF:0|ExampleCorp|Sensor\|IDS|1.0|sig-0|Connection denied|1|src=203.0.113.77 spt=55192 dst=10.20.1.5 dpt=443 suser=bob msg=Rule 14 matched for host\=edge
+<132>1 2026-10-09T20:08:31Z fw01 edgewall - - - CEF:0|ExampleSec|Proxy|7.1|sig-1|Connection denied|5|src=192.0.2.10 spt=11858 dst=10.20.1.6 dpt=22 suser=bob msg=Rule 15 matched for host\=edge
+<132>Oct  9 20:09:23 fw01 CEF:0|ExampleCorp|Sensor\|IDS|1.0|sig-2|Connection denied|6|src=192.0.2.10 spt=1282 dst=10.20.2.14 dpt=443 suser=bob msg=Rule 16 matched for host\=edge
+<132>Oct  9 20:09:59 fw01 CEF:0|ExampleCorp|EdgeWall|5.2|sig-3|Connection denied|6|src=203.0.113.9 spt=43924 dst=10.20.1.6 dpt=3389 suser=dave msg=Rule 17 matched for host\=edge
+<132>Oct  9 20:10:48 fw01 CEF:0|ExampleCorp|Sensor\|IDS|1.0|sig-4|Connection denied|3|src=198.51.100.4 spt=18418 dst=10.20.2.14 dpt=22 suser=dave msg=Rule 18 matched for host\=edge
+<132>Oct  9 20:11:24 fw01 CEF:0|ExampleCorp|EdgeWall|5.2|sig-5|Malware blocked|6|src=192.0.2.10 spt=20136 dst=10.20.3.30 dpt=443 suser=carol msg=Rule 19 matched for host\=edge
+<132>1 2026-10-09T20:12:33Z fw01 edgewall - - - CEF:0|ExampleCorp|Sensor\|IDS|1.0|sig-6|Policy allowed|10|src=198.51.100.4 spt=3828 dst=10.20.3.30 dpt=3389 suser=carol msg=Rule 20 matched for host\=edge
+<132>Oct  9 20:13:53 fw01 CEF:0|ExampleCorp|Sensor\|IDS|1.0|sig-0|Malware blocked|2|src=203.0.113.9 spt=15262 dst=10.20.3.30 dpt=443 suser=alice msg=Rule 21 matched for host\=edge
+<132>Oct  9 20:14:08 fw01 CEF:0|ExampleCorp|Sensor\|IDS|1.0|sig-1|Connection denied|0|src=203.0.113.9 spt=38119 dst=10.20.2.14 dpt=3389 suser=carol msg=Rule 22 matched for host\=edge
+<132>Oct  9 20:15:21 fw01 CEF:0|ExampleCorp|EdgeWall|5.2|sig-2|Port scan \| sweep|4|src=192.0.2.10 spt=27687 dst=10.20.1.5 dpt=22 suser=carol msg=Rule 23 matched for host\=edge
+<132>Oct  9 20:15:32 fw01 CEF:0|ExampleCorp|EdgeWall|5.2|sig-3|Malware blocked|9|src=203.0.113.9 spt=49407 dst=10.20.1.6 dpt=3389 suser=carol msg=Rule 24 matched for host\=edge
+<132>1 2026-10-09T20:16:51Z fw01 edgewall - - - CEF:0|ExampleSec|Proxy|7.1|sig-4|Connection denied|2|src=198.51.100.4 spt=64999 dst=10.20.1.5 dpt=22 suser=bob msg=Rule 25 matched for host\=edge
+<132>Oct  9 20:18:09 fw01 CEF:0|ExampleSec|Proxy|7.1|sig-5|Connection denied|9|src=198.51.100.4 spt=31752 dst=10.20.2.14 dpt=443 suser=alice msg=Rule 26 matched for host\=edge
+<132>Oct  9 20:18:37 fw01 CEF:0|ExampleSec|Proxy|7.1|sig-6|Connection denied|5|src=203.0.113.9 spt=2945 dst=10.20.2.14 dpt=80 suser=bob msg=Rule 27 matched for host\=edge
+<132>Oct  9 20:19:46 fw01 CEF:0|ExampleCorp|EdgeWall|5.2|sig-0|Policy allowed|8|src=192.0.2.10 spt=50669 dst=10.20.2.14 dpt=80 suser=carol msg=Rule 28 matched for host\=edge
+<132>Oct  9 20:19:52 fw01 CEF:0|ExampleSec|Proxy|7.1|sig-1|Policy allowed|5|src=198.51.100.4 spt=30940 dst=10.20.2.14 dpt=80 suser=carol msg=Rule 29 matched for host\=edge
+<132>1 2026-10-09T20:20:33Z fw01 edgewall - - - CEF:0|ExampleCorp|Sensor\|IDS|1.0|sig-2|Port scan \| sweep|10|src=192.0.2.10 spt=48482 dst=10.20.2.14 dpt=80 suser=bob msg=Rule 30 matched for host\=edge
+<132>Oct  9 20:21:49 fw01 CEF:0|ExampleCorp|Sensor\|IDS|1.0|sig-3|Policy allowed|6|src=192.0.2.10 spt=3689 dst=10.20.1.5 dpt=443 suser=bob msg=Rule 31 matched for host\=edge
+<132>Oct  9 20:22:12 fw01 CEF:0|ExampleCorp|Sensor\|IDS|1.0|sig-4|Malware blocked|0|src=203.0.113.77 spt=63619 dst=10.20.1.6 dpt=443 suser=dave msg=Rule 32 matched for host\=edge
+<132>Oct  9 20:23:09 fw01 CEF:0|ExampleCorp|Sensor\|IDS|1.0|sig-5|Policy allowed|8|src=203.0.113.77 spt=64431 dst=10.20.3.30 dpt=22 suser=bob msg=Rule 33 matched for host\=edge
+<132>Oct  9 20:23:17 fw01 CEF:0|ExampleCorp|EdgeWall|5.2|sig-6|Policy allowed|6|src=192.0.2.10 spt=30934 dst=10.20.1.5 dpt=22 suser=carol msg=Rule 34 matched for host\=edge
+<132>1 2026-10-09T20:23:36Z fw01 edgewall - - - CEF:0|ExampleSec|Proxy|7.1|sig-0|Malware blocked|10|src=203.0.113.9 spt=26618 dst=10.20.3.30 dpt=443 suser=bob msg=Rule 35 matched for host\=edge
+<132>Oct  9 20:25:04 fw01 CEF:0|ExampleSec|Proxy|7.1|sig-1|Policy allowed|1|src=203.0.113.9 spt=36577 dst=10.20.3.30 dpt=22 suser=dave msg=Rule 36 matched for host\=edge
+<132>Oct  9 20:25:49 fw01 CEF:0|ExampleCorp|EdgeWall|5.2|sig-2|Port scan \| sweep|8|src=203.0.113.77 spt=41698 dst=10.20.1.5 dpt=22 suser=bob msg=Rule 37 matched for host\=edge
+<132>Oct  9 20:25:52 fw01 CEF:0|ExampleCorp|Sensor\|IDS|1.0|sig-3|Malware blocked|8|src=203.0.113.77 spt=29224 dst=10.20.2.14 dpt=3389 suser=carol msg=Rule 38 matched for host\=edge
+<132>Oct  9 20:26:25 fw01 CEF:0|ExampleCorp|EdgeWall|5.2|sig-4|Connection denied|10|src=198.51.100.4 spt=46192 dst=10.20.1.5 dpt=80 suser=carol msg=Rule 39 matched for host\=edge
+<132>1 2026-10-09T20:27:00Z fw01 edgewall - - - CEF:0|ExampleCorp|EdgeWall|5.2|sig-5|Connection denied|7|src=203.0.113.9 spt=64068 dst=10.20.1.5 dpt=22 suser=carol msg=Rule 40 matched for host\=edge
+<132>Oct  9 20:27:23 fw01 CEF:0|ExampleSec|Proxy|7.1|sig-6|Connection denied|10|src=192.0.2.10 spt=58403 dst=10.20.1.5 dpt=80 suser=bob msg=Rule 41 matched for host\=edge
+<132>Oct  9 20:27:29 fw01 CEF:0|ExampleCorp|EdgeWall|5.2|sig-0|Connection denied|4|src=192.0.2.10 spt=49287 dst=10.20.1.5 dpt=80 suser=dave msg=Rule 42 matched for host\=edge
+<132>Oct  9 20:28:15 fw01 CEF:0|ExampleSec|Proxy|7.1|sig-1|Port scan \| sweep|2|src=192.0.2.10 spt=42728 dst=10.20.1.5 dpt=22 suser=alice msg=Rule 43 matched for host\=edge
+<132>Oct  9 20:28:52 fw01 CEF:0|ExampleSec|Proxy|7.1|sig-2|Policy allowed|1|src=192.0.2.10 spt=56953 dst=10.20.1.5 dpt=3389 suser=carol msg=Rule 44 matched for host\=edge
+<132>1 2026-10-09T20:29:10Z fw01 edgewall - - - CEF:0|ExampleSec|Proxy|7.1|sig-3|Port scan \| sweep|1|src=203.0.113.9 spt=14649 dst=10.20.1.6 dpt=443 suser=bob msg=Rule 45 matched for host\=edge
+<132>Oct  9 20:29:45 fw01 CEF:0|ExampleSec|Proxy|7.1|sig-4|Port scan \| sweep|2|src=203.0.113.9 spt=50319 dst=10.20.3.30 dpt=80 suser=alice msg=Rule 46 matched for host\=edge
+<132>Oct  9 20:31:12 fw01 CEF:0|ExampleSec|Proxy|7.1|sig-5|Connection denied|5|src=203.0.113.9 spt=8569 dst=10.20.1.6 dpt=3389 suser=bob msg=Rule 47 matched for host\=edge
+<132>Oct  9 20:32:33 fw01 CEF:0|ExampleSec|Proxy|7.1|sig-6|Port scan \| sweep|3|src=192.0.2.10 spt=51373 dst=10.20.2.14 dpt=22 suser=carol msg=Rule 48 matched for host\=edge
+<132>Oct  9 20:32:50 fw01 CEF:0|ExampleCorp|Sensor\|IDS|1.0|sig-0|Connection denied|5|src=192.0.2.10 spt=11478 dst=10.20.1.6 dpt=80 suser=alice msg=Rule 49 matched for host\=edge
+<132>1 2026-10-09T20:33:48Z fw01 edgewall - - - CEF:0|ExampleSec|Proxy|7.1|sig-1|Connection denied|10|src=198.51.100.4 spt=37836 dst=10.20.1.5 dpt=443 suser=alice msg=Rule 50 matched for host\=edge
+<132>Oct  9 20:34:00 fw01 CEF:0|ExampleCorp|EdgeWall|5.2|sig-2|Malware blocked|7|src=198.51.100.4 spt=23907 dst=10.20.2.14 dpt=80 suser=carol msg=Rule 51 matched for host\=edge
+<132>Oct  9 20:35:13 fw01 CEF:0|ExampleCorp|Sensor\|IDS|1.0|sig-3|Connection denied|6|src=192.0.2.10 spt=27484 dst=10.20.1.5 dpt=3389 suser=bob msg=Rule 52 matched for host\=edge
+<132>Oct  9 20:36:04 fw01 CEF:0|ExampleSec|Proxy|7.1|sig-4|Connection denied|2|src=203.0.113.9 spt=3377 dst=10.20.1.5 dpt=443 suser=carol msg=Rule 53 matched for host\=edge
+<132>Oct  9 20:37:31 fw01 CEF:0|ExampleSec|Proxy|7.1|sig-5|Malware blocked|8|src=198.51.100.4 spt=20572 dst=10.20.3.30 dpt=80 suser=dave msg=Rule 54 matched for host\=edge
+<132>1 2026-10-09T20:38:10Z fw01 edgewall - - - CEF:0|ExampleSec|Proxy|7.1|sig-6|Connection denied|2|src=198.51.100.4 spt=27397 dst=10.20.2.14 dpt=443 suser=carol msg=Rule 55 matched for host\=edge
+<132>Oct  9 20:38:46 fw01 CEF:0|ExampleSec|Proxy|7.1|sig-0|Policy allowed|0|src=203.0.113.9 spt=32460 dst=10.20.3.30 dpt=443 suser=alice msg=Rule 56 matched for host\=edge
+<132>Oct  9 20:40:04 fw01 CEF:0|ExampleCorp|EdgeWall|5.2|sig-1|Policy allowed|5|src=203.0.113.9 spt=40980 dst=10.20.1.5 dpt=80 suser=bob msg=Rule 57 matched for host\=edge
+<132>Oct  9 20:41:07 fw01 CEF:0|ExampleCorp|EdgeWall|5.2|sig-2|Port scan \| sweep|3|src=203.0.113.77 spt=62973 dst=10.20.2.14 dpt=80 suser=bob msg=Rule 58 matched for host\=edge
+<132>Oct  9 20:41:14 fw01 CEF:0|ExampleSec|Proxy|7.1|sig-3|Port scan \| sweep|8|src=203.0.113.77 spt=23276 dst=10.20.3.30 dpt=443 suser=dave msg=Rule 59 matched for host\=edge

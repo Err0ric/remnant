@@ -1,0 +1,61 @@
+<85>Oct  9 20:01:02 web-01 sudo[46204]:     dave : 2 incorrect password attempts ; TTY=pts/1 ; PWD=/home/dave ; USER=root ; COMMAND=/bin/journalctl -u ssh
+<85>Oct  9 20:02:07 web-01 sudo[53943]:     dave : user NOT in sudoers ; TTY=pts/2 ; PWD=/tmp ; USER=root ; COMMAND=/bin/bash
+<85>Oct  9 20:02:55 bastion sudo[52668]:      bob : TTY=pts/2 ; PWD=/home/bob ; USER=root ; COMMAND=/usr/bin/systemctl restart nginx
+<85>Oct  9 20:03:25 bastion sudo[5539]:     dave : TTY=pts/3 ; PWD=/home/dave ; USER=root ; COMMAND=/usr/bin/systemctl restart nginx
+<86>Oct  9 20:03:30 bastion sudo[29629]: pam_unix(sudo:session): session closed for user root
+<85>Oct  9 20:04:18 db-01 sudo[46476]:     dave : TTY=pts/1 ; PWD=/home/dave ; USER=root ; COMMAND=/bin/journalctl -u ssh
+<85>Oct  9 20:04:34 web-01 sudo[49563]: bob : PWD=/srv ; USER=postgres ; COMMAND=/usr/bin/systemctl restart nginx
+<85>Oct  9 20:05:18 web-01 sudo[11557]:     dave : user NOT in sudoers ; TTY=pts/2 ; PWD=/tmp ; USER=root ; COMMAND=/bin/bash
+<85>Oct  9 20:05:23 db-01 sudo[10902]:     dave : TTY=pts/0 ; PWD=/home/dave ; USER=root ; COMMAND=/bin/journalctl -u ssh
+<85>Oct  9 20:05:50 db-01 sudo[5890]: bob : PWD=/srv ; USER=postgres ; COMMAND=/usr/bin/systemctl restart nginx
+<85>Oct  9 20:07:02 bastion sudo[9026]:    alice : user NOT in sudoers ; TTY=pts/2 ; PWD=/tmp ; USER=root ; COMMAND=/bin/bash
+<85>Oct  9 20:07:55 db-01 sudo[23362]:      bob : TTY=pts/3 ; PWD=/home/bob ; USER=root ; COMMAND=/bin/journalctl -u ssh
+<85>Oct  9 20:08:36 db-01 sudo[30577]:    carol : user NOT in sudoers ; TTY=pts/2 ; PWD=/tmp ; USER=root ; COMMAND=/bin/bash
+<85>Oct  9 20:08:57 db-01 sudo[18413]:     dave : TTY=pts/1 ; PWD=/home/dave ; USER=root ; COMMAND=/usr/bin/systemctl restart nginx
+<85>Oct  9 20:10:14 bastion sudo[1185]:     dave : 3 incorrect password attempts ; TTY=pts/1 ; PWD=/home/dave ; USER=root ; COMMAND=/usr/bin/systemctl restart nginx
+<85>Oct  9 20:11:26 bastion sudo[38455]:      bob : user NOT in sudoers ; TTY=pts/2 ; PWD=/tmp ; USER=root ; COMMAND=/bin/bash
+<86>Oct  9 20:12:09 bastion sudo[12840]: pam_unix(sudo:session): session closed for user root
+<85>Oct  9 20:12:18 db-01 sudo[17106]:    carol : TTY=pts/1 ; PWD=/home/carol ; USER=root ; COMMAND=/usr/bin/systemctl restart nginx
+<85>Oct  9 20:12:23 web-01 sudo[25567]:     dave : TTY=pts/2 ; PWD=/home/dave ; USER=root ; COMMAND=/bin/journalctl -u ssh
+<85>Oct  9 20:13:39 bastion sudo[27674]:      bob : TTY=pts/3 ; PWD=/home/bob ; USER=root ; COMMAND=/bin/journalctl -u ssh
+<85>Oct  9 20:15:05 web-01 sudo[33172]:    carol : user NOT in sudoers ; TTY=pts/2 ; PWD=/tmp ; USER=root ; COMMAND=/bin/bash
+<85>Oct  9 20:16:02 web-01 sudo[11636]:      bob : user NOT in sudoers ; TTY=pts/2 ; PWD=/tmp ; USER=root ; COMMAND=/bin/bash
+<85>Oct  9 20:16:09 db-01 sudo[4763]: dave : PWD=/srv ; USER=postgres ; COMMAND=/usr/bin/apt update
+<85>Oct  9 20:17:00 db-01 sudo[3278]:    carol : 1 incorrect password attempt ; TTY=pts/1 ; PWD=/home/carol ; USER=root ; COMMAND=/usr/bin/systemctl restart nginx
+<85>Oct  9 20:18:02 web-01 sudo[43299]:    carol : TTY=pts/0 ; PWD=/home/carol ; USER=root ; COMMAND=/usr/bin/systemctl restart nginx
+<86>Oct  9 20:18:06 web-01 sudo[10148]: pam_unix(sudo:session): session closed for user root
+<85>Oct  9 20:19:23 web-01 sudo[53115]:    carol : TTY=pts/2 ; PWD=/home/carol ; USER=root ; COMMAND=/usr/bin/apt update
+<85>Oct  9 20:20:03 db-01 sudo[39085]: dave : PWD=/srv ; USER=postgres ; COMMAND=/usr/bin/apt update
+<85>Oct  9 20:20:05 web-01 sudo[10129]: carol : PWD=/srv ; USER=postgres ; COMMAND=/bin/journalctl -u ssh
+<85>Oct  9 20:21:21 db-01 sudo[47903]:      bob : TTY=pts/1 ; PWD=/home/bob ; USER=root ; COMMAND=/usr/bin/apt update
+<85>Oct  9 20:21:54 db-01 sudo[56815]:      bob : user NOT in sudoers ; TTY=pts/2 ; PWD=/tmp ; USER=root ; COMMAND=/bin/bash
+<85>Oct  9 20:22:12 bastion sudo[50259]: dave : PWD=/srv ; USER=postgres ; COMMAND=/usr/bin/systemctl restart nginx
+<85>Oct  9 20:22:16 web-01 sudo[27015]:    alice : TTY=pts/0 ; PWD=/home/alice ; USER=root ; COMMAND=/usr/bin/systemctl restart nginx
+<85>Oct  9 20:22:32 bastion sudo[52520]:     dave : TTY=pts/1 ; PWD=/home/dave ; USER=root ; COMMAND=/usr/bin/systemctl restart nginx
+<85>Oct  9 20:23:14 bastion sudo[9292]:    carol : TTY=pts/2 ; PWD=/home/carol ; USER=root ; COMMAND=/bin/journalctl -u ssh
+<85>Oct  9 20:23:36 db-01 sudo[59193]:     dave : TTY=pts/3 ; PWD=/home/dave ; USER=root ; COMMAND=/bin/journalctl -u ssh
+<85>Oct  9 20:24:47 web-01 sudo[57196]:      bob : 3 incorrect password attempts ; TTY=pts/1 ; PWD=/home/bob ; USER=root ; COMMAND=/usr/bin/systemctl restart nginx
+<85>Oct  9 20:25:47 web-01 sudo[52820]:    alice : TTY=pts/1 ; PWD=/home/alice ; USER=root ; COMMAND=/usr/bin/apt update
+<85>Oct  9 20:26:17 web-01 sudo[51064]:     dave : user NOT in sudoers ; TTY=pts/2 ; PWD=/tmp ; USER=root ; COMMAND=/bin/bash
+<85>Oct  9 20:27:07 db-01 sudo[49877]:    carol : TTY=pts/3 ; PWD=/home/carol ; USER=root ; COMMAND=/usr/bin/systemctl restart nginx
+<85>Oct  9 20:28:18 web-01 sudo[48588]:    carol : TTY=pts/0 ; PWD=/home/carol ; USER=root ; COMMAND=/bin/journalctl -u ssh
+<85>Oct  9 20:29:24 db-01 sudo[36744]:    alice : user NOT in sudoers ; TTY=pts/2 ; PWD=/tmp ; USER=root ; COMMAND=/bin/bash
+<85>Oct  9 20:30:44 bastion sudo[34872]:    carol : TTY=pts/2 ; PWD=/home/carol ; USER=root ; COMMAND=/usr/bin/apt update
+<85>Oct  9 20:31:10 bastion sudo[5176]:      bob : user NOT in sudoers ; TTY=pts/2 ; PWD=/tmp ; USER=root ; COMMAND=/bin/bash
+<86>Oct  9 20:31:20 db-01 sudo[21846]: pam_unix(sudo:session): session opened for user root(uid=0) by alice(uid=1000)
+<85>Oct  9 20:32:25 bastion sudo[42061]: alice : PWD=/srv ; USER=postgres ; COMMAND=/usr/bin/apt update
+<86>Oct  9 20:33:26 bastion sudo[45557]: pam_unix(sudo:session): session closed for user root
+<85>Oct  9 20:33:30 bastion sudo[58387]:     dave : 1 incorrect password attempt ; TTY=pts/1 ; PWD=/home/dave ; USER=root ; COMMAND=/usr/bin/systemctl restart nginx
+<85>Oct  9 20:34:46 web-01 sudo[3755]:     dave : TTY=pts/0 ; PWD=/home/dave ; USER=root ; COMMAND=/usr/bin/apt update
+<85>Oct  9 20:35:38 db-01 sudo[30883]: dave : PWD=/srv ; USER=postgres ; COMMAND=/usr/bin/systemctl restart nginx
+<85>Oct  9 20:37:02 db-01 sudo[32901]:    carol : TTY=pts/2 ; PWD=/home/carol ; USER=root ; COMMAND=/bin/journalctl -u ssh
+<85>Oct  9 20:37:50 web-01 sudo[32438]:    alice : TTY=pts/3 ; PWD=/home/alice ; USER=root ; COMMAND=/usr/bin/apt update
+<85>Oct  9 20:39:10 bastion sudo[52086]:      bob : 3 incorrect password attempts ; TTY=pts/1 ; PWD=/home/bob ; USER=root ; COMMAND=/bin/journalctl -u ssh
+<85>Oct  9 20:39:50 bastion sudo[17076]:    carol : 2 incorrect password attempts ; TTY=pts/1 ; PWD=/home/carol ; USER=root ; COMMAND=/usr/bin/apt update
+<85>Oct  9 20:39:51 bastion sudo[55056]:     dave : user NOT in sudoers ; TTY=pts/2 ; PWD=/tmp ; USER=root ; COMMAND=/bin/bash
+<85>Oct  9 20:40:10 web-01 sudo[14240]:    carol : TTY=pts/3 ; PWD=/home/carol ; USER=root ; COMMAND=/usr/bin/apt update
+<85>Oct  9 20:41:30 web-01 sudo[6211]:      bob : user NOT in sudoers ; TTY=pts/2 ; PWD=/tmp ; USER=root ; COMMAND=/bin/bash
+<85>Oct  9 20:42:26 db-01 sudo[8092]:     dave : TTY=pts/1 ; PWD=/home/dave ; USER=root ; COMMAND=/bin/journalctl -u ssh
+<86>Oct  9 20:43:00 web-01 sudo[25377]: pam_unix(sudo:session): session opened for user root(uid=0) by carol(uid=1000)
+<85>Oct  9 20:43:20 web-01 sudo[22109]:    alice : user NOT in sudoers ; TTY=pts/2 ; PWD=/tmp ; USER=root ; COMMAND=/bin/bash
+<85>Oct  9 20:44:48 web-01 sudo[1]: unable to resolve host web-01: Name or service not known

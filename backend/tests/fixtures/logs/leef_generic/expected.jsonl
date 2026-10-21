@@ -1,0 +1,10 @@
+{"actor_user_name": "bob", "device_hostname": "mail01", "dst_endpoint_port": 53, "parse_status": "ok", "severity_id": 3, "src_endpoint_ip": "10.20.3.30", "time": "2026-10-09T20:00:20+00:00"}
+{"actor_user_name": "alice", "device_hostname": "mail01", "dst_endpoint_port": 443, "parse_status": "ok", "severity_id": 2, "src_endpoint_ip": "10.20.2.14", "time": "2026-10-09T20:01:23+00:00"}
+{"actor_user_name": "bob", "device_hostname": "nta01", "dst_endpoint_port": 53, "parse_status": "ok", "severity_id": 3, "src_endpoint_ip": "10.20.3.30", "time": "2026-10-09T20:02:03+00:00"}
+{"actor_user_name": "carol", "device_hostname": "nta01", "dst_endpoint_port": 53, "parse_status": "ok", "severity_id": 3, "src_endpoint_ip": "10.20.1.5", "time": "2026-10-09T20:02:12+00:00"}
+{"actor_user_name": "bob", "device_hostname": "nta01", "dst_endpoint_port": 25, "parse_status": "ok", "severity_id": 5, "src_endpoint_ip": "10.20.2.14", "time": "2026-10-09T20:02:49+00:00"}
+{"actor_user_name": "dave", "device_hostname": "mail01", "dst_endpoint_port": 53, "parse_status": "ok", "severity_id": 2, "src_endpoint_ip": "10.20.2.14", "time": "2026-10-09T20:04:13+00:00"}
+{"actor_user_name": "bob", "device_hostname": "nta01", "dst_endpoint_port": 53, "parse_status": "ok", "severity_id": 5, "src_endpoint_ip": "10.20.1.6", "time": "2026-10-09T20:05:18+00:00"}
+{"actor_user_name": "bob", "device_hostname": "nta01", "dst_endpoint_port": 53, "parse_status": "ok", "severity_id": 2, "src_endpoint_ip": "10.20.2.14", "time": "2026-10-09T20:05:59+00:00"}
+{"actor_user_name": "alice", "device_hostname": "nta01", "dst_endpoint_port": 443, "parse_status": "ok", "severity_id": 4, "src_endpoint_ip": "10.20.1.6", "time": "2026-10-09T20:06:46+00:00"}
+{"actor_user_name": "dave", "device_hostname": "nta01", "dst_endpoint_port": 53, "parse_status": "ok", "severity_id": 5, "src_endpoint_ip": "10.20.2.14", "time": "2026-10-09T20:07:18+00:00"}

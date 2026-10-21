@@ -1,0 +1,10 @@
+{"actor_user_name": "alice@example.com", "class_uid": 2004, "message": "Suspicious inbox forwarding rule", "parse_status": "ok", "severity_id": 4, "time": "2026-10-14T17:26:00+00:00"}
+{"class_uid": 2004, "device_hostname": "lt-0107.corp.example", "message": "Suspicious PowerShell command line", "parse_status": "ok", "severity_id": 3, "time": "2026-10-14T17:45:00+00:00"}
+{"actor_user_name": "carol@example.com", "class_uid": 2004, "message": "Atypical travel", "parse_status": "ok", "severity_id": 3, "time": "2026-10-14T18:02:00+00:00"}
+{"actor_user_name": "dave@example.com", "class_uid": 2004, "message": "DLP policy match: credit card numbers", "parse_status": "ok", "severity_id": 2, "time": "2026-10-14T18:07:00+00:00"}
+{"class_uid": 2004, "message": "Mass download by a single user", "parse_status": "ok", "severity_id": 1, "time": "2026-10-14T18:25:00+00:00"}
+{"actor_user_name": "bob@example.com", "class_uid": 2004, "message": "Suspicious inbox forwarding rule", "parse_status": "ok", "severity_id": 4, "time": "2026-10-14T18:35:00+00:00"}
+{"class_uid": 2004, "device_hostname": "ws-0042.corp.example", "message": "Suspicious PowerShell command line", "parse_status": "ok", "severity_id": 3, "time": "2026-10-14T18:40:00+00:00"}
+{"actor_user_name": "dave@example.com", "class_uid": 2004, "message": "Atypical travel", "parse_status": "ok", "severity_id": 3, "time": "2026-10-14T19:09:00+00:00"}
+{"actor_user_name": "alice@example.com", "class_uid": 2004, "message": "DLP policy match: credit card numbers", "parse_status": "ok", "severity_id": 2, "time": "2026-10-14T19:21:00+00:00"}
+{"class_uid": 2004, "message": "Mass download by a single user", "parse_status": "ok", "severity_id": 1, "time": "2026-10-14T19:32:00+00:00"}

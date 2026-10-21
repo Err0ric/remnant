@@ -1,0 +1,130 @@
+schema_version: 1
+id: paloalto_threat
+name: Palo Alto Networks threat
+version: 1.0.0
+author: starter-pack
+description: >-
+  PAN-OS THREAT logs (virus, spyware, vulnerability, url, file, scan, flood, wildfire)
+  over syslog, CSV in the documented field order (PAN-OS 11.x). Mapped as Network
+  Activity with the threat severity; Threat ID goes to message, URL or file name and
+  category stay in unmapped.
+category: findings
+vendor: paloalto
+classification_default: local_only
+
+envelope:
+  type: syslog
+  syslog: { rfc: auto, assume_year: rollover_safe, timezone: UTC, strip_relay_headers: true }
+
+match:
+  regex: '^\d+,\d{4}/\d{2}/\d{2} [\d:]+,[^,]*,THREAT,'
+  min_confidence: 0.95
+
+payload:
+  format: csv
+  csv:
+    trailing: ignore
+    columns:
+      - "_"
+      - receive_time
+      - serial_number
+      - type
+      - subtype
+      - "_"
+      - generated_time
+      - source_address
+      - destination_address
+      - nat_source_ip
+      - nat_destination_ip
+      - rule_name
+      - source_user
+      - destination_user
+      - application
+      - virtual_system
+      - source_zone
+      - destination_zone
+      - inbound_interface
+      - outbound_interface
+      - log_action
+      - "_"
+      - session_id
+      - repeat_count
+      - source_port
+      - destination_port
+      - nat_source_port
+      - nat_destination_port
+      - flags
+      - ip_protocol
+      - action
+      - url_filename
+      - threat_id
+      - category
+      - severity
+      - direction
+      - sequence_number
+      - action_flags
+      - source_location
+      - destination_location
+      - "_"
+      - content_type
+      - pcap_id
+      - file_digest
+      - cloud
+      - url_index
+      - user_agent
+      - file_type
+      - x_forwarded_for
+      - referer
+      - sender
+      - subject
+      - recipient
+      - report_id
+      - device_group_hierarchy_level_1
+      - device_group_hierarchy_level_2
+      - device_group_hierarchy_level_3
+      - device_group_hierarchy_level_4
+      - virtual_system_name
+      - device_name
+
+transforms:
+  - { field: generated_time, op: timestamp, args: { format: "%Y/%m/%d %H:%M:%S" } }
+  - { field: source_port, op: to_int }
+  - { field: destination_port, op: to_int }
+
+mapping:
+  class_uid: 4001          # Network Activity, per SPEC 4.4 (threat severity carried)
+  fields:
+    time: { from: generated_time }
+    device_hostname: { from: device_name }
+    src_endpoint_ip: { from: source_address }
+    src_endpoint_port: { from: source_port }
+    dst_endpoint_ip: { from: destination_address }
+    dst_endpoint_port: { from: destination_port }
+    actor_user_name: { from: source_user }
+    message: { from: threat_id }
+    activity_id: { default: 6 }
+    status_id:
+      from: action
+      map: { alert: 1, allow: 1, continue: 1, override: 1, deny: 2, drop: 2, drop-all-packets: 2, reset-client: 2, reset-server: 2, reset-both: 2, block-url: 2, block-continue: 2, block-override: 2, override-lockout: 2, sinkhole: 2, block-ip: 2, random-drop: 2 }
+      default: 0
+  severity:
+    from: severity
+    map: { informational: 1, low: 2, medium: 3, high: 4, critical: 5 }
+
+tests:
+  - name: spyware alert
+    input: "<12>Oct  9 20:41:12 pa-fw01 1,2026/10/09 20:41:12,012345678901,THREAT,spyware,2561,2026/10/09 20:41:11,10.20.1.5,203.0.113.77,203.0.113.2,203.0.113.77,allow-web,example\\bob,,web-browsing,vsys1,trust,untrust,ethernet1/2,ethernet1/1,default,,5010,1,51300,80,40130,80,0x2000,tcp,alert,\"bad.example.org/beacon\",Suspicious Beacon Traffic(13040),command-and-control,high,client-to-server,7290000101,0x0,10.0.0.0-10.255.255.255,United States,,text/html,0,,,1,,,,,,,,0,0,0,0,0,,pa-fw01"
+    expect:
+      parse_status: ok
+      class_uid: 4001
+      fields: { src_endpoint_ip: 10.20.1.5, dst_endpoint_port: 80, message: Suspicious Beacon Traffic(13040), severity_id: 4, status_id: 1, actor_user_name: "example\\bob" }
+  - name: virus blocked
+    input: "<11>Oct  9 20:42:00 pa-fw01 1,2026/10/09 20:42:00,012345678901,THREAT,virus,2561,2026/10/09 20:42:00,198.51.100.4,10.20.1.6,198.51.100.4,203.0.113.2,inbound-mail,,,smtp,vsys1,untrust,trust,ethernet1/1,ethernet1/2,default,,5011,1,25000,25,25000,25,0x0,tcp,reset-both,\"invoice.zip\",Eicar Test File(39040),any,medium,server-to-client,7290000102,0x0,United States,10.0.0.0-10.255.255.255,,,0,,,1,,,,,,,,0,0,0,0,0,,pa-fw01"
+    expect:
+      parse_status: ok
+      fields: { severity_id: 3, status_id: 2, message: Eicar Test File(39040) }
+  - name: critical vulnerability dropped
+    input: "<10>Oct  9 20:43:00 pa-fw01 1,2026/10/09 20:43:00,012345678901,THREAT,vulnerability,2561,2026/10/09 20:43:00,203.0.113.9,192.0.2.10,203.0.113.9,10.20.3.30,dmz-web,,,web-browsing,vsys1,untrust,dmz,ethernet1/1,ethernet1/3,default,,5012,1,41000,443,41000,443,0x0,tcp,drop,\"/cgi-bin/x\",Example RCE Attempt(99001),any,critical,client-to-server,7290000103,0x0,United States,10.0.0.0-10.255.255.255,,,0,,,1,,,,,,,,0,0,0,0,0,,pa-fw01"
+    expect:
+      parse_status: ok
+      fields: { severity_id: 5, status_id: 2 }

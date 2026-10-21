@@ -1,0 +1,76 @@
+schema_version: 1
+id: dns_windows
+name: Windows DNS Server debug log
+version: 1.0.0
+author: starter-pack
+description: >-
+  PACKET lines from the Windows DNS Server debug log (dns.log, enabled under Debug
+  Logging with "Log packets for debugging"). The remote address is the peer of this
+  server: the source for received packets, the destination for sent ones. Question names
+  in (3)www(7)example(3)com(0) form are rewritten as www.example.com. The file's header
+  block and non-PACKET lines do not parse and are kept as failed rows with raw intact.
+  Dates are read month-first (en-US): servers in day-first locales need a copy with the
+  date format changed (see the transforms).
+category: dns
+vendor: windows
+classification_default: local_only
+sigma:
+  logsource:
+    - {category: dns}
+    - {product: windows, service: dns-server}
+
+envelope:
+  type: none
+
+match:
+  regex: '^\S+ \S+(?: [AP]M)? [0-9A-Fa-f]+ PACKET\s+[0-9A-Fa-f]+ (?:UDP|TCP) (?:Snd|Rcv) '
+  min_confidence: 0.95
+
+payload:
+  format: regex
+  regex:
+    patterns:
+      - '^(?P<date>\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}) (?P<clock>\d{1,2}:\d{2}:\d{2})(?: (?P<ampm>[AP]M))? (?P<thread_id>[0-9A-Fa-f]+) PACKET\s+(?P<packet_id>[0-9A-Fa-f]+) (?P<protocol>UDP|TCP) (?P<direction>Snd|Rcv) (?P<remote_ip>[0-9A-Fa-f.:]+)\s+(?P<xid>[0-9A-Fa-f]+)\s+(?:(?P<qr>R)\s+)?(?P<opcode>[A-Z?])\s+\[(?P<flags_hex>[0-9A-Fa-f]{4})\s+(?P<flag_chars>[ATDR]*)\s+(?P<rcode>[A-Z]+)\]\s+(?P<qtype>[A-Za-z0-9?]+)\s+(?P<qname>\S+)\s*$'
+
+transforms:
+  # The debug log writes dates in the server's locale. This template reads month-first
+  # (en-US) and ISO-style dates only. Day-first locales that also use AM/PM (en-AU, en-NZ,
+  # en-IN) look the same and WOULD PARSE WITH DAY AND MONTH SWAPPED for days 1 to 12:
+  # for those servers, copy this template and change the first format to
+  # '%d/%m/%Y %I:%M:%S %p'. Other forms are reported as a transform error.
+  - { field: date, op: join, args: { with: [clock, ampm], into: event_time, sep: " " } }
+  - { field: event_time, op: timestamp, args: { format: ['%m/%d/%Y %I:%M:%S %p', '%Y-%m-%d %H:%M:%S'] } }
+  - { field: direction, op: join, args: { with: [remote_ip], into: peer, sep: "|" } }
+  - { field: peer, op: regex_extract, args: { pattern: '^Rcv\|(.+)$', into: src_ip, optional: true } }
+  - { field: peer, op: regex_extract, args: { pattern: '^Snd\|(.+)$', into: dst_ip, optional: true } }
+  - { field: qname, op: replace, args: { pattern: '\(\d{1,3}\)', with: "." } }
+  - { field: qname, op: strip, args: { chars: "." } }
+  - { field: rcode, op: join, args: { with: [qr], into: rcode_reply, sep: ":" } }
+
+mapping:
+  class_uid: 4003          # DNS Activity
+  fields:
+    time: { from: event_time }
+    activity_id: { from: qr, map: { R: 2 }, default: 1 }    # 1 Query, 2 Response
+    status_id: { from: rcode_reply, map: { "NOERROR:R": 1, "NXDOMAIN:R": 2, "SERVFAIL:R": 2, "REFUSED:R": 2, "FORMERR:R": 2, "NOTIMP:R": 2 } }
+    src_endpoint_ip: { from: src_ip }
+    dst_endpoint_ip: { from: dst_ip }
+    message: { from: qname }
+
+tests:
+  - name: query received from a client, US date
+    input: "10/9/2026 8:41:12 PM 0E5C PACKET  000001D3A1B2C3D0 UDP Rcv 10.20.1.5       9f3a   Q [0001   D   NOERROR] A      (3)www(7)example(3)com(0)"
+    expect:
+      parse_status: ok
+      class_uid: 4003
+      fields: { activity_id: 1, src_endpoint_ip: 10.20.1.5, message: www.example.com, time: "2026-10-09T20:41:12+00:00", status_id: null }
+  - name: NXDOMAIN response sent to a client
+    input: "10/9/2026 8:41:13 PM 0E5C PACKET  000001D3A1B2C3D0 UDP Snd 10.20.1.5       9f3a R Q [8183   DR NXDOMAIN] A      (8)xj3k9q2v(7)example(3)org(0)"
+    expect:
+      parse_status: ok
+      fields: { activity_id: 2, status_id: 2, dst_endpoint_ip: 10.20.1.5, message: xj3k9q2v.example.org }
+  - name: IPv6 peer and ISO-style 24-hour date
+    input: "2026-10-09 20:42:00 1A2B PACKET  000001D3A1B2C3E0 TCP Rcv 2001:db8::5     0c11 R Q [8081   DR  NOERROR] AAAA   (7)example(3)net(0)"
+    expect:
+      parse_status: ok
+      fields: { activity_id: 2, status_id: 1, src_endpoint_ip: "2001:db8::5", message: example.net }
