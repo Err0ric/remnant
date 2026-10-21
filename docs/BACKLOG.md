@@ -5,6 +5,9 @@ Items noted during a slice that belong to a later slice. Move into the slice pla
 | Item | Target slice | Noted |
 |---|---|---|
 | On or after 2026-11-02: bump `certifi` to 2026.10.19 (PYSEC-2026-4320), then drop its row in `docs/security/dependencies.md` and its CI ignore | Maintenance | CI, 2026-10-20 |
+| AI catalog freshness, part one: a Possible AI list on AI usage > Services. Destination domains in DNS, firewall, and proxy logs that are not in the catalog but look like AI (a `.ai` domain; `gpt`, `llm`, `chat`, `copilot`, `agent`, `inference` in the name; known model hosting sites), with Add to catalog or Dismiss, both audited. Local logs only. Write ADR-0027 first | 9 | Owner, 2026-10-21 |
+| AI catalog freshness, part two: optional catalog updates. The service catalog published as a signed file in the public repo; the server checks for a newer version on a schedule like the ADR-0023 intel feeds (off until turned on, pull only, nothing sent, every change shown and audited). Release checklist adds a review of new AI services | 9 | Owner, 2026-10-21 |
+| Renew the generated self-signed certificate on its own before it expires (825 days), with a Health warning 30 days ahead | 9 | Install feedback, 2026-10-21 |
 | Pin Docker base images by digest | 6 | Slice 1 skeleton |
 | Self-hosted Lucide subset or tree-shake audit | 6 | Slice 1 skeleton |
 | Read-only MCP server (SPEC 3.8, ADR-0003) | 7 | Roadmap, 2026-10-10 |

@@ -292,9 +292,13 @@ export function LaneGraph({ graph, selected, onSelect }: LaneGraphProps) {
               key={`${e.source}>${e.target}`}
               d={elbow(x1, a.y + a.h / 2, xm, x2, b.y + b.h / 2)}
               fill="none"
-              strokeWidth={on ? 2 : 1.25}
+              strokeWidth={on ? 2 : 1}
               className={
-                on ? "stroke-accent-text" : lit ? "stroke-border opacity-30" : "stroke-text-muted"
+                on
+                  ? "stroke-accent-text"
+                  : lit
+                    ? "stroke-border opacity-30"
+                    : "stroke-border-strong"
               }
             />
           );

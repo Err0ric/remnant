@@ -37,7 +37,25 @@ jobs:
       - run: uv run ruff format --check app tests evals
       - run: uv run ruff check app tests evals
       - run: uv run mypy
-      - run: uv run pytest -q
+      - run: uv run pytest -q --junitxml=/tmp/junit.xml
+      - name: Name failing tests in the check (readable without the raw log)
+        if: failure()
+        run: |
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+          p = Path("/tmp/junit.xml")
+          if not p.exists():
+              raise SystemExit
+          n = 0
+          for case in ET.parse(p).iter("testcase"):
+              for bad in list(case.findall("failure")) + list(case.findall("error")):
+                  msg = (bad.get("message") or "").replace("%", "%25").replace("\r", "").replace("\n", "%0A")[:900]
+                  print(f"::error title={case.get('classname')}.{case.get('name')}::{msg}")
+                  n += 1
+                  if n >= 10:
+                      raise SystemExit
+          PY
       - name: Known vulnerabilities in runtime packages (docs/security/dependencies.md)
         run: |
           uv export --frozen --no-dev --no-hashes -q -o /tmp/requirements.txt
