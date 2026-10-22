@@ -63,6 +63,16 @@ export function AiUsagePage({ isAdmin }: AiUsagePageProps) {
     queryFn: () => api.aiUsage(rangeStart(range)),
     staleTime: 60_000,
   });
+  // A range too big for the memory share falls back to 24 hours, with the reason (F46).
+  const tooBig =
+    usage.error instanceof ApiError && usage.error.code === "query_memory" && range !== "24h";
+  const fallback = useQuery({
+    queryKey: ["ai-usage", "24h"],
+    queryFn: () => api.aiUsage(rangeStart("24h")),
+    staleTime: 60_000,
+    enabled: tooBig,
+  });
+  const shown: TimeRangeId = tooBig ? "24h" : range;
   const setService = useMutation({
     mutationFn: (v: { id: string; status: AiStatus }) => api.setAiServiceStatus(v.id, v.status),
     onSuccess: () => void client.invalidateQueries({ queryKey: ["ai-usage"] }),
@@ -92,7 +102,7 @@ export function AiUsagePage({ isAdmin }: AiUsagePageProps) {
       document.getElementById(`ai-tab-${next}`)?.focus();
     }
   };
-  const data = usage.data;
+  const data = tooBig ? fallback.data : usage.data;
   const notApproved =
     (data?.services.filter((s) => s.service.status === "not_approved").length ?? 0) +
     (data?.mcp.filter((m) => m.status === "not_approved").length ?? 0);
@@ -101,7 +111,7 @@ export function AiUsagePage({ isAdmin }: AiUsagePageProps) {
   const newMcp = new Set(data?.new_mcp ?? []);
   const fresh = newServices.size + newMcp.size;
   const gone = data?.gone ?? [];
-  const label = TIME_RANGES.find((r) => r.id === range)?.label ?? "";
+  const label = TIME_RANGES.find((r) => r.id === shown)?.label ?? "";
   const before = label.replace(/^Last /, "previous ");
   // Signed in, but no readable sources: say so instead of "add a source" (QA F17).
   const noAccess = !!data && data.sources_in_scope.length === 0 && !isAdmin;
@@ -156,7 +166,7 @@ export function AiUsagePage({ isAdmin }: AiUsagePageProps) {
               {sensitive} sensitive-data {sensitive === 1 ? "signal" : "signals"}
             </span>
           ) : null}
-          {data && !data.compared_from && range !== "all" && !noAccess ? (
+          {data && !data.compared_from && shown !== "all" && !noAccess ? (
             <span className="text-sm text-text-muted">
               Nothing earlier to compare with yet: New and No longer seen start once the {before}{" "}
               has data.
@@ -196,9 +206,14 @@ export function AiUsagePage({ isAdmin }: AiUsagePageProps) {
           ))}
         </div>
         {usage.isError ? (
-          <p role="alert" className="text-sm text-danger">
-            {usage.error instanceof ApiError ? usage.error.message : "Could not load AI usage"}
-          </p>
+          <div role="alert" className="flex flex-col gap-0.5 text-sm">
+            <p className="text-danger">
+              {usage.error instanceof ApiError ? usage.error.message : "Could not load AI usage"}
+            </p>
+            {tooBig ? (
+              <p className="text-text-secondary">Showing the last 24 hours instead.</p>
+            ) : null}
+          </div>
         ) : null}
         {setService.isError || setMcp.isError ? (
           <p role="alert" className="text-sm text-danger">
@@ -206,7 +221,7 @@ export function AiUsagePage({ isAdmin }: AiUsagePageProps) {
           </p>
         ) : null}
 
-        <ErrorBoundary key={`${tab}-${range}`} label="This tab">
+        <ErrorBoundary key={`${tab}-${shown}`} label="This tab">
           {tab === "services" ? (
             <Card
               title="AI services seen in network logs"

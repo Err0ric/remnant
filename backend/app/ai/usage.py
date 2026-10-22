@@ -129,26 +129,43 @@ catalog_values = _values
 
 def services_sql(pairs: list[tuple[str, str]]) -> str:
     """Use per service. Rows that name only an address get the person and machine that
-    had it at the time, from logon and User-ID events (ADR-0020 row 1)."""
+    had it at the time, from logon and User-ID events (ADR-0020 row 1).
+
+    Shaped for memory (install finding F46): hosts are matched to the catalog once per
+    distinct host, events are reduced to one row per service, person, machine, address,
+    and hour before anything else, and the address lookup joins that small result. No
+    step holds a row per event, so a week of busy DNS fits a small per-query budget."""
     return f"""
-WITH h AS (
-  SELECT {HOST_EXPR} AS host, {WHO_EXPR} AS who0,
-         nullif(src_endpoint_hostname, '') AS shost, nullif(src_endpoint_ip, '') AS ip,
-         device_hostname AS dev, coalesce(time, time_observed) AS t
-  FROM events
+WITH cat(service_id, domain) AS (VALUES {_values(pairs)}),
+hosts AS (
+  SELECT DISTINCT {HOST_EXPR} AS host FROM events
   WHERE coalesce({", ".join(_CANDIDATES)}) IS NOT NULL
 ),
-cat(service_id, domain) AS (VALUES {_values(pairs)}),
-{HOST_MATCH_SQL.format(src="h")},
-hj AS (SELECT h.*, hm.service_id FROM h JOIN hm USING (host)),
+hm AS (
+  SELECT host, arg_max(service_id, length(domain)) AS service_id
+  FROM hosts JOIN cat ON host = domain OR ends_with(host, '.' || domain)
+  WHERE host IS NOT NULL
+  GROUP BY host
+),
+hj AS (
+  SELECT hm.service_id, {WHO_EXPR} AS who0, nullif(src_endpoint_hostname, '') AS shost,
+         nullif(src_endpoint_ip, '') AS ip, device_hostname AS dev,
+         date_trunc('hour', coalesce(time, time_observed)) AS t,
+         count(*) AS n, min(coalesce(time, time_observed)) AS first_t,
+         max(coalesce(time, time_observed)) AS last_t
+  FROM events JOIN hm ON {HOST_EXPR} = hm.host
+  WHERE coalesce({", ".join(_CANDIDATES)}) IS NOT NULL
+  GROUP BY ALL
+),
 {address_ctes("hj", "who0 IS NULL OR shost IS NULL")},
 r AS (
-  SELECT service_id, t, coalesce(who0, addr.rwho) AS who,
+  SELECT service_id, n, first_t, last_t, coalesce(who0, addr.rwho) AS who,
          coalesce(shost, addr.rhost, hj.ip, dev) AS machine
   FROM hj {join_addr("hj")}
 )
-SELECT service_id, count(*) AS events, count(DISTINCT who) AS people,
-       count(DISTINCT machine) AS machines, min(t) AS first_seen, max(t) AS last_seen,
+SELECT service_id, sum(n)::BIGINT AS events, count(DISTINCT who) AS people,
+       count(DISTINCT machine) AS machines, min(first_t) AS first_seen,
+       max(last_t) AS last_seen,
        list_slice(list(DISTINCT who ORDER BY who) FILTER (WHERE who IS NOT NULL), 1, 5) AS top,
        list_slice(list(DISTINCT machine ORDER BY machine) FILTER (WHERE machine IS NOT NULL), 1, 5)
 FROM r

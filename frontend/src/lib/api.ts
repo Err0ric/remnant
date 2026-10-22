@@ -1451,6 +1451,12 @@ export const api = {
   /** Admins: change a source's label. Only new events take it (SPEC 6.2). */
   setSourceTimezone: (id: string, timezone: string) =>
     request<Source>(`/api/sources/${encodeURIComponent(id)}`, patch({ timezone })),
+  /** Days to keep; the nightly retention job applies it (F44). Audited. */
+  setSourceRetention: (id: string, retention_days: number) =>
+    request<Source>(`/api/sources/${encodeURIComponent(id)}`, patch({ retention_days })),
+  /** Feeds, first-run history, or the Loki query; the stored credential is kept (F44). */
+  setConnectorSettings: (id: string, connector: Record<string, unknown>) =>
+    request<Source>(`/api/sources/${encodeURIComponent(id)}`, patch({ connector })),
   classifySource: (id: string, classification: "local_only" | "cloud_allowed") =>
     request<Source>(`/api/sources/${encodeURIComponent(id)}`, patch({ classification })),
   /** null is the generic parser, "auto" the Automatic one (ADR-0012). New lines only. */

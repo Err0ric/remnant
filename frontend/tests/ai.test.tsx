@@ -127,3 +127,42 @@ describe("AI usage (ADR-0015)", () => {
     expect(JSON.parse(String(put?.[1]?.body))).toMatchObject({ enabled: true, sensitive: true });
   });
 });
+
+describe("A range too big for the memory share (F46)", () => {
+  it("says so and shows the last 24 hours instead", async () => {
+    const real = mockApi("Codename", { mode: "open" });
+    const impl = real.getMockImplementation() as typeof fetch;
+    real.mockRestore();
+    window.history.replaceState(null, "", "/ai");
+    const spy = vi.spyOn(globalThis, "fetch").mockImplementation((url, init) => {
+      const u = String(url);
+      if (u.includes("/api/ai/usage")) {
+        const start = new URL(u, "http://x").searchParams.get("start");
+        if (start && Date.now() - Date.parse(start) > 2 * 86_400_000)
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                detail:
+                  "The query needs more memory than this server allows. Narrow the time range or the sources, or aggregate before returning rows",
+                code: "query_memory",
+              }),
+              { status: 400, headers: { "Content-Type": "application/json" } },
+            ),
+          );
+      }
+      return impl(url, init);
+    });
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<App initialTheme="dark" queryClient={client} />);
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("The query needs more memory than this server allows.");
+    expect(alert).toHaveTextContent("Showing the last 24 hours instead.");
+    const table = await screen.findByRole("region", { name: "AI services seen in network logs" });
+    expect(within(table).getByText("ChatGPT")).toBeInTheDocument();
+    expect(spy.mock.calls.filter(([u]) => String(u).includes("/api/ai/usage")).length).toBe(2);
+  });
+});

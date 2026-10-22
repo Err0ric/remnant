@@ -1,0 +1,18 @@
+schema_version: 1
+id: m365_user_consent
+name: Users consenting to applications
+description: >-
+  "Consent to application" events: a person granted an app access to their data (or, as
+  an admin, to the organization's). The usual start of an OAuth consent-phishing case.
+  Check the app in raw (targetResources or ModifiedProperties) and whether the consent was
+  for the whole tenant.
+tags: [m365, identity, apps, example]
+mode: query
+sql: |-
+  SELECT time, actor_user_name AS "user", src_endpoint_ip AS client, status_id, template_id, raw
+  FROM events
+  WHERE template_id IN ('m365_directory_audit', 'm365_management_activity')
+    AND message IN ('Consent to application', 'Consent to application.')
+    AND time BETWEEN {{start}} AND {{end}}
+  ORDER BY time DESC
+params: []

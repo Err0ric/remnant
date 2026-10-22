@@ -16,6 +16,8 @@ import { OtlpControls } from "./OtlpSetup";
 import { QuietAlert } from "./QuietAlert";
 import { SourceState } from "./SourceState";
 import { TimeZoneEditor } from "./TimeZoneEditor";
+import { RetentionEditor } from "./RetentionEditor";
+import { ConnectorSettingsButton } from "./ConnectorSettingsEditor";
 
 const COUNTS_SQL =
   "SELECT source_id, count(*) AS events, max(coalesce(time, time_observed)) AS last_event " +
@@ -255,7 +257,13 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
                               listener={s.status.listener ?? null}
                             />
                           ) : s.kind === "loki" ? (
-                            <LokiSummary loki={s.loki ?? null} behind={s.status.behind_s ?? null} />
+                            <div className="flex flex-col gap-1">
+                              <LokiSummary
+                                loki={s.loki ?? null}
+                                behind={s.status.behind_s ?? null}
+                              />
+                              <ConnectorSettingsButton source={s} canManage={canManage} />
+                            </div>
                           ) : (
                             <>
                               <div className="break-words">
@@ -291,8 +299,12 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
                             <ClassificationBadge value={s.classification} />
                           )}
                         </td>
-                        <td className="whitespace-nowrap px-3 py-2.5 tabular-nums">
-                          {s.retention_days} days
+                        <td className="whitespace-nowrap px-3 py-2.5">
+                          <RetentionEditor
+                            sourceId={s.source_id}
+                            value={s.retention_days}
+                            canManage={canManage}
+                          />
                         </td>
                         {canManage ? (
                           <td className="px-3 py-2.5 text-right">

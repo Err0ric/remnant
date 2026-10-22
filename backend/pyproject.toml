@@ -63,9 +63,12 @@ packages = ["app"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Scale tests write millions of rows; run them with `uv run pytest -m scale`.
+addopts = ["-m", "not scale"]
 markers = [
     "templates: template fixture suite",
     "integration: integration tests",
+    "scale: large synthetic data, run on demand (uv run pytest -m scale)",
 ]
 
 [tool.ruff]

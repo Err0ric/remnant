@@ -452,6 +452,11 @@ describe("OTLP sources (ADR-0015)", () => {
       within(result).getByText("A1B2C3D4E5F60718293A4B5C6D7E8F9012345678"),
     ).toBeInTheDocument();
     expect(within(result).getByText(/need Entra ID P1 or P2/)).toBeInTheDocument();
+    expect(
+      within(result).getByText(
+        "Works. No subscription yet for Audit.General; it starts when the source is added.",
+      ),
+    ).toHaveClass("text-ok");
     await userEvent.click(within(form).getByRole("button", { name: "Add source" }));
     const row = (await screen.findByText(tenant)).closest("tr") as HTMLElement;
     expect(within(row).getByText("Microsoft 365")).toBeInTheDocument();
@@ -467,6 +472,7 @@ describe("OTLP sources (ADR-0015)", () => {
       credentials: { certificate_pem: "CERT", private_key_pem: "KEY" },
     });
     expect((body.m365 as { content_types: string[] }).content_types).toContain("DLP.All");
+    expect((body.m365 as { backfill_hours: number }).backfill_hours).toBe(168);
     expect(JSON.stringify(within(row).getByText(tenant).closest("td")?.textContent)).not.toContain(
       "KEY",
     );
@@ -578,5 +584,71 @@ describe("Add a Loki source (F27)", () => {
       await screen.findByRole("button", { name: "Use http://10.20.0.40:3100" }),
     );
     expect(screen.getByLabelText("Loki URL")).toHaveValue("http://10.20.0.40:3100");
+  });
+});
+
+describe("Change a source after adding it (F44)", () => {
+  function patches(spy: ReturnType<typeof mockApi>, id: string): unknown[] {
+    return spy.mock.calls
+      .filter(([u, i]) => String(u).endsWith(`/api/sources/${id}`) && i?.method === "PATCH")
+      .map(([, i]) => JSON.parse(String(i?.body)) as unknown);
+  }
+
+  it("changes retention and warns before a shorter one deletes days", async () => {
+    const spy = await openSources();
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Change retention of linux_sshd" }),
+    );
+    const form = screen.getByRole("form", { name: "Retention of linux_sshd" });
+    const input = within(form).getByLabelText("Keep events for (days)");
+    await userEvent.clear(input);
+    await userEvent.type(input, "7");
+    expect(
+      within(form).getByText("Days older than 7 are deleted on the next nightly run."),
+    ).toBeInTheDocument();
+    await userEvent.click(within(form).getByRole("button", { name: "90" }));
+    expect(within(form).getByText(/Applied by the nightly retention job/)).toBeInTheDocument();
+    await userEvent.click(within(form).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(patches(spy, "linux_sshd")).toEqual([{ retention_days: 90 }]));
+    expect(await screen.findByText("90 days")).toBeInTheDocument();
+  });
+
+  it("edits a Microsoft 365 source's feeds and sends only what changed", async () => {
+    const spy = await openSources();
+    await userEvent.click(screen.getByRole("button", { name: "Add source" }));
+    const add = screen.getByRole("form", { name: "Add source" });
+    await userEvent.type(within(add).getByLabelText("Source ID"), "m365");
+    await userEvent.selectOptions(within(add).getByLabelText("Reads from"), "m365");
+    await userEvent.type(
+      within(add).getByLabelText("Directory (tenant) ID"),
+      "11111111-2222-4333-8444-555555555555",
+    );
+    await userEvent.type(
+      within(add).getByLabelText("Application (client) ID"),
+      "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+    );
+    await userEvent.type(within(add).getByLabelText("Certificate (PEM)"), "CERT");
+    await userEvent.type(within(add).getByLabelText("Private key (PEM, unencrypted)"), "KEY");
+    await userEvent.click(within(add).getByRole("button", { name: "Add source" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Edit settings of m365" }));
+    const form = screen.getByRole("form", { name: "Settings for m365" });
+    expect(within(form).getByText(/stored credential is kept/)).toBeInTheDocument();
+    await userEvent.click(within(form).getByLabelText(/DLP rule matches/));
+    await userEvent.click(within(form).getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(patches(spy, "m365")).toEqual([
+        {
+          connector: {
+            content_types: [
+              "Audit.AzureActiveDirectory",
+              "Audit.Exchange",
+              "Audit.SharePoint",
+              "Audit.General",
+              "DLP.All",
+            ],
+          },
+        },
+      ]),
+    );
   });
 });

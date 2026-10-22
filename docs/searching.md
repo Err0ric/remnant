@@ -41,7 +41,7 @@ When a scheduled search drops to zero right after a source it reads switched par
 
 ## Example saved searches
 
-Six examples ship in `examples/saved-searches/`. Import one on **Saved searches > Import**, then adapt it. Each reads parsed columns and carries the time range, so it works on the Dashboard as a schedule.
+Eight examples ship in `examples/saved-searches/`. Import one on **Saved searches > Import**, then adapt it. Each reads parsed columns and carries the time range, so it works on the Dashboard as a schedule.
 
 | File | What it answers | Reads |
 |---|---|---|
@@ -51,6 +51,8 @@ Six examples ship in `examples/saved-searches/`. Import one on **Saved searches 
 | `parser_mix` | Which parser read each source, and how well | `source_id`, `template_id`, `parse_status` |
 | `ssh_logins` | SSH sign-ins per user, client, and result | `linux_sshd` columns |
 | `firewall_maintenance` | HA changes, commits, restarts, installs, and medium or higher system events per firewall | `paloalto_system` subtype, event id, severity |
+| `m365_new_service_principals` | Enterprise apps added to the tenant, without the ones Microsoft provisions itself (actor Azure Resource Manager, or an app owned by Microsoft's tenants `f8cdef31-...` and `72f988bf-...`) | M365 directory audit and Management Activity rows; the owner is matched on `raw` |
+| `m365_user_consent` | People consenting to applications (the start of OAuth consent phishing) | Same two templates, `Consent to application` |
 
 Notes:
 

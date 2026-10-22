@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { FormError } from "@/features/auth/FormError";
 import { ApiCredentialsFields } from "./ApiCredentialsFields";
+import { ConnectorSettingsButton } from "./ConnectorSettingsEditor";
 import { ApiError, api, type ApiCredentials, type Source } from "@/lib/api";
 
 function lag(seconds: number): string {
@@ -52,6 +53,7 @@ export function ApiSummary({ source, canManage }: ApiSummaryProps) {
         <div className="break-words text-sm text-text-secondary">{feeds.join(", ")}</div>
       ) : null}
       {behind !== null ? <div className="text-sm text-text-muted">{lag(behind)}</div> : null}
+      {!open ? <ConnectorSettingsButton source={source} canManage={canManage} /> : null}
       {canManage && !open ? (
         <button
           type="button"

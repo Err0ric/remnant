@@ -78,6 +78,9 @@ class FakeApis:
         if req.url.path == f"{root}/subscriptions/start":
             self.started.append(q["contentType"])
             return httpx.Response(200, json={"status": "enabled"})
+        if req.url.path == f"{root}/subscriptions/list":
+            subs = [{"contentType": ct, "status": "enabled"} for ct in dict.fromkeys(self.started)]
+            return httpx.Response(200, json=subs)
         if req.url.path == f"{root}/subscriptions/content":
             start, end = _t(q["startTime"]), _t(q["endTime"])
             ct = q["contentType"]

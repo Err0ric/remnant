@@ -283,13 +283,37 @@ class IngestService:
             count = self._write_api(source, pull.records)
             self._save_position(sid, pull.checkpoint, now)
             behind, warnings = pull.behind_s, tuple(w[:300] for w in pull.warnings[:10])
-            self._api_failures.pop(sid, None)
+            recovered = self._api_failures.pop(sid, None) is not None
+            # The journal tells the story (F41): starts, feed problems, recovery, and volume.
+            # Messages are the connector's own text, never event content.
+            for note in pull.notices[:10]:
+                log.info("connector_notice", source_id=sid, kind=source.kind, notice=note[:300])
+            for w in warnings:
+                if w not in prev.warnings:
+                    log.warning("connector_feed_failed", source_id=sid, kind=source.kind, error=w)
+            if recovered or count:
+                log.info(
+                    "connector_pulled",
+                    source_id=sid,
+                    kind=source.kind,
+                    events=count,
+                    behind_s=round(behind) if behind is not None else None,
+                    recovered=recovered,
+                )
         except ConnectorError as exc:
             failures = self._api_failures.get(sid, 0) + 1
             self._api_failures[sid] = failures
             wait = exc.seconds if isinstance(exc, RetryLaterError) else None
             retry_at = now + backoff(failures, connector.poll_every, wait)
             error = str(exc)[:500]
+            log.warning(
+                "connector_failed",
+                source_id=sid,
+                kind=source.kind,
+                error=error,
+                failures=failures,
+                retry_in_s=round((retry_at - now).total_seconds()),
+            )
         with self._lock:
             self._status[sid] = replace(
                 prev,

@@ -62,7 +62,9 @@ def management() -> tuple[list[str], list[dict[str, Any]]]:
         ("Exchange", 2, "MailItemsAccessed", "Succeeded"),
         ("Exchange", 1, "New-InboxRule", "True"),
         ("AzureActiveDirectory", 15, "UserLoggedIn", "Success"),
-        ("AzureActiveDirectory", 15, "UserLoginFailed", "Failed"),
+        # Microsoft writes "Success" on failed logons (the audit write succeeded); the
+        # failure is in Operation and LogonError (install finding F42).
+        ("AzureActiveDirectory", 15, "UserLoginFailed", "Success"),
         ("Copilot", 261, "CopilotInteraction", None),
         ("Exchange", 13, "DlpRuleMatch", None),
         ("MicrosoftTeams", 25, "MessageSent", None),
@@ -88,6 +90,8 @@ def management() -> tuple[list[str], list[dict[str, Any]]]:
         ip = IPS[i % len(IPS)]
         if result:
             rec["ResultStatus"] = result
+        if op == "UserLoginFailed":
+            rec["LogonError"] = "InvalidUserNameOrPassword"
         if op != "DlpRuleMatch":
             rec["ClientIP"] = f"{ip}:{rng.randint(1024, 65535)}" if i % 5 == 0 and ":" not in ip else ip
         if workload == "SharePoint":
@@ -109,7 +113,9 @@ def management() -> tuple[list[str], list[dict[str, Any]]]:
         }
         if "ClientIP" in rec:
             row["src_endpoint_ip"] = ip
-        if result:
+        if op == "UserLoginFailed":
+            row["status_id"] = 2
+        elif result:
             row["status_id"] = 2 if result == "Failed" else 1
         if op == "DlpRuleMatch":
             row["severity_id"] = 3

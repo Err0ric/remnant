@@ -1,7 +1,7 @@
 schema_version: 1
 id: m365_management_activity
 name: Microsoft 365 audit (Management Activity API)
-version: 1.0.0
+version: 1.1.0
 author: starter-pack
 description: >-
   Unified audit records from the Office 365 Management Activity API, pulled by the
@@ -9,6 +9,8 @@ description: >-
   Audit.SharePoint, Audit.General (includes Copilot interactions, RecordType 261), and
   DLP.All (DlpRuleMatch). Each line is Microsoft's JSON, unchanged. The operation is the
   message; Workload, RecordType, ObjectId, and the Copilot and DLP details stay in unmapped.
+  Status comes from the operation for logons (UserLoginFailed is a failure even though
+  Microsoft writes ResultStatus "Success" on it), otherwise from ResultStatus.
 category: identity
 vendor: microsoft
 classification_default: local_only
@@ -29,6 +31,11 @@ transforms:
   - field: ResultStatus
     op: map
     args: { into: outcome, values: { Succeeded: 1, Success: 1, success: 1, "True": 1, PartiallySucceeded: 1, Failed: 2, Failure: 2, failure: 2, "False": 2 }, optional: true }
+  # Logons: the operation decides. Microsoft's ResultStatus on UserLoginFailed is
+  # "Success" (the audit write succeeded), and the reason is in LogonError.
+  - field: Operation
+    op: map
+    args: { into: outcome, values: { UserLoginFailed: 2, UserLoggedIn: 1 }, optional: true }
   - { field: ClientIP, op: regex_extract, args: { pattern: '^(?|\[([0-9A-Fa-f:.]+)\](?::\d+)?|(\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?|([0-9A-Fa-f:]*:[0-9A-Fa-f:.]*))$', into: client_ip, optional: true } }
 
 mapping:
@@ -68,6 +75,16 @@ tests:
       parse_status: ok
       class_uid: 6003
       fields: { actor_user_name: dave@example.com, message: UserLoginFailed, status_id: 2 }
+  - name: failed logon as Microsoft writes it (ResultStatus Success)
+    input: '{"CreationTime":"2026-10-14T17:06:30","Id":"6b2f3a10-0000-4000-8000-000000000006","Operation":"UserLoginFailed","RecordType":15,"ResultStatus":"Success","LogonError":"InvalidUserNameOrPassword","UserType":0,"Version":1,"Workload":"AzureActiveDirectory","ClientIP":"203.0.113.99","UserId":"dave@example.com"}'
+    expect:
+      parse_status: ok
+      fields: { message: UserLoginFailed, status_id: 2 }
+  - name: successful logon
+    input: '{"CreationTime":"2026-10-14T17:06:40","Id":"6b2f3a10-0000-4000-8000-000000000007","Operation":"UserLoggedIn","RecordType":15,"ResultStatus":"Success","UserType":0,"Version":1,"Workload":"AzureActiveDirectory","ClientIP":"203.0.113.98","UserId":"dave@example.com"}'
+    expect:
+      parse_status: ok
+      fields: { message: UserLoggedIn, status_id: 1 }
   - name: IPv6 with and without a port
     input: '{"CreationTime":"2026-10-14T17:07:00","Id":"6b2f3a10-0000-4000-8000-000000000005","Operation":"MailItemsAccessed","RecordType":50,"ResultStatus":"Succeeded","UserType":0,"Version":1,"Workload":"Exchange","ClientIP":"[2001:db8::5]:443","UserId":"erin@example.com"}'
     expect:

@@ -83,7 +83,8 @@ class M365Settings(BaseModel):
         default_factory=lambda: list(DEFAULT_CONTENT), max_length=5
     )
     graph: list[GraphFeed] = Field(default_factory=lambda: list(DEFAULT_GRAPH), max_length=3)
-    backfill_hours: int = Field(default=24, ge=0, le=168)
+    # The audit API keeps 7 days; a new app's first days are often what people need (F43).
+    backfill_hours: int = Field(default=168, ge=0, le=168)
 
     @field_validator("content_types", "graph")
     @classmethod
@@ -231,6 +232,19 @@ class M365Client:
             return
         raise ConnectorError(_api_error(self._manage, reply))
 
+    def list_subscriptions(self) -> dict[str, str]:
+        """Content type -> status ("enabled" or "disabled"). Read only: it needs the same
+        token and permission as a pull, and works before any subscription exists."""
+        url = (
+            f"{self._feed_root()}/subscriptions/list?PublisherIdentifier={self.settings.tenant_id}"
+        )
+        data, _ = self._get(self._manage, url)
+        out: dict[str, str] = {}
+        for sub in data if isinstance(data, list) else []:
+            if isinstance(sub, dict) and sub.get("contentType"):
+                out[str(sub["contentType"])] = str(sub.get("status", "")).lower()
+        return out
+
     def list_content(
         self, content_type: str, start: datetime, end: datetime
     ) -> list[dict[str, Any]]:
@@ -309,10 +323,42 @@ def _entra_error(reply: Any) -> str:
     return f"Entra refused the sign-in ({code or f'HTTP {reply.status}'})"
 
 
+# Management Activity API error codes worth a plain explanation (Microsoft's troubleshooting
+# reference for the API). Others are shown with Microsoft's own message.
+AF_HINTS = {
+    "AF10001": "the app lacks ActivityFeed.Read on Office 365 Management APIs, or admin consent",
+    "AF20010": "the tenant id does not match the app's tenant",
+    "AF20011": "no such tenant",
+    "AF20012": "the tenant is not set up for the audit API; check that audit logging is on",
+    "AF20013": "the tenant id is not a valid GUID",
+    "AF20020": "the content type is not valid",
+    "AF20022": "no subscription yet; it starts when the source is added",
+    "AF20023": "the subscription was turned off; it is started again",
+    "AF20030": "the time range is outside what the API allows (24 hours, last 7 days)",
+    "AF20051": "the content is older than 7 days and has expired",
+}
+
+
+def af_error(body: bytes) -> tuple[str, str] | None:
+    """Microsoft's error code and message from a Management Activity API reply, if any."""
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return None
+    err = data.get("error") if isinstance(data, dict) else None
+    if not isinstance(err, dict):
+        return None
+    code, message = str(err.get("code") or ""), str(err.get("message") or "")
+    return (code[:20], message[:300]) if code else None
+
+
 def _api_error(host: str, reply: Any) -> str:
     body = reply.body.decode("utf-8", "replace")
-    if "AF20022" in body:  # listing content before the subscription has started
-        return "ok (no subscription yet; it starts on the first pull)"
+    af = af_error(reply.body)
+    if af:
+        code, message = af
+        hint = AF_HINTS.get(code)
+        return f"{host}: {hint} ({code})" if hint else f"{host}: {message or 'error'} ({code})"
     if reply.status == 403 and "premium license" in body.lower():
         return "Sign-in logs need Entra ID P1 or P2 in this tenant"
     if reply.status in (401, 403):
@@ -320,7 +366,8 @@ def _api_error(host: str, reply: Any) -> str:
             f"{host} refused access (HTTP {reply.status});"
             " check the app's API permissions and admin consent"
         )
-    return f"{host} answered HTTP {reply.status}"
+    snippet = " ".join(body.split())[:200]
+    return f"{host} answered HTTP {reply.status}" + (f": {snippet}" if snippet else "")
 
 
 def _record_time(item: dict[str, Any]) -> datetime | None:
@@ -348,6 +395,7 @@ class M365Connector:
         started: list[str] = cp.setdefault("started", [])
         records: list[Record] = []
         warnings: list[str] = []
+        notices: list[str] = []
         floor = now - timedelta(days=7) + timedelta(minutes=5)
         default_start = now - timedelta(hours=s.backfill_hours)
         blobs = 0
@@ -358,6 +406,7 @@ class M365Connector:
                 if ct not in started:
                     self._c.start_subscription(ct)
                     started.append(ct)
+                    notices.append(f"subscription started: {ct}")
                 state = feeds.setdefault(ct, {})
                 start = max(_parse(state.get("end")) or default_start, floor)
                 seen = set(state.get("seen", []))
@@ -397,6 +446,14 @@ class M365Connector:
             except RetryLaterError:
                 raise  # the whole organization is rate limited: wait as asked
             except ConnectorError as exc:
+                if "(AF20022)" in str(exc) or "(AF20023)" in str(exc):
+                    # Missing or turned off in the tenant: start it again now; reading
+                    # resumes on the next pull from the same checkpoint.
+                    try:
+                        self._c.start_subscription(ct)
+                        notices.append(f"subscription started again: {ct}")
+                    except ConnectorError as again:
+                        exc = again
                 warnings.append(f"{ct}: {exc}")
 
         graph_end = now - GRAPH_LAG
@@ -422,24 +479,36 @@ class M365Connector:
         if warnings and not records and len(warnings) == len(s.content_types) + len(s.graph):
             raise ConnectorError("; ".join(warnings)[:500])
         behind = (now - oldest_end).total_seconds() if oldest_end else None
-        return Pull(records, json.dumps(cp), behind, warnings)
+        return Pull(records, json.dumps(cp), behind, warnings, notices)
 
 
 def test_connection(client: M365Client) -> dict[str, str]:
-    """Get the tokens and read one small page from each enabled API; says which work."""
+    """Get the tokens and make one small read per enabled API; says which work.
+
+    The audit API is checked by listing subscriptions, which is read only and works on a
+    new app. Test never starts a subscription (D92): that is a change in the tenant, and
+    it happens when the source is added. A value starting "ok" means it works."""
     now = datetime.now(UTC)
     hour = now - timedelta(hours=1)
-    checks: list[tuple[str, Any]] = []
-    first = client.settings.content_types[0] if client.settings.content_types else None
-    if first:
-        checks.append(("Management Activity API", lambda: client.list_content(first, hour, now)))
-    for feed in client.settings.graph:
-        checks.append((f"Graph {feed}", lambda f=feed: client.graph(f, hour, now)))
     results: dict[str, str] = {}
-    for name, fn in checks:
+    wanted = client.settings.content_types
+    if wanted:
         try:
-            fn()
-            results[name] = "ok"
+            subs = client.list_subscriptions()
+            missing = [ct for ct in wanted if subs.get(ct) != "enabled"]
+            results["Management Activity API"] = (
+                "ok"
+                if not missing
+                else "ok: no subscription yet for "
+                + ", ".join(missing)
+                + "; it starts when the source is added"
+            )
         except ConnectorError as exc:
-            results[name] = str(exc)
+            results["Management Activity API"] = str(exc)
+    for feed in client.settings.graph:
+        try:
+            client.graph(feed, hour, now)
+            results[f"Graph {feed}"] = "ok"
+        except ConnectorError as exc:
+            results[f"Graph {feed}"] = str(exc)
     return results

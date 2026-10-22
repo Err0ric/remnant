@@ -19,6 +19,10 @@ class QueryFailedError(AppError):
     """The query was allowed but failed while running (bad column, type error)."""
 
 
+class QueryMemoryError(QueryFailedError):
+    """The query needed more memory than its share; a narrower range may work (F46)."""
+
+
 class QueryBusyError(AppError):
     """Too many queries already running; this one waited and got no slot (D79)."""
 

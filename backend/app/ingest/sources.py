@@ -8,7 +8,7 @@ import stat
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import BinaryIO, Literal
+from typing import Any, BinaryIO, Literal
 
 from pydantic import (
     BaseModel,
@@ -39,6 +39,15 @@ CONNECTOR_LABELS = {
 # Kinds whose records the server receives and spools for ingest, with their file suffix.
 SPOOL_SUFFIX = {"otlp": ".jsonl", "syslog": ".syslog"}
 SourceKind = Literal["file", "loki", "otlp", "m365", "anthropic", "syslog"]
+
+
+# Settings that can change after a source is added (F44). Tenant, app, cloud, key type, and
+# the Loki address and sign-in stay: they go with the stored credential.
+EDITABLE_SETTINGS: dict[str, frozenset[str]] = {
+    "m365": frozenset({"content_types", "graph", "backfill_hours"}),
+    "anthropic": frozenset({"feeds", "backfill_days"}),
+    "loki": frozenset({"query", "backfill_hours"}),
+}
 
 
 class SourceConfig(BaseModel):
@@ -445,6 +454,59 @@ class SourceStore:
             )
         (source,) = [s for s in self.list() if s.source_id == source_id]
         return before, source
+
+    def set_retention(self, source_id: str, days: int) -> tuple[int, SourceConfig]:
+        """The previous retention and the source after the change (install finding F44).
+        The nightly retention job reads it on its next run; nothing is deleted now."""
+        found = [s for s in self.list() if s.source_id == source_id]
+        if not found:
+            raise NotFoundError("No such source")
+        SourceConfig.model_validate({**found[0].model_dump(), "retention_days": days})
+        with self._meta.connect() as con:
+            con.execute(
+                "UPDATE sources SET retention_days = ? WHERE source_id = ?", (days, source_id)
+            )
+        (source,) = [s for s in self.list() if s.source_id == source_id]
+        return found[0].retention_days, source
+
+    def set_connector_settings(
+        self, source_id: str, changes: Mapping[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, Any], SourceConfig]:
+        """Change the settings of an API or Loki source that do not depend on its stored
+        credential (install finding F44): feeds, first-run history, the Loki query. Returns
+        the old and new values of what changed, and the source. The credential is kept."""
+        found = [s for s in self.list() if s.source_id == source_id]
+        if not found:
+            raise NotFoundError("No such source")
+        src = found[0]
+        settings: BaseModel | None = src.m365 or src.anthropic or src.loki
+        if settings is None or src.kind not in EDITABLE_SETTINGS:
+            raise SourceRejectedError("This source has no connector settings to change")
+        allowed = EDITABLE_SETTINGS[src.kind]
+        locked = sorted(set(changes) - allowed)
+        if locked:
+            raise SourceRejectedError(
+                f"{', '.join(locked)} cannot be changed here: it goes with the stored"
+                " credential. Use Replace credentials, or add a new source"
+            )
+        current = settings.model_dump()
+        try:
+            updated = type(settings).model_validate({**current, **changes})
+        except ValidationError as exc:
+            msg = str(exc.errors()[0]["msg"]).removeprefix("Value error, ")
+            raise SourceRejectedError(msg) from exc
+        after = updated.model_dump()
+        changed = [k for k in allowed if k in changes and after[k] != current[k]]
+        if not changed:
+            raise SourceRejectedError("Nothing to change")
+        new_source = src.model_copy(update={src.kind: updated})
+        with self._meta.connect() as con:
+            con.execute(
+                "UPDATE sources SET connector = ? WHERE source_id = ?",
+                (new_source.connector_json(), source_id),
+            )
+        (source,) = [s for s in self.list() if s.source_id == source_id]
+        return {k: current[k] for k in changed}, {k: after[k] for k in changed}, source
 
     def connector_secret(self, source_id: str) -> str | None:
         """Decrypted connector credential, for the ingest worker and the connection test."""

@@ -4,7 +4,7 @@ import shutil
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Query, Request, Response, status
 from fastapi.responses import PlainTextResponse
@@ -418,7 +418,9 @@ async def test_api(body: ApiTest, request: Request, user: AdminUser) -> ApiTestO
         feeds = await run_in_threadpool(
             probe, body.kind, settings, secret, now, ingest.api_transport
         )
-        outcome = "success" if feeds and all(v == "ok" for v in feeds.values()) else "failure"
+        outcome = (
+            "success" if feeds and all(v.startswith("ok") for v in feeds.values()) else "failure"
+        )
     except ConnectorError as exc:
         raise SourceRejectedError(str(exc)) from None
     finally:
@@ -537,6 +539,11 @@ class SourcePatch(BaseModel):
     ) = None
     # The zone for times that carry none (RFC 3164 headers, Palo Alto Generated Time).
     timezone: str | None = Field(default=None, min_length=1, max_length=64)
+    # Days to keep; the nightly retention job applies it (install finding F44).
+    retention_days: int | None = Field(default=None, ge=1, le=3650)
+    # API and Loki settings that do not depend on the stored credential (F44): feeds,
+    # first-run history, the Loki query. Only the keys given change.
+    connector: dict[str, Any] | None = Field(default=None, max_length=5)
 
     @model_validator(mode="after")
     def _something(self) -> "SourcePatch":
@@ -546,6 +553,8 @@ class SourcePatch(BaseModel):
             "otlp_keep_content",
             "loki_label_map",
             "timezone",
+            "retention_days",
+            "connector",
         }:
             raise ValueError("Nothing to change")
         if "otlp_keep_content" in self.model_fields_set and self.otlp_keep_content is None:
@@ -634,6 +643,28 @@ async def update_source(
             user.user_id,
             client_ip(request),
             {"source_id": source_id, "from": before_tz, "to": body.timezone},
+        )
+    if body.retention_days is not None:
+        days = body.retention_days
+        before_days, source = await run_in_threadpool(store.set_retention, source_id, days)
+        await run_in_threadpool(
+            _audit(request).audit.write,
+            "source.retention_change",
+            "success",
+            user.user_id,
+            client_ip(request),
+            {"source_id": source_id, "from": before_days, "to": days},
+        )
+    if body.connector is not None:
+        changes = body.connector
+        old, new, source = await run_in_threadpool(store.set_connector_settings, source_id, changes)
+        await run_in_threadpool(
+            _audit(request).audit.write,
+            "source.settings_change",
+            "success",
+            user.user_id,
+            client_ip(request),
+            {"source_id": source_id, "from": old, "to": new},
         )
     assert source is not None  # the validator requires at least one change
     return source

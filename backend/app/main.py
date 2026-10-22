@@ -86,6 +86,7 @@ from app.core.errors import (
     ProviderUnreachableError,
     QueryBusyError,
     QueryFailedError,
+    QueryMemoryError,
     QueryRejectedError,
     QueryTimeoutError,
     RateLimitedError,
@@ -106,7 +107,7 @@ from app.core.net import parse_trusted
 from app.core.threads import cap_allocator_arenas, query_threads
 from app.detect.runner import RuleRunner
 from app.detect.store import RuleStore
-from app.engine.duckdb import QueryEngine, QueryScope
+from app.engine.duckdb import QueryEngine, QueryScope, spill_dir
 from app.enrich.feeds import FeedStore
 from app.enrich.geoip import GeoIP
 from app.enrich.intel import ThreatIntel
@@ -145,6 +146,7 @@ log = structlog.get_logger("app")
 _ERROR_STATUS: dict[type[Exception], tuple[int, str]] = {
     QueryRejectedError: (400, "query_rejected"),
     QueryFailedError: (400, "query_failed"),
+    QueryMemoryError: (400, "query_memory"),
     QueryTimeoutError: (408, "query_timeout"),
     SourceRejectedError: (400, "source_rejected"),
     NotFoundError: (404, "not_found"),
@@ -427,6 +429,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         memory_mb=max(256, budget // (qt.at_once + 1)) if budget else None,
         threads=qt.per_query,
         max_concurrent=qt.at_once,
+        temp_dir=spill_dir(config.paths.data_dir),
     )
     app.state.gate = LLMGate(
         meta,

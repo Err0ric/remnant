@@ -39,7 +39,7 @@ const BADGE: Record<Level, string> = {
 const TABS: { id: TabId; label: string }[] = [
   { id: "sources", label: "Sources" },
   { id: "connectors", label: "Connectors" },
-  { id: "agents", label: "Agents" },
+  { id: "agents", label: "Endpoint agents" },
   { id: "devices", label: "Watched devices" },
   { id: "alerts", label: "Alerts and schedules" },
 ];
@@ -251,7 +251,7 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       <PageHeader
-        crumbs={["Home", "General", "Health"]}
+        crumbs={["Home", "System", "Health"]}
         title="Health"
         commands={
           <Command

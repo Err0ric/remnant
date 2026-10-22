@@ -1505,6 +1505,12 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       if ("classification" in body) Object.assign(s, { classification: body.classification });
       if ("template_id" in body) Object.assign(s, { template_id: body.template_id });
       if ("timezone" in body) Object.assign(s, { timezone: body.timezone });
+      if ("retention_days" in body) Object.assign(s, { retention_days: body.retention_days });
+      if ("connector" in body) {
+        const kind = (s as { kind?: string }).kind ?? "file";
+        const current = (s as Record<string, unknown>)[kind] as Record<string, unknown>;
+        Object.assign(s, { [kind]: { ...current, ...(body.connector as object) } });
+      }
       return json(s);
     }
     if (url.endsWith("/api/sources/loki/test")) {
@@ -1527,7 +1533,8 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       if (body.kind === "m365")
         return json({
           feeds: {
-            "Management Activity API": "ok",
+            "Management Activity API":
+              "ok: no subscription yet for Audit.General; it starts when the source is added",
             "Graph signins": "Sign-in logs need Entra ID P1 or P2 in this tenant",
           },
           thumbprint: body.credentials.certificate_pem

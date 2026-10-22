@@ -51,6 +51,7 @@ class Pull:
     checkpoint: str
     behind_s: float | None = None
     warnings: list[str] = field(default_factory=list)  # partial failures (one feed of many)
+    notices: list[str] = field(default_factory=list)  # one-time events worth a log line
 
 
 class Connector(Protocol):

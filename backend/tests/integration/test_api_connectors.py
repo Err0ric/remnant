@@ -231,7 +231,11 @@ def test_certificate_auth_signs_a_ps256_assertion_and_test_shows_thumbprint(
     assert res.status_code == 200, res.text
     out = res.json()
     assert out["thumbprint"] == cert.fingerprint(hashes.SHA1()).hex().upper()
-    assert out["feeds"] == {"Management Activity API": "ok", "Graph signins": "ok"}
+    assert out["feeds"] == {
+        "Management Activity API": "ok: no subscription yet for Audit.SharePoint, Audit.General;"
+        " it starts when the source is added",
+        "Graph signins": "ok",
+    }
     form = lab["fake"].forms[-1]
     assert "client_secret" not in form
     header = jwt.get_unverified_header(form["client_assertion"][0])
@@ -396,3 +400,180 @@ def test_bad_api_sources_are_refused(lab: dict[str, Any]) -> None:
     assert add(lab, mixed).status_code == 422
     bad_tenant = m365_body(tenant_id="contoso.onmicrosoft.com")
     assert add(lab, bad_tenant).status_code == 422
+
+
+# --- install findings F41 and F43 (2026-10-22) -------------------------------------------
+
+
+def api_test(lab: dict[str, Any], **over: Any) -> dict[str, str]:
+    body = m365_body(**over)
+    res = lab["admin"].post(
+        "/api/sources/api/test",
+        json={"kind": "m365", "m365": body["m365"], "credentials": body["credentials"]},
+        headers=lab["h"],
+    )
+    assert res.status_code == 200, res.text
+    feeds: dict[str, str] = res.json()["feeds"]
+    return feeds
+
+
+def test_test_on_a_new_app_explains_the_missing_subscription_and_starts_nothing(
+    lab: dict[str, Any],
+) -> None:
+    first = api_test(lab, graph=[])
+    assert first["Management Activity API"] == (
+        "ok: no subscription yet for Audit.SharePoint, Audit.General;"
+        " it starts when the source is added"
+    )
+    assert lab["fake"].started == []  # D92: Test changes nothing in the tenant
+    db = sqlite3.connect(lab["db"])
+    outcome = db.execute(
+        "SELECT outcome FROM audit_log WHERE action = 'source.api_test'"
+    ).fetchone()[0]
+    assert outcome == "success"
+    seed_m365(lab["fake"])
+    add(lab, m365_body())
+    lab["app"].state.ingest.run_once()
+    assert api_test(lab, graph=[])["Management Activity API"] == "ok"
+
+
+def test_management_api_errors_show_microsofts_code(lab: dict[str, Any]) -> None:
+    root = f"/api/v1.0/{TENANT}/activity/feed/subscriptions/list"
+    fail = lab["fake"].fail
+    fail[root] = httpx.Response(
+        401,
+        json={"error": {"code": "AF10001", "message": "The permission set () sent in the request"}},
+    )
+    got = api_test(lab, graph=[])["Management Activity API"]
+    assert "lacks ActivityFeed.Read" in got and got.endswith("(AF10001)")
+    fail[root] = httpx.Response(
+        400, json={"error": {"code": "AF29999", "message": "Something new from Microsoft."}}
+    )
+    assert api_test(lab, graph=[])["Management Activity API"] == (
+        "manage.office.com: Something new from Microsoft. (AF29999)"
+    )
+    fail[root] = httpx.Response(400, text="<html> Bad   request </html>")
+    assert api_test(lab, graph=[])["Management Activity API"] == (
+        "manage.office.com answered HTTP 400: <html> Bad request </html>"
+    )
+
+
+def test_connector_events_are_logged_with_the_source_id(lab: dict[str, Any]) -> None:
+    from structlog.testing import capture_logs
+
+    seed_m365(lab["fake"])
+    add(lab, m365_body(graph=[]))
+    ingest = lab["app"].state.ingest
+    with capture_logs() as logs:
+        ingest.run_once()
+    notices = [e for e in logs if e["event"] == "connector_notice"]
+    assert {e["notice"] for e in notices} == {
+        "subscription started: Audit.SharePoint",
+        "subscription started: Audit.General",
+    }
+    assert all(e["source_id"] == "m365" and e["log_level"] == "info" for e in notices)
+    pulled = [e for e in logs if e["event"] == "connector_pulled"]
+    assert pulled and pulled[0]["events"] == 9 and pulled[0]["source_id"] == "m365"
+    lab["fake"].fail["/" + TENANT] = httpx.Response(
+        401, json={"error": "invalid_client", "error_codes": [7000222]}
+    )
+    with capture_logs() as logs:
+        lab["clock"].now = NOW + timedelta(minutes=6)
+        ingest.run_once()
+    failed = [e for e in logs if e["event"] == "connector_failed"]
+    assert failed and failed[0]["log_level"] == "warning" and failed[0]["source_id"] == "m365"
+    assert "client secret has expired" in failed[0]["error"]
+    assert not any("m365-client-s3cret" in json.dumps(e, default=str) for e in logs)
+
+
+def test_a_turned_off_subscription_is_started_again(lab: dict[str, Any]) -> None:
+    seed_m365(lab["fake"])
+    add(lab, m365_body(content_types=["Audit.SharePoint"], graph=[]))
+    ingest = lab["app"].state.ingest
+    ingest.run_once()
+    assert lab["fake"].started == ["Audit.SharePoint"]
+    content = f"/api/v1.0/{TENANT}/activity/feed/subscriptions/content"
+    lab["fake"].fail[content] = httpx.Response(
+        400, json={"error": {"code": "AF20023", "message": "The subscription was disabled by"}}
+    )
+    lab["clock"].now = NOW + timedelta(minutes=6)
+    ingest.run_once()
+    status = lab["admin"].get("/api/sources").json()[0]["status"]
+    assert "turned off" in status["error"]
+    assert lab["fake"].started == ["Audit.SharePoint", "Audit.SharePoint"]  # started again
+    del lab["fake"].fail[content]
+    lab["clock"].now = NOW + timedelta(hours=2)
+    ingest.run_once()
+    status = lab["admin"].get("/api/sources").json()[0]["status"]
+    assert status["error"] is None
+
+
+def test_first_run_reads_seven_days_by_default() -> None:
+    from app.ingest.connectors.m365 import M365Settings
+
+    assert M365Settings(tenant_id=TENANT, client_id=CLIENT).backfill_hours == 168
+
+
+# --- install finding F44 (2026-10-22): change retention and settings after adding ------------
+
+
+def patch(lab: dict[str, Any], body: dict[str, Any], source_id: str = "m365") -> httpx.Response:
+    res: httpx.Response = lab["admin"].patch(
+        f"/api/sources/{source_id}", json=body, headers=lab["h"]
+    )
+    return res
+
+
+def audit_rows(lab: dict[str, Any], action: str) -> list[dict[str, Any]]:
+    db = sqlite3.connect(lab["db"])
+    got = db.execute("SELECT detail FROM audit_log WHERE action = ?", (action,)).fetchall()
+    return [json.loads(r[0]) for r in got]
+
+
+def test_retention_changes_after_adding_and_is_audited(lab: dict[str, Any]) -> None:
+    add(lab, m365_body())
+    res = patch(lab, {"retention_days": 90})
+    assert res.status_code == 200, res.text
+    assert res.json()["retention_days"] == 90
+    assert lab["admin"].get("/api/sources").json()[0]["retention_days"] == 90
+    assert audit_rows(lab, "source.retention_change") == [
+        {"source_id": "m365", "from": 30, "to": 90}
+    ]
+    assert patch(lab, {"retention_days": 0}).status_code == 422
+
+
+def test_connector_settings_change_and_the_credential_is_kept(lab: dict[str, Any]) -> None:
+    seed_m365(lab["fake"])
+    add(lab, m365_body(content_types=["Audit.SharePoint"], graph=[]))
+    ingest = lab["app"].state.ingest
+    ingest.run_once()
+    secret_before = lab["app"].state.ingest._sources.connector_secret("m365")
+    res = patch(
+        lab, {"connector": {"content_types": ["Audit.SharePoint", "Audit.General"], "graph": []}}
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["m365"]["content_types"] == ["Audit.SharePoint", "Audit.General"]
+    assert lab["app"].state.ingest._sources.connector_secret("m365") == secret_before
+    assert audit_rows(lab, "source.settings_change") == [
+        {
+            "source_id": "m365",
+            "from": {"content_types": ["Audit.SharePoint"]},
+            "to": {"content_types": ["Audit.SharePoint", "Audit.General"]},
+        }
+    ]
+    lab["clock"].now = NOW + timedelta(minutes=6)
+    ingest.run_once()  # the stored credential still signs in; the new feed starts
+    assert lab["fake"].started == ["Audit.SharePoint", "Audit.General"]
+    assert lab["admin"].get("/api/sources").json()[0]["status"]["error"] is None
+
+
+def test_settings_tied_to_the_credential_cannot_change(lab: dict[str, Any]) -> None:
+    add(lab, m365_body())
+    for change in ({"tenant_id": CLIENT}, {"cloud": "gcc"}, {"auth": "certificate"}):
+        res = patch(lab, {"connector": change})
+        assert res.status_code == 400 and "stored credential" in res.json()["detail"]
+    bad = patch(lab, {"connector": {"content_types": ["Audit.Nope"]}})
+    assert bad.status_code == 400
+    same = patch(lab, {"connector": {"backfill_hours": 24}})
+    assert same.status_code == 400 and "Nothing to change" in same.json()["detail"]
+    assert audit_rows(lab, "source.settings_change") == []

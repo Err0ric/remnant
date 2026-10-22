@@ -19,7 +19,12 @@ from uuid import UUID
 
 import duckdb
 
-from app.core.errors import QueryBusyError, QueryFailedError, QueryTimeoutError
+from app.core.errors import (
+    QueryBusyError,
+    QueryFailedError,
+    QueryMemoryError,
+    QueryTimeoutError,
+)
 from app.core.schema import duckdb_create_table_sql
 from app.engine.guard import DEFAULT_LIMIT, MAX_LIMIT, guard
 from app.engine.narrow import pinned_sources
@@ -33,6 +38,17 @@ INTEL_COLUMNS = (
     "indicator VARCHAR, type VARCHAR, feed VARCHAR, threat VARCHAR,"
     " first_seen VARCHAR, last_seen VARCHAR"
 )
+
+
+def spill_dir(data_dir: Path) -> Path:
+    """The folder queries spill to, under the data folder (always writable), emptied at
+    start: spill files from a stopped server are never read again (F46)."""
+    path = data_dir / "tmp" / "duckdb"
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    for leftover in path.iterdir():
+        if leftover.is_file():
+            leftover.unlink(missing_ok=True)
+    return path
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,8 +81,13 @@ class QueryEngine:
         threads: int | None = None,
         intel_file: Path | None = None,
         max_concurrent: int = 0,
+        temp_dir: Path | None = None,
     ) -> None:
         self._lake = lake_dir
+        # Where a query spills when it needs more than its memory share (F46). DuckDB's
+        # default is ".tmp" in the working directory, which a read-only container or a
+        # sandboxed service cannot write: the query then fails instead of spilling.
+        self._temp_dir = temp_dir
         self._intel = intel_file
         # Per query: DuckDB spills or fails past this, instead of growing without bound.
         self._memory_mb = memory_mb
@@ -124,7 +145,7 @@ class QueryEngine:
         except duckdb.InterruptException as exc:
             raise QueryTimeoutError(f"Query exceeded {limit_s:g}s and was stopped") from exc
         except (duckdb.OutOfMemoryException, MemoryError) as exc:
-            raise QueryFailedError(
+            raise QueryMemoryError(
                 "The query needs more memory than this server allows. Narrow the time range "
                 "or the sources, or aggregate before returning rows"
             ) from exc
@@ -220,6 +241,8 @@ class QueryEngine:
             config["threads"] = int(self._threads)
         if self._memory_mb:
             config["memory_limit"] = f"{int(self._memory_mb)}MB"
+        if self._temp_dir is not None:
+            config["temp_directory"] = str(self._temp_dir)
         con = duckdb.connect(":memory:", config=config)
         con.execute("SET TimeZone = 'UTC'")
         if dirs:

@@ -31,6 +31,9 @@ export interface NavGroup {
 }
 
 // Plain labels only (CLAUDE.md rule 12). Items not built yet stay visible but inert.
+// Daily work first (install finding F48): General, Investigate, Detect, AI usage, then
+// System > Health (also reached from the Dashboard health strip). Settings sits at the
+// bottom. The group is not called Health: one heading and one item of the same name.
 export const NAV_GROUPS: NavGroup[] = [
   {
     label: "General",
@@ -38,39 +41,6 @@ export const NAV_GROUPS: NavGroup[] = [
       // First, and the landing page when the viewer has a panel (ADR-0031).
       { id: "dashboard", label: "Dashboard", ready: true, page: "dashboard" },
       { id: "overview", label: "Overview", ready: true, page: "overview" },
-      {
-        id: "health",
-        label: "Health",
-        ready: true,
-        page: "health",
-        aliases: ["status", "sensors", "agents", "watched devices", "connectors health"],
-        sections: [
-          { id: "sources", label: "Sources" },
-          { id: "connectors", label: "Connectors" },
-          { id: "agents", label: "Agents" },
-          { id: "devices", label: "Watched devices" },
-          { id: "alerts", label: "Alerts and schedules" },
-        ],
-      },
-    ],
-  },
-  {
-    label: "AI",
-    items: [
-      {
-        id: "ai",
-        label: "AI usage",
-        ready: true,
-        page: "ai",
-        aliases: ["shadow ai", "mcp servers", "claude usage", "dlp"],
-        sections: [
-          { id: "services", label: "Services" },
-          { id: "agents", label: "Agents" },
-          { id: "mcp", label: "MCP servers" },
-          { id: "people", label: "Claude usage" },
-          { id: "settings", label: "Review and alerts", adminOnly: true },
-        ],
-      },
     ],
   },
   {
@@ -92,6 +62,52 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { id: "rules", label: "Detection rules", ready: true, page: "rules" },
       { id: "schedules", label: "Schedules", ready: true, page: "schedules" },
+    ],
+  },
+  {
+    label: "AI",
+    items: [
+      {
+        id: "ai",
+        label: "AI usage",
+        ready: true,
+        page: "ai",
+        aliases: ["shadow ai", "mcp servers", "claude usage", "dlp", "ai agents"],
+        sections: [
+          { id: "services", label: "Services" },
+          { id: "agents", label: "Agents" },
+          { id: "mcp", label: "MCP servers" },
+          { id: "people", label: "Claude usage" },
+          { id: "settings", label: "Review and alerts", adminOnly: true },
+        ],
+      },
+    ],
+  },
+  {
+    label: "System",
+    items: [
+      {
+        id: "health",
+        label: "Health",
+        ready: true,
+        page: "health",
+        aliases: [
+          "status",
+          "sensors",
+          "endpoint agents",
+          "collectors",
+          "watched devices",
+          "connectors health",
+        ],
+        sections: [
+          { id: "sources", label: "Sources" },
+          { id: "connectors", label: "Connectors" },
+          // "Agents" alone is the AI agents tab; these are the log collectors (F48).
+          { id: "agents", label: "Endpoint agents" },
+          { id: "devices", label: "Watched devices" },
+          { id: "alerts", label: "Alerts and schedules" },
+        ],
+      },
     ],
   },
 ];

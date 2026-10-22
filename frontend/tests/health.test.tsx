@@ -34,8 +34,8 @@ describe("Health (ADR-0019)", () => {
     const unhealthy = screen.getByRole("button", { name: /Unhealthy/ });
     expect(await within(unhealthy).findByText("1")).toBeVisible(); // the silent sensor
 
-    await userEvent.click(screen.getByRole("tab", { name: /Agents/ }));
-    const agents = await screen.findByRole("table", { name: "Agents" });
+    await userEvent.click(screen.getByRole("tab", { name: /Endpoint agents/ }));
+    const agents = await screen.findByRole("table", { name: "Endpoint agents" });
     expect(within(agents).getByText("ws-0042")).toBeVisible();
     expect(within(agents).getByText("Last reported 2 d ago")).toBeVisible();
 

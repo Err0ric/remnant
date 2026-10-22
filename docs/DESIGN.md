@@ -108,18 +108,19 @@ Shown as a filled badge with a text label, never color alone.
 | [logo] Remnant | Security workspace  [ Jump to  Ctrl K ]     env  theme  user  sign out |  48px top bar
 +------------------+------------------------------------------------------------+
 | General          | Home > Investigate > Search                                |
-|   Overview       | Search                                       (page title)  |
-|   Health         | Run query  Save  Schedule  Export  Columns   Last run ...  |  command bar
-| AI               |------------------------------------------------------------|
-|   AI usage       | [Time range: Last 24h] [Source: linux_sshd] + Add filter   |  filter chips
-| Investigate      | Simple | Ask in plain English | SQL     (tabs)            |
-| > Search         | +--------------------------------------------------------+ |
-|   Investigations | | Results  23 items                                      | |
-|   Saved searches | | > row                                                  | |
-| Detect           | | v row (expanded: fields | raw, actions)                | |
+|   Dashboard      | Search                                       (page title)  |
+|   Overview       | Run query  Save  Schedule  Export  Columns   Last run ...  |  command bar
+| Investigate      |------------------------------------------------------------|
+| > Search         | [Time range: Last 24h] [Source: linux_sshd] + Add filter   |  filter chips
+|   Investigations | Simple | Ask in plain English | SQL     (tabs)            |
+|   Saved searches | +--------------------------------------------------------+ |
+| Detect           | | Results  23 items                                      | |
 |   Detection rules| | > row                                                  | |
-|   Schedules      | | 1 to 10 of 23                    Previous  Next         | |
-|   Dashboard      | +--------------------------------------------------------+ |
+|   Schedules      | | v row (expanded: fields | raw, actions)                | |
+| AI               | | > row                                                  | |
+|   AI usage       | | 1 to 10 of 23                    Previous  Next         | |
+| System           | +--------------------------------------------------------+ |
+|   Health         |                                                            |
 |                  |                                                            |
 | ---------------- |                                                            |
 |   Settings       |  (pinned to the foot; opens its own sub-nav)               |
@@ -127,7 +128,7 @@ Shown as a filled badge with a text label, never color alone.
 ```
 
 - **Top bar** is dark in both themes, 48px, and stays in view on scroll. Contains product mark, workspace label, a compact **Jump to** button with the shortcut (it opens the command palette, so it is styled as a button, not a text field), an optional environment label (`server.environment_label`, for example "Lab"; hidden when unset, never the raw host or IP), theme toggle, and user menu.
-- **Left nav** is 220px, labeled, grouped by section (General, AI, Investigate, Detect). Configuration lives under **Settings**, which has its own sub-nav (Start here, Data, Access, AI, Alerts, Records; D70). Items hidden by role (an Auditor sees no Settings items they cannot use). Settings stays in view on short screens: the section list scrolls, the pinned entry does not. Collapses to an icon rail below 1100px and stacks on phones. From tablet width up it stays in view under the top bar, and **Settings** is pinned to its foot below a divider, out of the way of daily work. A page with tabs (AI usage, Health) always lists them under its nav item, indented on a hairline, so every tab is one click away; only the open page marks its current tab; the tab lives in the URL (`/ai#agents`) so nav links, Back, and the command palette (`AI usage › Agents`) all reach it.
+- **Left nav** is 220px, labeled, grouped by section in order of daily use (F48): General (Dashboard, Overview), Investigate, Detect, AI, System (Health, also reached from the Dashboard health strip). One label per meaning: **Agents** is the AI agents tab of AI usage; the Health tab for log collectors is **Endpoint agents**. Configuration lives under **Settings**, which has its own sub-nav (Start here, Data, Access, AI, Alerts, Records; D70). Items hidden by role (an Auditor sees no Settings items they cannot use). Settings stays in view on short screens: the section list scrolls, the pinned entry does not. Collapses to an icon rail below 1100px and stacks on phones. From tablet width up it stays in view under the top bar, and **Settings** is pinned to its foot below a divider, out of the way of daily work. A page with tabs (AI usage, Health) always lists them under its nav item, indented on a hairline, so every tab is one click away; only the open page marks its current tab; the tab lives in the URL (`/ai#agents`) so nav links, Back, and the command palette (`AI usage › Agents`) all reach it.
 - **Page header**: breadcrumb, title, then a command bar of text buttons. The primary command is in accent text; destructive commands are never in the command bar.
 
 ---

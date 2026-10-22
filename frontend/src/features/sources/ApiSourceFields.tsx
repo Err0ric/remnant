@@ -25,8 +25,19 @@ export const M365_DEFAULTS: M365Settings = {
     "Audit.General",
   ],
   graph: ["signins", "directory_audits"],
-  backfill_hours: 24,
+  // The audit API keeps 7 days; read all of it on first run (install finding F43).
+  backfill_hours: 168,
 };
+
+/** "ok" is Works; "ok: note" is Works with the note (for example, no subscription yet). */
+export function feedResult(result: string): string {
+  if (result === "ok") return "Works";
+  if (result.startsWith("ok: ")) {
+    const note = result.slice(4);
+    return `Works. ${note.charAt(0).toUpperCase()}${note.slice(1)}.`;
+  }
+  return result;
+}
 
 export const ANTHROPIC_DEFAULTS: AnthropicSettings = {
   key_type: "admin",
@@ -34,7 +45,7 @@ export const ANTHROPIC_DEFAULTS: AnthropicSettings = {
   backfill_days: 7,
 };
 
-const CONTENT: { id: M365ContentType; label: string; needs: string }[] = [
+export const CONTENT: { id: M365ContentType; label: string; needs: string }[] = [
   { id: "Audit.AzureActiveDirectory", label: "Entra ID audit", needs: "ActivityFeed.Read" },
   { id: "Audit.Exchange", label: "Exchange", needs: "ActivityFeed.Read" },
   { id: "Audit.SharePoint", label: "SharePoint and OneDrive", needs: "ActivityFeed.Read" },
@@ -45,12 +56,12 @@ const CONTENT: { id: M365ContentType; label: string; needs: string }[] = [
   },
   { id: "DLP.All", label: "DLP rule matches", needs: "ActivityFeed.ReadDlp" },
 ];
-const GRAPH: { id: M365GraphFeed; label: string; needs: string }[] = [
+export const GRAPH: { id: M365GraphFeed; label: string; needs: string }[] = [
   { id: "signins", label: "Sign-ins (Entra ID P1 or P2)", needs: "AuditLog.Read.All" },
   { id: "directory_audits", label: "Directory changes", needs: "AuditLog.Read.All" },
   { id: "alerts", label: "Security alerts (Defender, Purview)", needs: "SecurityAlert.Read.All" },
 ];
-const FEEDS: { id: AnthropicFeed; label: string; needs: string }[] = [
+export const FEEDS: { id: AnthropicFeed; label: string; needs: string }[] = [
   { id: "usage", label: "API usage by model, workspace, and key (hourly)", needs: "Admin key" },
   { id: "cost", label: "API cost (daily)", needs: "Admin key" },
   { id: "claude_code", label: "Claude Code per person (daily)", needs: "Admin or Analytics key" },
@@ -77,7 +88,7 @@ interface ChecklistProps<T extends string> {
   onChange: (next: T[]) => void;
 }
 
-function Checklist<T extends string>({ legend, items, value, onChange }: ChecklistProps<T>) {
+export function Checklist<T extends string>({ legend, items, value, onChange }: ChecklistProps<T>) {
   return (
     <fieldset className="flex flex-col gap-1">
       <legend className="mb-1 text-sm font-semibold">{legend}</legend>
@@ -217,7 +228,7 @@ export function ApiSourceFields(props: ApiSourceFieldsProps) {
             </div>
             <Field
               label="On first run, read back (hours)"
-              help="At most 168: the audit API keeps 7 days."
+              help="At most 168 (7 days, all the audit API keeps). A busy tenant's 7 days can be hundreds of thousands of events; the first run catches up over a few polls."
               type="number"
               min={0}
               max={168}
@@ -305,8 +316,8 @@ export function ApiSourceFields(props: ApiSourceFieldsProps) {
             {Object.entries(test.data.feeds).map(([feed, result]) => (
               <li key={feed} className="flex flex-wrap gap-2">
                 <span className="font-mono">{feed}</span>
-                <span className={result === "ok" ? "text-ok" : "text-warn"}>
-                  {result === "ok" ? "Works" : result}
+                <span className={result.startsWith("ok") ? "text-ok" : "text-warn"}>
+                  {feedResult(result)}
                 </span>
               </li>
             ))}
