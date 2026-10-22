@@ -11,7 +11,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
-from app.core.errors import ProviderError
+from app.core.errors import ProviderBusyError, ProviderError, ProviderUnreachableError
 from app.llm.provider import Locality
 
 MAX_RESPONSE_BYTES = 64 * 1024
@@ -67,16 +67,36 @@ class PinnedJsonClient:
                     method, url, json=body, headers=headers, extensions=extensions
                 ) as res,
             ):
+                if res.status_code in BUSY_STATUS:
+                    raise ProviderBusyError(
+                        f"Model server busy (HTTP {res.status_code})",
+                        _retry_after(res.headers.get("retry-after")),
+                    )
                 if res.status_code != 200:
+                    head = res.read()[:512].decode("utf-8", "replace").lower()
+                    if "busy" in head:  # Ollama: "server busy, please try again"
+                        raise ProviderBusyError(f"Model server busy (HTTP {res.status_code})")
                     raise ProviderError(f"Provider returned HTTP {res.status_code}")
                 data = b""
                 for chunk in res.iter_bytes():
                     data += chunk
                     if len(data) > MAX_RESPONSE_BYTES:
                         raise ProviderError("Provider response too large")
+        except httpx.ConnectError as exc:
+            raise ProviderUnreachableError(f"Cannot reach provider: {type(exc).__name__}") from exc
         except httpx.HTTPError as exc:
             raise ProviderError(f"Cannot reach provider: {type(exc).__name__}") from exc
         try:
             return json.loads(data)
         except ValueError as exc:
             raise ProviderError("Provider returned invalid JSON") from exc
+
+
+BUSY_STATUS = frozenset({429, 503})
+
+
+def _retry_after(value: str | None) -> int | None:
+    """Retry-After in seconds (the date form is rare from model servers and ignored)."""
+    if value and value.strip().isdigit():
+        return min(int(value.strip()), 600)
+    return None

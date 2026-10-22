@@ -37,9 +37,13 @@ from app.core.chain import GENESIS, audit_hash, llm_chain_content
 from app.core.config import LLMConfig
 from app.core.errors import (
     AnswerShapeError,
+    CallCancelledError,
     ClassificationBlockedError,
+    NotFoundError,
+    ProviderBusyError,
     ProviderConfigError,
     ProviderError,
+    ProviderUnreachableError,
 )
 from app.core.ids import RESERVED_SOURCE_PREFIX, new_id
 from app.engine.duckdb import QueryEngine, QueryScope
@@ -48,6 +52,19 @@ from app.llm.prompt_files import PROMPT_DIR, Prompt, load_prompt
 from app.llm.provider import ChatMessage, Locality, Provider, ProviderHealth, ProviderResponse
 from app.llm.providers.anthropic import AnthropicProvider
 from app.llm.providers.openai_compat import OpenAICompatibleProvider
+from app.llm.queue import (
+    CANCELLED,
+    DEFAULT_WAIT_S,
+    QUEUES,
+    ProviderQueues,
+    WaitCancelledError,
+    WaitTimedOutError,
+    backoff_s,
+    health_ok,
+    recently_healthy,
+    sleep_until,
+    slots_for,
+)
 from app.llm.redact import PURPOSES as REDACTED_PURPOSES
 from app.llm.redact import Redactor, derive_key
 from app.llm.registry import ProviderRecord, ProviderStore
@@ -121,9 +138,17 @@ def health(
     """Lists models. Sends no event data, so it needs no classification check."""
     endpoint = provider_endpoint(record.kind, record.base_url, trusted_local_hosts)
     try:
+        # No slot (ADR-0028 row 7): the check must not wait behind inference.
         models = build_provider(record, store, endpoint).models()
+    except ProviderBusyError:
+        return ProviderHealth(ok=True, detail="Busy: answering another request", busy=True)
+    except ProviderUnreachableError as exc:
+        if QUEUES.busy(record.provider_id):
+            return ProviderHealth(ok=True, detail="Busy: answering another request", busy=True)
+        return ProviderHealth(ok=False, detail=str(exc))
     except ProviderError as exc:
         return ProviderHealth(ok=False, detail=str(exc))
+    health_ok(record.provider_id)
     found = record.model in models if record.model else True
     detail = "Reachable" if found else f"Reachable, but model {record.model} is not installed"
     return ProviderHealth(ok=found, detail=detail, models=models[:200])
@@ -191,6 +216,7 @@ class LLMGate:
         provider_factory: ProviderFactory = build_provider,
         prompt_dir: Path = PROMPT_DIR,
         redaction_key: Callable[[], bytes] | None = None,
+        queues: ProviderQueues = QUEUES,
     ) -> None:
         self._meta = meta
         self._providers = providers
@@ -200,6 +226,7 @@ class LLMGate:
         self._factory = provider_factory
         self._prompt_dir = prompt_dir
         self._redaction_key = redaction_key
+        self._queues = queues
 
     def call(self, req: GateRequest) -> GateResult:
         record = self._providers.get(req.provider_id)  # unknown id: nothing to call or record
@@ -252,21 +279,42 @@ class LLMGate:
         self._insert(row)  # fail closed: no row, no call
 
         started = time.perf_counter()
+        wait = _Wait()
         try:
             provider = self._factory(record, self._providers, endpoint)
-            response = provider.chat(
-                messages,
-                tools=tools,
-                json_mode=req.response_model is not None and not tools,
-                max_tokens=req.max_tokens,
-                temperature=req.temperature,
+            response = self._queued(
+                req,
+                record,
+                endpoint,
+                scope,
+                sources,
+                wait,
+                lambda: provider.chat(
+                    messages,
+                    tools=tools,
+                    json_mode=req.response_model is not None and not tools,
+                    max_tokens=req.max_tokens,
+                    temperature=req.temperature,
+                ),
             )
+        except _RefusedError as refusal:  # a re-check before a retry refused (ADR-0028)
+            self._finish(row["call_id"], started, None, refusal.error, wait=wait)
+            refusal.exc.call_id = row["call_id"]  # type: ignore[attr-defined]  # for the caller's audit row
+            raise refusal.exc from None
+        except CallCancelledError as exc:
+            self._finish(row["call_id"], started, None, "cancelled", wait=wait)
+            exc.call_id = row["call_id"]  # type: ignore[attr-defined]  # for the caller's audit row
+            raise
+        except ProviderBusyError as exc:
+            self._finish(row["call_id"], started, None, "provider_busy", wait=wait)
+            exc.call_id = row["call_id"]  # type: ignore[attr-defined]  # for the caller's audit row
+            raise
         except ProviderError as exc:
-            self._finish(row["call_id"], started, None, "provider_error")
+            self._finish(row["call_id"], started, None, "provider_error", wait=wait)
             exc.call_id = row["call_id"]  # type: ignore[attr-defined]  # for the caller's audit row
             raise
         except Exception:
-            self._finish(row["call_id"], started, None, "internal_error")
+            self._finish(row["call_id"], started, None, "internal_error", wait=wait)
             raise
 
         # The audit row keeps what the model sent (`sent_back`); everything that reads the
@@ -276,7 +324,7 @@ class LLMGate:
             response = redactor.restore(response)
         offered = {t["function"]["name"] for t in tools or []}
         if any(c.name not in offered for c in response.tool_calls):
-            self._finish(row["call_id"], started, sent_back, "tool_not_offered")
+            self._finish(row["call_id"], started, sent_back, "tool_not_offered", wait=wait)
             raise ProviderError("The model asked for a tool it was not offered")
         parsed: BaseModel | None = None
         if req.response_model is not None and not response.tool_calls:
@@ -284,11 +332,11 @@ class LLMGate:
                 parsed = req.response_model.model_validate_json(answer_json(response.text))
             except ValidationError as exc:
                 if response.truncated:
-                    self._finish(row["call_id"], started, sent_back, "truncated")
+                    self._finish(row["call_id"], started, sent_back, "truncated", wait=wait)
                     raise ProviderError(
                         _truncated_message(record.reasoning, response, req.max_tokens)
                     ) from exc
-                self._finish(row["call_id"], started, sent_back, "schema_invalid")
+                self._finish(row["call_id"], started, sent_back, "schema_invalid", wait=wait)
                 raise AnswerShapeError("The model returned an answer in the wrong shape") from exc
         check: Literal["pass", "fail"] | None = None
         cited: list[str] | None = None
@@ -296,7 +344,7 @@ class LLMGate:
             cite = getattr(parsed, "cited_event_ids", None)
             cited = list(cite()) if callable(cite) else []
             check = citation_check(cited, req.citable_event_ids)
-        self._finish(row["call_id"], started, sent_back, None, cited, check)
+        self._finish(row["call_id"], started, sent_back, None, cited, check, wait=wait)
         log.info(
             "llm.call",
             call_id=row["call_id"],
@@ -305,6 +353,116 @@ class LLMGate:
             citation_check=check,
         )
         return GateResult(row["call_id"], endpoint.locality, response, parsed, check)
+
+    # --- the queue and busy retries (ADR-0028) -------------------------------------------
+
+    def _queued(
+        self,
+        req: GateRequest,
+        record: ProviderRecord,
+        endpoint: Endpoint,
+        scope: QueryScope,
+        sources: list[str],
+        wait: "_Wait",
+        send: Callable[[], ProviderResponse],
+    ) -> ProviderResponse:
+        """Send through the provider's queue, retrying busy answers within the budget
+        (ADR-0028 rows 1 to 6). Raises ProviderBusyError when the budget runs out.
+
+        `send` holds the adapter built once for this call, pinned to the address the
+        locality decision was made on, so every attempt connects there (no re-resolving).
+        Before each retry the provider and the classification are checked again
+        (`_recheck`). A cloud provider is not retried unless it has `max_concurrent` set:
+        fewer automatic re-sends of data to a cloud endpoint."""
+        local = endpoint.locality == "local"
+        retries_allowed = local or record.max_concurrent is not None
+        limit = slots_for(record.max_concurrent, local)
+        budget = record.wait_budget_s or DEFAULT_WAIT_S
+        deadline = time.monotonic() + budget
+        cancelled = CANCELLED.get()
+        busy_msg = f"The model was busy for {budget} seconds. Try again in a moment."
+        while True:
+            t0 = time.monotonic()
+            try:
+                self._queues.acquire(record.provider_id, limit, deadline, cancelled)
+            except WaitTimedOutError:
+                wait.add(t0)
+                raise ProviderBusyError(busy_msg, retry_after_s=15) from None
+            except WaitCancelledError:
+                wait.add(t0)
+                raise CallCancelledError("Cancelled while waiting for the model") from None
+            wait.add(t0)
+            retry_after: int | None = None
+            try:
+                if wait.retries:  # immediately before each re-send, after any wait
+                    self._recheck(req, record, endpoint, scope, sources)
+                return send()
+            except ProviderBusyError as exc:
+                if not retries_allowed:
+                    raise ProviderBusyError(
+                        "The model service is busy. Try again in a moment.", exc.retry_after_s
+                    ) from None
+                retry_after = exc.retry_after_s
+            except ProviderUnreachableError:
+                # A refusal from a server that answered recently is "occupied" (row 4).
+                if not retries_allowed or not recently_healthy(record.provider_id):
+                    raise
+            finally:
+                self._queues.release(record.provider_id)
+            wait.retries += 1
+            pause = backoff_s(wait.retries, retry_after)
+            if time.monotonic() + pause >= deadline:
+                raise ProviderBusyError(busy_msg, retry_after_s=15)
+            t0 = time.monotonic()
+            try:
+                sleep_until(pause, deadline, cancelled)
+            except WaitCancelledError:
+                raise CallCancelledError("Cancelled while waiting for the model") from None
+            finally:
+                wait.add(t0)
+
+    def _recheck(
+        self,
+        req: GateRequest,
+        first: ProviderRecord,
+        endpoint: Endpoint,
+        scope: QueryScope,
+        sources: list[str],
+    ) -> None:
+        """Before a retry: the provider is still enabled and unchanged, its locality is the
+        one decided for the first attempt, and (for cloud) no source in scope is now
+        local only. Raises _RefusedError; nothing is sent."""
+        try:
+            now = self._providers.get(req.provider_id)
+        except NotFoundError as exc:
+            raise _RefusedError(
+                "provider_disabled", ProviderConfigError("This provider was removed")
+            ) from exc
+        if not now.enabled:
+            raise _RefusedError(
+                "provider_disabled", ProviderConfigError("This provider was disabled")
+            )
+        if (now.kind, now.base_url) != (first.kind, first.base_url):
+            raise _RefusedError(
+                "provider_changed",
+                ProviderConfigError("This provider's address changed; ask again"),
+            )
+        again = provider_endpoint(now.kind, now.base_url, self._config.trusted_local_hosts)
+        if again.locality != endpoint.locality:
+            raise _RefusedError(
+                "locality_changed",
+                ProviderConfigError("This provider no longer resolves the same way; ask again"),
+            )
+        if endpoint.locality == "cloud":
+            blocked = self._local_only(scope, sources)
+            if blocked:
+                log.warning("llm.blocked_on_retry", sources=blocked)
+                block = ClassificationBlockedError(
+                    "This provider is a cloud service and the search now includes local-only "
+                    "sources: " + ", ".join(blocked),
+                    sources=blocked,
+                )
+                raise _RefusedError("classification_blocked", block, blocked=True)
 
     # --- checks before anything is sent ---------------------------------------------------
 
@@ -398,6 +556,7 @@ class LLMGate:
         error: str | None,
         cited: list[str] | None = None,
         check: str | None = None,
+        wait: "_Wait | None" = None,
     ) -> None:
         body = _response_text(response) if response is not None else None
         done = {
@@ -410,6 +569,9 @@ class LLMGate:
             "error": error,
             "cited_event_ids": json.dumps(sorted(set(cited))[:500]) if cited is not None else None,
             "citation_check": check,
+            # Outside the chain hash (core/chain.py CHAIN_COLUMNS), so old rows stay valid.
+            "queue_wait_ms": wait.ms if wait else None,
+            "busy_retries": wait.retries if wait else None,
         }
         try:
             with self._meta.connect() as con:
@@ -429,6 +591,17 @@ class LLMGate:
             # The call is already recorded as started; losing the outcome must not hide
             # the provider's error or answer from the caller.
             log.error("llm.audit_finish_failed", call_id=call_id)
+
+
+class _Wait:
+    """Time spent waiting for a slot or between busy retries, and the retry count."""
+
+    def __init__(self) -> None:
+        self.ms = 0
+        self.retries = 0
+
+    def add(self, since: float) -> None:
+        self.ms += int((time.monotonic() - since) * 1000)
 
 
 def _chain(con: sqlite3.Connection, row: dict[str, Any]) -> dict[str, Any]:

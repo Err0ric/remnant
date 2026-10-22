@@ -868,6 +868,12 @@ export interface ProviderConfig {
   redact: boolean;
   /** Thinking control sent as reasoning_effort; null: the model's default. */
   reasoning: "none" | "low" | "medium" | "high" | null;
+  /** ADR-0028: requests sent at once (null: 1 for local, no limit for cloud). */
+  max_concurrent: number | null;
+  /** Seconds a request waits for the model before "busy" (null: 120). */
+  wait_budget_s: number | null;
+  effective_slots: number | null;
+  effective_wait_s: number;
 }
 
 export interface ProviderInput {
@@ -882,10 +888,22 @@ export interface ProviderInput {
   api_key?: string;
   clear_api_key?: boolean;
   acknowledge_cloud?: boolean;
+  /** 0 returns to the default. */
+  max_concurrent?: number;
+  wait_budget_s?: number;
+}
+
+/** How busy a provider is now (ADR-0028): counts only. */
+export interface ProviderQueue {
+  slots: number | null;
+  running: number;
+  waiting: number;
 }
 
 export interface ProviderHealth {
   ok: boolean;
+  /** Answering another request: occupied, not down. */
+  busy?: boolean;
   detail: string;
   models: string[];
 }
@@ -1096,6 +1114,9 @@ export interface AuditLlmCall {
   prompt_tokens: number | null;
   completion_tokens: number | null;
   latency_ms: number | null;
+  /** ADR-0028: time waiting for a free slot, and busy answers retried. */
+  queue_wait_ms?: number | null;
+  busy_retries?: number | null;
   citation_check: "pass" | "fail" | null;
   error: string | null;
   finished_at: string | null;
@@ -1228,8 +1249,12 @@ export const api = {
     }),
   scheduleDeliveries: (id: string) =>
     request<AlertDelivery[]>(`/api/schedules/${encodeURIComponent(id)}/deliveries`),
-  explain: (body: { event_ids: string[]; provider_id?: string; question?: string }) =>
-    request<ExplainResponse>("/api/explain", post(body)),
+  explain: (
+    body: { event_ids: string[]; provider_id?: string; question?: string },
+    signal?: AbortSignal,
+  ) => request<ExplainResponse>("/api/explain", { ...post(body), signal }),
+  providerQueue: (id: string) =>
+    request<ProviderQueue>(`/api/ask/providers/${encodeURIComponent(id)}/queue`),
   schedules: () => request<Schedule[]>("/api/schedules"),
   overview: () => request<Overview>("/api/overview"),
   auditEvents: (f: AuditFilters, before?: number) =>
@@ -1271,7 +1296,8 @@ export const api = {
   testProvider: (id: string) =>
     request<ProviderHealth>(`/api/providers/${encodeURIComponent(id)}/test`, { method: "POST" }),
   askProviders: () => request<AskProvider[]>("/api/ask/providers"),
-  ask: (body: AskRequest) => request<AskResponse>("/api/ask", post(body)),
+  ask: (body: AskRequest, signal?: AbortSignal) =>
+    request<AskResponse>("/api/ask", { ...post(body), signal }),
   columns: () => request<ColumnInfo[]>("/api/schema/columns"),
   authState: () => request<AuthState>("/api/auth/state"),
   setup: (body: { token: string; username: string; password: string }) =>

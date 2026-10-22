@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, StringConstraints
 from starlette.concurrency import run_in_threadpool
 
 from app.api.access import client_ip, require_role
+from app.api.cancel import watch_disconnect
 from app.auth.service import AuthService
 from app.auth.users import User
 from app.core.config import AppConfig
@@ -24,6 +25,7 @@ from app.engine.views import permitted_sources, scope_sources
 from app.llm import gate
 from app.llm.agent import AskAgent, AskExample, AskTurn
 from app.llm.provider import Locality
+from app.llm.queue import QUEUES
 from app.llm.registry import ProviderRecord, ProviderStore
 from app.meta.db import MetaDB
 from app.search.saved import SavedSearchStore
@@ -103,6 +105,23 @@ async def ask_providers(request: Request, _: AskUser) -> list[AskProvider]:
     return await run_in_threadpool(_enabled, request)
 
 
+class QueueOut(BaseModel):
+    """How busy a provider is right now (ADR-0028 row 10). Counts only, no content."""
+
+    slots: int | None  # None: no queue
+    running: int
+    waiting: int
+
+
+@router.get("/ask/providers/{provider_id}/queue")
+async def provider_queue(provider_id: str, request: Request, _: AskUser) -> QueueOut:
+    choices = await run_in_threadpool(_enabled, request)
+    if provider_id not in {p.provider_id for p in choices}:
+        raise ProviderConfigError("That AI provider is not available")
+    st = QUEUES.status(provider_id)
+    return QueueOut(slots=st.limit, running=st.running, waiting=st.waiting)
+
+
 @router.post("/ask")
 async def ask(body: AskRequest, request: Request, user: AskUser) -> AskResponse:
     meta: MetaDB = request.app.state.meta
@@ -132,16 +151,17 @@ async def ask(body: AskRequest, request: Request, user: AskUser) -> AskResponse:
         "examples": [s.id for s in found],
     }
     try:
-        with _one_at_a_time(user.user_id):
-            outcome = await run_in_threadpool(
-                agent.ask,
-                user.user_id,
-                chosen.provider_id,
-                scope,
-                body.question,
-                history,
-                examples,
-            )
+        async with watch_disconnect(request):
+            with _one_at_a_time(user.user_id):
+                outcome = await run_in_threadpool(
+                    agent.ask,
+                    user.user_id,
+                    chosen.provider_id,
+                    scope,
+                    body.question,
+                    history,
+                    examples,
+                )
     except Exception as exc:  # every outcome is audited, including unexpected ones
         detail["error"] = type(exc).__name__
         await run_in_threadpool(

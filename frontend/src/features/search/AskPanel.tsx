@@ -1,5 +1,13 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useEffect, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
+import { ModelWait, isAborted, isModelBusy } from "@/components/ai/ModelWait";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
 import { ApiError, api, type AskResponse, type AskTurn } from "@/lib/api";
 import { navigate } from "@/lib/route";
 import { setAskProvider, useAskProvider } from "@/lib/askProvider";
@@ -52,15 +60,22 @@ export function AskPanel({
     providers.data?.[0]?.provider_id ??
     "";
 
+  // Cancel aborts the request; the server then frees its place in the model queue.
+  const abort = useRef<AbortController | null>(null);
   const ask = useMutation({
-    mutationFn: (q: string) =>
-      api.ask({
-        question: q,
-        provider_id: chosen || undefined,
-        start,
-        sources: sources.length ? sources : undefined,
-        history: turns.slice(-MAX_TURNS),
-      }),
+    mutationFn: (q: string) => {
+      abort.current = new AbortController();
+      return api.ask(
+        {
+          question: q,
+          provider_id: chosen || undefined,
+          start,
+          sources: sources.length ? sources : undefined,
+          history: turns.slice(-MAX_TURNS),
+        },
+        abort.current.signal,
+      );
+    },
     onSuccess: (res, q) => {
       setAnswer(res);
       const next = [...turns, { question: q, sql: res.sql }].slice(-MAX_TURNS);
@@ -205,7 +220,31 @@ export function AskPanel({
         </div>
       </form>
 
-      {ask.isError ? (
+      <ModelWait
+        providerId={chosen}
+        label="Writing SQL"
+        pending={ask.isPending}
+        onCancel={() => abort.current?.abort()}
+      />
+      {ask.isError && isAborted(ask.error) ? (
+        <p role="status" className="text-sm text-text-muted">
+          Cancelled.
+        </p>
+      ) : ask.isError && isModelBusy(ask.error) ? (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center gap-3 rounded border border-warn px-3 py-2 text-sm"
+        >
+          <span>{askError(ask.error)}</span>
+          <button
+            type="button"
+            onClick={() => ask.variables !== undefined && ask.mutate(ask.variables)}
+            className="h-7 rounded border border-border-strong px-3 hover:bg-surface-head"
+          >
+            Retry
+          </button>
+        </div>
+      ) : ask.isError ? (
         <div
           role="alert"
           className="rounded border border-danger bg-sev-critical-bg px-3 py-2 text-sm text-sev-critical-text"

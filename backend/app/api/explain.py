@@ -12,6 +12,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.api.access import client_ip
 from app.api.ask import AskProvider, AskUser, _enabled, _one_at_a_time
+from app.api.cancel import watch_disconnect
 from app.auth.service import AuthService
 from app.core.errors import ProviderConfigError
 from app.engine.duckdb import QueryScope
@@ -66,15 +67,16 @@ async def explain(body: ExplainRequest, request: Request, user: AskUser) -> Expl
         "requested": len(body.event_ids),
     }
     try:
-        with _one_at_a_time(user.user_id):
-            out = await run_in_threadpool(
-                explainer.explain,
-                user.user_id,
-                chosen.provider_id,
-                QueryScope(sources=allowed),
-                body.event_ids,
-                body.question,
-            )
+        async with watch_disconnect(request):
+            with _one_at_a_time(user.user_id):
+                out = await run_in_threadpool(
+                    explainer.explain,
+                    user.user_id,
+                    chosen.provider_id,
+                    QueryScope(sources=allowed),
+                    body.event_ids,
+                    body.question,
+                )
     except Exception as exc:  # every outcome is audited
         detail["error"] = type(exc).__name__
         await run_in_threadpool(

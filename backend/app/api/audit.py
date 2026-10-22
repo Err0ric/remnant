@@ -55,6 +55,8 @@ class LlmCallOut(BaseModel):
     prompt_tokens: int | None
     completion_tokens: int | None
     latency_ms: int | None
+    queue_wait_ms: int | None = None  # ADR-0028: time waiting for the model
+    busy_retries: int | None = None
     citation_check: str | None
     error: str | None
     finished_at: str | None

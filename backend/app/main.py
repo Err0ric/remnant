@@ -45,7 +45,7 @@ from app.api.integrity import router as integrity_router
 from app.api.mcp import router as mcp_router
 from app.api.meta import app_version
 from app.api.meta import router as meta_router
-from app.api.middleware import HostOriginMiddleware, SecurityMiddleware
+from app.api.middleware import HostOriginMiddleware, SecurityMiddleware, TrustedProxyMiddleware
 from app.api.otlp import router as otlp_router
 from app.api.overview import router as overview_router
 from app.api.providers import router as providers_router
@@ -66,6 +66,7 @@ from app.core.config import AppConfig, is_loopback_host, load_config
 from app.core.errors import (
     AnswerShapeError,
     AuthRequiredError,
+    CallCancelledError,
     ClassificationBlockedError,
     CloudAckRequiredError,
     ConfigError,
@@ -80,8 +81,10 @@ from app.core.errors import (
     NotFoundError,
     ParamInvalidError,
     PayloadTooLargeError,
+    ProviderBusyError,
     ProviderConfigError,
     ProviderError,
+    ProviderUnreachableError,
     QueryFailedError,
     QueryRejectedError,
     QueryTimeoutError,
@@ -99,6 +102,7 @@ from app.core.errors import (
 )
 from app.core.logging import configure_logging
 from app.core.memory import budget_note, server_budget_mb
+from app.core.net import parse_trusted
 from app.detect.runner import RuleRunner
 from app.detect.store import RuleStore
 from app.engine.duckdb import QueryEngine, QueryScope
@@ -166,6 +170,9 @@ _ERROR_STATUS: dict[type[Exception], tuple[int, str]] = {
     UnsupportedMediaError: (415, "unsupported_media"),
     CloudAckRequiredError: (409, "cloud_ack_required"),
     ProviderError: (502, "provider_error"),
+    ProviderUnreachableError: (502, "provider_error"),
+    ProviderBusyError: (503, "provider_busy"),
+    CallCancelledError: (409, "cancelled"),
     AnswerShapeError: (502, "provider_error"),
     ProviderConfigError: (400, "provider_invalid"),
     ClassificationBlockedError: (403, "classification_blocked"),
@@ -389,6 +396,8 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         HostOriginMiddleware, loopback=loopback, extra_hosts=config.server.public_names
     )
     app.add_middleware(SecurityMiddleware, https=not loopback)
+    # Outermost: everything inside sees the resolved client address (ADR-0027).
+    app.add_middleware(TrustedProxyMiddleware, trusted=parse_trusted(config.server.trusted_proxies))
     app.state.config = config
     app.state.meta = meta
     oidc = None
@@ -610,7 +619,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     async def app_error(_: Request, exc: Exception) -> JSONResponse:
         code, kind = _ERROR_STATUS[type(exc)]
         headers = {}
-        if isinstance(exc, RateLimitedError):
+        if isinstance(exc, RateLimitedError | ProviderBusyError) and exc.retry_after_s:
             headers["Retry-After"] = str(exc.retry_after_s)
         return JSONResponse(
             status_code=code, content={"detail": str(exc), "code": kind}, headers=headers
@@ -651,6 +660,12 @@ def run() -> None:
         resource.setrlimit(resource.RLIMIT_AS, (budget << 20, budget << 20))
         note = budget_note(config.server.memory_limit_mb)
         print(f"Memory limit: {budget} MB ({note})")
+    proxies = config.server.trusted_proxies
+    print(
+        f"Trusted proxies: {', '.join(proxies)}"
+        if proxies
+        else "Trusted proxies: none (forwarded headers ignored)"
+    )
     scheme = "https" if tls else "http"
     print(f"{PRODUCT_NAME} listening on {scheme}://{config.server.host}:{config.server.port}")
     if tls is not None and tls.self_signed:

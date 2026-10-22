@@ -129,4 +129,13 @@ describe("Ask", () => {
     const nav = screen.getByRole("navigation", { name: "Primary" });
     expect(within(nav).queryByText("Ask")).not.toBeInTheDocument();
   });
+
+  it("says the model is busy and retries on click", async () => {
+    await renderAt("/ask");
+    await askQuestion("while the model is busy");
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("The model was busy");
+    await userEvent.click(within(alert).getByRole("button", { name: "Retry" }));
+    expect(await screen.findByLabelText("Generated SQL")).toBeInTheDocument();
+  });
 });

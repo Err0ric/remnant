@@ -167,6 +167,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       updated_at: "2026-10-10T10:00:00Z",
     },
   ];
+  let askBusySeen = false;
   const tokens: Record<string, unknown>[] = [
     {
       token_id: "t1",
@@ -1337,6 +1338,16 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         provider_id: string;
         history: unknown[];
       };
+      if (body.question === "while the model is busy" && !askBusySeen) {
+        askBusySeen = true;
+        return json(
+          {
+            detail: "The model was busy for 120 seconds. Try again in a moment.",
+            code: "provider_busy",
+          },
+          503,
+        );
+      }
       if (body.provider_id === "p2")
         return json(
           {

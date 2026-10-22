@@ -16,6 +16,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 from app.core.errors import ConfigError
+from app.core.net import parse_trusted
 
 ENV_PREFIX = "APP__"
 DEFAULT_CONFIG_PATH = Path("config/app.yaml")
@@ -29,6 +30,13 @@ def _split_list(value: object) -> object:
     """Env overrides arrive as one string: split on the OS path separator or commas."""
     if isinstance(value, str):
         return [p.strip() for p in re.split(rf"[,{re.escape(os.pathsep)}]", value) if p.strip()]
+    return value
+
+
+def _split_commas(value: object) -> object:
+    """Comma separated only: IPv6 addresses contain the path separator (":")."""
+    if isinstance(value, str):
+        return [p.strip() for p in value.split(",") if p.strip()]
     return value
 
 
@@ -50,8 +58,22 @@ class ServerConfig(_Strict):
     # Address-space cap for the server process in MB, so an oversized query fails instead
     # of the process being killed (D58). 0: 75% of the machine's or container's memory.
     memory_limit_mb: int = Field(default=0, ge=0, le=1_048_576)
+    # Reverse proxies whose X-Forwarded-For is believed (ADR-0027): IPs and CIDRs. Empty:
+    # the header is ignored. For an HA pair, list the node addresses, not only the VIP.
+    trusted_proxies: list[str] = Field(default_factory=list, max_length=64)
 
     _split_names = field_validator("public_names", mode="before")(_split_list)
+    _split_proxies = field_validator("trusted_proxies", mode="before")(_split_commas)
+
+    @field_validator("trusted_proxies")
+    @classmethod
+    def _trusted(cls, value: list[str]) -> list[str]:
+        try:
+            parse_trusted(value)
+        except ValueError as exc:
+            raise ValueError(f"trusted_proxies: {exc}") from exc
+        return value
+
     _blank_url = field_validator("public_url", "environment_label", mode="before")(
         lambda v: v or None
     )

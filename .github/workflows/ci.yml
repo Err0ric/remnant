@@ -15,6 +15,28 @@ permissions:
   contents: read
 
 jobs:
+  # Private dev repo only (its minutes are limited): a PR runs the backend job unless it
+  # touches nothing outside frontend/, and the frontend job only when frontend/ changed.
+  # The public repo always runs everything.
+  changes:
+    if: github.event_name == 'pull_request' && github.event.repository.private
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.diff.outputs.backend }}
+      frontend: ${{ steps.diff.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          files=$(git diff --name-only "$BASE"...HEAD)
+          echo "$files"
+          echo "backend=$(echo "$files" | grep -qv '^frontend/' && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "frontend=$(echo "$files" | grep -qE '^(frontend/|\.github/)' && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
   architecture:
     if: github.event_name != 'push' || !github.event.repository.private  # private dev repo: the PR run is the gate; public minutes are free
     runs-on: ubuntu-latest
@@ -23,7 +45,10 @@ jobs:
       - run: ./scripts/check-architecture.sh
 
   backend:
-    if: github.event_name != 'push' || !github.event.repository.private  # private dev repo: the PR run is the gate; public minutes are free
+    needs: changes
+    if: >-
+      always() && (github.event_name != 'push' || !github.event.repository.private)
+      && (needs.changes.result == 'skipped' || needs.changes.outputs.backend == 'true')
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -70,7 +95,10 @@ jobs:
           path: sbom.cdx.json
 
   frontend:
-    if: github.event_name != 'push' || !github.event.repository.private  # private dev repo: the PR run is the gate; public minutes are free
+    needs: changes
+    if: >-
+      always() && (github.event_name != 'push' || !github.event.repository.private)
+      && (needs.changes.result == 'skipped' || needs.changes.outputs.frontend == 'true')
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -87,8 +115,9 @@ jobs:
           cache-dependency-path: frontend/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - name: Known vulnerabilities in shipped packages (docs/security/dependencies.md)
-        run: pnpm audit --prod
+        # Findings fail at once; only an error from the audit service is retried (3 tries).
+        run: ../scripts/pnpm-audit.sh
       - run: pnpm lint
       - run: pnpm typecheck
-      - run: pnpm test
+      - run: pnpm test -- --reporter=default --reporter=github-actions  # failing tests become check annotations
       - run: pnpm build

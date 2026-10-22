@@ -753,6 +753,17 @@ MIGRATIONS: tuple[Migration, ...] = (
     CREATE TRIGGER integrity_seals_no_update BEFORE UPDATE ON integrity_seals
     BEGIN SELECT RAISE(ABORT, 'seals cannot be changed'); END;
     """,
+    # 42: one queue per model provider (ADR-0028): slots and wait budget per provider
+    # (NULL: the default), and per call the time spent waiting and the busy retries. The
+    # two call columns are not in the chain hash (core/chain.py), which keeps old rows valid.
+    """
+    ALTER TABLE llm_providers ADD COLUMN max_concurrent INTEGER
+        CHECK (max_concurrent IS NULL OR max_concurrent BETWEEN 1 AND 16);
+    ALTER TABLE llm_providers ADD COLUMN wait_budget_s INTEGER
+        CHECK (wait_budget_s IS NULL OR wait_budget_s BETWEEN 10 AND 600);
+    ALTER TABLE llm_calls ADD COLUMN queue_wait_ms INTEGER;
+    ALTER TABLE llm_calls ADD COLUMN busy_retries INTEGER;
+    """,
 )
 
 

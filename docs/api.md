@@ -65,6 +65,7 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 |---|---|---|---|---|
 | `POST` | `/api/ask` | Ask |  | `question`: string<br>`provider_id`?: string<br>`start`?: date-time<br>`end`?: date-time<br>`sources`?: list of string<br>`history`?: list of Turn |
 | `GET` | `/api/ask/providers` | Enabled providers an analyst can choose, local first. No URLs or key state. |  |  |
+| `GET` | `/api/ask/providers/{provider_id}/queue` | Provider Queue |  |  |
 
 ### Audit
 
@@ -186,7 +187,7 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 |---|---|---|---|---|
 | `GET` | `/api/providers` | List Providers |  |  |
 | `POST` | `/api/providers` | Add Provider |  | `name`: string<br>`kind`?: `openai_compat` &#124; `anthropic`<br>`base_url`: string<br>`model`?: string<br>`api_key`?: password<br>`acknowledge_cloud`?: boolean |
-| `PATCH` | `/api/providers/{provider_id}` | Update Provider |  | `name`?: string<br>`base_url`?: string<br>`model`?: string<br>`enabled`?: boolean<br>`api_key`?: password<br>`clear_api_key`?: boolean<br>`acknowledge_cloud`?: boolean<br>`redact`?: boolean<br>`reasoning`?: `none` &#124; `low` &#124; `medium` &#124; `high` or `default` |
+| `PATCH` | `/api/providers/{provider_id}` | Update Provider |  | `name`?: string<br>`base_url`?: string<br>`model`?: string<br>`enabled`?: boolean<br>`api_key`?: password<br>`clear_api_key`?: boolean<br>`acknowledge_cloud`?: boolean<br>`redact`?: boolean<br>`reasoning`?: `none` &#124; `low` &#124; `medium` &#124; `high` or `default`<br>`max_concurrent`?: integer<br>`wait_budget_s`?: integer |
 | `DELETE` | `/api/providers/{provider_id}` | Delete Provider |  |  |
 | `POST` | `/api/providers/{provider_id}/test` | Test Provider |  |  |
 

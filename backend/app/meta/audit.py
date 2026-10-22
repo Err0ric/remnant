@@ -99,6 +99,8 @@ class LlmCallRow:
     prompt_tokens: int | None
     completion_tokens: int | None
     latency_ms: int | None
+    queue_wait_ms: int | None  # ADR-0028: time waiting for the model
+    busy_retries: int | None
     citation_check: str | None
     error: str | None
     finished_at: str | None
@@ -202,6 +204,8 @@ class AuditReader:
                     prompt_tokens=r["prompt_tokens"],
                     completion_tokens=r["completion_tokens"],
                     latency_ms=r["latency_ms"],
+                    queue_wait_ms=r["queue_wait_ms"],
+                    busy_retries=r["busy_retries"],
                     citation_check=r["citation_check"],
                     error=r["error"],
                     finished_at=r["finished_at"],

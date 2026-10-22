@@ -42,6 +42,7 @@ class ProviderHealth:
     ok: bool
     detail: str
     models: list[str] = field(default_factory=list)
+    busy: bool = False  # occupied with a request, not down (ADR-0028 row 7)
 
 
 class Provider(Protocol):

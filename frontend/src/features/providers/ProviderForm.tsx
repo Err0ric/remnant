@@ -37,6 +37,9 @@ export function ProviderForm({ existing, models = [], onDone, onCancel }: Provid
   const [clearKey, setClearKey] = useState(false);
   const [redact, setRedact] = useState(existing?.redact ?? false);
   const [reasoning, setReasoning] = useState<string>(existing?.reasoning ?? "default");
+  // ADR-0028: "" keeps the default (1 at a time for local, no limit for cloud; 120 s).
+  const [slots, setSlots] = useState(existing?.max_concurrent?.toString() ?? "");
+  const [waitS, setWaitS] = useState(existing?.wait_budget_s?.toString() ?? "");
   const [needsAck, setNeedsAck] = useState(false);
   const [ack, setAck] = useState(false);
 
@@ -63,6 +66,10 @@ export function ProviderForm({ existing, models = [], onDone, onCancel }: Provid
     if (existing && redact !== existing.redact) body.redact = redact;
     if (existing && reasoning !== (existing.reasoning ?? "default"))
       body.reasoning = reasoning as ProviderInput["reasoning"];
+    if (existing && slots !== (existing.max_concurrent?.toString() ?? ""))
+      body.max_concurrent = slots === "" ? 0 : Number(slots);
+    if (existing && waitS !== (existing.wait_budget_s?.toString() ?? ""))
+      body.wait_budget_s = waitS === "" ? 0 : Number(waitS);
     if (ack) body.acknowledge_cloud = true;
     save.mutate(body);
   };
@@ -224,6 +231,51 @@ export function ProviderForm({ existing, models = [], onDone, onCancel }: Provid
                 </span>
               </label>
             ) : null}
+          </OptionalSection>
+        </div>
+      ) : null}
+      {existing ? (
+        <div className="mt-3">
+          <OptionalSection
+            title="Requests to the model"
+            summary={`${
+              existing.effective_slots === null
+                ? "No limit"
+                : `${existing.effective_slots} at a time`
+            }, wait up to ${existing.effective_wait_s} s`}
+          >
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="font-semibold">Requests at once</span>
+              <input
+                type="number"
+                min={1}
+                max={16}
+                value={slots}
+                placeholder={existing.locality === "local" ? "1 (default)" : "No limit (default)"}
+                onChange={(e) => setSlots(e.target.value)}
+                className="h-8 max-w-40 rounded border border-border-strong bg-inset px-2 text-sm"
+              />
+              <span className="text-text-muted">
+                1 for a single local GPU or CPU host: two at once make each several times slower.
+                Others wait their turn.
+              </span>
+            </label>
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="font-semibold">Wait for the model (seconds)</span>
+              <input
+                type="number"
+                min={10}
+                max={600}
+                value={waitS}
+                placeholder="120 (default)"
+                onChange={(e) => setWaitS(e.target.value)}
+                className="h-8 max-w-40 rounded border border-border-strong bg-inset px-2 text-sm"
+              />
+              <span className="text-text-muted">
+                How long a request waits for a free slot, and retries a busy model, before people
+                see &quot;Model busy&quot; with Retry.
+              </span>
+            </label>
           </OptionalSection>
         </div>
       ) : null}

@@ -17,6 +17,8 @@ services:
       APP__SERVER__PUBLIC_NAMES: ${APP_PUBLIC_NAME:-localhost}
       # Set only if analysts reach the app on another port or through a proxy.
       APP__SERVER__PUBLIC_URL: ${APP_PUBLIC_URL:-}
+      # Reverse proxies whose X-Forwarded-For is believed (ADR-0027). Empty: ignored.
+      APP__SERVER__TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
       # Optional single sign-on (docs/install/sso-entra.md). Off unless SSO_ENABLED=true.
       APP__SSO__ENABLED: ${SSO_ENABLED:-false}
       APP__SSO__ISSUER: ${SSO_ISSUER:-}

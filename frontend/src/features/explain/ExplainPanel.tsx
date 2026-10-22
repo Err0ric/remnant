@@ -1,5 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { ModelWait, isAborted, isModelBusy } from "@/components/ai/ModelWait";
+import { useRef, useState } from "react";
 import { LocalityBadge } from "@/features/providers/LocalityBadge";
 import { ApiError, api } from "@/lib/api";
 import { navigate } from "@/lib/route";
@@ -32,13 +33,19 @@ export function ExplainPanel({ eventIds, subject, onClose }: ExplainPanelProps) 
   const providers = useQuery({ queryKey: ["ask-providers"], queryFn: api.askProviders });
   const choices = providers.data ?? [];
   const chosen = provider || choices[0]?.provider_id || "";
+  const abort = useRef<AbortController | null>(null);
   const run = useMutation({
-    mutationFn: () =>
-      api.explain({
-        event_ids: ids,
-        provider_id: chosen || undefined,
-        question: question.trim() || undefined,
-      }),
+    mutationFn: () => {
+      abort.current = new AbortController();
+      return api.explain(
+        {
+          event_ids: ids,
+          provider_id: chosen || undefined,
+          question: question.trim() || undefined,
+        },
+        abort.current.signal,
+      );
+    },
   });
   const answer = run.data;
 
@@ -109,7 +116,28 @@ export function ExplainPanel({ eventIds, subject, onClose }: ExplainPanelProps) 
         Only these events are sent, and only from sources you can read. Cloud models are refused for
         local-only sources.
       </p>
-      {run.error ? (
+      <ModelWait
+        providerId={chosen}
+        label="Explaining"
+        pending={run.isPending}
+        onCancel={() => abort.current?.abort()}
+      />
+      {run.error && isAborted(run.error) ? (
+        <p role="status" className="text-text-muted">
+          Cancelled.
+        </p>
+      ) : run.error && isModelBusy(run.error) ? (
+        <p role="alert" className="flex flex-wrap items-center gap-3 text-warn">
+          {run.error.message}
+          <button
+            type="button"
+            onClick={() => run.mutate()}
+            className="h-7 rounded border border-border-strong px-3 text-text hover:bg-surface-head"
+          >
+            Retry
+          </button>
+        </p>
+      ) : run.error ? (
         <p role="alert" className="text-danger">
           {run.error instanceof ApiError ? run.error.message : "That did not work"}
         </p>

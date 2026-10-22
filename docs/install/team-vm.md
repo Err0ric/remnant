@@ -99,6 +99,9 @@ APP__SERVER__PORT=8080
 APP__SERVER__PUBLIC_NAMES=siem.example.internal
 # Behind a reverse proxy: the address people open (no :8080), set before the first start.
 # APP__SERVER__PUBLIC_URL=https://siem.example.internal
+# Behind a reverse proxy: its node addresses, so the audit log and the login lockout see
+# each person's address (docs/install/tls.md, Trusted proxies).
+# APP__SERVER__TRUSTED_PROXIES=192.0.2.10,192.0.2.11
 APP__SERVER__STATIC_DIR=/opt/remnant/frontend/dist
 APP__PATHS__DATA_DIR=/var/lib/remnant
 APP__PATHS__ALLOWED_ROOTS=/var/log/remote

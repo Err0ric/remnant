@@ -7,7 +7,7 @@ from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Request, Response, status
-from pydantic import AfterValidator, BaseModel, Field, SecretStr, StringConstraints
+from pydantic import AfterValidator, BaseModel, Field, SecretStr, StringConstraints, field_validator
 from starlette.concurrency import run_in_threadpool
 
 from app.api.access import AdminUser, client_ip
@@ -17,6 +17,7 @@ from app.core.errors import CloudAckRequiredError, ProviderConfigError
 from app.llm import gate
 from app.llm.locality import provider_endpoint
 from app.llm.provider import Locality
+from app.llm.queue import DEFAULT_WAIT_S, slots_for
 from app.llm.registry import ProviderRecord, ProviderStore
 
 router = APIRouter(tags=["providers"])
@@ -54,6 +55,12 @@ class ProviderOut(BaseModel):
     host_found: bool
     redact: bool  # ADR-0010: tokens instead of IPs, users, and hosts (cloud calls only)
     reasoning: Reasoning | None  # thinking control sent as reasoning_effort; None: default
+    # ADR-0028: requests at once (None: 1 for local, no limit for cloud) and how long a
+    # request waits for the model before "busy" (None: 120 s).
+    max_concurrent: int | None
+    wait_budget_s: int | None
+    effective_slots: int | None  # what applies now; None: no queue
+    effective_wait_s: int
 
 
 class ProviderCreate(BaseModel):
@@ -78,10 +85,21 @@ class ProviderUpdate(BaseModel):
     redact: bool | None = None
     # "default" clears it (the model decides); others are sent as reasoning_effort.
     reasoning: Reasoning | Literal["default"] | None = None
+    # 0 returns to the default.
+    max_concurrent: int | None = Field(default=None, ge=0, le=16)
+    wait_budget_s: int | None = Field(default=None, ge=0, le=600)
+
+    @field_validator("wait_budget_s")
+    @classmethod
+    def _budget(cls, value: int | None) -> int | None:
+        if value is not None and 0 < value < 10:
+            raise ValueError("Wait at least 10 seconds, or 0 for the default (120)")
+        return value
 
 
 class HealthOut(BaseModel):
     ok: bool
+    busy: bool = False  # answering another request: occupied, not down (ADR-0028)
     detail: str
     models: list[str] = Field(default_factory=list)
 
@@ -110,6 +128,10 @@ def _out(r: ProviderRecord, trusted: list[str]) -> ProviderOut:
         host_found=endpoint.host_found,
         redact=r.redact,
         reasoning=r.reasoning,  # type: ignore[arg-type]  # the column CHECK keeps it a Reasoning
+        max_concurrent=r.max_concurrent,
+        wait_budget_s=r.wait_budget_s,
+        effective_slots=slots_for(r.max_concurrent, endpoint.locality == "local"),
+        effective_wait_s=r.wait_budget_s or DEFAULT_WAIT_S,
     )
 
 
@@ -187,6 +209,8 @@ async def update_provider(
         body.clear_api_key,
         body.redact,
         None if body.reasoning is None else ("" if body.reasoning == "default" else body.reasoning),
+        body.max_concurrent,
+        body.wait_budget_s,
     )
     changed = body.model_dump(exclude={"api_key", "acknowledge_cloud"}, exclude_none=True)
     changed["api_key_changed"] = bool(key) or body.clear_api_key
@@ -208,4 +232,4 @@ async def test_provider(provider_id: str, request: Request, _: AdminUser) -> Hea
     store = _store(request)
     record = await run_in_threadpool(store.get, provider_id)
     h = await run_in_threadpool(gate.health, record, store, _trusted(request))
-    return HealthOut(ok=h.ok, detail=h.detail, models=h.models)
+    return HealthOut(ok=h.ok, busy=h.busy, detail=h.detail, models=h.models)

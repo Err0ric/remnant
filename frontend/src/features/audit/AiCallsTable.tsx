@@ -111,6 +111,12 @@ export function AiCallsTable({ rows, onUser }: AiCallsTableProps) {
                                   : "set when the call completes"),
                             ],
                             ["Latency", c.latency_ms === null ? "·" : `${c.latency_ms} ms`],
+                            [
+                              "Waited for the model",
+                              c.queue_wait_ms == null
+                                ? "·"
+                                : `${c.queue_wait_ms} ms${c.busy_retries ? `, ${c.busy_retries} busy retries` : ""}`,
+                            ],
                             ["Prompt sha256", c.prompt_sha256 ?? "·"],
                             ["Response sha256", c.response_sha256 ?? "·"],
                           ] as const

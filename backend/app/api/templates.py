@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, model_validator
 from starlette.concurrency import run_in_threadpool
 
 from app.api.access import AdminUser, CurrentUser, client_ip
+from app.api.cancel import watch_disconnect
 from app.auth.service import AuthService
 from app.llm.parser_draft import ParserDrafter
 from app.meta.audit import Outcome
@@ -228,9 +229,10 @@ async def ai_draft(template_id: str, body: AiDraftIn, request: Request, user: Ad
     detail: dict[str, Any] = {"template_id": template_id[:64], "provider_id": body.provider_id}
     async with _audited(request, "template.ai_draft", user.user_id, detail):
         try:
-            draft = await run_in_threadpool(
-                drafter.draft, template_id, user.user_id, body.provider_id
-            )
+            async with watch_disconnect(request):
+                draft = await run_in_threadpool(
+                    drafter.draft, template_id, user.user_id, body.provider_id
+                )
         except Exception as exc:
             detail["llm_call_id"] = getattr(exc, "call_id", None)  # joins to llm_calls
             raise

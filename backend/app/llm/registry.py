@@ -23,6 +23,9 @@ class ProviderRecord:
     redact: bool = False  # ADR-0010: opt-in token redaction for cloud calls
     # reasoning_effort to send (none, low, medium, high); None: the model's default.
     reasoning: str | None = None
+    # ADR-0028: slots (None: 1 for local, no queue for cloud) and wait budget (None: 120 s).
+    max_concurrent: int | None = None
+    wait_budget_s: int | None = None
 
 
 class ProviderStore:
@@ -91,7 +94,10 @@ class ProviderStore:
         clear_api_key: bool,
         redact: bool | None = None,
         reasoning: str | None = None,
+        max_concurrent: int | None = None,
+        wait_budget_s: int | None = None,
     ) -> ProviderRecord:
+        """For max_concurrent and wait_budget_s, None keeps the value and 0 clears it."""
         current = self.get(provider_id)
         new_model = current.model if model is None else model
         if enabled and not new_model:
@@ -108,7 +114,8 @@ class ProviderStore:
                 con.execute(
                     "UPDATE llm_providers SET name = ?, base_url = ?, model = ?, enabled = ?,"
                     " api_key_enc = CASE WHEN ? = '__keep__' THEN api_key_enc ELSE ? END,"
-                    " redact = ?, reasoning = ?, updated_at = ? WHERE provider_id = ?",
+                    " redact = ?, reasoning = ?, max_concurrent = ?, wait_budget_s = ?,"
+                    " updated_at = ? WHERE provider_id = ?",
                     (
                         current.name if name is None else name,
                         current.base_url if base_url is None else base_url,
@@ -118,6 +125,10 @@ class ProviderStore:
                         enc,
                         int(current.redact if redact is None else redact),
                         current.reasoning if reasoning is None else (reasoning or None),
+                        current.max_concurrent
+                        if max_concurrent is None
+                        else (max_concurrent or None),
+                        current.wait_budget_s if wait_budget_s is None else (wait_budget_s or None),
                         self._clock().isoformat(),
                         provider_id,
                     ),
@@ -148,4 +159,6 @@ def _record(r: sqlite3.Row) -> ProviderRecord:
         has_api_key=r["api_key_enc"] is not None,
         redact=bool(r["redact"]),
         reasoning=r["reasoning"],
+        max_concurrent=r["max_concurrent"],
+        wait_budget_s=r["wait_budget_s"],
     )

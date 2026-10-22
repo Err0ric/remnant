@@ -56,6 +56,8 @@ server {
     location / {
         proxy_pass http://127.0.0.1:8080;
         proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_read_timeout 120s;   # longer than the 30 s query timeout
     }
 }
@@ -82,6 +84,20 @@ APP_PUBLIC_URL=https://siem.corp.example
 The UI makes ordinary requests only (no WebSocket or server-sent events), so no buffering or upgrade settings are needed; keep `proxy_read_timeout` above the 30 second query timeout.
 
 Allow port 8080 on the app's host only from the proxy nodes. `APP_PUBLIC_URL` must be the address users type, because the setup link, alert links, and the SSO return address are built from it. The generated certificate is valid for 825 days; to renew it, stop the app, delete `data/tls/`, and start it again.
+
+### Trusted proxies: each person's own address
+
+Behind a proxy every request comes from the proxy, so the audit log would show the proxy's address for every sign-in, and a few wrong passwords from anyone would lock everyone out for five minutes. List the proxy in `server.trusted_proxies` (Compose: `TRUSTED_PROXIES`; systemd: `APP__SERVER__TRUSTED_PROXIES`), as IPs or CIDRs, comma separated:
+
+```
+TRUSTED_PROXIES=192.0.2.10,192.0.2.11,192.0.2.20
+```
+
+- Only a request whose TCP peer is in the list has its `X-Forwarded-For` read. It is read from the right, and the first address that is not a listed proxy is the client.
+- For an HA pair, list the node addresses: traffic reaches the app from a node, not from the VIP. Listing the VIP too does no harm.
+- List proxies only, never a client subnet: anything listed can set the client address. `0.0.0.0/0` and `::/0` are refused.
+- The startup log names the list: `Trusted proxies: 192.0.2.10, 192.0.2.11, 192.0.2.20`, or `none (forwarded headers ignored)`. Request log lines show `client` (the person) and `peer` (the proxy).
+- The proxy must send the header: `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` as in the examples above.
 
 ### Forward-auth proxies (Authelia, oauth2-proxy, and similar)
 

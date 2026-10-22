@@ -107,6 +107,23 @@ class ProviderError(AppError):
     """The model provider failed, refused, or returned something invalid."""
 
 
+class ProviderBusyError(ProviderError):
+    """The model server is occupied: it answered busy, or no slot came free in time
+    (ADR-0028). Not a fault; try again later."""
+
+    def __init__(self, message: str, retry_after_s: int | None = None) -> None:
+        super().__init__(message)
+        self.retry_after_s = retry_after_s
+
+
+class ProviderUnreachableError(ProviderError):
+    """No connection to the model server (refused, timed out, name not found)."""
+
+
+class CallCancelledError(AppError):
+    """The caller went away while the model call waited for a slot (ADR-0028 row 6)."""
+
+
 class AnswerShapeError(ProviderError):
     """The model replied, but not in the required JSON shape (a caller may ask once more)."""
 

@@ -17,7 +17,9 @@ import structlog
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
-from starlette.types import ASGIApp
+from starlette.types import ASGIApp, Receive, Scope, Send
+
+from app.core.net import Network, client_address
 
 log = structlog.get_logger("app.http")
 
@@ -71,6 +73,8 @@ class SecurityMiddleware(BaseHTTPMiddleware):
             duration_ms=round((time.perf_counter() - started) * 1000, 1),
             user_id=getattr(user, "user_id", None),
             client=request.client.host if request.client else None,
+            # The TCP peer when a trusted proxy supplied the client address (ADR-0027).
+            peer=request.scope.get(PEER_KEY),
         )
         return response
 
@@ -121,3 +125,31 @@ class HostOriginMiddleware(BaseHTTPMiddleware):
                     status_code=403,
                 )
         return await call_next(request)
+
+
+PEER_KEY = "app.peer"
+
+
+class TrustedProxyMiddleware:
+    """Client address from X-Forwarded-For when the peer is a trusted proxy (ADR-0027).
+
+    Outermost, and it rewrites only `scope["client"]`, so every reader of
+    `request.client` (login limiter, audit rows, request log) gets the resolved address.
+    The TCP peer is kept in the scope for the request log. Scheme and host are not taken
+    from headers: `server.public_url` gives those.
+    """
+
+    def __init__(self, app: ASGIApp, trusted: tuple[Network, ...]) -> None:
+        self._app = app
+        self._trusted = trusted
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        client = scope.get("client")
+        if scope["type"] in ("http", "websocket") and self._trusted and client:
+            values = [
+                v.decode("latin-1") for k, v in scope.get("headers", []) if k == b"x-forwarded-for"
+            ]
+            resolved = client_address(client[0], values, self._trusted)
+            if resolved != client[0]:
+                scope = {**scope, "client": (resolved, client[1]), PEER_KEY: client[0]}
+        await self._app(scope, receive, send)
