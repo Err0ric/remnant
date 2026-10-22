@@ -2,7 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { Field } from "@/features/auth/Field";
 import { FormError } from "@/features/auth/FormError";
-import { ApiError, api, type ParamDef, type ParamType } from "@/lib/api";
+import { ApiError, api, type ParamDef, type ParamType, type SavedSearch } from "@/lib/api";
 import { slugify, sqlPlaceholders } from "@/lib/search";
 
 interface SaveSearchFormProps {
@@ -11,7 +11,9 @@ interface SaveSearchFormProps {
   askQuestion?: string;
   /** Set when the SQL came from Simple search: recorded as the origin (ADR-0009 row 7). */
   simpleText?: string;
-  onDone: (id: string) => void;
+  /** The saved search open on the page: Save changes updates it (install finding 13). */
+  existing?: SavedSearch | null;
+  onDone: (saved: SavedSearch) => void;
   onCancel: () => void;
 }
 
@@ -22,23 +24,35 @@ export function SaveSearchForm({
   sql,
   askQuestion,
   simpleText,
+  existing = null,
   onDone,
   onCancel,
 }: SaveSearchFormProps) {
   const client = useQueryClient();
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [tags, setTags] = useState("");
-  const [visibility, setVisibility] = useState<"private" | "shared">("private");
+  const [asNew, setAsNew] = useState(false);
+  const editing = existing !== null && !asNew;
+  const [name, setName] = useState(existing?.name ?? "");
+  const [description, setDescription] = useState(existing?.description ?? "");
+  const [tags, setTags] = useState(existing?.tags.join(", ") ?? "");
+  const [visibility, setVisibility] = useState<"private" | "shared">(
+    existing?.visibility ?? "private",
+  );
   const names = sqlPlaceholders(sql);
   const [params, setParams] = useState<Record<string, { type: ParamType; def: string }>>(() =>
-    Object.fromEntries(names.map((n) => [n, { type: "string" as ParamType, def: "" }])),
+    Object.fromEntries(
+      names.map((n) => {
+        const d = existing?.params.find((p) => p.name === n);
+        const def = d?.default === undefined || d.default === null ? "" : String(d.default);
+        return [n, { type: d?.type ?? ("string" as ParamType), def }];
+      }),
+    ),
   );
   const save = useMutation({
-    mutationFn: api.createSearch,
+    mutationFn: (body: Parameters<typeof api.createSearch>[0]) =>
+      editing ? api.updateSearch(body) : api.createSearch(body),
     onSuccess: async (s) => {
       await client.invalidateQueries({ queryKey: ["searches"] });
-      onDone(s.id);
+      onDone(s);
     },
   });
 
@@ -58,7 +72,7 @@ export function SaveSearchForm({
       return d;
     });
     save.mutate({
-      id: slugify(name),
+      id: editing && existing ? existing.id : slugify(name),
       name: name.trim(),
       description,
       tags: tags
@@ -74,16 +88,27 @@ export function SaveSearchForm({
   };
 
   return (
+    // autoComplete off: field ids are generated, so the browser's autofill offered values
+    // typed into other forms (a stray "UTC" over Parameters, install finding 14).
     <form
       aria-label="Save search"
+      autoComplete="off"
       onSubmit={submit}
       className="rounded-card border border-border bg-surface p-4"
     >
-      <h2 className="mb-3 text-base font-semibold">Save search</h2>
+      <h2 className="mb-3 text-base font-semibold">
+        {editing && existing ? `Save changes to ${existing.name}` : "Save search"}
+      </h2>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <Field
           label="Name"
-          help={name ? `Id: ${slugify(name)}` : "For example: Failed SSH logins by source"}
+          help={
+            editing && existing
+              ? `Id: ${existing.id}`
+              : name
+                ? `Id: ${slugify(name)}`
+                : "For example: Failed SSH logins by source"
+          }
           value={name}
           onChange={(e) => setName(e.target.value)}
         />
@@ -150,6 +175,7 @@ export function SaveSearchForm({
                 <input
                   aria-label={`Default for ${n}`}
                   placeholder="Default (optional)"
+                  autoComplete="off"
                   value={params[n]?.def ?? ""}
                   onChange={(e) =>
                     setParams({
@@ -174,8 +200,20 @@ export function SaveSearchForm({
           disabled={!name.trim() || save.isPending}
           className="h-8 rounded bg-accent px-4 text-sm font-semibold text-white hover:brightness-110 disabled:opacity-60"
         >
-          Save
+          {editing ? "Save changes" : "Save"}
         </button>
+        {editing ? (
+          <button
+            type="button"
+            onClick={() => {
+              setAsNew(true);
+              setName("");
+            }}
+            className="h-8 rounded border border-border-strong px-4 text-sm hover:bg-surface-head"
+          >
+            Save as a new search
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={onCancel}

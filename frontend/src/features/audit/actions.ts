@@ -77,6 +77,7 @@ const ACTIONS: Record<string, string> = {
   "source.discover": "Scanned a folder for sources",
   "source.loki_test": "Tested a Loki connection",
   "source.otlp_content": "Changed telemetry content setting",
+  "source.loki_label_map": "Changed Loki label map",
   "source.otlp_token": "Issued a new telemetry token",
   "source.parser_change": "Changed a source's parser",
   "source.quiet": "Source went quiet",

@@ -5,6 +5,7 @@ import hashlib
 import os
 import secrets
 import stat
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import BinaryIO, Literal
@@ -417,6 +418,33 @@ class SourceStore:
             )
         (source,) = [s for s in self.list() if s.source_id == source_id]
         return found[0].otlp_keep_content, source
+
+    def set_loki_label_map(
+        self, source_id: str, label_map: Mapping[str, Sequence[str]]
+    ) -> tuple[dict[str, tuple[str, ...]], SourceConfig]:
+        """The previous label map and the source after the change (install finding 10)."""
+        found = [s for s in self.list() if s.source_id == source_id]
+        if not found:
+            raise NotFoundError("No such source")
+        if found[0].loki is None:
+            raise SourceRejectedError("Label maps apply to Loki sources only")
+        before = {str(k): tuple(v) for k, v in found[0].loki.label_map.items()}
+        try:
+            loki = LokiSettings.model_validate(
+                {**found[0].loki.model_dump(), "label_map": {k: [*v] for k, v in label_map.items()}}
+            )
+        except ValidationError as exc:
+            raise SourceRejectedError(
+                "Label names: up to 10 per part, letters, digits, and _"
+            ) from exc
+        updated = found[0].model_copy(update={"loki": loki})
+        with self._meta.connect() as con:
+            con.execute(
+                "UPDATE sources SET connector = ? WHERE source_id = ?",
+                (updated.connector_json(), source_id),
+            )
+        (source,) = [s for s in self.list() if s.source_id == source_id]
+        return before, source
 
     def connector_secret(self, source_id: str) -> str | None:
         """Decrypted connector credential, for the ingest worker and the connection test."""

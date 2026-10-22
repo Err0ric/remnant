@@ -16,6 +16,13 @@ interface SimplePanelProps {
   /** Suspicious presets (ADR-0016 row 3): picking one fills the bar and runs it. */
   presets?: SearchPreset[];
   onPreset?: (text: string) => void;
+  /** Moves text that looks like SQL to the SQL tab. */
+  onMoveToSql?: (sql: string) => void;
+}
+
+/** Text that is a query, not words to search for (install finding 13). */
+export function looksLikeSql(text: string): boolean {
+  return /^\s*(select|with)\s/i.test(text);
 }
 
 const EXAMPLES = [
@@ -37,6 +44,7 @@ export function SimplePanel({
   toggle,
   presets = [],
   onPreset,
+  onMoveToSql,
 }: SimplePanelProps) {
   const [showSql, setShowSql] = useState(false);
   const submit = (e: FormEvent) => {
@@ -122,6 +130,18 @@ export function SimplePanel({
             </button>
           </span>
         </div>
+        {onMoveToSql && looksLikeSql(text) ? (
+          <p role="status" className="flex flex-wrap items-center gap-2 text-sm text-warn">
+            This looks like SQL, which this box searches for as words.
+            <button
+              type="button"
+              onClick={() => onMoveToSql(text.trim())}
+              className="rounded border border-border-strong px-2 py-0.5 text-text hover:bg-surface-head"
+            >
+              Run it in the SQL tab
+            </button>
+          </p>
+        ) : null}
         {emptyColumns.length ? (
           <p role="status" className="text-sm text-warn">
             No event in this time range has a value in {emptyColumns.join(", ")}, so a filter on{" "}

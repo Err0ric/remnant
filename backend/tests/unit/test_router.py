@@ -144,3 +144,13 @@ def test_json_lines_without_a_syslog_header_use_the_generic_json_parser() -> Non
     # Over syslog, the same JSON still goes to the JSON template.
     routed = _auto().normalize(_line(f"<14>1 2026-10-11T15:56:03Z web01 app 1 - - {text}"))
     assert routed is not None and routed["template_id"] == "json_over_syslog"
+
+
+@pytest.mark.parametrize("program", ["sshd", "sshd-session", "sshd-auth"])
+def test_openssh_programs_route_to_the_sshd_template(program: str) -> None:
+    """OpenSSH 9.8 and later log per-session work as sshd-session (install finding 11)."""
+    text = f"<38>Oct  9 21:07:00 bastion {program}[3100]: Failed password for root from 203.0.113.9 port 40100 ssh2"
+    row = _auto().normalize(_line(text))
+    assert row is not None
+    assert row["template_id"] == "linux_sshd"
+    assert row["parse_status"] == "ok"

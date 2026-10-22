@@ -149,7 +149,7 @@ def test_a_windows_rule_reads_only_windows_sources_and_finds_every_match(
 
 def test_runs_stay_inside_the_callers_sources(lab: dict[str, Any]) -> None:
     out = run(lab["ana"], LINUX_ID).json()
-    assert (out["status"], out["match_count"], out["sources_in_scope"]) == ("ok", 6, ["lin_auth"])
+    assert (out["status"], out["match_count"], out["sources_in_scope"]) == ("ok", 7, ["lin_auth"])
     # The analyst may not read the Windows source, so the Windows rule reads nothing.
     out = run(lab["ana"], WIN_ID).json()
     assert (out["status"], out["match_count"], out["sources_in_scope"]) == ("no_data", 0, [])

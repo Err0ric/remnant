@@ -61,9 +61,9 @@ class AutoNormalizer:
         self._patterns = {t.id: regex.compile(t.match.regex or "") for t in with_regex}
         self._normalizers: dict[str, TemplateNormalizer] = {}
 
-    def route(self, text: str) -> Template | None:
+    def route(self, text: str, hint: Envelope | None = None) -> Template | None:
         """The template this line goes to, or None for the generic parser."""
-        env: Envelope | None = self._envelope.parse(text)
+        env: Envelope | None = self._envelope.parse(text, hint)
         if env is not None and env.rfc == "none":
             env = None
         if env is not None and env.app_name:
@@ -90,7 +90,7 @@ class AutoNormalizer:
             return False  # a hostile line is not routed by this template
 
     def normalize(self, line: DecodedLine) -> dict[str, Any] | None:
-        template = self.route(line.text)
+        template = self.route(line.text, line.hint)
         if template is None:
             return self._generic.normalize(line)
         row = self._template(template).normalize(line)

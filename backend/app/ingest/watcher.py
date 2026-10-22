@@ -34,6 +34,7 @@ from app.ingest.connectors.loki import poll as loki_poll
 from app.ingest.evtx import EvtxReader, file_signature
 from app.ingest.framer import Framer
 from app.ingest.integrity import LakeEvents
+from app.ingest.labels import labels_envelope
 from app.ingest.normalizer import Normalizer
 from app.ingest.records import DecodedLine, Frame, decode_frame
 from app.ingest.sources import (
@@ -236,7 +237,8 @@ class IngestService:
         for item in result.lines:
             data = item.line.encode("utf-8", "replace")
             frame = Frame(data=data[:MAX_LINE], truncated=len(data) > MAX_LINE)
-            row = normalizer.normalize(decode_frame(frame))
+            hint = labels_envelope(item.labels, source.loki.label_map)
+            row = normalizer.normalize(replace(decode_frame(frame), hint=hint))
             if row is None:
                 continue
             env = _json_object(row.get("envelope"))

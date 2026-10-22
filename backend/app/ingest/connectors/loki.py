@@ -67,6 +67,9 @@ def check_query(query: str) -> str:
     return text
 
 
+_LABEL = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
+
+
 class LokiSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -76,6 +79,19 @@ class LokiSettings(BaseModel):
     auth: Literal["none", "basic", "bearer"] = "none"
     username: str | None = Field(default=None, max_length=200)
     backfill_hours: int = Field(default=24, ge=0, le=24 * 3650)
+    # Which stream labels stand in for the syslog header (app.ingest.labels). Unset parts
+    # keep the defaults; an empty list turns a part off.
+    label_map: dict[
+        Literal["hostname", "app_name", "procid", "severity", "facility"], list[str]
+    ] = Field(default_factory=dict)
+
+    @field_validator("label_map")
+    @classmethod
+    def _label_map(cls, value: dict[str, list[str]]) -> dict[str, list[str]]:
+        for names in value.values():
+            if len(names) > 10 or any(not _LABEL.fullmatch(n) for n in names):
+                raise ValueError("Label names: up to 10 per part, letters, digits, and _")
+        return value
 
     @field_validator("query")
     @classmethod
@@ -268,12 +284,39 @@ def poll(
     return PollResult(lines, pos, max(timedelta(0), now - from_ns(pos.ns)))
 
 
+# Labels that name one process or instance: grouping on them lists the same host and
+# program once per id (install finding 12). `instance` only when its value looks like an id.
+PER_ID_LABELS = ("proc_id", "pid")
+_ID_LIKE = re.compile(r"^(\d+|[0-9a-f]{8,}|[0-9a-f-]{36})$", re.IGNORECASE)
+
+
+def group_streams(label_sets: list[dict[str, str]]) -> tuple[list[dict[str, Any]], list[str]]:
+    """Label sets grouped without per-id labels: [{labels, streams}], and the labels ignored."""
+    ignored: set[str] = set()
+    counts: dict[str, int] = {}
+    for labels in label_sets:
+        kept = {}
+        for name, value in labels.items():
+            if name in PER_ID_LABELS or (name == "instance" and _ID_LIKE.match(value)):
+                ignored.add(name)
+            else:
+                kept[name] = value
+        key = json.dumps(kept, sort_keys=True)
+        counts[key] = counts.get(key, 0) + 1
+    groups = [{"labels": json.loads(k), "streams": n} for k, n in counts.items()]
+    groups.sort(key=lambda g: (-g["streams"], json.dumps(g["labels"], sort_keys=True)))
+    return groups, sorted(ignored)
+
+
 def test_connection(client: LokiClient, now: datetime) -> dict[str, Any]:
     """One small query over the last hour: how many lines and which streams matched."""
     page = client.query_range(to_ns(now - timedelta(hours=1)), to_ns(now), limit=100)
-    streams = sorted({json.dumps(x.labels, sort_keys=True) for x in page})
+    distinct = sorted({json.dumps(x.labels, sort_keys=True) for x in page})
+    groups, ignored = group_streams([json.loads(s) for s in distinct])
     return {
         "lines": len(page),
-        "streams": [json.loads(s) for s in streams[:20]],
+        "stream_count": len(distinct),
+        "groups": groups[:20],
+        "ignored_labels": ignored,
         "newest": from_ns(page[-1].ns).isoformat() if page else None,
     }

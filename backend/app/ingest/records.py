@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 
+from app.ingest.envelope import Envelope
+
 
 @dataclass(frozen=True, slots=True)
 class Frame:
@@ -18,6 +20,9 @@ class DecodedLine:
     text: str
     bytes_invalid: bool
     truncated: bool
+    # An envelope from outside the line (Loki stream labels), used when the line has no
+    # syslog header of its own. Never changes `text`.
+    hint: Envelope | None = None
 
 
 def decode_frame(frame: Frame, encoding: str = "utf-8") -> DecodedLine:

@@ -2,7 +2,7 @@
 
 import re
 from dataclasses import asdict
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Request, Response
@@ -12,13 +12,14 @@ from starlette.concurrency import run_in_threadpool
 from app.api.access import CurrentUser, client_ip
 from app.auth.service import AuthService
 from app.auth.users import User
-from app.core.errors import AppError, SearchInvalidError
+from app.core.errors import AppError, ParamInvalidError, SearchInvalidError
 from app.engine.duckdb import QueryEngine, QueryResult, QueryScope
 from app.engine.export import to_csv
 from app.engine.views import permitted_sources, scope_sources
 from app.enrich.geoip import GeoIP
 from app.enrich.intel import ThreatIntel
 from app.meta.db import MetaDB
+from app.search.params import RESERVED, compile_sql, placeholders
 from app.search.presets import presets
 from app.search.refine import refine_sql
 from app.search.simple import MAX_TEXT, compile_search
@@ -80,6 +81,26 @@ def _intel(request: Request, rows: list[list[object]]) -> dict[str, list[IntelHi
     return {k: [IntelHitOut(**asdict(h)) for h in v] for k, v in found.items()}
 
 
+def _placeholders(
+    sql: str, given: dict[str, Any], start: datetime | None, end: datetime | None
+) -> tuple[str, dict[str, Any]]:
+    """`{{start}}`, `{{end}}`, and `{{name}}` work here as in a saved search (SPEC 5.4), so
+    a query written for saving runs on the Search page as it will when saved: start and
+    end come from the time range, other names from `params`, all bound by the driver."""
+    names = placeholders(sql)
+    if not names:
+        return sql, dict(given)
+    values: dict[str, Any] = {k: v for k, v in given.items() if k not in RESERVED}
+    missing = sorted(n for n in names - RESERVED if n not in values)
+    if missing:
+        raise ParamInvalidError(f"No value for {', '.join('{{' + n + '}}' for n in missing)}")
+    if "start" in names:
+        values["start"] = start or datetime(1970, 1, 1, tzinfo=UTC)
+    if "end" in names:
+        values["end"] = end or datetime.now(UTC)
+    return compile_sql(sql), values
+
+
 async def _run_audited(
     body: QueryRequest, request: Request, user: User, action: str
 ) -> QueryResult:
@@ -96,8 +117,9 @@ async def _run_audited(
         "sources_requested": body.sources,
         "sources_in_scope": "all" if sources is None else sources,
     }
+    sql, values = _placeholders(body.sql, body.params, body.start, body.end)
     try:
-        result = await run_in_threadpool(engine.run, body.sql, scope, body.params or None)
+        result = await run_in_threadpool(engine.run, sql, scope, values or None)
     except AppError as exc:
         detail["error"] = type(exc).__name__
         await run_in_threadpool(
@@ -248,7 +270,7 @@ async def search_facets(body: FacetRequest, request: Request, user: CurrentUser)
         query, params = compiled.sql, compiled.params
         wanted = list(FACET_COLUMNS)
     elif body.sql is not None:
-        query, params = body.sql, dict(body.params)
+        query, params = _placeholders(body.sql, body.params, body.start, body.end)
         wanted = [c for c in FACET_COLUMNS if c in set(body.columns)]
     else:
         raise SearchInvalidError("Send the search text or the SQL")

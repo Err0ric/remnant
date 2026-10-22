@@ -86,7 +86,7 @@ def test_copy_preview_approve_and_use(lab: dict[str, Any]) -> None:
     approved = approve(lab["c"], "bastion_sshd")
     assert approved.status_code == 200, approved.text
     body = approved.json()
-    assert body["version"] == "1.0.0" and len(body["sha256"]) == 64
+    assert body["version"] == "1.1.0" and len(body["sha256"]) == 64
     assert lab["c"].get("/api/templates/drafts").json() == []
     assert "bastion_sshd" in [t["id"] for t in lab["c"].get("/api/templates").json()]
     src = {

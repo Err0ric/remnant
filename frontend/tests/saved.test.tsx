@@ -35,7 +35,7 @@ describe("Saving a search", () => {
   it("turns {{placeholders}} into typed parameters", async () => {
     const spy = await renderAt("/search");
     await screen.findByRole("heading", { name: "Search", level: 1 });
-    setSql("SELECT * FROM events WHERE time > {{start}} LIMIT {{top}}");
+    await setSql("SELECT * FROM events WHERE time > {{start}} LIMIT {{top}}");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     const form = screen.getByRole("form", { name: "Save search" });
     await userEvent.type(within(form).getByLabelText("Name"), "Recent Events!");
@@ -44,7 +44,11 @@ describe("Saving a search", () => {
     await userEvent.selectOptions(within(form).getByLabelText("Type of top"), "int");
     await userEvent.type(within(form).getByLabelText("Default for top"), "5");
     await userEvent.click(within(form).getByRole("button", { name: "Save" }));
-    expect(await screen.findByRole("status")).toHaveTextContent("Saved as recent_events");
+    expect(await screen.findByText(/Saved as/)).toHaveTextContent(
+      "Saved as Recent Events! recent_events",
+    );
+    expect(screen.getByRole("link", { name: "Open in Saved searches" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Schedule it" })).toBeInTheDocument();
     const sent = JSON.parse(String(bodies(spy, (u) => u.endsWith("/api/searches"))[0])) as {
       id: string;
       params: unknown[];
@@ -130,5 +134,54 @@ describe("Saved searches page", () => {
     await renderAt("/saved");
     await screen.findByRole("button", { name: "Run Failed SSH by source" });
     expect(screen.queryByRole("button", { name: /^Verify/ })).not.toBeInTheDocument();
+  });
+
+  it("opens a saved search on the Search page, fills its parameters, and saves changes", async () => {
+    const spy = await renderAt("/search");
+    await screen.findByRole("heading", { name: "Search", level: 1 });
+    await userEvent.click(screen.getByRole("button", { name: "Open" }));
+    const panel = await screen.findByRole("region", { name: "Open a saved search" });
+    await userEvent.type(within(panel).getByLabelText("Open a saved search"), "ssh");
+    await userEvent.click(within(panel).getByRole("button", { name: /Failed SSH by source/ }));
+    expect(await screen.findByText(/Open:/)).toHaveTextContent("Failed SSH by source");
+    // The default (25) fills {{top}} and the query runs at once.
+    await waitFor(() => {
+      const runs = bodies(spy, (u) => u.endsWith("/api/query")).map(
+        (b) => JSON.parse(String(b)) as { sql: string; params?: Record<string, unknown> },
+      );
+      expect(runs.some((r) => r.sql === "SELECT 1 LIMIT {{top}}" && r.params?.top === 25)).toBe(
+        true,
+      );
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    const form = await screen.findByRole("form", { name: "Save search" });
+    expect(within(form).getByRole("heading")).toHaveTextContent(
+      "Save changes to Failed SSH by source",
+    );
+    await userEvent.click(within(form).getByRole("button", { name: "Save changes" }));
+    await waitFor(() =>
+      expect(
+        spy.mock.calls.some(
+          ([u, i]) => String(u).endsWith("/api/searches/failed_by_ip") && i?.method === "PUT",
+        ),
+      ).toBe(true),
+    );
+  });
+
+  it("offers to move SQL typed into the Simple box", async () => {
+    window.localStorage.setItem("search-tab", "simple");
+    window.history.replaceState(null, "", "/search");
+    mockApi("Codename", { mode: "login", signedIn: true, role: "analyst" });
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    render(<App initialTheme="dark" queryClient={new QueryClient()} />);
+    const box = await screen.findByLabelText("Search text");
+    await userEvent.type(box, "SELECT count(*) FROM events");
+    await userEvent.click(await screen.findByRole("button", { name: "Run it in the SQL tab" }));
+    expect(await screen.findByLabelText("SQL query")).toHaveTextContent(
+      "SELECT count(*) FROM events",
+    );
   });
 });

@@ -1,11 +1,12 @@
 schema_version: 1
 id: linux_sshd
 name: Linux sshd authentication
-version: 1.0.0
+version: 1.1.0
 author: starter-pack
 description: >-
   OpenSSH server authentication events through syslog (RFC 3164 or 5424): accepted and
-  failed logins, invalid users, disconnects, and PAM session open and close.
+  failed logins, invalid users, disconnects, and PAM session open and close. Also matches
+  the sshd-session and sshd-auth programs that OpenSSH 9.8 and later log under.
 category: identity
 vendor: linux
 classification_default: local_only
@@ -24,7 +25,7 @@ envelope:
     strip_relay_headers: true
 
 match:
-  app_name: [sshd]
+  app_name: [sshd, sshd-session, sshd-auth]
   min_confidence: 0.9
 
 framing:
@@ -97,3 +98,13 @@ tests:
     expect:
       parse_status: envelope_only
       fields: { device_hostname: bastion, actor_process_name: sshd }
+  - name: sshd-session (OpenSSH 9.8 and later)
+    input: "<38>Oct  9 21:07:00 bastion sshd-session[3100]: Accepted publickey for alice from 192.0.2.10 port 50000 ssh2: ED25519 SHA256:abc"
+    expect:
+      parse_status: ok
+      fields: { actor_user_name: alice, src_endpoint_ip: 192.0.2.10, status_id: 1, actor_process_name: sshd-session, actor_process_pid: 3100 }
+  - name: sshd-session failed password
+    input: "<38>Oct  9 21:07:05 bastion sshd-session[3101]: Failed password for root from 203.0.113.9 port 40100 ssh2"
+    expect:
+      parse_status: ok
+      fields: { actor_user_name: root, src_endpoint_ip: 203.0.113.9, status_id: 2 }

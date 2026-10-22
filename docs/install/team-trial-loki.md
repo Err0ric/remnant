@@ -99,7 +99,7 @@ Start with one source. Add more selectors as separate sources once the first one
 | 30 min | **Detection rules**: import `/rules/linux` (or `/rules/windows`), enable a few rules, run over 24 hours | Matches listed with event ids; no rule reads rows from the generic parser |
 | 60 min | **Audit log** | Your sign-in, the source creation, the Loki connection test, every query |
 
-If most lines show `generic_syslog`, no template fits those products yet. Note the program names (the `app_name` in a row's envelope); a template for each is the fix (**Templates > New draft**, from a sample of those lines).
+Stripped headers are fine: the stream labels (`hostname`, `app_name`, `proc_id`, ...) stand in for them, see [Labels as the syslog header](../ingest/loki.md#labels-as-the-syslog-header). If most lines show `generic_syslog`, no template fits those products yet. Note the program names (the `app_name` in a row's envelope); a template for each is the fix (**Templates > New draft**, from a sample of those lines).
 
 ## 7. What to write down for the project
 

@@ -126,7 +126,7 @@ class TemplateNormalizer:
         text = line.text
         env: Envelope | None = None
         if self._envelope is not None:
-            env = self._envelope.parse(text)
+            env = self._envelope.parse(text, line.hint)
             if env.rfc == "none":
                 if not self._t.envelope.optional:
                     errors.append("no_syslog_header")

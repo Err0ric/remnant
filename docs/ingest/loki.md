@@ -28,6 +28,25 @@ If your logs already go to Loki, the app can copy them from there instead of rea
 - If the app is stopped for a while, it carries on from where it stopped. It reads at most 20,000 lines per source every 30 seconds while catching up.
 - Credentials are stored encrypted and are never shown again; to change them, remove the source and add it again.
 
+## Labels as the syslog header
+
+Many pipelines (Grafana Alloy or Promtail syslog receivers) strip the syslog header and turn its parts into labels, so the line Loki returns is only the message. When a line has no complete syslog header of its own, the stream labels stand in for it:
+
+| Envelope part | Labels checked, first present wins | Fills |
+|---|---|---|
+| Host | `hostname`, `host` | `device_hostname` |
+| Program | `app_name`, `appname`, `program`, `service_name` | `actor_process_name`, and Automatic routing by program |
+| Process id | `proc_id`, `pid` | `actor_process_pid` |
+| Severity | `severity`, `level` (names or 0 to 7) | `severity_id` |
+| Facility | `facility` (names or 0 to 23) | `envelope.facility` (user, 1, when only a severity is known) |
+
+- A line that carries its own syslog header keeps it: the header wins over the labels.
+- Nothing is guessed from a line without a header: a line like `2026-10-21T10:00:00Z [INFO] started` never gets `[INFO]` as its host.
+- The space a receiver leaves where the header was is ignored for matching and parsing, so vendor templates anchored at the first field (Palo Alto CSV) still match. `raw` keeps the line exactly as received.
+- The envelope shows where it came from: `rfc` is `labels`, and the labels themselves stay in `envelope.loki_labels`.
+
+Different label names: set `label_map` on the source (API, `PATCH /api/sources/{id}` with the `loki` settings), for example `{"hostname": ["node"], "app_name": ["svc"]}`. Parts left out keep the defaults; an empty list turns a part off.
+
 ## Trouble
 
 | Message | Likely cause |

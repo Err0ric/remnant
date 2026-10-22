@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-Rfc = Literal["5424", "3164", "none"]
+Rfc = Literal["5424", "3164", "none", "labels"]  # labels: built from Loki stream labels
 
 _MONTHS = {
     m: i
@@ -108,8 +108,21 @@ class EnvelopeParser:
         self._tz = ZoneInfo(self._cfg.timezone)
         self._clock = clock
 
-    def parse(self, line: str) -> Envelope:
-        """Parse one decoded line. Never raises on bad input; problems go in `errors`."""
+    def parse(self, line: str, hint: Envelope | None = None) -> Envelope:
+        """Parse one decoded line. Never raises on bad input; problems go in `errors`.
+
+        `hint` is an envelope built from outside the line (Loki stream labels). It is used
+        when the line has no complete syslog header of its own; a real header always wins,
+        and nothing is guessed from a line that has none (install finding 10)."""
+        env = self._parse(line)
+        if hint is None or (_is_real_header(env) and "no_header" not in env.errors):
+            return env
+        # The space a receiver leaves after stripping the header is not part of the payload
+        # (Palo Alto CSV regexes are anchored at the first field). Only the working copy is
+        # trimmed; `raw` keeps the line as received (rule 5).
+        return replace(hint, msg=line.lstrip(" "), errors=())
+
+    def _parse(self, line: str) -> Envelope:
         env = self._parse_once(line, forced=self._cfg.rfc)
         if not self._cfg.strip_relay_headers or env.rfc == "none":
             return env

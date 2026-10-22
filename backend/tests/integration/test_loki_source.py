@@ -42,6 +42,7 @@ def lab(tmp_path: Path) -> dict[str, Any]:
             "APP__PATHS__DATA_DIR": str(tmp_path / "data"),
             "APP__PATHS__ALLOWED_ROOTS": str(tmp_path),
             "APP__SERVER__HOST": "0.0.0.0",
+            "APP__PATHS__RULE_ROOTS": str(tmp_path),
         },
     )
     app = create_app(config)
@@ -186,7 +187,7 @@ def test_connection_test_and_errors_show_on_the_source(lab: dict[str, Any]) -> N
         "/api/sources/loki/test", json={**LOKI, "secret": SECRET}, headers=lab["h"]
     )
     assert res.status_code == 200, res.text
-    assert res.json()["streams"] and res.json()["lines"] >= 1
+    assert res.json()["groups"] and res.json()["lines"] >= 1
     bad = lab["admin"].post(
         "/api/sources/loki/test", json={**LOKI, "query": "job=syslog"}, headers=lab["h"]
     )
@@ -234,3 +235,71 @@ def test_automatic_parser_on_a_loki_stream(lab: dict[str, Any]) -> None:
     assert got[0][:2] == ["linux_sshd", "203.0.113.9"]
     assert json.loads(got[0][2])["loki_labels"]["host"] == "bastion"
     assert got[1][0] == "generic_syslog" and got[1][3].startswith("2026-10-12T11:40")
+
+
+STREAMS = json.loads(
+    (Path(__file__).parents[1] / "fixtures" / "loki" / "streams.json").read_text(encoding="utf-8")
+)
+SSHD_RULE = """title: SSH failed password
+id: 0a7e1c52-2222-4222-8222-000000000010
+level: medium
+logsource: {product: linux, service: sshd}
+detection:
+  k: ['Failed password']
+  condition: k
+"""
+
+
+def test_stream_labels_become_the_envelope(lab: dict[str, Any], tmp_path: Path) -> None:
+    """Install finding 10: a receiver that strips the syslog header into labels."""
+    lab["fake"].calls.clear()
+    for i, stream in enumerate(STREAMS):
+        lab["fake"].add(to_ns(NOW - timedelta(minutes=10 - i)), stream["line"], **stream["labels"])
+    res = lab["admin"].patch(
+        "/api/sources/loki_auth", json={"template_id": "auto"}, headers=lab["h"]
+    )
+    assert res.status_code == 200, res.text
+    assert lab["app"].state.ingest.run_once() == 2 + len(STREAMS)
+    cols = sorted({k for s in STREAMS for k in s["expect"]})
+    got = rows(lab, f"SELECT raw, {', '.join(cols)} FROM events")
+    by_raw = {r[0]: dict(zip(cols, r[1:], strict=True)) for r in got}
+    for stream in STREAMS:
+        row = by_raw[stream["line"]]
+        for key, want in stream["expect"].items():
+            assert row[key] == want, (stream["line"][:30], key)
+    assert not rows(lab, "SELECT 1 FROM events WHERE device_hostname = '[INFO]'")
+
+    # Sigma: a Linux sshd rule matches the label-routed lines.
+    (tmp_path / "rules").mkdir()
+    (tmp_path / "rules" / "sshd.yml").write_text(SSHD_RULE)
+    h = lab["h"]
+    assert (
+        lab["admin"]
+        .post("/api/rules/import", json={"path": str(tmp_path / "rules")}, headers=h)
+        .status_code
+        < 300
+    )
+    rid = "0a7e1c52-2222-4222-8222-000000000010"
+    span = {"start": (NOW - timedelta(days=1)).isoformat(), "end": NOW.isoformat()}
+    run = lab["admin"].post(f"/api/rules/{rid}/run", json=span, headers=h)
+    assert run.status_code == 200, run.text
+    assert run.json()["match_count"] >= 2
+
+
+def test_label_map_can_be_changed_and_is_audited(lab: dict[str, Any]) -> None:
+    patch = lab["admin"].patch(
+        "/api/sources/loki_auth",
+        json={"loki_label_map": {"hostname": ["node"]}},
+        headers=lab["h"],
+    )
+    assert patch.status_code == 200, patch.text
+    assert patch.json()["loki"]["label_map"] == {"hostname": ["node"]}
+    bad = lab["admin"].patch(
+        "/api/sources/loki_auth",
+        json={"loki_label_map": {"hostname": ["no spaces"]}},
+        headers=lab["h"],
+    )
+    assert bad.status_code in (400, 422)
+    with sqlite3.connect(lab["db"]) as con:
+        actions = [r[0] for r in con.execute("SELECT action FROM audit_log")]
+    assert "source.loki_label_map" in actions

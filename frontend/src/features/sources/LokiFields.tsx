@@ -111,21 +111,35 @@ export function LokiFields({ part, value, secret, onChange, onSecret }: LokiFiel
           <div role="status" className="text-sm">
             <p className={test.data.lines ? "text-ok" : "text-warn"}>
               {test.data.lines
-                ? `Connected: ${test.data.lines} lines in the last hour from ${test.data.streams.length} ${test.data.streams.length === 1 ? "stream" : "streams"}`
+                ? `Connected: ${test.data.lines} lines in the last hour from ${test.data.stream_count} ${test.data.stream_count === 1 ? "stream" : "streams"}`
                 : "Connected, but no lines matched in the last hour"}
             </p>
-            {test.data.streams.length ? (
+            {test.data.groups.length ? (
               <ul className="mt-1 font-mono text-text-secondary">
-                {test.data.streams.map((s, i) => (
-                  <li key={i}>
-                    {"{"}
-                    {Object.entries(s)
-                      .map(([k, v]) => `${k}="${v}"`)
-                      .join(", ")}
-                    {"}"}
+                {test.data.groups.map((g, i) => (
+                  <li key={i} className="flex gap-2">
+                    <span className="min-w-0 break-all">
+                      {"{"}
+                      {Object.entries(g.labels)
+                        .map(([k, v]) => `${k}="${v}"`)
+                        .join(", ")}
+                      {"}"}
+                    </span>
+                    {g.streams > 1 ? (
+                      <span className="shrink-0 font-sans text-text-muted">
+                        {g.streams} streams
+                      </span>
+                    ) : null}
                   </li>
                 ))}
               </ul>
+            ) : null}
+            {test.data.ignored_labels.length ? (
+              <p className="mt-1 text-text-muted">
+                Grouped without{" "}
+                <span className="font-mono">{test.data.ignored_labels.join(", ")}</span>: a label
+                per process makes one stream per id in Loki, which is worth fixing in the pipeline.
+              </p>
             ) : null}
           </div>
         ) : null}

@@ -71,7 +71,7 @@ class Normalizer:
         errors: list[str] = []
         fmt = self._spec.format
         if fmt == "syslog":
-            status = self._syslog(line.text, row, errors)
+            status = self._syslog(line.text, row, errors, line.hint)
         elif fmt == "json":
             status = self._json(line.text, row, errors)
         else:
@@ -102,8 +102,10 @@ class Normalizer:
 
     # -- formats ---------------------------------------------------------------------
 
-    def _syslog(self, text: str, row: dict[str, Any], errors: list[str]) -> str:
-        env: Envelope = self._envelope.parse(text)
+    def _syslog(
+        self, text: str, row: dict[str, Any], errors: list[str], hint: Envelope | None = None
+    ) -> str:
+        env: Envelope = self._envelope.parse(text, hint)
         if env.rfc == "none":
             errors.append("no_syslog_header")
             row["message"] = text

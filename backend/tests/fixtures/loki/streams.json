@@ -1,0 +1,130 @@
+[
+  {
+    "labels": {
+      "job": "syslog",
+      "hostname": "web01",
+      "app_name": "sshd",
+      "proc_id": "1234",
+      "severity": "info",
+      "facility": "auth"
+    },
+    "line": "Accepted publickey for alice from 192.0.2.10 port 50000 ssh2",
+    "expect": {
+      "template_id": "linux_sshd",
+      "parse_status": "ok",
+      "device_hostname": "web01",
+      "actor_process_name": "sshd",
+      "actor_process_pid": 1234,
+      "actor_user_name": "alice",
+      "src_endpoint_ip": "192.0.2.10"
+    }
+  },
+  {
+    "labels": {
+      "job": "syslog",
+      "hostname": "web01",
+      "app_name": "sshd",
+      "proc_id": "1240",
+      "severity": "info",
+      "facility": "auth"
+    },
+    "line": "Failed password for invalid user oracle from 203.0.113.9 port 40022 ssh2",
+    "expect": {
+      "template_id": "linux_sshd",
+      "parse_status": "ok",
+      "device_hostname": "web01",
+      "actor_user_name": "oracle",
+      "src_endpoint_ip": "203.0.113.9"
+    }
+  },
+  {
+    "labels": {
+      "job": "syslog",
+      "hostname": "db01",
+      "app_name": "sudo",
+      "severity": "notice",
+      "facility": "authpriv"
+    },
+    "line": "  carol : TTY=pts/0 ; PWD=/home/carol ; USER=root ; COMMAND=/usr/bin/systemctl restart nginx",
+    "expect": {
+      "template_id": "linux_sudo",
+      "parse_status": "ok",
+      "device_hostname": "db01",
+      "actor_process_name": "sudo",
+      "actor_user_name": "carol"
+    }
+  },
+  {
+    "labels": {
+      "job": "syslog",
+      "hostname": "app02",
+      "app_name": "myworker",
+      "proc_id": "88",
+      "severity": "err"
+    },
+    "line": "queue flush failed after 3 retries",
+    "expect": {
+      "template_id": "generic_syslog",
+      "parse_status": "envelope_only",
+      "device_hostname": "app02",
+      "actor_process_name": "myworker",
+      "actor_process_pid": 88,
+      "message": "queue flush failed after 3 retries"
+    }
+  },
+  {
+    "labels": {
+      "job": "syslog",
+      "hostname": "app02",
+      "app_name": "myworker"
+    },
+    "line": "2026-10-12T11:30:00Z [INFO] worker started",
+    "expect": {
+      "template_id": "generic_syslog",
+      "device_hostname": "app02",
+      "actor_process_name": "myworker"
+    }
+  },
+  {
+    "labels": {
+      "job": "syslog",
+      "hostname": "relay01",
+      "app_name": "rsyslogd"
+    },
+    "line": "<38>Oct 12 11:20:00 bastion sshd[7]: Failed password for root from 198.51.100.4 port 4 ssh2",
+    "expect": {
+      "template_id": "linux_sshd",
+      "parse_status": "ok",
+      "device_hostname": "bastion",
+      "actor_process_pid": 7,
+      "src_endpoint_ip": "198.51.100.4"
+    }
+  },
+  {
+    "labels": {
+      "job": "syslog",
+      "hostname": "fw01",
+      "service_name": "syslog"
+    },
+    "line": " 1,2026/10/12 11:25:16,012345678901,SYSTEM,ha,,2026/10/12 11:25:16,vsys1,state-change,,,,general,high,HA Group 1: Moved from state Active to state Passive,,,,,,,,fw01",
+    "expect": {
+      "template_id": "paloalto_system",
+      "parse_status": "ok",
+      "device_hostname": "fw01"
+    }
+  },
+  {
+    "labels": {
+      "job": "syslog",
+      "hostname": "fw01",
+      "service_name": "syslog"
+    },
+    "line": " 1,2026/10/12 11:26:43,012345678901,GLOBALPROTECT,0,,2026/10/12 11:26:43,vsys1,gateway-logout,login,LDAP,SSL,alice,,LAPTOP-ALICE,203.0.113.9,,10.30.0.5,,,,,,,,,,,success,,,,,gp-portal,,,,,,,,,,,,,,fw01",
+    "expect": {
+      "template_id": "paloalto_globalprotect",
+      "parse_status": "ok",
+      "device_hostname": "fw01",
+      "src_endpoint_ip": "203.0.113.9"
+    }
+  }
+]

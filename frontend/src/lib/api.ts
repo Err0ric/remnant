@@ -302,9 +302,17 @@ export interface LokiSettings {
   backfill_hours: number;
 }
 
+export interface LokiStreamGroup {
+  labels: Record<string, string>;
+  streams: number;
+}
+
 export interface LokiTestResult {
   lines: number;
-  streams: Record<string, string>[];
+  stream_count: number;
+  /** Label sets with per-id labels (proc_id, pid) left out, largest first. */
+  groups: LokiStreamGroup[];
+  ignored_labels: string[];
   newest: string | null;
 }
 
@@ -1319,6 +1327,8 @@ export const api = {
     request<void>("/api/account/password", post(body)),
   searches: () => request<SavedSearch[]>("/api/searches"),
   createSearch: (body: SavedSearchInput) => request<SavedSearch>("/api/searches", post(body)),
+  updateSearch: (body: SavedSearchInput) =>
+    request<SavedSearch>(`/api/searches/${encodeURIComponent(body.id)}`, put(body)),
   verifySearch: (id: string, verified: boolean) =>
     request<SavedSearch>(`/api/searches/${encodeURIComponent(id)}/verified`, put({ verified })),
   deleteSearch: (id: string) =>

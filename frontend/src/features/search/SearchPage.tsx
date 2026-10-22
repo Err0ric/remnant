@@ -7,8 +7,10 @@ import {
   type FacetRequest,
   type QueryRequest,
   type QueryResult,
+  type SavedSearch,
 } from "@/lib/api";
-import { DEFAULT_SQL, rangeStart, type TimeRangeId } from "@/lib/search";
+import { DEFAULT_SQL, rangeStart, sqlPlaceholders, type TimeRangeId } from "@/lib/search";
+import { openSavedSearch } from "@/lib/savedSeed";
 import { navigate } from "@/lib/route";
 import { seedSchedule } from "@/lib/scheduleSeed";
 import { RUN_SEARCH_EVENT, takeSearchSeed } from "@/lib/searchSeed";
@@ -25,6 +27,7 @@ import { AskPanel } from "./AskPanel";
 import { FacetSidebar } from "./FacetSidebar";
 import { FieldActionsContext, type FieldActions } from "./fieldActions";
 import { FilterBar } from "./FilterBar";
+import { OpenSearchPanel } from "./OpenSearchPanel";
 import { downloadCsv, ResultsCard } from "./ResultsCard";
 import { SaveSearchForm } from "./SaveSearchForm";
 import { SearchTabs, type SearchArea } from "./SearchTabs";
@@ -96,7 +99,13 @@ export function SearchPage({
   const [saving, setSaving] = useState(false);
   // Schedule saves first (a schedule runs a saved search), then opens the schedule form.
   const [scheduleAfterSave, setScheduleAfterSave] = useState(false);
-  const [savedId, setSavedId] = useState<string | null>(null);
+  const [saved, setSaved] = useState<SavedSearch | null>(null);
+  const savedId = saved?.id ?? null;
+  // Open (install finding 13): the saved search loaded here, and values for its
+  // {{name}} placeholders. {{start}} and {{end}} come from the time range.
+  const [opening, setOpening] = useState(false);
+  const [opened, setOpened] = useState<SavedSearch | null>(null);
+  const [paramValues, setParamValues] = useState<Record<string, string>>({});
   const schema = useQuery({
     queryKey: ["schema-columns"],
     queryFn: api.columns,
@@ -173,7 +182,44 @@ export function SearchPage({
   const result: QueryResult | undefined = run.data;
   const pending = run.isPending || simple.isPending;
 
-  const runSql = (value: string) => run.mutate({ sql: value });
+  const typed = (name: string, value: string, defs: SavedSearch["params"]) => {
+    const type = defs.find((d) => d.name === name)?.type;
+    if (type === "int" || type === "float") return Number(value);
+    if (type === "bool") return value === "true";
+    return value;
+  };
+  const runSql = (value: string, values = paramValues, defs = opened?.params ?? []) => {
+    const names = sqlPlaceholders(value);
+    const params = Object.fromEntries(
+      names
+        .filter((n) => values[n] !== undefined && values[n] !== "")
+        .map((n) => [n, typed(n, values[n] ?? "", defs)]),
+    );
+    run.mutate({ sql: value, params: names.length ? params : undefined });
+  };
+  const openSearch = (s: SavedSearch) => {
+    setOpening(false);
+    setOpened(s);
+    setSaved(null);
+    const values = Object.fromEntries(
+      s.params.map((p) => [
+        p.name,
+        p.default === undefined || p.default === null ? "" : String(p.default),
+      ]),
+    );
+    setParamValues(values);
+    const simpleText = s.origin?.simple_text;
+    if (simpleText !== undefined) {
+      setText(simpleText);
+      setTab("simple");
+      simple.mutate({ text: simpleText });
+      return;
+    }
+    setSql(s.sql);
+    setTab("sql");
+    // Run now unless a parameter still needs a value.
+    if (sqlPlaceholders(s.sql).every((n) => values[n])) runSql(s.sql, values, s.params);
+  };
   const runAsk = (value: string) => {
     setSql(value); // the editor always holds what produced the results
     runSql(value);
@@ -250,11 +296,16 @@ export function SearchPage({
               onClick={runCurrent}
               disabled={pending || (tab === "ask" && !askAnswer)}
             />
+            <Command
+              label="Open"
+              title="Open a saved search here"
+              onClick={() => setOpening((v) => !v)}
+            />
             {canSave ? (
               <Command
                 label="Save"
                 onClick={() => {
-                  setSavedId(null);
+                  setSaved(null);
                   setScheduleAfterSave(false);
                   setSaving(true);
                 }}
@@ -287,6 +338,21 @@ export function SearchPage({
       />
 
       <div className="flex flex-col gap-2.5 px-5 py-3">
+        {opening ? <OpenSearchPanel onOpen={openSearch} onClose={() => setOpening(false)} /> : null}
+        {opened ? (
+          <p className="text-sm text-text-secondary">
+            Open: <span className="text-text">{opened.name}</span>{" "}
+            <span className="font-mono text-text-muted">{opened.id}</span>. Save keeps changes in
+            it.{" "}
+            <button
+              type="button"
+              onClick={() => setOpened(null)}
+              className="text-accent-text hover:underline"
+            >
+              Close it
+            </button>
+          </p>
+        ) : null}
         <FilterBar range={range} onRange={setRange} sources={sources} onSources={setSources} />
         <SearchTabs active={area} onSelect={(a) => setTab(a === "sql" ? "sql" : searchMode)} />
         {/* Panels stay mounted so a question and its turns survive a look at another tab. */}
@@ -305,6 +371,11 @@ export function SearchPage({
                 onRun={() => simple.mutate({ text })}
                 compiled={compiled}
                 emptyColumns={emptyColumns}
+                onMoveToSql={(q) => {
+                  setSql(q);
+                  setText("");
+                  setTab("sql");
+                }}
                 onEditAsSql={() => {
                   if (!compiled) return;
                   setSql(inlineParams(compiled));
@@ -345,6 +416,27 @@ export function SearchPage({
                 columns={columnNames}
               />
             </Suspense>
+            {sqlPlaceholders(sql).length ? (
+              <fieldset className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+                <legend className="sr-only">Parameters</legend>
+                {sqlPlaceholders(sql).map((n) => (
+                  <label key={n} className="flex items-center gap-2">
+                    <span className="font-mono">{n}</span>
+                    <input
+                      value={paramValues[n] ?? ""}
+                      onChange={(e) => setParamValues({ ...paramValues, [n]: e.target.value })}
+                      className="h-8 w-40 rounded border border-border-strong bg-inset px-2 font-mono text-sm"
+                    />
+                  </label>
+                ))}
+              </fieldset>
+            ) : null}
+            {/\{\{\s*(start|end)\s*\}\}/.test(sql) ? (
+              <p className="text-sm text-text-muted">
+                <span className="font-mono">{"{{start}}"}</span> and{" "}
+                <span className="font-mono">{"{{end}}"}</span> come from the time range above.
+              </p>
+            ) : null}
             <div className="flex flex-wrap items-center gap-4 text-sm text-text-muted">
               <button
                 type="button"
@@ -361,6 +453,8 @@ export function SearchPage({
         </div>
         {saving ? (
           <SaveSearchForm
+            key={opened?.id ?? "new"}
+            existing={opened}
             sql={sqlToSave}
             askQuestion={tab === "ask" ? askAnswer?.question : undefined}
             simpleText={
@@ -370,21 +464,51 @@ export function SearchPage({
               setSaving(false);
               setScheduleAfterSave(false);
             }}
-            onDone={(id) => {
+            onDone={(s) => {
               setSaving(false);
-              setSavedId(id);
+              setSaved(s);
+              setOpened(s);
               if (scheduleAfterSave) {
                 setScheduleAfterSave(false);
-                seedSchedule({ kind: "search", targetId: id });
+                seedSchedule({ kind: "search", targetId: s.id });
                 navigate("schedules");
               }
             }}
           />
         ) : null}
-        {savedId ? (
-          <p role="status" className="text-sm text-text-secondary">
-            Saved as <span className="font-mono text-text">{savedId}</span>. Run it from Saved
-            searches or with <span className="font-mono">remnant search {savedId}</span>.
+        {saved ? (
+          <p
+            role="status"
+            className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded border border-ok bg-surface px-3 py-2 text-sm"
+          >
+            <span>
+              Saved as <span className="font-semibold">{saved.name}</span>{" "}
+              <span className="font-mono text-text-muted">{saved.id}</span>.
+            </span>
+            <a
+              href="/saved"
+              onClick={(e) => {
+                e.preventDefault();
+                openSavedSearch(saved.id);
+                navigate("saved");
+              }}
+              className="text-accent-text hover:underline"
+            >
+              Open in Saved searches
+            </a>
+            <button
+              type="button"
+              onClick={() => {
+                seedSchedule({ kind: "search", targetId: saved.id });
+                navigate("schedules");
+              }}
+              className="text-accent-text hover:underline"
+            >
+              Schedule it
+            </button>
+            <span className="text-text-muted">
+              CLI: <span className="font-mono">remnant search {saved.id}</span>
+            </span>
           </p>
         ) : null}
         {simple.isError ? (

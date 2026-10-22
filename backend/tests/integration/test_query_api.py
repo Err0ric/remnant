@@ -123,3 +123,28 @@ def test_export_rejected_sql_is_audited_as_failure(data_dir: Path) -> None:
     assert db.execute("SELECT action, outcome FROM audit_log").fetchall() == [
         ("query.export", "failure")
     ]
+
+
+def test_placeholders_bind_like_a_saved_search(data_dir: Path) -> None:
+    """Install finding 13: {{start}}/{{end}} come from the range, other names from params."""
+    sql = (
+        "SELECT message FROM events WHERE time BETWEEN {{start}} AND {{end}}"
+        " AND actor_process_name = {{prog}}"
+    )
+    c = client(data_dir)
+    res = c.post(
+        "/api/query",
+        json={
+            "sql": sql,
+            "start": "2026-10-09T20:50:00Z",
+            "end": "2026-10-09T23:00:00Z",
+            "params": {"prog": "sshd"},
+        },
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["rows"] == [["Failed password for admin"]]
+    # No range: start is the beginning of time and end is now.
+    res = c.post("/api/query", json={"sql": sql, "params": {"prog": "sshd"}})
+    assert len(res.json()["rows"]) == 2
+    missing = c.post("/api/query", json={"sql": sql})
+    assert missing.status_code == 400 and "{{prog}}" in missing.json()["detail"]

@@ -318,9 +318,16 @@ class LokiTest(LokiSettings):
     secret: SecretStr | None = Field(default=None, max_length=4096)
 
 
+class LokiStreamGroup(BaseModel):
+    labels: dict[str, str]
+    streams: int  # streams with these labels, apart from per-id labels
+
+
 class LokiTestOut(BaseModel):
     lines: int  # lines in the last hour, up to 100
-    streams: list[dict[str, str]]  # label sets that matched, up to 20
+    stream_count: int  # distinct streams among those lines
+    groups: list[LokiStreamGroup]  # up to 20, largest first
+    ignored_labels: list[str]  # per-id labels left out of the grouping (proc_id, pid, ...)
     newest: str | None
 
 
@@ -510,10 +517,19 @@ class SourcePatch(BaseModel):
     template_id: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]{1,63}$")
     # OTLP sources: keep prompt and tool content (ADR-0015 row 4).
     otlp_keep_content: bool | None = None
+    # Loki sources: which stream labels stand in for the syslog header (docs/ingest/loki.md).
+    loki_label_map: (
+        dict[Literal["hostname", "app_name", "procid", "severity", "facility"], list[str]] | None
+    ) = None
 
     @model_validator(mode="after")
     def _something(self) -> "SourcePatch":
-        if not self.model_fields_set & {"classification", "template_id", "otlp_keep_content"}:
+        if not self.model_fields_set & {
+            "classification",
+            "template_id",
+            "otlp_keep_content",
+            "loki_label_map",
+        }:
             raise ValueError("Nothing to change")
         if "otlp_keep_content" in self.model_fields_set and self.otlp_keep_content is None:
             raise ValueError("otlp_keep_content cannot be empty")
@@ -574,6 +590,17 @@ async def update_source(
             user.user_id,
             client_ip(request),
             {"source_id": source_id, "from": before_keep, "to": keep},
+        )
+    if body.loki_label_map is not None:
+        new_map = {str(k): v for k, v in body.loki_label_map.items()}
+        before_map, source = await run_in_threadpool(store.set_loki_label_map, source_id, new_map)
+        await run_in_threadpool(
+            _audit(request).audit.write,
+            "source.loki_label_map",
+            "success",
+            user.user_id,
+            client_ip(request),
+            {"source_id": source_id, "from": before_map, "to": new_map},
         )
     assert source is not None  # the validator requires at least one change
     return source

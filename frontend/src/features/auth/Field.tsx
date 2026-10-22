@@ -18,6 +18,9 @@ export function Field({ label, help, className, ...input }: FieldProps) {
       <input
         id={id}
         aria-describedby={helpId}
+        // Ids are generated, so browser autofill would offer values typed into unrelated
+        // forms (install finding 14). Sign-in fields pass their own autoComplete.
+        autoComplete="off"
         {...input}
         className={cn(
           "h-9 rounded border border-border-strong bg-inset px-2.5 text-sm text-text outline-none focus:border-accent focus:ring-1 focus:ring-focus-ring",

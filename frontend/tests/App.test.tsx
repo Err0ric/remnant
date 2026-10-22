@@ -116,7 +116,7 @@ describe("Search page", () => {
   it("shows guard rejections inline and runs on Ctrl+Enter", async () => {
     const spy = await renderApp();
     await screen.findByText("Failed password for invalid user oracle");
-    const editor = setSql("DROP TABLE events");
+    const editor = await setSql("DROP TABLE events");
     fireEvent.keyDown(editor, { key: "Enter", ctrlKey: true });
     expect(await screen.findByRole("alert")).toHaveTextContent("Statement not allowed");
     expect(queryBodies(spy).some((b) => b.sql === "DROP TABLE events")).toBe(true);
@@ -125,7 +125,7 @@ describe("Search page", () => {
   it("runs the current SQL from the Run button beside the editor", async () => {
     const spy = await renderApp();
     await screen.findByText("Failed password for invalid user oracle");
-    setSql("SELECT source_id FROM events");
+    await setSql("SELECT source_id FROM events");
     await userEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() =>
       expect(queryBodies(spy).some((b) => b.sql === "SELECT source_id FROM events")).toBe(true),
@@ -151,7 +151,7 @@ describe("Search page", () => {
 describe("SQL editor and raw view", () => {
   it("uses a code editor labelled for screen readers", async () => {
     await renderApp();
-    const editor = screen.getByLabelText("SQL query");
+    const editor = await screen.findByLabelText("SQL query");
     expect(editor).toHaveClass("cm-content");
     expect(editor.textContent).toContain("FROM events");
   });
@@ -174,7 +174,7 @@ describe("SQL editor and raw view", () => {
   it("explains when a query has no raw lines", async () => {
     await renderApp();
     await screen.findByText("Failed password for invalid user oracle");
-    setSql("SELECT source_id, count(*) AS events FROM events GROUP BY source_id");
+    await setSql("SELECT source_id, count(*) AS events FROM events GROUP BY source_id");
     await userEvent.click(screen.getByRole("button", { name: "Run query" }));
     await screen.findByText("69");
     await userEvent.click(screen.getByRole("button", { name: "Raw" }));

@@ -46,13 +46,13 @@ def query(lab: dict[str, Any], sql: str) -> list[list[Any]]:
 
 def test_template_source_lands_ocsf_columns(lab: dict[str, Any]) -> None:
     assert add(lab, template_id="linux_sshd").status_code == 201
-    assert lab["app"].state.ingest.run_once() == 66
+    assert lab["app"].state.ingest.run_once() == len(FIXTURE.read_text().splitlines())
     rows = query(
         lab,
         "SELECT template_id, class_uid, count(*) FROM events GROUP BY 1, 2 ORDER BY 2",
     )
     # The one line the template does not model keeps its envelope and gets no class.
-    assert rows == [["linux_sshd", 3002, 65], ["linux_sshd", None, 1]]
+    assert rows == [["linux_sshd", 3002, 68], ["linux_sshd", None, 1]]
     (ok,) = query(lab, "SELECT count(*) FROM events WHERE parse_status = 'ok'")[0]
     assert ok >= 63
     first = FIXTURE.read_text().splitlines()[0]

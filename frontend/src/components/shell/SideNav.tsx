@@ -38,8 +38,15 @@ function itemClass(current: boolean, ready: boolean): string {
 
 function Item({ item, active, isAdmin }: { item: NavItem; active: string; isAdmin: boolean }) {
   const section = useSection();
-  const sections = item.id === active ? visibleSections(item, isAdmin) : [];
-  const current = sections.some((x) => x.id === section) ? section : sections[0]?.id;
+  // Always listed, so every tab is one click from anywhere (owner, 2026-10-21); only the
+  // open page marks its current tab.
+  const sections = visibleSections(item, isAdmin);
+  const here = item.id === active;
+  const current = !here
+    ? undefined
+    : sections.some((x) => x.id === section)
+      ? section
+      : sections[0]?.id;
   return (
     <>
       {link(item, active)}

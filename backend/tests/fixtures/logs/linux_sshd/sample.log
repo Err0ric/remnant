@@ -64,3 +64,6 @@
 <86>1 2026-10-09T20:42:33Z db-01 sshd 14427 - - Accepted publickey for alice from 10.20.1.5 port 48336 ssh2: ED25519 SHA256:Zm9v
 <38>Oct  9 20:43:23 bastion sshd[811]: Timeout before authentication for 198.51.100.4 port 4022
 <38>Oct  9 20:43:35 bastion sshd[812]: Server listening on 0.0.0.0 port 22.
+<38>Oct  9 21:07:00 bastion sshd-session[3100]: Accepted publickey for alice from 192.0.2.10 port 50000 ssh2: ED25519 SHA256:Zm9v
+<38>Oct  9 21:07:05 web-01 sshd-session[3101]: Failed password for root from 203.0.113.9 port 40100 ssh2
+<86>Oct  9 21:07:06 web-01 sshd-session[3100]: pam_unix(sshd:session): session opened for user alice(uid=1001) by alice(uid=0)

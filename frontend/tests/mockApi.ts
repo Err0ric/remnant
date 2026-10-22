@@ -467,6 +467,12 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       Object.assign(found ?? {}, JSON.parse(String(init?.body ?? "{}")));
       return json(found);
     }
+    if (/\/api\/searches\/[^/]+$/.test(url) && method === "PUT") {
+      const id = url.split("/api/searches/")[1];
+      const found = searches.find((x) => x.id === id);
+      Object.assign(found ?? {}, JSON.parse(String(init?.body ?? "{}")), { updated_at: "y" });
+      return json(found);
+    }
     if (/\/api\/searches\/[^/]+\/run$/.test(url))
       return json(result({ columns: ["src", "n"], rows: [["203.0.113.9", 278]] }));
     if (/\/api\/searches\/[^/]+\/export$/.test(url))
@@ -1474,7 +1480,9 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         return json({ detail: "Start with a label selector", code: "param_invalid" }, 400);
       return json({
         lines: 42,
-        streams: [{ job: "syslog", host: "fw01" }],
+        stream_count: 1,
+        groups: [{ labels: { job: "syslog", host: "fw01" }, streams: 1 }],
+        ignored_labels: [],
         newest: "2026-10-12T11:59:00+00:00",
       });
     }

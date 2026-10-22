@@ -145,7 +145,7 @@ def test_a_due_schedule_runs_as_its_owner_inside_the_owners_sources(lab: dict[st
     assert run["range_start"] == "2026-10-08T07:00:00+00:00"  # 3 days back from 07:00
     assert run["row_count"] == 1  # one row: lin_auth and its count
     detail = lab["ana"].get(f"/api/schedules/{s['schedule_id']}/runs/{run['run_id']}").json()
-    assert detail["columns"] == ["source_id", "n"] and detail["sample"] == [["lin_auth", 6]]
+    assert detail["columns"] == ["source_id", "n"] and detail["sample"] == [["lin_auth", 7]]
     after = lab["ana"].get("/api/schedules").json()[0]
     assert after["next_run_at"] == "2026-10-12T07:00:00+00:00"
     with sqlite3.connect(lab["db"]) as db:

@@ -51,7 +51,7 @@ describe("Simple search", () => {
     await userEvent.type(screen.getByLabelText("Search text"), "it's{Enter}");
     await userEvent.click(await screen.findByRole("button", { name: "Edit as SQL" }));
     expect(screen.getByRole("tab", { name: "SQL", selected: true })).toBeVisible();
-    expect(screen.getByLabelText("SQL query")).toHaveTextContent("ILIKE '%it''s%'");
+    expect(await screen.findByLabelText("SQL query")).toHaveTextContent("ILIKE '%it''s%'");
   });
 
   it("shows why a search could not be read", async () => {
