@@ -1,0 +1,91 @@
+schema_version: 1
+id: tacacs_tac_plus
+name: TACACS+ server (tac_plus)
+version: 1.0.0
+author: starter-pack
+description: >-
+  tac_plus TACACS+ daemon over syslog: login and enable queries (accepted or rejected) and
+  accounting records sent to syslog (start, stop, and command records, tab separated:
+  device, user, port, client address, type, then attributes). Logins and sessions map to
+  Authentication with the user, the network device (device_ip), and the client
+  (src_endpoint_ip); command records to Process Activity with the command as the message.
+  The port, task id, service, and privilege level stay in unmapped. Built from vendor docs:
+  verify on real data.
+category: identity
+vendor: tacacs
+classification_default: local_only
+
+envelope:
+  type: syslog
+  syslog: { rfc: auto, assume_year: rollover_safe, timezone: UTC, strip_relay_headers: true }
+
+match:
+  app_name: [tac_plus, tac_plus-ng, tacacs]
+  min_confidence: 0.9
+
+payload:
+  format: regex
+  regex:
+    patterns:
+      - "^(?P<kind>login|enable|pap-login|chap-login) query for '(?P<user>[^']{0,256})' (?P<port>\\S{0,64}) from (?P<nas>[0-9A-Fa-f:.]{2,45}) (?P<result>accepted|rejected)"
+      - '^(?P<nas>[0-9A-Fa-f:.]{2,45})\t(?P<user>[^\t]{0,256})\t(?P<port>[^\t]{0,64})\t(?P<rem>[^\t]{0,64})\t(?P<acct_type>start|stop|update)(?P<rest>(?:\t[^\t]{0,2000}){0,40})$'
+      - '^connect from (?P<nas>[0-9A-Fa-f:.]{2,45})$'
+
+transforms:
+  - { field: acct_type, op: regex_extract, args: { pattern: '^(\w+)$', into: kind, optional: true } }
+  - { field: rest, op: regex_extract, args: { pattern: '\tcmd=([^\t]*)', into: command, optional: true } }
+  - { field: rest, op: regex_extract, args: { pattern: '\t(cmd)=', into: kind, optional: true } }
+  - { field: rest, op: regex_extract, args: { pattern: '\ttask_id=([^\t]*)', into: task_id, optional: true } }
+  - { field: rest, op: regex_extract, args: { pattern: '\tservice=([^\t]*)', into: service, optional: true } }
+  - { field: rest, op: regex_extract, args: { pattern: '\tpriv-lvl=([^\t]*)', into: priv_lvl, optional: true } }
+  - { field: rest, op: regex_extract, args: { pattern: '\telapsed_time=([^\t]*)', into: elapsed_time, optional: true } }
+  - { field: rem, op: regex_extract, args: { pattern: '^([0-9A-Fa-f:.]{2,45})$', into: client_ip, optional: true } }
+
+mapping:
+  class_uid: 0             # Base Event: "connect from" lines
+  class_by:
+    field: kind
+    values: { login: 3002, enable: 3002, pap-login: 3002, chap-login: 3002, start: 3002, stop: 3002, update: 3002, cmd: 1007 }
+  fields:
+    actor_user_name: { from: user }
+    actor_process_name: { default: tac_plus }
+    device_ip: { from: nas }
+    src_endpoint_ip: { from: client_ip }
+    message: { from: command }
+    activity_id: { from: kind, map: { login: 1, enable: 1, pap-login: 1, chap-login: 1, start: 1, stop: 2, update: 99, cmd: 1 } }
+    status_id: { from: result, map: { accepted: 1, rejected: 2 } }
+  severity:
+    from: result
+    map: { rejected: 3, accepted: 1 }
+
+tests:
+  - name: login accepted
+    input: "<86>Oct  9 20:41:12 tacacs-01 tac_plus[2201]: login query for 'alice' tty1 from 10.20.0.1 accepted"
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { actor_user_name: alice, device_ip: 10.20.0.1, status_id: 1, activity_id: 1 }
+  - name: login rejected
+    input: "<86>Oct  9 20:42:00 tacacs-01 tac_plus[2201]: login query for 'mallory' tty2 from 10.20.0.2 rejected"
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { actor_user_name: mallory, status_id: 2, severity_id: 3 }
+  - name: accounting command record
+    input: "<86>Oct  9 20:43:00 tacacs-01 tac_plus[2202]: 10.20.0.1\talice\ttty1\t10.20.1.5\tstop\ttask_id=14\tservice=shell\tpriv-lvl=15\tcmd=show running-config <cr>"
+    expect:
+      parse_status: ok
+      class_uid: 1007
+      fields: { actor_user_name: alice, device_ip: 10.20.0.1, src_endpoint_ip: 10.20.1.5, message: show running-config <cr> }
+  - name: accounting session stop
+    input: "<86>Oct  9 20:44:00 tacacs-01 tac_plus[2202]: 10.20.0.1\talice\ttty1\t10.20.1.5\tstop\ttask_id=12\tservice=shell\telapsed_time=3606"
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { activity_id: 2, src_endpoint_ip: 10.20.1.5 }
+  - name: connection from a device
+    input: "<86>Oct  9 20:40:00 tacacs-01 tac_plus[2200]: connect from 10.20.0.1"
+    expect:
+      parse_status: ok
+      class_uid: 0
+      fields: { device_ip: 10.20.0.1 }

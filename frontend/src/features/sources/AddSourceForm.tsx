@@ -82,6 +82,15 @@ export function AddSourceForm({ allowedRoots, initial, onDone }: AddSourceFormPr
   });
   const [senders, setSenders] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
+  // F27: the Loki addresses existing sources use (admins see them; others never add sources).
+  const existing = useQuery({ queryKey: ["source-list"], queryFn: api.sources });
+  const knownLokiUrls = [
+    ...new Set(
+      (existing.data ?? [])
+        .map((s) => (s.kind === "loki" ? s.loki?.url : undefined))
+        .filter((u): u is string => Boolean(u)),
+    ),
+  ];
   const templates = useQuery({
     queryKey: ["templates"],
     queryFn: api.templates,
@@ -220,6 +229,7 @@ export function AddSourceForm({ allowedRoots, initial, onDone }: AddSourceFormPr
             secret={lokiSecret}
             onChange={setLoki}
             onSecret={setLokiSecret}
+            knownUrls={knownLokiUrls}
           />
         ) : kind === "m365" || kind === "anthropic" ? (
           <ApiSourceFields

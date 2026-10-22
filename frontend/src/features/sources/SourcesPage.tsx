@@ -15,6 +15,7 @@ import { LokiSummary } from "./LokiSummary";
 import { OtlpControls } from "./OtlpSetup";
 import { QuietAlert } from "./QuietAlert";
 import { SourceState } from "./SourceState";
+import { TimeZoneEditor } from "./TimeZoneEditor";
 
 const COUNTS_SQL =
   "SELECT source_id, count(*) AS events, max(coalesce(time, time_observed)) AS last_event " +
@@ -230,6 +231,13 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
                           />
                           {s.template_id === AUTO_PARSER ? (
                             <ParserMix counts={mixFor.get(s.source_id) ?? new Map()} />
+                          ) : null}
+                          {s.kind !== "otlp" && s.kind !== "m365" && s.kind !== "anthropic" ? (
+                            <TimeZoneEditor
+                              sourceId={s.source_id}
+                              value={s.timezone}
+                              canManage={canManage}
+                            />
                           ) : null}
                         </td>
                         <td className="px-3 py-2.5 font-mono text-sm">

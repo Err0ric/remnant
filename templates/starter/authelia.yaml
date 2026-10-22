@@ -1,0 +1,94 @@
+schema_version: 1
+id: authelia
+name: Authelia
+version: 1.0.0
+author: starter-pack
+description: >-
+  Authelia authentication portal logs (text or JSON log format): first-factor and
+  second-factor attempts (1FA, TOTP, WebAuthn, Duo, mobile push), regulation bans, and
+  access denied by the access control rules. Attempts map to Authentication with the user,
+  client address, and result; denials to Authorize Session with the URL kept in unmapped
+  (target_url). Built from vendor docs: verify on real data.
+category: identity
+vendor: authelia
+classification_default: local_only
+
+envelope:
+  type: syslog
+  syslog: { rfc: auto, assume_year: rollover_safe, timezone: UTC, strip_relay_headers: true }
+
+match:
+  app_name: [authelia]
+  regex: '(?:\bmsg="|"msg":")(?:(?:Uns|S)uccessful (?:1FA|TOTP|WebAuthn|Duo|U2F|Passkey|Mobile Push) authentication attempt|Access to \S+ (?:\(method \w+\) )?is (?:forbidden|not authorized) to user)'
+  min_confidence: 0.9
+
+payload:
+  format: regex
+  regex:
+    patterns:
+      # Text (logrus): time="..." level=error msg="..." method=POST path=/api/firstfactor remote_ip=...
+      # JSON: {"level":"error","method":"POST","msg":"...","path":"...","remote_ip":"...","time":"..."}
+      - '^(?P<body>.{0,2000}?(?:\bmsg="|"msg":")(?P<msg>(?:[^"\\]|\\.){0,4000})".*)$'
+
+transforms:
+  - { field: body, op: regex_extract, args: { pattern: '\blevel"?[=:]"?(\w+)', into: level, optional: true } }
+  - { field: body, op: regex_extract, args: { pattern: '\bremote_ip"?[=:]"?([0-9A-Fa-f:.]+)', into: remote_ip, optional: true } }
+  - { field: body, op: regex_extract, args: { pattern: '\bmethod"?[=:]"?([A-Z]+)\b', into: method, optional: true } }
+  - { field: body, op: regex_extract, args: { pattern: '\bpath"?[=:]"?([^"\s,]+)', into: path, optional: true } }
+  - { field: body, op: regex_extract, args: { pattern: '\btime"?[=:]"([^"]+)"', into: ts, optional: true } }
+  - { field: ts, op: timestamp, args: { format: iso8601 } }
+  - { field: msg, op: regex_extract, args: { pattern: '^(Unsuccessful|Successful|Access to)\b', into: kind, optional: true } }
+  - { field: msg, op: regex_extract, args: { pattern: '^(?:Uns|S)uccessful (1FA|TOTP|WebAuthn|Duo|U2F|Passkey|Mobile Push) ', into: factor, optional: true } }
+  - { field: msg, op: regex_extract, args: { pattern: "by user '([^']{1,256})'", into: user, optional: true } }
+  - { field: msg, op: regex_extract, args: { pattern: "^Access to '?(\\S+?)'? (?:\\(method \\w+\\) )?is (?:forbidden|not authorized) to user", into: target_url, optional: true } }
+  - { field: msg, op: regex_extract, args: { pattern: "is (?:forbidden|not authorized) to user '?([^',\\s]{1,256})", into: user, optional: true } }
+  - { field: msg, op: regex_extract, args: { pattern: '\b(banned) until\b', into: banned, optional: true } }
+  - { field: banned, op: map, args: { values: { banned: Banned }, into: kind, optional: true } }
+
+mapping:
+  class_uid: 0             # Base Event for startup and other lines
+  class_by:
+    field: kind
+    values: { Unsuccessful: 3002, Successful: 3002, Banned: 3002, "Access to": 3003 }
+  fields:
+    time: { from: ts }
+    message: { from: msg }
+    actor_user_name: { from: user }
+    actor_process_name: { default: authelia }
+    src_endpoint_ip: { from: remote_ip }
+    activity_id: { from: kind, map: { Unsuccessful: 1, Successful: 1, Banned: 1, "Access to": 1 } }
+    status_id: { from: kind, map: { Unsuccessful: 2, Successful: 1, Banned: 2, "Access to": 2 } }
+  severity:
+    from: kind
+    map: { Unsuccessful: 3, Banned: 4, "Access to": 3, Successful: 1 }
+
+tests:
+  - name: failed first factor, text format
+    input: "<27>Oct  9 20:41:12 auth-01 authelia[1]: time=\"2026-10-09T20:41:12Z\" level=error msg=\"Unsuccessful 1FA authentication attempt by user 'alice': authentication failed\" method=POST path=/api/firstfactor remote_ip=203.0.113.9"
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { actor_user_name: alice, src_endpoint_ip: 203.0.113.9, status_id: 2, severity_id: 3 }
+  - name: successful TOTP, JSON format
+    input: '<30>Oct  9 20:42:00 auth-01 authelia[1]: {"level":"debug","method":"POST","msg":"Successful TOTP authentication attempt made by user ''bob''","path":"/api/secondfactor/totp","remote_ip":"198.51.100.4","time":"2026-10-09T20:42:00Z"}'
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { actor_user_name: bob, src_endpoint_ip: 198.51.100.4, status_id: 1, severity_id: 1 }
+  - name: banned by regulation
+    input: "<27>Oct  9 20:43:00 auth-01 authelia[1]: time=\"2026-10-09T20:43:00Z\" level=error msg=\"Unsuccessful 1FA authentication attempt by user 'carol' and they are banned until 2026-10-09 20:48:00 +0000 UTC\" method=POST path=/api/firstfactor remote_ip=203.0.113.77"
+    expect:
+      parse_status: ok
+      fields: { actor_user_name: carol, status_id: 2, severity_id: 4 }
+  - name: access forbidden by a rule
+    input: "<30>Oct  9 20:44:00 auth-01 authelia[1]: time=\"2026-10-09T20:44:00Z\" level=info msg=\"Access to https://grafana.example.com/admin (method GET) is forbidden to user 'dave'\" method=GET path=/api/authz/forward-auth remote_ip=10.20.1.6"
+    expect:
+      parse_status: ok
+      class_uid: 3003
+      fields: { actor_user_name: dave, src_endpoint_ip: 10.20.1.6, status_id: 2 }
+  - name: startup line is a base event
+    input: '<30>Oct  9 20:40:00 auth-01 authelia[1]: time="2026-10-09T20:40:00Z" level=info msg="Startup complete"'
+    expect:
+      parse_status: ok
+      class_uid: 0
+      fields: { message: Startup complete }

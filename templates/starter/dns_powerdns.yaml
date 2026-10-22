@@ -1,0 +1,68 @@
+schema_version: 1
+id: dns_powerdns
+name: PowerDNS query log
+version: 1.0.0
+author: starter-pack
+description: >-
+  PowerDNS query logging: the Authoritative Server with log-dns-queries ("Remote X wants
+  'name|type'") and the Recursor with quiet=no, in the older text form ("question for
+  'name|type' from X") and the structured form (msg="Question" ... ip= qname= qtype=). The
+  queried name is the message and is kept in unmapped (qname) for the AI usage page; the
+  type and cache result too. Query logging is high volume: turn it on deliberately. Built
+  from vendor docs: verify on real data.
+category: dns
+vendor: powerdns
+classification_default: local_only
+sigma:
+  logsource:
+    - {category: dns}
+
+envelope:
+  type: syslog
+  syslog: { rfc: auto, assume_year: rollover_safe, timezone: UTC, strip_relay_headers: true }
+
+match:
+  app_name: [pdns_server, pdns, pdns_recursor, pdns-recursor]
+  min_confidence: 0.9
+
+payload:
+  format: regex
+  regex:
+    patterns:
+      - "^Remote (?P<src_ip>[0-9A-Fa-f:.]{2,45}) wants '(?P<qname>[^|']{0,255})\\|(?P<qtype>[A-Za-z0-9]{1,10})', do = (?P<do>\\d), bufsize = (?P<bufsize>\\d{1,5})(?: \\(\\d{1,5}\\))?[:,] (?P<cache>packetcache (?:HIT|MISS))?"
+      - "^(?:\\d{1,10} \\[\\d{1,10}/\\d{1,10}\\] )?question for '(?P<qname>[^|']{0,255})\\|(?P<qtype>[A-Za-z0-9]{1,10})' from (?P<src_ip>[0-9A-Fa-f:.]{2,45}?)(?::(?P<src_port>\\d{1,5}))?$"
+      - '^msg="Question"(?P<rest>.{0,2000})$'
+
+transforms:
+  - { field: rest, op: regex_extract, args: { pattern: '\bip="([0-9A-Fa-f:.]{2,45})"', into: src_ip, optional: true } }
+  - { field: rest, op: regex_extract, args: { pattern: '\bqname="([^"]{0,255})"', into: qname, optional: true } }
+  - { field: rest, op: regex_extract, args: { pattern: '\bqtype="([A-Za-z0-9]{1,10})"', into: qtype, optional: true } }
+  - { field: rest, op: regex_extract, args: { pattern: '\bproto="(\w+)"', into: proto, optional: true } }
+  - { field: src_port, op: to_int }
+  - { field: qname, op: to_lower }
+
+mapping:
+  class_uid: 4003          # DNS Activity
+  fields:
+    activity_id: { default: 1 }    # Query
+    src_endpoint_ip: { from: src_ip }
+    src_endpoint_port: { from: src_port }
+    message: { from: qname }
+
+tests:
+  - name: authoritative query with cache result
+    input: "<30>Oct  9 20:41:12 ns2 pdns_server[700]: Remote 10.20.1.5 wants 'www.example.com|A', do = 0, bufsize = 1232 (4096): packetcache MISS"
+    expect:
+      parse_status: ok
+      class_uid: 4003
+      fields: { src_endpoint_ip: 10.20.1.5, message: www.example.com, activity_id: 1 }
+  - name: recursor text form
+    input: "<30>Oct  9 20:42:00 ns3 pdns_recursor[710]: 2 [1/1] question for 'chatgpt.com|AAAA' from 10.20.1.6:53212"
+    expect:
+      parse_status: ok
+      fields: { src_endpoint_ip: 10.20.1.6, src_endpoint_port: 53212, message: chatgpt.com }
+  - name: recursor structured form
+    input: '<30>Oct  9 20:43:00 ns3 pdns-recursor[710]: msg="Question" subsystem="syncres" level="0" prio="Info" tid="1" ts="1791578580.123" ecs="" ip="10.20.2.14" proto="udp" qname="API.Anthropic.com" qtype="A"'
+    expect:
+      parse_status: ok
+      fields: { src_endpoint_ip: 10.20.2.14, message: api.anthropic.com }

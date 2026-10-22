@@ -1,14 +1,29 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { OptionalSection } from "@/components/forms/OptionalSection";
-import { ApiError, api, type ScheduleInput, type ThresholdKind } from "@/lib/api";
+import {
+  ApiError,
+  api,
+  type Schedule,
+  type ScheduleInput,
+  type ScheduleUpdate,
+  type ThresholdKind,
+} from "@/lib/api";
 import { PRESETS } from "./schedule";
 
 interface ScheduleFormProps {
   onDone: () => void;
   /** Preselected target, from a "Schedule" button elsewhere. */
   initial?: { kind: "search" | "rule"; targetId: string } | null;
+  /** Edit this schedule instead of creating one (F37). Its run history is kept. */
+  existing?: Schedule | null;
 }
+
+const PRESET_CRON: Record<string, string> = {
+  "0 * * * *": "hourly",
+  "0 7 * * *": "daily",
+  "0 7 * * 1-5": "weekdays",
+};
 
 const LOOKBACKS = [
   { value: "", label: "Since the last run" },
@@ -18,18 +33,21 @@ const LOOKBACKS = [
 ];
 
 /** New schedule for a saved search or an enabled rule (SPEC 5.5). Runs as you. */
-export function ScheduleForm({ onDone, initial = null }: ScheduleFormProps) {
+export function ScheduleForm({ onDone, initial = null, existing = null }: ScheduleFormProps) {
   const client = useQueryClient();
-  const [kind, setKind] = useState<"search" | "rule">(initial?.kind ?? "search");
-  const [target, setTarget] = useState(initial?.targetId ?? "");
-  const [name, setName] = useState("");
-  const [preset, setPreset] = useState<string>("daily");
-  const [cron, setCron] = useState("");
-  const [lookback, setLookback] = useState("");
-  const [shared, setShared] = useState(false);
-  const [thresholdKind, setThresholdKind] = useState<ThresholdKind | "">("");
-  const [thresholdValue, setThresholdValue] = useState("");
-  const [targetIds, setTargetIds] = useState<string[]>([]);
+  const e = existing;
+  const [kind, setKind] = useState<"search" | "rule">(e?.kind ?? initial?.kind ?? "search");
+  const [target, setTarget] = useState(e?.target_id ?? initial?.targetId ?? "");
+  const [name, setName] = useState(e?.name ?? "");
+  const [preset, setPreset] = useState<string>(e ? (PRESET_CRON[e.cron] ?? "custom") : "daily");
+  const [cron, setCron] = useState(e && !PRESET_CRON[e.cron] ? e.cron : "");
+  const [lookback, setLookback] = useState(e?.lookback_minutes ? String(e.lookback_minutes) : "");
+  const [shared, setShared] = useState(e?.shared ?? false);
+  const [thresholdKind, setThresholdKind] = useState<ThresholdKind | "">(e?.threshold_kind ?? "");
+  const [thresholdValue, setThresholdValue] = useState(
+    e?.threshold_value != null ? String(e.threshold_value) : "",
+  );
+  const [targetIds, setTargetIds] = useState<string[]>(e?.target_ids ?? []);
   const alertTargets = useQuery({ queryKey: ["alert-targets"], queryFn: api.alertTargets });
   const searches = useQuery({ queryKey: ["searches"], queryFn: api.searches });
   const rules = useQuery({ queryKey: ["rules"], queryFn: api.rules, enabled: kind === "rule" });
@@ -40,6 +58,32 @@ export function ScheduleForm({ onDone, initial = null }: ScheduleFormProps) {
 
   const save = useMutation({
     mutationFn: () => {
+      if (e) {
+        // Only what changed, so the audit row and the run's change note say exactly that.
+        const nextCron = preset === "custom" ? cron.trim() : preset;
+        const patch: ScheduleUpdate = {};
+        if (kind !== e.kind || target !== e.target_id) {
+          patch.kind = kind;
+          patch.target_id = target;
+        }
+        if (name.trim() && name.trim() !== e.name) patch.name = name.trim();
+        if (nextCron !== (PRESET_CRON[e.cron] ?? e.cron)) patch.cron = nextCron;
+        const nextLookback = lookback ? Number(lookback) : 0;
+        if (nextLookback !== (e.lookback_minutes ?? 0)) patch.lookback_minutes = nextLookback;
+        if (shared !== e.shared) patch.shared = shared;
+        if (!thresholdKind && e.threshold_kind) patch.threshold_kind = "none";
+        else if (
+          thresholdKind &&
+          thresholdValue !== "" &&
+          (thresholdKind !== e.threshold_kind || Number(thresholdValue) !== e.threshold_value)
+        ) {
+          patch.threshold_kind = thresholdKind;
+          patch.threshold_value = Number(thresholdValue);
+        }
+        if ([...targetIds].sort().join() !== [...e.target_ids].sort().join())
+          patch.target_ids = targetIds;
+        return api.updateSchedule(e.schedule_id, patch);
+      }
       const body: ScheduleInput = {
         kind,
         target_id: target,
@@ -65,7 +109,7 @@ export function ScheduleForm({ onDone, initial = null }: ScheduleFormProps) {
   const input = "h-8 rounded border border-border bg-inset px-2";
   return (
     <form
-      aria-label="New schedule"
+      aria-label={e ? `Edit ${e.name}` : "New schedule"}
       className="flex flex-col gap-3 rounded-card border border-border bg-surface p-3"
       onSubmit={(e) => {
         e.preventDefault();
@@ -213,6 +257,12 @@ export function ScheduleForm({ onDone, initial = null }: ScheduleFormProps) {
           </label>
         </div>
       </OptionalSection>
+      {e ? (
+        <p className="text-sm text-text-secondary">
+          Run history is kept. The next run notes what changed in its definition (what it runs, its
+          parameters, or its range).
+        </p>
+      ) : null}
       <p className="text-sm text-text-secondary">
         Runs as you, with your access checked every run. If the saved search changes, the rule is
         disabled, or you lose access to a source, it pauses until you resume it.
@@ -228,7 +278,7 @@ export function ScheduleForm({ onDone, initial = null }: ScheduleFormProps) {
           className="h-8 rounded bg-accent px-3 font-semibold text-white disabled:opacity-40"
           disabled={!target || save.isPending}
         >
-          Create schedule
+          {e ? "Save changes" : "Create schedule"}
         </button>
         <button type="button" className="h-8 rounded px-3 hover:bg-surface-head" onClick={onDone}>
           Cancel

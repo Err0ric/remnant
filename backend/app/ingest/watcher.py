@@ -37,6 +37,7 @@ from app.ingest.integrity import LakeEvents
 from app.ingest.labels import labels_envelope
 from app.ingest.normalizer import Normalizer
 from app.ingest.records import DecodedLine, Frame, decode_frame
+from app.ingest.skew import SkewTracker
 from app.ingest.sources import (
     SPOOL_SUFFIX,
     SourceConfig,
@@ -88,6 +89,8 @@ class SourceStatus:
     warnings: tuple[str, ...] = ()
     # API sources: the next poll after errors or a provider's request to slow down.
     retry_at: datetime | None = None
+    # Event times look this many hours off (positive: early), steadily (ingest/skew.py).
+    time_offset_h: float | None = None
 
 
 SourceState = Literal["waiting", "reading", "error", "disabled"]
@@ -118,6 +121,8 @@ class IngestService:
         self._templates = templates
         self._meta = meta
         self._writer = LakeWriter(lake_dir, events)
+        # Event times a whole number of hours off: a time zone to check (trial finding).
+        self.skew = SkewTracker()
         self._evtx = EvtxReader(max_len=MAX_LINE)
         self._clock = clock
         self._status: dict[str, SourceStatus] = {}
@@ -248,7 +253,7 @@ class IngestService:
                 row["time"] = from_ns(item.ns)
             rows.append(row)
         if rows:
-            self._writer.write(rows)
+            self._write(source.source_id, rows)
         with self._meta.connect() as con:
             con.execute(
                 "INSERT INTO connector_checkpoints (source_id, position, updated_at)"
@@ -313,7 +318,7 @@ class IngestService:
                 row["time"] = rec.time
             rows.append(row)
         if rows:
-            self._writer.write(rows)
+            self._write(source.source_id, rows)
         return len(rows)
 
     def _save_position(self, source_id: str, position: str, now: datetime) -> None:
@@ -372,9 +377,15 @@ class IngestService:
                 if cur.last_event_at is None:
                     self._status[sid] = replace(cur, last_event_at=at)
 
+    def _write(self, source_id: str, rows: list[dict[str, Any]]) -> None:
+        self._writer.write(rows)
+        self.skew.observe(source_id, rows)
+
     def status(self) -> dict[str, SourceStatus]:
         with self._lock:
             out = dict(self._status)
+        for sid, hours in self.skew.offsets().items():
+            out[sid] = replace(out.get(sid) or SourceStatus(), time_offset_h=hours)
         # A syslog listener that cannot bind its port is this source's error (ADR-0021).
         for sid, error in (self.listener_errors() if self.listener_errors else {}).items():
             out[sid] = replace(out.get(sid) or SourceStatus(), error=error)
@@ -450,7 +461,7 @@ class IngestService:
             if row is not None:
                 rows.append(row)
         if rows:
-            self._writer.write(rows)
+            self._write(source.source_id, rows)
         self._save_checkpoint(
             source.source_id, path_key(path), inode, offset + consumed, csv_header, skipping
         )
@@ -506,7 +517,7 @@ class IngestService:
                 row["device_ip"] = sender  # what the network saw (ADR-0021 row 5)
             rows.append(row)
         if rows:
-            self._writer.write(rows)
+            self._write(source.source_id, rows)
         self._save_checkpoint(source.source_id, path_key(path), inode, offset + pos, None, False)
         if damaged:
             # Never resync inside message bodies: senders control those bytes and could
@@ -579,7 +590,7 @@ class IngestService:
             if row is not None:
                 rows.append(row)
         if rows:
-            self._writer.write(rows)
+            self._write(source.source_id, rows)
         self._skipped[key] = unreadable
         if unreadable:
             log.warning("evtx_records_skipped", source_id=source.source_id, count=unreadable)

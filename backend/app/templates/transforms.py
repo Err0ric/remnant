@@ -131,6 +131,10 @@ def _run(
         if not -(2**63) <= number < 2**63:
             raise OverflowError("int64")
         return number
+    if isinstance(value, list) and t.op == "regex_extract":
+        # A list of cells (a CSV row's extra columns, `_extra`) is searched as its scalar
+        # items joined with commas, so a pattern can find a field whose position varies.
+        value = ",".join(str(v) for v in value if v is not None and not isinstance(v, dict | list))
     text = value if isinstance(value, str) else str(value)
     if t.op == "to_lower":
         return text.lower()

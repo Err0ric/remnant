@@ -22,6 +22,7 @@ import {
   storedTab,
   type SearchTab,
 } from "@/lib/simpleSearch";
+import { AddToDashboardPanel } from "@/features/dashboard/AddToDashboard";
 import { AiToggle } from "./AiToggle";
 import { AskPanel } from "./AskPanel";
 import { FacetSidebar } from "./FacetSidebar";
@@ -99,6 +100,9 @@ export function SearchPage({
   const [saving, setSaving] = useState(false);
   // Schedule saves first (a schedule runs a saved search), then opens the schedule form.
   const [scheduleAfterSave, setScheduleAfterSave] = useState(false);
+  // Add to dashboard (D89): a saved search goes on the Dashboard with panel defaults.
+  const [dashboardAfterSave, setDashboardAfterSave] = useState(false);
+  const [dashboardFor, setDashboardFor] = useState<SavedSearch | null>(null);
   const [saved, setSaved] = useState<SavedSearch | null>(null);
   const savedId = saved?.id ?? null;
   // Open (install finding 13): the saved search loaded here, and values for its
@@ -230,6 +234,23 @@ export function SearchPage({
     else if (askAnswer) runAsk(askAnswer.sql);
   };
 
+  // Saved searches > Edit (F37): open that search here, so Save changes updates it.
+  const editing = useQuery({
+    queryKey: ["searches"],
+    queryFn: api.searches,
+    enabled: Boolean(seed?.savedId),
+  });
+  const editTaken = useRef(false);
+  useEffect(() => {
+    if (editTaken.current || !seed?.savedId || !editing.data) return;
+    const found = editing.data.find((s) => s.id === seed.savedId);
+    if (!found) return;
+    editTaken.current = true;
+    openSearch(found);
+    setSaving(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing.data]);
+
   // Run once on open so the page shows recent events immediately.
   useEffect(() => {
     if (sqlSeed || tab === "sql") runSql(sql);
@@ -323,6 +344,24 @@ export function SearchPage({
                     return;
                   }
                   setScheduleAfterSave(true);
+                  setSaving(true);
+                }}
+                disabled={saving || !sqlToSave.trim()}
+              />
+            ) : null}
+            {canSave ? (
+              <Command
+                label="Add to dashboard"
+                title="Put this search on the Dashboard: hourly, last 24 hours"
+                onClick={() => {
+                  // The search as shown: the one just saved, or the open one if unchanged.
+                  const current = saved ?? (opened && opened.sql === sql ? opened : null);
+                  if (current && tab === "sql") {
+                    setDashboardFor(current);
+                    return;
+                  }
+                  setScheduleAfterSave(false);
+                  setDashboardAfterSave(true);
                   setSaving(true);
                 }}
                 disabled={saving || !sqlToSave.trim()}
@@ -463,17 +502,30 @@ export function SearchPage({
             onCancel={() => {
               setSaving(false);
               setScheduleAfterSave(false);
+              setDashboardAfterSave(false);
             }}
             onDone={(s) => {
               setSaving(false);
               setSaved(s);
               setOpened(s);
+              if (dashboardAfterSave) {
+                setDashboardAfterSave(false);
+                setDashboardFor(s);
+              }
               if (scheduleAfterSave) {
                 setScheduleAfterSave(false);
                 seedSchedule({ kind: "search", targetId: s.id });
                 navigate("schedules");
               }
             }}
+          />
+        ) : null}
+        {dashboardFor ? (
+          <AddToDashboardPanel
+            key={dashboardFor.id}
+            search={dashboardFor}
+            result={result ?? null}
+            onClose={() => setDashboardFor(null)}
           />
         ) : null}
         {saved ? (

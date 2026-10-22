@@ -85,6 +85,8 @@ class Schedule:
     # Dashboard display (trial finding): the owner's choice, seen by everyone.
     panel_width: PanelWidth = "third"
     panel_view: PanelView = "table"
+    # What changed in the definition since the last run (F37); the next run records it.
+    definition_change: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +110,9 @@ class ScheduleRun:
     # Set when the run found nothing, the one before found rows, and a source it read
     # switched parser (template) in between (trial finding F36).
     parser_change: str | None = None
+    # The first run after the target, its parameters, its range, or the saved search
+    # changed says what changed (F37).
+    definition_change: str | None = None
 
 
 # Templates per source in the earlier part (before $cur) and in this run's range.
@@ -244,8 +249,40 @@ class ScheduleService:
         paused: bool | None = None,
         panel_width: PanelWidth | None = None,
         panel_view: PanelView | None = None,
+        kind: Kind | None = None,
+        target_id: str | None = None,
+        params: dict[str, Any] | None = None,
     ) -> Schedule:
         sets: dict[str, Any] = {}
+        notes: list[str] = []
+        new_kind, new_target = kind or s.kind, target_id or s.target_id
+        retarget = (new_kind, new_target) != (s.kind, s.target_id)
+        if retarget or (params is not None and params != s.params):
+            # A new definition: checked as the owner it runs as, like a new schedule.
+            try:
+                owner = self._owner(s)
+            except _Stop as exc:
+                raise ConflictError(f"Cannot change it: {exc}") from exc
+            sha, scope, target_name = self.snapshot(new_kind, new_target, owner)
+            # A new target starts without the old target's parameters unless given.
+            values = params if params is not None else ({} if retarget else s.params)
+            if new_kind == "search":
+                search = self._searches.get(new_target, owner)
+                now = self._clock().astimezone(UTC)
+                bind(search.params, values, now, now, search.sql)  # refuses bad params now
+            elif values:
+                raise ParamInvalidError("Rules take no parameters")
+            sets |= {
+                "kind": new_kind,
+                "target_id": new_target,
+                "params": json.dumps(values),
+                "target_sha256": sha,
+                "scope_sources": None if scope is None else json.dumps(scope),
+            }
+            what = "saved search" if new_kind == "search" else "rule"
+            notes.append(
+                f"Now runs the {what} {target_name[:120]}" if retarget else "Parameters changed"
+            )
         if panel_width is not None:
             sets["panel_width"] = panel_width
         if panel_view is not None:
@@ -255,8 +292,12 @@ class ScheduleService:
         expr = s.cron
         if cron is not None:
             expr = sets["cron"] = _cron(cron)
-        if lookback_minutes is not None:
+        if lookback_minutes is not None and (lookback_minutes or None) != s.lookback_minutes:
             sets["lookback_minutes"] = lookback_minutes or None
+            notes.append(
+                f"Range changed from {_range_label(s.lookback_minutes)}"
+                f" to {_range_label(lookback_minutes or None)}"
+            )
         if shared is not None:
             sets["shared"] = int(shared)
         if threshold_kind == "none":
@@ -281,11 +322,16 @@ class ScheduleService:
                 "target_sha256": sha,
                 "scope_sources": None if scope is None else json.dumps(scope),
             }
+            if sha != s.target_sha256:
+                what = "saved search" if s.kind == "search" else "rule"
+                notes.append(f"The {what} changed; accepted on resume")
         running = not s.paused if paused is None else not paused
         if running and ("cron" in sets or "paused" in sets):
             sets["next_run_at"] = self.next_run(expr, self._clock().astimezone(UTC))
         if not sets:
             return s
+        if notes:
+            sets["definition_change"] = "; ".join(filter(None, [s.definition_change, *notes]))[:500]
         sets["updated_at"] = self._clock().astimezone(UTC).isoformat()
         cols = ", ".join(f"{k} = ?" for k in sets)
         with self._meta.connect() as con:
@@ -294,6 +340,41 @@ class ScheduleService:
                 (*sets.values(), s.schedule_id),
             )
         return self.get(s.schedule_id)
+
+    def accept_search_change(self, search_id: str, editor: User) -> list[str]:
+        """The owner of a saved search changed it: their own running schedules of it take
+        the new definition at once and note it (F37). Anyone else's schedules of it still
+        pause at their next run until their owner reviews and resumes (SPEC 5.5)."""
+        with self._meta.connect() as con:
+            rows = con.execute(
+                "SELECT * FROM schedules WHERE kind = 'search' AND target_id = ?"
+                " AND owner_id = ? AND paused = 0",
+                (search_id, editor.user_id),
+            ).fetchall()
+        changed = []
+        for r in rows:
+            s = _schedule(r)
+            try:
+                sha, scope, _ = self.snapshot("search", search_id, editor)
+            except NotFoundError:
+                continue
+            if sha == s.target_sha256:
+                continue
+            note = "; ".join(filter(None, [s.definition_change, "The saved search was edited"]))
+            with self._meta.connect() as con:
+                con.execute(
+                    "UPDATE schedules SET target_sha256 = ?, scope_sources = ?,"
+                    " definition_change = ?, updated_at = ? WHERE schedule_id = ?",
+                    (
+                        sha,
+                        None if scope is None else json.dumps(scope),
+                        note[:500],
+                        self._clock().astimezone(UTC).isoformat(),
+                        s.schedule_id,
+                    ),
+                )
+            changed.append(s.schedule_id)
+        return changed
 
     def delete(self, s: Schedule) -> None:
         with self._meta.connect() as con:
@@ -496,7 +577,7 @@ class ScheduleService:
         run = ScheduleRun(
             run_id, sched.schedule_id, now.isoformat(), start.isoformat(), end.isoformat(),
             status, count, elapsed, read, columns, sample, truncated, flagged, reason, error,
-            rule_run_id, changed,
+            rule_run_id, changed, sched.definition_change,
         )  # fmt: skip
         self._save(run)
         self._notify(sched, run)
@@ -673,8 +754,8 @@ class ScheduleService:
             con.execute(
                 "INSERT INTO schedule_runs (run_id, schedule_id, started_at, range_start,"
                 " range_end, status, row_count, elapsed_ms, sources_in_scope, columns, sample,"
-                " truncated, flagged, flag_reason, error, rule_run_id, parser_change)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " truncated, flagged, flag_reason, error, rule_run_id, parser_change,"
+                " definition_change) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     run.run_id,
                     run.schedule_id,
@@ -693,8 +774,14 @@ class ScheduleService:
                     run.error,
                     run.rule_run_id,
                     run.parser_change,
+                    run.definition_change,
                 ),
             )
+            if run.definition_change and run.status == "ok":
+                con.execute(
+                    "UPDATE schedules SET definition_change = NULL WHERE schedule_id = ?",
+                    (run.schedule_id,),
+                )
             con.execute(
                 "UPDATE schedules SET last_run_at = ? WHERE schedule_id = ?",
                 (run.started_at, run.schedule_id),
@@ -736,6 +823,7 @@ def _schedule(r: sqlite3.Row) -> Schedule:
         updated_at=r["updated_at"],
         panel_width=r["panel_width"],
         panel_view=r["panel_view"],
+        definition_change=r["definition_change"],
     )
 
 
@@ -758,4 +846,17 @@ def _run(r: sqlite3.Row) -> ScheduleRun:
         error=r["error"],
         rule_run_id=r["rule_run_id"],
         parser_change=r["parser_change"],
+        definition_change=r["definition_change"],
     )
+
+
+def _range_label(minutes: int | None) -> str:
+    if not minutes:
+        return "since the last run"
+    if minutes % 1440 == 0:
+        days = minutes // 1440
+        return f"last {days} day{'s' if days != 1 else ''}"
+    if minutes % 60 == 0:
+        hours = minutes // 60
+        return f"last {hours} hour{'s' if hours != 1 else ''}"
+    return f"last {minutes} minutes"

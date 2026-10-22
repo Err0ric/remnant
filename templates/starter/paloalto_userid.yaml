@@ -1,7 +1,7 @@
 schema_version: 1
 id: paloalto_userid
 name: Palo Alto Networks User-ID
-version: 1.0.0
+version: 1.1.0
 author: starter-pack
 description: >-
   PAN-OS USERID logs: IP-to-user mappings learned from a data source (domain controller,
@@ -52,6 +52,11 @@ payload:
       - device_name
 
 transforms:
+  # Time: the high-resolution timestamp with its UTC offset when the firewall sends it
+  # (PAN-OS 10.x and later; 9.1 and earlier write a fixed 1969 value, which is skipped),
+  # else Generated Time, which has no zone and is read in the source's time zone.
+  - { field: _extra, op: regex_extract, args: { pattern: '(?:^|,)(20\d{2}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2}))(?:,|$)', into: event_time, optional: true } }
+  - { field: event_time, op: timestamp, args: { format: iso8601 } }
   - { field: generated_time, op: timestamp, args: { format: "%Y/%m/%d %H:%M:%S" } }
   - { field: source_port, op: to_int }
 
@@ -61,7 +66,7 @@ mapping:
     field: subtype
     values: { login: 3002, logout: 3002 }
   fields:
-    time: { from: generated_time }
+    time: { from: [event_time, generated_time] }
     device_hostname: { from: device_name }
     actor_user_name: { from: user }
     src_endpoint_ip: { from: source_ip }

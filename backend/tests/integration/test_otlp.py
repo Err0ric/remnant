@@ -308,6 +308,23 @@ def test_agent_config_has_no_secret_and_parses(lab: dict[str, Any], target: str)
         assert receivers == ["journald"]
     assert lab["ana"].get("/api/sources/claude/agent-config").status_code == 403
     assert lab["admin"].get("/api/sources/lin_auth/agent-config").status_code == 400
+    # Offline laptops keep their events: a disk queue that is retried without a deadline.
+    assert exporter["sending_queue"]["storage"] == "file_storage"
+    assert exporter["retry_on_failure"]["max_elapsed_time"] == 0
+    assert "server_name_override" not in exporter["tls"]
+    if target == "windows":
+        assert all(doc["receivers"][r]["storage"] == "file_storage" for r in receivers)
+
+
+def test_agent_config_can_name_the_server_for_its_certificate(lab: dict[str, Any]) -> None:
+    import yaml
+
+    url = "/api/sources/claude/agent-config?os=windows&server_name=siem.example.internal"
+    doc = yaml.safe_load(lab["admin"].get(url).text)
+    tls = doc["exporters"]["otlphttp/remnant"]["tls"]
+    assert tls["server_name_override"] == "siem.example.internal"
+    bad = "/api/sources/claude/agent-config?server_name=" + "a%22%0Ab: c"
+    assert lab["admin"].get(bad).status_code == 422
 
 
 def test_sensitive_signals_are_searchable(lab: dict[str, Any]) -> None:

@@ -279,6 +279,43 @@ describe("Source status", () => {
     rerender(<SourceState status={{ ...base, files_waiting: 1 }} />);
     expect(screen.getByText(/1 .evtx file looks partly copied/)).toBeInTheDocument();
   });
+
+  it("warns when event times look a whole number of hours off", async () => {
+    const { SourceState } = await import("@/features/sources/SourceState");
+    render(
+      <SourceState
+        status={{
+          ...base,
+          time_offset_h: 7,
+          time_offset_text: "Event times look 7 hours early; check this source's time zone",
+        }}
+      />,
+    );
+    expect(screen.getByRole("note")).toHaveTextContent(
+      "Event times look 7 hours early; check this source's time zone.",
+    );
+  });
+
+  it("lets an admin change a source's time zone", async () => {
+    const spy = await openSources();
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Change time zone of linux_sshd" }),
+    );
+    const form = screen.getByRole("form", { name: "Time zone of linux_sshd" });
+    const input = within(form).getByLabelText("Time zone (IANA name)");
+    await userEvent.clear(input);
+    await userEvent.type(input, "America/Los_Angeles");
+    await userEvent.click(within(form).getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(
+        spy.mock.calls
+          .filter(
+            ([u, i]) => String(u).endsWith("/api/sources/linux_sshd") && i?.method === "PATCH",
+          )
+          .map(([, i]) => JSON.parse(String(i?.body))),
+      ).toEqual([{ timezone: "America/Los_Angeles" }]),
+    );
+  });
 });
 
 describe("Quiet-source alert (ADR-0014)", () => {
@@ -490,5 +527,56 @@ describe("OTLP sources (ADR-0015)", () => {
     ).toBeInTheDocument();
     expect(within(blocks[0] as HTMLElement).getByLabelText("Cloud")).toBeInTheDocument();
     expect(within(form).getByLabelText("Directory (tenant) ID").closest("details")).toBeNull();
+  });
+});
+
+describe("Add a Loki source (F27)", () => {
+  it("offers the Loki address existing sources use", async () => {
+    const spy = await openSources();
+    const real = spy.getMockImplementation();
+    spy.mockImplementation((url, init) =>
+      String(url).endsWith("/api/sources") && (init?.method ?? "GET") === "GET"
+        ? Promise.resolve(
+            new Response(
+              JSON.stringify([
+                {
+                  source_id: "loki_dns",
+                  kind: "loki",
+                  format: "syslog",
+                  path: "",
+                  glob: "*",
+                  timezone: "UTC",
+                  retention_days: 30,
+                  classification: "local_only",
+                  enabled: true,
+                  loki: {
+                    url: "http://10.20.0.40:3100",
+                    query: '{job="dns"}',
+                    auth: "none",
+                    backfill_hours: 24,
+                  },
+                  status: {
+                    state: "reading",
+                    files: 0,
+                    last_pass_at: null,
+                    last_event_at: null,
+                    events_since_start: 0,
+                    error: null,
+                    records_skipped: 0,
+                    files_waiting: 0,
+                  },
+                },
+              ]),
+              { headers: { "Content-Type": "application/json" } },
+            ),
+          )
+        : (real as typeof fetch)(url, init),
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Add source" }));
+    await userEvent.selectOptions(await screen.findByLabelText("Reads from"), "loki");
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Use http://10.20.0.40:3100" }),
+    );
+    expect(screen.getByLabelText("Loki URL")).toHaveValue("http://10.20.0.40:3100");
   });
 });

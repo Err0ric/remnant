@@ -1,7 +1,7 @@
 schema_version: 1
 id: windows_evtx
 name: Windows .evtx files
-version: 1.0.0
+version: 1.1.0
 author: starter-pack
 description: >-
   Native Windows event log files (Security.evtx, System.evtx, Sysmon, and others) copied
@@ -70,6 +70,8 @@ mapping:
     src_endpoint_hostname: { from: Event.EventData.WorkstationName }
     dst_endpoint_ip: { from: wfp_dst_ip }
     dst_endpoint_port: { from: wfp_dst_port }
+    # Sysmon event 22 (DNS query): the name looked up, so endpoint DNS reaches AI usage.
+    dst_endpoint_hostname: { from: Event.EventData.QueryName }
     status_id: { from: outcome }
   # Windows level, the same in every Windows template (0 is "log always", used by audits).
   severity:
@@ -95,3 +97,9 @@ tests:
       parse_status: ok
       class_uid: 0
       fields: { message: A service was installed in the system }
+  - name: Sysmon DNS query from an endpoint agent
+    input: '{"Event":{"#attributes":{"xmlns":"http://schemas.microsoft.com/win/2004/08/events/event"},"System":{"Provider":{"#attributes":{"Name":"Microsoft-Windows-Sysmon"}},"EventID":22,"Version":5,"Level":4,"Task":22,"Opcode":0,"Keywords":"0x8000000000000000","TimeCreated":{"#attributes":{"SystemTime":"2026-10-09T20:45:00.5Z"}},"EventRecordID":9001,"Correlation":null,"Execution":{"#attributes":{"ProcessID":3100,"ThreadID":4100}},"Channel":"Microsoft-Windows-Sysmon/Operational","Computer":"LAPTOP-ALICE.corp.example","Security":null},"EventData":{"RuleName":"-","UtcTime":"2026-10-09 20:45:00.500","ProcessGuid":"{00000000-0000-0000-0000-000000000000}","ProcessId":"5120","QueryName":"chatgpt.com","QueryStatus":"0","QueryResults":"type:  5 chatgpt.com.cdn.example;192.0.2.10;","Image":"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe","User":"CORP\\alice"}}}'
+    expect:
+      parse_status: ok
+      class_uid: 4003
+      fields: { activity_id: 1, dst_endpoint_hostname: chatgpt.com, device_hostname: LAPTOP-ALICE.corp.example, message: DNS query }

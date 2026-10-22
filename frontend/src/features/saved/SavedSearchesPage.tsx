@@ -4,7 +4,9 @@ import { Command, PageHeader } from "@/components/shell/PageHeader";
 import { ApiError, api, type SavedSearch, type User } from "@/lib/api";
 import { navigate } from "@/lib/route";
 import { seedSchedule } from "@/lib/scheduleSeed";
+import { seedSearch } from "@/lib/searchSeed";
 import { takeSavedSeed } from "@/lib/savedSeed";
+import { AddToDashboardPanel } from "@/features/dashboard/AddToDashboard";
 import { SearchRunner } from "./SearchRunner";
 
 interface SavedSearchesPageProps {
@@ -28,6 +30,7 @@ export function SavedSearchesPage({ me }: SavedSearchesPageProps) {
   const [seeded, setSeeded] = useState(takeSavedSeed);
   const [confirming, setConfirming] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [toDashboard, setToDashboard] = useState<SavedSearch | null>(null);
   const file = useRef<HTMLInputElement>(null);
   const myId = me?.user_id ?? "local";
   const isAdmin = !me || me.role === "admin";
@@ -94,6 +97,13 @@ export function SavedSearchesPage({ me }: SavedSearchesPageProps) {
           <p role="alert" className="text-sm text-danger">
             {error instanceof ApiError ? error.message : "Something went wrong."}
           </p>
+        ) : null}
+        {toDashboard ? (
+          <AddToDashboardPanel
+            key={toDashboard.id}
+            search={toDashboard}
+            onClose={() => setToDashboard(null)}
+          />
         ) : null}
         {running ? (
           <SearchRunner
@@ -196,6 +206,29 @@ export function SavedSearchesPage({ me }: SavedSearchesPageProps) {
                             >
                               Run
                             </button>
+                            {mine && canAuthor ? (
+                              <button
+                                type="button"
+                                aria-label={`Edit ${s.name}`}
+                                onClick={() => {
+                                  seedSearch({ savedId: s.id, sql: s.sql });
+                                  navigate("search");
+                                }}
+                                className="px-2 py-0.5 text-text-secondary hover:text-text"
+                              >
+                                Edit
+                              </button>
+                            ) : null}
+                            {canAuthor ? (
+                              <button
+                                type="button"
+                                aria-label={`Add ${s.name} to dashboard`}
+                                onClick={() => setToDashboard(s)}
+                                className="px-2 py-0.5 text-text-secondary hover:text-text"
+                              >
+                                Add to dashboard
+                              </button>
+                            ) : null}
                             {canAuthor ? (
                               <button
                                 type="button"
@@ -250,7 +283,9 @@ export function SavedSearchesPage({ me }: SavedSearchesPageProps) {
         <p className="text-sm text-text-muted">
           Saved searches always run with your own source access. A shared search never shows you
           more than you could search yourself. Verified searches are examples Ask learns from;
-          editing one clears the mark.
+          editing one clears the mark. Editing a search updates your own schedules of it at once
+          (their next run notes the change); other people's schedules of it pause until they review
+          and resume.
         </p>
       </div>
     </div>

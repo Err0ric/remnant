@@ -48,6 +48,17 @@ uv run python -m evals.nl_queries.run --base-url http://127.0.0.1:11434/v1 --mod
 uv run python -m evals.nl_queries.run ... --prompt ask.v5 --ids f001,f002,f003,f004,f005,f006,f007,f008,f009,f010
 ```
 
+`ask.v6` (2026-10-22) is `ask.v5` with one rule changed: match text on `raw` or a parsed column,
+never on `message`, whose meaning depends on the parser (D84; `message` stays right for DNS
+events, where it is the queried name). Not yet run on the homelab model; compare with:
+
+```
+uv run python -m evals.nl_queries.run --base-url http://<ollama-host>:11434/v1 --model qwen3.5:9b \
+    --thinking none --prompt ask.v5 --out v5.json
+uv run python -m evals.nl_queries.run --base-url http://<ollama-host>:11434/v1 --model qwen3.5:9b \
+    --thinking none --prompt ask.v6 --out v6.json
+```
+
 The server uses `llm.ask_prompt` (compose `ASK_PROMPT`, default `ask.v4`). Switch only when the
 newer version scores at least as well overall on your model.
 

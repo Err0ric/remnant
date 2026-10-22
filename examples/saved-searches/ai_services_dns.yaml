@@ -1,0 +1,39 @@
+schema_version: 1
+id: ai_services_dns
+name: AI services from DNS
+description: >-
+  Queries to well-known AI services in DNS logs, per service: how many queries and from
+  how many client addresses. Reads parsed DNS events only (class_uid 4003, where the DNS
+  template put the queried name in message). Vendor ad and measurement hosts (service "-") are left out.
+  The AI usage page uses the full, reviewable catalog; this is a starting point to adapt.
+tags: [ai, dns, example]
+mode: query
+sql: |-
+  WITH ai(domain, service) AS (VALUES
+    ('chatgpt.com', 'ChatGPT'), ('openai.com', 'ChatGPT'), ('oaiusercontent.com', 'ChatGPT'),
+    ('api.openai.com', 'OpenAI API'), ('claude.ai', 'Claude'), ('claude.com', 'Claude'),
+    ('api.anthropic.com', 'Anthropic API'), ('gemini.google.com', 'Gemini'),
+    ('generativelanguage.googleapis.com', 'Gemini API'), ('copilot.microsoft.com', 'Microsoft Copilot'),
+    ('githubcopilot.com', 'GitHub Copilot'), ('perplexity.ai', 'Perplexity'),
+    ('deepseek.com', 'DeepSeek'), ('mistral.ai', 'Mistral'), ('grok.com', 'Grok'),
+    ('cursor.sh', 'Cursor'), ('cursor.com', 'Cursor'), ('huggingface.co', 'Hugging Face'),
+    ('bzr.openai.com', '-'), ('bzrcdn.openai.com', '-')
+  ),
+  q AS (
+    SELECT event_id, src_endpoint_ip, lower(rtrim(message, '.')) AS qname
+    FROM events
+    WHERE class_uid = 4003 AND time BETWEEN {{start}} AND {{end}}
+  ),
+  best AS (
+    SELECT q.event_id, any_value(q.src_endpoint_ip) AS client,
+           arg_max(ai.service, length(ai.domain)) AS service,
+           max_by(ai.domain, length(ai.domain)) AS domain
+    FROM q JOIN ai ON q.qname = ai.domain OR ends_with(q.qname, '.' || ai.domain)
+    GROUP BY q.event_id
+  )
+  SELECT service, count(DISTINCT client) AS clients, count(*) AS queries
+  FROM best
+  WHERE service <> '-'
+  GROUP BY service
+  ORDER BY queries DESC
+params: []

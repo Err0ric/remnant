@@ -1,0 +1,10 @@
+{"class_uid": 4001, "device_hostname": "ldap-01", "parse_status": "ok", "src_endpoint_ip": "10.20.1.5", "src_endpoint_port": 29216, "time": "2026-10-09T20:01:14+00:00"}
+{"actor_user_name": "carol", "class_uid": 3002, "device_hostname": "ldap-01", "message": "uid=carol,ou=people,dc=example,dc=com", "parse_status": "ok", "time": "2026-10-09T20:01:58+00:00"}
+{"actor_user_name": "carol", "class_uid": 3002, "device_hostname": "ldap-01", "parse_status": "ok", "time": "2026-10-09T20:02:31+00:00"}
+{"class_uid": 3002, "device_hostname": "ldap-01", "parse_status": "ok", "status_id": 1, "time": "2026-10-09T20:03:37+00:00"}
+{"class_uid": 0, "device_hostname": "ldap-01", "parse_status": "ok", "time": "2026-10-09T20:04:27+00:00"}
+{"activity_id": 2, "class_uid": 4001, "device_hostname": "ldap-01", "parse_status": "ok", "time": "2026-10-09T20:05:18+00:00"}
+{"class_uid": 4001, "device_hostname": "ldap-01", "parse_status": "ok", "src_endpoint_ip": "10.20.3.30", "src_endpoint_port": 44187, "time": "2026-10-09T20:05:32+00:00"}
+{"actor_user_name": "alice", "class_uid": 3002, "device_hostname": "ldap-01", "message": "uid=alice,ou=people,dc=example,dc=com", "parse_status": "ok", "time": "2026-10-09T20:05:33+00:00"}
+{"class_uid": 3002, "device_hostname": "ldap-01", "parse_status": "ok", "status_id": 2, "time": "2026-10-09T20:06:07+00:00"}
+{"activity_id": 2, "class_uid": 4001, "device_hostname": "ldap-01", "parse_status": "ok", "time": "2026-10-09T20:07:09+00:00"}

@@ -1,0 +1,62 @@
+schema_version: 1
+id: vault_server
+name: HashiCorp Vault server log
+version: 1.0.0
+author: starter-pack
+description: >-
+  Vault's operational log in its default text format ("timestamp [LEVEL]  component:
+  message"), for example seal and unseal, leader changes, storage and plugin errors. Base
+  events with severity from the level and the component in unmapped. Audit entries go to
+  vault_audit. Built from vendor docs: verify on real data.
+category: application
+vendor: hashicorp
+classification_default: local_only
+
+envelope:
+  type: syslog
+  syslog: { rfc: auto, assume_year: rollover_safe, timezone: UTC, strip_relay_headers: false }
+  # The message starts with its own ISO timestamp, which a relay-header check would strip.
+  # Through syslog or journald only: a bare log file line reads as a header.
+
+match:
+  app_name: [vault]
+  # Only components Vault itself logs, so Consul or Nomad lines in the same format are left alone.
+  regex: '^\d{4}-\d{2}-\d{2}T[\d:.]{8,15}(?:Z|[+-]\d{2}:?\d{2}) \[(?:TRACE|DEBUG|INFO|WARN|ERROR)\]\s+(?:core|expiration|rollback|identity|secrets\.|auth\.|seal|audit|token|http|storage\.|replication)'
+  min_confidence: 0.9
+
+payload:
+  format: regex
+  regex:
+    patterns:
+      - '^(?P<ts>\d{4}-\d{2}-\d{2}T[\d:.]{8,15}(?:Z|[+-]\d{2}:?\d{2}))\s+\[(?P<level>TRACE|DEBUG|INFO|WARN|ERROR)\]\s+(?P<component>[A-Za-z0-9_.\-]{1,120}):\s+(?P<msg>.*)$'
+      - '^(?P<ts>\d{4}-\d{2}-\d{2}T[\d:.]{8,15}(?:Z|[+-]\d{2}:?\d{2}))\s+\[(?P<level>TRACE|DEBUG|INFO|WARN|ERROR)\]\s+(?P<msg>.*)$'
+
+transforms:
+  - { field: ts, op: timestamp, args: { format: iso8601 } }
+
+mapping:
+  class_uid: 0             # Base Event
+  fields:
+    time: { from: ts }
+    message: { from: msg }
+    actor_process_name: { default: vault }
+  severity:
+    from: level
+    map: { TRACE: 1, DEBUG: 1, INFO: 1, WARN: 3, ERROR: 4 }
+
+tests:
+  - name: unsealed
+    input: "<30>Oct  9 20:41:12 vault-01 vault[900]: 2026-10-09T20:41:12.123Z [INFO]  core: vault is unsealed"
+    expect:
+      parse_status: ok
+      fields: { message: vault is unsealed, severity_id: 1, device_hostname: vault-01 }
+  - name: storage error
+    input: "<27>Oct  9 20:42:00 vault-01 vault[900]: 2026-10-09T20:42:00.000Z [ERROR] storage.raft: failed to heartbeat to: peer=10.20.0.12:8201 error=\"dial tcp 10.20.0.12:8201: i/o timeout\""
+    expect:
+      parse_status: ok
+      fields: { severity_id: 4 }
+  - name: warning from the expiration manager
+    input: "<28>Oct  9 20:43:00 vault-01 vault[900]: 2026-10-09T20:43:00.000Z [WARN]  expiration: lease count exceeds warning lease count threshold"
+    expect:
+      parse_status: ok
+      fields: { severity_id: 3, message: lease count exceeds warning lease count threshold }

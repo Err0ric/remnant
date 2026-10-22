@@ -1,0 +1,61 @@
+<30>Oct  9 20:01:16 ns2 pdns-recursor[710]: msg="Question" subsystem="syncres" level="0" prio="Info" tid="1" ts="1791578580.000" ecs="" ip="10.20.1.5" proto="udp" qname="mail.example.com" qtype="A"
+<30>Oct  9 20:02:25 ns2 pdns-recursor[711]: msg="Question" subsystem="syncres" level="0" prio="Info" tid="1" ts="1791578580.001" ecs="" ip="10.20.1.6" proto="udp" qname="intranet.example.internal" qtype="AAAA"
+<30>Oct  9 20:02:32 ns2 pdns_recursor[712]: 2 [1/1] question for 'www.example.com|A' from 10.20.1.5:42453
+<30>Oct  9 20:03:15 ns2 pdns-recursor[710]: msg="Question" subsystem="syncres" level="0" prio="Info" tid="1" ts="1791578580.003" ecs="" ip="10.20.1.5" proto="udp" qname="chatgpt.com" qtype="MX"
+<30>Oct  9 20:04:16 ns2 pdns_recursor[711]: 4 [1/1] question for 'mail.example.com|TXT' from 10.20.1.5:11254
+<30>Oct  9 20:05:26 ns2 pdns-recursor[712]: msg="Question" subsystem="syncres" level="0" prio="Info" tid="1" ts="1791578580.005" ecs="" ip="10.20.3.30" proto="udp" qname="www.example.com" qtype="TXT"
+<30>Oct  9 20:06:23 ns2 pdns_recursor[710]: 6 [1/1] question for 'mail.example.com|AAAA' from 10.20.1.5:34222
+<30>Oct  9 20:07:09 ns2 pdns-recursor[711]: msg="Question" subsystem="syncres" level="0" prio="Info" tid="1" ts="1791578580.007" ecs="" ip="10.20.2.14" proto="udp" qname="chatgpt.com" qtype="A"
+<30>Oct  9 20:08:01 ns2 pdns_recursor[712]: 8 [1/1] question for 'intranet.example.internal|MX' from 10.20.1.5:58161
+<30>Oct  9 20:08:28 ns2 pdns_recursor[710]: 9 [1/1] question for 'mail.example.com|MX' from 10.20.1.6:51695
+<30>Oct  9 20:09:55 ns2 pdns-recursor[711]: msg="Question" subsystem="syncres" level="0" prio="Info" tid="1" ts="1791578580.010" ecs="" ip="10.20.1.5" proto="udp" qname="intranet.example.internal" qtype="AAAA"
+<30>Oct  9 20:11:07 ns2 pdns_server[702]: Remote 10.20.2.14 wants 'www.example.com|MX', do = 0, bufsize = 1232 (4096): packetcache MISS
+<30>Oct  9 20:12:17 ns2 pdns-recursor[710]: msg="Question" subsystem="syncres" level="0" prio="Info" tid="1" ts="1791578580.012" ecs="" ip="10.20.1.6" proto="udp" qname="api.anthropic.com" qtype="AAAA"
+<30>Oct  9 20:12:40 ns2 pdns_server[701]: Remote 10.20.1.6 wants 'www.example.com|TXT', do = 0, bufsize = 1232 (4096): packetcache MISS
+<30>Oct  9 20:14:05 ns2 pdns_recursor[712]: 14 [1/1] question for 'chatgpt.com|MX' from 10.20.1.5:38683
+<30>Oct  9 20:14:52 ns2 pdns_server[700]: Remote 10.20.1.5 wants 'intranet.example.internal|A', do = 0, bufsize = 1232 (4096): packetcache HIT
+<30>Oct  9 20:15:15 ns2 pdns_recursor[711]: 16 [1/1] question for 'www.example.com|TXT' from 10.20.1.5:43660
+<30>Oct  9 20:16:40 ns2 pdns-recursor[712]: msg="Question" subsystem="syncres" level="0" prio="Info" tid="1" ts="1791578580.017" ecs="" ip="10.20.1.6" proto="udp" qname="mail.example.com" qtype="MX"
+<30>Oct  9 20:17:20 ns2 pdns_recursor[710]: 18 [1/1] question for 'mail.example.com|AAAA' from 10.20.3.30:44151
+<30>Oct  9 20:17:27 ns2 pdns_server[701]: Remote 10.20.3.30 wants 'chatgpt.com|TXT', do = 0, bufsize = 1232 (4096): packetcache HIT
+<30>Oct  9 20:18:51 ns2 pdns_recursor[712]: 20 [1/1] question for 'www.example.com|TXT' from 10.20.1.6:19180
+<30>Oct  9 20:19:41 ns2 pdns_server[700]: Remote 10.20.2.14 wants 'www.example.com|TXT', do = 0, bufsize = 1232 (4096): packetcache MISS
+<30>Oct  9 20:19:47 ns2 pdns-recursor[711]: msg="Question" subsystem="syncres" level="0" prio="Info" tid="1" ts="1791578580.022" ecs="" ip="10.20.3.30" proto="udp" qname="api.anthropic.com" qtype="MX"
+<30>Oct  9 20:20:38 ns2 pdns-recursor[712]: msg="Question" subsystem="syncres" level="0" prio="Info" tid="1" ts="1791578580.023" ecs="" ip="10.20.1.6" proto="udp" qname="www.example.com" qtype="MX"
+<30>Oct  9 20:21:16 ns2 pdns_server[700]: Remote 10.20.2.14 wants 'www.example.com|TXT', do = 0, bufsize = 1232 (4096): packetcache MISS
+<30>Oct  9 20:22:40 ns2 pdns_server[701]: Remote 10.20.3.30 wants 'intranet.example.internal|A', do = 0, bufsize = 1232 (4096): packetcache HIT
+<30>Oct  9 20:24:07 ns2 pdns_recursor[712]: 26 [1/1] question for 'www.example.com|MX' from 10.20.1.6:12081
+<30>Oct  9 20:25:17 ns2 pdns_server[700]: Remote 10.20.1.5 wants 'www.example.com|TXT', do = 0, bufsize = 1232 (4096): packetcache HIT
+<30>Oct  9 20:26:41 ns2 pdns-recursor[711]: msg="Question" subsystem="syncres" level="0" prio="Info" tid="1" ts="1791578580.028" ecs="" ip="10.20.1.5" proto="udp" qname="intranet.example.internal" qtype="MX"
+<30>Oct  9 20:27:25 ns2 pdns_server[702]: Remote 10.20.1.5 wants 'mail.example.com|AAAA', do = 0, bufsize = 1232 (4096): packetcache HIT
+<30>Oct  9 20:27:46 ns2 pdns_recursor[710]: 30 [1/1] question for 'mail.example.com|MX' from 10.20.1.6:42067
+<30>Oct  9 20:28:25 ns2 pdns_recursor[711]: 31 [1/1] question for 'www.example.com|AAAA' from 10.20.2.14:16270
+<30>Oct  9 20:29:42 ns2 pdns-recursor[712]: msg="Question" subsystem="syncres" level="0" prio="Info" tid="1" ts="1791578580.032" ecs="" ip="10.20.2.14" proto="udp" qname="api.anthropic.com" qtype="MX"
+<30>Oct  9 20:30:17 ns2 pdns-recursor[710]: msg="Question" subsystem="syncres" level="0" prio="Info" tid="1" ts="1791578580.033" ecs="" ip="10.20.1.5" proto="udp" qname="mail.example.com" qtype="TXT"
+<30>Oct  9 20:31:41 ns2 pdns_recursor[711]: 34 [1/1] question for 'intranet.example.internal|TXT' from 10.20.1.6:52693
+<30>Oct  9 20:32:12 ns2 pdns_server[702]: Remote 10.20.3.30 wants 'intranet.example.internal|TXT', do = 0, bufsize = 1232 (4096): packetcache HIT
+<30>Oct  9 20:32:21 ns2 pdns-recursor[710]: msg="Question" subsystem="syncres" level="0" prio="Info" tid="1" ts="1791578580.036" ecs="" ip="10.20.3.30" proto="udp" qname="chatgpt.com" qtype="AAAA"
+<30>Oct  9 20:33:47 ns2 pdns-recursor[711]: msg="Question" subsystem="syncres" level="0" prio="Info" tid="1" ts="1791578580.037" ecs="" ip="10.20.3.30" proto="udp" qname="www.example.com" qtype="MX"
+<30>Oct  9 20:34:04 ns2 pdns_server[702]: Remote 10.20.1.5 wants 'chatgpt.com|MX', do = 0, bufsize = 1232 (4096): packetcache HIT
+<30>Oct  9 20:35:24 ns2 pdns_recursor[710]: 39 [1/1] question for 'api.anthropic.com|MX' from 10.20.1.6:19537
+<30>Oct  9 20:36:03 ns2 pdns_server[701]: Remote 10.20.3.30 wants 'mail.example.com|AAAA', do = 0, bufsize = 1232 (4096): packetcache MISS
+<30>Oct  9 20:36:25 ns2 pdns_recursor[712]: 41 [1/1] question for 'api.anthropic.com|MX' from 10.20.3.30:14546
+<30>Oct  9 20:37:26 ns2 pdns-recursor[710]: msg="Question" subsystem="syncres" level="0" prio="Info" tid="1" ts="1791578580.042" ecs="" ip="10.20.2.14" proto="udp" qname="www.example.com" qtype="AAAA"
+<30>Oct  9 20:38:03 ns2 pdns_server[701]: Remote 10.20.1.5 wants 'chatgpt.com|MX', do = 0, bufsize = 1232 (4096): packetcache HIT
+<30>Oct  9 20:38:23 ns2 pdns_server[702]: Remote 10.20.1.5 wants 'intranet.example.internal|TXT', do = 0, bufsize = 1232 (4096): packetcache HIT
+<30>Oct  9 20:38:39 ns2 pdns_server[700]: Remote 10.20.1.6 wants 'chatgpt.com|AAAA', do = 0, bufsize = 1232 (4096): packetcache MISS
+<30>Oct  9 20:39:04 ns2 pdns_recursor[711]: 46 [1/1] question for 'chatgpt.com|MX' from 10.20.1.5:17582
+<30>Oct  9 20:39:52 ns2 pdns_recursor[712]: 47 [1/1] question for 'intranet.example.internal|MX' from 10.20.3.30:39441
+<30>Oct  9 20:40:39 ns2 pdns-recursor[710]: msg="Question" subsystem="syncres" level="0" prio="Info" tid="1" ts="1791578580.048" ecs="" ip="10.20.2.14" proto="udp" qname="www.example.com" qtype="MX"
+<30>Oct  9 20:40:50 ns2 pdns_server[701]: Remote 10.20.1.5 wants 'chatgpt.com|TXT', do = 0, bufsize = 1232 (4096): packetcache HIT
+<30>Oct  9 20:41:28 ns2 pdns-recursor[712]: msg="Question" subsystem="syncres" level="0" prio="Info" tid="1" ts="1791578580.050" ecs="" ip="10.20.1.6" proto="udp" qname="chatgpt.com" qtype="A"
+<30>Oct  9 20:42:05 ns2 pdns-recursor[710]: msg="Question" subsystem="syncres" level="0" prio="Info" tid="1" ts="1791578580.051" ecs="" ip="10.20.2.14" proto="udp" qname="mail.example.com" qtype="MX"
+<30>Oct  9 20:42:55 ns2 pdns_recursor[711]: 52 [1/1] question for 'www.example.com|AAAA' from 10.20.1.5:18876
+<30>Oct  9 20:43:20 ns2 pdns-recursor[712]: msg="Question" subsystem="syncres" level="0" prio="Info" tid="1" ts="1791578580.053" ecs="" ip="10.20.1.5" proto="udp" qname="www.example.com" qtype="TXT"
+<30>Oct  9 20:44:11 ns2 pdns-recursor[710]: msg="Question" subsystem="syncres" level="0" prio="Info" tid="1" ts="1791578580.054" ecs="" ip="10.20.2.14" proto="udp" qname="intranet.example.internal" qtype="TXT"
+<30>Oct  9 20:44:48 ns2 pdns-recursor[711]: msg="Question" subsystem="syncres" level="0" prio="Info" tid="1" ts="1791578580.055" ecs="" ip="10.20.3.30" proto="udp" qname="api.anthropic.com" qtype="TXT"
+<30>Oct  9 20:45:02 ns2 pdns_recursor[712]: 56 [1/1] question for 'www.example.com|TXT' from 10.20.2.14:3471
+<30>Oct  9 20:45:41 ns2 pdns_server[700]: Remote 10.20.1.6 wants 'api.anthropic.com|A', do = 0, bufsize = 1232 (4096): packetcache MISS
+<30>Oct  9 20:46:06 ns2 pdns_recursor[711]: 58 [1/1] question for 'intranet.example.internal|A' from 10.20.1.5:29421
+<30>Oct  9 20:46:24 ns2 pdns_recursor[712]: 59 [1/1] question for 'api.anthropic.com|MX' from 10.20.1.5:39145
+<30>Oct  9 20:47:45 ns2 pdns_server[700]: Done launching threads, ready to distribute questions

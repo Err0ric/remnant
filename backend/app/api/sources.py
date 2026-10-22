@@ -4,9 +4,9 @@ import shutil
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Request, Response, status
+from fastapi import APIRouter, Query, Request, Response, status
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field, SecretStr, ValidationError, model_validator
 from starlette.concurrency import run_in_threadpool
@@ -16,7 +16,7 @@ from app.api.access import AdminUser, CurrentUser, client_ip
 from app.api.schedules import DeliveryOut
 from app.auth.service import AuthService
 from app.core.branding import PRODUCT_NAME
-from app.core.errors import NotFoundError, RateLimitedError, SourceRejectedError
+from app.core.errors import NotFoundError, ParamInvalidError, RateLimitedError, SourceRejectedError
 from app.core.ids import AUTO_PARSER
 from app.engine.views import permitted_sources
 from app.ingest.agent import AgentOs
@@ -30,6 +30,7 @@ from app.ingest.connectors.registry import API_KINDS, probe, secret_text
 from app.ingest.discovery import DiscoveryReport, discover
 from app.ingest.listener import ListenerStatus, SyslogListeners
 from app.ingest.quiet import MAX_QUIET_S, MIN_QUIET_S, QuietWatch, Watch
+from app.ingest.skew import skew_text
 from app.ingest.sources import SourceConfig, SourceStore, spool_dir
 from app.ingest.watcher import IngestService, SourceStatus, source_state
 from app.meta.db import MetaDB
@@ -84,6 +85,9 @@ class StatusOut(BaseModel):
     warnings: list[str] = []  # API sources: feeds that failed while others worked
     retry_at: datetime | None = None  # API sources: next try after errors
     listener: ListenerOut | None = None  # syslog listener sources
+    # Event times steadily this many hours off (positive: early): check the time zone.
+    time_offset_h: float | None = None
+    time_offset_text: str | None = None
 
 
 class QuietOut(BaseModel):
@@ -125,6 +129,8 @@ def _status_out(source: SourceConfig, st: SourceStatus | None) -> StatusOut:
         behind_s=st.behind_s,
         warnings=list(st.warnings),
         retry_at=st.retry_at,
+        time_offset_h=st.time_offset_h,
+        time_offset_text=skew_text(st.time_offset_h) if st.time_offset_h else None,
     )
 
 
@@ -267,7 +273,15 @@ async def add_source(body: SourceCreate, request: Request, user: AdminUser) -> S
 
 @router.get("/sources/{source_id}/agent-config")
 async def agent_config(
-    source_id: str, request: Request, user: AdminUser, os: AgentOs = "windows"
+    source_id: str,
+    request: Request,
+    user: AdminUser,
+    os: AgentOs = "windows",
+    # The name in the server's certificate, when agents connect by address (self-signed).
+    server_name: Annotated[
+        str | None,
+        Query(max_length=253, pattern=r"^[A-Za-z0-9]([A-Za-z0-9-]{0,62})(\.[A-Za-z0-9-]{1,63})*$"),
+    ] = None,
 ) -> PlainTextResponse:
     """OpenTelemetry Collector config for an agent group (ADR-0017 row 2). Holds no secret:
     the token is read from a file on the endpoint. Audited source.agent_config."""
@@ -277,14 +291,14 @@ async def agent_config(
     if found[0].kind != "otlp":
         raise SourceRejectedError("Agent configs are for OTLP sources")
     base = request.app.state.public_url or str(request.base_url).rstrip("/")
-    text = render_agent(os, f"{base}/api/otlp", source_id, PRODUCT_NAME)
+    text = render_agent(os, f"{base}/api/otlp", source_id, PRODUCT_NAME, server_name)
     await run_in_threadpool(
         _audit(request).audit.write,
         "source.agent_config",
         "success",
         user.user_id,
         client_ip(request),
-        {"source_id": source_id, "os": os},
+        {"source_id": source_id, "os": os, "server_name": server_name},
     )
     name = f"{PRODUCT_NAME.lower()}-agent-{source_id}-{os}.yaml"
     return PlainTextResponse(
@@ -521,6 +535,8 @@ class SourcePatch(BaseModel):
     loki_label_map: (
         dict[Literal["hostname", "app_name", "procid", "severity", "facility"], list[str]] | None
     ) = None
+    # The zone for times that carry none (RFC 3164 headers, Palo Alto Generated Time).
+    timezone: str | None = Field(default=None, min_length=1, max_length=64)
 
     @model_validator(mode="after")
     def _something(self) -> "SourcePatch":
@@ -529,6 +545,7 @@ class SourcePatch(BaseModel):
             "template_id",
             "otlp_keep_content",
             "loki_label_map",
+            "timezone",
         }:
             raise ValueError("Nothing to change")
         if "otlp_keep_content" in self.model_fields_set and self.otlp_keep_content is None:
@@ -601,6 +618,22 @@ async def update_source(
             user.user_id,
             client_ip(request),
             {"source_id": source_id, "from": before_map, "to": new_map},
+        )
+    if body.timezone is not None:
+        try:
+            before_tz, source = await run_in_threadpool(
+                store.set_timezone, source_id, body.timezone
+            )
+        except ValueError as exc:
+            raise ParamInvalidError(f"Unknown time zone {body.timezone!r}") from exc
+        request.app.state.ingest.skew.forget(source_id)
+        await run_in_threadpool(
+            _audit(request).audit.write,
+            "source.timezone",
+            "success",
+            user.user_id,
+            client_ip(request),
+            {"source_id": source_id, "from": before_tz, "to": body.timezone},
         )
     assert source is not None  # the validator requires at least one change
     return source

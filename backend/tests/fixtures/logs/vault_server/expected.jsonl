@@ -1,0 +1,10 @@
+{"device_hostname": "vault-01", "message": "failed to heartbeat to: peer=10.20.0.12:8201 error=\"i/o timeout\"", "parse_status": "ok", "severity_id": 4, "time": "2026-10-09T20:00:53+00:00"}
+{"device_hostname": "vault-01", "message": "entities restored", "parse_status": "ok", "severity_id": 1, "time": "2026-10-09T20:02:03+00:00"}
+{"device_hostname": "vault-01", "message": "acquired lock, enabling active operation", "parse_status": "ok", "severity_id": 1, "time": "2026-10-09T20:02:18+00:00"}
+{"device_hostname": "vault-01", "message": "acquired lock, enabling active operation", "parse_status": "ok", "severity_id": 1, "time": "2026-10-09T20:03:07+00:00"}
+{"device_hostname": "vault-01", "message": "vault is unsealed", "parse_status": "ok", "severity_id": 1, "time": "2026-10-09T20:03:45+00:00"}
+{"device_hostname": "vault-01", "message": "vault is unsealed", "parse_status": "ok", "severity_id": 1, "time": "2026-10-09T20:04:14+00:00"}
+{"device_hostname": "vault-01", "message": "vault is unsealed", "parse_status": "ok", "severity_id": 1, "time": "2026-10-09T20:05:27+00:00"}
+{"device_hostname": "vault-01", "message": "acquired lock, enabling active operation", "parse_status": "ok", "severity_id": 1, "time": "2026-10-09T20:05:40+00:00"}
+{"device_hostname": "vault-01", "message": "entities restored", "parse_status": "ok", "severity_id": 1, "time": "2026-10-09T20:06:46+00:00"}
+{"device_hostname": "vault-01", "message": "entities restored", "parse_status": "ok", "severity_id": 1, "time": "2026-10-09T20:07:25+00:00"}

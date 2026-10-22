@@ -185,3 +185,102 @@ describe("Saved searches page", () => {
     );
   });
 });
+
+describe("Edit (F37)", () => {
+  it("opens your own saved search in Search to change and save it", async () => {
+    window.history.replaceState(null, "", "/saved");
+    window.localStorage.setItem("search-tab", "sql");
+    const spy = mockApi("Codename", { mode: "login", signedIn: true, role: "analyst" });
+    const real = spy.getMockImplementation();
+    const mine = {
+      id: "my_search",
+      name: "My search",
+      description: "",
+      tags: [],
+      visibility: "private",
+      sources: null,
+      sql: "SELECT 1",
+      params: [],
+      mode: "query",
+      owner_id: "u1",
+      verified: false,
+      created_at: "2026-10-10T10:00:00Z",
+      updated_at: "2026-10-10T10:00:00Z",
+    };
+    spy.mockImplementation((url, init) =>
+      String(url).endsWith("/api/searches") && (init?.method ?? "GET") === "GET"
+        ? Promise.resolve(
+            new Response(JSON.stringify([mine]), {
+              headers: { "Content-Type": "application/json" },
+            }),
+          )
+        : (real as typeof fetch)(url, init),
+    );
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    render(<App initialTheme="dark" queryClient={new QueryClient()} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Edit My search" }));
+    await waitFor(() => expect(window.location.pathname).toBe("/search"));
+    expect(await screen.findByText("Save changes to My search")).toBeInTheDocument();
+  });
+
+  it("is not offered on someone else's search", async () => {
+    await renderAt("/saved");
+    await screen.findByRole("button", { name: "Run Failed SSH by source" });
+    expect(screen.queryByRole("button", { name: "Edit Failed SSH by source" })).toBeNull();
+  });
+});
+
+describe("Add to dashboard (D89)", () => {
+  function calls(spy: ReturnType<typeof mockApi>, method: string, test: (u: string) => boolean) {
+    return spy.mock.calls
+      .filter(([u, init]) => test(String(u)) && init?.method === method)
+      .map(([, init]) => JSON.parse(String(init?.body ?? "null")) as unknown);
+  }
+
+  it("saves a label-and-count result, then adds it hourly over 24 hours as bars", async () => {
+    const spy = await renderAt("/search");
+    await screen.findByRole("heading", { name: "Search", level: 1 });
+    await setSql("SELECT source_id, count(*) AS events FROM events GROUP BY source_id");
+    await userEvent.click(screen.getByRole("button", { name: "Run query" }));
+    await screen.findAllByText("paloalto_traffic");
+    await userEvent.click(screen.getByRole("button", { name: "Add to dashboard" }));
+    const form = screen.getByRole("form", { name: "Save search" });
+    await userEvent.type(within(form).getByLabelText("Name"), "Top sources");
+    await userEvent.click(within(form).getByRole("button", { name: "Save" }));
+    const panel = await screen.findByRole("form", { name: "Add to dashboard" });
+    expect(panel).toHaveTextContent("Hourly, last 24 hours, bars, a third wide, private.");
+    await userEvent.click(within(panel).getByRole("button", { name: "Add to dashboard" }));
+    await waitFor(() => expect(window.location.pathname).toBe("/dashboard"));
+    expect(calls(spy, "POST", (u) => u.endsWith("/api/schedules"))).toEqual([
+      {
+        kind: "search",
+        target_id: "top_sources",
+        name: "Top sources",
+        cron: "hourly",
+        lookback_minutes: 1440,
+        shared: false,
+      },
+    ]);
+    expect(calls(spy, "PATCH", (u) => /\/api\/schedules\/[^/]+$/.test(u))).toEqual([
+      { panel_view: "bars" },
+    ]);
+    expect(spy.mock.calls.some(([u]) => /\/api\/schedules\/[^/]+\/run$/.test(String(u)))).toBe(
+      true,
+    );
+  });
+
+  it("adds a saved search from Saved searches", async () => {
+    const spy = await renderAt("/saved");
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Add Failed SSH by source to dashboard" }),
+    );
+    const panel = screen.getByRole("form", { name: "Add to dashboard" });
+    expect(panel).toHaveTextContent("Hourly, last 24 hours, table, a third wide, private.");
+    await userEvent.click(within(panel).getByRole("button", { name: "Add to dashboard" }));
+    await waitFor(() => expect(window.location.pathname).toBe("/dashboard"));
+    expect(calls(spy, "POST", (u) => u.endsWith("/api/schedules"))).toHaveLength(1);
+  });
+});

@@ -151,6 +151,22 @@ describe("Schedules", () => {
     expect(within(table).getByText("Since the last run")).toBeInTheDocument();
   });
 
+  it("edits a schedule and sends only what changed", async () => {
+    const spy = await renderAt("/schedules");
+    const table = await screen.findByRole("table", { name: "Schedules" });
+    await userEvent.click(
+      await within(table).findByRole("button", { name: "Edit Failed SSH daily" }),
+    );
+    const form = await screen.findByRole("form", { name: "Edit Failed SSH daily" });
+    await userEvent.selectOptions(within(form).getByLabelText("Time range of each run"), "60");
+    await userEvent.click(within(form).getByRole("button", { name: "Save changes" }));
+    await vi.waitFor(() =>
+      expect(sent(spy, "PATCH", (u) => u.includes("/api/schedules/s1"))).toEqual([
+        { lookback_minutes: 60 },
+      ]),
+    );
+  });
+
   it("opens the form with a saved search chosen from Saved searches", async () => {
     await renderAt("/saved");
     await userEvent.click(

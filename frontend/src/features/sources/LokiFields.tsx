@@ -9,10 +9,19 @@ interface LokiFieldsProps {
   secret: string;
   onChange: (next: LokiSettings) => void;
   onSecret: (secret: string) => void;
+  /** Loki addresses existing sources read from (F27), offered so they are not retyped. */
+  knownUrls?: string[];
 }
 
 /** The Loki part of Add source (ADR-0011), with a connection test before saving. */
-export function LokiFields({ part, value, secret, onChange, onSecret }: LokiFieldsProps) {
+export function LokiFields({
+  part,
+  value,
+  secret,
+  onChange,
+  onSecret,
+  knownUrls = [],
+}: LokiFieldsProps) {
   const set = <K extends keyof LokiSettings>(key: K, v: LokiSettings[K]) =>
     onChange({ ...value, [key]: v });
   const test = useMutation({
@@ -82,6 +91,25 @@ export function LokiFields({ part, value, secret, onChange, onSecret }: LokiFiel
         className="font-mono"
         required
       />
+      {knownUrls.length && !knownUrls.includes(value.url) ? (
+        <div className="flex flex-wrap items-center gap-2 text-sm md:col-span-2">
+          <span className="text-text-secondary">Used by other sources:</span>
+          {knownUrls.map((u) => (
+            <button
+              key={u}
+              type="button"
+              onClick={() => set("url", u)}
+              aria-label={`Use ${u}`}
+              className="rounded border border-border px-2 py-0.5 font-mono hover:bg-surface-head"
+            >
+              {u}
+            </button>
+          ))}
+          <span className="text-text-muted">
+            The sign-in is not copied; enter it below if needed.
+          </span>
+        </div>
+      ) : null}
       <Field
         label="Query"
         help='A label selector, optionally with line filters: {job="syslog", host=~"fw.*"} |= "sshd"'

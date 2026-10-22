@@ -43,7 +43,9 @@ def _q(text: str) -> str:
     return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def render(target: AgentOs, endpoint: str, source_id: str, product: str) -> str:
+def render(
+    target: AgentOs, endpoint: str, source_id: str, product: str, server_name: str | None = None
+) -> str:
     p = paths(target, product)
     stamp = datetime.now(UTC).strftime("%Y-%m-%d")
     out = [
@@ -66,6 +68,7 @@ def render(target: AgentOs, endpoint: str, source_id: str, product: str) -> str:
                 f"    channel: {_q(channel)}",
                 "    raw: true          # event XML; the server reads it like .evtx",
                 "    start_at: end",
+                "    storage: file_storage   # resume after a restart, no gap and no repeats",
             ]
             log_receivers.append(f"windowseventlog/{name}")
     else:
@@ -79,6 +82,7 @@ def render(target: AgentOs, endpoint: str, source_id: str, product: str) -> str:
             "  #   include: [/var/log/auth.log, /var/log/secure, /var/log/syslog]",
             "  #   start_at: end",
             "  #   include_file_name: true",
+            "  #   storage: file_storage",
         ]
         log_receivers.append("journald")
     out += [
@@ -100,8 +104,14 @@ def render(target: AgentOs, endpoint: str, source_id: str, product: str) -> str:
         "    timeout: 5s",
         "",
         "extensions:",
+        "  # Read positions and the sending queue live on disk: a laptop off the VPN or",
+        "  # asleep keeps its events and sends them when it can reach the server again.",
         "  file_storage:",
         f"    directory: {_q(p['queue'])}",
+        "    create_directory: true",
+        "    compaction:",
+        "      on_start: true",
+        f"      directory: {_q(p['queue'])}",
         "",
         "exporters:",
         "  otlphttp/remnant:",
@@ -112,11 +122,28 @@ def render(target: AgentOs, endpoint: str, source_id: str, product: str) -> str:
         f'      Authorization: "Bearer ${{file:{p["token"]}}}"',
         "    tls:",
         f"      ca_file: {_q(p['ca'])}",
+        *(
+            [
+                "      # Agents connect by address; the certificate names the server:",
+                f"      server_name_override: {_q(server_name)}",
+            ]
+            if server_name
+            else [
+                "      # Connecting by IP address to a certificate issued for a name? Set the",
+                "      # name here (or download the config with ?server_name=...):",
+                '      # server_name_override: "siem.example.internal"',
+            ]
+        ),
         "    retry_on_failure:",
         "      enabled: true",
+        "      initial_interval: 5s",
+        "      max_interval: 5m",
+        "      max_elapsed_time: 0   # keep retrying: the queue holds events while offline",
         "    sending_queue:",
         "      enabled: true",
-        "      storage: file_storage",
+        "      storage: file_storage   # on disk, so a restart or reboot loses nothing",
+        "      num_consumers: 2",
+        "      queue_size: 20000      # batches; about a week of a typical laptop's events",
         "",
         "service:",
         "  extensions: [file_storage]",

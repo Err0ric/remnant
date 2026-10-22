@@ -1,0 +1,95 @@
+schema_version: 1
+id: openldap_slapd
+name: OpenLDAP slapd
+version: 1.0.0
+author: starter-pack
+description: >-
+  OpenLDAP slapd stats logging (loglevel stats): connections (ACCEPT from IP=), BIND
+  requests with the DN, bind results (RESULT tag=97, err=49 is invalid credentials), other
+  operations, and closes. A failed bind is two lines: the BIND line names the DN and the
+  RESULT line carries err=49; both keep conn and op in unmapped so a search can join them
+  (see docs/searching.md). Binds map to Authentication, connections to Network Activity.
+  Full slapd stats logs are very high volume: filter to ACCEPT, BIND, RESULT tag=97, and
+  closed lines at the collector (for example an rsyslog filter on the message) before
+  sending. Built from vendor docs: verify on real data.
+category: identity
+vendor: openldap
+classification_default: local_only
+
+envelope:
+  type: syslog
+  syslog: { rfc: auto, assume_year: rollover_safe, timezone: UTC, strip_relay_headers: true }
+
+match:
+  app_name: [slapd]
+  min_confidence: 0.9
+
+payload:
+  format: regex
+  regex:
+    patterns:
+      # slapd 2.5+ writing its own log file puts a hex time and thread id first.
+      - '^(?:[0-9a-f]{8}\.[0-9a-f]{8} 0x[0-9a-f]{1,16} )?conn=(?P<conn>\d{1,20}) (?:fd=\d{1,10} )?ACCEPT from IP=\[?(?P<src_ip>[0-9A-Fa-f:.]{2,45}?)\]?:(?P<src_port>\d{1,5}) \(IP=(?P<listen>[^)]{0,64})\)'
+      - '^(?:[0-9a-f]{8}\.[0-9a-f]{8} 0x[0-9a-f]{1,16} )?conn=(?P<conn>\d{1,20}) op=(?P<op>\d{1,10}) BIND dn="(?P<dn>[^"]{0,1024})" (?:method=(?P<method>\d{1,4})|mech=(?P<mech>\S{1,32}))'
+      - '^(?:[0-9a-f]{8}\.[0-9a-f]{8} 0x[0-9a-f]{1,16} )?conn=(?P<conn>\d{1,20}) op=(?P<op>\d{1,10}) RESULT tag=(?P<tag>\d{1,4}) err=(?P<err>\d{1,4})(?P<rest>.{0,2000})$'
+      - '^(?:[0-9a-f]{8}\.[0-9a-f]{8} 0x[0-9a-f]{1,16} )?conn=(?P<conn>\d{1,20}) (?:fd=\d{1,10} )?(?P<closed>closed)(?: \((?P<why>[^)]{0,200})\))?'
+      - '^(?:[0-9a-f]{8}\.[0-9a-f]{8} 0x[0-9a-f]{1,16} )?conn=(?P<conn>\d{1,20}) op=(?P<op>\d{1,10}) (?P<opname>SRCH|MOD|ADD|DEL|MODRDN|UNBIND|EXT|CMP|ABANDON|PASSMOD|STARTTLS)\b(?P<rest>.{0,2000})$'
+
+transforms:
+  - { field: dn, op: regex_extract, args: { pattern: '^(?:uid|cn|sAMAccountName)=([^,]{1,256})', into: user, optional: true } }
+  - { field: rest, op: regex_extract, args: { pattern: '\btext=(.*)$', into: text, optional: true } }
+  - { field: method, op: replace, args: { pattern: '^.+$', with: bind, into: kind } }
+  - { field: mech, op: replace, args: { pattern: '^.+$', with: bind_ok, into: kind } }
+  - { field: tag, op: map, args: { values: { "97": bind_result }, into: kind, optional: true } }
+  - { field: listen, op: replace, args: { pattern: '^.*$', with: accept, into: kind } }
+  - { field: closed, op: replace, args: { pattern: '^.+$', with: close, into: kind } }
+  - { field: err, op: replace, args: { pattern: '^(?!0$)\d+$', with: failure, into: outcome } }
+  - { field: src_port, op: to_int }
+
+mapping:
+  class_uid: 0             # Base Event: searches, modifications, and other operations
+  class_by:
+    field: kind
+    values: { bind: 3002, bind_ok: 3002, bind_result: 3002, accept: 4001, close: 4001 }
+  fields:
+    actor_user_name: { from: user }
+    actor_process_name: { default: slapd }
+    src_endpoint_ip: { from: src_ip }
+    src_endpoint_port: { from: src_port }
+    message: { from: [dn, text, opname] }
+    activity_id: { from: kind, map: { bind: 1, bind_ok: 1, bind_result: 1, accept: 1, close: 2 } }
+    status_id: { from: outcome, map: { "0": 1, failure: 2 } }
+  severity:
+    from: err
+    map: { "49": 3, "50": 3, "53": 2 }
+
+tests:
+  - name: connection accepted
+    input: "<166>Oct  9 20:41:12 ldap-01 slapd[1100]: conn=1001 fd=12 ACCEPT from IP=10.20.1.5:51234 (IP=0.0.0.0:389)"
+    expect:
+      parse_status: ok
+      class_uid: 4001
+      fields: { src_endpoint_ip: 10.20.1.5, src_endpoint_port: 51234 }
+  - name: bind request names the user
+    input: '<166>Oct  9 20:41:12 ldap-01 slapd[1100]: conn=1001 op=0 BIND dn="uid=alice,ou=people,dc=example,dc=com" method=128'
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { actor_user_name: alice, message: "uid=alice,ou=people,dc=example,dc=com" }
+  - name: failed bind result
+    input: "<166>Oct  9 20:41:12 ldap-01 slapd[1100]: conn=1001 op=0 RESULT tag=97 err=49 qtime=0.000012 etime=0.000210 text="
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { status_id: 2, severity_id: 3 }
+  - name: successful bind result
+    input: "<166>Oct  9 20:42:00 ldap-01 slapd[1100]: conn=1002 op=0 RESULT tag=97 err=0 qtime=0.000010 etime=0.000300 text="
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { status_id: 1 }
+  - name: search is a base event
+    input: '<166>Oct  9 20:42:01 ldap-01 slapd[1100]: conn=1002 op=1 SRCH base="dc=example,dc=com" scope=2 deref=0 filter="(uid=bob)"'
+    expect:
+      parse_status: ok
+      class_uid: 0

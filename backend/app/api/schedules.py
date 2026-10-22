@@ -57,6 +57,10 @@ class ScheduleUpdate(BaseModel):
     target_ids: list[str] | None = Field(default=None, max_length=10)  # replaces the list
     panel_width: PanelWidth | None = None
     panel_view: PanelView | None = None
+    # A new definition (F37): run history is kept and the next run notes the change.
+    kind: Literal["search", "rule"] | None = None
+    target_id: str | None = Field(default=None, min_length=1, max_length=300)
+    params: dict[str, Any] | None = Field(default=None, max_length=20)
 
 
 class RunOut(BaseModel):
@@ -75,6 +79,8 @@ class RunOut(BaseModel):
     rule_run_id: str | None
     # A drop to zero right after a source this run read changed parser (F36).
     parser_change: str | None = None
+    # The first run after the schedule's definition changed says what changed (F37).
+    definition_change: str | None = None
 
 
 class RunDetail(RunOut):
@@ -134,6 +140,7 @@ def _run_out(r: ScheduleRun, can_read: Any, detail: bool = False) -> RunOut:
         "error": None if restricted else r.error,
         "rule_run_id": None if restricted else r.rule_run_id,
         "parser_change": None if restricted else r.parser_change,
+        "definition_change": r.definition_change,
     }
     if not detail:
         return RunOut(**base)

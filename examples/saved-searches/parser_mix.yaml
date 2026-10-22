@@ -1,0 +1,16 @@
+schema_version: 1
+id: parser_mix
+name: Parser mix by source
+description: >-
+  Which parser (template) read each source's events and how well: rows per source,
+  template, and parse status. A source that is mostly generic or envelope_only needs a
+  template; a sudden change in the mix means a parser changed (see docs/searching.md).
+tags: [ingest, health, example]
+mode: query
+sql: |-
+  SELECT source_id, coalesce(template_id, 'none') AS parser, parse_status, count(*) AS events
+  FROM events
+  WHERE time BETWEEN {{start}} AND {{end}}
+  GROUP BY ALL
+  ORDER BY source_id, events DESC
+params: []

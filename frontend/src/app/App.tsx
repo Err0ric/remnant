@@ -15,6 +15,7 @@ import { HomeRedirect } from "@/features/dashboard/HomeRedirect";
 import { usePage } from "@/lib/route";
 import { SETTINGS_IDS } from "@/lib/nav";
 import { cn } from "@/lib/cn";
+import { OfflineBanner } from "@/components/shell/OfflineBanner";
 import { SettingsNav } from "@/components/shell/SettingsNav";
 import { applyTheme, type Theme } from "@/lib/theme";
 
@@ -127,6 +128,7 @@ export function App({ initialTheme, queryClient }: AppProps) {
                 menuOpen={menu}
                 onToggleMenu={() => setMenu((open) => !open)}
               />
+              <OfflineBanner />
               {palette ? (
                 <CommandPalette
                   page={page}

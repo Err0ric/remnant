@@ -1,0 +1,61 @@
+<134>Oct  9 20:00:11 vpn-02 openvpn[1200]: carol/192.0.2.10:33007 SIGTERM[soft,remote-exit] received, client-instance exiting
+<134>Oct  9 20:01:13 vpn-01 openvpnas: 2026-10-09T20:01:13+0000 [stdout#info] [OVPN 0] OUT: '2026-10-09 20:01:13 203.0.113.77:2439 [carol] Peer Connection Initiated with [AF_INET]203.0.113.77:2439 (via [AF_INET]10.20.0.4%eth0)'
+<134>Oct  9 20:01:53 vpn-01 openvpnas: 2026-10-09T20:01:53+0000 [stdout#info] [OVPN 0] OUT: '2026-10-09 20:01:53 203.0.113.9:19626 [alice] Peer Connection Initiated with [AF_INET]203.0.113.9:19626 (via [AF_INET]10.20.0.4%eth0)'
+<134>Oct  9 20:02:13 vpn-02 openvpn[1200]: alice/203.0.113.9:9872 SIGTERM[soft,remote-exit] received, client-instance exiting
+<134>Oct  9 20:03:06 vpn-02 openvpn[1201]: 192.0.2.10:5936 [bob] Peer Connection Initiated with [AF_INET]192.0.2.10:5936
+<134>Oct  9 20:03:29 vpn-01 openvpnas: 2026-10-09T20:03:29+0000 [stdout#info] [OVPN 0] OUT: '2026-10-09 20:03:29 203.0.113.9:61510 [bob] Peer Connection Initiated with [AF_INET]203.0.113.9:61510 (via [AF_INET]10.20.0.4%eth0)'
+<134>Oct  9 20:03:42 vpn-02 openvpn[1200]: carol/203.0.113.77:24390 SIGTERM[soft,remote-exit] received, client-instance exiting
+<134>Oct  9 20:04:23 vpn-02 openvpn[1201]: dave/203.0.113.9:2415 SIGTERM[soft,remote-exit] received, client-instance exiting
+<134>Oct  9 20:05:27 vpn-01 openvpnas: 2026-10-09T20:05:27+0000 [stdout#info] [OVPN 0] OUT: '2026-10-09 20:05:27 203.0.113.77:39897 [dave] Peer Connection Initiated with [AF_INET]203.0.113.77:39897 (via [AF_INET]10.20.0.4%eth0)'
+<134>Oct  9 20:06:48 vpn-01 openvpnas: 2026-10-09T20:06:48+0000 [stdout#info] [OVPN 0] OUT: '2026-10-09 20:06:48 carol/198.51.100.4:24049 MULTI_sva: pool returned IPv4=172.27.232.2, IPv6=(Not enabled)'
+<134>Oct  9 20:07:43 vpn-02 openvpn[1201]: 198.51.100.4:33789 [alice] Peer Connection Initiated with [AF_INET]198.51.100.4:33789
+<134>Oct  9 20:08:32 vpn-02 openvpn[1202]: 198.51.100.4:28188 TLS Auth Error: Auth Username/Password verification failed for peer
+<134>Oct  9 20:09:44 vpn-01 openvpnas: 2026-10-09T20:09:44+0000 [stdout#info] [OVPN 0] OUT: '2026-10-09 20:09:44 192.0.2.10:37355 [bob] Peer Connection Initiated with [AF_INET]192.0.2.10:37355 (via [AF_INET]10.20.0.4%eth0)'
+<134>Oct  9 20:11:03 vpn-02 openvpn[1201]: 203.0.113.9:58861 [dave] Peer Connection Initiated with [AF_INET]203.0.113.9:58861
+<134>Oct  9 20:11:25 vpn-02 openvpn[1202]: alice/203.0.113.77:21880 SIGTERM[soft,remote-exit] received, client-instance exiting
+<134>Oct  9 20:11:32 vpn-02 openvpn[1200]: bob/203.0.113.9:41797 SIGTERM[soft,remote-exit] received, client-instance exiting
+<134>Oct  9 20:12:46 vpn-02 openvpn[1201]: 203.0.113.9:1217 [dave] Peer Connection Initiated with [AF_INET]203.0.113.9:1217
+<134>Oct  9 20:13:12 vpn-02 openvpn[1202]: 203.0.113.77:30838 TLS Auth Error: Auth Username/Password verification failed for peer
+<134>Oct  9 20:14:35 vpn-01 openvpnas: 2026-10-09T20:14:35+0000 [stdout#info] [OVPN 0] OUT: '2026-10-09 20:14:35 carol/203.0.113.77:64698 MULTI_sva: pool returned IPv4=172.27.232.3, IPv6=(Not enabled)'
+<134>Oct  9 20:14:38 vpn-01 openvpnas: 2026-10-09T20:14:38+0000 [stdout#info] [OVPN 0] OUT: '2026-10-09 20:14:38 bob/192.0.2.10:2836 MULTI_sva: pool returned IPv4=172.27.232.4, IPv6=(Not enabled)'
+<134>Oct  9 20:15:57 vpn-01 openvpnas: 2026-10-09T20:15:57+0000 [stdout#info] [OVPN 0] OUT: '2026-10-09 20:15:57 carol/192.0.2.10:7255 MULTI_sva: pool returned IPv4=172.27.232.5, IPv6=(Not enabled)'
+<134>Oct  9 20:16:06 vpn-01 openvpnas: 2026-10-09T20:16:06+0000 [stdout#info] [OVPN 0] OUT: '2026-10-09 20:16:06 203.0.113.9:59630 [bob] Peer Connection Initiated with [AF_INET]203.0.113.9:59630 (via [AF_INET]10.20.0.4%eth0)'
+<134>Oct  9 20:16:27 vpn-02 openvpn[1201]: 192.0.2.10:53111 [bob] Peer Connection Initiated with [AF_INET]192.0.2.10:53111
+<134>Oct  9 20:17:51 vpn-02 openvpn[1202]: 192.0.2.10:57128 TLS Auth Error: Auth Username/Password verification failed for peer
+<134>Oct  9 20:18:40 vpn-02 openvpn[1200]: 192.0.2.10:51261 TLS Auth Error: Auth Username/Password verification failed for peer
+<134>Oct  9 20:19:56 vpn-02 openvpn[1201]: bob/203.0.113.9:5758 SIGTERM[soft,remote-exit] received, client-instance exiting
+<134>Oct  9 20:20:53 vpn-02 openvpn[1202]: dave/198.51.100.4:22084 SIGTERM[soft,remote-exit] received, client-instance exiting
+<134>Oct  9 20:22:02 vpn-02 openvpn[1200]: 192.0.2.10:61473 [bob] Peer Connection Initiated with [AF_INET]192.0.2.10:61473
+<134>Oct  9 20:23:24 vpn-01 openvpnas: 2026-10-09T20:23:24+0000 [stdout#info] [OVPN 0] OUT: '2026-10-09 20:23:24 192.0.2.10:39720 [alice] Peer Connection Initiated with [AF_INET]192.0.2.10:39720 (via [AF_INET]10.20.0.4%eth0)'
+<134>Oct  9 20:23:54 vpn-02 openvpn[1202]: 203.0.113.9:16291 [dave] Peer Connection Initiated with [AF_INET]203.0.113.9:16291
+<134>Oct  9 20:25:14 vpn-01 openvpnas: 2026-10-09T20:25:14+0000 [stdout#info] [OVPN 0] OUT: '2026-10-09 20:25:14 203.0.113.9:4250 [bob] Peer Connection Initiated with [AF_INET]203.0.113.9:4250 (via [AF_INET]10.20.0.4%eth0)'
+<134>Oct  9 20:26:12 vpn-02 openvpn[1201]: carol/203.0.113.77:54333 SIGTERM[soft,remote-exit] received, client-instance exiting
+<134>Oct  9 20:27:37 vpn-02 openvpn[1202]: 203.0.113.9:48018 TLS Auth Error: Auth Username/Password verification failed for peer
+<134>Oct  9 20:28:27 vpn-01 openvpnas: 2026-10-09T20:28:27+0000 [stdout#info] [OVPN 0] OUT: '2026-10-09 20:28:27 192.0.2.10:38099 [dave] Peer Connection Initiated with [AF_INET]192.0.2.10:38099 (via [AF_INET]10.20.0.4%eth0)'
+<134>Oct  9 20:29:14 vpn-01 openvpnas: 2026-10-09T20:29:14+0000 [stdout#info] [OVPN 0] OUT: '2026-10-09 20:29:14 192.0.2.10:5110 [bob] Peer Connection Initiated with [AF_INET]192.0.2.10:5110 (via [AF_INET]10.20.0.4%eth0)'
+<134>Oct  9 20:29:33 vpn-02 openvpn[1202]: 203.0.113.9:55907 [carol] Peer Connection Initiated with [AF_INET]203.0.113.9:55907
+<134>Oct  9 20:30:26 vpn-01 openvpnas: 2026-10-09T20:30:26+0000 [stdout#info] [OVPN 0] OUT: '2026-10-09 20:30:26 203.0.113.77:15454 [dave] Peer Connection Initiated with [AF_INET]203.0.113.77:15454 (via [AF_INET]10.20.0.4%eth0)'
+<134>Oct  9 20:31:42 vpn-01 openvpnas: 2026-10-09T20:31:42+0000 [stdout#info] [OVPN 0] OUT: '2026-10-09 20:31:42 198.51.100.4:44949 [carol] Peer Connection Initiated with [AF_INET]198.51.100.4:44949 (via [AF_INET]10.20.0.4%eth0)'
+<134>Oct  9 20:33:08 vpn-02 openvpn[1202]: 203.0.113.9:56427 [dave] Peer Connection Initiated with [AF_INET]203.0.113.9:56427
+<134>Oct  9 20:33:25 vpn-01 openvpnas: 2026-10-09T20:33:25+0000 [stdout#info] [OVPN 0] OUT: '2026-10-09 20:33:25 198.51.100.4:6420 [bob] Peer Connection Initiated with [AF_INET]198.51.100.4:6420 (via [AF_INET]10.20.0.4%eth0)'
+<134>Oct  9 20:34:46 vpn-02 openvpn[1201]: 203.0.113.77:43189 [carol] Peer Connection Initiated with [AF_INET]203.0.113.77:43189
+<134>Oct  9 20:35:20 vpn-02 openvpn[1202]: 203.0.113.77:27200 [bob] Peer Connection Initiated with [AF_INET]203.0.113.77:27200
+<134>Oct  9 20:35:36 vpn-01 openvpnas: 2026-10-09T20:35:36+0000 [stdout#info] [OVPN 0] OUT: '2026-10-09 20:35:36 dave/198.51.100.4:2303 MULTI_sva: pool returned IPv4=172.27.232.6, IPv6=(Not enabled)'
+<134>Oct  9 20:35:43 vpn-02 openvpn[1201]: 203.0.113.9:56287 TLS Auth Error: Auth Username/Password verification failed for peer
+<134>Oct  9 20:37:04 vpn-02 openvpn[1202]: 203.0.113.77:22657 TLS Auth Error: Auth Username/Password verification failed for peer
+<134>Oct  9 20:37:58 vpn-01 openvpnas: 2026-10-09T20:37:58+0000 [stdout#info] [OVPN 0] OUT: '2026-10-09 20:37:58 203.0.113.77:18870 [carol] Peer Connection Initiated with [AF_INET]203.0.113.77:18870 (via [AF_INET]10.20.0.4%eth0)'
+<134>Oct  9 20:38:35 vpn-02 openvpn[1201]: 198.51.100.4:32731 [carol] Peer Connection Initiated with [AF_INET]198.51.100.4:32731
+<134>Oct  9 20:40:00 vpn-01 openvpnas: 2026-10-09T20:40:00+0000 [stdout#info] [OVPN 0] OUT: '2026-10-09 20:40:00 bob/203.0.113.9:52458 MULTI_sva: pool returned IPv4=172.27.232.7, IPv6=(Not enabled)'
+<134>Oct  9 20:40:11 vpn-01 openvpnas: 2026-10-09T20:40:11+0000 [stdout#info] [OVPN 0] OUT: '2026-10-09 20:40:11 192.0.2.10:63711 [dave] Peer Connection Initiated with [AF_INET]192.0.2.10:63711 (via [AF_INET]10.20.0.4%eth0)'
+<134>Oct  9 20:40:55 vpn-02 openvpn[1201]: 203.0.113.77:13726 [dave] Peer Connection Initiated with [AF_INET]203.0.113.77:13726
+<134>Oct  9 20:41:59 vpn-02 openvpn[1202]: 192.0.2.10:8850 [bob] Peer Connection Initiated with [AF_INET]192.0.2.10:8850
+<134>Oct  9 20:42:22 vpn-02 openvpn[1200]: 192.0.2.10:13488 TLS Auth Error: Auth Username/Password verification failed for peer
+<134>Oct  9 20:42:36 vpn-01 openvpnas: 2026-10-09T20:42:36+0000 [stdout#info] [OVPN 0] OUT: '2026-10-09 20:42:36 203.0.113.9:24228 [carol] Peer Connection Initiated with [AF_INET]203.0.113.9:24228 (via [AF_INET]10.20.0.4%eth0)'
+<134>Oct  9 20:43:21 vpn-02 openvpn[1202]: 192.0.2.10:35379 TLS Auth Error: Auth Username/Password verification failed for peer
+<134>Oct  9 20:43:59 vpn-02 openvpn[1200]: bob/203.0.113.77:3873 SIGTERM[soft,remote-exit] received, client-instance exiting
+<134>Oct  9 20:44:05 vpn-02 openvpn[1201]: bob/198.51.100.4:36752 SIGTERM[soft,remote-exit] received, client-instance exiting
+<134>Oct  9 20:45:14 vpn-02 openvpn[1202]: 192.0.2.10:54054 [carol] Peer Connection Initiated with [AF_INET]192.0.2.10:54054
+<134>Oct  9 20:45:51 vpn-02 openvpn[1200]: 203.0.113.77:39071 [bob] Peer Connection Initiated with [AF_INET]203.0.113.77:39071
+<134>Oct  9 20:46:05 vpn-01 openvpnas: 2026-10-09T20:46:05+0000 [stdout#info] [OVPN 0] OUT: '2026-10-09 20:46:05 dave/203.0.113.9:12443 MULTI_sva: pool returned IPv4=172.27.232.8, IPv6=(Not enabled)'
+<134>Oct  9 20:46:42 vpn-02 openvpn[1202]: dave/192.0.2.10:49320 SIGTERM[soft,remote-exit] received, client-instance exiting
+<134>Oct  9 20:46:56 vpn-02 openvpn[1200]: Initialization Sequence Completed

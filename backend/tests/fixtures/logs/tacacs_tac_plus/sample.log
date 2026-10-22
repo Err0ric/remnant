@@ -1,0 +1,62 @@
+<86>Oct  9 20:00:29 tacacs-01 tac_plus[2200]: enable query for 'alice' tty0 from 10.20.0.1 accepted
+<86>Oct  9 20:01:45 tacacs-01 tac_plus[2201]: login query for 'bob' tty1 from 10.20.0.3 accepted
+<86>Oct  9 20:02:13 tacacs-01 tac_plus[2202]: login query for 'dave' tty2 from 10.20.0.1 accepted
+<86>Oct  9 20:03:37 tacacs-01 tac_plus[2203]: enable query for 'bob' tty3 from 10.20.0.3 accepted
+<86>Oct  9 20:03:38 tacacs-01 tac_plus[2204]: 10.20.0.1	dave	tty0	10.20.3.30	start	task_id=15	service=shell
+<86>Oct  9 20:03:58 tacacs-01 tac_plus[2205]: 10.20.0.3	bob	tty1	10.20.3.30	stop	task_id=16	service=shell	priv-lvl=15	cmd=interface GigabitEthernet0/1 <cr>
+<86>Oct  9 20:04:47 tacacs-01 tac_plus[2206]: login query for 'bob' tty2 from 10.20.0.2 accepted
+<86>Oct  9 20:04:53 tacacs-01 tac_plus[2200]: 10.20.0.2	alice	tty3	10.20.2.14	start	task_id=18	service=shell
+<86>Oct  9 20:06:04 tacacs-01 tac_plus[2201]: 10.20.0.3	dave	tty0	10.20.1.5	stop	task_id=19	service=shell	priv-lvl=15	cmd=show running-config <cr>
+<86>Oct  9 20:06:13 tacacs-01 tac_plus[2202]: enable query for 'carol' tty1 from 10.20.0.3 accepted
+<86>Oct  9 20:06:24 tacacs-01 tac_plus[2203]: 10.20.0.3	alice	tty2	10.20.1.6	start	task_id=21	service=shell
+<86>Oct  9 20:07:23 tacacs-01 tac_plus[2204]: 10.20.0.1	bob	tty3	10.20.3.30	start	task_id=22	service=shell
+<86>Oct  9 20:08:49 tacacs-01 tac_plus[2205]: 10.20.0.1	carol	tty0	10.20.2.14	stop	task_id=23	service=shell	priv-lvl=15	cmd=configure terminal <cr>
+<86>Oct  9 20:09:58 tacacs-01 tac_plus[2206]: login query for 'carol' tty1 from 10.20.0.3 rejected
+<86>Oct  9 20:11:20 tacacs-01 tac_plus[2200]: 10.20.0.1	bob	tty2	10.20.3.30	stop	task_id=25	service=shell	priv-lvl=15	cmd=interface GigabitEthernet0/1 <cr>
+<86>Oct  9 20:11:50 tacacs-01 tac_plus[2201]: login query for 'bob' tty3 from 10.20.0.3 accepted
+<86>Oct  9 20:11:59 tacacs-01 tac_plus[2202]: 10.20.0.2	alice	tty0	10.20.3.30	start	task_id=27	service=shell
+<86>Oct  9 20:13:23 tacacs-01 tac_plus[2203]: enable query for 'bob' tty1 from 10.20.0.3 accepted
+<86>Oct  9 20:13:57 tacacs-01 tac_plus[2204]: login query for 'dave' tty2 from 10.20.0.2 rejected
+<86>Oct  9 20:14:44 tacacs-01 tac_plus[2205]: 10.20.0.1	bob	tty3	10.20.2.14	stop	task_id=30	service=shell	priv-lvl=15	cmd=write memory <cr>
+<86>Oct  9 20:14:51 tacacs-01 tac_plus[2206]: login query for 'bob' tty0 from 10.20.0.1 accepted
+<86>Oct  9 20:15:41 tacacs-01 tac_plus[2200]: 10.20.0.1	alice	tty1	10.20.1.6	stop	task_id=32	service=shell	priv-lvl=15	cmd=show running-config <cr>
+<86>Oct  9 20:16:52 tacacs-01 tac_plus[2201]: 10.20.0.3	dave	tty2	10.20.3.30	start	task_id=33	service=shell
+<86>Oct  9 20:18:15 tacacs-01 tac_plus[2202]: 10.20.0.3	alice	tty3	10.20.1.5	start	task_id=34	service=shell
+<86>Oct  9 20:19:14 tacacs-01 tac_plus[2203]: 10.20.0.1	carol	tty0	10.20.2.14	stop	task_id=35	service=shell	priv-lvl=15	cmd=configure terminal <cr>
+<86>Oct  9 20:20:19 tacacs-01 tac_plus[2204]: login query for 'alice' tty1 from 10.20.0.3 rejected
+<86>Oct  9 20:20:39 tacacs-01 tac_plus[2205]: enable query for 'alice' tty2 from 10.20.0.3 accepted
+<86>Oct  9 20:20:42 tacacs-01 tac_plus[2206]: 10.20.0.1	carol	tty3	10.20.1.5	stop	task_id=38	service=shell	priv-lvl=15	cmd=write memory <cr>
+<86>Oct  9 20:20:50 tacacs-01 tac_plus[2200]: enable query for 'alice' tty0 from 10.20.0.2 accepted
+<86>Oct  9 20:21:53 tacacs-01 tac_plus[2201]: login query for 'bob' tty1 from 10.20.0.3 accepted
+<86>Oct  9 20:23:18 tacacs-01 tac_plus[2202]: login query for 'alice' tty2 from 10.20.0.3 rejected
+<86>Oct  9 20:24:26 tacacs-01 tac_plus[2203]: 10.20.0.3	dave	tty3	10.20.1.6	start	task_id=42	service=shell
+<86>Oct  9 20:25:18 tacacs-01 tac_plus[2204]: 10.20.0.1	dave	tty0	10.20.1.6	start	task_id=43	service=shell
+<86>Oct  9 20:25:50 tacacs-01 tac_plus[2205]: login query for 'carol' tty1 from 10.20.0.2 accepted
+<86>Oct  9 20:27:06 tacacs-01 tac_plus[2206]: login query for 'bob' tty2 from 10.20.0.1 accepted
+<86>Oct  9 20:27:16 tacacs-01 tac_plus[2200]: login query for 'bob' tty3 from 10.20.0.3 accepted
+<86>Oct  9 20:27:59 tacacs-01 tac_plus[2201]: login query for 'alice' tty0 from 10.20.0.1 accepted
+<86>Oct  9 20:29:25 tacacs-01 tac_plus[2202]: 10.20.0.3	alice	tty1	10.20.1.6	start	task_id=48	service=shell
+<86>Oct  9 20:30:26 tacacs-01 tac_plus[2203]: 10.20.0.1	dave	tty2	10.20.1.6	stop	task_id=49	service=shell	elapsed_time=1000
+<86>Oct  9 20:31:51 tacacs-01 tac_plus[2204]: login query for 'dave' tty3 from 10.20.0.1 accepted
+<86>Oct  9 20:31:58 tacacs-01 tac_plus[2205]: 10.20.0.2	dave	tty0	10.20.3.30	stop	task_id=51	service=shell	priv-lvl=15	cmd=write memory <cr>
+<86>Oct  9 20:32:30 tacacs-01 tac_plus[2206]: 10.20.0.1	alice	tty1	10.20.3.30	stop	task_id=52	service=shell	priv-lvl=15	cmd=show running-config <cr>
+<86>Oct  9 20:33:25 tacacs-01 tac_plus[2200]: login query for 'bob' tty2 from 10.20.0.1 rejected
+<86>Oct  9 20:33:35 tacacs-01 tac_plus[2201]: enable query for 'bob' tty3 from 10.20.0.2 accepted
+<86>Oct  9 20:34:59 tacacs-01 tac_plus[2202]: login query for 'dave' tty0 from 10.20.0.3 accepted
+<86>Oct  9 20:35:52 tacacs-01 tac_plus[2203]: login query for 'alice' tty1 from 10.20.0.1 rejected
+<86>Oct  9 20:36:14 tacacs-01 tac_plus[2204]: 10.20.0.2	dave	tty2	10.20.1.6	stop	task_id=57	service=shell	priv-lvl=15	cmd=show running-config <cr>
+<86>Oct  9 20:37:13 tacacs-01 tac_plus[2205]: 10.20.0.1	dave	tty3	10.20.3.30	start	task_id=58	service=shell
+<86>Oct  9 20:37:38 tacacs-01 tac_plus[2206]: login query for 'carol' tty0 from 10.20.0.2 rejected
+<86>Oct  9 20:38:19 tacacs-01 tac_plus[2200]: login query for 'carol' tty1 from 10.20.0.1 accepted
+<86>Oct  9 20:38:27 tacacs-01 tac_plus[2201]: login query for 'alice' tty2 from 10.20.0.1 rejected
+<86>Oct  9 20:39:54 tacacs-01 tac_plus[2202]: login query for 'alice' tty3 from 10.20.0.1 accepted
+<86>Oct  9 20:41:09 tacacs-01 tac_plus[2203]: enable query for 'bob' tty0 from 10.20.0.2 accepted
+<86>Oct  9 20:41:43 tacacs-01 tac_plus[2204]: 10.20.0.3	alice	tty1	10.20.1.5	stop	task_id=64	service=shell	priv-lvl=15	cmd=interface GigabitEthernet0/1 <cr>
+<86>Oct  9 20:42:17 tacacs-01 tac_plus[2205]: enable query for 'bob' tty2 from 10.20.0.3 accepted
+<86>Oct  9 20:42:27 tacacs-01 tac_plus[2206]: 10.20.0.1	dave	tty3	10.20.2.14	stop	task_id=66	service=shell	elapsed_time=1300
+<86>Oct  9 20:43:36 tacacs-01 tac_plus[2200]: login query for 'alice' tty0 from 10.20.0.2 accepted
+<86>Oct  9 20:44:21 tacacs-01 tac_plus[2201]: login query for 'bob' tty1 from 10.20.0.3 rejected
+<86>Oct  9 20:44:42 tacacs-01 tac_plus[2202]: 10.20.0.1	alice	tty2	10.20.2.14	start	task_id=69	service=shell
+<86>Oct  9 20:46:08 tacacs-01 tac_plus[2203]: login query for 'dave' tty3 from 10.20.0.3 accepted
+<86>Oct  9 20:47:19 tacacs-01 tac_plus[2200]: connect from 10.20.0.1
+<86>Oct  9 20:47:58 tacacs-01 tac_plus[2200]: Reading config

@@ -44,6 +44,11 @@ export function SourceState({ status }: SourceStateProps) {
           10 minutes
         </span>
       ) : null}
+      {status.time_offset_text ? (
+        <span role="note" className="max-w-[320px] text-sm text-warn">
+          {status.time_offset_text}.
+        </span>
+      ) : null}
       {status.records_skipped > 0 ? (
         <span className="max-w-[320px] text-sm text-text-secondary">
           {status.records_skipped.toLocaleString()}{" "}

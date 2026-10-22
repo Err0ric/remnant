@@ -1,0 +1,61 @@
+<166>Oct  9 20:01:14 ldap-01 slapd[1100]: conn=1001 fd=13 ACCEPT from IP=10.20.1.5:29216 (IP=0.0.0.0:389)
+<166>Oct  9 20:01:58 ldap-01 slapd[1100]: conn=1001 op=0 BIND dn="uid=carol,ou=people,dc=example,dc=com" method=128
+<166>Oct  9 20:02:31 ldap-01 slapd[1100]: conn=1001 op=0 BIND dn="uid=carol,ou=people,dc=example,dc=com" mech=SIMPLE bind_ssf=0 ssf=0
+<166>Oct  9 20:03:37 ldap-01 slapd[1100]: conn=1001 op=0 RESULT tag=97 err=0 qtime=0.000012 etime=0.000210 text=
+<166>Oct  9 20:04:27 ldap-01 slapd[1100]: conn=1001 op=1 SRCH base="dc=example,dc=com" scope=2 deref=0 filter="(uid=carol)"
+<166>Oct  9 20:05:18 ldap-01 slapd[1100]: conn=1001 fd=13 closed
+<166>Oct  9 20:05:32 ldap-01 slapd[1100]: conn=1002 fd=14 ACCEPT from IP=10.20.3.30:44187 (IP=0.0.0.0:389)
+<166>Oct  9 20:05:33 ldap-01 slapd[1100]: conn=1002 op=0 BIND dn="uid=alice,ou=people,dc=example,dc=com" method=128
+<166>Oct  9 20:06:07 ldap-01 slapd[1100]: conn=1002 op=0 RESULT tag=97 err=49 qtime=0.000012 etime=0.000210 text=
+<166>Oct  9 20:07:09 ldap-01 slapd[1100]: conn=1002 fd=14 closed (connection lost)
+<166>Oct  9 20:07:40 ldap-01 slapd[1100]: conn=1003 fd=15 ACCEPT from IP=10.20.2.14:38220 (IP=0.0.0.0:389)
+<166>Oct  9 20:08:47 ldap-01 slapd[1100]: conn=1003 op=0 BIND dn="uid=alice,ou=people,dc=example,dc=com" method=128
+<166>Oct  9 20:09:53 ldap-01 slapd[1100]: conn=1003 op=0 BIND dn="uid=alice,ou=people,dc=example,dc=com" mech=SIMPLE bind_ssf=0 ssf=0
+<166>Oct  9 20:10:39 ldap-01 slapd[1100]: conn=1003 op=0 RESULT tag=97 err=0 qtime=0.000012 etime=0.000210 text=
+<166>Oct  9 20:11:36 ldap-01 slapd[1100]: conn=1003 op=1 SRCH base="dc=example,dc=com" scope=2 deref=0 filter="(uid=alice)"
+<166>Oct  9 20:12:07 ldap-01 slapd[1100]: conn=1003 fd=15 closed
+<166>Oct  9 20:13:24 ldap-01 slapd[1100]: conn=1004 fd=16 ACCEPT from IP=10.20.2.14:47995 (IP=0.0.0.0:389)
+<166>Oct  9 20:14:08 ldap-01 slapd[1100]: conn=1004 op=0 BIND dn="uid=alice,ou=people,dc=example,dc=com" method=128
+<166>Oct  9 20:15:20 ldap-01 slapd[1100]: conn=1004 op=0 BIND dn="uid=alice,ou=people,dc=example,dc=com" mech=SIMPLE bind_ssf=0 ssf=0
+<166>Oct  9 20:16:34 ldap-01 slapd[1100]: conn=1004 op=0 RESULT tag=97 err=0 qtime=0.000012 etime=0.000210 text=
+<166>Oct  9 20:17:00 ldap-01 slapd[1100]: conn=1004 op=1 SRCH base="dc=example,dc=com" scope=2 deref=0 filter="(uid=alice)"
+<166>Oct  9 20:17:31 ldap-01 slapd[1100]: conn=1004 fd=16 closed
+<166>Oct  9 20:18:46 ldap-01 slapd[1100]: conn=1005 fd=17 ACCEPT from IP=10.20.1.6:22908 (IP=0.0.0.0:389)
+<166>Oct  9 20:19:36 ldap-01 slapd[1100]: conn=1005 op=0 BIND dn="uid=alice,ou=people,dc=example,dc=com" method=128
+<166>Oct  9 20:20:42 ldap-01 slapd[1100]: conn=1005 op=0 RESULT tag=97 err=49 qtime=0.000012 etime=0.000210 text=
+<166>Oct  9 20:21:52 ldap-01 slapd[1100]: conn=1005 fd=17 closed (connection lost)
+<166>Oct  9 20:22:22 ldap-01 slapd[1100]: conn=1006 fd=18 ACCEPT from IP=10.20.1.5:43544 (IP=0.0.0.0:389)
+<166>Oct  9 20:23:05 ldap-01 slapd[1100]: conn=1006 op=0 BIND dn="uid=carol,ou=people,dc=example,dc=com" method=128
+<166>Oct  9 20:23:33 ldap-01 slapd[1100]: conn=1006 op=0 BIND dn="uid=carol,ou=people,dc=example,dc=com" mech=SIMPLE bind_ssf=0 ssf=0
+<166>Oct  9 20:24:34 ldap-01 slapd[1100]: conn=1006 op=0 RESULT tag=97 err=0 qtime=0.000012 etime=0.000210 text=
+<166>Oct  9 20:24:49 ldap-01 slapd[1100]: conn=1006 op=1 SRCH base="dc=example,dc=com" scope=2 deref=0 filter="(uid=carol)"
+<166>Oct  9 20:25:43 ldap-01 slapd[1100]: conn=1006 fd=18 closed
+<166>Oct  9 20:26:14 ldap-01 slapd[1100]: conn=1007 fd=19 ACCEPT from IP=10.20.2.14:58639 (IP=0.0.0.0:389)
+<166>Oct  9 20:27:26 ldap-01 slapd[1100]: conn=1007 op=0 BIND dn="uid=carol,ou=people,dc=example,dc=com" method=128
+<166>Oct  9 20:28:00 ldap-01 slapd[1100]: conn=1007 op=0 BIND dn="uid=carol,ou=people,dc=example,dc=com" mech=SIMPLE bind_ssf=0 ssf=0
+<166>Oct  9 20:28:46 ldap-01 slapd[1100]: conn=1007 op=0 RESULT tag=97 err=0 qtime=0.000012 etime=0.000210 text=
+<166>Oct  9 20:29:55 ldap-01 slapd[1100]: conn=1007 op=1 SRCH base="dc=example,dc=com" scope=2 deref=0 filter="(uid=carol)"
+<166>Oct  9 20:31:08 ldap-01 slapd[1100]: conn=1007 fd=19 closed
+<166>Oct  9 20:31:59 ldap-01 slapd[1100]: conn=1008 fd=20 ACCEPT from IP=10.20.3.30:21484 (IP=0.0.0.0:389)
+<166>Oct  9 20:32:33 ldap-01 slapd[1100]: conn=1008 op=0 BIND dn="uid=alice,ou=people,dc=example,dc=com" method=128
+<166>Oct  9 20:33:40 ldap-01 slapd[1100]: conn=1008 op=0 BIND dn="uid=alice,ou=people,dc=example,dc=com" mech=SIMPLE bind_ssf=0 ssf=0
+<166>Oct  9 20:34:09 ldap-01 slapd[1100]: conn=1008 op=0 RESULT tag=97 err=0 qtime=0.000012 etime=0.000210 text=
+<166>Oct  9 20:35:27 ldap-01 slapd[1100]: conn=1008 op=1 SRCH base="dc=example,dc=com" scope=2 deref=0 filter="(uid=alice)"
+<166>Oct  9 20:35:42 ldap-01 slapd[1100]: conn=1008 fd=20 closed
+<166>Oct  9 20:37:00 ldap-01 slapd[1100]: conn=1009 fd=21 ACCEPT from IP=10.20.3.30:32835 (IP=0.0.0.0:389)
+<166>Oct  9 20:38:12 ldap-01 slapd[1100]: conn=1009 op=0 BIND dn="uid=bob,ou=people,dc=example,dc=com" method=128
+<166>Oct  9 20:38:32 ldap-01 slapd[1100]: conn=1009 op=0 RESULT tag=97 err=49 qtime=0.000012 etime=0.000210 text=
+<166>Oct  9 20:39:29 ldap-01 slapd[1100]: conn=1009 fd=21 closed (connection lost)
+<166>Oct  9 20:39:40 ldap-01 slapd[1100]: conn=1010 fd=22 ACCEPT from IP=10.20.1.6:36871 (IP=0.0.0.0:389)
+<166>Oct  9 20:39:50 ldap-01 slapd[1100]: conn=1010 op=0 BIND dn="uid=alice,ou=people,dc=example,dc=com" method=128
+<166>Oct  9 20:40:25 ldap-01 slapd[1100]: conn=1010 op=0 BIND dn="uid=alice,ou=people,dc=example,dc=com" mech=SIMPLE bind_ssf=0 ssf=0
+<166>Oct  9 20:41:31 ldap-01 slapd[1100]: conn=1010 op=0 RESULT tag=97 err=0 qtime=0.000012 etime=0.000210 text=
+<166>Oct  9 20:42:51 ldap-01 slapd[1100]: conn=1010 op=1 SRCH base="dc=example,dc=com" scope=2 deref=0 filter="(uid=alice)"
+<166>Oct  9 20:44:01 ldap-01 slapd[1100]: conn=1010 fd=22 closed
+<166>Oct  9 20:44:06 ldap-01 slapd[1100]: conn=1011 fd=23 ACCEPT from IP=10.20.3.30:24982 (IP=0.0.0.0:389)
+<166>Oct  9 20:45:24 ldap-01 slapd[1100]: conn=1011 op=0 BIND dn="uid=dave,ou=people,dc=example,dc=com" method=128
+<166>Oct  9 20:45:58 ldap-01 slapd[1100]: conn=1011 op=0 BIND dn="uid=dave,ou=people,dc=example,dc=com" mech=SIMPLE bind_ssf=0 ssf=0
+<166>Oct  9 20:47:21 ldap-01 slapd[1100]: conn=1011 op=0 RESULT tag=97 err=0 qtime=0.000012 etime=0.000210 text=
+<166>Oct  9 20:48:39 ldap-01 slapd[1100]: conn=1011 op=1 SRCH base="dc=example,dc=com" scope=2 deref=0 filter="(uid=dave)"
+<166>Oct  9 20:49:46 ldap-01 slapd[1100]: conn=1011 fd=23 closed
+<166>Oct  9 20:51:13 ldap-01 slapd[1100]: slapd starting

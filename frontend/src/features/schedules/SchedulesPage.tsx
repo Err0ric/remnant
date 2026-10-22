@@ -30,6 +30,7 @@ export function SchedulesPage({ canCreate, isAdmin }: SchedulesPageProps) {
   const [adding, setAdding] = useState(Boolean(seed) && canCreate);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [showLog, setShowLog] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
   const schedules = useQuery({ queryKey: ["schedules"], queryFn: api.schedules });
   const list = schedules.data ?? [];
   const refresh = () => client.invalidateQueries({ queryKey: ["schedules"] });
@@ -70,6 +71,13 @@ export function SchedulesPage({ canCreate, isAdmin }: SchedulesPageProps) {
       />
       <div className="flex flex-col gap-3 px-5 py-3">
         {adding ? <ScheduleForm initial={seed} onDone={() => setAdding(false)} /> : null}
+        {editing && list.find((s) => s.schedule_id === editing) ? (
+          <ScheduleForm
+            key={editing}
+            existing={list.find((s) => s.schedule_id === editing) ?? null}
+            onDone={() => setEditing(null)}
+          />
+        ) : null}
         {failure ? (
           <p role="alert" className="text-sm text-danger">
             {failure instanceof ApiError ? failure.message : "That did not work"}
@@ -108,7 +116,14 @@ export function SchedulesPage({ canCreate, isAdmin }: SchedulesPageProps) {
                         </td>
                         <td className="px-3 py-2">{cronLabel(s.cron)}</td>
                         <td className="px-3 py-2">{lookbackLabel(s.lookback_minutes)}</td>
-                        <td className="px-3 py-2 font-mono">{lastRunText(s)}</td>
+                        <td className="px-3 py-2">
+                          <div className="font-mono">{lastRunText(s)}</div>
+                          {s.recent[0]?.definition_change ? (
+                            <div className="text-text-secondary">
+                              Changed: {s.recent[0].definition_change}
+                            </div>
+                          ) : null}
+                        </td>
                         <td className="px-3 py-2">
                           {s.paused ? (
                             <>
@@ -150,6 +165,14 @@ export function SchedulesPage({ canCreate, isAdmin }: SchedulesPageProps) {
                                 aria-label={`Run ${s.name} now`}
                               >
                                 Run now
+                              </button>
+                              <button
+                                type="button"
+                                className={btn}
+                                onClick={() => setEditing(s.schedule_id)}
+                                aria-label={`Edit ${s.name}`}
+                              >
+                                Edit
                               </button>
                               <button
                                 type="button"

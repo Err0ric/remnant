@@ -1,3 +1,5 @@
+import { reportReached, reportUnreachable, unreachableStatus } from "@/lib/connectivity";
+
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
@@ -29,7 +31,13 @@ async function request<T>(path: string, init?: RequestInit, asText = false): Pro
     "Content-Type": "application/json",
   };
   if (method !== "GET" && csrfToken) headers["X-CSRF-Token"] = csrfToken;
-  const res = await fetch(path, { ...init, credentials: "same-origin", headers });
+  let res: Response;
+  try {
+    res = await fetch(path, { ...init, credentials: "same-origin", headers });
+  } catch (err) {
+    reportUnreachable(); // the request never reached the server (F40)
+    throw err;
+  }
   if (!res.ok) {
     let detail = `${res.status} ${res.statusText}`;
     let code: string | undefined;
@@ -40,9 +48,12 @@ async function request<T>(path: string, init?: RequestInit, asText = false): Pro
     } catch {
       // Non-JSON error body: keep the status line.
     }
+    if (unreachableStatus(res.status, code)) reportUnreachable();
+    else reportReached();
     if (code === "auth_required" || code === "setup_required") onAuthLost?.();
     throw new ApiError(res.status, detail, code);
   }
+  reportReached();
   if (res.status === 204) return undefined as T;
   if (asText) return (await res.text()) as T;
   return (await res.json()) as T;
@@ -716,6 +727,9 @@ export interface SourceStatus {
   retry_at?: string | null;
   /** Syslog listener sources: the socket and who is sending (ADR-0021). */
   listener?: ListenerStatus | null;
+  /** Event times steadily this many hours off (positive: early): check the time zone. */
+  time_offset_h?: number | null;
+  time_offset_text?: string | null;
 }
 
 /** Quiet-source alert state (ADR-0014); null when no alert is set. */
@@ -1023,6 +1037,8 @@ export interface ScheduleRunSummary {
   rule_run_id: string | null;
   /** A drop to zero right after a source this run read changed parser (F36). */
   parser_change?: string | null;
+  /** The first run after the schedule's definition changed says what changed (F37). */
+  definition_change?: string | null;
 }
 
 export interface ScheduleRunDetail extends ScheduleRunSummary {
@@ -1183,6 +1199,15 @@ export interface ScheduleUpdate {
   target_ids?: string[];
   panel_width?: "third" | "half" | "full";
   panel_view?: "table" | "bars";
+  /** 0 clears the range (since the last run). */
+  lookback_minutes?: number;
+  /** "none" clears the threshold. */
+  threshold_kind?: ThresholdKind | "none";
+  threshold_value?: number;
+  /** A new definition (F37): history is kept and the next run notes the change. */
+  kind?: "search" | "rule";
+  target_id?: string;
+  params?: Record<string, string | number | boolean>;
 }
 
 export interface ExplainClaim {
@@ -1424,6 +1449,8 @@ export const api = {
   discoverSources: (path: string) =>
     request<DiscoveryReport>("/api/sources/discover", post({ path })),
   /** Admins: change a source's label. Only new events take it (SPEC 6.2). */
+  setSourceTimezone: (id: string, timezone: string) =>
+    request<Source>(`/api/sources/${encodeURIComponent(id)}`, patch({ timezone })),
   classifySource: (id: string, classification: "local_only" | "cloud_allowed") =>
     request<Source>(`/api/sources/${encodeURIComponent(id)}`, patch({ classification })),
   /** null is the generic parser, "auto" the Automatic one (ADR-0012). New lines only. */

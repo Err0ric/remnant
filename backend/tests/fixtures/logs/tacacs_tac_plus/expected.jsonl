@@ -1,0 +1,10 @@
+{"actor_user_name": "alice", "class_uid": 3002, "device_hostname": "tacacs-01", "device_ip": "10.20.0.1", "parse_status": "ok", "status_id": 1, "time": "2026-10-09T20:00:29+00:00"}
+{"actor_user_name": "bob", "class_uid": 3002, "device_hostname": "tacacs-01", "device_ip": "10.20.0.3", "parse_status": "ok", "status_id": 1, "time": "2026-10-09T20:01:45+00:00"}
+{"actor_user_name": "dave", "class_uid": 3002, "device_hostname": "tacacs-01", "device_ip": "10.20.0.1", "parse_status": "ok", "status_id": 1, "time": "2026-10-09T20:02:13+00:00"}
+{"actor_user_name": "bob", "class_uid": 3002, "device_hostname": "tacacs-01", "device_ip": "10.20.0.3", "parse_status": "ok", "status_id": 1, "time": "2026-10-09T20:03:37+00:00"}
+{"activity_id": 1, "actor_user_name": "dave", "class_uid": 3002, "device_hostname": "tacacs-01", "device_ip": "10.20.0.1", "parse_status": "ok", "src_endpoint_ip": "10.20.3.30", "time": "2026-10-09T20:03:38+00:00"}
+{"actor_user_name": "bob", "class_uid": 1007, "device_hostname": "tacacs-01", "device_ip": "10.20.0.3", "message": "interface GigabitEthernet0/1 <cr>", "parse_status": "ok", "time": "2026-10-09T20:03:58+00:00"}
+{"actor_user_name": "bob", "class_uid": 3002, "device_hostname": "tacacs-01", "device_ip": "10.20.0.2", "parse_status": "ok", "status_id": 1, "time": "2026-10-09T20:04:47+00:00"}
+{"activity_id": 1, "actor_user_name": "alice", "class_uid": 3002, "device_hostname": "tacacs-01", "device_ip": "10.20.0.2", "parse_status": "ok", "src_endpoint_ip": "10.20.2.14", "time": "2026-10-09T20:04:53+00:00"}
+{"actor_user_name": "dave", "class_uid": 1007, "device_hostname": "tacacs-01", "device_ip": "10.20.0.3", "message": "show running-config <cr>", "parse_status": "ok", "time": "2026-10-09T20:06:04+00:00"}
+{"actor_user_name": "carol", "class_uid": 3002, "device_hostname": "tacacs-01", "device_ip": "10.20.0.3", "parse_status": "ok", "status_id": 1, "time": "2026-10-09T20:06:13+00:00"}

@@ -12,9 +12,9 @@ description: >-
   otherwise the template takes it from the audit keyword. Entries with class_uid 0 have
   no OCSF class yet and only supply a readable message. actor: target marks logon events,
   where the user logging on is in Target*; everywhere else the acting user is in Subject*
-  and the account or group acted on stays in unmapped (TargetUserName). Sysmon is not
-  mapped yet: its events use different field names (Image, SourceIp, User), so a class
-  without those fields would mislead; see docs/BACKLOG.md.
+  and the account or group acted on stays in unmapped (TargetUserName). Of Sysmon, only
+  event 22 (DNS query) is mapped; the others use different field names (Image, SourceIp,
+  User), so a class without those fields would mislead; see docs/BACKLOG.md.
 
 entries:
   # Logon and logoff
@@ -63,3 +63,7 @@ entries:
   "Security:4697": { class_uid: 0, label: A service was installed in the system }
   "Security:4698": { class_uid: 0, label: A scheduled task was created }
   "System:7045": { class_uid: 0, label: A service was installed in the system }
+  # Sysmon DNS queries (event 22): only this Sysmon event is mapped, because its one field
+  # that matters (QueryName) is read by name in windows_evtx. Other Sysmon events stay
+  # unmapped until their field names are (see docs/BACKLOG.md).
+  "Microsoft-Windows-Sysmon/Operational:22": { class_uid: 4003, activity_id: 1, label: DNS query }

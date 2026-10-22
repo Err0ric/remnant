@@ -1,0 +1,10 @@
+{"actor_user_name": "dave", "class_uid": 3002, "device_hostname": "auth-01", "parse_status": "ok", "src_endpoint_ip": "10.20.1.6", "status_id": 2, "time": "2026-10-09T20:00:22+00:00"}
+{"actor_user_name": "carol", "class_uid": 3003, "device_hostname": "auth-01", "parse_status": "ok", "src_endpoint_ip": "10.20.1.5", "status_id": 2, "time": "2026-10-09T20:01:36+00:00"}
+{"actor_user_name": "bob", "class_uid": 3002, "device_hostname": "auth-01", "parse_status": "ok", "src_endpoint_ip": "203.0.113.9", "status_id": 1, "time": "2026-10-09T20:01:56+00:00"}
+{"actor_user_name": "bob", "class_uid": 3002, "device_hostname": "auth-01", "parse_status": "ok", "src_endpoint_ip": "10.20.1.6", "status_id": 1, "time": "2026-10-09T20:02:29+00:00"}
+{"actor_user_name": "alice", "class_uid": 3002, "device_hostname": "auth-01", "parse_status": "ok", "src_endpoint_ip": "198.51.100.4", "status_id": 2, "time": "2026-10-09T20:03:25+00:00"}
+{"actor_user_name": "carol", "class_uid": 3002, "device_hostname": "auth-01", "parse_status": "ok", "src_endpoint_ip": "192.0.2.10", "status_id": 2, "time": "2026-10-09T20:04:12+00:00"}
+{"actor_user_name": "dave", "class_uid": 3002, "device_hostname": "auth-01", "parse_status": "ok", "src_endpoint_ip": "203.0.113.77", "status_id": 2, "time": "2026-10-09T20:04:28+00:00"}
+{"actor_user_name": "alice", "class_uid": 3002, "device_hostname": "auth-01", "parse_status": "ok", "src_endpoint_ip": "203.0.113.77", "status_id": 1, "time": "2026-10-09T20:04:35+00:00"}
+{"actor_user_name": "carol", "class_uid": 3002, "device_hostname": "auth-01", "parse_status": "ok", "src_endpoint_ip": "10.20.1.6", "status_id": 2, "time": "2026-10-09T20:05:55+00:00"}
+{"actor_user_name": "bob", "class_uid": 3002, "device_hostname": "auth-01", "parse_status": "ok", "src_endpoint_ip": "10.20.2.14", "status_id": 2, "time": "2026-10-09T20:06:34+00:00"}

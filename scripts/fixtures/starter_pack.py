@@ -15,6 +15,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 INTERNAL = ("10.20.1.5", "10.20.1.6", "10.20.2.14", "10.20.3.30")
 EXTERNAL = ("203.0.113.9", "198.51.100.4", "203.0.113.77", "192.0.2.10")
@@ -469,11 +470,22 @@ def _pan_columns(template_id: str) -> list[str]:
     return [str(c) for c in doc["payload"]["csv"]["columns"]]
 
 
-def _pan_line(columns: list[str], values: dict[str, str], extra: int) -> str:
+def _pan_line(columns: list[str], values: dict[str, str], extra: int, hires: str = "") -> str:
     cells = [values.get(c, "") if c != "_" else "" for c in columns]
     cells[0] = "1"
-    cells += [""] * extra
+    tail = [""] * extra
+    if hires and "high_resolution_timestamp" not in columns:
+        # After Device Name, newer releases send two more fields, then the high-resolution
+        # timestamp with its UTC offset (PAN-OS syslog field descriptions).
+        tail = (tail + ["", "", ""])[: max(extra, 3)]
+        tail[2] = hires
+    cells += tail
     return ",".join(f'"{c}"' if ("," in c or '"' in c) else c for c in cells)
+
+
+# Firewalls in three zones (UTC, Pacific, and a half-hour zone): Generated Time is the
+# firewall's local time with no zone, so only the high-resolution field says when it was.
+PAN_ZONES = (None, ZoneInfo("America/Los_Angeles"), ZoneInfo("Asia/Kolkata"))
 
 
 def _pan_sample(out: Path, template_id: str, seed: int, build: Callable[[Sample, int], tuple[dict[str, str], dict[str, Any]]]) -> None:
@@ -482,9 +494,14 @@ def _pan_sample(out: Path, template_id: str, seed: int, build: Callable[[Sample,
     for i in range(60):
         t = s.tick()
         values, exp = build(s, i)
-        values.update(receive_time=f"{t:%Y/%m/%d %H:%M:%S}", generated_time=f"{t:%Y/%m/%d %H:%M:%S}",
+        zone = PAN_ZONES[i % 3]
+        local = t.astimezone(zone) if zone else t
+        hires = local.isoformat(timespec="milliseconds") if zone else ""
+        values.update(receive_time=f"{local:%Y/%m/%d %H:%M:%S}", generated_time=f"{local:%Y/%m/%d %H:%M:%S}",
                       serial_number="012345678901", device_name="pa-fw01", virtual_system="vsys1")
-        line = _pan_line(columns, values, extra=i % 3 * 20)  # newer releases append columns
+        if "high_resolution_timestamp" in columns:
+            values["high_resolution_timestamp"] = hires
+        line = _pan_line(columns, values, extra=i % 3 * 20, hires=hires)  # newer releases append columns
         if i % 4 == 0:
             s.lines.append(f"<14>1 {t:%Y-%m-%dT%H:%M:%SZ} pa-fw01 - - - - {line}")
         else:

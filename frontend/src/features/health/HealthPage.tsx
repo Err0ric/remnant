@@ -90,6 +90,7 @@ function sourceRow(s: Source): Row {
   if (st.warnings?.length) return { ...base, level: "attention", reason: st.warnings.join("; ") };
   if (st.retry_at)
     return { ...base, level: "attention", reason: `Retrying at ${stamp(st.retry_at)} UTC` };
+  if (st.time_offset_text) return { ...base, level: "attention", reason: st.time_offset_text };
   if ((st.behind_s ?? 0) > 3600)
     return { ...base, level: "attention", reason: `Reading is ${human(st.behind_s ?? 0)} behind` };
   if (st.records_skipped)

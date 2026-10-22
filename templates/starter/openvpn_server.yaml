@@ -1,0 +1,74 @@
+schema_version: 1
+id: openvpn_server
+name: OpenVPN Access Server and OpenVPN server
+version: 1.0.0
+author: starter-pack
+description: >-
+  OpenVPN server sessions, from OpenVPN Access Server (its lines wrap the OpenVPN process
+  output as "[OVPN n] OUT: '...'") and the community OpenVPN server: connection
+  established (with the user when the certificate common name or username is logged),
+  tunnel address handed out, disconnects, and username/password verification failures.
+  Mapped to Authentication with the user and the client's public address; the tunnel
+  address is kept in unmapped (tunnel_ip). Built from vendor docs: verify on real data.
+category: identity
+vendor: openvpn
+classification_default: local_only
+
+envelope:
+  type: syslog
+  syslog: { rfc: auto, assume_year: rollover_safe, timezone: UTC, strip_relay_headers: false }
+
+match:
+  app_name: [openvpnas, openvpn, ovpn-server, openvpn-server]
+  min_confidence: 0.9
+
+payload:
+  format: regex
+  regex:
+    patterns:
+      # Optional Access Server wrapper, then an optional OpenVPN date, then the event.
+      - "^(?:[^']{0,160}OUT: ')?(?:\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2} )?(?:(?P<user>[^\\s/\\[\\]]{1,128})/)?\\[?(?:AF_INET6?\\])?(?P<client_ip>[0-9A-Fa-f:.]{2,45}):(?P<client_port>\\d{1,5}) \\[(?P<cn>[^\\]]{0,128})\\] (?P<event>Peer Connection Initiated) with"
+      - "^(?:[^']{0,160}OUT: ')?(?:\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2} )?(?P<user>[^\\s/]{1,128})/(?P<client_ip>[0-9A-Fa-f:.]{2,45}):(?P<client_port>\\d{1,5}) MULTI_sva: (?P<event>pool returned) IPv4=(?P<tunnel_ip>[0-9.]{7,15})"
+      - "^(?:[^']{0,160}OUT: ')?(?:\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2} )?(?P<user>[^\\s/]{1,128})/(?P<client_ip>[0-9A-Fa-f:.]{2,45}):(?P<client_port>\\d{1,5}) (?P<event>SIGTERM|SIGUSR1)\\[[^\\]]{0,64}\\] received, client-instance (?:exiting|restarting)"
+      - "^(?:[^']{0,160}OUT: ')?(?:\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2} )?(?P<client_ip>[0-9A-Fa-f:.]{2,45}):(?P<client_port>\\d{1,5}) (?P<event>TLS Auth Error): Auth Username/Password verification failed for peer"
+
+transforms:
+  - { field: client_port, op: to_int }
+  - { field: cn, op: regex_extract, args: { pattern: '^(?!UNDEF$)(.+)$', into: user, optional: true } }
+
+mapping:
+  class_uid: 3002          # Authentication
+  fields:
+    actor_user_name: { from: user }
+    actor_process_name: { default: openvpn }
+    src_endpoint_ip: { from: client_ip }
+    src_endpoint_port: { from: client_port }
+    activity_id: { from: event, map: { Peer Connection Initiated: 1, pool returned: 1, SIGTERM: 2, SIGUSR1: 2, TLS Auth Error: 1 } }
+    status_id: { from: event, map: { Peer Connection Initiated: 1, pool returned: 1, SIGTERM: 1, SIGUSR1: 1, TLS Auth Error: 2 } }
+    message: { from: event }
+  severity:
+    from: event
+    map: { TLS Auth Error: 3, Peer Connection Initiated: 1, pool returned: 1, SIGTERM: 1, SIGUSR1: 1 }
+
+tests:
+  - name: Access Server connection with user
+    input: "<134>Oct  9 20:41:12 vpn-01 openvpnas: 2026-10-09T20:41:12+0000 [stdout#info] [OVPN 0] OUT: '2026-10-09 20:41:12 203.0.113.9:51234 [alice] Peer Connection Initiated with [AF_INET]203.0.113.9:51234 (via [AF_INET]10.20.0.4%eth0)'"
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { actor_user_name: alice, src_endpoint_ip: 203.0.113.9, src_endpoint_port: 51234, status_id: 1, activity_id: 1 }
+  - name: tunnel address assigned
+    input: "<134>Oct  9 20:41:13 vpn-01 openvpnas: 2026-10-09T20:41:13+0000 [stdout#info] [OVPN 0] OUT: '2026-10-09 20:41:13 alice/203.0.113.9:51234 MULTI_sva: pool returned IPv4=172.27.232.2, IPv6=(Not enabled)'"
+    expect:
+      parse_status: ok
+      fields: { actor_user_name: alice, src_endpoint_ip: 203.0.113.9 }
+  - name: community server disconnect
+    input: "<30>Oct  9 20:50:00 vpn-02 openvpn[1200]: bob/198.51.100.4:40000 SIGTERM[soft,remote-exit] received, client-instance exiting"
+    expect:
+      parse_status: ok
+      fields: { actor_user_name: bob, activity_id: 2 }
+  - name: password verification failed
+    input: "<28>Oct  9 20:51:00 vpn-02 openvpn[1200]: 192.0.2.10:52000 TLS Auth Error: Auth Username/Password verification failed for peer"
+    expect:
+      parse_status: ok
+      fields: { src_endpoint_ip: 192.0.2.10, status_id: 2, severity_id: 3 }

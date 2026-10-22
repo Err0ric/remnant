@@ -171,16 +171,72 @@ def test_rule_schedules_store_matches_and_viewers_without_the_sources_see_restri
     assert got["sample"] == [] and got["columns"] == []
 
 
-def test_a_changed_saved_search_pauses_until_someone_resumes(lab: dict[str, Any]) -> None:
+def test_a_saved_search_changed_by_someone_else_pauses_until_resumed(
+    lab: dict[str, Any],
+) -> None:
+    """bob schedules ana's shared search; ana edits it; bob's schedule pauses for review."""
+    sid = schedule(lab["bob"]).json()["schedule_id"]
+    changed = {**SEARCH, "sql": SEARCH["sql"].replace("Failed password", "Accepted")}
+    assert lab["ana"].put("/api/searches/failed_ssh", json=changed).status_code == 200
+    run = run_now(lab, lab["bob"], sid).json()
+    assert run["status"] == "paused" and "changed" in run["error"]
+    assert run_now(lab, lab["bob"], sid).status_code == 409
+    res = lab["bob"].patch(f"/api/schedules/{sid}", json={"paused": False})
+    assert res.status_code == 200 and res.json()["paused"] is False
+    run = run_now(lab, lab["bob"], sid).json()
+    assert run["status"] == "ok"
+    assert run["definition_change"] == "The saved search changed; accepted on resume"
+
+
+def test_editing_your_own_search_updates_your_schedules_and_notes_it(
+    lab: dict[str, Any],
+) -> None:
+    """F37: the owner's edit is the review; history is kept and the run says what changed."""
     sid = schedule(lab["ana"]).json()["schedule_id"]
+    first = run_now(lab, lab["ana"], sid).json()
+    assert first["status"] == "ok" and first["definition_change"] is None
     changed = {**SEARCH, "sql": SEARCH["sql"].replace("Failed password", "Accepted")}
     assert lab["ana"].put("/api/searches/failed_ssh", json=changed).status_code == 200
     run = run_now(lab, lab["ana"], sid).json()
-    assert run["status"] == "paused" and "changed" in run["error"]
-    assert run_now(lab, lab["ana"], sid).status_code == 409
-    res = lab["ana"].patch(f"/api/schedules/{sid}", json={"paused": False})
-    assert res.status_code == 200 and res.json()["paused"] is False
+    assert run["status"] == "ok"
+    assert run["definition_change"] == "The saved search was edited"
+    assert run_now(lab, lab["ana"], sid).json()["definition_change"] is None
+    recent = {x["schedule_id"]: x for x in lab["ana"].get("/api/schedules").json()}[sid]["recent"]
+    assert len(recent) == 3  # history kept
+    with sqlite3.connect(lab["db"]) as db:
+        details = [
+            d
+            for (d,) in db.execute("SELECT detail FROM audit_log WHERE action = 'schedule.update'")
+        ]
+    assert any("saved search edited" in d for d in details)
+
+
+def test_changing_target_or_range_keeps_history_and_marks_the_run(lab: dict[str, Any]) -> None:
+    sid = schedule(lab["ana"]).json()["schedule_id"]
     assert run_now(lab, lab["ana"], sid).json()["status"] == "ok"
+    other = {
+        **SEARCH,
+        "id": "all_ssh",
+        "name": "All SSH",
+        "sql": SEARCH["sql"].replace("raw LIKE '%Failed password%' AND ", ""),
+    }
+    assert lab["ana"].post("/api/searches", json=other).status_code == 201
+    res = lab["ana"].patch(
+        f"/api/schedules/{sid}", json={"target_id": "all_ssh", "lookback_minutes": 60}
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["target_id"] == "all_ssh" and res.json()["lookback_minutes"] == 60
+    run = run_now(lab, lab["ana"], sid).json()
+    assert run["definition_change"] == (
+        "Now runs the saved search All SSH; Range changed from last 1 day to last 1 hour"
+    )
+    assert len(lab["ana"].get("/api/schedules").json()[0]["recent"]) == 2
+    # Someone who cannot see the new target cannot point a schedule at it.
+    assert lab["ana"].patch(f"/api/schedules/{sid}", json={"target_id": "nope"}).status_code == 404
+    assert (
+        lab["ana"].patch(f"/api/schedules/{sid}", json={"params": {"unknown": 1}}).status_code
+        == 400
+    )
 
 
 def test_losing_a_source_or_the_account_pauses_the_schedule(lab: dict[str, Any]) -> None:

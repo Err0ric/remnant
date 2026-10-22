@@ -1504,6 +1504,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       if (!s) return json({ detail: "No such source", code: "not_found" }, 404);
       if ("classification" in body) Object.assign(s, { classification: body.classification });
       if ("template_id" in body) Object.assign(s, { template_id: body.template_id });
+      if ("timezone" in body) Object.assign(s, { timezone: body.timezone });
       return json(s);
     }
     if (url.endsWith("/api/sources/loki/test")) {

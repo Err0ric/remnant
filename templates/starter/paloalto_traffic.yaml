@@ -1,7 +1,7 @@
 schema_version: 1
 id: paloalto_traffic
 name: Palo Alto Networks traffic
-version: 1.0.0
+version: 1.1.0
 author: starter-pack
 description: >-
   PAN-OS TRAFFIC logs over syslog (BSD or IETF), CSV in the documented field order
@@ -83,6 +83,11 @@ payload:
       - device_name
 
 transforms:
+  # Time: the high-resolution timestamp with its UTC offset when the firewall sends it
+  # (PAN-OS 10.x and later; 9.1 and earlier write a fixed 1969 value, which is skipped),
+  # else Generated Time, which has no zone and is read in the source's time zone.
+  - { field: _extra, op: regex_extract, args: { pattern: '(?:^|,)(20\d{2}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2}))(?:,|$)', into: event_time, optional: true } }
+  - { field: event_time, op: timestamp, args: { format: iso8601 } }
   - { field: generated_time, op: timestamp, args: { format: "%Y/%m/%d %H:%M:%S" } }
   - { field: source_port, op: to_int }
   - { field: destination_port, op: to_int }
@@ -90,7 +95,7 @@ transforms:
 mapping:
   class_uid: 4001          # Network Activity
   fields:
-    time: { from: generated_time }
+    time: { from: [event_time, generated_time] }
     device_hostname: { from: device_name }
     src_endpoint_ip: { from: source_address }
     src_endpoint_port: { from: source_port }
@@ -113,7 +118,7 @@ tests:
     expect:
       parse_status: ok
       class_uid: 4001
-      fields: { src_endpoint_ip: 10.20.1.5, dst_endpoint_port: 443, actor_user_name: "example\\alice", status_id: 1, activity_id: 2, message: ssl, device_hostname: pa-fw01, time: "2026-10-09T20:41:11+00:00" }
+      fields: { src_endpoint_ip: 10.20.1.5, dst_endpoint_port: 443, actor_user_name: "example\\alice", status_id: 1, activity_id: 2, message: ssl, device_hostname: pa-fw01, time: "2026-10-10T03:41:11.123+00:00" }
   - name: denied at session start
     input: "<14>Oct  9 20:42:00 pa-fw01 1,2026/10/09 20:42:00,012345678901,TRAFFIC,deny,2561,2026/10/09 20:42:00,203.0.113.9,192.0.2.10,0.0.0.0,0.0.0.0,block-rdp,,,ms-rdp,vsys1,untrust,dmz,ethernet1/1,,default,,0,1,40022,3389,0,0,0x0,tcp,deny,60,60,0,1,2026/10/09 20:42:00,0,any,,7290000002,0x0,United States,10.0.0.0-10.255.255.255,,1,0,policy-deny,0,0,0,0,,pa-fw01,from-policy"
     expect:

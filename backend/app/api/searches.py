@@ -22,6 +22,7 @@ from app.engine.views import permitted_sources, scope_sources
 from app.meta.db import MetaDB
 from app.search.params import bind, compile_sql
 from app.search.saved import SavedSearch, SavedSearchIn, SavedSearchStore
+from app.search.schedules import ScheduleService
 
 router = APIRouter(tags=["searches"])
 
@@ -77,6 +78,17 @@ async def update_search(
     await run_in_threadpool(
         _audit, request, "search.update", "success", user, {"search_id": search_id}
     )
+    # The editor's own schedules of this search take the change and note it (F37).
+    schedules: ScheduleService = request.app.state.schedules
+    for schedule_id in await run_in_threadpool(schedules.accept_search_change, search_id, user):
+        await run_in_threadpool(
+            _audit,
+            request,
+            "schedule.update",
+            "success",
+            user,
+            {"schedule_id": schedule_id, "definition_change": "saved search edited"},
+        )
     return updated
 
 

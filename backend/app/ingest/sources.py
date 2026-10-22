@@ -485,6 +485,20 @@ class SourceStore:
         (source,) = [s for s in self.list() if s.source_id == source_id]
         return str(row["classification"]), source
 
+    def set_timezone(self, source_id: str, timezone: str) -> tuple[str, SourceConfig]:
+        """The previous zone and the source after the change. Only lines read from now on
+        use it: stored events keep the time they were read with (re-parsing is backlog)."""
+        found = [s for s in self.list() if s.source_id == source_id]
+        if not found:
+            raise NotFoundError("No such source")
+        SyslogEnvelopeConfig(timezone=timezone)  # refuses an unknown zone
+        with self._meta.connect() as con:
+            con.execute(
+                "UPDATE sources SET timezone = ? WHERE source_id = ?", (timezone, source_id)
+            )
+        (source,) = [s for s in self.list() if s.source_id == source_id]
+        return found[0].timezone, source
+
     def set_parser(
         self, source_id: str, template_id: str | None
     ) -> tuple[str | None, SourceConfig]:

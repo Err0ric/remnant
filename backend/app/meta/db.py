@@ -775,6 +775,12 @@ MIGRATIONS: tuple[Migration, ...] = (
     """
     ALTER TABLE schedule_runs ADD COLUMN parser_change TEXT;
     """,
+    # 45: editing a schedule (F37): what changed in its definition is noted on the schedule
+    # until the next run, which records it, so run history shows where the definition moved.
+    """
+    ALTER TABLE schedules ADD COLUMN definition_change TEXT;
+    ALTER TABLE schedule_runs ADD COLUMN definition_change TEXT;
+    """,
 )
 
 

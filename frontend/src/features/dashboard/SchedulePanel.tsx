@@ -138,6 +138,9 @@ export function SchedulePanel({ schedule: s, canManage }: SchedulePanelProps) {
           {last.flagged && last.flag_reason ? (
             <p className="text-sev-high-text">{last.flag_reason}</p>
           ) : null}
+          {last.definition_change ? (
+            <p className="text-text-secondary">Changed: {last.definition_change}</p>
+          ) : null}
           {last.parser_change ? (
             <p role="note" className="text-warn">
               {last.parser_change}

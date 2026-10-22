@@ -1,0 +1,67 @@
+schema_version: 1
+id: vault_audit
+name: HashiCorp Vault audit log
+version: 1.0.0
+author: starter-pack
+description: >-
+  Vault audit device entries (file or syslog device, JSON): one request entry and one
+  response entry per call, linked by request.id. Mapped to API Activity: the token's
+  display name as the user, the client address, the API path as the message, the operation
+  as the activity, and failure when the entry carries an error. Most values in an entry
+  are HMAC'd by Vault unless the mount says otherwise; the full entry stays in unmapped.
+  Count calls on type = 'response' to avoid counting each call twice. Built from vendor
+  docs: verify on real data.
+category: application
+vendor: hashicorp
+classification_default: local_only
+
+envelope:
+  type: syslog
+  syslog: { rfc: auto, assume_year: rollover_safe, timezone: UTC, strip_relay_headers: true }
+  optional: true
+
+match:
+  app_name: [vault]
+  regex: '^\{"time":"[^"]{10,40}","type":"(?:request|response)"'
+  min_confidence: 0.9
+
+payload:
+  format: json
+  json: { root: "$" }
+
+transforms:
+  - { field: time, op: timestamp, args: { format: iso8601 } }
+  - { field: error, op: replace, args: { pattern: '(?s)^.+$', with: failed, into: outcome } }
+
+mapping:
+  class_uid: 6003          # API Activity
+  fields:
+    time: { from: time }
+    actor_user_name: { from: auth.display_name }
+    actor_process_name: { default: vault }
+    src_endpoint_ip: { from: request.remote_address }
+    src_endpoint_port: { from: request.remote_port }
+    message: { from: request.path }
+    activity_id: { from: request.operation, map: { create: 1, read: 2, list: 2, update: 3, delete: 4 }, default: 99 }
+    status_id: { from: outcome, map: { failed: 2 }, default: 1 }
+  severity:
+    from: outcome
+    map: { failed: 3 }
+
+tests:
+  - name: response with a token read
+    input: '<134>Oct  9 20:41:12 vault-01 vault[900]: {"time":"2026-10-09T20:41:12.123Z","type":"response","auth":{"display_name":"userpass-alice","policies":["default","app-read"],"token_type":"service"},"request":{"id":"6d6b1c2e-0000-4000-8000-000000000001","operation":"read","path":"secret/data/app/db","remote_address":"10.20.1.5","remote_port":51234,"mount_type":"kv"},"response":{"mount_type":"kv"}}'
+    expect:
+      parse_status: ok
+      class_uid: 6003
+      fields: { actor_user_name: userpass-alice, src_endpoint_ip: 10.20.1.5, message: secret/data/app/db, activity_id: 2, status_id: 1 }
+  - name: permission denied
+    input: '<134>Oct  9 20:42:00 vault-01 vault[900]: {"time":"2026-10-09T20:42:00Z","type":"response","auth":{"display_name":"token-ci"},"request":{"id":"6d6b1c2e-0000-4000-8000-000000000002","operation":"update","path":"sys/policies/acl/admin","remote_address":"10.20.2.14"},"error":"1 error occurred:\n\t* permission denied\n\n"}'
+    expect:
+      parse_status: ok
+      fields: { actor_user_name: token-ci, activity_id: 3, status_id: 2, severity_id: 3 }
+  - name: file device line without a syslog header
+    input: '{"time":"2026-10-09T20:43:00Z","type":"request","auth":{"display_name":"root"},"request":{"id":"6d6b1c2e-0000-4000-8000-000000000003","operation":"delete","path":"secret/metadata/old","remote_address":"10.20.3.30"}}'
+    expect:
+      parse_status: ok
+      fields: { actor_user_name: root, activity_id: 4, src_endpoint_ip: 10.20.3.30 }
