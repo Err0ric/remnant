@@ -97,7 +97,8 @@ export function SetupPage({ onDone }: SetupPageProps) {
         <p className="rounded border border-border bg-inset px-3 py-2.5 text-sm text-text-secondary">
           Open the one-time setup link printed in the server log. It looks like{" "}
           <span className="font-mono text-sm">https://your-server:8080/setup#...</span> and works
-          once, for 30 minutes.
+          once, for 30 minutes. If a sign-in page came first, the link lost its code on the way
+          back: open the link again now that you&apos;re signed in. Nothing has been used up.
         </p>
       )}
     </AuthCard>

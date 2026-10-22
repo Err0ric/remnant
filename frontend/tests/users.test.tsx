@@ -45,6 +45,8 @@ describe("Users and access", () => {
       `${window.location.origin}/account#invite-token-123`,
     );
     expect(within(panel).getByText(/not shown again/)).toBeInTheDocument();
+    expect(within(panel).getByText(/open the link again once signed in/)).toBeInTheDocument();
+    expect(within(panel).getByRole("button", { name: "Copy message" })).toBeInTheDocument();
     await userEvent.click(within(panel).getByRole("button", { name: "Done" }));
     expect(screen.queryByRole("region", { name: "Invite link" })).not.toBeInTheDocument();
     expect(await screen.findByText("Invite pending")).toBeInTheDocument();
@@ -83,6 +85,21 @@ describe("Account password page", () => {
     await userEvent.click(screen.getByRole("button", { name: "Set password" }));
     expect(await screen.findByText("Password set")).toBeInTheDocument();
     await waitFor(() => expect(window.location.hash).toBe(""));
+  });
+
+  it("explains a link that lost its code at a sign-in proxy, and spends nothing", async () => {
+    const spy = await renderAt("/account", { mode: "login" });
+    expect(
+      await screen.findByText(
+        "This link lost its code during sign-in. Open the invite link again now that you're signed in.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Open your link again" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("New password")).toBeNull();
+    const posted = spy.mock.calls
+      .filter(([, init]) => init?.method === "POST")
+      .map(([u]) => String(u));
+    expect(posted.filter((u) => /account\/password|sso\/start/.test(u))).toEqual([]);
   });
 
   it("explains a spent link", async () => {
@@ -177,5 +194,15 @@ describe("Suggested groups", () => {
       key: "identity",
       source_ids: ["linux_sshd"],
     });
+  });
+});
+
+describe("Invite message", () => {
+  it("carries the link and the sign-in-again note", async () => {
+    const { linkMessage } = await import("@/features/users/OneTimeLink");
+    const text = linkMessage("dana", "https://siem.example.internal/account#abc");
+    expect(text).toContain("https://siem.example.internal/account#abc");
+    expect(text).toContain("(account dana)");
+    expect(text).toContain("open this link again now that you're signed in");
   });
 });

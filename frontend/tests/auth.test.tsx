@@ -30,7 +30,8 @@ describe("First-run setup", () => {
     await userEvent.type(screen.getByLabelText("Confirm password"), "a long passphrase");
     await userEvent.click(screen.getByRole("button", { name: "Create administrator account" }));
     expect(await screen.findByRole("heading", { level: 1, name: "Search" })).toBeInTheDocument();
-    expect(window.location.hash).toBe("");
+    // The setup token is gone; Search records its own state after `#` (D90).
+    expect(window.location.hash).not.toContain("good-token");
     expect(screen.getByText("jordan")).toBeInTheDocument();
   });
 

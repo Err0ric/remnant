@@ -31,8 +31,8 @@ export function OpenSearchPanel({ onOpen, onClose }: OpenSearchPanelProps) {
   const names = new Map((searches.data ?? []).map((s) => [s.id, s.name]));
   const recentShown = recent
     .map((r) => {
-      const id = new URLSearchParams(r.url.split("?")[1] ?? "").get("saved");
-      const range = new URLSearchParams(r.url.split("?")[1] ?? "").get("range") ?? "";
+      const id = new URLSearchParams(r.url.split("#")[1] ?? "").get("saved");
+      const range = new URLSearchParams(r.url.split("#")[1] ?? "").get("range") ?? "";
       return {
         ...r,
         label: id && names.has(id) ? `Saved search: ${names.get(id)}` : r.label,

@@ -122,4 +122,13 @@ access_control:
       policy: two_factor
 ```
 
+#### Invite, reset, and setup links behind forward-auth
+
+These links carry their one-time code after `#` (`https://siem.example.internal/account#...`, `/setup#...`). Browsers never send that part to a server, so the code stays out of proxy and SSO access logs. The catch: when the proxy sends the browser to its login and back, the part after `#` is dropped, and the person lands on the page without the code.
+
+- The page then says: "This link lost its code during sign-in. Open the invite link again now that you're signed in." Opening the same link a second time works, because the proxy session now exists and no redirect happens.
+- Nothing is spent by that visit. A link is used up only when a password is set or a single sign-on link finishes; a page load without the code, a wrong code, a too-short password, or an abandoned sign-in leaves it valid.
+- Copy message on the Users page puts this note in the text you send with the link.
+- Do not work around it by moving the code into the query string or bypassing `/account` and `/setup` in the proxy for convenience: the query string lands in every access log on the path, and the bypass would expose those pages without the proxy's login.
+
 With forward-auth and the app's own sign-in through the same Authelia (see [sso-authelia.md](sso-authelia.md)), the second sign-in is one click.

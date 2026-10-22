@@ -56,7 +56,15 @@ export function AccountPasswordPage() {
   const passwordForm = !sso || showPassword;
 
   return (
-    <AuthCard title={sso ? "Finish setting up your account" : "Set your password"}>
+    <AuthCard
+      title={
+        !token
+          ? "Open your link again"
+          : sso
+            ? "Finish setting up your account"
+            : "Set your password"
+      }
+    >
       {token && sso ? (
         <div className="mt-3 flex flex-col gap-3">
           <p className="text-sm text-text-secondary">
@@ -108,10 +116,20 @@ export function AccountPasswordPage() {
         </form>
       ) : null}
       {!token ? (
-        <p className="mt-3 text-sm text-text-secondary">
-          This page needs the link an administrator sent you. Ask them for a new one if it has
-          expired.
-        </p>
+        <div role="status" className="mt-3 flex flex-col gap-2 text-sm text-text-secondary">
+          {/* A forward-auth proxy (Authelia, oauth2-proxy) drops the part after `#` when it
+              sends the browser back from its login, so the code never reaches this page. The
+              code stays in the fragment so it is not written to proxy logs. Nothing is spent:
+              a link is only used up when a password is set or a single sign-on link finishes. */}
+          <p className="text-text">
+            This link lost its code during sign-in. Open the invite link again now that you&apos;re
+            signed in.
+          </p>
+          <p>
+            Opened this page without a link? Ask an administrator for one. Links work once and
+            expire after 24 hours.
+          </p>
+        </div>
       ) : null}
     </AuthCard>
   );

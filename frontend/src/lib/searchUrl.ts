@@ -5,6 +5,10 @@ import { TIME_RANGES, type TimeRangeId } from "@/lib/search";
  * open saved search, and the time range, so Back and Forward step through earlier searches
  * and the address can be bookmarked or shared. A shared address shows nothing the reader
  * could not search already: the server applies the reader's own source access to every run.
+ *
+ * The state lives in the fragment (`/search#tab=sql&q=...`), never the query string. Browsers
+ * do not send a fragment to the server, so search text (user names, addresses, investigation
+ * terms) stays out of reverse proxy and SSO access logs, which often feed back into the lake.
  */
 export interface SearchUrlState {
   tab: "simple" | "sql";
@@ -30,12 +34,22 @@ export function searchUrl(state: SearchUrlState): string {
     if (state.q && state.q.length <= MAX_Q) p.set("q", state.q);
   }
   p.set("range", state.range);
-  return `/search?${p.toString()}`;
+  return `/search#${p.toString()}`;
 }
 
-export function readSearchUrl(search: string = window.location.search): SearchUrlState | null {
-  const p = new URLSearchParams(search);
-  if (![...p.keys()].length) return null;
+/** Read the state from a fragment (`#tab=...`). An address from before the fragment change
+ * (`/search?tab=...`) is read once and moved to the fragment, so it is not sent again. */
+export function readSearchUrl(fragment: string = window.location.hash): SearchUrlState | null {
+  if (fragment === window.location.hash && window.location.search) {
+    const legacy = new URLSearchParams(window.location.search);
+    if (["tab", "q", "saved", "range"].some((k) => legacy.has(k))) {
+      window.history.replaceState(null, "", `${window.location.pathname}#${legacy.toString()}`);
+      fragment = window.location.hash;
+    }
+  }
+  const p = new URLSearchParams(fragment.replace(/^#/, ""));
+  // Only a search fragment counts: another page's `#section` or a token is not a search.
+  if (!["tab", "q", "saved", "range"].some((k) => p.has(k))) return null;
   const range = p.get("range") ?? "24h";
   const state: SearchUrlState = {
     tab: p.get("tab") === "sql" ? "sql" : "simple",
@@ -58,7 +72,7 @@ export function readSearchUrl(search: string = window.location.search): SearchUr
  * one, unless nothing changed. No navigation event: the page already shows this state. */
 export function recordSearch(state: SearchUrlState, replace: boolean): void {
   const url = searchUrl(state);
-  if (window.location.pathname + window.location.search === url) return;
+  if (window.location.pathname + window.location.search + window.location.hash === url) return;
   if (replace) window.history.replaceState(null, "", url);
   else window.history.pushState(null, "", url);
   rememberRecent(state, url);
@@ -118,7 +132,11 @@ export function recentSearches(): RecentSearch[] {
   try {
     const raw = window.localStorage.getItem(RECENT_KEY);
     const list = raw ? (JSON.parse(raw) as RecentSearch[]) : [];
-    return Array.isArray(list) ? list.slice(0, RECENT_MAX) : [];
+    if (!Array.isArray(list)) return [];
+    // Entries kept before the fragment change used `/search?`; never send those again.
+    return list
+      .slice(0, RECENT_MAX)
+      .map((r) => ({ ...r, url: r.url.replace(/^\/search\?/, "/search#") }));
   } catch {
     return []; // storage blocked or unreadable
   }

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { PRODUCT_NAME } from "@/lib/branding";
 
 interface OneTimeLinkProps {
   title: string;
@@ -7,15 +8,28 @@ interface OneTimeLinkProps {
   onDone: () => void;
 }
 
+const RELOGIN_NOTE =
+  "If a sign-in page comes up first and you land on a page saying the link lost its code, open this link again now that you're signed in.";
+
+/** The text to send with a link, so the forward-auth case is explained up front. */
+export function linkMessage(username: string, link: string): string {
+  return [
+    `Use this link to set up how you sign in to ${PRODUCT_NAME} (account ${username}):`,
+    link,
+    "It works once and expires in 24 hours.",
+    RELOGIN_NOTE,
+  ].join("\n");
+}
+
 /** Shows an invite or reset link exactly once, with copy and a clear warning. */
 export function OneTimeLink({ title, username, link, onDone }: OneTimeLinkProps) {
-  const [copied, setCopied] = useState(false);
-  const copy = async () => {
+  const [copied, setCopied] = useState<"link" | "message" | null>(null);
+  const copy = async (what: "link" | "message") => {
     try {
-      await navigator.clipboard.writeText(link);
-      setCopied(true);
+      await navigator.clipboard.writeText(what === "link" ? link : linkMessage(username, link));
+      setCopied(what);
     } catch {
-      setCopied(false); // the field stays selectable for manual copy
+      setCopied(null); // the field stays selectable for manual copy
     }
   };
   return (
@@ -24,6 +38,11 @@ export function OneTimeLink({ title, username, link, onDone }: OneTimeLinkProps)
       <p className="mt-1 text-sm text-text-secondary">
         Send this to <span className="font-semibold text-text">{username}</span> through a channel
         you trust. It works once, expires in 24 hours, and is not shown again.
+      </p>
+      <p className="mt-1 text-sm text-text-secondary">
+        Behind a sign-in proxy (Authelia, oauth2-proxy), the code after{" "}
+        <code className="font-mono">#</code> can be dropped on the way back from its login; they
+        open the link again once signed in. Copy message includes that note.
       </p>
       <div className="mt-3 flex flex-wrap gap-2">
         <input
@@ -35,10 +54,17 @@ export function OneTimeLink({ title, username, link, onDone }: OneTimeLinkProps)
         />
         <button
           type="button"
-          onClick={() => void copy()}
+          onClick={() => void copy("link")}
           className="h-8 rounded border border-border-strong px-3 text-sm hover:bg-surface-head"
         >
-          {copied ? "Copied" : "Copy"}
+          {copied === "link" ? "Copied" : "Copy"}
+        </button>
+        <button
+          type="button"
+          onClick={() => void copy("message")}
+          className="h-8 rounded border border-border-strong px-3 text-sm hover:bg-surface-head"
+        >
+          {copied === "message" ? "Copied" : "Copy message"}
         </button>
         <button
           type="button"

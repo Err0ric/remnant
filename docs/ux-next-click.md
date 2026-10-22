@@ -147,13 +147,13 @@ From real use: after a run there was no reset, no new search, and Back left the 
 | Item | What it does |
 |---|---|
 | New search | First in the command bar. Closes the open saved search, clears both editors, resets the time range (last 24 hours) and the tab (Simple). Asks first when the editors hold edits that were neither saved nor run. |
-| Back and Forward | Each run updates the address: the tab and query, or the open saved search id and its parameter values, plus the time range. Back returns to the previous search and runs it. The address can be bookmarked or shared; it only shows what the reader's own source access allows, because the server scopes every run. |
+| Back and Forward | Each run updates the address fragment: the tab and query, or the open saved search id and its parameter values, plus the time range. Back returns to the previous search and runs it. The address can be bookmarked or shared; it only shows what the reader's own source access allows, because the server scopes every run. |
 | Recent searches | The last 10 runs, at the top of Open, with Clear recent. Kept in this browser only. |
 | State label | "Unsaved search" or "Open: name", plus "edited, not saved" when the editor differs from the open search. |
 
 Notes:
 
-- The query text is in the address, so it lands in browser history. Queries over 4,000 characters are left out of the address (the tab and range are still recorded).
+- The state is in the address fragment (`/search#...`), never the query string, so search text does not reach the server or reverse proxy and SSO access logs. It does land in browser history; see `docs/searching.md`. Queries over 4,000 characters are left out of the address (the tab and range are still recorded).
 - Recent searches live in this browser's storage, not on the server; they do not follow a user to another machine.
 
 ## Order

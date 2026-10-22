@@ -120,6 +120,16 @@ def test_used_link_cannot_start_again(tmp_path: Path, idp: FakeIdp) -> None:
     assert res.status_code == 403 and res.json()["code"] == "link_invalid"
 
 
+def test_abandoned_or_failed_sign_in_leaves_the_invite_usable(tmp_path: Path, idp: FakeIdp) -> None:
+    """Starting single sign-on with a link only checks it; a flow that never comes back, or
+    a start without the code (lost to a forward-auth redirect), does not spend it."""
+    c = server(tmp_path, idp)
+    link = invite(c, "jordan")
+    assert browser(c).post("/api/auth/sso/start", json={"link_token": link}).status_code == 200
+    assert browser(c).post("/api/auth/sso/start", json={}).status_code == 200
+    assert sso_sign_in(browser(c), idp, "sub-jordan", link) == "/"
+
+
 def test_identity_without_an_invite_is_refused(tmp_path: Path, idp: FakeIdp) -> None:
     c = server(tmp_path, idp)
     b = browser(c)

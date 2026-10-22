@@ -57,3 +57,23 @@ Notes:
 - The AI usage page uses the full, reviewable AI catalog and names people from logon, User-ID, and VPN events. The AI examples are a smaller, editable starting point.
 - The DHCP examples read the Palo Alto system log's DHCP lease lines. For another DHCP server (Windows DHCP, ISC dhcpd, UniFi), change the `leases` part to read that source.
 - A summary with a label and a count (`ai_services_dns`, `parser_mix`) can be shown as bars on the Dashboard.
+
+## Search addresses, history, and where search text goes
+
+Each run on Search records the search in the address after `#`, for example `/search#tab=sql&q=...&range=24h` or `/search#saved=failed_by_ip&p.top=5&range=24h`. Back and Forward step through earlier searches, and the address can be bookmarked or shared. A shared address only shows what the reader's own source access allows; the server scopes every run.
+
+The search is in the fragment (after `#`), not the query string (after `?`), on purpose:
+
+| Where | Sees search text? | Why |
+|---|---|---|
+| Reverse proxy and SSO access logs (nginx, Caddy, Authelia) | No | Browsers never send the fragment to the server |
+| The server's own request log | No | Same; the query runs as a POST body to `/api/query` |
+| Referer header to other sites | No | The server sends `Referrer-Policy: no-referrer`, and fragments are never in a Referer anyway |
+| The audit log | Yes, by design | Every query is audited with the user id (SPEC rule 14) |
+| This browser's history and bookmarks | Yes | The full address, fragment included, is kept by the browser |
+| Recent searches (top of Open) | Yes | The last 10 runs, in this browser's storage only; Clear recent removes them |
+
+What is left is on the analyst's own machine: browser history, bookmarks, synced browser profiles, and anywhere an address is pasted (a ticket, a chat). Treat a copied search address like the query itself. Queries over 4,000 characters are not put in the address at all.
+
+Addresses from before this change (`/search?tab=...`) still open; the page moves the state into the fragment at once, so it is not sent again on reload.
+

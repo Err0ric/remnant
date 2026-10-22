@@ -111,6 +111,23 @@ def test_weak_password_on_accept_rejected(tmp_path: Path) -> None:
     assert accept(c, token) == 204  # token not burned by the rejected attempt
 
 
+def test_tokenless_and_failed_visits_leave_the_invite_usable(tmp_path: Path) -> None:
+    """A forward-auth proxy can return the user to /account without the `#` code. That
+    visit, and any failed attempt, must not spend the invite (owner report 2026-10-22)."""
+    c, h = admin_client(tmp_path)
+    _, token = invite(c, h, "jordan")
+    c.get("/account")  # the page itself: a fragment is never sent, so the server sees no code
+    c.get("/api/auth/state")  # what the page asks on load
+    assert c.post("/api/account/password", json={"password": USER_PW}).status_code == 422
+    assert (
+        c.post("/api/account/password", json={"token": "", "password": USER_PW}).status_code == 422
+    )
+    assert accept(c, "wrong-" + token[6:]) == 403
+    assert accept(c, token, "short") == 422
+    assert accept(c, token) == 204
+    assert login(c, "jordan") is not None
+
+
 # --- roles and admin-only routes --------------------------------------------------------
 
 
