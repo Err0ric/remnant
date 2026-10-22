@@ -98,7 +98,7 @@ from app.core.errors import (
     UnsupportedMediaError,
 )
 from app.core.logging import configure_logging
-from app.core.memory import server_budget_mb
+from app.core.memory import budget_note, server_budget_mb
 from app.detect.runner import RuleRunner
 from app.detect.store import RuleStore
 from app.engine.duckdb import QueryEngine, QueryScope
@@ -649,7 +649,8 @@ def run() -> None:
     if budget is not None and sys.platform.startswith("linux"):
         # An oversized query then fails with an error, not a kernel kill of the server (D58).
         resource.setrlimit(resource.RLIMIT_AS, (budget << 20, budget << 20))
-        print(f"Memory limit: {budget} MB (server.memory_limit_mb)")
+        note = budget_note(config.server.memory_limit_mb)
+        print(f"Memory limit: {budget} MB ({note})")
     scheme = "https" if tls else "http"
     print(f"{PRODUCT_NAME} listening on {scheme}://{config.server.host}:{config.server.port}")
     if tls is not None and tls.self_signed:
@@ -664,8 +665,13 @@ def run() -> None:
         )
         print("")
         print("No administrator account exists yet. Open this one-time link to create it:")
-        print(f"  {auth.setup_url(public, config.server.port)}")
+        print(f"  {auth.setup_url(public, config.server.port, config.server.public_url)}")
         print("The link works once and expires in 30 minutes. Restarting issues a new one.")
+        if not config.server.public_url:
+            print(
+                "Behind a reverse proxy? Set APP_PUBLIC_URL (systemd: APP__SERVER__PUBLIC_URL)"
+                " to the address people open, then restart, so this link goes through it."
+            )
         print("", flush=True)  # reach the log now, even when stdout is a pipe
 
     uvicorn.run(

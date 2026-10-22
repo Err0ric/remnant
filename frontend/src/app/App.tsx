@@ -1,37 +1,76 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { Suspense, lazy, useEffect, useState, useSyncExternalStore } from "react";
 import { CommandPalette } from "@/components/shell/CommandPalette";
 import { savedVersion, subscribeSaved } from "@/lib/savedSeed";
 import { seedVersion, subscribeSeed } from "@/lib/searchSeed";
 import { SideNav } from "@/components/shell/SideNav";
+import { SearchPage } from "@/features/search/SearchPage";
+// Small, and the target of "Schedule" handoffs from Search; kept with Search.
+import { SchedulesPage } from "@/features/schedules/SchedulesPage";
 import { AuthGate } from "@/features/auth/AuthGate";
 import { TopBar } from "@/components/shell/TopBar";
-import { SearchPage } from "@/features/search/SearchPage";
-import { SourcesPage } from "@/features/sources/SourcesPage";
-import { TemplatesPage } from "@/features/templates/TemplatesPage";
 import { AccountPasswordPage } from "@/features/auth/AccountPasswordPage";
-import { UsersPage } from "@/features/users/UsersPage";
-import { AccountPage } from "@/features/account/AccountPage";
-import { SavedSearchesPage } from "@/features/saved/SavedSearchesPage";
-import { ProvidersPage } from "@/features/providers/ProvidersPage";
-import { RulesPage } from "@/features/detect/RulesPage";
-import { DashboardPage } from "@/features/dashboard/DashboardPage";
-import { AlertTargetsPage } from "@/features/alerts/AlertTargetsPage";
-import { SchedulesPage } from "@/features/schedules/SchedulesPage";
 import { OverviewPage } from "@/features/overview/OverviewPage";
-import { AuditLogPage } from "@/features/audit/AuditLogPage";
-import { AiUsagePage } from "@/features/ai/AiUsagePage";
-import { InvestigatePage } from "@/features/investigate/InvestigatePage";
-import { IdentitiesPage } from "@/features/identities/IdentitiesPage";
-import { EnrichmentPage } from "@/features/settings/EnrichmentPage";
-import { McpPage } from "@/features/settings/McpPage";
-import { SetupPage } from "@/features/setup/SetupPage";
-import { HealthPage } from "@/features/health/HealthPage";
 import { usePage } from "@/lib/route";
 import { SETTINGS_IDS } from "@/lib/nav";
 import { cn } from "@/lib/cn";
 import { SettingsNav } from "@/components/shell/SettingsNav";
 import { applyTheme, type Theme } from "@/lib/theme";
+
+// Pages load on first visit, so the first screen does not carry every page (install
+// finding: one 961 kB chunk). Search, Schedules, and Overview stay in the main bundle;
+// the SQL editor (CodeMirror) is its own chunk, loaded after the page shows.
+const SourcesPage = lazy(() =>
+  import("@/features/sources/SourcesPage").then((m) => ({ default: m.SourcesPage })),
+);
+const TemplatesPage = lazy(() =>
+  import("@/features/templates/TemplatesPage").then((m) => ({ default: m.TemplatesPage })),
+);
+const UsersPage = lazy(() =>
+  import("@/features/users/UsersPage").then((m) => ({ default: m.UsersPage })),
+);
+const AccountPage = lazy(() =>
+  import("@/features/account/AccountPage").then((m) => ({ default: m.AccountPage })),
+);
+const SavedSearchesPage = lazy(() =>
+  import("@/features/saved/SavedSearchesPage").then((m) => ({ default: m.SavedSearchesPage })),
+);
+const ProvidersPage = lazy(() =>
+  import("@/features/providers/ProvidersPage").then((m) => ({ default: m.ProvidersPage })),
+);
+const RulesPage = lazy(() =>
+  import("@/features/detect/RulesPage").then((m) => ({ default: m.RulesPage })),
+);
+const DashboardPage = lazy(() =>
+  import("@/features/dashboard/DashboardPage").then((m) => ({ default: m.DashboardPage })),
+);
+const AlertTargetsPage = lazy(() =>
+  import("@/features/alerts/AlertTargetsPage").then((m) => ({ default: m.AlertTargetsPage })),
+);
+const AuditLogPage = lazy(() =>
+  import("@/features/audit/AuditLogPage").then((m) => ({ default: m.AuditLogPage })),
+);
+const AiUsagePage = lazy(() =>
+  import("@/features/ai/AiUsagePage").then((m) => ({ default: m.AiUsagePage })),
+);
+const InvestigatePage = lazy(() =>
+  import("@/features/investigate/InvestigatePage").then((m) => ({ default: m.InvestigatePage })),
+);
+const IdentitiesPage = lazy(() =>
+  import("@/features/identities/IdentitiesPage").then((m) => ({ default: m.IdentitiesPage })),
+);
+const EnrichmentPage = lazy(() =>
+  import("@/features/settings/EnrichmentPage").then((m) => ({ default: m.EnrichmentPage })),
+);
+const McpPage = lazy(() =>
+  import("@/features/settings/McpPage").then((m) => ({ default: m.McpPage })),
+);
+const SetupPage = lazy(() =>
+  import("@/features/setup/SetupPage").then((m) => ({ default: m.SetupPage })),
+);
+const HealthPage = lazy(() =>
+  import("@/features/health/HealthPage").then((m) => ({ default: m.HealthPage })),
+);
 
 interface AppProps {
   initialTheme: Theme;
@@ -119,60 +158,62 @@ export function App({ initialTheme, queryClient }: AppProps) {
                       canAudit={!user || user.role !== "analyst"}
                     />
                   ) : null}
-                  {page === "rules" ? (
-                    <RulesPage
-                      isAdmin={!user || user.role === "admin"}
-                      canRun={!user || user.role !== "auditor"}
-                    />
-                  ) : page === "alerts" && (!user || user.role === "admin") ? (
-                    <AlertTargetsPage />
-                  ) : page === "dashboard" ? (
-                    <DashboardPage />
-                  ) : page === "schedules" ? (
-                    <SchedulesPage
-                      canCreate={!user || user.role !== "auditor"}
-                      isAdmin={!user || user.role === "admin"}
-                    />
-                  ) : page === "saved" ? (
-                    <SavedSearchesPage key={savedKey} me={user} />
-                  ) : page === "me" && user ? (
-                    <AccountPage me={user} />
-                  ) : page === "providers" && (!user || user.role === "admin") ? (
-                    <ProvidersPage />
-                  ) : page === "users" && (!user || user.role === "admin") ? (
-                    <UsersPage me={user} />
-                  ) : page === "templates" && (!user || user.role === "admin") ? (
-                    <TemplatesPage />
-                  ) : page === "audit" && (!user || user.role !== "analyst") ? (
-                    <AuditLogPage isAdmin={!user || user.role === "admin"} />
-                  ) : page === "ai" ? (
-                    <AiUsagePage isAdmin={!user || user.role === "admin"} />
-                  ) : page === "identities" && (!user || user.role === "admin") ? (
-                    <IdentitiesPage />
-                  ) : page === "mcp" && (!user || user.role === "admin") ? (
-                    <McpPage />
-                  ) : page === "enrichment" && (!user || user.role === "admin") ? (
-                    <EnrichmentPage />
-                  ) : page === "setup" && (!user || user.role === "admin") ? (
-                    <SetupPage />
-                  ) : page === "health" ? (
-                    <HealthPage isAdmin={!user || user.role === "admin"} />
-                  ) : page === "investigate" ? (
-                    <InvestigatePage />
-                  ) : page === "overview" ? (
-                    <OverviewPage />
-                  ) : page === "sources" ? (
-                    // Open mode (no accounts) is the local admin.
-                    <SourcesPage canManage={!user || user.role === "admin"} />
-                  ) : (
-                    <SearchPage
-                      key={`${page}:${searchKey}`}
-                      canSave={!user || user.role !== "auditor"}
-                      canAsk={!user || user.role !== "auditor"}
-                      isAdmin={!user || user.role === "admin"}
-                      initialTab={page === "ask" ? "ask" : undefined}
-                    />
-                  )}
+                  <Suspense fallback={<div className="flex-1" aria-busy="true" />}>
+                    {page === "rules" ? (
+                      <RulesPage
+                        isAdmin={!user || user.role === "admin"}
+                        canRun={!user || user.role !== "auditor"}
+                      />
+                    ) : page === "alerts" && (!user || user.role === "admin") ? (
+                      <AlertTargetsPage />
+                    ) : page === "dashboard" ? (
+                      <DashboardPage />
+                    ) : page === "schedules" ? (
+                      <SchedulesPage
+                        canCreate={!user || user.role !== "auditor"}
+                        isAdmin={!user || user.role === "admin"}
+                      />
+                    ) : page === "saved" ? (
+                      <SavedSearchesPage key={savedKey} me={user} />
+                    ) : page === "me" && user ? (
+                      <AccountPage me={user} />
+                    ) : page === "providers" && (!user || user.role === "admin") ? (
+                      <ProvidersPage />
+                    ) : page === "users" && (!user || user.role === "admin") ? (
+                      <UsersPage me={user} />
+                    ) : page === "templates" && (!user || user.role === "admin") ? (
+                      <TemplatesPage />
+                    ) : page === "audit" && (!user || user.role !== "analyst") ? (
+                      <AuditLogPage isAdmin={!user || user.role === "admin"} />
+                    ) : page === "ai" ? (
+                      <AiUsagePage isAdmin={!user || user.role === "admin"} />
+                    ) : page === "identities" && (!user || user.role === "admin") ? (
+                      <IdentitiesPage />
+                    ) : page === "mcp" && (!user || user.role === "admin") ? (
+                      <McpPage />
+                    ) : page === "enrichment" && (!user || user.role === "admin") ? (
+                      <EnrichmentPage />
+                    ) : page === "setup" && (!user || user.role === "admin") ? (
+                      <SetupPage />
+                    ) : page === "health" ? (
+                      <HealthPage isAdmin={!user || user.role === "admin"} />
+                    ) : page === "investigate" ? (
+                      <InvestigatePage />
+                    ) : page === "overview" ? (
+                      <OverviewPage />
+                    ) : page === "sources" ? (
+                      // Open mode (no accounts) is the local admin.
+                      <SourcesPage canManage={!user || user.role === "admin"} />
+                    ) : (
+                      <SearchPage
+                        key={`${page}:${searchKey}`}
+                        canSave={!user || user.role !== "auditor"}
+                        canAsk={!user || user.role !== "auditor"}
+                        isAdmin={!user || user.role === "admin"}
+                        initialTab={page === "ask" ? "ask" : undefined}
+                      />
+                    )}
+                  </Suspense>
                 </main>
               </div>
             </div>

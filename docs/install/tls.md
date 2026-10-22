@@ -56,6 +56,7 @@ server {
     location / {
         proxy_pass http://127.0.0.1:8080;
         proxy_set_header Host $host;
+        proxy_read_timeout 120s;   # longer than the 30 s query timeout
     }
 }
 ```
@@ -78,4 +79,31 @@ APP_PUBLIC_NAME=siem.corp.example
 APP_PUBLIC_URL=https://siem.corp.example
 ```
 
+The UI makes ordinary requests only (no WebSocket or server-sent events), so no buffering or upgrade settings are needed; keep `proxy_read_timeout` above the 30 second query timeout.
+
 Allow port 8080 on the app's host only from the proxy nodes. `APP_PUBLIC_URL` must be the address users type, because the setup link, alert links, and the SSO return address are built from it. The generated certificate is valid for 825 days; to renew it, stop the app, delete `data/tls/`, and start it again.
+
+### Forward-auth proxies (Authelia, oauth2-proxy, and similar)
+
+A forward-auth proxy can sit in front of the browser pages: people pass its login first, then the app's own sign-in. Clients that authenticate with a token cannot follow a login redirect, so their paths need a bypass rule in the proxy. The app still checks its own token on every one of them.
+
+| Client | Paths (from the app's routers) | Token the app checks |
+|---|---|---|
+| OpenTelemetry senders (Claude Code telemetry, the endpoint agent, the MCP inventory script) | `/api/otlp/v1/logs`, `/api/otlp/v1/metrics` | Per-source ingest token |
+| MCP clients (Claude Desktop, Claude Code) | `/api/mcp` | Per-user MCP token |
+| The `remnant` CLI and TUI | Any path under `/api/` | Per-user API token (`Authorization: Bearer`); browser cookies are not accepted with it |
+| Monitoring | `/api/health` | None; returns status only |
+
+For the CLI, either bypass `/api/` when the request carries an `Authorization` header (if your proxy can match headers), or point the CLI at the app's own address and allow that in the firewall. Authelia example for the first two rows:
+
+```yaml
+access_control:
+  rules:
+    - domain: siem.example.internal
+      resources: ['^/api/otlp/v1/(logs|metrics)$', '^/api/mcp$', '^/api/health$']
+      policy: bypass
+    - domain: siem.example.internal
+      policy: two_factor
+```
+
+With forward-auth and the app's own sign-in through the same Authelia (see [sso-authelia.md](sso-authelia.md)), the second sign-in is one click.

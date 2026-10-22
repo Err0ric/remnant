@@ -20,5 +20,7 @@ export default defineConfig({
     globals: true,
     setupFiles: ["./tests/setup.ts"],
     include: ["tests/**/*.test.{ts,tsx}"],
+    // Pages are lazy-loaded; a test that moves between pages transforms each on first use.
+    testTimeout: 15000,
   },
 });

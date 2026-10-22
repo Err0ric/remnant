@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { Command, PageHeader } from "@/components/shell/PageHeader";
 import {
   api,
@@ -29,7 +29,9 @@ import { downloadCsv, ResultsCard } from "./ResultsCard";
 import { SaveSearchForm } from "./SaveSearchForm";
 import { SearchTabs, type SearchArea } from "./SearchTabs";
 import { SimplePanel } from "./SimplePanel";
-import { SqlEditor } from "./SqlEditor";
+
+// CodeMirror is most of the bundle; it loads as its own chunk after the page shows.
+const SqlEditor = lazy(() => import("./SqlEditor").then((m) => ({ default: m.SqlEditor })));
 
 interface SearchPageProps {
   /** Admins and analysts author saved searches; auditors are read-only (SPEC 3.6). */
@@ -334,13 +336,15 @@ export function SearchPage({
             aria-labelledby="search-tab-sql"
             className="flex flex-col gap-2.5"
           >
-            <SqlEditor
-              label="SQL query"
-              value={sql}
-              onChange={setSql}
-              onRun={runSql}
-              columns={columnNames}
-            />
+            <Suspense fallback={<div className="h-40 rounded border border-border bg-inset" />}>
+              <SqlEditor
+                label="SQL query"
+                value={sql}
+                onChange={setSql}
+                onRun={runSql}
+                columns={columnNames}
+              />
+            </Suspense>
             <div className="flex flex-wrap items-center gap-4 text-sm text-text-muted">
               <button
                 type="button"

@@ -51,7 +51,7 @@ identity_providers:
         consent_mode: 'implicit'                     # optional: skip the consent screen
 ```
 
-Restart Authelia. The redirect URI must match the app's public address exactly, port included.
+Restart Authelia. The redirect URI must match the app's public address exactly, port included. Behind a reverse proxy that is the proxy's address, usually without a port: `https://siem.example.internal/api/auth/sso/callback` (see [tls.md](tls.md#behind-a-reverse-proxy)).
 
 ## 2. The app: turn it on
 
@@ -92,5 +92,6 @@ The app's sign-in page shows a plain reason; details are in the **Audit log** un
 | Authelia: "invalid_client" | The secret or `token_endpoint_auth_method` does not match. Set `SSO_TOKEN_AUTH_METHOD=client_secret_post` if the client uses `client_secret_post` |
 | Authelia: redirect URI mismatch | `redirect_uris` must equal the app's public address plus `/api/auth/sso/callback` |
 | App: "not in the group allowed" for a member | `groups` missing from the client's `scopes`, or `SSO_EXTRA_SCOPES=groups` not set |
+| `https://<authelia>/.well-known/openid-configuration` returns 404 | The OIDC provider is not enabled in Authelia: `identity_providers.oidc` needs its keys (`jwks`) and HMAC secret configured |
 | App: "cannot be reached right now" | The app's server cannot resolve or reach Authelia, or `SSO_ISSUER` differs from Authelia's `issuer` |
 | App: "cannot be reached right now", audit detail "userinfo did not return JSON" | `userinfo_signed_response_alg` is not `none` (signed UserInfo is not supported) |

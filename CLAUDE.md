@@ -242,7 +242,7 @@ A slice is done when every box below is checked, demoed end to end from a fresh 
 - [x] Light mode complete per `docs/DESIGN.md` (every page checked in light; all text tokens meet WCAG AA 4.5:1 in both themes)
 - [x] Command palette covers navigation, sources, saved searches, run, provider switch
 - [x] CLI `tui` (Textual): query box, results table, tail pane (baseline; optional `tui` extra)
-- [x] Install guides: team VM (Compose and systemd) and single user (Compose and single-user tried on the homelab; the systemd unit, copied from the guide, installed and run on an Ubuntu 24.04 VM by `release-checks.yml`: setup link, HTTPS health, restart, and a syslog message ingested and queried under the sandbox, `systemd-analyze security` 1.4 OK)
+- [x] Install guides: team VM (Compose and systemd) and single user (Compose and single-user tried on the homelab; the systemd unit, copied from the guide, installed and run on an Ubuntu 24.04 VM by `release-checks.yml`: setup link, HTTPS health, restart, and a syslog message ingested and queried under the sandbox, `systemd-analyze security` 1.4 OK; the same unit, hardening included, ran unchanged in an unprivileged Proxmox LXC on Debian 13 on 2026-10-21 and survived a reboot)
 - [x] README states tested scale (ingest rate, lake size, query latency on named hardware) (2 vCPU cloud VM and 4 vCPU homelab container via `scripts/bench.py`)
 - [x] SBOM generated, images pinned, release tagged `v0.1.0` (SBOM from lockfiles in every CI run via `scripts/sbom.py`; base images, compose images, and workflow actions pinned by digest or commit and enforced by `check-architecture.sh`; tagged 2026-10-17 on the owner's go-ahead)
 

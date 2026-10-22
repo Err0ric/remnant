@@ -108,22 +108,25 @@ export function SideNav({ active, isAdmin, canAudit, open = false }: SideNavProp
       aria-label="Primary"
       className={cn(
         // From md up the rail stays in view under the top bar, with Settings pinned to its foot.
-        "w-full shrink-0 border-b border-border bg-nav px-2 py-3 md:sticky md:top-12 md:flex md:h-[calc(100dvh-3rem)] md:w-55 md:flex-col md:self-start md:overflow-y-auto md:border-b-0 md:border-r",
+        "w-full shrink-0 border-b border-border bg-nav px-2 py-3 md:sticky md:top-12 md:flex md:h-[calc(100dvh-3rem)] md:w-55 md:flex-col md:self-start md:border-b-0 md:border-r",
         open ? "block" : "hidden",
       )}
     >
-      {GROUPS.map((group) => (
-        <div key={group.label} className="mb-3">
-          <div className="px-2.5 py-1 text-xs text-text-muted">{group.label}</div>
-          {group.items
-            .filter((item) => (isAdmin || !item.adminOnly) && (canAudit || !item.auditOnly))
-            .map((item) => (
-              <Item key={item.id} item={item} active={active} isAdmin={isAdmin} />
-            ))}
-        </div>
-      ))}
+      {/* The groups scroll on short screens; Settings below stays in view. */}
+      <div className="md:min-h-0 md:flex-1 md:overflow-y-auto">
+        {GROUPS.map((group) => (
+          <div key={group.label} className="mb-3">
+            <div className="px-2.5 py-1 text-xs text-text-muted">{group.label}</div>
+            {group.items
+              .filter((item) => (isAdmin || !item.adminOnly) && (canAudit || !item.auditOnly))
+              .map((item) => (
+                <Item key={item.id} item={item} active={active} isAdmin={isAdmin} />
+              ))}
+          </div>
+        ))}
+      </div>
       {first ? (
-        <div className="border-t border-border pt-3 md:mt-auto">
+        <div className="shrink-0 border-t border-border pt-3">
           <a
             href={pathFor(first)}
             onClick={go(first)}

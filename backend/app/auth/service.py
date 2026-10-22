@@ -87,9 +87,12 @@ class AuthService:
             return "login"
         return "open" if self.loopback else "setup"
 
-    def setup_url(self, public_host: str, port: int) -> str:
-        """Issue a fresh one-time link. The token sits in the fragment, never in a request line."""
+    def setup_url(self, public_host: str, port: int, base: str | None = None) -> str:
+        """Issue a fresh one-time link. The token sits in the fragment, never in a request line.
+        `base` (server.public_url) wins when set, so the link works through a reverse proxy."""
         token = self._setup.issue(self.clock())
+        if base:
+            return f"{base.rstrip('/')}/setup#{token}"
         scheme = "http" if self.loopback else "https"
         return f"{scheme}://{public_host}:{port}/setup#{token}"
 

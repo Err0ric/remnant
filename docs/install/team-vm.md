@@ -16,7 +16,8 @@ One server that several analysts use from their browsers, each with their own ac
 | VM | Ubuntu 24.04 or Debian 12/13, 2 vCPU, 4 GB RAM to start. A Proxmox LXC works (unprivileged, `nesting` and `keyctl` on) |
 | Disk | 20 GB plus room for the logs you keep. Retention is per source (30 days by default) |
 | A fixed address | Static IP or a DHCP reservation, and a DNS name analysts will type |
-| Firewall | Analysts to TCP 8080 only; SSH for administrators |
+| Firewall | Analysts to TCP 8080 only (or only the reverse proxy nodes, when there is one); SSH for administrators. Examples below |
+| A reverse proxy in front? | Read [tls.md, Behind a reverse proxy](tls.md#behind-a-reverse-proxy) first, and set the public URL **before the first start** so the setup link goes through the proxy |
 | Logs on the VM | A collector writing files under one folder (see [../ingest/](../ingest/)), or a Grafana Loki to read from ([../ingest/loki.md](../ingest/loki.md)) |
 
 Anything reachable from the network requires sign-in and HTTPS; there is no switch to turn that off. Until the first administrator exists, the server only serves the setup page.
@@ -69,7 +70,7 @@ Lost the administrator password: `docker compose exec app app-admin reset-passwo
 
 ## B. systemd service
 
-Needs Python 3.12 (uv installs it) to run, and Node 22 to build the web UI once per update.
+Needs Python 3.12 (uv installs it; `backend/.python-version` pins it even when the system Python is newer) to run, and Node 22 to build the web UI once per update. Run the commands as root, or prefix each with `sudo`. Tested unchanged, hardening included, in an unprivileged Proxmox LXC on Debian 13: it survived a reboot and used about 105 MB at idle.
 
 ```bash
 # 1. Tools (as root)
@@ -81,10 +82,12 @@ curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y 
 useradd --system --home /var/lib/remnant --shell /usr/sbin/nologin remnant
 install -d -o remnant -g remnant -m 0750 /var/lib/remnant
 install -d -m 0755 /etc/remnant
+install -d -m 0755 /var/log/remote   # or the folder your collector already writes to
 
 # 3. Code, UI, and Python packages
 git clone https://github.com/Err0ric/remnant /opt/remnant
-cd /opt/remnant/frontend && corepack enable && pnpm install --frozen-lockfile && pnpm build
+cd /opt/remnant/frontend && corepack enable \
+  && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 pnpm install --frozen-lockfile && pnpm build
 cd /opt/remnant/backend && UV_PYTHON_INSTALL_DIR=/opt/remnant/.python uv sync --frozen --no-dev
 ```
 
@@ -94,11 +97,16 @@ cd /opt/remnant/backend && UV_PYTHON_INSTALL_DIR=/opt/remnant/.python uv sync --
 APP__SERVER__HOST=0.0.0.0
 APP__SERVER__PORT=8080
 APP__SERVER__PUBLIC_NAMES=siem.example.internal
+# Behind a reverse proxy: the address people open (no :8080), set before the first start.
+# APP__SERVER__PUBLIC_URL=https://siem.example.internal
 APP__SERVER__STATIC_DIR=/opt/remnant/frontend/dist
 APP__PATHS__DATA_DIR=/var/lib/remnant
 APP__PATHS__ALLOWED_ROOTS=/var/log/remote
 APP__PATHS__STARTER_TEMPLATES=/opt/remnant/templates/starter
 # APP__PATHS__RULE_ROOTS=/opt/sigma/rules
+# Memory cap. Auto: 75% of the smallest of /proc/meminfo, the cgroup limit, and physical RAM.
+# Set it only if the startup line "Memory limit" shows a size larger than this machine.
+# APP__SERVER__MEMORY_LIMIT_MB=4096
 PYTHONUNBUFFERED=1
 ```
 
@@ -175,6 +183,24 @@ Lost the administrator password:
 ```bash
 sudo -u remnant env $(grep -v '^#' /etc/remnant/remnant.env | xargs) /opt/remnant/backend/.venv/bin/app-admin reset-password <username>
 ```
+
+### Firewall examples
+
+Allow port 8080 only from the people or the proxy nodes that need it (addresses are examples):
+
+```bash
+# firewalld
+firewall-cmd --permanent --add-rich-rule='rule family=ipv4 source address=192.0.2.10/32 port port=8080 protocol=tcp accept'
+firewall-cmd --reload
+# ufw
+ufw allow from 192.0.2.10 to any port 8080 proto tcp
+```
+
+Docker installs: Docker publishes ports through its own rules, which can bypass firewalld and ufw. Check from a host that should be refused that the port does not answer, or publish on one address only (`APP_BIND`).
+
+### File integrity monitoring
+
+AIDE, Wazuh syscheck, and similar tools: exclude the data folder (`/var/lib/remnant`, or the `app-data` volume), which changes constantly. Keep watching `/opt/remnant` and `/etc/remnant`. The data folder has the app's own integrity checks ([integrity.md](integrity.md)).
 
 ## After install
 

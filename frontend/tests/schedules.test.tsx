@@ -63,7 +63,7 @@ describe("Schedules", () => {
   it("creates a schedule from a preset with a threshold", async () => {
     const spy = await renderAt("/schedules");
     await userEvent.click(await screen.findByRole("button", { name: "New schedule" }));
-    const form = screen.getByRole("form", { name: "New schedule" });
+    const form = await screen.findByRole("form", { name: "New schedule" });
     await userEvent.selectOptions(within(form).getByLabelText("Saved search"), "failed_by_ip");
     await userEvent.selectOptions(within(form).getByLabelText("When"), "hourly");
     await userEvent.selectOptions(within(form).getByLabelText("Flag when"), "above");
