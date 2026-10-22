@@ -107,9 +107,16 @@ APP__PATHS__DATA_DIR=/var/lib/remnant
 APP__PATHS__ALLOWED_ROOTS=/var/log/remote
 APP__PATHS__STARTER_TEMPLATES=/opt/remnant/templates/starter
 # APP__PATHS__RULE_ROOTS=/opt/sigma/rules
-# Memory cap. Auto: 75% of the smallest of /proc/meminfo, the cgroup limit, and physical RAM.
-# Set it only if the startup line "Memory limit" shows a size larger than this machine.
+# Memory budget that query memory is sized from. Auto: 75% of the smallest of
+# /proc/meminfo, the cgroup limit, and physical RAM. Set it only if the startup line
+# "Memory budget" shows a size larger than this machine. The process limit itself is
+# MemoryHigh=/MemoryMax= in the unit below.
 # APP__SERVER__MEMORY_LIMIT_MB=4096
+# Query threads. Auto: threads per query from the usable CPUs (at most 4), 4 queries at once.
+# On a small container with a low process limit, lower them; the startup line "Queries"
+# shows the peak thread count to compare with the limit.
+# APP__SERVER__QUERY_THREADS=2
+# APP__SERVER__MAX_CONCURRENT_QUERIES=2
 PYTHONUNBUFFERED=1
 ```
 
@@ -135,6 +142,11 @@ WorkingDirectory=/var/lib/remnant
 ExecStart=/opt/remnant/backend/.venv/bin/app-server
 Restart=on-failure
 RestartSec=5
+# Memory limit for the whole service (D80). Past MemoryHigh the kernel reclaims and slows
+# the service; past MemoryMax it ends it and systemd restarts it. Percentages are of the
+# machine's (or container's) memory; fixed sizes such as 3G work too.
+MemoryHigh=80%
+MemoryMax=90%
 
 NoNewPrivileges=true
 ProtectSystem=strict
@@ -184,7 +196,7 @@ systemctl restart remnant
 Lost the administrator password:
 
 ```bash
-sudo -u remnant env $(grep -v '^#' /etc/remnant/remnant.env | xargs) /opt/remnant/backend/.venv/bin/app-admin reset-password <username>
+sudo -u remnant sh -c 'set -a; . /etc/remnant/remnant.env; set +a; exec /opt/remnant/backend/.venv/bin/app-admin "$@"' app-admin reset-password <username>
 ```
 
 ### Firewall examples

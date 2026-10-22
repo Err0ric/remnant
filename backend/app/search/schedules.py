@@ -54,6 +54,8 @@ log = structlog.get_logger()
 
 Kind = Literal["search", "rule"]
 ThresholdKind = Literal["above", "below", "change_pct"]
+PanelWidth = Literal["third", "half", "full"]
+PanelView = Literal["table", "bars"]
 LATE = timedelta(minutes=5)  # a run this late covers up to now, not just to its fire time
 MAX_LAST_INTERVAL = timedelta(days=31)
 DUE_PER_TICK = 20
@@ -80,6 +82,9 @@ class Schedule:
     last_run_at: str | None
     created_at: str
     updated_at: str
+    # Dashboard display (trial finding): the owner's choice, seen by everyone.
+    panel_width: PanelWidth = "third"
+    panel_view: PanelView = "table"
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +105,20 @@ class ScheduleRun:
     flag_reason: str | None
     error: str | None
     rule_run_id: str | None
+    # Set when the run found nothing, the one before found rows, and a source it read
+    # switched parser (template) in between (trial finding F36).
+    parser_change: str | None = None
+
+
+# Templates per source in the earlier part (before $cur) and in this run's range.
+PARSER_SQL = """
+SELECT source_id, coalesce(template_id, 'none') AS template,
+       coalesce(time, time_observed) >= CAST($cur AS TIMESTAMPTZ) AS current,
+       min(coalesce(time, time_observed)) AS first
+FROM events
+GROUP BY 1, 2, 3
+ORDER BY 1, 2, 3
+LIMIT 1000"""
 
 
 class _Stop(Exception):  # noqa: N818  # a signal to pause, not an error
@@ -223,8 +242,14 @@ class ScheduleService:
         threshold_kind: str | None = None,  # "none" clears it
         threshold_value: float | None = None,
         paused: bool | None = None,
+        panel_width: PanelWidth | None = None,
+        panel_view: PanelView | None = None,
     ) -> Schedule:
         sets: dict[str, Any] = {}
+        if panel_width is not None:
+            sets["panel_width"] = panel_width
+        if panel_view is not None:
+            sets["panel_view"] = panel_view
         if name is not None:
             sets["name"] = name
         expr = s.cron
@@ -463,10 +488,15 @@ class ScheduleService:
         flagged, reason = (
             self._flag(sched, count) if status == "ok" and count is not None else (False, None)
         )
+        changed = (
+            self._parser_change(sched, start, last, read)
+            if status == "ok" and count == 0 and read
+            else None
+        )
         run = ScheduleRun(
             run_id, sched.schedule_id, now.isoformat(), start.isoformat(), end.isoformat(),
             status, count, elapsed, read, columns, sample, truncated, flagged, reason, error,
-            rule_run_id,
+            rule_run_id, changed,
         )  # fmt: skip
         self._save(run)
         self._notify(sched, run)
@@ -565,6 +595,55 @@ class ScheduleService:
         )
         return run
 
+    def _parser_change(
+        self, sched: Schedule, start: datetime, last: datetime, read: list[str]
+    ) -> str | None:
+        """A zero after rows: did a source this run read switch template since the last run
+        with rows? Searches written against `message` stop matching when a line moves from a
+        generic parser to a specific one (F36). Reads only the sources the run itself read."""
+        with self._meta.connect() as con:
+            prev = con.execute(
+                "SELECT range_start FROM schedule_runs WHERE schedule_id = ? AND status = 'ok'"
+                " AND row_count > 0 AND range_start IS NOT NULL ORDER BY started_at DESC LIMIT 1",
+                (sched.schedule_id,),
+            ).fetchone()
+        if prev is None:
+            return None
+        before = datetime.fromisoformat(prev["range_start"])
+        if before >= start:
+            return None
+        try:
+            result = self._engine.run(
+                PARSER_SQL, QueryScope(sorted(read), before, last), {"cur": start.isoformat()}
+            )
+        except AppError:
+            return None
+        old: dict[str, set[str]] = {}
+        new: dict[str, dict[str, Any]] = {}
+        for source, template, current, first in result.rows:
+            if current:
+                new.setdefault(str(source), {})[str(template)] = first
+            else:
+                old.setdefault(str(source), set()).add(str(template))
+        notes = []
+        for source in sorted(new):
+            added = {t: f for t, f in new[source].items() if t not in old.get(source, set())}
+            if not added or not old.get(source):
+                continue
+            at = min(str(v) for v in added.values())
+            try:
+                when = datetime.fromisoformat(at).astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
+            except ValueError:
+                when = at
+            gone = sorted(old[source] - set(new[source])) or sorted(old[source])
+            notes.append(f"{source} at {when} ({', '.join(gone)} to {', '.join(sorted(added))})")
+        if not notes:
+            return None
+        return (
+            "Parser changed for " + "; ".join(notes)[:400] + ". Searches on message may no"
+            " longer match: use raw or parsed fields."
+        )
+
     def _flag(self, sched: Schedule, count: int) -> tuple[bool, str | None]:
         v = sched.threshold_value
         if sched.threshold_kind is None or v is None:
@@ -594,8 +673,8 @@ class ScheduleService:
             con.execute(
                 "INSERT INTO schedule_runs (run_id, schedule_id, started_at, range_start,"
                 " range_end, status, row_count, elapsed_ms, sources_in_scope, columns, sample,"
-                " truncated, flagged, flag_reason, error, rule_run_id)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " truncated, flagged, flag_reason, error, rule_run_id, parser_change)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     run.run_id,
                     run.schedule_id,
@@ -613,6 +692,7 @@ class ScheduleService:
                     run.flag_reason,
                     run.error,
                     run.rule_run_id,
+                    run.parser_change,
                 ),
             )
             con.execute(
@@ -654,6 +734,8 @@ def _schedule(r: sqlite3.Row) -> Schedule:
         last_run_at=r["last_run_at"],
         created_at=r["created_at"],
         updated_at=r["updated_at"],
+        panel_width=r["panel_width"],
+        panel_view=r["panel_view"],
     )
 
 
@@ -675,4 +757,5 @@ def _run(r: sqlite3.Row) -> ScheduleRun:
         flag_reason=r["flag_reason"],
         error=r["error"],
         rule_run_id=r["rule_run_id"],
+        parser_change=r["parser_change"],
     )

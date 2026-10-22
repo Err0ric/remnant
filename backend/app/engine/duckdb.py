@@ -8,8 +8,9 @@ configuration locked. The guard runs before any of this.
 
 import threading
 import time
-from collections.abc import Mapping
-from dataclasses import dataclass, field
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -18,9 +19,10 @@ from uuid import UUID
 
 import duckdb
 
-from app.core.errors import QueryFailedError, QueryTimeoutError
+from app.core.errors import QueryBusyError, QueryFailedError, QueryTimeoutError
 from app.core.schema import duckdb_create_table_sql
 from app.engine.guard import DEFAULT_LIMIT, MAX_LIMIT, guard
+from app.engine.narrow import pinned_sources
 
 ALLOWED_TABLES = frozenset({"events"})
 LAKE_FILES = "day=*/part-*.parquet"  # under each source=<id> folder
@@ -62,12 +64,17 @@ class QueryEngine:
         memory_mb: int | None = None,
         threads: int | None = None,
         intel_file: Path | None = None,
+        max_concurrent: int = 0,
     ) -> None:
         self._lake = lake_dir
         self._intel = intel_file
         # Per query: DuckDB spills or fails past this, instead of growing without bound.
         self._memory_mb = memory_mb
         self._threads = threads
+        # At most this many DuckDB connections at once, each with `threads` threads, so a
+        # burst of page loads cannot multiply threads past a container's pids limit (D79).
+        # Others wait for a slot, up to the query timeout. 0: no limit.
+        self._slots = threading.BoundedSemaphore(max_concurrent) if max_concurrent else None
         self._default_limit = default_limit
         self._max_limit = max_limit
         self._timeout_s = timeout_s
@@ -89,11 +96,28 @@ class QueryEngine:
         cap = min(self._max_limit, row_cap) if row_cap else self._max_limit
         # Ask for one extra row so truncation is detectable, then trim it.
         guarded = guard(sql, INTEL_TABLES if intel else ALLOWED_TABLES, default + 1, cap + 1)
+        pinned = pinned_sources(guarded.sql, params)
+        if pinned is not None:  # read only the sources the query can use; never widen
+            keep = pinned if scope.sources is None else pinned & set(scope.sources)
+            scope = replace(scope, sources=sorted(keep))
+        with self._slot(limit_s):
+            return self._execute(guarded, scope, params, intel, limit_s, cap)
+
+    def _execute(
+        self,
+        guarded: Any,
+        scope: QueryScope,
+        params: Mapping[str, Any] | None,
+        intel: bool,
+        limit_s: float,
+        cap: int,
+    ) -> QueryResult:
         con = self._connect(scope, intel=intel)
         timer = threading.Timer(limit_s, con.interrupt)
         started = time.perf_counter()
-        timer.start()
         try:
+            # Inside the try: if no thread can start, the connection is still closed.
+            timer.start()
             cursor = con.execute(guarded.sql, dict(params)) if params else con.execute(guarded.sql)
             rows = cursor.fetchall()
             columns = [d[0] for d in cursor.description or []]
@@ -129,6 +153,20 @@ class QueryEngine:
             sources=[d.name.removeprefix("source=") for d in self._source_dirs(scope)],
         )
 
+    @contextmanager
+    def _slot(self, wait_s: float) -> Iterator[None]:
+        if self._slots is None:
+            yield
+            return
+        if not self._slots.acquire(timeout=wait_s):
+            raise QueryBusyError(
+                "The server is running as many queries as it allows; try again in a moment"
+            )
+        try:
+            yield
+        finally:
+            self._slots.release()
+
     def _scrub(self, message: str) -> str:
         """Server paths stay out of error text shown to analysts and models."""
         for path in {str(self._lake.resolve()), str(self._lake)}:
@@ -147,6 +185,10 @@ class QueryEngine:
         """
         if not self._source_dirs(scope):
             return []
+        with self._slot(self._timeout_s):
+            return self._local_only(scope)
+
+    def _local_only(self, scope: QueryScope) -> list[str]:
         con = self._connect(scope)
         try:
             rows = con.execute(
@@ -170,12 +212,16 @@ class QueryEngine:
 
     def _connect(self, scope: QueryScope, intel: bool = False) -> duckdb.DuckDBPyConnection:
         dirs = self._source_dirs(scope)
-        con = duckdb.connect(":memory:")
-        con.execute("SET TimeZone = 'UTC'")
-        if self._memory_mb:
-            con.execute(f"SET memory_limit = '{int(self._memory_mb)}MB'")
+        # Threads and memory at creation: connecting with the defaults first starts one
+        # thread per core the host reports (inside a container, the host's cores), then
+        # SET threads starts more (D79).
+        config: dict[str, str | bool | int | float | list[str]] = {}
         if self._threads:
-            con.execute(f"SET threads = {int(self._threads)}")
+            config["threads"] = int(self._threads)
+        if self._memory_mb:
+            config["memory_limit"] = f"{int(self._memory_mb)}MB"
+        con = duckdb.connect(":memory:", config=config)
+        con.execute("SET TimeZone = 'UTC'")
         if dirs:
             globs = ", ".join(_sql_str(str(d / LAKE_FILES)) for d in dirs)
             base = f"read_parquet([{globs}], hive_partitioning = false, union_by_name = true)"

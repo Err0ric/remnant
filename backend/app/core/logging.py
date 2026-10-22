@@ -12,6 +12,10 @@ import structlog
 
 def configure_logging(level: str = "INFO") -> None:
     logging.basicConfig(format="%(message)s", stream=sys.stderr, level=level)
+    # The HTTP client logs every request at INFO (each Loki poll, each connector call):
+    # noise, and URLs can carry query text. Warnings and errors still show.
+    for noisy in ("httpx", "httpcore"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,

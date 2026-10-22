@@ -155,6 +155,8 @@ export interface AiGone {
 
 export interface AiUsage {
   services: AiServiceUse[];
+  /** Vendor hosts other sites load (ad and measurement tags): shown apart, not AI use. */
+  non_usage?: AiServiceUse[];
   mcp: AiMcpUse[];
   people: AiPerson[];
   sources_in_scope: string[];
@@ -1019,6 +1021,8 @@ export interface ScheduleRunSummary {
   flag_reason: string | null;
   error: string | null;
   rule_run_id: string | null;
+  /** A drop to zero right after a source this run read changed parser (F36). */
+  parser_change?: string | null;
 }
 
 export interface ScheduleRunDetail extends ScheduleRunSummary {
@@ -1154,6 +1158,9 @@ export interface Schedule {
   /** Newest first, up to 30. */
   recent: ScheduleRunSummary[];
   target_ids: string[];
+  /** Dashboard panel width and view, set by the owner or an admin. */
+  panel_width?: "third" | "half" | "full";
+  panel_view?: "table" | "bars";
 }
 
 export interface ScheduleInput {
@@ -1174,6 +1181,8 @@ export interface ScheduleUpdate {
   shared?: boolean;
   paused?: boolean;
   target_ids?: string[];
+  panel_width?: "third" | "half" | "full";
+  panel_view?: "table" | "bars";
 }
 
 export interface ExplainClaim {

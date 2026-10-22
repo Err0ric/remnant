@@ -41,7 +41,7 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | `GET` | `/api/ai/catalog` | Ai Catalog |  |  |
 | `GET` | `/api/ai/mcp-rules` | Mcp Rules |  |  |
 | `PUT` | `/api/ai/mcp-rules` | Set Mcp Rule |  | `pattern`: string<br>`status`: `approved` &#124; `not_approved`<br>`note`?: string |
-| `POST` | `/api/ai/services` | Add Service |  | `id`: string<br>`name`: string<br>`vendor`?: string<br>`kind`: `chat` &#124; `api` &#124; `coding` &#124; `agent_platform` &#124; `mcp_registry` &#124; `image` &#124; `meetings` &#124; `writing`<br>`domains`: list of string |
+| `POST` | `/api/ai/services` | Add Service |  | `id`: string<br>`name`: string<br>`vendor`?: string<br>`kind`: `chat` &#124; `api` &#124; `coding` &#124; `agent_platform` &#124; `mcp_registry` &#124; `image` &#124; `meetings` &#124; `writing` &#124; `non_usage`<br>`domains`: list of string |
 | `DELETE` | `/api/ai/services/{service_id}` | Delete Service |  |  |
 | `PUT` | `/api/ai/services/{service_id}/data-level` | The most sensitive data allowed to this service (ADR-0020 row 4). Audited as ai.service_change. |  | `data_level`: `public` &#124; `internal` &#124; `confidential` |
 | `PUT` | `/api/ai/services/{service_id}/status` | Set Service Status |  | `status`: `approved` &#124; `not_approved` &#124; `unreviewed`<br>`note`?: string |
@@ -223,7 +223,7 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 |---|---|---|---|---|
 | `GET` | `/api/schedules` | List Schedules |  |  |
 | `POST` | `/api/schedules` | Create Schedule |  | `kind`: `search` &#124; `rule`<br>`target_id`: string<br>`name`?: string<br>`cron`: string<br>`lookback_minutes`?: integer<br>`params`?: object<br>`shared`?: boolean<br>`threshold_kind`?: `above` &#124; `below` &#124; `change_pct`<br>`threshold_value`?: number<br>`target_ids`?: list of string |
-| `PATCH` | `/api/schedules/{schedule_id}` | Update Schedule |  | `name`?: string<br>`cron`?: string<br>`lookback_minutes`?: integer<br>`shared`?: boolean<br>`threshold_kind`?: `above` &#124; `below` &#124; `change_pct` or `none`<br>`threshold_value`?: number<br>`paused`?: boolean<br>`target_ids`?: list of string |
+| `PATCH` | `/api/schedules/{schedule_id}` | Update Schedule |  | `name`?: string<br>`cron`?: string<br>`lookback_minutes`?: integer<br>`shared`?: boolean<br>`threshold_kind`?: `above` &#124; `below` &#124; `change_pct` or `none`<br>`threshold_value`?: number<br>`paused`?: boolean<br>`target_ids`?: list of string<br>`panel_width`?: `third` &#124; `half` &#124; `full`<br>`panel_view`?: `table` &#124; `bars` |
 | `DELETE` | `/api/schedules/{schedule_id}` | Delete Schedule |  |  |
 | `GET` | `/api/schedules/{schedule_id}/deliveries` | Alert delivery status for a schedule the viewer can see (no message content). |  |  |
 | `POST` | `/api/schedules/{schedule_id}/run` | Run Now |  |  |

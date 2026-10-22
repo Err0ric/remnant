@@ -327,3 +327,69 @@ def test_a_reimported_rule_with_new_content_pauses_its_schedules(
     lab["admin"].post("/api/rules/import", json={"path": str(rules)}, headers=lab["h"])
     run = run_now(lab, lab["admin"], s["schedule_id"], lab["h"]).json()
     assert run["status"] == "paused" and "re-imported" in run["error"]
+
+
+def test_panel_width_and_view_are_stored_and_only_managers_change_them(
+    lab: dict[str, Any],
+) -> None:
+    sid = schedule(lab["ana"], shared=True).json()["schedule_id"]
+    first = lab["ana"].get("/api/schedules").json()[0]
+    assert (first["panel_width"], first["panel_view"]) == ("third", "table")
+    res = lab["ana"].patch(
+        f"/api/schedules/{sid}", json={"panel_width": "full", "panel_view": "bars"}
+    )
+    assert res.status_code == 200
+    assert (res.json()["panel_width"], res.json()["panel_view"]) == ("full", "bars")
+    seen = {x["schedule_id"]: x for x in lab["bob"].get("/api/schedules").json()}
+    assert seen[sid]["panel_width"] == "full"  # everyone sees the owner's layout
+    assert (
+        lab["bob"].patch(f"/api/schedules/{sid}", json={"panel_width": "half"}).status_code == 403
+    )
+    assert (
+        lab["ana"].patch(f"/api/schedules/{sid}", json={"panel_width": "wide"}).status_code == 422
+    )
+
+
+def _lake_rows(source: str, template: str, at: datetime, n: int) -> list[dict[str, Any]]:
+    from app.ingest.normalizer import Normalizer, SourceSpec
+    from app.ingest.records import DecodedLine
+
+    norm = Normalizer(SourceSpec(source_id=source, format="json"), clock=lambda: at)
+    rows = []
+    for i in range(n):
+        line = f'{{"time": "{(at + timedelta(minutes=i)).isoformat()}", "message": "x"}}'
+        row = norm.normalize(DecodedLine(line, False, False))
+        assert row is not None
+        rows.append({**row, "template_id": template})
+    return rows
+
+
+def test_a_drop_to_zero_after_a_parser_change_says_so(lab: dict[str, Any]) -> None:
+    """F36: lines moved from a generic parser to a specific one, `message` stopped matching,
+    and the schedule went to zero with no warning."""
+    from app.ingest.writer import LakeWriter
+
+    app = lab["app"]
+    svc = app.state.schedules
+    day1 = datetime(2026, 11, 1, 10, tzinfo=UTC)
+    day2 = day1 + timedelta(days=1)
+    lake = app.state.engine._lake
+    LakeWriter(lake).write(_lake_rows("lin_auth", "generic_syslog", day1, 3))
+    LakeWriter(lake).write(_lake_rows("lin_auth", "dns_bind", day2, 3))
+    sid = schedule(lab["ana"]).json()["schedule_id"]
+    sched = svc.get(sid)
+    with app.state.meta.connect() as con:
+        con.execute(
+            "INSERT INTO schedule_runs (run_id, schedule_id, started_at, range_start, range_end,"
+            " status, row_count, sources_in_scope) VALUES ('r0', ?, ?, ?, ?, 'ok', 5, '[]')",
+            (sid, day2.isoformat(), day1.isoformat(), day2.isoformat()),
+        )
+    end = day2 + timedelta(hours=12)
+    note = svc._parser_change(sched, day2, end, ["lin_auth"])
+    assert note is not None
+    assert "lin_auth at 2026-11-02 10:00 UTC (generic_syslog to dns_bind)" in note
+    assert "use raw or parsed fields" in note
+    # No earlier run with rows: nothing to compare, no note.
+    with app.state.meta.connect() as con:
+        con.execute("UPDATE schedule_runs SET row_count = 0 WHERE run_id = 'r0'")
+    assert svc._parser_change(sched, day2, end, ["lin_auth"]) is None

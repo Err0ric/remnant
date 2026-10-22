@@ -5,7 +5,6 @@ accounts is setup-only and prints a one-time setup link; otherwise sign-in is re
 """
 
 import asyncio
-import os
 import resource
 import socket
 import sys
@@ -85,6 +84,7 @@ from app.core.errors import (
     ProviderConfigError,
     ProviderError,
     ProviderUnreachableError,
+    QueryBusyError,
     QueryFailedError,
     QueryRejectedError,
     QueryTimeoutError,
@@ -103,6 +103,7 @@ from app.core.errors import (
 from app.core.logging import configure_logging
 from app.core.memory import budget_note, server_budget_mb
 from app.core.net import parse_trusted
+from app.core.threads import cap_allocator_arenas, query_threads
 from app.detect.runner import RuleRunner
 from app.detect.store import RuleStore
 from app.engine.duckdb import QueryEngine, QueryScope
@@ -172,6 +173,7 @@ _ERROR_STATUS: dict[type[Exception], tuple[int, str]] = {
     ProviderError: (502, "provider_error"),
     ProviderUnreachableError: (502, "provider_error"),
     ProviderBusyError: (503, "provider_busy"),
+    QueryBusyError: (503, "busy"),
     CallCancelledError: (409, "cancelled"),
     AnswerShapeError: (502, "provider_error"),
     ProviderConfigError: (400, "provider_invalid"),
@@ -415,13 +417,16 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     app.state.searches = SavedSearchStore(meta, lambda: app.state.auth.clock())
     app.state.groups = GroupStore(meta, app.state.auth.audit, lambda: app.state.auth.clock())
     budget = server_budget_mb(config.server.memory_limit_mb)
+    qt = query_threads(config.server.query_threads, config.server.max_concurrent_queries)
     app.state.feeds = FeedStore(meta, config.paths.data_dir)
     app.state.engine = QueryEngine(
         lake_dir,
         intel_file=app.state.feeds.intel_file,
-        # A third of the server's budget per query, so two can run with room for ingest.
-        memory_mb=max(256, budget // 3) if budget else None,
-        threads=min(4, os.cpu_count() or 1),
+        # A share of the budget per query, so every allowed query fits with one share left
+        # for ingest and the server itself (D80).
+        memory_mb=max(256, budget // (qt.at_once + 1)) if budget else None,
+        threads=qt.per_query,
+        max_concurrent=qt.at_once,
     )
     app.state.gate = LLMGate(
         meta,
@@ -619,7 +624,10 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     async def app_error(_: Request, exc: Exception) -> JSONResponse:
         code, kind = _ERROR_STATUS[type(exc)]
         headers = {}
-        if isinstance(exc, RateLimitedError | ProviderBusyError) and exc.retry_after_s:
+        if (
+            isinstance(exc, RateLimitedError | ProviderBusyError | QueryBusyError)
+            and exc.retry_after_s
+        ):
             headers["Retry-After"] = str(exc.retry_after_s)
         return JSONResponse(
             status_code=code, content={"detail": str(exc), "code": kind}, headers=headers
@@ -655,11 +663,20 @@ def run() -> None:
         raise SystemExit(2) from exc
 
     budget = server_budget_mb(config.server.memory_limit_mb)
-    if budget is not None and sys.platform.startswith("linux"):
-        # An oversized query then fails with an error, not a kernel kill of the server (D58).
-        resource.setrlimit(resource.RLIMIT_AS, (budget << 20, budget << 20))
+    qt = query_threads(config.server.query_threads, config.server.max_concurrent_queries)
+    if budget is not None:
         note = budget_note(config.server.memory_limit_mb)
-        print(f"Memory limit: {budget} MB ({note})")
+        print(f"Memory budget: {budget} MB ({note})")
+    arenas = cap_allocator_arenas()  # fewer reserved arenas, whatever enforces memory (D79)
+    if budget is not None and config.server.address_space_cap and sys.platform.startswith("linux"):
+        # Opt-in (D80): thread stacks get room on top so a burst can still start threads.
+        cap = budget + qt.headroom_mb
+        resource.setrlimit(resource.RLIMIT_AS, (cap << 20, cap << 20))
+        print(f"Address-space cap: {cap} MB (budget plus {qt.headroom_mb} MB for threads)")
+    print(
+        f"Queries: {qt.per_query} threads each, {qt.at_once} at once"
+        f" (up to about {qt.peak} threads for queries at peak); malloc arenas: {arenas}"
+    )
     proxies = config.server.trusted_proxies
     print(
         f"Trusted proxies: {', '.join(proxies)}"

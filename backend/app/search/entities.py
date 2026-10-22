@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from app.ai.catalog import Catalog
+from app.ai.catalog import NON_USAGE, Catalog
 from app.ai.usage import (
     HOST_EXPR,
     HOST_MATCH_SQL,
@@ -597,11 +597,16 @@ def ai_graph(
         h = host.lower().rstrip(".")
         for sid, dom in domains:
             if h == dom or h.endswith("." + dom):
-                return f"svc:{sid}"
+                hit = services.get(sid)
+                return host if hit is not None and hit.kind == NON_USAGE else f"svc:{sid}"
         return host
 
     b = _Builder(["People", "AI clients", "Tools and MCP servers", "Destinations"])
     for person, client, tool, dest, n, sens, mcp in result.rows:
+        if dest and str(dest).startswith("svc:"):
+            hit = services.get(str(dest)[4:])
+            if hit is not None and hit.kind == NON_USAGE:
+                continue  # a vendor tag on another site is not AI use
         n, sens = int(n), int(sens or 0)
         pkey = ident.key(str(person))
         seen_email[pkey] = seen_email.get(pkey, False) or ident.org_email(str(person))

@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from app.ai.catalog import DOMAIN, Catalog, Service, Status
+from app.ai.catalog import DOMAIN, NON_USAGE, Catalog, Service, Status
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.search.addresses import address_ctes, join_addr
 from app.search.identity import IdentityMap
@@ -213,7 +213,12 @@ class Usage:
         return self._engine.run(sql, scope, timeout_s=TIMEOUT_S).rows
 
     def services(self, scope: QueryScope) -> tuple[list[ServiceUse], list[str]]:
-        """Use per service, plus the sources read."""
+        """Use per service, plus the sources read. Non-usage hosts are left out."""
+        found, sources = self.all_services(scope)
+        return [u for u in found if u.service.kind != NON_USAGE], sources
+
+    def all_services(self, scope: QueryScope) -> tuple[list[ServiceUse], list[str]]:
+        """Every catalog match, non-usage hosts included, plus the sources read."""
         known = {s.id: s for s in self._catalog.services()}
         result = self._engine.run(
             services_sql(self._catalog.domain_table()), scope, timeout_s=TIMEOUT_S

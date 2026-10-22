@@ -2,7 +2,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type KeyboardEvent, type ReactNode } from "react";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Command, PageHeader } from "@/components/shell/PageHeader";
-import { ApiError, api, type AiGone, type AiStatus, type DataLevel } from "@/lib/api";
+import {
+  ApiError,
+  api,
+  type AiGone,
+  type AiServiceUse,
+  type AiStatus,
+  type DataLevel,
+} from "@/lib/api";
 import { rangeStart, TIME_RANGES, type TimeRangeId } from "@/lib/search";
 import { navigate, useSectionTab } from "@/lib/route";
 import { AgentsCard } from "./AgentsCard";
@@ -26,6 +33,7 @@ const KIND: Record<string, string> = {
   image: "Image and voice",
   meetings: "Meetings",
   writing: "Writing",
+  non_usage: "Not AI use",
 };
 
 const LEVELS: DataLevel[] = ["public", "internal", "confidential"];
@@ -295,6 +303,7 @@ export function AiUsagePage({ isAdmin }: AiUsagePageProps) {
           {tab === "services" ? (
             <GoneList items={gone.filter((g) => g.kind === "service")} before={before} />
           ) : null}
+          {tab === "services" ? <NotUsageList items={data?.non_usage ?? []} /> : null}
 
           {tab === "mcp" ? (
             <Card
@@ -484,6 +493,56 @@ function GoneList({ items, before }: { items: AiGone[]; before: string }) {
         ))}
       </ul>
     </section>
+  );
+}
+
+/** Vendor hosts other websites load (ad and measurement tags): matched so they are not
+ * mistaken for the vendor's service, shown here, and never counted as AI use. */
+function NotUsageList({ items }: { items: AiServiceUse[] }) {
+  if (items.length === 0) return null;
+  const events = items.reduce((n, u) => n + u.events, 0);
+  return (
+    <details
+      aria-label="Not counted as AI use"
+      className="overflow-hidden rounded-card border border-border bg-surface"
+    >
+      <summary className="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 bg-surface-head px-3 py-2">
+        <h2 className="text-base font-semibold">Not counted as AI use</h2>
+        <span className="font-mono text-sm tabular-nums text-text-secondary">
+          {items.length} {items.length === 1 ? "host group" : "host groups"},{" "}
+          {events.toLocaleString()} events
+        </span>
+        <span className="text-sm text-text-muted">
+          Vendor ad and measurement tags that other websites load. They are not someone using the
+          service.
+        </span>
+      </summary>
+      <table className="w-full border-t border-border text-sm">
+        <thead>
+          <tr className="border-b border-border text-text-secondary">
+            <th className={TH}>Hosts</th>
+            <th className={`${TH} text-right`}>Machines</th>
+            <th className={`${TH} text-right`}>Events</th>
+            <th className={TH}>Last seen (UTC)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((u) => (
+            <tr key={u.service.id} className="border-b border-border last:border-0">
+              <td className={TD}>
+                <div className="font-semibold">{u.service.name}</div>
+                <div className="font-mono text-text-muted">{u.service.domains.join(", ")}</div>
+              </td>
+              <td className={`${TD} text-right font-mono tabular-nums`}>{u.machines}</td>
+              <td className={`${TD} text-right font-mono tabular-nums`}>
+                {u.events.toLocaleString()}
+              </td>
+              <td className={`${TD} whitespace-nowrap font-mono`}>{when(u.last_seen)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </details>
   );
 }
 

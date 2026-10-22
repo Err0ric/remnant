@@ -23,8 +23,19 @@ from app.meta.db import MetaDB
 
 CATALOG_FILE = Path(__file__).resolve().parents[1] / "content" / "ai" / "services.yaml"
 Kind = Literal[
-    "chat", "api", "coding", "agent_platform", "mcp_registry", "image", "meetings", "writing"
+    "chat",
+    "api",
+    "coding",
+    "agent_platform",
+    "mcp_registry",
+    "image",
+    "meetings",
+    "writing",
+    "non_usage",
 ]
+# Vendor hosts that other sites load (ad and measurement tags, shared CDNs): matched so
+# they win over the vendor's broader domain, then shown apart and never counted as use.
+NON_USAGE: Kind = "non_usage"
 Status = Literal["approved", "not_approved", "unreviewed"]
 DataLevel = Literal["public", "internal", "confidential"]
 DOMAIN = re.compile(r"^(?=.{3,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")

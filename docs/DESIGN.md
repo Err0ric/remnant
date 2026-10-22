@@ -169,8 +169,8 @@ A focused, saved page about one entity. Reached from an expanded row's **Investi
 
 ### 6.3 Overview, Dashboards, Ask, Settings
 
-- **Overview** (the landing page, ADR-0008) uses the Dashboard card grammar: a full-width Event volume card (sources busiest first, total per source, 24 hourly bars on one shared scale), then Ingest health, Detections (Sigma level badge or Flagged), Paused schedules (reason in `--warn`), and, for admins, Alert delivery (Failing badge in critical tint). Each card has a plain empty state. The product mark in the top bar links here.
-- **Dashboards** use the Investigation card grammar (cards, KPIs, simple bars) for scheduled-search panels (SPEC 5.5).
+- **Overview** (the landing page when the viewer has no Dashboard panel; ADR-0008, ADR-0031) uses the Dashboard card grammar: a full-width Event volume card (sources busiest first, total per source, 24 hourly bars on one shared scale), then Ingest health, Detections (Sigma level badge or Flagged), Paused schedules (reason in `--warn`), and, for admins, Alert delivery (Failing badge in critical tint). Each card has a plain empty state. The product mark in the top bar links here.
+- **Dashboards** use the Investigation card grammar (cards, KPIs, simple bars) for scheduled-search panels (SPEC 5.5). First in the nav and the landing page when the viewer has a panel (ADR-0031); a one-line Health strip from Overview sits above the panels. Panels are a third, a half, or full width; a label-and-count result can show as bars (D82).
 - **Ask** is a tab of Search (6.1), not a page of its own; `/ask` opens Search on that tab.
 - **Audit log** has Activity and AI calls tabs over a dense table, filters in one row, rows that expand to show detail as text, Load older entries at the foot, and Export CSV as the primary command.
 - **Settings** pages (Users and access, Sources, AI providers) are list + detail forms with labels above inputs, help text below, and a sticky save bar.

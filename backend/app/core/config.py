@@ -55,9 +55,18 @@ class ServerConfig(_Strict):
     # Optional label shown in the top bar, for example "Production" or "Lab", so people can
     # tell installs apart. Shown before sign-in too, so keep it free of anything sensitive.
     environment_label: str | None = Field(default=None, max_length=24, pattern=r"^[\w .()-]+$")
-    # Address-space cap for the server process in MB, so an oversized query fails instead
-    # of the process being killed (D58). 0: 75% of the machine's or container's memory.
+    # Memory budget for the server in MB; query memory is sized from it (D58, D80).
+    # 0: 75% of the machine's or container's memory. Enforce the process limit with the
+    # service manager (systemd MemoryMax=, Docker mem_limit), not here.
     memory_limit_mb: int = Field(default=0, ge=0, le=1_048_576)
+    # Opt-in: also cap the process's address space at the budget plus room for thread
+    # stacks (the D58 behavior). Off by default: address space counts reservations, not
+    # use, so a cap can stop a thread from starting while memory is free (D80).
+    address_space_cap: bool = False
+    # DuckDB threads per query. 0: the usable CPUs, at most 4 (D79).
+    query_threads: int = Field(default=0, ge=0, le=64)
+    # Queries running at once; more wait for a slot, then get "busy". 0: 4 (D79).
+    max_concurrent_queries: int = Field(default=0, ge=0, le=64)
     # Reverse proxies whose X-Forwarded-For is believed (ADR-0027): IPs and CIDRs. Empty:
     # the header is ignored. For an HA pair, list the node addresses, not only the VIP.
     trusted_proxies: list[str] = Field(default_factory=list, max_length=64)

@@ -43,12 +43,12 @@ export function TopBar({
         </button>
       ) : null}
       <a
-        href="/overview"
-        aria-label={`${PRODUCT_NAME} overview`}
+        href="/"
+        aria-label={`${PRODUCT_NAME} home`}
         className="flex items-center gap-2 text-md text-white no-underline"
         onClick={(e) => {
           e.preventDefault();
-          navigate("overview");
+          navigate("home");
         }}
       >
         <svg

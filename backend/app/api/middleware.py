@@ -49,12 +49,35 @@ class SecurityMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         nonce = secrets.token_urlsafe(16)
         request.state.csp_nonce = nonce
+        # A short id per request, in the response header and every log line, so an error a
+        # person reports can be found in the server log.
+        request_id = secrets.token_hex(6)
+        request.state.request_id = request_id
+        structlog.contextvars.bind_contextvars(request_id=request_id)
         started = time.perf_counter()
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        except RuntimeError as exc:
+            if "can't start new thread" not in str(exc):
+                raise
+            # Out of worker threads (process or container limit): busy, not broken.
+            log.error("http.no_thread", path=request.url.path, request_id=request_id)
+            response = JSONResponse(
+                status_code=503,
+                content={
+                    "detail": f"The server is busy; try again in a moment (request {request_id})",
+                    "code": "busy",
+                    "request_id": request_id,
+                },
+                headers={"Retry-After": "5"},
+            )
+        finally:
+            structlog.contextvars.unbind_contextvars("request_id")
 
         headers = response.headers
         headers["Content-Security-Policy"] = content_security_policy(nonce)
         headers["X-Content-Type-Options"] = "nosniff"
+        headers["X-Request-ID"] = request_id
         headers["X-Frame-Options"] = "DENY"
         headers["Referrer-Policy"] = "no-referrer"
         headers["Cross-Origin-Opener-Policy"] = "same-origin"
@@ -75,6 +98,7 @@ class SecurityMiddleware(BaseHTTPMiddleware):
             client=request.client.host if request.client else None,
             # The TCP peer when a trusted proxy supplied the client address (ADR-0027).
             peer=request.scope.get(PEER_KEY),
+            request_id=request_id,
         )
         return response
 

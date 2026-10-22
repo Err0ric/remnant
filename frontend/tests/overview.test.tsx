@@ -26,8 +26,8 @@ async function renderAt(
 afterEach(() => vi.restoreAllMocks());
 
 describe("Overview", () => {
-  it("is the landing page and shows volume, ingest health, detections, and pauses", async () => {
-    await renderAt("/");
+  it("shows volume, ingest health, detections, and pauses", async () => {
+    await renderAt("/overview");
     expect(await screen.findByRole("heading", { name: "Overview", level: 1 })).toBeVisible();
     const volume = await screen.findByRole("region", { name: "Event volume" });
     expect(within(volume).getByText("88 events · last 24 hours")).toBeVisible();
@@ -87,10 +87,11 @@ describe("Overview", () => {
     expect(screen.queryByRole("region", { name: "Alert delivery" })).toBeNull();
   });
 
-  it("goes home from the product mark", async () => {
+  it("goes home from the product mark: the Dashboard when there are panels", async () => {
     await renderAt("/schedules");
-    await userEvent.click(await screen.findByRole("link", { name: "Codename overview" }));
-    expect(await screen.findByRole("heading", { name: "Overview", level: 1 })).toBeVisible();
+    await userEvent.click(await screen.findByRole("link", { name: "Codename home" }));
+    expect(await screen.findByRole("heading", { name: "Dashboard", level: 1 })).toBeVisible();
+    expect(window.location.pathname).toBe("/dashboard");
   });
 
   it("keeps the setup checklist in Settings, not on the Overview", async () => {
@@ -128,5 +129,43 @@ describe("Overview", () => {
     await renderAt("/setup", { mode: "login", signedIn: true, role: "analyst" });
     await screen.findByRole("heading", { level: 1 });
     expect(screen.queryByRole("region", { name: "Required steps" })).toBeNull();
+  });
+});
+
+function noSchedules(spy: ReturnType<typeof mockApi>) {
+  const real = spy.getMockImplementation();
+  spy.mockImplementation((url, init) =>
+    String(url).endsWith("/api/schedules") && (init?.method ?? "GET") === "GET"
+      ? Promise.resolve(new Response("[]", { headers: { "Content-Type": "application/json" } }))
+      : (real as typeof fetch)(url, init),
+  );
+}
+
+describe("Landing page (ADR-0031)", () => {
+  it("opens the Dashboard first when there is a panel, with health on the first screen", async () => {
+    await renderAt("/");
+    expect(await screen.findByRole("heading", { name: "Dashboard", level: 1 })).toBeVisible();
+    expect(window.location.pathname).toBe("/dashboard");
+    const health = await screen.findByRole("region", { name: "Health" });
+    expect(health).toHaveTextContent("1 source with errors");
+    expect(health).toHaveTextContent("1 quiet source");
+    await userEvent.click(within(health).getByRole("button", { name: "Open Overview" }));
+    expect(await screen.findByRole("heading", { name: "Overview", level: 1 })).toBeVisible();
+  });
+
+  it("opens the Overview when there are no panels", async () => {
+    await renderAt("/", undefined, noSchedules);
+    expect(await screen.findByRole("heading", { name: "Overview", level: 1 })).toBeVisible();
+    expect(window.location.pathname).toBe("/overview");
+  });
+
+  it("lists Dashboard first in the nav, once", async () => {
+    await renderAt("/overview");
+    const nav = await screen.findByRole("navigation", { name: "Primary" });
+    const links = within(nav)
+      .getAllByRole("link")
+      .map((a) => a.textContent);
+    expect(links[0]).toBe("Dashboard");
+    expect(links.filter((t) => t === "Dashboard")).toHaveLength(1);
   });
 });

@@ -51,6 +51,15 @@ describe("AI usage (ADR-0015)", () => {
     expect(within(gone).getByText("Last seen 2026-10-01 09:00 UTC")).toBeVisible();
   });
 
+  it("shows vendor ad tags apart and never as a service in use", async () => {
+    await openAi();
+    const table = await screen.findByRole("region", { name: "AI services seen in network logs" });
+    expect(within(table).queryByText("OpenAI ad and measurement tags")).toBeNull();
+    const apart = screen.getByRole("group", { name: "Not counted as AI use" });
+    expect(within(apart).getByText("1 host group, 900 events")).toBeInTheDocument();
+    expect(within(apart).getByText("bzr.openai.com, bzrcdn.openai.com")).toBeInTheDocument();
+  });
+
   it("lists agents with what changed and sets a service's allowed data", async () => {
     const spy = await openAi();
     const table = await screen.findByRole("region", { name: "AI services seen in network logs" });

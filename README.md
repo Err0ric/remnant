@@ -196,6 +196,7 @@ Database changes apply at start and only ever add to what is there. Take a backu
 | [docs/SPEC.md](docs/SPEC.md) | Architecture, schemas, threat model, roadmap, decisions |
 | [docs/DESIGN.md](docs/DESIGN.md) | UI tokens, typography, component patterns |
 | [docs/api.md](docs/api.md) | API reference: every endpoint, tokens, errors, a curl example |
+| [docs/searching.md](docs/searching.md) | Writing searches that keep working when a parser changes |
 | [docs/adr/](docs/adr/) | One file per design decision |
 | [CLAUDE.md](CLAUDE.md) | Build rules, conventions, tests, definition of done |
 | [SECURITY.md](SECURITY.md) | Reporting a vulnerability |

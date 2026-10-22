@@ -3,7 +3,10 @@ server:
   host: 127.0.0.1      # anything other than loopback requires auth below
   port: 8080
   # environment_label: Lab   # optional top bar label to tell installs apart; shown before sign-in
-  # memory_limit_mb: 0       # address-space cap; 0 = 75% of the machine or container memory
+  # memory_limit_mb: 0       # memory budget queries are sized from; 0 = 75% of memory
+  # address_space_cap: false  # opt-in RLIMIT_AS at the budget; enforce memory with systemd or Docker instead
+  # query_threads: 0          # DuckDB threads per query; 0 = usable CPUs, at most 4
+  # max_concurrent_queries: 0 # queries at once, others wait then get "busy"; 0 = 4
 
 auth:
   # Set one of these to bind beyond localhost. Prefer env vars over YAML for secrets.

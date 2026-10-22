@@ -489,3 +489,35 @@ def test_gate_scope_for_an_analyst_is_only_granted_sources(lab: dict[str, Any]) 
     assert len(rows) == 2
     assert {r["sources_in_scope"] for r in rows} == {'["fw_edge"]'}
     assert "hr_payroll" not in json.dumps([[m.content for m in s] for s in lab["script"].seen])
+
+
+@pytest.mark.parametrize(
+    ("preview", "narrowed"),
+    [
+        ("SELECT source_id FROM events WHERE source_id = 'fw_edge'", True),
+        ("SELECT source_id FROM events WHERE source_id = 'fw_edge' OR 1=1", False),
+        ("SELECT source_id FROM events WHERE source_id IN (SELECT source_id FROM events)", False),
+    ],
+)
+def test_preview_declares_exactly_what_its_view_read_and_the_gate_covers_it(
+    lab: dict[str, Any], preview: str, narrowed: bool
+) -> None:
+    """Scope narrowing (trial finding): the view and the declared sources share one scope,
+    and the gate's sources_in_scope is never narrower than any view behind the request."""
+    lab["script"].replies = [tool("preview_query", {"sql": preview}), answer(SQL)]
+    admin = TestClient(lab["app"], base_url=BASE)
+    token = admin.post(
+        "/api/auth/login", json={"username": "admin", "password": ADMIN_PW, "client": "cli"}
+    ).json()["token"]
+    admin.headers["Authorization"] = f"Bearer {token}"
+    assert ask(admin).status_code == 200
+    result = lab["script"].seen[1][-1]
+    declared = set(result.data_sources)
+    in_rows = {r[0] for r in data_of(result)["rows"]}
+    assert in_rows <= declared  # every row's source is declared
+    if narrowed:
+        assert declared == {"fw_edge"}
+    else:
+        assert len(declared) > 1  # unsure: the full permitted scope, not a guess
+    for row in llm_rows(lab):
+        assert declared <= set(json.loads(row["sources_in_scope"]))

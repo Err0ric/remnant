@@ -59,6 +59,53 @@ describe("Dashboard", () => {
   });
 });
 
+describe("Dashboard panels (trial finding)", () => {
+  it("lets the owner set width and switch a summary result to bars", async () => {
+    const spy = await renderAt("/dashboard");
+    const panel = await screen.findByRole("region", { name: "Failed SSH daily" });
+    const width = within(panel).getByRole("group", { name: "Width of Failed SSH daily" });
+    expect(within(width).getByRole("button", { name: "1/3" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await userEvent.click(within(width).getByRole("button", { name: "Full" }));
+    const view = await within(panel).findByRole("group", { name: "View of Failed SSH daily" });
+    await userEvent.click(within(view).getByRole("button", { name: "Bars" }));
+    await vi.waitFor(() =>
+      expect(sent(spy, "PATCH", (u) => u.endsWith("/api/schedules/s1"))).toEqual([
+        { panel_width: "full" },
+        { panel_view: "bars" },
+      ]),
+    );
+    const bars = await within(panel).findByRole("list", { name: "Top values of Failed SSH daily" });
+    expect(within(bars).getByRole("button", { name: "203.0.113.9: 9 failures" })).toBeVisible();
+    expect(within(panel).queryByRole("table")).toBeNull();
+  });
+
+  it("opens the full result from a whole row, and others cannot change the layout", async () => {
+    await renderAt("/dashboard");
+    const panel = await screen.findByRole("region", { name: "Failed SSH daily" });
+    const table = await within(panel).findByRole("table", { name: "Top rows of Failed SSH daily" });
+    expect(within(table).getByText("203.0.113.9")).toHaveAttribute("title", "203.0.113.9");
+    await userEvent.click(within(table).getByRole("button", { name: "Open row 1 in Search" }));
+    await vi.waitFor(() => expect(window.location.pathname).toBe("/search"));
+  });
+
+  it("says when a source's parser changed before a run (F36)", async () => {
+    await renderAt("/dashboard");
+    const panel = await screen.findByRole("region", { name: "Failed SSH daily" });
+    expect(within(panel).getByRole("note")).toHaveTextContent(
+      "Parser changed for lin_auth at 2026-10-11 03:00 UTC (generic_syslog to linux_sshd)",
+    );
+  });
+
+  it("shows no layout controls on a panel someone else owns", async () => {
+    await renderAt("/dashboard");
+    const other = await screen.findByRole("region", { name: "Windows failures" });
+    expect(within(other).queryByRole("group", { name: /Width of/ })).toBeNull();
+  });
+});
+
 describe("Schedules", () => {
   it("creates a schedule from a preset with a threshold", async () => {
     const spy = await renderAt("/schedules");

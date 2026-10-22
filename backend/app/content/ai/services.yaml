@@ -2,7 +2,10 @@
 # one of its domains or ends with "." plus the domain; the longest matching domain wins, so
 # api.openai.com is "OpenAI API", not ChatGPT. Admins add their own entries and mark any
 # service Approved or Not approved in the app; everything starts Unreviewed.
-# kind: chat | api | coding | agent_platform | mcp_registry | image | meetings | writing
+# kind: chat | api | coding | agent_platform | mcp_registry | image | meetings | writing |
+#   non_usage (vendor hosts that other websites load, such as ad and measurement tags: they
+#   win over the vendor's broader domain by being longer, are shown apart, and never count
+#   as AI use, alerts, or flow)
 - {id: chatgpt, name: ChatGPT, vendor: OpenAI, kind: chat, domains: [chatgpt.com, chat.openai.com, oaiusercontent.com, openai.com]}
 - {id: openai_api, name: OpenAI API, vendor: OpenAI, kind: api, domains: [api.openai.com]}
 - {id: claude, name: Claude, vendor: Anthropic, kind: chat, domains: [claude.ai, claude.com]}
@@ -39,3 +42,4 @@
 - {id: otter, name: Otter.ai, vendor: Otter.ai, kind: meetings, domains: [otter.ai]}
 - {id: fireflies, name: Fireflies.ai, vendor: Fireflies.ai, kind: meetings, domains: [fireflies.ai]}
 - {id: deepl, name: DeepL, vendor: DeepL, kind: writing, domains: [deepl.com]}
+- {id: openai_ad_tags, name: OpenAI ad and measurement tags, vendor: OpenAI, kind: non_usage, domains: [bzr.openai.com, bzrcdn.openai.com]}

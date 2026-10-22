@@ -21,6 +21,9 @@ DNS = [
     ("10.20.1.7", "chat.deepseek.com."),
     ("10.20.1.7", "www.example.com"),
     ("10.20.1.8", "notchatgpt.com"),
+    # An OpenAI ad tag loaded by some other website: not ChatGPT use (trial finding).
+    ("10.20.1.9", "bzr.openai.com"),
+    ("10.20.1.9", "bzrcdn.openai.com"),
 ]
 
 
@@ -131,6 +134,14 @@ def test_services_from_dns_longest_domain_wins(lab: dict[str, Any]) -> None:
     assert got["chatgpt"]["service"]["status"] == "unreviewed"
 
 
+def test_vendor_tags_on_other_sites_are_shown_apart_not_counted(lab: dict[str, Any]) -> None:
+    body = usage(lab["admin"])
+    assert "openai_ad_tags" not in {u["service"]["id"] for u in body["services"]}
+    (tags,) = body["non_usage"]
+    assert tags["service"]["id"] == "openai_ad_tags" and tags["service"]["kind"] == "non_usage"
+    assert tags["events"] == 2 and tags["machines"] == 1
+
+
 def test_mcp_and_people(lab: dict[str, Any]) -> None:
     body = usage(lab["admin"])
     mcp = {m["name"]: m for m in body["mcp"]}
@@ -216,6 +227,7 @@ def test_watch_alerts_once_per_first_sighting_and_on_sensitive_data(lab: dict[st
         }
     items = " ".join(rows["ai.sighting"]["items"])
     assert "ChatGPT by 10.20.1.5" in items and "MCP paste-share by alice@example.com" in items
+    assert "10.20.1.9" not in items  # the ad tag host is not a sighting
     assert rows["ai.sensitive"]["items"] == ["alice@example.com: aws_access_key x1"]
     assert "AKIA" not in json.dumps(rows)
     assert lab["ana"].get("/api/ai/watch").status_code == 403

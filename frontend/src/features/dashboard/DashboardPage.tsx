@@ -1,11 +1,19 @@
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "@/components/shell/PageHeader";
-import { ApiError, api } from "@/lib/api";
+import { ApiError, api, type User } from "@/lib/api";
 import { navigate } from "@/lib/route";
+import { HealthStrip } from "./HealthStrip";
+import { SPAN, type PanelWidth } from "./panelShape";
 import { SchedulePanel } from "./SchedulePanel";
 
-/** A panel per schedule you own or that is shared with you (SPEC 5.5). */
-export function DashboardPage() {
+interface DashboardPageProps {
+  me?: User | null;
+}
+
+/** A panel per schedule you own or that is shared with you (SPEC 5.5). Each panel is a
+ * third, half, or full width, set by its owner. */
+export function DashboardPage({ me = null }: DashboardPageProps) {
+  const isAdmin = !me || me.role === "admin";
   const schedules = useQuery({
     queryKey: ["schedules"],
     queryFn: api.schedules,
@@ -16,11 +24,12 @@ export function DashboardPage() {
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       <PageHeader
-        crumbs={["Home", "Detect", "Dashboard"]}
+        crumbs={["Home", "Dashboard"]}
         title="Dashboard"
         meta={`${list.length} ${list.length === 1 ? "panel" : "panels"}${flagged ? ` · ${flagged} flagged` : ""}`}
       />
       <div className="flex flex-col gap-3 px-5 py-3">
+        <HealthStrip />
         {schedules.error ? (
           <p role="alert" className="text-sm text-danger">
             {schedules.error instanceof ApiError ? schedules.error.message : "Could not load"}
@@ -41,9 +50,14 @@ export function DashboardPage() {
             </button>
           </div>
         ) : null}
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,360px),1fr))] gap-3">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-6">
           {list.map((s) => (
-            <SchedulePanel key={s.schedule_id} schedule={s} />
+            <div
+              key={s.schedule_id}
+              className={`min-w-0 ${SPAN[(s.panel_width ?? "third") as PanelWidth]}`}
+            >
+              <SchedulePanel schedule={s} canManage={s.mine || isAdmin} />
+            </div>
           ))}
         </div>
       </div>

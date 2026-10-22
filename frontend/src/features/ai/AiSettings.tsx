@@ -300,9 +300,10 @@ function CatalogList() {
             "image",
             "meetings",
             "writing",
+            "non_usage",
           ].map((k) => (
             <option key={k} value={k}>
-              {k.replace("_", " ")}
+              {k === "non_usage" ? "not AI use (ad or measurement tag)" : k.replace("_", " ")}
             </option>
           ))}
         </select>

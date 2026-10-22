@@ -37,6 +37,9 @@ services:
       APP__NETWORK__PROXY_USERNAME: ${PROXY_USERNAME:-}
       APP__NETWORK__PROXY_PASSWORD: ${PROXY_PASSWORD:-}
       APP__NETWORK__CA_BUNDLE: ${PROXY_CA_BUNDLE:-}
+    # Memory limit for the container (D80): set it in .env to fit the machine, for
+    # example APP_MEM_LIMIT=3g. Unset: no container limit.
+    mem_limit: ${APP_MEM_LIMIT:-0}
     ports:
       - "${APP_BIND:-127.0.0.1}:${APP_PORT:-8080}:8080"
       # Syslog listener sources (docs/install/syslog-listener.md): publish the ports your

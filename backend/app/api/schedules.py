@@ -18,7 +18,14 @@ from app.auth.users import User
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError
 from app.engine.views import permitted_sources
 from app.meta.db import MetaDB
-from app.search.schedules import Schedule, ScheduleRun, ScheduleService, ThresholdKind
+from app.search.schedules import (
+    PanelView,
+    PanelWidth,
+    Schedule,
+    ScheduleRun,
+    ScheduleService,
+    ThresholdKind,
+)
 
 router = APIRouter(tags=["schedules"])
 Author = Annotated[User, Depends(require_role("admin", "analyst"))]
@@ -48,6 +55,8 @@ class ScheduleUpdate(BaseModel):
     threshold_value: float | None = Field(default=None, ge=0, le=1e12)
     paused: bool | None = None
     target_ids: list[str] | None = Field(default=None, max_length=10)  # replaces the list
+    panel_width: PanelWidth | None = None
+    panel_view: PanelView | None = None
 
 
 class RunOut(BaseModel):
@@ -64,6 +73,8 @@ class RunOut(BaseModel):
     flag_reason: str | None
     error: str | None
     rule_run_id: str | None
+    # A drop to zero right after a source this run read changed parser (F36).
+    parser_change: str | None = None
 
 
 class RunDetail(RunOut):
@@ -92,6 +103,8 @@ class ScheduleOut(BaseModel):
     created_at: str
     recent: list[RunOut]  # newest first, up to 30: last run and sparkline
     target_ids: list[str]
+    panel_width: str
+    panel_view: str
 
 
 def _svc(request: Request) -> ScheduleService:
@@ -120,6 +133,7 @@ def _run_out(r: ScheduleRun, can_read: Any, detail: bool = False) -> RunOut:
         "flag_reason": None if restricted else r.flag_reason,
         "error": None if restricted else r.error,
         "rule_run_id": None if restricted else r.rule_run_id,
+        "parser_change": None if restricted else r.parser_change,
     }
     if not detail:
         return RunOut(**base)
@@ -154,6 +168,8 @@ def _out(
         created_at=s.created_at,
         recent=[_run_out(r, can_read) for r in runs],
         target_ids=targets,
+        panel_width=s.panel_width,
+        panel_view=s.panel_view,
     )
 
 

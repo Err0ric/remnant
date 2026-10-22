@@ -17,7 +17,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.ai.agents import agents
-from app.ai.catalog import Catalog
+from app.ai.catalog import NON_USAGE, Catalog
 from app.ai.usage import HOST_EXPR, MACHINE_EXPR, MCP_EXPR, NO_MCP_NAMES, WHO_EXPR, _values
 from app.alerts.dispatch import AlertDispatcher
 from app.alerts.render import Alert
@@ -160,6 +160,8 @@ class AiWatch:
                 continue
             if kind == "service":
                 svc = services.get(str(name))
+                if svc is not None and svc.kind == NON_USAGE:
+                    continue  # a vendor tag on another site is not AI use
                 status = svc.status if svc else "unreviewed"
                 label = svc.name if svc else str(name)
             else:

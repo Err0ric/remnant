@@ -35,6 +35,8 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: "General",
     items: [
+      // First, and the landing page when the viewer has a panel (ADR-0031).
+      { id: "dashboard", label: "Dashboard", ready: true, page: "dashboard" },
       { id: "overview", label: "Overview", ready: true, page: "overview" },
       {
         id: "health",
@@ -90,7 +92,6 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { id: "rules", label: "Detection rules", ready: true, page: "rules" },
       { id: "schedules", label: "Schedules", ready: true, page: "schedules" },
-      { id: "dashboard", label: "Dashboard", ready: true, page: "dashboard" },
     ],
   },
 ];

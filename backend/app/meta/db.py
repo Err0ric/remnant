@@ -764,6 +764,17 @@ MIGRATIONS: tuple[Migration, ...] = (
     ALTER TABLE llm_calls ADD COLUMN queue_wait_ms INTEGER;
     ALTER TABLE llm_calls ADD COLUMN busy_retries INTEGER;
     """,
+    # 43: how a schedule's Dashboard panel is shown (trial finding): width and table or bars.
+    """
+    ALTER TABLE schedules ADD COLUMN panel_width TEXT NOT NULL DEFAULT 'third'
+        CHECK (panel_width IN ('third', 'half', 'full'));
+    ALTER TABLE schedules ADD COLUMN panel_view TEXT NOT NULL DEFAULT 'table'
+        CHECK (panel_view IN ('table', 'bars'));
+    """,
+    # 44: a run that dropped to zero right after a source's parser changed says so (F36).
+    """
+    ALTER TABLE schedule_runs ADD COLUMN parser_change TEXT;
+    """,
 )
 
 

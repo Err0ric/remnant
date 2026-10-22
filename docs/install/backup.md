@@ -48,9 +48,11 @@ docker compose exec app sh -c 'rm -rf /srv/data/.before-restore-*'
 
 ```bash
 sudo install -d -m 0700 -o remnant -g remnant /var/backups/remnant
-sudo -u remnant env $(grep -v '^#' /etc/remnant/remnant.env | xargs) \
-  /opt/remnant/backend/.venv/bin/app-admin backup -o /var/backups/remnant/backup-$(date +%F).tar.gz
+sudo -u remnant sh -c 'set -a; . /etc/remnant/remnant.env; set +a; exec /opt/remnant/backend/.venv/bin/app-admin "$@"' app-admin \
+  backup -o /var/backups/remnant/backup-$(date +%F).tar.gz
 ```
+
+The settings file is read by the `remnant` user, which may read it (mode 0640, group `remnant`). Reading it before `sudo` (for example `env $(grep ... remnant.env)`) runs as you, fails on the permissions, and the command then starts with no settings, silently.
 
 Restore: `systemctl stop remnant`, run the same command with `restore --replace <file>` instead of `backup -o <file>`, then `systemctl start remnant`.
 

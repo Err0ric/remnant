@@ -259,7 +259,12 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       created_at: "2026-10-10T00:00:00+00:00",
       target_ids: ["t1"],
       recent: [
-        runSummary("sr2", 12, { flagged: true, flag_reason: "12 is above 10" }),
+        runSummary("sr2", 12, {
+          flagged: true,
+          flag_reason: "12 is above 10",
+          parser_change:
+            "Parser changed for lin_auth at 2026-10-11 03:00 UTC (generic_syslog to linux_sshd). Searches on message may no longer match: use raw or parsed fields.",
+        }),
         runSummary("sr1", 3),
       ],
     },
@@ -779,6 +784,22 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
             last_seen: "2026-10-10T11:30:00+00:00",
             top_people: [],
             top_machines: ["10.20.1.5"],
+          },
+        ],
+        non_usage: [
+          {
+            service: {
+              ...svc("openai_ad_tags", "OpenAI ad and measurement tags", "unreviewed"),
+              kind: "non_usage",
+              domains: ["bzr.openai.com", "bzrcdn.openai.com"],
+            },
+            events: 900,
+            people: 0,
+            machines: 30,
+            first_seen: null,
+            last_seen: "2026-10-10T11:45:00+00:00",
+            top_people: [],
+            top_machines: [],
           },
         ],
         mcp: [

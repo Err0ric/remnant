@@ -13,8 +13,8 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from app.ai.agents import agents
-from app.ai.catalog import Catalog, DataLevel, Service, ServiceDef
-from app.ai.usage import Usage
+from app.ai.catalog import NON_USAGE, Catalog, DataLevel, Service, ServiceDef
+from app.ai.usage import ServiceUse, Usage
 from app.ai.watch import AiWatch
 from app.api.access import AdminUser, CurrentUser, client_ip
 from app.auth.service import AuthService
@@ -85,6 +85,8 @@ class GoneOut(BaseModel):
 
 class UsageOut(BaseModel):
     services: list[ServiceUseOut]
+    # Vendor hosts other sites load (ad and measurement tags): shown apart, not AI use.
+    non_usage: list[ServiceUseOut] = []
     mcp: list[McpUseOut]
     people: list[PersonOut]
     sources_in_scope: list[str]
@@ -136,7 +138,9 @@ async def ai_usage(
     period of the same length before it. Audited ai.view."""
     usage: Usage = request.app.state.ai_usage
     scope = await _scope(request, user, start, end)
-    services, sources = await run_in_threadpool(usage.services, scope)
+    found, sources = await run_in_threadpool(usage.all_services, scope)
+    services = [u for u in found if u.service.kind != NON_USAGE]
+    other = [u for u in found if u.service.kind == NON_USAGE]
     ident = await run_in_threadpool(request.app.state.identities.load)
     mcp = await run_in_threadpool(usage.mcp, scope, ident)
     changes, compared_from = None, None
@@ -161,19 +165,8 @@ async def ai_usage(
         {"sources_in_scope": sources},
     )
     return UsageOut(
-        services=[
-            ServiceUseOut(
-                service=_service_out(u.service),
-                events=u.events,
-                people=u.people,
-                machines=u.machines,
-                first_seen=u.first_seen,
-                last_seen=u.last_seen,
-                top_people=u.top_people,
-                top_machines=u.top_machines,
-            )
-            for u in services
-        ],
+        services=[_use_out(u) for u in services],
+        non_usage=[_use_out(u) for u in other],
         mcp=[McpUseOut(**_slots(m)) for m in mcp],
         people=[PersonOut(**_slots(p)) for p in people],
         sources_in_scope=sources,
@@ -181,6 +174,19 @@ async def ai_usage(
         new_services=changes.new_services if changes else [],
         new_mcp=changes.new_mcp if changes else [],
         gone=[GoneOut(**_slots(g)) for g in changes.gone] if changes else [],
+    )
+
+
+def _use_out(u: ServiceUse) -> ServiceUseOut:
+    return ServiceUseOut(
+        service=_service_out(u.service),
+        events=u.events,
+        people=u.people,
+        machines=u.machines,
+        first_seen=u.first_seen,
+        last_seen=u.last_seen,
+        top_people=u.top_people,
+        top_machines=u.top_machines,
     )
 
 

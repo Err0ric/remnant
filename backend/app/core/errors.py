@@ -19,6 +19,12 @@ class QueryFailedError(AppError):
     """The query was allowed but failed while running (bad column, type error)."""
 
 
+class QueryBusyError(AppError):
+    """Too many queries already running; this one waited and got no slot (D79)."""
+
+    retry_after_s = 5
+
+
 class QueryTimeoutError(AppError):
     """The query ran longer than the configured timeout and was interrupted."""
 
