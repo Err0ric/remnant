@@ -140,9 +140,25 @@ Today most empty states explain; some link. Proposal: every empty state names wh
 | Templates, new parser | YAML | Draft from sample exists; add "Draft from these lines" on generic rows in Search | none |
 | Health, quiet sources | Typing a source's normal volume | Learned from history (already, ADR-0014) | done |
 
+## (f) Search has a way back (built, D90, quick win)
+
+From real use: after a run there was no reset, no new search, and Back left the page instead of stepping through earlier searches.
+
+| Item | What it does |
+|---|---|
+| New search | First in the command bar. Closes the open saved search, clears both editors, resets the time range (last 24 hours) and the tab (Simple). Asks first when the editors hold edits that were neither saved nor run. |
+| Back and Forward | Each run updates the address: the tab and query, or the open saved search id and its parameter values, plus the time range. Back returns to the previous search and runs it. The address can be bookmarked or shared; it only shows what the reader's own source access allows, because the server scopes every run. |
+| Recent searches | The last 10 runs, at the top of Open, with Clear recent. Kept in this browser only. |
+| State label | "Unsaved search" or "Open: name", plus "edited, not saved" when the editor differs from the open search. |
+
+Notes:
+
+- The query text is in the address, so it lands in browser history. Queries over 4,000 characters are left out of the address (the tab and range are still recorded).
+- Recent searches live in this browser's storage, not on the server; they do not follow a user to another machine.
+
 ## Order
 
-1. (c) Add to dashboard (built tonight, small).
+1. (c) Add to dashboard (built tonight, small). (f) Search history (built, quick win).
 2. (d) Empty-state actions (no ADR; one PR per few pages).
 3. (e) the no-dependency rows: parser mix on Sources, Top N by on column headers, Sign-ins preset, threshold suggestion.
 4. (b) Context panel without "Held by"; then with it after ADR-0029.

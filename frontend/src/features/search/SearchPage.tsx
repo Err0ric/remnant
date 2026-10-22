@@ -14,6 +14,7 @@ import { openSavedSearch } from "@/lib/savedSeed";
 import { navigate } from "@/lib/route";
 import { seedSchedule } from "@/lib/scheduleSeed";
 import { RUN_SEARCH_EVENT, takeSearchSeed } from "@/lib/searchSeed";
+import { goToSearch, readSearchUrl, recordSearch, type SearchUrlState } from "@/lib/searchUrl";
 import {
   addTerm,
   filterTerm,
@@ -69,8 +70,12 @@ export function SearchPage({
   // A handoff from another page (rule matches) opens on the SQL tab over all time.
   const [seed] = useState(takeSearchSeed);
   const sqlSeed = seed?.sql !== undefined;
+  // Back, Forward, a bookmark, or a shared link (D90): the address says what to show.
+  const [urlState] = useState(() => (seed ? null : readSearchUrl()));
   // Two tabs (ADR-0016 row 1): Search, with the AI switch choosing Simple or Ask, and SQL.
-  const [initial] = useState<SearchTab>(() => (sqlSeed ? "sql" : (initialTab ?? storedTab())));
+  const [initial] = useState<SearchTab>(() =>
+    sqlSeed ? "sql" : urlState ? urlState.tab : (initialTab ?? storedTab()),
+  );
   const [area, setArea] = useState<SearchArea>(initial === "sql" ? "sql" : "search");
   const [mode, setMode] = useState<"simple" | "ask">(initial === "ask" ? "ask" : "simple");
   const searchMode = mode === "ask" && !canAsk ? "simple" : mode;
@@ -89,12 +94,16 @@ export function SearchPage({
     queryFn: api.searchPresets,
     staleTime: Infinity,
   });
-  const [text, setText] = useState("");
+  const [text, setText] = useState(urlState?.tab === "simple" ? (urlState.q ?? "") : "");
   // The last compiled Simple search and the text it came from (saved as the origin).
   const [compiled, setCompiled] = useState<(CompiledSearch & { text: string }) | null>(null);
-  const [sql, setSql] = useState(seed?.sql ?? DEFAULT_SQL);
+  const [sql, setSql] = useState(
+    seed?.sql ?? (urlState?.tab === "sql" && urlState.q ? urlState.q : DEFAULT_SQL),
+  );
   const [askAnswer, setAskAnswer] = useState<{ sql: string; question: string } | null>(null);
-  const [range, setRange] = useState<TimeRangeId>(seed?.range ?? (sqlSeed ? "all" : "24h"));
+  const [range, setRange] = useState<TimeRangeId>(
+    seed?.range ?? urlState?.range ?? (sqlSeed ? "all" : "24h"),
+  );
   const [sources, setSources] = useState<string[]>(seed?.sources ?? []);
   const [lastRun, setLastRun] = useState<Date | null>(null);
   const [saving, setSaving] = useState(false);
@@ -109,6 +118,11 @@ export function SearchPage({
   // {{name}} placeholders. {{start}} and {{end}} come from the time range.
   const [opening, setOpening] = useState(false);
   const [opened, setOpened] = useState<SavedSearch | null>(null);
+  // Mutation callbacks keep the render they were started from; these are always current.
+  const openedNow = useRef<SavedSearch | null>(null);
+  openedNow.current = opened;
+  const rangeNow = useRef(range);
+  rangeNow.current = range;
   const [paramValues, setParamValues] = useState<Record<string, string>>({});
   const schema = useQuery({
     queryKey: ["schema-columns"],
@@ -132,6 +146,7 @@ export function SearchPage({
     },
     onSuccess: (data, vars) => {
       setLastRun(new Date());
+      remember(vars);
       const body = lastRequest.current;
       if (!body) return;
       const scope = { start: body.start, sources: body.sources };
@@ -201,14 +216,15 @@ export function SearchPage({
     );
     run.mutate({ sql: value, params: names.length ? params : undefined });
   };
-  const openSearch = (s: SavedSearch) => {
+  const openSearch = (s: SavedSearch, given: Record<string, string> = {}) => {
     setOpening(false);
     setOpened(s);
+    openedNow.current = s;
     setSaved(null);
     const values = Object.fromEntries(
       s.params.map((p) => [
         p.name,
-        p.default === undefined || p.default === null ? "" : String(p.default),
+        given[p.name] ?? (p.default === undefined || p.default === null ? "" : String(p.default)),
       ]),
     );
     setParamValues(values);
@@ -224,6 +240,42 @@ export function SearchPage({
     // Run now unless a parameter still needs a value.
     if (sqlPlaceholders(s.sql).every((n) => values[n])) runSql(s.sql, values, s.params);
   };
+  // What ran last, for Back and Forward (D90) and for "unsaved edits" before New search.
+  const recorded = useRef(false);
+  const lastRan = useRef<{ sql: string | null; text: string | null }>({ sql: null, text: null });
+  const remember = (vars: Run) => {
+    if (vars.text !== undefined) lastRan.current.text = vars.text;
+    else lastRan.current.sql = vars.sql;
+    const open = openedNow.current;
+    const range = rangeNow.current;
+    const simpleOrigin = open?.origin?.simple_text;
+    let state: SearchUrlState;
+    if (open && (vars.text !== undefined ? vars.text === simpleOrigin : vars.sql === open.sql)) {
+      const params = Object.fromEntries(
+        Object.entries(vars.params ?? {}).map(([k, v]) => [k, String(v)]),
+      );
+      state = { tab: vars.text !== undefined ? "simple" : "sql", saved: open.id, params, range };
+    } else if (vars.text !== undefined) {
+      state = { tab: "simple", q: vars.text, range };
+    } else {
+      state = { tab: "sql", q: vars.sql, range };
+    }
+    recordSearch(state, !recorded.current);
+    recorded.current = true;
+  };
+  const [confirmNew, setConfirmNew] = useState(false);
+  const unsaved =
+    (sql !== DEFAULT_SQL && sql !== lastRan.current.sql && sql !== opened?.sql) ||
+    (text.trim() !== "" && text !== lastRan.current.text);
+  const startNew = () => {
+    storeTab("simple");
+    goToSearch("/search");
+  };
+  const edited = opened
+    ? opened.origin?.simple_text !== undefined
+      ? text !== opened.origin.simple_text
+      : sql !== opened.sql
+    : false;
   const runAsk = (value: string) => {
     setSql(value); // the editor always holds what produced the results
     runSql(value);
@@ -234,27 +286,33 @@ export function SearchPage({
     else if (askAnswer) runAsk(askAnswer.sql);
   };
 
-  // Saved searches > Edit (F37): open that search here, so Save changes updates it.
+  // A saved search to open on arrival: Saved searches > Edit (F37), or an address that
+  // names one (D90). Edit also opens the Save form, so Save changes updates it.
+  const toOpen = seed?.savedId ?? urlState?.saved;
   const editing = useQuery({
     queryKey: ["searches"],
     queryFn: api.searches,
-    enabled: Boolean(seed?.savedId),
+    enabled: Boolean(toOpen),
   });
   const editTaken = useRef(false);
   useEffect(() => {
-    if (editTaken.current || !seed?.savedId || !editing.data) return;
-    const found = editing.data.find((s) => s.id === seed.savedId);
-    if (!found) return;
+    if (editTaken.current || !toOpen || !editing.data) return;
     editTaken.current = true;
-    openSearch(found);
-    setSaving(true);
+    const found = editing.data.find((s) => s.id === toOpen);
+    if (!found) {
+      runSql(sql); // gone, or not shared with this reader: show recent events instead
+      return;
+    }
+    openSearch(found, urlState?.params);
+    if (seed?.savedId) setSaving(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editing.data]);
+  }, [editing.data, editing.isError]);
 
   // Run once on open so the page shows recent events immediately.
   useEffect(() => {
+    if (toOpen) return; // the saved search runs once it is loaded
     if (sqlSeed || tab === "sql") runSql(sql);
-    else simple.mutate({ text: "" });
+    else simple.mutate({ text });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -318,6 +376,11 @@ export function SearchPage({
               disabled={pending || (tab === "ask" && !askAnswer)}
             />
             <Command
+              label="New search"
+              title="Start over: close any open search and clear both editors"
+              onClick={() => (unsaved ? setConfirmNew(true) : startNew())}
+            />
+            <Command
               label="Open"
               title="Open a saved search here"
               onClick={() => setOpening((v) => !v)}
@@ -378,11 +441,40 @@ export function SearchPage({
 
       <div className="flex flex-col gap-2.5 px-5 py-3">
         {opening ? <OpenSearchPanel onOpen={openSearch} onClose={() => setOpening(false)} /> : null}
+        {confirmNew ? (
+          <div
+            role="alertdialog"
+            aria-label="Discard unsaved edits"
+            className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded border border-warn bg-surface px-3 py-2 text-sm"
+          >
+            <span>Your edits are not saved or run. Start a new search anyway?</span>
+            <button
+              type="button"
+              onClick={startNew}
+              className="h-7 rounded border border-border px-2.5 hover:bg-surface-head"
+            >
+              Discard and start new
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirmNew(false)}
+              className="h-7 rounded px-2.5 text-accent-text hover:bg-surface-head"
+            >
+              Keep editing
+            </button>
+          </div>
+        ) : null}
+        {!opened ? (
+          <p className="text-sm text-text-secondary" data-testid="search-state">
+            Unsaved search
+          </p>
+        ) : null}
         {opened ? (
-          <p className="text-sm text-text-secondary">
+          <p className="text-sm text-text-secondary" data-testid="search-state">
             Open: <span className="text-text">{opened.name}</span>{" "}
-            <span className="font-mono text-text-muted">{opened.id}</span>. Save keeps changes in
-            it.{" "}
+            <span className="font-mono text-text-muted">{opened.id}</span>
+            {edited ? <span className="text-warn"> · edited, not saved</span> : null}. Save keeps
+            changes in it.{" "}
             <button
               type="button"
               onClick={() => setOpened(null)}

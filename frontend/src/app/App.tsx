@@ -5,6 +5,7 @@ import { savedVersion, subscribeSaved } from "@/lib/savedSeed";
 import { seedVersion, subscribeSeed } from "@/lib/searchSeed";
 import { SideNav } from "@/components/shell/SideNav";
 import { SearchPage } from "@/features/search/SearchPage";
+import { searchNavVersion, subscribeSearchNav } from "@/lib/searchUrl";
 // Small, and the target of "Schedule" handoffs from Search; kept with Search.
 import { SchedulesPage } from "@/features/schedules/SchedulesPage";
 import { AuthGate } from "@/features/auth/AuthGate";
@@ -91,6 +92,8 @@ export function App({ initialTheme, queryClient }: AppProps) {
   useEffect(() => setMenu(false), [page]);
   // A handoff into Search or Saved searches remounts that page so it takes the handoff.
   const searchKey = useSyncExternalStore(subscribeSeed, seedVersion);
+  // Back and Forward on Search, and New search, rebuild the page from its address (D90).
+  const searchNav = useSyncExternalStore(subscribeSearchNav, searchNavVersion);
   const savedKey = useSyncExternalStore(subscribeSaved, savedVersion);
 
   useEffect(() => {
@@ -211,7 +214,7 @@ export function App({ initialTheme, queryClient }: AppProps) {
                       <SourcesPage canManage={!user || user.role === "admin"} />
                     ) : (
                       <SearchPage
-                        key={`${page}:${searchKey}`}
+                        key={`${page}:${searchKey}:${searchNav}`}
                         canSave={!user || user.role !== "auditor"}
                         canAsk={!user || user.role !== "auditor"}
                         isAdmin={!user || user.role === "admin"}
