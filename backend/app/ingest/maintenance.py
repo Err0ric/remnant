@@ -34,6 +34,8 @@ class LakeMaintenance:
         self._integrity_every = integrity_interval_s
         self._last_integrity: float | None = None
         self.on_verified: Callable[[Verification], None] | None = None
+        # Runs after each compaction: the daily AI rollup builds closed days (ADR-0035 row 3).
+        self.after_compaction: Callable[[], object] | None = None
         self._sources = sources
         self._orphan_days = orphan_retention_days
         self._compaction_every = compaction_interval_s
@@ -82,6 +84,11 @@ class LakeMaintenance:
         if self._last_compaction is None or now - self._last_compaction >= self._compaction_every:
             self.compact()
             self._last_compaction = now
+            if self.after_compaction is not None:
+                try:
+                    self.after_compaction()
+                except Exception:  # a rollup failure never stops lake maintenance
+                    log.exception("ai_rollup.failed")
         if self._integrity is not None and (
             self._last_integrity is None or now - self._last_integrity >= self._integrity_every
         ):

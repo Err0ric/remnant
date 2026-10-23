@@ -8,6 +8,7 @@ like any other, so people see only sources they may read.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Any, Literal
 
 from app.ai.catalog import DOMAIN, NON_USAGE, Catalog, Service, Status
@@ -127,35 +128,70 @@ def _values(pairs: list[tuple[str, str]]) -> str:
 catalog_values = _values
 
 
-def services_sql(pairs: list[tuple[str, str]]) -> str:
-    """Use per service. Rows that name only an address get the person and machine that
-    had it at the time, from logon and User-ID events (ADR-0020 row 1).
+_ANY_HOST = "coalesce(" + ", ".join(_CANDIDATES) + ") IS NOT NULL"
+# Events reduced to one row per service, person, machine, address, and hour (F46). The
+# daily AI rollup (ADR-0035 Part 1) stores exactly these rows per source and closed day.
+_HOUR_ROWS = f"""{WHO_EXPR} AS who0, nullif(src_endpoint_hostname, '') AS shost,
+         nullif(src_endpoint_ip, '') AS ip, device_hostname AS dev,
+         date_trunc('hour', coalesce(time, time_observed)) AS t,
+         count(*) AS n, min(coalesce(time, time_observed)) AS first_t,
+         max(coalesce(time, time_observed)) AS last_t"""
+_DAY_KEY = "source_id || '|' || strftime(coalesce(time, time_observed), '%Y-%m-%d')"
 
-    Shaped for memory (install finding F46): hosts are matched to the catalog once per
-    distinct host, events are reduced to one row per service, person, machine, address,
-    and hour before anything else, and the address lookup joins that small result. No
-    step holds a row per event, so a week of busy DNS fits a small per-query budget."""
-    return f"""
-WITH cat(service_id, domain) AS (VALUES {_values(pairs)}),
+
+def _match_ctes(pairs: list[tuple[str, str]]) -> str:
+    return f"""cat(service_id, domain) AS (VALUES {_values(pairs)}),
 hosts AS (
   SELECT DISTINCT {HOST_EXPR} AS host FROM events
-  WHERE coalesce({", ".join(_CANDIDATES)}) IS NOT NULL
+  WHERE {_ANY_HOST}
 ),
 hm AS (
   SELECT host, arg_max(service_id, length(domain)) AS service_id
   FROM hosts JOIN cat ON host = domain OR ends_with(host, '.' || domain)
   WHERE host IS NOT NULL
   GROUP BY host
-),
+)"""  # noqa: S608  # fixed SQL text; domains checked against DOMAIN in _values
+
+
+def rollup_build_sql(pairs: list[tuple[str, str]]) -> str:
+    """One source's closed day as rollup rows, with the source's classification as the
+    events had it (ADR-0035 row 4)."""
+    return f"""
+WITH {_match_ctes(pairs)}
+SELECT source_id, classification, hm.service_id, {_HOUR_ROWS}
+FROM events JOIN hm ON {HOST_EXPR} = hm.host
+WHERE {_ANY_HOST}
+GROUP BY ALL
+LIMIT 1000000"""  # noqa: S608  # fixed SQL text; domains checked against DOMAIN in _values
+
+
+def services_sql(pairs: list[tuple[str, str]], rollup: bool = False) -> str:
+    """Use per service. Rows that name only an address get the person and machine that
+    had it at the time, from logon and User-ID events (ADR-0020 row 1).
+
+    Shaped for memory (install finding F46): hosts are matched to the catalog once per
+    distinct host, events are reduced to one row per service, person, machine, address,
+    and hour before anything else, and the address lookup joins that small result. No
+    step holds a row per event, so a week of busy DNS fits a small per-query budget.
+
+    With `rollup`, the days listed in `$covered` ("source|YYYY-MM-DD") come from the daily
+    AI rollup and only the rest is read from events (ADR-0035 rows 3 and 8)."""
+    live_where = _ANY_HOST + (f" AND NOT list_contains($covered, {_DAY_KEY})" if rollup else "")
+    from_rollup = (
+        """
+  UNION ALL
+  SELECT service_id, who0, shost, ip, dev, t, n, first_t, last_t FROM ai_rollup
+  WHERE list_contains($covered, source_id || '|' || strftime(t, '%Y-%m-%d'))"""
+        if rollup
+        else ""
+    )
+    return f"""
+WITH {_match_ctes(pairs)},
 hj AS (
-  SELECT hm.service_id, {WHO_EXPR} AS who0, nullif(src_endpoint_hostname, '') AS shost,
-         nullif(src_endpoint_ip, '') AS ip, device_hostname AS dev,
-         date_trunc('hour', coalesce(time, time_observed)) AS t,
-         count(*) AS n, min(coalesce(time, time_observed)) AS first_t,
-         max(coalesce(time, time_observed)) AS last_t
+  SELECT hm.service_id, {_HOUR_ROWS}
   FROM events JOIN hm ON {HOST_EXPR} = hm.host
-  WHERE coalesce({", ".join(_CANDIDATES)}) IS NOT NULL
-  GROUP BY ALL
+  WHERE {live_where}
+  GROUP BY ALL{from_rollup}
 ),
 {address_ctes("hj", "who0 IS NULL OR shost IS NULL")},
 r AS (
@@ -222,9 +258,12 @@ LIMIT 1000"""
 
 
 class Usage:
-    def __init__(self, engine: QueryEngine, catalog: Catalog) -> None:
+    def __init__(self, engine: QueryEngine, catalog: Catalog, rollup: Any = None) -> None:
         self._engine = engine
         self._catalog = catalog
+        # The daily AI rollup (ADR-0035 row 8): ranges of 2 days or more read closed days
+        # from it. `Any` to avoid an import cycle (app.ai.rollup imports this module).
+        self._rollup = rollup
 
     def _rows(self, sql: str, scope: QueryScope) -> list[list[Any]]:
         return self._engine.run(sql, scope, timeout_s=TIMEOUT_S).rows
@@ -237,9 +276,26 @@ class Usage:
     def all_services(self, scope: QueryScope) -> tuple[list[ServiceUse], list[str]]:
         """Every catalog match, non-usage hosts included, plus the sources read."""
         known = {s.id: s for s in self._catalog.services()}
-        result = self._engine.run(
-            services_sql(self._catalog.domain_table()), scope, timeout_s=TIMEOUT_S
-        )
+        covered: list[str] = []
+        if (
+            self._rollup is not None
+            and scope.start is not None
+            and scope.end is not None
+            and scope.end - scope.start >= timedelta(days=2)
+        ):
+            covered = self._rollup.covered(scope)
+        if covered:
+            result = self._engine.run(
+                services_sql(self._catalog.domain_table(), rollup=True),
+                scope,
+                {"covered": covered},
+                timeout_s=TIMEOUT_S,
+                rollup=True,
+            )
+        else:
+            result = self._engine.run(
+                services_sql(self._catalog.domain_table()), scope, timeout_s=TIMEOUT_S
+            )
         out = []
         for sid, events, people, machines, first, last, top, top_m in result.rows:
             if sid in known:

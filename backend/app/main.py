@@ -22,6 +22,7 @@ from starlette.responses import HTMLResponse, Response
 from starlette.types import Scope
 
 from app.ai.catalog import Catalog
+from app.ai.rollup import AiRollup
 from app.ai.usage import Usage
 from app.ai.watch import AiWatch
 from app.alerts.dispatch import AlertDispatcher
@@ -425,6 +426,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     app.state.feeds = FeedStore(meta, config.paths.data_dir)
     app.state.engine = QueryEngine(
         lake_dir,
+        rollup_dir=config.paths.data_dir / "rollup" / "ai",
         intel_file=app.state.feeds.intel_file,
         # A share of the budget per query, so every allowed query fits with one share left
         # for ingest and the server itself (D80).
@@ -515,7 +517,14 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     )
     app.state.ai_catalog = Catalog(meta)
     app.state.identities = IdentityStore(meta)
-    app.state.ai_usage = Usage(app.state.engine, app.state.ai_catalog)
+    app.state.ai_rollup = AiRollup(
+        app.state.engine,
+        app.state.ai_catalog,
+        lake_dir,
+        config.paths.data_dir / "rollup" / "ai",
+        clock=lambda: app.state.auth.clock(),
+    )
+    app.state.ai_usage = Usage(app.state.engine, app.state.ai_catalog, app.state.ai_rollup)
     app.state.ai_watch = AiWatch(
         meta,
         app.state.engine,
@@ -590,6 +599,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         integrity=app.state.integrity,
         integrity_interval_s=config.maintenance.integrity_interval_s,
     )
+    app.state.maintenance.after_compaction = app.state.ai_rollup.run
     app.state.integrity_service = IntegrityService(
         meta,
         app.state.integrity,

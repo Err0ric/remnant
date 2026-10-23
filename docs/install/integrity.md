@@ -7,6 +7,7 @@ The server keeps a tamper-evident record of its own stored logs and of the audit
 | Record | What it holds | Where |
 |---|---|---|
 | Lake ledger | One row per lake file the server writes or removes: path, SHA-256, size, and the reason for a removal (compacted into another file, retention, quarantine). Each row includes the hash of the row before it | `lake_ledger` in `meta.sqlite` |
+| Not covered | The daily AI rollup under `<data>/rollup/ai` (D111): derived from lake files and rebuilt from them, so it is not ledgered | |
 | Audit chain | Each audit row carries a hash over its content and the previous row's hash | `audit_log.chain_hash` |
 | AI call chain | Each AI call record is chained the same way when the call completes (calls still running have no hash yet) | `llm_calls.chain_hash` |
 | Seals | Each verification: both chain heads, counts, the result, and every finding, signed with a key derived from the install key (`data/.key`) | `integrity_seals` |

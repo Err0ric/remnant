@@ -66,6 +66,10 @@ Depends on ADR-0034 (headline values, tiles, sections, Restricted handling).
 | 15 | Access | Every number is computed on the caller's view. A card or queue item that needs a source the viewer cannot read shows **Restricted**. `local_only` data stays local: no model call anywhere on the page | Rule 13, SPEC 6.2 |
 | 16 | Design | Built with DESIGN.md tokens and the frontend-design skill; the KPI card, queue row, and stacked bar become DESIGN.md patterns (section 6) before the build | |
 
+## Implementation notes
+
+- 2026-10-22, Part 1 (D111): the rollup is built per source and closed day after compaction and checked against a manifest (catalog domains plus the day's event files), so late events, compaction, and catalog changes rebuild the day without a migration or a stale flag in the database. A closed day with more than 200,000 grouped rows is marked and read live.
+
 ## Owner note: default Dashboard and AI Watch content (2026-10-22, design input, no build yet)
 
 When a new install's default Dashboard and AI Watch are designed, panels are organized around:

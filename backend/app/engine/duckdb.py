@@ -34,6 +34,15 @@ LAKE_FILES = "day=*/part-*.parquet"  # under each source=<id> folder
 # Threat intel lists (ADR-0023 row 7) are readable in SQL, but never by a model: Ask's
 # previews and the MCP server run with intel=False, so feed text cannot reach a prompt.
 INTEL_TABLES = ALLOWED_TABLES | {"threat_intel"}
+# The daily AI rollup (ADR-0035 Part 1): server-built queries only. Users, saved searches,
+# Ask, and MCP never see this table; `run(..., rollup=True)` is not reachable from them.
+ROLLUP_TABLES = ALLOWED_TABLES | {"ai_rollup"}
+ROLLUP_FILES = "day=*/part-*.parquet"  # under rollup/ai/source=<id>
+ROLLUP_COLUMNS = (
+    "source_id VARCHAR, classification VARCHAR, service_id VARCHAR, who0 VARCHAR,"
+    " shost VARCHAR, ip VARCHAR, dev VARCHAR, t TIMESTAMPTZ, n BIGINT,"
+    " first_t TIMESTAMPTZ, last_t TIMESTAMPTZ"
+)
 INTEL_COLUMNS = (
     "indicator VARCHAR, type VARCHAR, feed VARCHAR, threat VARCHAR,"
     " first_seen VARCHAR, last_seen VARCHAR"
@@ -82,8 +91,10 @@ class QueryEngine:
         intel_file: Path | None = None,
         max_concurrent: int = 0,
         temp_dir: Path | None = None,
+        rollup_dir: Path | None = None,
     ) -> None:
         self._lake = lake_dir
+        self._rollup = rollup_dir
         # Where a query spills when it needs more than its memory share (F46). DuckDB's
         # default is ".tmp" in the working directory, which a read-only container or a
         # sandboxed service cannot write: the query then fails instead of spilling.
@@ -108,6 +119,7 @@ class QueryEngine:
         row_cap: int | None = None,
         timeout_s: float | None = None,
         intel: bool = True,
+        rollup: bool = False,
     ) -> QueryResult:
         """Run guarded SQL. `params` are bound by the driver ($name), never formatted in.
         `row_cap` lowers both the implicit and the maximum LIMIT (Ask previews use 5), and
@@ -116,13 +128,16 @@ class QueryEngine:
         default = min(self._default_limit, row_cap) if row_cap else self._default_limit
         cap = min(self._max_limit, row_cap) if row_cap else self._max_limit
         # Ask for one extra row so truncation is detectable, then trim it.
-        guarded = guard(sql, INTEL_TABLES if intel else ALLOWED_TABLES, default + 1, cap + 1)
+        tables = INTEL_TABLES if intel else ALLOWED_TABLES
+        if rollup:
+            tables = tables | ROLLUP_TABLES
+        guarded = guard(sql, tables, default + 1, cap + 1)
         pinned = pinned_sources(guarded.sql, params)
         if pinned is not None:  # read only the sources the query can use; never widen
             keep = pinned if scope.sources is None else pinned & set(scope.sources)
             scope = replace(scope, sources=sorted(keep))
         with self._slot(limit_s):
-            return self._execute(guarded, scope, params, intel, limit_s, cap)
+            return self._execute(guarded, scope, params, intel, limit_s, cap, rollup)
 
     def _execute(
         self,
@@ -132,8 +147,9 @@ class QueryEngine:
         intel: bool,
         limit_s: float,
         cap: int,
+        rollup: bool = False,
     ) -> QueryResult:
-        con = self._connect(scope, intel=intel)
+        con = self._connect(scope, intel=intel, rollup=rollup)
         timer = threading.Timer(limit_s, con.interrupt)
         started = time.perf_counter()
         try:
@@ -231,7 +247,20 @@ class QueryEngine:
         # so a file dropped in another folder cannot add events (security review, D64).
         return [d for d in dirs if any(d.glob(LAKE_FILES))]
 
-    def _connect(self, scope: QueryScope, intel: bool = False) -> duckdb.DuckDBPyConnection:
+    def rollup_dirs(self, scope: QueryScope) -> list[Path]:
+        """Rollup folders of the sources in scope: the same scope as `events`, so the rollup
+        never shows a source the caller may not read (ADR-0035 row 4)."""
+        if self._rollup is None or not self._rollup.is_dir():
+            return []
+        dirs = sorted(d for d in self._rollup.glob("source=*") if d.is_dir())
+        if scope.sources is not None:
+            wanted = set(scope.sources)
+            dirs = [d for d in dirs if d.name.removeprefix("source=") in wanted]
+        return [d for d in dirs if any(d.glob(ROLLUP_FILES))]
+
+    def _connect(
+        self, scope: QueryScope, intel: bool = False, rollup: bool = False
+    ) -> duckdb.DuckDBPyConnection:
         dirs = self._source_dirs(scope)
         # Threads and memory at creation: connecting with the defaults first starts one
         # thread per core the host reports (inside a container, the host's cores), then
@@ -253,6 +282,23 @@ class QueryEngine:
             base = "_empty_events"
         con.execute(f"CREATE VIEW events AS SELECT * FROM {base}{_time_filter(scope)}")  # noqa: S608  # built from escaped server paths and datetime literals only
         readable = [d.resolve() for d in dirs]
+        if rollup:
+            rdirs = self.rollup_dirs(scope)
+            if rdirs:
+                globs = ", ".join(_sql_str(str(d / ROLLUP_FILES)) for d in rdirs)
+                hours = []
+                if scope.start is not None:
+                    hours.append(f"t >= date_trunc('hour', {_ts(scope.start)})")
+                if scope.end is not None:
+                    hours.append(f"t <= {_ts(scope.end)}")
+                where = (" WHERE " + " AND ".join(hours)) if hours else ""
+                con.execute(
+                    "CREATE VIEW ai_rollup AS SELECT * FROM"  # noqa: S608  # escaped server paths and datetime literals only
+                    f" read_parquet([{globs}], hive_partitioning = false){where}"
+                )
+                readable += [d.resolve() for d in rdirs]
+            else:
+                con.execute(f"CREATE TABLE ai_rollup ({ROLLUP_COLUMNS})")
         if intel:
             if self._intel is not None and self._intel.is_file():
                 con.execute(

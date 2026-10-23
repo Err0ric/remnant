@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Faster AI usage over long ranges
+
+- A daily AI rollup is built for each closed day after compaction, so AI usage > Services over 7 or 30 days reads a few rows per hour instead of every DNS event. Today and any day not yet built are still read from events, with the same totals.
+- The rollup follows source access and the Local only label exactly as events do, is rebuilt when late events arrive or the AI service catalog's domains change, and is removed with the events it came from. It is derived data: not in the integrity ledger, and not queryable from Search.
+
 ### Investigations leads with the answer
 
 - An address, person, or machine opens on one sentence that says what it did ("2,619 failed sign-ins against ftp-01 over the last 7 days, 0 succeeded. From Netherlands, AS64500."), then cards with sign-in attempts, successes, users tried, hosts targeted, first and last seen, and country and network.
