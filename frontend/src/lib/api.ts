@@ -1423,6 +1423,14 @@ export interface AiWatchSummary {
     last_seen: string | null;
   }[];
   sources: string[];
+  /** First seen in the last 24 hours, from the data, never from a review decision. */
+  new: {
+    kind: "service" | "mcp" | "agent";
+    id: string;
+    name: string;
+    first_seen: string;
+    item_id: string | null;
+  }[];
 }
 
 /** A named dashboard (ADR-0034): personal or shared, with its panels and the flagged runs

@@ -760,6 +760,15 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
           },
         ],
         sources: ["linux_sshd"],
+        new: [
+          {
+            kind: "service",
+            id: "deepseek",
+            name: "DeepSeek",
+            first_seen: "2026-10-10T05:00:00+00:00",
+            item_id: "w1",
+          },
+        ],
       });
     }
     // Alerts (ADR-0037): one open rule alert, one closed gap.

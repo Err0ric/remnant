@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed: AI Watch review items and "New in 24 hours"
+
+- An AI service in use that is not approved now always has an item on Alerts until someone decides. Before, a service used only before the watch's last check never got one, so AI Watch could count unapproved services while Alerts and the morning answer said nothing needed you. The watch now checks every hour over the last 7 days. Items read "AI service not reviewed: Copilot" (or "not approved"), since the service may not be new; the hourly check also brings open items' wording and people up to date. A closed item stays as it was decided.
+- **New in 24 hours** now lists AI services, MCP servers, and agents whose use first appears in the data in the last day (not seen in the 30 days before), with the time first seen. Before, it listed items raised in the last day, so approving a service seen days earlier could make it look new.
+
 ### People and devices are counted apart
 
 - AI Watch's card is **People using unapproved AI** again, counting only people the events name. Devices or addresses with no person matched show as their own line under it ("3 more devices not matched to a person"), linked to AI usage > Services. Before, both were added into one number.

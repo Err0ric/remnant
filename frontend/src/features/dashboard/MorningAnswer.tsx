@@ -103,7 +103,7 @@ export function MorningAnswer({ canClose, isAdmin }: MorningAnswerProps) {
       <div className="grid min-w-0 md:grid-cols-2 xl:grid-cols-[5fr_3fr_3fr]">
         <NeedsYou list={alerts.data} canClose={canClose} isAdmin={isAdmin} />
         <Sources states={states} overview={overview.data} now={now} />
-        <New now={now} />
+        <New />
       </div>
     </section>
   );
@@ -264,19 +264,13 @@ function Sources({
   );
 }
 
-const DAY_MS = 86_400_000;
-
-/** First seen in 24 hours (ADR-0037 row 6): AI services, MCP servers, and agents the AI
- * watch raised, open or closed, each linking to its alert. */
-function New({ now }: { now: string }) {
-  const all = useQuery({ queryKey: ["alerts", "all"], queryFn: () => api.alerts("all") });
-  const since = Date.parse(now) - DAY_MS;
-  const fresh = (all.data?.items ?? []).filter(
-    (i) =>
-      i.kind === "ai_watch" &&
-      !i.subject.startsWith("sensitive:") &&
-      Date.parse(i.created_at) >= since,
-  );
+/** First seen in 24 hours (ADR-0037 row 6): AI services, MCP servers, and agents whose
+ * use first appears in the data in the last day (not seen in the 30 days before). A
+ * review decision never makes something new. Each links to its alert when it has one. */
+function New() {
+  const q = useQuery({ queryKey: ["ai-watch", 7], queryFn: () => api.aiWatchSummary(7) });
+  const fresh = q.data?.new ?? [];
+  const KIND = { service: "AI service", mcp: "MCP server", agent: "Agent" } as const;
   return (
     <div className="min-w-0 border-t border-border px-3 py-2 md:col-span-2 xl:col-span-1 xl:border-l xl:border-t-0">
       <h2 className="mb-1 text-sm font-semibold">
@@ -287,27 +281,25 @@ function New({ now }: { now: string }) {
         <p className="text-sm text-text-secondary">No new AI services, MCP servers, or agents.</p>
       ) : (
         <ul className="text-sm">
-          {fresh.slice(0, 5).map((i) => (
-            <li key={i.item_id} className="flex min-w-0 items-baseline gap-2">
-              <a
-                href={`${pathFor("alerts")}#item=${i.item_id}`}
-                onClick={(e) => {
-                  if (e.metaKey || e.ctrlKey || e.shiftKey) return;
-                  e.preventDefault();
-                  navigate("alerts", `item=${i.item_id}`);
-                }}
-                className="min-w-0 truncate text-accent-text hover:underline"
-                title={i.title}
-              >
-                {i.title.replace(/^New (AI service|MCP server|AI agent): /, "")}
-              </a>
-              <span className="shrink-0 text-text-muted">
-                {i.subject.startsWith("service:")
-                  ? "AI service"
-                  : i.subject.startsWith("mcp:")
-                    ? "MCP server"
-                    : "Agent"}
-              </span>
+          {fresh.slice(0, 5).map((n) => (
+            <li key={`${n.kind}:${n.id}`} className="flex min-w-0 items-baseline gap-2">
+              {n.item_id ? (
+                <a
+                  href={`${pathFor("alerts")}#item=${n.item_id}`}
+                  onClick={(e) => {
+                    if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+                    e.preventDefault();
+                    navigate("alerts", `item=${n.item_id}`);
+                  }}
+                  className="min-w-0 truncate text-accent-text hover:underline"
+                >
+                  {n.name}
+                </a>
+              ) : (
+                <span className="min-w-0 truncate">{n.name}</span>
+              )}
+              <span className="shrink-0 text-text-muted">{KIND[n.kind]}</span>
+              <When iso={n.first_seen} className="ml-auto shrink-0 text-text-muted" />
             </li>
           ))}
         </ul>
@@ -315,10 +307,10 @@ function New({ now }: { now: string }) {
       {fresh.length > 5 ? (
         <button
           type="button"
-          onClick={() => navigate("alerts")}
+          onClick={() => navigate("ai", "services")}
           className="mt-1 text-sm text-accent-text hover:underline"
         >
-          {fresh.length - 5} more on Alerts
+          {fresh.length - 5} more on AI usage
         </button>
       ) : null}
     </div>

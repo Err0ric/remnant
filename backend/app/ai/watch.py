@@ -22,7 +22,7 @@ from typing import Any
 
 from app.ai.agents import agents
 from app.ai.catalog import NON_USAGE, Catalog
-from app.ai.usage import HOST_EXPR, MACHINE_EXPR, MCP_EXPR, NO_MCP_NAMES, WHO_EXPR, _values
+from app.ai.usage import HOST_EXPR, MACHINE_EXPR, MCP_EXPR, NO_MCP_NAMES, WHO_EXPR, Usage, _values
 from app.alerts.dispatch import AlertDispatcher
 from app.alerts.items import AlertItems
 from app.alerts.render import Alert
@@ -36,6 +36,7 @@ MAX_TARGETS = 10
 BATCH = 20_000  # rows read per check; the cursor moves past what was read
 LOOKBACK_FIRST_RUN = timedelta(hours=1)
 AGENT_CHECK_EVERY = timedelta(hours=1)
+REVIEW_WINDOW = timedelta(days=7)
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,8 +78,14 @@ class AiWatch:
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         items: AlertItems | None = None,
         agent_sources: Callable[[], list[str]] = list,
+        usage: Usage | None = None,
     ) -> None:
         self._items = items
+        # Hourly, every service in use in the last REVIEW_WINDOW that is not approved gets
+        # an item if it has none, so a decision is never skipped because its events came
+        # before the watch's cursor (owner, 2026-10-23).
+        self._usage = usage
+        self._reviewed_at: datetime | None = None
         # Agent changes come from telemetry sources: an agent item is restricted for a
         # viewer who cannot read them.
         self._agent_sources = agent_sources
@@ -246,14 +253,45 @@ class AiWatch:
         with self._meta.connect() as con:
             con.execute("UPDATE ai_watch SET cursor = ? WHERE id = 1", (newest.isoformat(),))
         sent += self._agents(s, now)
+        self._reconcile(now)
         return sent
+
+    def _reconcile(self, now: datetime) -> None:
+        if self._usage is None or self._items is None:
+            return
+        if self._reviewed_at is not None and now - self._reviewed_at < AGENT_CHECK_EVERY:
+            return
+        self._reviewed_at = now
+        since = now - REVIEW_WINDOW
+        services = {sv.id: sv for sv in self._catalog.services()}
+        for sid, sources, people, devices, matched in self._usage.review(
+            QueryScope(None, since, now)
+        ):
+            svc = services.get(str(sid))
+            if svc is None or svc.kind == NON_USAGE or svc.status == "approved":
+                continue
+            r = _Review(svc.name, svc.status)
+            r.people = {str(p) for p in people or []}
+            r.devices = {str(d) for d in devices or []}
+            r.matched = {str(m) for m in matched or []}
+            r.sources = {str(x) for x in sources or []}
+            self._raise_use("service", str(sid), r, since, now, refresh=True)
 
     # --- review items (ADR-0035 row 11) --------------------------------------------------
 
-    def _raise_use(self, kind: str, name: str, r: _Review, since: datetime, now: datetime) -> None:
+    def _raise_use(
+        self,
+        kind: str,
+        name: str,
+        r: _Review,
+        since: datetime,
+        now: datetime,
+        refresh: bool = False,
+    ) -> None:
         if self._items is None:
             return
         not_approved = r.status == "not_approved"
+        state = "not approved" if not_approved else "not reviewed"
         people = sorted(r.people)
         devices = sorted(r.devices - r.matched)
         # People and devices are never added into one number (owner, 2026-10-22).
@@ -272,7 +310,12 @@ class AiWatch:
         self._items.raise_item(
             "ai_watch",
             f"{kind}:{name}",
-            f"New AI service: {r.label}" if kind == "service" else f"New MCP server: {name}",
+            # Waiting for a decision, not necessarily new: the title says which decision.
+            (
+                f"AI service {state}: {r.label}"
+                if kind == "service"
+                else f"MCP server {state}: {name}"
+            ),
             ref_id=f"{kind}:{name}",
             why="Not approved" if not_approved else "Not reviewed yet",
             detail=". ".join(parts),
@@ -282,6 +325,9 @@ class AiWatch:
             range_end=now.isoformat(),
             # Breadth, for severity only: more than one person or unmatched device.
             severity="high" if not_approved and len(people) + len(devices) > 1 else "medium",
+            # Only the hourly 7-day check sees all of a service's use; a 30-second check
+            # sees a slice, so it raises but never rewrites (owner, 2026-10-23).
+            refresh=refresh,
         )
 
     def _raise_sensitive(

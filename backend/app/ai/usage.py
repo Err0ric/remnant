@@ -182,21 +182,21 @@ def _use_ctes(pairs: list[tuple[str, str]], rollup: bool) -> str:
     from_rollup = (
         """
   UNION ALL
-  SELECT service_id, who0, shost, ip, dev, t, n, first_t, last_t FROM ai_rollup
+  SELECT service_id, source_id, who0, shost, ip, dev, t, n, first_t, last_t FROM ai_rollup
   WHERE list_contains($covered, source_id || '|' || strftime(t, '%Y-%m-%d'))"""
         if rollup
         else ""
     )
     return f"""{_match_ctes(pairs)},
 hj AS (
-  SELECT hm.service_id, {_HOUR_ROWS}
+  SELECT hm.service_id, source_id, {_HOUR_ROWS}
   FROM events JOIN hm ON {HOST_EXPR} = hm.host
   WHERE {live_where}
   GROUP BY ALL{from_rollup}
 ),
 {address_ctes("hj", "who0 IS NULL OR shost IS NULL")},
 r AS (
-  SELECT service_id, n, first_t, last_t, hj.t, coalesce(who0, addr.rwho) AS who,
+  SELECT service_id, hj.source_id, n, first_t, last_t, hj.t, coalesce(who0, addr.rwho) AS who,
          coalesce(shost, addr.rhost, hj.ip, dev) AS machine
   FROM hj {join_addr("hj")}
 )"""  # noqa: S608  # fixed SQL text; domains checked against DOMAIN in _values
@@ -227,6 +227,20 @@ SELECT service_id, who, machine, CAST(t AS DATE) AS day,
 FROM r
 GROUP BY 1, 2, 3, 4
 LIMIT 500000"""  # noqa: S608  # fixed SQL text; domains checked against DOMAIN in _values
+
+
+def review_sql(pairs: list[tuple[str, str]], rollup: bool = False) -> str:
+    """Per service: the sources it was seen in, its people, and its machines, for the AI
+    watch's review items (ADR-0035 row 11)."""
+    return f"""
+WITH {_use_ctes(pairs, rollup)}
+SELECT service_id, list(DISTINCT source_id) AS sources,
+       list(DISTINCT who) FILTER (WHERE who IS NOT NULL) AS people,
+       list(DISTINCT machine) FILTER (WHERE machine IS NOT NULL AND who IS NULL) AS devices,
+       list(DISTINCT machine) FILTER (WHERE machine IS NOT NULL AND who IS NOT NULL) AS matched
+FROM r
+GROUP BY 1
+LIMIT 500"""  # noqa: S608  # fixed SQL text; domains checked against DOMAIN in _values
 
 
 MCP_SQL = f"""
@@ -334,6 +348,10 @@ class Usage:
                 rollup=True,
             )
         return self._engine.run(build(self._catalog.domain_table()), scope, timeout_s=TIMEOUT_S)
+
+    def review(self, scope: QueryScope) -> list[list[Any]]:
+        """(service id, sources, people, devices without a person, devices with one)."""
+        return list(self._run_use(review_sql, scope).rows)
 
     def daily(self, scope: QueryScope) -> tuple[list[list[Any]], list[str]]:
         """(service id, person, machine, day, events, last seen, first seen) rows, and the

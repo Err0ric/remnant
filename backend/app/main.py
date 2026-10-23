@@ -545,6 +545,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         agent_sources=lambda: source_classes(
             [(s.source_id, s.kind or "file", s.template_id) for s in app.state.sources.list()]
         )["telemetry"],
+        usage=app.state.ai_usage,
     )
     app.state.audit_reader = AuditReader(meta)
     app.state.overview = OverviewService(

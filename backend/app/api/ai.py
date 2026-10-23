@@ -228,6 +228,14 @@ class TopServiceOut(BaseModel):
     last_seen: str | None
 
 
+class NewOut(BaseModel):
+    kind: str
+    id: str
+    name: str
+    first_seen: str
+    item_id: str | None
+
+
 class WatchSummaryOut(BaseModel):
     days: int
     start: str
@@ -236,6 +244,7 @@ class WatchSummaryOut(BaseModel):
     chart: list[DayOut]
     top: list[TopServiceOut]
     sources: list[str]
+    new: list[NewOut] = []  # first seen in 24 hours, from the data (ADR-0037 row 6)
 
 
 @router.get("/ai/watch/summary")
@@ -288,6 +297,7 @@ async def ai_watch_summary(
         chart=[DayOut(**_slots(d)) for d in s.chart],
         top=[TopServiceOut(**_slots(t)) for t in s.top],
         sources=s.sources,
+        new=[NewOut(**_slots(n)) for n in s.new],
     )
 
 

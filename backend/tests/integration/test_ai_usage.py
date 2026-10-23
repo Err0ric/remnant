@@ -308,7 +308,10 @@ def test_review_items_on_alerts_without_alert_messages(lab: dict[str, Any]) -> N
     assert app.state.ai_watch.tick() == 0  # messages are off by default
     items = _ai_items(a)
     chatgpt = items["service:chatgpt"]
-    assert chatgpt["title"] == "New AI service: ChatGPT" and chatgpt["why"] == "Not reviewed yet"
+    assert (
+        chatgpt["title"] == "AI service not reviewed: ChatGPT"
+        and chatgpt["why"] == "Not reviewed yet"
+    )
     assert chatgpt["sources"] == ["dns"] and chatgpt["severity"] == "medium"
     # DNS names no person: the addresses are devices, apart, never counted as people.
     assert chatgpt["count"] == 0
@@ -400,3 +403,57 @@ def test_ai_flow_shows_devices_apart_from_people(lab: dict[str, Any]) -> None:
     assert lane0["alice@example.com"] == "People"
     assert lane0["10.20.1.5"] == "Addresses"  # an address with no person stays apart
     assert lane0.get("ws-0042") in (None, "Devices not matched to a person")
+
+
+def test_every_unapproved_service_in_use_has_an_item_until_decided(lab: dict[str, Any]) -> None:
+    """Owner, 2026-10-23: use from before the watch's cursor still leaves an open item."""
+    app, a, h = lab["app"], lab["admin"], lab["h"]
+    watch = app.state.ai_watch
+    watch._clock = lambda: NOW + timedelta(hours=2)  # the cursor starts after the data
+    watch.tick()
+    items = _ai_items(a)
+    assert items["service:chatgpt"]["title"] == "AI service not reviewed: ChatGPT"
+    assert items["service:deepseek"]["state"] == "open"
+    assert "service:bzr" not in " ".join(items)
+    # A decision closes it, and the next hourly check does not open another.
+    a.put("/api/ai/services/chatgpt/status", json={"status": "approved"}, headers=h)
+    watch._reviewed_at = None
+    watch.tick()
+    assert "service:chatgpt" not in _ai_items(a)
+    assert _ai_items(a, "closed")["service:chatgpt"]["note"] == "Approved"
+
+
+def test_new_in_24_hours_is_first_seen_not_a_review_decision(lab: dict[str, Any]) -> None:
+    """Owner, 2026-10-23: approving a service seen days ago does not make it new."""
+    app, a, h = lab["app"], lab["admin"], lab["h"]
+    app.state.ai_watch._clock = lambda: NOW + timedelta(hours=1)
+    new = {n["id"]: n for n in a.get("/api/ai/watch/summary").json()["new"]}
+    assert "chatgpt" in new and new["chatgpt"]["kind"] == "service"
+    # Two days later, the same use is not new, and approving it now does not change that.
+    app.state.ai_watch._clock = lambda: NOW + timedelta(days=2)
+    app.state.ai_watch.tick()  # raises its review item today
+    a.put("/api/ai/services/claude/status", json={"status": "approved"}, headers=h)
+    later = a.get("/api/ai/watch/summary").json()["new"]
+    assert later == []
+
+
+def test_the_hourly_check_refreshes_an_open_item_and_leaves_a_closed_one(
+    lab: dict[str, Any],
+) -> None:
+    app, a, h = lab["app"], lab["admin"], lab["h"]
+    store = app.state.alert_items
+    old = store.raise_item(
+        "ai_watch", "service:deepseek", "New AI service: DeepSeek", ref_id="service:deepseek",
+        detail="Used by 1: 10.20.1.7",
+    )  # fmt: skip
+    gone = store.raise_item(
+        "ai_watch", "service:chatgpt", "New AI service: ChatGPT", ref_id="service:chatgpt"
+    )
+    a.post(f"/api/alerts/{gone.item_id}/close", json={"reason": "benign"}, headers=h)
+    app.state.ai_watch._clock = lambda: NOW + timedelta(hours=2)
+    app.state.ai_watch.tick()
+    items = _ai_items(a, "all")
+    assert items["service:deepseek"]["title"] == "AI service not reviewed: DeepSeek"
+    assert items["service:deepseek"]["detail"].startswith("1 device not matched to a person")
+    assert items["service:deepseek"]["item_id"] == old.item_id
+    assert items["service:chatgpt"]["title"] == "New AI service: ChatGPT"  # closed: as decided

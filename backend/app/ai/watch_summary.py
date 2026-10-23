@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
+from app.ai.agents import agents
 from app.ai.catalog import NON_USAGE, Catalog
 from app.ai.usage import Usage
 from app.alerts.items import AlertItem
@@ -112,6 +113,19 @@ class Summary:
     chart: list[Day]
     top: list[TopService]
     sources: list[str] = field(default_factory=list)
+    new: list[NewThing] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class NewThing:
+    """First seen in the last 24 hours (ADR-0037 row 6), by when its use first appears in
+    the data, never by when an item was raised or a decision made (owner, 2026-10-23)."""
+
+    kind: str  # service | mcp | agent
+    id: str
+    name: str
+    first_seen: str
+    item_id: str | None  # its AI Watch item, when the viewer can read one
 
 
 def _iso(v: Any) -> str | None:
@@ -242,7 +256,64 @@ def summary(
         chart_days,
         top,
         sorted(set(read) | set(read_top) | set(read_signals)),
+        _new(usage, engine, allowed, items, readable, now),
     )
+
+
+NEW_WINDOW = timedelta(hours=24)
+HISTORY = timedelta(days=30)  # "first seen" means not seen in the 30 days before
+
+
+def _ts(v: Any) -> datetime | None:
+    if v is None:
+        return None
+    d = v if isinstance(v, datetime) else datetime.fromisoformat(str(v).replace(" ", "T", 1))
+    return d if d.tzinfo else d.replace(tzinfo=UTC)
+
+
+def _new(
+    usage: Usage,
+    engine: QueryEngine,
+    allowed: list[str] | None,
+    items: list[AlertItem],
+    readable: Callable[[AlertItem], bool],
+    now: datetime,
+) -> list[NewThing]:
+    cutoff = now - NEW_WINDOW
+    scope = QueryScope(allowed, now - HISTORY, now)
+    item_of: dict[str, str] = {}
+    for i in sorted(items, key=lambda i: i.created_at):
+        if readable(i):
+            item_of[i.subject] = i.item_id
+    out: list[NewThing] = []
+    found, _ = usage.services(scope)
+    for u in found:
+        first = _ts(u.first_seen)
+        if first is not None and first >= cutoff:
+            out.append(
+                NewThing(
+                    "service",
+                    u.service.id,
+                    u.service.name,
+                    first.isoformat(),
+                    item_of.get(f"service:{u.service.id}"),
+                )
+            )
+    for m in usage.mcp(scope):
+        first = _ts(m.first_seen)
+        if first is not None and first >= cutoff:
+            out.append(
+                NewThing("mcp", m.name, m.name, first.isoformat(), item_of.get(f"mcp:{m.name}"))
+            )
+    for a in agents(engine, allowed, now):
+        first = _ts(a.first_seen)
+        if first is not None and first >= cutoff:
+            out.append(
+                NewThing(
+                    "agent", a.agent, a.label, first.isoformat(), item_of.get(f"agent:{a.agent}")
+                )
+            )
+    return sorted(out, key=lambda n: n.first_seen, reverse=True)
 
 
 TELEMETRY_TEMPLATES = frozenset({"claude_code_otel", "mcp_inventory"})

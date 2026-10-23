@@ -130,6 +130,11 @@ describe("Dashboards at scale (ADR-0034)", () => {
     );
     // New in 24 hours: AI services, MCP servers, and agents the AI watch raised.
     expect(within(top).getByRole("heading", { name: /^New in 24 hours/ })).toBeVisible();
+    // From first seen in the data, linking to its alert (owner, 2026-10-23).
+    expect(await within(top).findByRole("link", { name: "DeepSeek" })).toHaveAttribute(
+      "href",
+      "/alerts#item=w1",
+    );
     await userEvent.click(within(top).getByRole("button", { name: "Close Failed logons" }));
     const form = within(top).getByRole("form", { name: "Close Failed logons" });
     await userEvent.click(within(form).getByLabelText("Benign or expected"));

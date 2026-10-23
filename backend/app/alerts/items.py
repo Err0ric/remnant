@@ -120,8 +120,10 @@ class AlertItems:
         range_start: str | None = None,
         range_end: str | None = None,
         severity: str | None = None,
+        refresh: bool = False,
     ) -> AlertItem:
-        """Write an item (once per kind and ref id). A muted subject closes it at once."""
+        """Write an item (once per kind and ref id). A muted subject closes it at once.
+        With `refresh`, an existing open item takes the new wording and counts."""
         now = self._now()
         item_id = str(uuid.uuid4())
         with self._meta.connect() as con:
@@ -130,6 +132,25 @@ class AlertItems:
                     "SELECT item_id FROM alert_items WHERE kind = ? AND ref_id = ?",
                     (kind, ref_id),
                 ).fetchone()
+                if had and refresh:
+                    # An open item is kept current (who used it, its wording, its sources);
+                    # a closed one stays as it was decided (owner, 2026-10-23).
+                    con.execute(
+                        "UPDATE alert_items SET title = ?, detail = ?, why = ?, count = ?,"
+                        " sources = ?, range_end = coalesce(?, range_end),"
+                        " severity = coalesce(?, severity)"
+                        " WHERE item_id = ? AND state = 'open'",
+                        (
+                            title[:300],
+                            detail[:1_000],
+                            (why or "")[:500] or None,
+                            count,
+                            json.dumps(sorted(set(sources or []))),
+                            range_end,
+                            severity,
+                            had["item_id"],
+                        ),
+                    )
                 if had:
                     return self._load(con, had["item_id"])
             con.execute(
