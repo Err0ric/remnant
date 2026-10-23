@@ -18,7 +18,9 @@ from app.auth.users import User
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError
 from app.engine.views import permitted_sources
 from app.meta.db import MetaDB
+from app.search.dashboards import DashboardStore, can_edit
 from app.search.schedules import (
+    HeadlineKind,
     PanelView,
     PanelWidth,
     Schedule,
@@ -44,6 +46,11 @@ class ScheduleIn(BaseModel):
     threshold_value: float | None = Field(default=None, ge=0, le=1e12)
     # Alert targets (ADR-0007): chosen by the owner from those an admin set up.
     target_ids: list[str] = Field(default_factory=list, max_length=10)
+    # The dashboard its panel goes on (ADR-0034): one the creator can change; by default
+    # their own first dashboard, made when they have none.
+    dashboard_id: str | None = Field(default=None, max_length=64)
+    panel_size: Literal["tile", "third", "half", "full"] | None = None
+    panel_view: PanelView | None = None
 
 
 class ScheduleUpdate(BaseModel):
@@ -57,6 +64,11 @@ class ScheduleUpdate(BaseModel):
     target_ids: list[str] | None = Field(default=None, max_length=10)  # replaces the list
     panel_width: PanelWidth | None = None
     panel_view: PanelView | None = None
+    # The panel's number (ADR-0034): row count, or sum, count distinct, or first value of a
+    # result column, with a label. "" clears the column or label.
+    headline_kind: HeadlineKind | None = None
+    headline_column: str | None = Field(default=None, max_length=120)
+    headline_label: str | None = Field(default=None, max_length=60)
     # A new definition (F37): run history is kept and the next run notes the change.
     kind: Literal["search", "rule"] | None = None
     target_id: str | None = Field(default=None, min_length=1, max_length=300)
@@ -81,6 +93,7 @@ class RunOut(BaseModel):
     parser_change: str | None = None
     # The first run after the schedule's definition changed says what changed (F37).
     definition_change: str | None = None
+    headline: str | None = None  # the panel's number for this run (ADR-0034)
 
 
 class RunDetail(RunOut):
@@ -111,6 +124,9 @@ class ScheduleOut(BaseModel):
     target_ids: list[str]
     panel_width: str
     panel_view: str
+    headline_kind: str = "rows"
+    headline_column: str | None = None
+    headline_label: str | None = None
 
 
 def _svc(request: Request) -> ScheduleService:
@@ -141,6 +157,7 @@ def _run_out(r: ScheduleRun, can_read: Any, detail: bool = False) -> RunOut:
         "rule_run_id": None if restricted else r.rule_run_id,
         "parser_change": None if restricted else r.parser_change,
         "definition_change": r.definition_change,
+        "headline": None if restricted else r.headline,
     }
     if not detail:
         return RunOut(**base)
@@ -177,6 +194,9 @@ def _out(
         target_ids=targets,
         panel_width=s.panel_width,
         panel_view=s.panel_view,
+        headline_kind=s.headline_kind,
+        headline_column=s.headline_column,
+        headline_label=s.headline_label,
     )
 
 
@@ -240,6 +260,38 @@ async def create_schedule(body: ScheduleIn, request: Request, user: Author) -> S
     }
     detail |= {"cron": s.cron, "alert_targets": body.target_ids}
     await run_in_threadpool(_audit, request, "schedule.create", user, detail)
+    dashboards: DashboardStore = request.app.state.dashboards
+
+    def place() -> str:
+        # The dashboard asked for when the user may change it (a browser can remember one
+        # since deleted or unshared), else their own first dashboard.
+        board = None
+        if body.dashboard_id:
+            try:
+                board = dashboards.get(body.dashboard_id, user)
+            except NotFoundError:
+                board = None
+            if board is not None and not can_edit(board, user):
+                board = None
+        if board is None:
+            board = dashboards.default_for(user)
+        dashboards.set_panel(
+            board.dashboard_id,
+            user,
+            s.schedule_id,
+            size=body.panel_size,
+            view=body.panel_view,
+        )
+        return board.dashboard_id
+
+    board_id = await run_in_threadpool(place)
+    await run_in_threadpool(
+        _audit,
+        request,
+        "dashboard.panel_add",
+        user,
+        {"dashboard_id": board_id, "schedule_id": s.schedule_id},
+    )
     return _out(s, user, [], _visible_to(meta, user), sorted(set(body.target_ids)))
 
 

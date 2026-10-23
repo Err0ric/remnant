@@ -166,3 +166,28 @@ describe("A range too big for the memory share (F46)", () => {
     expect(spy.mock.calls.filter(([u]) => String(u).includes("/api/ai/usage")).length).toBe(2);
   });
 });
+
+describe("Agent sessions from the hooks plugin (ADR-0026)", () => {
+  it("lists sessions and opens one in order", async () => {
+    window.history.replaceState(null, "", "/ai#agents");
+    mockApi("Codename", { mode: "open" });
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    render(
+      <App
+        initialTheme="dark"
+        queryClient={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      />,
+    );
+    const card = await screen.findByRole("region", { name: "Agent sessions" });
+    await userEvent.click(await within(card).findByRole("button", { name: "dana@example.com" }));
+    const steps = await within(card).findByRole("list", { name: "Session timeline" });
+    const items = within(steps).getAllByRole("listitem");
+    expect(items).toHaveLength(5);
+    expect(items[2]).toHaveTextContent("Calls Read /home/dana/app/auth.py");
+    expect(items[3]).toHaveTextContent("github create_issue");
+    expect(items[1]).toHaveTextContent("42 chars");
+  });
+});

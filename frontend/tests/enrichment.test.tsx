@@ -97,6 +97,19 @@ describe("Location in results", () => {
     expect(screen.getAllByText(/AS64500/)).toHaveLength(1); // nothing on the private address
   });
 
+  it("credits DB-IP once, quietly, below the table (F52)", () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}"));
+    render(<ResultsTable result={result} view="parsed" geo={result.geo} />);
+    const credit = screen.getAllByRole("link", { name: "IP Geolocation by DB-IP" });
+    expect(credit).toHaveLength(1);
+    expect(credit[0]).not.toHaveClass("text-accent");
+  });
+
+  it("does not credit DB-IP when no location is shown", () => {
+    render(<ResultsTable result={result} view="parsed" />);
+    expect(screen.queryByText(/IP Geolocation by DB-IP/)).toBeNull();
+  });
+
   it("marks listed values with one small dot and nothing else", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}"));
     render(
@@ -120,5 +133,20 @@ describe("Location in results", () => {
   it("shows nothing when the viewer hides it", () => {
     render(<ResultsTable result={result} view="parsed" />);
     expect(screen.queryByText("NL · AS64500")).toBeNull();
+  });
+});
+
+describe("About and licenses", () => {
+  it("lists the version, licence, and each outside data source with its attribution", async () => {
+    await renderAt("/about");
+    expect(await screen.findByRole("heading", { name: "About and licenses" })).toBeInTheDocument();
+    expect(screen.getByText("Apache License 2.0")).toBeInTheDocument();
+    const table = screen.getByRole("table");
+    expect(within(table).getByRole("link", { name: "IP Geolocation by DB-IP" })).toHaveAttribute(
+      "href",
+      "https://db-ip.com",
+    );
+    expect(within(table).getByText(/Feodo Tracker and ThreatFox/)).toBeInTheDocument();
+    expect(within(table).getByText(/Detection Rule License/)).toBeInTheDocument();
   });
 });

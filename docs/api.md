@@ -45,6 +45,8 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | `DELETE` | `/api/ai/services/{service_id}` | Delete Service |  |  |
 | `PUT` | `/api/ai/services/{service_id}/data-level` | The most sensitive data allowed to this service (ADR-0020 row 4). Audited as ai.service_change. |  | `data_level`: `public` &#124; `internal` &#124; `confidential` |
 | `PUT` | `/api/ai/services/{service_id}/status` | Set Service Status |  | `status`: `approved` &#124; `not_approved` &#124; `unreviewed`<br>`note`?: string |
+| `GET` | `/api/ai/sessions` | Recent Claude Code and Cowork sessions from the hooks plugin (ADR-0026), newest first, from the sources the caller may read. Audited ai.view. | `?days` (optional): integer |  |
+| `GET` | `/api/ai/sessions/{session_id}` | One session in order: start, prompts, each tool call and its result, stop. Audited ai.view with the session id. | `?days` (optional): integer |  |
 | `GET` | `/api/ai/usage` | Services, MCP servers, and Claude usage per person, from the sources the caller may read; with a start, also what is new and what is no longer seen against the period of the same length before it. Audited ai.view. | `?start` (optional): date-time<br>`?end` (optional): date-time |  |
 | `GET` | `/api/ai/watch` | Get Watch |  |  |
 | `PUT` | `/api/ai/watch` | Put Watch |  | `enabled`: boolean<br>`include_unreviewed`?: boolean<br>`sensitive`?: boolean<br>`target_ids`?: list of string<br>`agents`?: boolean |
@@ -84,6 +86,21 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | `POST` | `/api/auth/sso/start` | Where to send the browser to sign in; binds the flow to this browser with a cookie. |  | `link_token`?: string |
 | `GET` | `/api/auth/state` | State |  |  |
 | `POST` | `/api/setup` | Setup |  | `token`: string<br>`username`: string<br>`password`: string |
+
+### Dashboards
+
+| Method | Path | What it does | Query | JSON body (`?` optional) |
+|---|---|---|---|---|
+| `GET` | `/api/dashboards` | Dashboards the viewer sees, their own first. A user with none yet gets an empty "My dashboard" the first time they create a panel, not on reading. |  |  |
+| `POST` | `/api/dashboards` | Create Dashboard |  | `name`: string<br>`shared`?: boolean |
+| `PATCH` | `/api/dashboards/{dashboard_id}` | Update Dashboard |  | `name`?: string<br>`shared`?: boolean |
+| `DELETE` | `/api/dashboards/{dashboard_id}` | Deletes the dashboard and its panel layout; the schedules keep running. |  |  |
+| `POST` | `/api/dashboards/{dashboard_id}/acknowledge` | Clear a flagged run from Needs attention until the next flagged run. Only the schedule's latest run, only when flagged, and only for a viewer who may read it. |  | `schedule_id`: string<br>`run_id`: string |
+| `PUT` | `/api/dashboards/{dashboard_id}/layout` | The whole arrangement: sections in order, each with its panels in order. Drag and drop, keyboard moves, section order, adding an empty section, and deleting one (its panels move to no section) all send this. Audited dashboard.layout with before and after. |  | `sections`: list of LayoutSection |
+| `PUT` | `/api/dashboards/{dashboard_id}/order` | Reorder |  | `schedule_ids`: list of string |
+| `PUT` | `/api/dashboards/{dashboard_id}/panels/{schedule_id}` | Add a schedule's panel, or change its section, position, size, or view. |  | `section`?: string<br>`position`?: integer<br>`size`?: `tile` &#124; `third` &#124; `half` &#124; `full`<br>`view`?: `table` &#124; `bars` |
+| `DELETE` | `/api/dashboards/{dashboard_id}/panels/{schedule_id}` | Takes the panel off this dashboard; the schedule keeps running. |  |  |
+| `PATCH` | `/api/dashboards/{dashboard_id}/sections` | Rename Section |  | `old`: string<br>`new`: string |
 
 ### Enrichment
 
@@ -222,8 +239,8 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | Method | Path | What it does | Query | JSON body (`?` optional) |
 |---|---|---|---|---|
 | `GET` | `/api/schedules` | List Schedules |  |  |
-| `POST` | `/api/schedules` | Create Schedule |  | `kind`: `search` &#124; `rule`<br>`target_id`: string<br>`name`?: string<br>`cron`: string<br>`lookback_minutes`?: integer<br>`params`?: object<br>`shared`?: boolean<br>`threshold_kind`?: `above` &#124; `below` &#124; `change_pct`<br>`threshold_value`?: number<br>`target_ids`?: list of string |
-| `PATCH` | `/api/schedules/{schedule_id}` | Update Schedule |  | `name`?: string<br>`cron`?: string<br>`lookback_minutes`?: integer<br>`shared`?: boolean<br>`threshold_kind`?: `above` &#124; `below` &#124; `change_pct` or `none`<br>`threshold_value`?: number<br>`paused`?: boolean<br>`target_ids`?: list of string<br>`panel_width`?: `third` &#124; `half` &#124; `full`<br>`panel_view`?: `table` &#124; `bars`<br>`kind`?: `search` &#124; `rule`<br>`target_id`?: string<br>`params`?: object |
+| `POST` | `/api/schedules` | Create Schedule |  | `kind`: `search` &#124; `rule`<br>`target_id`: string<br>`name`?: string<br>`cron`: string<br>`lookback_minutes`?: integer<br>`params`?: object<br>`shared`?: boolean<br>`threshold_kind`?: `above` &#124; `below` &#124; `change_pct`<br>`threshold_value`?: number<br>`target_ids`?: list of string<br>`dashboard_id`?: string<br>`panel_size`?: `tile` &#124; `third` &#124; `half` &#124; `full`<br>`panel_view`?: `table` &#124; `bars` |
+| `PATCH` | `/api/schedules/{schedule_id}` | Update Schedule |  | `name`?: string<br>`cron`?: string<br>`lookback_minutes`?: integer<br>`shared`?: boolean<br>`threshold_kind`?: `above` &#124; `below` &#124; `change_pct` or `none`<br>`threshold_value`?: number<br>`paused`?: boolean<br>`target_ids`?: list of string<br>`panel_width`?: `third` &#124; `half` &#124; `full`<br>`panel_view`?: `table` &#124; `bars`<br>`headline_kind`?: `rows` &#124; `sum` &#124; `distinct` &#124; `first`<br>`headline_column`?: string<br>`headline_label`?: string<br>`kind`?: `search` &#124; `rule`<br>`target_id`?: string<br>`params`?: object |
 | `DELETE` | `/api/schedules/{schedule_id}` | Delete Schedule |  |  |
 | `GET` | `/api/schedules/{schedule_id}/deliveries` | Alert delivery status for a schedule the viewer can see (no message content). |  |  |
 | `POST` | `/api/schedules/{schedule_id}/run` | Run Now |  |  |
@@ -250,6 +267,7 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | `GET` | `/api/sources` | List Sources |  |  |
 | `POST` | `/api/sources` | Add Source |  | `source_id`: string<br>`format`: `syslog` &#124; `json` &#124; `csv`<br>`kind`?: `file` &#124; `loki` &#124; `otlp` &#124; `m365` &#124; `anthropic` &#124; `syslog`<br>`path`?: string<br>`loki`?: LokiSettings<br>`m365`?: M365Settings<br>`anthropic`?: AnthropicSettings<br>`syslog`?: SyslogSettings<br>`glob`?: string<br>`timezone`?: string<br>`classification`?: `local_only` &#124; `cloud_allowed`<br>`retention_days`?: integer<br>`enabled`?: boolean<br>`template_id`?: string<br>`otlp_keep_content`?: boolean<br>`loki_secret`?: password<br>`credentials`?: ApiCredentials |
 | `POST` | `/api/sources/api/test` | One small read per enabled feed with these settings, before the source is saved. Audited source.api_test with the kind and feeds, never the credentials. |  | `kind`: `m365` &#124; `anthropic`<br>`m365`?: M365Settings<br>`anthropic`?: AnthropicSettings<br>`credentials`?: ApiCredentials |
+| `GET` | `/api/sources/claude-plugin` | The hooks plugin's version and the SHA-256 of its script, to check a copy against. |  |  |
 | `POST` | `/api/sources/discover` | Suggest sources for a folder. Reads files only: creates and grants nothing. |  | `path`: string |
 | `POST` | `/api/sources/loki/test` | One small query with these settings, before a Loki source is saved (ADR-0011). |  | `url`: string<br>`query`: string<br>`tenant`?: string<br>`auth`?: `none` &#124; `basic` &#124; `bearer`<br>`username`?: string<br>`backfill_hours`?: integer<br>`label_map`?: object<br>`secret`?: password |
 | `GET` | `/api/sources/settings` | Source Settings |  |  |
@@ -257,6 +275,7 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | `PATCH` | `/api/sources/{source_id}` | Change a source's classification (SPEC 6.2) or parser (ADR-0012). Only new events take either: events already stored keep their label, so relabelling never releases older data (T8), and keep the parser they were read with. |  | `classification`?: `local_only` &#124; `cloud_allowed`<br>`template_id`?: string<br>`otlp_keep_content`?: boolean<br>`loki_label_map`?: object<br>`timezone`?: string<br>`retention_days`?: integer<br>`connector`?: object |
 | `DELETE` | `/api/sources/{source_id}` | Delete Source |  |  |
 | `GET` | `/api/sources/{source_id}/agent-config` | OpenTelemetry Collector config for an agent group (ADR-0017 row 2). Holds no secret: the token is read from a file on the endpoint. Audited source.agent_config. | `?os` (optional): `windows` &#124; `linux`<br>`?server_name` (optional): string |  |
+| `POST` | `/api/sources/{source_id}/claude-plugin` | The hooks plugin for this OTLP source as a zip: server address, a new token for the source (earlier copies stop sending), content on only when the source keeps content, and the pilot list. Audited source.claude_plugin (never the token). |  | `pilot_users`?: list of string<br>`server_url`?: string |
 | `PUT` | `/api/sources/{source_id}/credentials` | Replace an API source's credentials (a renewed certificate or a new key). Reading continues from the saved position. Audited source.credentials, never the values. |  | `api_key`?: password<br>`client_secret`?: password<br>`certificate_pem`?: string<br>`private_key_pem`?: password |
 | `GET` | `/api/sources/{source_id}/deliveries` | Quiet and resumed alerts sent for this source, newest first (no message content). |  |  |
 | `POST` | `/api/sources/{source_id}/otlp-token` | A new ingest token for an OTLP source; the old one stops working at once. Shown once, stored hashed, audited source.otlp_token (never the token). |  |  |

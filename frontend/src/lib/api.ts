@@ -856,10 +856,73 @@ async function postYaml<T>(path: string, text: string): Promise<T> {
   return body as T;
 }
 
+/** A POST whose answer is a file (the Claude hooks plugin zip), with the usual CSRF header
+ * and error handling. */
+async function postForFile(path: string, body: unknown): Promise<{ blob: Blob; headers: Headers }> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (csrfToken) headers["X-CSRF-Token"] = csrfToken;
+  const res = await fetch(path, {
+    method: "POST",
+    body: JSON.stringify(body),
+    credentials: "same-origin",
+    headers,
+  });
+  if (!res.ok) {
+    let detail = `${res.status} ${res.statusText}`;
+    let code: string | undefined;
+    try {
+      const b = (await res.json()) as { detail?: unknown; code?: string };
+      if (typeof b.detail === "string") detail = b.detail;
+      code = b.code;
+    } catch {
+      // keep the status line
+    }
+    throw new ApiError(res.status, detail, code);
+  }
+  return { blob: await res.blob(), headers: res.headers };
+}
+
 async function requestText(path: string): Promise<string> {
   const res = await fetch(path, { credentials: "same-origin" });
   if (!res.ok) throw new ApiError(res.status, `${res.status} ${res.statusText}`);
   return res.text();
+}
+
+/** An agent session from the hooks plugin (ADR-0026). */
+export interface AgentSession {
+  session_id: string;
+  person: string | null;
+  machine: string | null;
+  started: string;
+  last: string;
+  prompts: number;
+  tool_calls: number;
+  tools: string[];
+  hosts: string[];
+  stopped: boolean;
+}
+
+export interface SessionStep {
+  time: string;
+  event: string;
+  role: string | null;
+  tool: string | null;
+  mcp_server: string | null;
+  mcp_tool: string | null;
+  path: string | null;
+  web_host: string | null;
+  program: string | null;
+  prompt_chars: number | null;
+  input_chars: number | null;
+  output_chars: number | null;
+  event_id: string;
+}
+
+export interface SessionTimeline {
+  session_id: string;
+  person: string | null;
+  machine: string | null;
+  steps: SessionStep[];
 }
 
 export interface AskProvider {
@@ -1039,6 +1102,8 @@ export interface ScheduleRunSummary {
   parser_change?: string | null;
   /** The first run after the schedule's definition changed says what changed (F37). */
   definition_change?: string | null;
+  /** The panel's number for this run (ADR-0034); null when its column was not in the result. */
+  headline?: string | null;
 }
 
 export interface ScheduleRunDetail extends ScheduleRunSummary {
@@ -1177,7 +1242,42 @@ export interface Schedule {
   /** Dashboard panel width and view, set by the owner or an admin. */
   panel_width?: "third" | "half" | "full";
   panel_view?: "table" | "bars";
+  /** The panel's number (ADR-0034): row count, or sum, count distinct, or first value of a
+   * result column, with a label. */
+  headline_kind?: HeadlineKind;
+  headline_column?: string | null;
+  headline_label?: string | null;
 }
+
+export type HeadlineKind = "rows" | "sum" | "distinct" | "first";
+export type PanelSize = "tile" | "third" | "half" | "full";
+
+export interface DashboardPanel {
+  schedule_id: string;
+  section: string;
+  position: number;
+  size: PanelSize;
+  view: "table" | "bars";
+}
+
+/** A named dashboard (ADR-0034): personal or shared, with its panels and the flagged runs
+ * that were acknowledged (schedule id to run id). */
+export interface Dashboard {
+  dashboard_id: string;
+  name: string;
+  owner_id: string;
+  mine: boolean;
+  shared: boolean;
+  can_edit: boolean;
+  panels: DashboardPanel[];
+  acks: Record<string, string>;
+  /** Section names in their stored order; a panel's section "" is no section. */
+  sections: string[];
+  updated_at: string;
+}
+
+/** The whole arrangement of a dashboard: sections in order, each with its panels in order. */
+export type DashboardLayout = { name: string; schedule_ids: string[] }[];
 
 export interface ScheduleInput {
   kind: "search" | "rule";
@@ -1189,6 +1289,10 @@ export interface ScheduleInput {
   threshold_kind?: ThresholdKind | null;
   threshold_value?: number | null;
   target_ids?: string[];
+  /** The dashboard its panel goes on; by default the creator's first one. */
+  dashboard_id?: string;
+  panel_size?: PanelSize;
+  panel_view?: "table" | "bars";
 }
 
 export interface ScheduleUpdate {
@@ -1199,6 +1303,10 @@ export interface ScheduleUpdate {
   target_ids?: string[];
   panel_width?: "third" | "half" | "full";
   panel_view?: "table" | "bars";
+  headline_kind?: HeadlineKind;
+  /** "" clears it. */
+  headline_column?: string;
+  headline_label?: string;
   /** 0 clears the range (since the last run). */
   lookback_minutes?: number;
   /** "none" clears the threshold. */
@@ -1301,6 +1409,44 @@ export const api = {
   auditExport: (log: "events" | "llm-calls", f: AuditFilters) =>
     request<string>(`/api/audit/${log}/export${queryString({ ...f })}`, undefined, true),
   createSchedule: (body: ScheduleInput) => request<Schedule>("/api/schedules", post(body)),
+  dashboards: () => request<Dashboard[]>("/api/dashboards"),
+  createDashboard: (name: string, shared = false) =>
+    request<Dashboard>("/api/dashboards", post({ name, shared })),
+  updateDashboard: (id: string, body: { name?: string; shared?: boolean }) =>
+    request<Dashboard>(`/api/dashboards/${encodeURIComponent(id)}`, patch(body)),
+  deleteDashboard: (id: string) =>
+    request<void>(`/api/dashboards/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  setPanel: (
+    id: string,
+    scheduleId: string,
+    body: { section?: string; position?: number; size?: PanelSize; view?: "table" | "bars" },
+  ) =>
+    request<Dashboard>(
+      `/api/dashboards/${encodeURIComponent(id)}/panels/${encodeURIComponent(scheduleId)}`,
+      put(body),
+    ),
+  removePanel: (id: string, scheduleId: string) =>
+    request<void>(
+      `/api/dashboards/${encodeURIComponent(id)}/panels/${encodeURIComponent(scheduleId)}`,
+      { method: "DELETE" },
+    ),
+  reorderPanels: (id: string, scheduleIds: string[]) =>
+    request<Dashboard>(
+      `/api/dashboards/${encodeURIComponent(id)}/order`,
+      put({ schedule_ids: scheduleIds }),
+    ),
+  setLayout: (id: string, sections: DashboardLayout) =>
+    request<Dashboard>(`/api/dashboards/${encodeURIComponent(id)}/layout`, put({ sections })),
+  renameSection: (id: string, oldName: string, newName: string) =>
+    request<Dashboard>(
+      `/api/dashboards/${encodeURIComponent(id)}/sections`,
+      patch({ old: oldName, new: newName }),
+    ),
+  acknowledge: (id: string, scheduleId: string, runId: string) =>
+    request<void>(
+      `/api/dashboards/${encodeURIComponent(id)}/acknowledge`,
+      post({ schedule_id: scheduleId, run_id: runId }),
+    ),
   updateSchedule: (id: string, body: ScheduleUpdate) =>
     request<Schedule>(`/api/schedules/${encodeURIComponent(id)}`, patch(body)),
   deleteSchedule: (id: string) =>
@@ -1434,6 +1580,13 @@ export const api = {
     }),
   setKeepContent: (id: string, keep: boolean) =>
     request<Source>(`/api/sources/${encodeURIComponent(id)}`, patch({ otlp_keep_content: keep })),
+  /** The hooks plugin for an OTLP source (ADR-0026): issues a new token for the source. */
+  claudePlugin: (id: string, body: { server_url?: string; pilot_users: string[] }) =>
+    postForFile(`/api/sources/${encodeURIComponent(id)}/claude-plugin`, body),
+  aiSessions: (days = 7) => request<AgentSession[]>(`/api/ai/sessions?days=${days}`),
+  aiSession: (id: string) => request<SessionTimeline>(`/api/ai/sessions/${encodeURIComponent(id)}`),
+  claudePluginInfo: () =>
+    request<{ version: string; script_sha256: string }>("/api/sources/claude-plugin"),
   agentConfig: (id: string, os: "windows" | "linux") =>
     requestText(`/api/sources/${encodeURIComponent(id)}/agent-config?os=${os}`),
   testLoki: (body: LokiSettings & { secret?: string }) =>

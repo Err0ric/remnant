@@ -119,6 +119,7 @@ Runtime data lives outside the repo at `./data/` (gitignored) or the compose vol
 - Conventional commits: `feat(ingest): ...`, `fix(engine): ...`, `docs: ...`, `test(templates): ...`
 - One slice per milestone, one PR per vertical feature inside a slice
 - Never commit `data/`, `.env`, or `*.key`
+- CI minutes are limited: docs-only PRs run no CI, superseded runs are cancelled, scale tests run only from the `scale` workflow, and `release-checks` runs by hand before a release and whenever an install guide's install or update commands change (not for wording)
 - Every PR description lists which Definition of Done items it satisfies
 
 ## 5. Security rules

@@ -1,0 +1,10 @@
+{"activity_id": 1, "actor_user_name": "alice@example.com", "class_uid": 6003, "device_hostname": "ws-0042", "message": "claude_hooks.session_start", "parse_status": "ok"}
+{"activity_id": 1, "actor_user_name": "alice@example.com", "class_uid": 6003, "device_hostname": "ws-0042", "message": "claude_hooks.user_prompt_submit", "parse_status": "ok"}
+{"activity_id": 1, "actor_user_name": "alice@example.com", "class_uid": 6003, "device_hostname": "ws-0042", "message": "claude_hooks.pre_tool_use", "parse_status": "ok"}
+{"activity_id": 2, "actor_user_name": "alice@example.com", "class_uid": 6003, "device_hostname": "ws-0042", "message": "claude_hooks.post_tool_use", "parse_status": "ok"}
+{"activity_id": 1, "actor_user_name": "alice@example.com", "class_uid": 6003, "device_hostname": "ws-0042", "message": "claude_hooks.pre_tool_use", "parse_status": "ok"}
+{"activity_id": 2, "actor_user_name": "alice@example.com", "class_uid": 6003, "device_hostname": "ws-0042", "message": "claude_hooks.post_tool_use", "parse_status": "ok"}
+{"activity_id": 1, "actor_user_name": "alice@example.com", "class_uid": 6003, "device_hostname": "ws-0042", "message": "claude_hooks.pre_tool_use", "parse_status": "ok"}
+{"activity_id": 2, "actor_user_name": "alice@example.com", "class_uid": 6003, "device_hostname": "ws-0042", "message": "claude_hooks.post_tool_use", "parse_status": "ok"}
+{"activity_id": 2, "actor_user_name": "alice@example.com", "class_uid": 6003, "device_hostname": "ws-0042", "message": "claude_hooks.stop", "parse_status": "ok"}
+{"activity_id": 1, "actor_user_name": "bob@example.com", "class_uid": 6003, "device_hostname": "lt-0107", "message": "claude_hooks.session_start", "parse_status": "ok"}

@@ -395,6 +395,44 @@ describe("OTLP sources (ADR-0015)", () => {
     ).not.toBeChecked();
   });
 
+  it("downloads the Claude hooks plugin with a pilot list (ADR-0026)", async () => {
+    const spy = await openSources();
+    await userEvent.click(screen.getByRole("button", { name: "Add source" }));
+    const form = screen.getByRole("form", { name: "Add source" });
+    await userEvent.type(within(form).getByLabelText("Source ID"), "claude_hooks");
+    await userEvent.selectOptions(within(form).getByLabelText("Reads from"), "otlp");
+    await userEvent.click(within(form).getByRole("button", { name: "Add source" }));
+    await userEvent.click(
+      within(await screen.findByRole("region", { name: "Ingest token" })).getByRole("button", {
+        name: "Done",
+      }),
+    );
+    const row = (await screen.findByText("claude_hooks")).closest("tr") as HTMLElement;
+    await userEvent.click(within(row).getByRole("button", { name: "Claude plugin" }));
+    const plugin = within(row).getByRole("form", { name: "Claude plugin for claude_hooks" });
+    expect(plugin).toHaveTextContent("metadata only");
+    expect(plugin).toHaveTextContent("issues a new token for this source");
+    await userEvent.type(
+      within(plugin).getByLabelText("Server address"),
+      "https://siem.example.internal",
+    );
+    await userEvent.type(
+      within(plugin).getByLabelText("Pilot users"),
+      "dana@example.com, erin@example.com",
+    );
+    expect(plugin).toHaveTextContent("Only these 2 people send");
+    URL.createObjectURL = vi.fn(() => "blob:x");
+    URL.revokeObjectURL = vi.fn();
+    await userEvent.click(within(plugin).getByRole("button", { name: "Download plugin" }));
+    expect(await within(plugin).findByRole("status")).toHaveTextContent("Upload the zip");
+    expect(
+      JSON.parse(String(posts(spy, "/api/sources/claude_hooks/claude-plugin")[0]?.[1]?.body)),
+    ).toEqual({
+      server_url: "https://siem.example.internal",
+      pilot_users: ["dana@example.com", "erin@example.com"],
+    });
+  });
+
   it("adds a syslog listener with protocol, port, and allowed senders", async () => {
     const spy = await openSources();
     await userEvent.click(screen.getByRole("button", { name: "Add source" }));

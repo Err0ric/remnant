@@ -25,7 +25,8 @@ export type PageId =
   | "health"
   | "mcp"
   | "enrichment"
-  | "audit";
+  | "audit"
+  | "about";
 
 const PATHS: Record<PageId, string> = {
   home: "/",
@@ -50,6 +51,7 @@ const PATHS: Record<PageId, string> = {
   mcp: "/mcp-server",
   enrichment: "/enrichment",
   audit: "/audit",
+  about: "/about",
   account: "/account", // invite and reset links land here; works signed out
 };
 const CHANGE = "app:navigate";

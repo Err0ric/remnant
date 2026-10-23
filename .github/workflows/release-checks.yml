@@ -1,15 +1,14 @@
 name: release-checks
 
-# Runs by hand before a release, and on PRs that change the Dockerfile, the compose file,
-# the systemd guide, or this file. Not on every PR: it builds images and installs a service.
+# Runs by hand: before a release, and whenever an install guide's install or update
+# commands change (not for wording). On PRs only when the Dockerfile, the compose file, or
+# this file changes. Not on every PR: it builds images and installs a service.
 on:
   workflow_dispatch:
   pull_request:
     paths:
       - Dockerfile
       - docker-compose.yml
-      - docs/install/team-vm.md
-      - docs/ingest/vector.md
       - .github/workflows/release-checks.yml
 
 permissions:
@@ -122,6 +121,40 @@ jobs:
           systemctl show remnant -p User -p NoNewPrivileges -p ProtectSystem
           echo "::notice title=systemd::$(sudo systemd-analyze security remnant --no-pager | tail -1)"
           sudo systemctl restart remnant && sleep 5 && systemctl is-active remnant
+      - name: Update with the script under umask 077 (F50)
+        run: |
+          # Failures are written as annotations: the raw log is not always reachable.
+          # At most 10 annotations of each kind per step: the newest lines only.
+          fail() {
+            echo "::error title=F50::$1"
+            echo "::warning title=state::$(systemctl show remnant -p ActiveState -p SubState -p ExecMainStatus | tr '\n' ' ')"
+            sudo journalctl -u remnant --since "$since" --no-pager -o cat | tail -9 | while IFS= read -r l; do
+              echo "::notice title=journal::$l"; done
+            exit 1
+          }
+          # A root-only file, as an update in a umask 077 shell leaves: the service says so
+          # in one line instead of a traceback.
+          # (chmod as well: on the hosted runner a umask 077 touch under sudo still left the
+          # file 0666.)
+          sudo sh -c 'umask 077; touch /opt/remnant/backend/app/zz_root_only.py'
+          sudo chmod 0600 /opt/remnant/backend/app/zz_root_only.py
+          since=$(date '+%Y-%m-%d %H:%M:%S')
+          echo "::warning title=file::$(stat -c '%A %U' /opt/remnant/backend/app/zz_root_only.py) $(sudo -u remnant test -r /opt/remnant/backend/app/zz_root_only.py && echo readable || echo unreadable) by remnant; entry $(grep -o 'from app[.a-z]* import run' /opt/remnant/backend/.venv/bin/app-server)"
+          sudo systemctl restart remnant || true
+          for i in $(seq 1 60); do
+            sudo journalctl -u remnant --since "$since" --no-pager -o cat | grep -qE "cannot read|listening on" && break
+            sleep 2
+          done
+          sudo journalctl -u remnant --since "$since" --no-pager -o cat \
+            | grep -q "cannot read /opt/remnant/backend/app/zz_root_only.py" \
+            || fail "no one-line message for the root-only file"
+          # The update script fixes it and checks the service came up.
+          # PATH passed through: pnpm comes from the setup action, outside sudo's secure_path.
+          sudo env "PATH=$PATH" sh -c 'umask 077; sh /opt/remnant/scripts/update-systemd.sh --no-pull' > /tmp/update.log 2>&1 \
+            || { tail -20 /tmp/update.log | while IFS= read -r l; do echo "::error title=update::$l"; done; fail "update script failed"; }
+          tail -20 /tmp/update.log
+          systemctl is-active remnant || fail "not active after the update"
+          sudo rm /opt/remnant/backend/app/zz_root_only.py
       - name: Ingest and query under the sandbox (loopback, single-user mode)
         run: |
           sudo sed -i 's/^APP__SERVER__HOST=.*/APP__SERVER__HOST=127.0.0.1/' /etc/remnant/remnant.env

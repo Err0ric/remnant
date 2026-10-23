@@ -262,10 +262,8 @@ describe("Add to dashboard (D89)", () => {
         cron: "hourly",
         lookback_minutes: 1440,
         shared: false,
+        panel_view: "bars",
       },
-    ]);
-    expect(calls(spy, "PATCH", (u) => /\/api\/schedules\/[^/]+$/.test(u))).toEqual([
-      { panel_view: "bars" },
     ]);
     expect(spy.mock.calls.some(([u]) => /\/api\/schedules\/[^/]+\/run$/.test(String(u)))).toBe(
       true,

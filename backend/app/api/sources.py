@@ -5,12 +5,23 @@ import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import APIRouter, Query, Request, Response, status
 from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel, Field, SecretStr, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    SecretStr,
+    StringConstraints,
+    ValidationError,
+    model_validator,
+)
 from starlette.concurrency import run_in_threadpool
 
+from app.ai.claude_plugin import SCRIPT_SHA256
+from app.ai.claude_plugin import VERSION as PLUGIN_VERSION
+from app.ai.claude_plugin import build_zip as build_plugin_zip
 from app.alerts.dispatch import AlertDispatcher
 from app.api.access import AdminUser, CurrentUser, client_ip
 from app.api.schedules import DeliveryOut
@@ -310,6 +321,90 @@ async def agent_config(
 
 class OtlpToken(BaseModel):
     token: str
+
+
+# The hooks plugin (ADR-0026). A pilot user is an email or an OS user name.
+PilotUser = Annotated[
+    str, StringConstraints(strip_whitespace=True, pattern=r"^[A-Za-z0-9._%+@\\-]{1,254}$")
+]
+
+
+class ClaudePluginIn(BaseModel):
+    # Only these people send while the plugin rolls out (empty: everyone who has it).
+    pilot_users: list[PilotUser] = Field(default_factory=list, max_length=200)
+    # Where the plugin sends: the address people's machines reach this server at. Fixed in
+    # the plugin; nothing on the machine or in a session can change it.
+    server_url: str | None = Field(default=None, max_length=300)
+
+
+class ClaudePluginInfo(BaseModel):
+    version: str
+    script_sha256: str
+
+
+@router.get("/sources/claude-plugin")
+async def claude_plugin_info(_: AdminUser) -> ClaudePluginInfo:
+    """The hooks plugin's version and the SHA-256 of its script, to check a copy against."""
+    return ClaudePluginInfo(version=PLUGIN_VERSION, script_sha256=SCRIPT_SHA256)
+
+
+def _plugin_url(raw: str) -> str:
+    parts = urlsplit(raw.strip())
+    host = (parts.hostname or "").lower()
+    if parts.scheme not in ("https", "http") or not host or parts.query or parts.fragment:
+        raise ParamInvalidError("Give the server address, for example https://siem.example:8080")
+    if parts.username or parts.password:
+        raise ParamInvalidError("The address cannot hold a user name or password")
+    if parts.scheme == "http" and host not in ("127.0.0.1", "localhost", "::1"):
+        raise ParamInvalidError("Use https: the token travels with every record")
+    return urlunsplit((parts.scheme, parts.netloc, parts.path.rstrip("/"), "", ""))
+
+
+@router.post("/sources/{source_id}/claude-plugin")
+async def claude_plugin(
+    source_id: str, body: ClaudePluginIn, request: Request, user: AdminUser
+) -> Response:
+    """The hooks plugin for this OTLP source as a zip: server address, a new token for the
+    source (earlier copies stop sending), content on only when the source keeps content,
+    and the pilot list. Audited source.claude_plugin (never the token)."""
+    store = _store(request)
+    found = [s for s in await run_in_threadpool(store.list) if s.source_id == source_id]
+    if not found:
+        raise NotFoundError("No such source")
+    if found[0].kind != "otlp":
+        raise SourceRejectedError("The Claude plugin sends to an OTLP source")
+    base = body.server_url or request.app.state.public_url
+    if not base:
+        raise ParamInvalidError("Give the address people's machines reach this server at")
+    url = _plugin_url(base)
+    send_content = bool(found[0].otlp_keep_content)
+    token = await run_in_threadpool(store.issue_otlp_token, source_id)
+    data = build_plugin_zip(url, token, send_content, body.pilot_users)
+    await run_in_threadpool(
+        _audit(request).audit.write,
+        "source.claude_plugin",
+        "success",
+        user.user_id,
+        client_ip(request),
+        {
+            "source_id": source_id,
+            "server_url": url,
+            "send_content": send_content,
+            "pilot_users": body.pilot_users,
+            "version": PLUGIN_VERSION,
+            "script_sha256": SCRIPT_SHA256,
+        },
+    )
+    name = f"{PRODUCT_NAME.lower()}-claude-hooks-{source_id}.zip"
+    return Response(
+        data,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{name}"',
+            "X-Script-Sha256": SCRIPT_SHA256,
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.post("/sources/{source_id}/otlp-token")

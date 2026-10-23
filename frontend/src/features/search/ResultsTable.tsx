@@ -242,6 +242,20 @@ export function ResultsTable({
           {result.rows.length}
           {result.truncated ? " (limit reached)" : ""}
         </span>
+        {geo && Object.keys(geo).length ? (
+          // Attribution the DB-IP Lite licence (CC BY 4.0) asks for: once, and quiet (F52).
+          <span className="text-xs text-text-muted">
+            Locations:{" "}
+            <a
+              href="https://db-ip.com"
+              target="_blank"
+              rel="noreferrer"
+              className="text-text-muted underline-offset-2 hover:underline"
+            >
+              IP Geolocation by DB-IP
+            </a>
+          </span>
+        ) : null}
         <span className="ml-auto flex gap-3">
           <button
             type="button"

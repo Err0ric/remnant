@@ -50,6 +50,9 @@ const DashboardPage = lazy(() =>
 const AlertTargetsPage = lazy(() =>
   import("@/features/alerts/AlertTargetsPage").then((m) => ({ default: m.AlertTargetsPage })),
 );
+const AboutPage = lazy(() =>
+  import("@/features/settings/AboutPage").then((m) => ({ default: m.AboutPage })),
+);
 const AuditLogPage = lazy(() =>
   import("@/features/audit/AuditLogPage").then((m) => ({ default: m.AuditLogPage })),
 );
@@ -191,6 +194,8 @@ export function App({ initialTheme, queryClient }: AppProps) {
                       <TemplatesPage />
                     ) : page === "audit" && (!user || user.role !== "analyst") ? (
                       <AuditLogPage isAdmin={!user || user.role === "admin"} />
+                    ) : page === "about" ? (
+                      <AboutPage />
                     ) : page === "ai" ? (
                       <AiUsagePage isAdmin={!user || user.role === "admin"} />
                     ) : page === "identities" && (!user || user.role === "admin") ? (

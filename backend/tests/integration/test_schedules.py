@@ -421,17 +421,21 @@ def _lake_rows(source: str, template: str, at: datetime, n: int) -> list[dict[st
 
 
 def test_a_drop_to_zero_after_a_parser_change_says_so(lab: dict[str, Any]) -> None:
-    """F36: lines moved from a generic parser to a specific one, `message` stopped matching,
-    and the schedule went to zero with no warning."""
+    """F36 and F53: a panel that had rows and now has none says so when an administrator
+    changed the parser of a source it read. Routing shifts under Automatic, sources the
+    query never returned rows from, and panels that had no rows last time stay quiet."""
     from app.ingest.writer import LakeWriter
 
     app = lab["app"]
     svc = app.state.schedules
-    day1 = datetime(2026, 11, 1, 10, tzinfo=UTC)
+    day1 = datetime(2026, 9, 1, 10, tzinfo=UTC)  # in the past: audit rows use the real clock
     day2 = day1 + timedelta(days=1)
+    end = day2 + timedelta(hours=12)
     lake = app.state.engine._lake
     LakeWriter(lake).write(_lake_rows("lin_auth", "generic_syslog", day1, 3))
     LakeWriter(lake).write(_lake_rows("lin_auth", "dns_bind", day2, 3))
+    LakeWriter(lake).write(_lake_rows("pa_fw", "paloalto_system", day1, 3))
+    LakeWriter(lake).write(_lake_rows("pa_fw", "paloalto_threat", day2, 3))
     sid = schedule(lab["ana"]).json()["schedule_id"]
     sched = svc.get(sid)
     with app.state.meta.connect() as con:
@@ -440,12 +444,31 @@ def test_a_drop_to_zero_after_a_parser_change_says_so(lab: dict[str, Any]) -> No
             " status, row_count, sources_in_scope) VALUES ('r0', ?, ?, ?, ?, 'ok', 5, '[]')",
             (sid, day2.isoformat(), day1.isoformat(), day2.isoformat()),
         )
-    end = day2 + timedelta(hours=12)
-    note = svc._parser_change(sched, day2, end, ["lin_auth"])
+    read = ["lin_auth", "pa_fw"]
+    sql = "SELECT event_id FROM events WHERE source_id = 'lin_auth'"
+
+    # A new template in the routing mix under Automatic: no audited change, no note.
+    assert svc._parser_change(sched, day2, end, read, sql, {}) is None
+
+    app.state.auth.audit.write(
+        "source.parser_change", "success", "ana", None,
+        {"source_id": "pa_fw", "from": "auto", "to": "paloalto_threat"},
+    )  # fmt: skip
+    # pa_fw changed, but this search never returned rows from it.
+    assert svc._parser_change(sched, day2, end, read, sql, {}) is None
+
+    app.state.auth.audit.write(
+        "source.parser_change", "success", "ana", None,
+        {"source_id": "lin_auth", "from": "auto", "to": "dns_bind"},
+    )  # fmt: skip
+    note = svc._parser_change(sched, day2, end, read, sql, {})
     assert note is not None
-    assert "lin_auth at 2026-11-02 10:00 UTC (generic_syslog to dns_bind)" in note
+    assert "lin_auth at " in note and "(Automatic to dns_bind)" in note
+    assert "pa_fw" not in note
     assert "use raw or parsed fields" in note
-    # No earlier run with rows: nothing to compare, no note.
+    # A source the run did not read never shows its change.
+    assert svc._parser_change(sched, day2, end, ["pa_fw"], sql, {}) is None
+    # The last run had no rows: nothing stopped matching, no note.
     with app.state.meta.connect() as con:
         con.execute("UPDATE schedule_runs SET row_count = 0 WHERE run_id = 'r0'")
-    assert svc._parser_change(sched, day2, end, ["lin_auth"]) is None
+    assert svc._parser_change(sched, day2, end, read, sql, {}) is None

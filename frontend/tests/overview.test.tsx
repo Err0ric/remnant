@@ -90,7 +90,7 @@ describe("Overview", () => {
   it("goes home from the product mark: the Dashboard when there are panels", async () => {
     await renderAt("/schedules");
     await userEvent.click(await screen.findByRole("link", { name: "Codename home" }));
-    expect(await screen.findByRole("heading", { name: "Dashboard", level: 1 })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "My dashboard", level: 1 })).toBeVisible();
     expect(window.location.pathname).toBe("/dashboard");
   });
 
@@ -135,7 +135,8 @@ describe("Overview", () => {
 function noSchedules(spy: ReturnType<typeof mockApi>) {
   const real = spy.getMockImplementation();
   spy.mockImplementation((url, init) =>
-    String(url).endsWith("/api/schedules") && (init?.method ?? "GET") === "GET"
+    (String(url).endsWith("/api/schedules") || String(url).endsWith("/api/dashboards")) &&
+    (init?.method ?? "GET") === "GET"
       ? Promise.resolve(new Response("[]", { headers: { "Content-Type": "application/json" } }))
       : (real as typeof fetch)(url, init),
   );
@@ -144,7 +145,7 @@ function noSchedules(spy: ReturnType<typeof mockApi>) {
 describe("Landing page (ADR-0031)", () => {
   it("opens the Dashboard first when there is a panel, with health on the first screen", async () => {
     await renderAt("/");
-    expect(await screen.findByRole("heading", { name: "Dashboard", level: 1 })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "My dashboard", level: 1 })).toBeVisible();
     expect(window.location.pathname).toBe("/dashboard");
     const health = await screen.findByRole("region", { name: "Health" });
     expect(health).toHaveTextContent("1 source with errors");

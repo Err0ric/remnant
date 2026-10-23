@@ -1,0 +1,65 @@
+schema_version: 1
+id: claude_hooks
+name: Claude Code and Cowork session hooks (plugin)
+version: 1.0.0
+author: starter-pack
+description: >-
+  Records from the observe-only hooks plugin (ADR-0026), received as OTLP logs: session
+  start, prompt submit, before and after each tool call, and stop, in order, per session.
+  The person is the Claude account email (else the OS user); the machine is the host name.
+  attr.role says where in the session a record sits (session, user, tool_call,
+  tool_result); tool name, MCP server and tool, the file path, web host, or program a tool
+  touched, sizes, and SHA-256 hashes stay in unmapped. Prompt text and tool input and output
+  are present only when the plugin was downloaded with content on and the source keeps it.
+category: application
+vendor: anthropic
+classification_default: local_only
+
+envelope:
+  type: none
+
+match:
+  regex: '^\{"signal":"log".*"event":"claude_hooks\.'
+  min_confidence: 0.95
+
+payload:
+  format: json
+  json: { root: "$" }
+
+transforms:
+  - { field: time, op: timestamp, args: { format: iso8601 } }
+
+mapping:
+  class_uid: 6003            # API Activity
+  fields:
+    time: { from: time }
+    actor_user_name: { from: [attr.user, attr.os_user] }
+    device_hostname: { from: resource.host_name }
+    dst_endpoint_hostname: { from: attr.web_host }
+    message: { from: event }
+    activity_id:
+      from: event
+      map:
+        claude_hooks.session_start: 1
+        claude_hooks.user_prompt_submit: 1
+        claude_hooks.pre_tool_use: 1
+        claude_hooks.post_tool_use: 2
+        claude_hooks.stop: 2
+
+tests:
+  - name: a tool call that reads a file
+    input: '{"signal":"log","time":"2026-10-22T18:00:01+00:00","service":"claude-hooks","event":"claude_hooks.pre_tool_use","severity":null,"attr":{"event_name":"claude_hooks.pre_tool_use","role":"tool_call","session_id":"s-01","user":"alice@example.com","os_user":"alice","tool_name":"Read","path":"/home/alice/app/src/main.py","tool_input_sha256":"00","tool_input_chars":41},"body":"claude_hooks.pre_tool_use","resource":{"service_name":"claude-hooks","host_name":"ws-0042"},"scope":"claude-hooks","content":"dropped"}'
+    expect:
+      parse_status: ok
+      class_uid: 6003
+      fields: { actor_user_name: alice@example.com, device_hostname: ws-0042, message: claude_hooks.pre_tool_use, activity_id: 1 }
+  - name: a web fetch result names the host
+    input: '{"signal":"log","time":"2026-10-22T18:00:03+00:00","service":"claude-hooks","event":"claude_hooks.post_tool_use","attr":{"event_name":"claude_hooks.post_tool_use","role":"tool_result","session_id":"s-01","user":"alice@example.com","tool_name":"WebFetch","web_host":"docs.example.com","tool_response_chars":5120},"resource":{"service_name":"claude-hooks","host_name":"ws-0042"},"content":"dropped"}'
+    expect:
+      parse_status: ok
+      fields: { dst_endpoint_hostname: docs.example.com, activity_id: 2 }
+  - name: no account email falls back to the OS user
+    input: '{"signal":"log","time":"2026-10-22T18:01:00+00:00","service":"claude-hooks","event":"claude_hooks.session_start","attr":{"event_name":"claude_hooks.session_start","role":"session","session_id":"s-02","os_user":"bob","session_source":"startup"},"resource":{"service_name":"claude-hooks","host_name":"lt-0107"},"content":"dropped"}'
+    expect:
+      parse_status: ok
+      fields: { actor_user_name: bob, message: claude_hooks.session_start }

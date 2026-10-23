@@ -105,7 +105,7 @@ A forward-auth proxy can sit in front of the browser pages: people pass its logi
 
 | Client | Paths (from the app's routers) | Token the app checks |
 |---|---|---|
-| OpenTelemetry senders (Claude Code telemetry, the endpoint agent, the MCP inventory script) | `/api/otlp/v1/logs`, `/api/otlp/v1/metrics` | Per-source ingest token |
+| OpenTelemetry senders (Claude Code telemetry, the Claude hooks plugin, the endpoint agent, the MCP inventory script) | `/api/otlp/v1/logs`, `/api/otlp/v1/metrics` | Per-source ingest token |
 | MCP clients (Claude Desktop, Claude Code) | `/api/mcp` | Per-user MCP token |
 | The `remnant` CLI and TUI | Any path under `/api/` | Per-user API token (`Authorization: Bearer`); browser cookies are not accepted with it |
 | Monitoring | `/api/health` | None; returns status only |

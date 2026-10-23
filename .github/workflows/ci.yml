@@ -3,20 +3,27 @@ name: ci
 on:
   push:
     branches: [main]
+  # Docs and ADRs alone never run CI (the private repo's minutes are limited). A PR that
+  # also changes code still runs.
   pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
   workflow_dispatch:
 
-# A newer commit on the same PR cancels the older run.
+# A newer run on the same PR or branch cancels the older one.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  # Private dev repo only (its minutes are limited): a PR runs the backend job unless it
-  # touches nothing outside frontend/, and the frontend job only when frontend/ changed.
+  # Private dev repo only (its minutes are limited): a PR runs the backend job only when
+  # something outside frontend/ and the docs changed, and the frontend job only when
+  # frontend/ changed. Scale tests never run here (`-m scale` is excluded by default; run
+  # them with the scale workflow, on demand).
   # The public repo always runs everything.
   changes:
     if: github.event_name == 'pull_request' && github.event.repository.private
@@ -34,7 +41,8 @@ jobs:
         run: |
           files=$(git diff --name-only "$BASE"...HEAD)
           echo "$files"
-          echo "backend=$(echo "$files" | grep -qv '^frontend/' && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          code=$(echo "$files" | grep -vE '^frontend/|^docs/|\.md$' || true)
+          echo "backend=$([ -n "$code" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
           echo "frontend=$(echo "$files" | grep -qE '^(frontend/|\.github/)' && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
   architecture:

@@ -39,7 +39,7 @@ from app.auth.users import LOCAL_USER, User, UserStore
 from app.core.branding import PRODUCT_NAME
 from app.core.config import SchedulesConfig
 from app.core.errors import AppError, ConflictError, NotFoundError, ParamInvalidError
-from app.core.ids import new_id
+from app.core.ids import AUTO_PARSER, new_id
 from app.detect.runner import RuleRunner
 from app.detect.store import RuleStore
 from app.engine.duckdb import QueryEngine, QueryScope
@@ -56,6 +56,10 @@ Kind = Literal["search", "rule"]
 ThresholdKind = Literal["above", "below", "change_pct"]
 PanelWidth = Literal["third", "half", "full"]
 PanelView = Literal["table", "bars"]
+# The number on a Dashboard panel (ADR-0034 row 1): row count, or a value of one column
+# over the whole result.
+HeadlineKind = Literal["rows", "sum", "distinct", "first"]
+COLUMN_NAME_MAX = 120
 LATE = timedelta(minutes=5)  # a run this late covers up to now, not just to its fire time
 MAX_LAST_INTERVAL = timedelta(days=31)
 DUE_PER_TICK = 20
@@ -87,6 +91,9 @@ class Schedule:
     panel_view: PanelView = "table"
     # What changed in the definition since the last run (F37); the next run records it.
     definition_change: str | None = None
+    headline_kind: HeadlineKind = "rows"
+    headline_column: str | None = None
+    headline_label: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,17 +120,14 @@ class ScheduleRun:
     # The first run after the target, its parameters, its range, or the saved search
     # changed says what changed (F37).
     definition_change: str | None = None
+    # The panel's number for this run (ADR-0034): None when the column was not in the
+    # result, so the panel says so instead of showing a wrong number.
+    headline: str | None = None
 
 
 # Templates per source in the earlier part (before $cur) and in this run's range.
-PARSER_SQL = """
-SELECT source_id, coalesce(template_id, 'none') AS template,
-       coalesce(time, time_observed) >= CAST($cur AS TIMESTAMPTZ) AS current,
-       min(coalesce(time, time_observed)) AS first
-FROM events
-GROUP BY 1, 2, 3
-ORDER BY 1, 2, 3
-LIMIT 1000"""
+def _parser_name(template_id: Any) -> str:
+    return "Automatic" if template_id in (None, AUTO_PARSER) else str(template_id)
 
 
 class _Stop(Exception):  # noqa: N818  # a signal to pause, not an error
@@ -249,6 +253,9 @@ class ScheduleService:
         paused: bool | None = None,
         panel_width: PanelWidth | None = None,
         panel_view: PanelView | None = None,
+        headline_kind: HeadlineKind | None = None,
+        headline_column: str | None = None,  # "" clears it
+        headline_label: str | None = None,  # "" clears it
         kind: Kind | None = None,
         target_id: str | None = None,
         params: dict[str, Any] | None = None,
@@ -287,6 +294,16 @@ class ScheduleService:
             sets["panel_width"] = panel_width
         if panel_view is not None:
             sets["panel_view"] = panel_view
+        if headline_kind is not None:
+            sets["headline_kind"] = headline_kind
+        if headline_column is not None:
+            sets["headline_column"] = headline_column.strip()[:COLUMN_NAME_MAX] or None
+        if headline_label is not None:
+            sets["headline_label"] = headline_label.strip()[:60] or None
+        kind_after = sets.get("headline_kind", s.headline_kind)
+        column_after = sets.get("headline_column", s.headline_column)
+        if kind_after != "rows" and not column_after:
+            raise ParamInvalidError("Pick the column the headline reads")
         if name is not None:
             sets["name"] = name
         expr = s.cron
@@ -524,6 +541,9 @@ class ScheduleService:
         read: list[str] = []
         truncated = False
         rule_run_id: str | None = None
+        headline: str | None = None
+        search_sql: str | None = None
+        values: dict[str, Any] = {}
         try:
             if sched.kind == "search":
                 search = self._searches.get(sched.target_id, owner)
@@ -532,6 +552,7 @@ class ScheduleService:
                 sources = scope_sources(allowed, search.sources)
                 scope = QueryScope(sources, start, last)
                 sql = compile_sql(search.sql).strip().rstrip(";")
+                search_sql = sql
                 # The full count, not just the rows a result can hold.
                 total = self._engine.run(
                     f"SELECT count(*) FROM ({sql}) AS counted",  # noqa: S608  # saved, guarded SQL
@@ -547,6 +568,7 @@ class ScheduleService:
                 )
                 sample = result.rows
                 truncated = count > len(sample)
+                headline = self._headline(sched, sql, scope, values, columns, sample, count)
             else:
                 rr = self._rule_runner.run(sched.target_id, owner, start, last, None)
                 rule_run_id, count, elapsed, read = (
@@ -564,20 +586,21 @@ class ScheduleService:
                     for m in matches[: self._config.sample_rows]
                 ]
                 truncated = count > len(sample)
+                headline = str(count)
         except AppError as exc:
             status, error = "failed", f"{type(exc).__name__}: {exc}"[:500]
         flagged, reason = (
             self._flag(sched, count) if status == "ok" and count is not None else (False, None)
         )
         changed = (
-            self._parser_change(sched, start, last, read)
+            self._parser_change(sched, start, last, read, search_sql, values)
             if status == "ok" and count == 0 and read
             else None
         )
         run = ScheduleRun(
             run_id, sched.schedule_id, now.isoformat(), start.isoformat(), end.isoformat(),
             status, count, elapsed, read, columns, sample, truncated, flagged, reason, error,
-            rule_run_id, changed, sched.definition_change,
+            rule_run_id, changed, sched.definition_change, headline,
         )  # fmt: skip
         self._save(run)
         self._notify(sched, run)
@@ -677,53 +700,77 @@ class ScheduleService:
         return run
 
     def _parser_change(
-        self, sched: Schedule, start: datetime, last: datetime, read: list[str]
+        self,
+        sched: Schedule,
+        start: datetime,
+        last: datetime,
+        read: list[str],
+        sql: str | None = None,
+        values: dict[str, Any] | None = None,
     ) -> str | None:
-        """A zero after rows: did a source this run read switch template since the last run
-        with rows? Searches written against `message` stop matching when a line moves from a
-        generic parser to a specific one (F36). Reads only the sources the run itself read."""
+        """A zero right after rows: did an administrator change the parser of a source this
+        panel reads since that run? Searches written against `message` stop matching when a
+        source moves from a generic parser to a specific one (F36).
+
+        Only an audited `source.parser_change` counts, never the template mix shifting under
+        Automatic (F53). The source must be one the run read, and for a saved search, one the
+        query returned rows from in the run before the change; a panel that never read the
+        source never shows its change."""
         with self._meta.connect() as con:
             prev = con.execute(
-                "SELECT range_start FROM schedule_runs WHERE schedule_id = ? AND status = 'ok'"
-                " AND row_count > 0 AND range_start IS NOT NULL ORDER BY started_at DESC LIMIT 1",
+                "SELECT started_at, range_start, range_end, row_count FROM schedule_runs"
+                " WHERE schedule_id = ? AND status = 'ok' ORDER BY started_at DESC LIMIT 1",
                 (sched.schedule_id,),
             ).fetchone()
-        if prev is None:
-            return None
+            if prev is None or not prev["row_count"] or prev["range_start"] is None:
+                return None  # the panel must have had rows last time and none now
+            audits = con.execute(
+                "SELECT ts, detail FROM audit_log WHERE action = 'source.parser_change'"
+                " AND outcome = 'success' ORDER BY audit_id"
+            ).fetchall()
         before = datetime.fromisoformat(prev["range_start"])
+        prev_end = datetime.fromisoformat(prev["range_end"] or prev["range_start"])
+        since = datetime.fromisoformat(prev["started_at"])  # changes after that run
         if before >= start:
             return None
-        try:
-            result = self._engine.run(
-                PARSER_SQL, QueryScope(sorted(read), before, last), {"cur": start.isoformat()}
-            )
-        except AppError:
-            return None
-        old: dict[str, set[str]] = {}
-        new: dict[str, dict[str, Any]] = {}
-        for source, template, current, first in result.rows:
-            if current:
-                new.setdefault(str(source), {})[str(template)] = first
-            else:
-                old.setdefault(str(source), set()).add(str(template))
-        notes = []
-        for source in sorted(new):
-            added = {t: f for t, f in new[source].items() if t not in old.get(source, set())}
-            if not added or not old.get(source):
-                continue
-            at = min(str(v) for v in added.values())
+        changes: dict[str, tuple[datetime, Any, Any]] = {}
+        for row in audits:
             try:
-                when = datetime.fromisoformat(at).astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
-            except ValueError:
-                when = at
-            gone = sorted(old[source] - set(new[source])) or sorted(old[source])
-            notes.append(f"{source} at {when} ({', '.join(gone)} to {', '.join(sorted(added))})")
+                at = datetime.fromisoformat(row["ts"])
+                detail = json.loads(row["detail"])
+            except (ValueError, TypeError):
+                continue
+            source = str(detail.get("source_id", ""))
+            if at > since and source in read:
+                first = changes.get(source)
+                changes[source] = (at, first[1] if first else detail.get("from"), detail.get("to"))
+        notes = []
+        for source in sorted(changes):
+            if sql is not None and not self._fed(sql, source, before, prev_end, values or {}):
+                continue
+            at, old, new = changes[source]
+            when = at.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
+            notes.append(f"{source} at {when} ({_parser_name(old)} to {_parser_name(new)})")
         if not notes:
             return None
         return (
             "Parser changed for " + "; ".join(notes)[:400] + ". Searches on message may no"
             " longer match: use raw or parsed fields."
         )
+
+    def _fed(
+        self, sql: str, source: str, start: datetime, end: datetime, values: dict[str, Any]
+    ) -> bool:
+        """Did this search return rows from `source` over the earlier run's range?"""
+        try:
+            result = self._engine.run(
+                f"SELECT count(*) FROM ({sql}) AS counted",  # noqa: S608  # saved, guarded SQL
+                QueryScope([source], start, end),
+                values,
+            )
+        except AppError:
+            return False
+        return bool(result.rows and int(result.rows[0][0]) > 0)
 
     def _flag(self, sched: Schedule, count: int) -> tuple[bool, str | None]:
         v = sched.threshold_value
@@ -749,13 +796,51 @@ class ScheduleService:
             return True, f"{count} vs {before}: changed {change:.0f}%"
         return False, None
 
+    def _headline(
+        self,
+        sched: Schedule,
+        sql: str,
+        scope: QueryScope,
+        values: dict[str, Any],
+        columns: list[str],
+        sample: list[list[Any]],
+        count: int,
+    ) -> str | None:
+        """The panel's number over the whole result (not the stored sample), as text."""
+        kind, col = sched.headline_kind, sched.headline_column
+        if kind == "rows" or not col:
+            return str(count)
+        if col not in columns:
+            return None
+        if kind == "first":
+            return (
+                None
+                if not sample or sample[0][columns.index(col)] is None
+                else (str(sample[0][columns.index(col)]))
+            )
+        ident = '"' + col.replace('"', '""') + '"'
+        agg = f"sum({ident})" if kind == "sum" else f"count(DISTINCT {ident})"
+        try:
+            got = self._engine.run(
+                f"SELECT {agg} FROM ({sql}) AS headline",  # noqa: S608  # saved, guarded SQL; quoted column from the result
+                scope,
+                values,
+            )
+        except AppError:
+            return None  # a sum over text, for example: shown as "no value", the run is fine
+        value = got.rows[0][0] if got.rows else None
+        if value is None:
+            return "0"
+        return str(int(value)) if float(value).is_integer() else f"{float(value):.6g}"
+
     def _save(self, run: ScheduleRun) -> None:
         with self._meta.connect() as con:
             con.execute(
                 "INSERT INTO schedule_runs (run_id, schedule_id, started_at, range_start,"
                 " range_end, status, row_count, elapsed_ms, sources_in_scope, columns, sample,"
                 " truncated, flagged, flag_reason, error, rule_run_id, parser_change,"
-                " definition_change) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " definition_change, headline)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     run.run_id,
                     run.schedule_id,
@@ -775,6 +860,7 @@ class ScheduleService:
                     run.rule_run_id,
                     run.parser_change,
                     run.definition_change,
+                    run.headline,
                 ),
             )
             if run.definition_change and run.status == "ok":
@@ -824,6 +910,9 @@ def _schedule(r: sqlite3.Row) -> Schedule:
         panel_width=r["panel_width"],
         panel_view=r["panel_view"],
         definition_change=r["definition_change"],
+        headline_kind=r["headline_kind"],
+        headline_column=r["headline_column"],
+        headline_label=r["headline_label"],
     )
 
 
@@ -847,6 +936,7 @@ def _run(r: sqlite3.Row) -> ScheduleRun:
         rule_run_id=r["rule_run_id"],
         parser_change=r["parser_change"],
         definition_change=r["definition_change"],
+        headline=r["headline"],
     )
 
 

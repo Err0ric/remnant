@@ -32,7 +32,7 @@ dependencies = [
 tui = ["textual>=3"]
 
 [project.scripts]
-app-server = "app.main:run"
+app-server = "app.launch:run"
 app-admin = "app.admin:main"
 remnant = "app.cli.main:main"
 

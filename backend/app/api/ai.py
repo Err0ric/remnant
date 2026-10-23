@@ -6,14 +6,15 @@ Usage numbers come from the caller's own events view and reading them is audited
 
 from dataclasses import fields
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Request, Response, status
+from fastapi import APIRouter, Query, Request, Response, status
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from app.ai.agents import agents
 from app.ai.catalog import NON_USAGE, Catalog, DataLevel, Service, ServiceDef
+from app.ai.sessions import sessions, timeline
 from app.ai.usage import ServiceUse, Usage
 from app.ai.watch import AiWatch
 from app.api.access import AdminUser, CurrentUser, client_ip
@@ -391,3 +392,89 @@ async def ai_agents(request: Request, user: CurrentUser) -> list[AgentOut]:
         {"sources_in_scope": allowed, "view": "agents"},
     )
     return [AgentOut(**_slots(a)) for a in rows]
+
+
+class SessionOut(BaseModel):
+    session_id: str
+    person: str | None
+    machine: str | None
+    started: str
+    last: str
+    prompts: int
+    tool_calls: int
+    tools: list[str]
+    hosts: list[str]
+    stopped: bool
+
+
+class StepOut(BaseModel):
+    time: str
+    event: str
+    role: str | None
+    tool: str | None
+    mcp_server: str | None
+    mcp_tool: str | None
+    path: str | None
+    web_host: str | None
+    program: str | None
+    prompt_chars: int | None
+    input_chars: int | None
+    output_chars: int | None
+    event_id: str
+
+
+class TimelineOut(BaseModel):
+    session_id: str
+    person: str | None
+    machine: str | None
+    steps: list[StepOut]
+
+
+@router.get("/ai/sessions")
+async def ai_sessions(
+    request: Request, user: CurrentUser, days: Annotated[int, Query(ge=1, le=90)] = 7
+) -> list[SessionOut]:
+    """Recent Claude Code and Cowork sessions from the hooks plugin (ADR-0026), newest
+    first, from the sources the caller may read. Audited ai.view."""
+    meta: MetaDB = request.app.state.meta
+    allowed = await run_in_threadpool(permitted_sources, meta, user)
+    engine: QueryEngine = request.app.state.engine
+    rows = await run_in_threadpool(sessions, engine, allowed, datetime.now(UTC), days)
+    await run_in_threadpool(
+        _audit(request).audit.write,
+        "ai.view",
+        "success",
+        user.user_id,
+        client_ip(request),
+        {"sources_in_scope": allowed, "view": "sessions"},
+    )
+    return [SessionOut(**_slots(s)) for s in rows]
+
+
+@router.get("/ai/sessions/{session_id}")
+async def ai_session(
+    session_id: str,
+    request: Request,
+    user: CurrentUser,
+    days: Annotated[int, Query(ge=1, le=90)] = 30,
+) -> TimelineOut:
+    """One session in order: start, prompts, each tool call and its result, stop. Audited
+    ai.view with the session id."""
+    meta: MetaDB = request.app.state.meta
+    allowed = await run_in_threadpool(permitted_sources, meta, user)
+    engine: QueryEngine = request.app.state.engine
+    t = await run_in_threadpool(timeline, engine, allowed, session_id, datetime.now(UTC), days)
+    await run_in_threadpool(
+        _audit(request).audit.write,
+        "ai.view",
+        "success",
+        user.user_id,
+        client_ip(request),
+        {"sources_in_scope": allowed, "view": "session", "session_id": session_id[:200]},
+    )
+    return TimelineOut(
+        session_id=t.session_id,
+        person=t.person,
+        machine=t.machine,
+        steps=[StepOut(**_slots(x)) for x in t.steps],
+    )

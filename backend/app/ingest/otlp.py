@@ -57,6 +57,10 @@ CONTENT_KEYS = frozenset(
         "response_body",
         "raw_body",
         "body_text",
+        # The hooks plugin (ADR-0026): tool output and the whole hook input, sent only when
+        # the plugin was downloaded with content on, kept only when the source keeps it.
+        "tool_response",
+        "hook_payload",
     }
 )
 # Kept from tool_parameters even when content is dropped: names, never arguments.
@@ -179,6 +183,8 @@ def _event_name(attr: dict[str, Any], body: Any, service: str | None) -> str | N
     if not name:
         return None
     name = str(name)
+    if name.startswith("claude_hooks."):  # the hooks plugin names its own events
+        return name
     claude = (service or "").lower().startswith("claude") or name in CLAUDE_EVENTS
     if claude and not name.startswith("claude_code."):
         name = "claude_code." + name
@@ -314,7 +320,14 @@ def signals(
     src = full if isinstance(full, dict) else attr
     prompt_event = str(record.get("event") or "").endswith("user_prompt")
     body = (full_body if full_body is not None else record.get("body")) if prompt_event else None
-    found = scan(src.get("prompt"), src.get("tool_input"), src.get("tool_parameters"), body)
+    payload = src.get("hook_payload")
+    # The hooks plugin's whole input holds the prompt, tool input, and tool output: what
+    # the model sees. Scan it once rather than its parts twice.
+    found = (
+        scan(payload)
+        if isinstance(payload, str) and payload
+        else scan(src.get("prompt"), src.get("tool_input"), src.get("tool_parameters"), body)
+    )
     if found:
         attr["sensitive"] = found
         attr["sensitive_total"] = sum(found.values())

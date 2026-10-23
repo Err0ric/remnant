@@ -13,6 +13,7 @@ import {
 import { rangeStart, TIME_RANGES, type TimeRangeId } from "@/lib/search";
 import { navigate, useSectionTab } from "@/lib/route";
 import { AgentsCard } from "./AgentsCard";
+import { SessionsCard } from "./SessionsCard";
 import { AiSettings } from "./AiSettings";
 import { StatusBadge, StatusPicker } from "./StatusBadge";
 
@@ -446,7 +447,12 @@ export function AiUsagePage({ isAdmin }: AiUsagePageProps) {
             </Card>
           ) : null}
 
-          {tab === "agents" ? <AgentsCard /> : null}
+          {tab === "agents" ? (
+            <div className="flex flex-col gap-3">
+              <AgentsCard />
+              <SessionsCard />
+            </div>
+          ) : null}
 
           {tab === "settings" && isAdmin ? <AiSettings /> : null}
         </ErrorBoundary>

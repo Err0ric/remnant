@@ -781,6 +781,76 @@ MIGRATIONS: tuple[Migration, ...] = (
     ALTER TABLE schedules ADD COLUMN definition_change TEXT;
     ALTER TABLE schedule_runs ADD COLUMN definition_change TEXT;
     """,
+    # 46: dashboards at scale (ADR-0034). A schedule says what its headline number is; each
+    # run stores it. Dashboards are objects: named, personal or shared, with panels that
+    # carry section, position, and size, and flagged runs that were acknowledged. Existing
+    # panels move to one "My dashboard" per owner (with the D82 width and view), and shared
+    # schedules also go on one shared "Shared panels" dashboard, so nobody loses a panel.
+    """
+    ALTER TABLE schedules ADD COLUMN headline_kind TEXT NOT NULL DEFAULT 'rows'
+        CHECK (headline_kind IN ('rows', 'sum', 'distinct', 'first'));
+    ALTER TABLE schedules ADD COLUMN headline_column TEXT;
+    ALTER TABLE schedules ADD COLUMN headline_label TEXT;
+    ALTER TABLE schedule_runs ADD COLUMN headline TEXT;
+    CREATE TABLE dashboards (
+        dashboard_id TEXT PRIMARY KEY,
+        name         TEXT NOT NULL,
+        owner_id     TEXT NOT NULL,
+        shared       INTEGER NOT NULL DEFAULT 0 CHECK (shared IN (0, 1)),
+        created_at   TEXT NOT NULL,
+        updated_at   TEXT NOT NULL
+    );
+    CREATE TABLE dashboard_panels (
+        dashboard_id TEXT NOT NULL REFERENCES dashboards(dashboard_id) ON DELETE CASCADE,
+        schedule_id  TEXT NOT NULL REFERENCES schedules(schedule_id) ON DELETE CASCADE,
+        section      TEXT NOT NULL DEFAULT '',
+        position     INTEGER NOT NULL DEFAULT 0,
+        size         TEXT NOT NULL DEFAULT 'third'
+            CHECK (size IN ('tile', 'third', 'half', 'full')),
+        view         TEXT NOT NULL DEFAULT 'table' CHECK (view IN ('table', 'bars')),
+        PRIMARY KEY (dashboard_id, schedule_id)
+    );
+    CREATE TABLE dashboard_acks (
+        dashboard_id TEXT NOT NULL REFERENCES dashboards(dashboard_id) ON DELETE CASCADE,
+        schedule_id  TEXT NOT NULL REFERENCES schedules(schedule_id) ON DELETE CASCADE,
+        run_id       TEXT NOT NULL,
+        user_id      TEXT NOT NULL,
+        acked_at     TEXT NOT NULL,
+        PRIMARY KEY (dashboard_id, schedule_id)
+    );
+    INSERT INTO dashboards (dashboard_id, name, owner_id, shared, created_at, updated_at)
+        SELECT 'mine-' || owner_id, 'My dashboard', owner_id, 0, min(created_at),
+               min(created_at)
+        FROM schedules GROUP BY owner_id;
+    INSERT INTO dashboard_panels (dashboard_id, schedule_id, position, size, view)
+        SELECT 'mine-' || owner_id, schedule_id,
+               row_number() OVER (PARTITION BY owner_id ORDER BY created_at, schedule_id),
+               panel_width, panel_view
+        FROM schedules;
+    INSERT INTO dashboards (dashboard_id, name, owner_id, shared, created_at, updated_at)
+        SELECT 'shared-panels', 'Shared panels', owner_id, 1, created_at, created_at
+        FROM schedules WHERE shared = 1 ORDER BY created_at, schedule_id LIMIT 1;
+    INSERT INTO dashboard_panels (dashboard_id, schedule_id, position, size, view)
+        SELECT 'shared-panels', schedule_id,
+               row_number() OVER (ORDER BY created_at, schedule_id), panel_width, panel_view
+        FROM schedules WHERE shared = 1;
+    """,
+    # 47: dashboard sections in a stored order (ADR-0034 layout, owner 2026-10-22). A
+    # section is named per dashboard; panels name their section (empty: no section). The
+    # existing sections start in the order of their first panel.
+    """
+    CREATE TABLE dashboard_sections (
+        dashboard_id TEXT NOT NULL REFERENCES dashboards(dashboard_id) ON DELETE CASCADE,
+        name         TEXT NOT NULL CHECK (name <> ''),
+        position     INTEGER NOT NULL,
+        PRIMARY KEY (dashboard_id, name)
+    );
+    INSERT INTO dashboard_sections (dashboard_id, name, position)
+        SELECT dashboard_id, section,
+               row_number() OVER (PARTITION BY dashboard_id ORDER BY min(position), section)
+        FROM dashboard_panels WHERE section <> ''
+        GROUP BY dashboard_id, section;
+    """,
 )
 
 

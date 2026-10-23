@@ -28,3 +28,20 @@ Claude Code telemetry (ADR-0015) gives counts, cost, and tool decisions; the MCP
 - Removing the plugin stops the records; the session and agent views show when a machine last reported, and the device watch (ADR-0019) can alert on silence.
 - ATLAS: AML.T0051 (indirect prompt injection) through tool output stored as content: stored as data, never in a prompt as instructions. AML.T0057 (data leakage): content off by default, `local_only` by default on the source. The plugin itself is code on every endpoint: AML.T0010 (ML supply chain compromise) and ATT&CK T1546 (event triggered execution) if it were tampered with, so it is pinned, hashed, and short.
 - Threats: T57 (an attacker reads or alters the agent record: per-source token, HTTPS off loopback, integrity chain over the lake files, content off by default).
+
+## Amendment 2026-10-22 (owner: build it now; pilot mode; metadata only)
+
+Checked against Anthropic's documentation on 2026-10-22: plugin hooks load in Cowork and Claude Code (terminal, IDE, desktop Code tab) and are ignored in chat on the web, desktop, and mobile ("Plugin feature support across platforms"); Team and Enterprise Owners publish plugins org-wide from Organization settings > Plugins & skills and can make them Installed by default or Required, which also installs them in Claude Code for signed-in members ("Manage plugins for your organization").
+
+| # | Change | Why |
+|---|---|---|
+| 2 | Hooks are `async: true` command hooks, so Claude Code does not wait for them at all; the script still caps the send at 2 seconds (1 to connect) and exits 0 | Never blocking does not depend on the script being fast |
+| 3 | One script, `hooks/send.sh` (POSIX `sh`, `awk`, `sed`, `curl`, `sha256sum` or `shasum`). Windows runs it under Git Bash, which Claude Code uses for hooks. No PowerShell script in this version: without Git Bash, nothing is sent and the session is unaffected | Claude Code runs shell-form hooks with `sh` on macOS and Linux and Git Bash on Windows. The `http` hook type was not used: `SessionStart` accepts only command hooks, and an `http` hook posts the whole hook input, content included |
+| 4 | Person: the Claude account email from `~/.claude.json` when present, else the OS user. Only `emailAddress` is read from that file | Matches the Claude Code telemetry person (`user.email`) so both feeds name the same agent |
+| 5 | Content: the download sets `SEND_CONTENT` from the source's keep-content setting. When off, no prompt, tool input, or tool output leaves the machine. When on, the receiver scans the whole hook input for sensitive data once, and stores content only while the source keeps it | Metadata by default, decided per source by an admin |
+| 7 | Destination: the download writes the server address and a **new** source token into the plugin's `config` (read as key=value data, never run). Earlier copies stop sending | The token is stored hashed and shown once; a dedicated source per plugin keeps this simple |
+| 12 (new) | Pilot mode: `PILOT_USERS` in the config lists the people who send (email or OS user, any case). Empty: everyone who has the plugin | Rolls out to two people first without a second plugin |
+| 13 (new) | Receiver path is the existing `/api/otlp/v1/logs`; records are `claude_hooks.*` events, parsed by the `claude_hooks` template; the agents view and a new sessions view (AI usage > Agents > Sessions, `/api/ai/sessions`) read them, scoped to the caller's sources | Same token, content, access, and audit rules as other OTLP senders |
+
+ATLAS and ATT&CK, unchanged in substance: the plugin itself runs on every tool call (AML.T0010, T1546), so it is short, pinned to a version, and its script hash is shown before publishing; what it monitors is indirect prompt injection reaching agents through tool output (AML.T0051.001) and data leaving through agents (AML.T0057).
+

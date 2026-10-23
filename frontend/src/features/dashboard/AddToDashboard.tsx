@@ -3,6 +3,7 @@ import { useState } from "react";
 import { ApiError, api, type QueryResult, type SavedSearch } from "@/lib/api";
 import { navigate } from "@/lib/route";
 import { seedSchedule } from "@/lib/scheduleSeed";
+import { currentDashboard } from "./choice";
 import { barShape } from "./panelShape";
 
 /** Defaults for a panel made in one step (docs/ux-next-click.md part c). */
@@ -19,15 +20,18 @@ export async function addToDashboard(
   name: string,
   result?: QueryResult | null,
 ): Promise<void> {
+  const board = currentDashboard();
   const schedule = await api.createSchedule({
     kind: "search",
     target_id: search.id,
     name: name.trim() || search.name,
     ...PANEL_DEFAULTS,
+    // The dashboard last opened in this browser; the server falls back to the first one.
+    ...(board ? { dashboard_id: board } : {}),
+    ...(result && barShape(result.columns, result.rows.slice(0, 10))
+      ? { panel_view: "bars" as const }
+      : {}),
   });
-  if (result && barShape(result.columns, result.rows.slice(0, 10))) {
-    await api.updateSchedule(schedule.schedule_id, { panel_view: "bars" });
-  }
   try {
     await api.runSchedule(schedule.schedule_id);
   } catch {

@@ -1,5 +1,6 @@
 import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
+import { ClaudePlugin } from "./ClaudePlugin";
 import { ApiError, api } from "@/lib/api";
 import { PRODUCT_NAME } from "@/lib/branding";
 
@@ -155,6 +156,7 @@ interface OtlpControlsProps {
 export function OtlpControls({ sourceId, keepContent, canManage }: OtlpControlsProps) {
   const [token, setToken] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const [plugin, setPlugin] = useState(false);
   const rotate = useMutation({
     mutationFn: () => api.rotateOtlpToken(sourceId),
     onSuccess: (r) => {
@@ -214,7 +216,18 @@ export function OtlpControls({ sourceId, keepContent, canManage }: OtlpControlsP
           >
             Linux
           </button>
+          <button
+            type="button"
+            onClick={() => setPlugin((v) => !v)}
+            aria-expanded={plugin}
+            className="text-accent-text hover:underline"
+          >
+            Claude plugin
+          </button>
         </span>
+      ) : null}
+      {canManage && plugin ? (
+        <ClaudePlugin sourceId={sourceId} keepContent={kept} onClose={() => setPlugin(false)} />
       ) : null}
       {canManage ? (
         <label className="flex items-start gap-2">

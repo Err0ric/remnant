@@ -84,7 +84,6 @@ export function EventDetail({ columns, row, selection, geo, intel }: EventDetail
   const places = geo ? { ...geo, ...(full.data?.geo ?? {}) } : undefined;
   const placeOf = (v: Cell | undefined) =>
     places && typeof v === "string" ? places[v] : undefined;
-  const anyPlace = fields.some((k) => placeOf(record[k]));
   const listed = { ...(intel ?? {}), ...(full.data?.intel ?? {}) };
   const hitsOf = (v: Cell | undefined) => (typeof v === "string" ? listed[v] : undefined);
   const actions = useContext(FieldActionsContext);
@@ -219,19 +218,6 @@ export function EventDetail({ columns, row, selection, geo, intel }: EventDetail
               </dd>
             </div>
           ))}
-          {anyPlace ? (
-            <div className="col-start-2 text-xs text-text-muted">
-              Locations from the local GeoIP files.{" "}
-              <a
-                href="https://db-ip.com"
-                target="_blank"
-                rel="noreferrer"
-                className="text-accent-text hover:underline"
-              >
-                IP Geolocation by DB-IP
-              </a>
-            </div>
-          ) : null}
         </dl>
         {typeof raw === "string" ? (
           <div className="min-w-0 flex-[1_1_380px]">

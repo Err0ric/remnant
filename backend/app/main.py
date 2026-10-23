@@ -33,6 +33,7 @@ from app.api.alerts import router as alerts_router
 from app.api.ask import router as ask_router
 from app.api.audit import router as audit_router
 from app.api.auth import router as auth_router
+from app.api.dashboards import router as dashboards_router
 from app.api.enrichment import router as enrichment_router
 from app.api.entities import router as entities_router
 from app.api.explain import router as explain_router
@@ -132,6 +133,7 @@ from app.meta.audit import AuditReader
 from app.meta.db import MetaDB
 from app.meta.secrets import SecretBox
 from app.ops.integrity import IntegrityService
+from app.search.dashboards import DashboardStore
 from app.search.handoff import HandoffService
 from app.search.health import HealthService
 from app.search.identity import IdentityStore
@@ -479,6 +481,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         app.state.rules,
         app.state.auth.audit,
     )
+    app.state.dashboards = DashboardStore(meta, lambda: app.state.auth.clock())
     app.state.schedules = ScheduleService(
         meta,
         config.schedules,
@@ -617,6 +620,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     app.include_router(explain_router, prefix="/api")
     app.include_router(alerts_router, prefix="/api")
     app.include_router(schedules_router, prefix="/api")
+    app.include_router(dashboards_router, prefix="/api")
     app.include_router(overview_router, prefix="/api")
     app.include_router(health_page_router, prefix="/api")
     app.include_router(handoff_router, prefix="/api")
@@ -657,6 +661,8 @@ def _listener_tls(config: AppConfig) -> tuple[Path, Path] | None:
 def run() -> None:
     import uvicorn
 
+    from app.launch import message_for, unreadable
+
     configure_logging()
     try:
         config = load_config()
@@ -664,6 +670,12 @@ def run() -> None:
     except ConfigError as exc:
         print(f"error: {exc}", file=sys.stderr)
         raise SystemExit(2) from exc
+
+    static = config.server.static_dir
+    bad = unreadable([static]) if static is not None else []
+    if bad:  # F50: one plain line, not a 403 on every page
+        print(message_for(bad[0]), file=sys.stderr, flush=True)
+        raise SystemExit(78)
 
     budget = server_budget_mb(config.server.memory_limit_mb)
     qt = query_threads(config.server.query_threads, config.server.max_concurrent_queries)

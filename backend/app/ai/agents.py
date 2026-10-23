@@ -2,7 +2,8 @@
 
 An agent is something that acts with AI on someone's behalf:
 
-- Claude Code for a person (telemetry), shown with the machine it last ran on;
+- Claude Code for a person (telemetry, or the hooks plugin of ADR-0026), shown with the
+  machine it last ran on;
 - an MCP client on a machine, owned by the person whose profile holds it (MCP inventory);
 - an Anthropic API key (usage reports).
 
@@ -34,6 +35,8 @@ _CLIENT = (
     " json_extract_string(unmapped, '$.attr.client'))"
 )
 
+HOOK_MCP = "json_extract_string(unmapped, '$.attr.mcp_server_name')"
+
 # One row per (agent, item) use: kind, agent key, label, owner, machine, item kind, item.
 ITEMS_SQL = f"""
 WITH u AS (
@@ -52,6 +55,14 @@ WITH u AS (
          json_extract_string(unmapped, '$.attr.model'), coalesce(time, time_observed)
   FROM events WHERE template_id = 'claude_code_otel'
     AND json_extract_string(unmapped, '$.attr.model') IS NOT NULL
+  UNION ALL
+  SELECT 'Claude Code', 'cc|' || coalesce({WHO_EXPR}, device_hostname, '?'),
+         'Claude Code on ' || coalesce(device_hostname, 'unknown machine'),
+         {WHO_EXPR}, device_hostname,
+         CASE WHEN {HOOK_MCP} IS NOT NULL THEN 'MCP server' ELSE 'Tool' END,
+         coalesce({HOOK_MCP}, json_extract_string(unmapped, '$.attr.tool_name')),
+         coalesce(time, time_observed)
+  FROM events WHERE template_id = 'claude_hooks' AND message = 'claude_hooks.pre_tool_use'
   UNION ALL
   SELECT 'MCP client',
          'mcp|' || coalesce(device_hostname, '?') || '|'
@@ -87,10 +98,12 @@ WITH u AS (
   SELECT CASE template_id
            WHEN 'claude_code_otel' THEN 'cc|'
              || coalesce(nullif(actor_user_name, ''), device_hostname, '?')
+           WHEN 'claude_hooks' THEN 'cc|'
+             || coalesce(nullif(actor_user_name, ''), device_hostname, '?')
            WHEN 'anthropic_reports' THEN 'key|' || json_extract_string(unmapped, '$.api_key_id')
          END AS agent, date_trunc('hour', coalesce(time, time_observed)) AS h
   FROM events
-  WHERE template_id = 'claude_code_otel'
+  WHERE template_id IN ('claude_code_otel', 'claude_hooks')
      OR (template_id = 'anthropic_reports' AND message = 'anthropic.usage')
 )
 SELECT agent,

@@ -215,6 +215,13 @@ export const SETTINGS_GROUPS: NavGroup[] = [
         auditOnly: true,
         aliases: ["integrity", "tamper check", "hash chain", "seal"],
       },
+      {
+        id: "about",
+        label: "About and licenses",
+        ready: true,
+        page: "about",
+        aliases: ["licenses", "attribution", "db-ip", "credits", "version"],
+      },
     ],
   },
 ];

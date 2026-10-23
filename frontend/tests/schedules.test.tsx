@@ -1,5 +1,5 @@
 import { QueryClient } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fillSql } from "@/features/schedules/schedule";
@@ -36,10 +36,10 @@ describe("Dashboard", () => {
     const panel = await screen.findByRole("region", { name: "Failed SSH daily" });
     expect(within(panel).getByText("12")).toBeInTheDocument();
     expect(within(panel).getByText("Flagged")).toBeInTheDocument();
-    expect(within(panel).getByText("12 is above 10")).toBeInTheDocument();
-    expect(
-      within(panel).getByRole("img", { name: "Counts of the last 2 runs" }),
-    ).toBeInTheDocument();
+    // Plain words, from what a row is (the first column is an address).
+    expect(await within(panel).findByText("12 addresses over threshold (10)")).toBeInTheDocument();
+    // Two runs are not a trend yet.
+    expect(within(panel).queryByRole("img", { name: /Counts of the last/ })).toBeNull();
     expect(await within(panel).findByText("203.0.113.9")).toBeInTheDocument();
     const restricted = screen.getByRole("region", { name: "Windows failures" });
     expect(within(restricted).getByText(/Restricted/)).toBeInTheDocument();
@@ -59,22 +59,24 @@ describe("Dashboard", () => {
   });
 });
 
-describe("Dashboard panels (trial finding)", () => {
-  it("lets the owner set width and switch a summary result to bars", async () => {
+describe("Dashboard panels (trial finding, ADR-0034)", () => {
+  it("lets the dashboard owner set size and switch a summary result to bars", async () => {
     const spy = await renderAt("/dashboard");
     const panel = await screen.findByRole("region", { name: "Failed SSH daily" });
-    const width = within(panel).getByRole("group", { name: "Width of Failed SSH daily" });
-    expect(within(width).getByRole("button", { name: "1/3" })).toHaveAttribute(
+    expect(within(panel).queryByRole("group", { name: /Size of/ })).toBeNull(); // not editing
+    await userEvent.click(screen.getByRole("button", { name: "Edit layout" }));
+    const size = within(panel).getByRole("group", { name: "Size of Failed SSH daily" });
+    expect(within(size).getByRole("button", { name: "1/3" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
-    await userEvent.click(within(width).getByRole("button", { name: "Full" }));
+    await userEvent.click(within(size).getByRole("button", { name: "Full" }));
     const view = await within(panel).findByRole("group", { name: "View of Failed SSH daily" });
     await userEvent.click(within(view).getByRole("button", { name: "Bars" }));
     await vi.waitFor(() =>
-      expect(sent(spy, "PATCH", (u) => u.endsWith("/api/schedules/s1"))).toEqual([
-        { panel_width: "full" },
-        { panel_view: "bars" },
+      expect(sent(spy, "PUT", (u) => u.endsWith("/api/dashboards/d1/panels/s1"))).toEqual([
+        { size: "full" },
+        { view: "bars" },
       ]),
     );
     const bars = await within(panel).findByRole("list", { name: "Top values of Failed SSH daily" });
@@ -82,7 +84,7 @@ describe("Dashboard panels (trial finding)", () => {
     expect(within(panel).queryByRole("table")).toBeNull();
   });
 
-  it("opens the full result from a whole row, and others cannot change the layout", async () => {
+  it("opens the full result from a whole row", async () => {
     await renderAt("/dashboard");
     const panel = await screen.findByRole("region", { name: "Failed SSH daily" });
     const table = await within(panel).findByRole("table", { name: "Top rows of Failed SSH daily" });
@@ -99,10 +101,81 @@ describe("Dashboard panels (trial finding)", () => {
     );
   });
 
-  it("shows no layout controls on a panel someone else owns", async () => {
+  it("offers no layout editing on a shared dashboard someone else owns", async () => {
     await renderAt("/dashboard");
-    const other = await screen.findByRole("region", { name: "Windows failures" });
-    expect(within(other).queryByRole("group", { name: /Width of/ })).toBeNull();
+    await userEvent.selectOptions(await screen.findByLabelText("Dashboard"), "d2");
+    expect(await screen.findByRole("heading", { name: "Team", level: 1 })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Edit layout" })).toBeNull();
+    // Sections have headers; a tile shows the number but no table.
+    const section = screen.getByRole("region", { name: "Windows" });
+    expect(within(section).getByRole("heading", { name: /Windows/ })).toBeVisible();
+    const tile = within(section).getByRole("region", { name: "Windows failures" });
+    expect(within(tile).getByText(/Restricted/)).toBeInTheDocument();
+  });
+});
+
+describe("Dashboards at scale (ADR-0034)", () => {
+  it("collects flagged panels in Needs attention until acknowledged", async () => {
+    const spy = await renderAt("/dashboard");
+    const strip = await screen.findByRole("region", { name: "Needs attention" });
+    expect(within(strip).getByText("Failed SSH daily")).toBeVisible();
+    // The same words as the panel: what a row is, from the run's first column.
+    expect(await within(strip).findByText("12 addresses over threshold (10)")).toBeVisible();
+    expect(within(strip).getByText("12 addresses")).toBeVisible();
+    await userEvent.click(
+      within(strip).getByRole("button", { name: "Acknowledge Failed SSH daily" }),
+    );
+    await vi.waitFor(() =>
+      expect(sent(spy, "POST", (u) => u.endsWith("/api/dashboards/d1/acknowledge"))).toEqual([
+        { schedule_id: "s1", run_id: "sr2" },
+      ]),
+    );
+    await vi.waitFor(() =>
+      expect(screen.queryByRole("region", { name: "Needs attention" })).toBeNull(),
+    );
+  });
+
+  it("sets the headline the panel shows, for the schedule's owner", async () => {
+    const spy = await renderAt("/dashboard");
+    await screen.findByRole("region", { name: "Failed SSH daily" });
+    await userEvent.click(screen.getByRole("button", { name: "Edit layout" }));
+    const form = await screen.findByRole("form", { name: "Headline of Failed SSH daily" });
+    await userEvent.selectOptions(
+      within(form).getByLabelText("Number shown for Failed SSH daily"),
+      "sum",
+    );
+    await userEvent.selectOptions(
+      await within(form).findByLabelText("Column for Failed SSH daily"),
+      "failures",
+    );
+    await userEvent.type(
+      within(form).getByLabelText("Label for Failed SSH daily"),
+      "failed logins",
+    );
+    await userEvent.click(within(form).getByRole("button", { name: "Save" }));
+    await vi.waitFor(() =>
+      expect(sent(spy, "PATCH", (u) => u.endsWith("/api/schedules/s1"))).toEqual([
+        { headline_kind: "sum", headline_column: "failures", headline_label: "failed logins" },
+      ]),
+    );
+    // Someone else's schedule on my dashboard: layout yes, headline no.
+    const other = screen.getByRole("region", { name: "Windows failures" });
+    expect(within(other).getByRole("group", { name: "Size of Windows failures" })).toBeVisible();
+    expect(within(other).queryByRole("form", { name: /Headline of/ })).toBeNull();
+  });
+
+  it("makes a new dashboard and adds a panel to it", async () => {
+    const spy = await renderAt("/dashboard");
+    await screen.findByRole("region", { name: "Failed SSH daily" });
+    await userEvent.click(screen.getByRole("button", { name: "New dashboard" }));
+    expect(await screen.findByRole("heading", { name: "New dashboard", level: 1 })).toBeVisible();
+    const settings = screen.getByRole("region", { name: "Dashboard settings" });
+    await userEvent.selectOptions(within(settings).getByLabelText("Schedule to add"), "s1");
+    await userEvent.click(within(settings).getByRole("button", { name: "Add panel" }));
+    expect(await screen.findByRole("region", { name: "Failed SSH daily" })).toBeVisible();
+    expect(sent(spy, "POST", (u) => u.endsWith("/api/dashboards"))).toEqual([
+      { name: "New dashboard", shared: false },
+    ]);
   });
 });
 
@@ -206,5 +279,82 @@ describe("fillSql", () => {
     ).toBe("x BETWEEN TIMESTAMPTZ 'a' AND TIMESTAMPTZ 'b' AND u = 'o''brien'");
     expect(fillSql("LIMIT {{top}}", {}, "a", "b")).toBeNull();
     expect(fillSql("x = {{flag}}", { flag: true }, "a", "b")).toBe("x = TRUE");
+  });
+});
+
+describe("Dashboard layout (ADR-0034, owner 2026-10-22)", () => {
+  function layouts(spy: ReturnType<typeof mockApi>) {
+    return sent(spy, "PUT", (u) => u.endsWith("/api/dashboards/d1/layout")).map(
+      (b) => (b as { sections: { name: string; schedule_ids: string[] }[] }).sections,
+    );
+  }
+
+  it("moves a panel to a new section from the keyboard, then manages sections", async () => {
+    const spy = await renderAt("/dashboard");
+    await screen.findByRole("region", { name: "Failed SSH daily" });
+    await userEvent.click(screen.getByRole("button", { name: "Edit layout" }));
+    const panel = screen.getByRole("region", { name: "Windows failures" });
+    await userEvent.selectOptions(
+      within(panel).getByLabelText("Move Windows failures to section"),
+      "\u0000new",
+    );
+    await userEvent.type(
+      within(panel).getByLabelText("New section for Windows failures"),
+      "Windows{enter}",
+    );
+    await vi.waitFor(() =>
+      expect(layouts(spy).at(-1)).toEqual([
+        { name: "", schedule_ids: ["s1"] },
+        { name: "Windows", schedule_ids: ["s2"] },
+      ]),
+    );
+    const section = await screen.findByRole("region", { name: "Windows" });
+    // Add an empty section, move it up, rename it, then delete it.
+    const settings = screen.getByRole("region", { name: "Dashboard settings" });
+    await userEvent.type(within(settings).getByLabelText("New section name"), "Identity");
+    await userEvent.click(within(settings).getByRole("button", { name: "Add section" }));
+    await screen.findByRole("region", { name: "Identity" });
+    await userEvent.click(screen.getByRole("button", { name: "Move section Identity up" }));
+    await vi.waitFor(() =>
+      expect(
+        layouts(spy)
+          .at(-1)
+          ?.map((x) => x.name),
+      ).toEqual(["", "Identity", "Windows"]),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Rename section Identity" }));
+    const name = screen.getByLabelText("New name for section Identity");
+    await userEvent.clear(name);
+    await userEvent.type(name, "Sign-ins{enter}");
+    await vi.waitFor(() =>
+      expect(sent(spy, "PATCH", (u) => u.endsWith("/api/dashboards/d1/sections"))).toEqual([
+        { old: "Identity", new: "Sign-ins" },
+      ]),
+    );
+    await userEvent.click(within(section).getByRole("button", { name: "Delete section Windows" }));
+    await userEvent.click(within(section).getByRole("button", { name: "Delete section" }));
+    await vi.waitFor(() =>
+      expect(layouts(spy).at(-1)).toEqual([
+        { name: "", schedule_ids: ["s1", "s2"] },
+        { name: "Sign-ins", schedule_ids: [] },
+      ]),
+    );
+  });
+
+  it("drags a panel before another", async () => {
+    const spy = await renderAt("/dashboard");
+    await screen.findByRole("region", { name: "Failed SSH daily" });
+    await userEvent.click(screen.getByRole("button", { name: "Edit layout" }));
+    const second = screen.getByRole("region", { name: "Windows failures" })
+      .parentElement as HTMLElement;
+    const first = screen.getByRole("region", { name: "Failed SSH daily" })
+      .parentElement as HTMLElement;
+    const data = { setData: vi.fn(), effectAllowed: "" };
+    fireEvent.dragStart(second, { dataTransfer: data });
+    fireEvent.dragOver(first, { dataTransfer: data });
+    fireEvent.drop(first, { dataTransfer: data });
+    await vi.waitFor(() =>
+      expect(layouts(spy).at(-1)).toEqual([{ name: "", schedule_ids: ["s2", "s1"] }]),
+    );
   });
 });

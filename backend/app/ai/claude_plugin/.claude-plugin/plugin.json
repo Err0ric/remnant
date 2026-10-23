@@ -1,0 +1,5 @@
+{
+  "name": "siem-claude-hooks",
+  "version": "1.0.0",
+  "description": "Observe-only hooks that send metadata about Claude Code and Cowork sessions to your SIEM. Never blocks or changes anything."
+}

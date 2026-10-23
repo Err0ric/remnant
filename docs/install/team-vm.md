@@ -84,7 +84,8 @@ install -d -o remnant -g remnant -m 0750 /var/lib/remnant
 install -d -m 0755 /etc/remnant
 install -d -m 0755 /var/log/remote   # or the folder your collector already writes to
 
-# 3. Code, UI, and Python packages
+# 3. Code, UI, and Python packages (umask 022: the service user must read every file)
+umask 022
 git clone https://github.com/Err0ric/remnant /opt/remnant
 cd /opt/remnant/frontend && corepack enable \
   && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 pnpm install --frozen-lockfile && pnpm build
@@ -184,14 +185,35 @@ journalctl -u remnant | grep "SHA-256"
 
 Open the link and create the administrator, as above.
 
-Updating:
+### Updating
+
+Run the update script as root. It stops the service, pulls, rebuilds the web UI, syncs the Python packages, makes `/opt/remnant` readable by the service user, starts the service, and prints the startup lines. Database migrations run on start.
 
 ```bash
-cd /opt/remnant && git pull
+sudo sh /opt/remnant/scripts/update-systemd.sh
+# With AIDE installed, also re-baseline it afterwards:
+sudo sh /opt/remnant/scripts/update-systemd.sh --aide
+```
+
+The same steps by hand:
+
+```bash
+umask 022                                  # whatever your shell had (an openssl step may leave 077)
+systemctl stop remnant
+cd /opt/remnant && git pull --ff-only
 cd frontend && pnpm install --frozen-lockfile && pnpm build
 cd ../backend && UV_PYTHON_INSTALL_DIR=/opt/remnant/.python uv sync --frozen --no-dev
-systemctl restart remnant
+chmod -R a+rX /opt/remnant
+systemctl start remnant
+journalctl -u remnant -n 20 -o cat          # look for "listening on"
 ```
+
+| What you see | Cause | Fix |
+|---|---|---|
+| `error: user remnant cannot read /opt/remnant/...` in the journal | The update ran with umask 077, so new files are readable by root only | `chmod -R a+rX /opt/remnant`, then `systemctl start remnant`; the script does this every time |
+| `status=203/EXEC` and `Permission denied` on `.venv/bin/app-server` | Same, on the program itself, so systemd cannot start it at all | Same fix |
+
+After an update, re-baseline any file integrity monitor that watches `/opt/remnant` (see below), or every updated file shows as changed.
 
 Lost the administrator password:
 
@@ -215,7 +237,7 @@ Docker installs: Docker publishes ports through its own rules, which can bypass 
 
 ### File integrity monitoring
 
-AIDE, Wazuh syscheck, and similar tools: exclude the data folder (`/var/lib/remnant`, or the `app-data` volume), which changes constantly. Keep watching `/opt/remnant` and `/etc/remnant`. The data folder has the app's own integrity checks ([integrity.md](integrity.md)).
+AIDE, Wazuh syscheck, and similar tools: exclude the data folder (`/var/lib/remnant`, or the `app-data` volume), which changes constantly. Keep watching `/opt/remnant` and `/etc/remnant`, and re-baseline after each update (`update-systemd.sh --aide` does it for AIDE). The data folder has the app's own integrity checks ([integrity.md](integrity.md)).
 
 ## After install
 

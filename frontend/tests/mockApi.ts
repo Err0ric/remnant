@@ -290,6 +290,46 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       recent: [runSummary("sr3", null, { restricted: true, sources_in_scope: [] })],
     },
   ];
+  const dashboards: {
+    dashboard_id: string;
+    name: string;
+    owner_id: string;
+    mine: boolean;
+    shared: boolean;
+    can_edit: boolean;
+    panels: Record<string, unknown>[] & { schedule_id?: string }[];
+    acks: Record<string, string>;
+    sections: string[];
+    updated_at: string;
+  }[] = [
+    {
+      dashboard_id: "d1",
+      name: "My dashboard",
+      owner_id: "u1",
+      mine: true,
+      shared: false,
+      can_edit: true,
+      panels: [
+        { schedule_id: "s1", section: "", position: 1, size: "third", view: "table" },
+        { schedule_id: "s2", section: "", position: 2, size: "third", view: "table" },
+      ],
+      acks: {},
+      sections: [] as string[],
+      updated_at: "2026-10-11T07:00:00+00:00",
+    },
+    {
+      dashboard_id: "d2",
+      name: "Team",
+      owner_id: "someone-else",
+      mine: false,
+      shared: true,
+      can_edit: false,
+      panels: [{ schedule_id: "s2", section: "Windows", position: 1, size: "tile", view: "table" }],
+      acks: {},
+      sections: [] as string[],
+      updated_at: "2026-10-11T07:00:00+00:00",
+    },
+  ];
   const providers: Record<string, unknown>[] = [
     {
       provider_id: "p1",
@@ -637,6 +677,111 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         sources: ["linux_sshd"],
       });
     }
+    if (url.includes("/api/ai/sessions?") && method === "GET")
+      return json([
+        {
+          session_id: "s-77",
+          person: "dana@example.com",
+          machine: "ws-0042",
+          started: "2026-10-22T18:00:00+00:00",
+          last: "2026-10-22T18:04:00+00:00",
+          prompts: 1,
+          tool_calls: 2,
+          tools: ["Read", "github"],
+          hosts: ["docs.example.com"],
+          stopped: true,
+        },
+      ]);
+    if (url.endsWith("/api/ai/sessions/s-77") && method === "GET")
+      return json({
+        session_id: "s-77",
+        person: "dana@example.com",
+        machine: "ws-0042",
+        steps: [
+          {
+            time: "2026-10-22T18:00:00+00:00",
+            event: "session_start",
+            role: "session",
+            tool: null,
+            mcp_server: null,
+            mcp_tool: null,
+            path: null,
+            web_host: null,
+            program: null,
+            prompt_chars: null,
+            input_chars: null,
+            output_chars: null,
+            event_id: "e1",
+          },
+          {
+            time: "2026-10-22T18:00:05+00:00",
+            event: "user_prompt_submit",
+            role: "user",
+            tool: null,
+            mcp_server: null,
+            mcp_tool: null,
+            path: null,
+            web_host: null,
+            program: null,
+            prompt_chars: 42,
+            input_chars: null,
+            output_chars: null,
+            event_id: "e2",
+          },
+          {
+            time: "2026-10-22T18:00:09+00:00",
+            event: "pre_tool_use",
+            role: "tool_call",
+            tool: "Read",
+            mcp_server: null,
+            mcp_tool: null,
+            path: "/home/dana/app/auth.py",
+            web_host: null,
+            program: null,
+            prompt_chars: null,
+            input_chars: 41,
+            output_chars: null,
+            event_id: "e3",
+          },
+          {
+            time: "2026-10-22T18:01:00+00:00",
+            event: "pre_tool_use",
+            role: "tool_call",
+            tool: "mcp__github__create_issue",
+            mcp_server: "github",
+            mcp_tool: "create_issue",
+            path: null,
+            web_host: null,
+            program: null,
+            prompt_chars: null,
+            input_chars: 13,
+            output_chars: null,
+            event_id: "e4",
+          },
+          {
+            time: "2026-10-22T18:04:00+00:00",
+            event: "stop",
+            role: "session",
+            tool: null,
+            mcp_server: null,
+            mcp_tool: null,
+            path: null,
+            web_host: null,
+            program: null,
+            prompt_chars: null,
+            input_chars: null,
+            output_chars: null,
+            event_id: "e5",
+          },
+        ],
+      });
+    if (url.endsWith("/api/sources/claude-plugin") && method === "GET")
+      return json({ version: "1.0.0", script_sha256: "ab".repeat(32) });
+    if (/\/api\/sources\/[^/]+\/claude-plugin$/.test(url) && method === "POST")
+      return new Response("PK", {
+        status: 200,
+        headers: { "Content-Type": "application/zip", "X-Script-Sha256": "ab".repeat(32) },
+      });
     if (url.endsWith("/api/ai/agents") && method === "GET")
       return json([
         {
@@ -1192,6 +1337,87 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
             }
           : null,
       });
+    }
+    if (url.endsWith("/api/dashboards") && method === "GET") return json(dashboards);
+    if (url.endsWith("/api/dashboards") && method === "POST") {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { name: string; shared?: boolean };
+      const d = {
+        dashboard_id: `d${dashboards.length + 1}`,
+        name: body.name,
+        owner_id: "u1",
+        mine: true,
+        shared: Boolean(body.shared),
+        can_edit: true,
+        panels: [] as Record<string, unknown>[],
+        acks: {} as Record<string, string>,
+        sections: [] as string[],
+        updated_at: "2026-10-11T07:00:00+00:00",
+      };
+      dashboards.push(d);
+      return json(d, 201);
+    }
+    {
+      const m = /\/api\/dashboards\/([^/]+)(\/.*)?$/.exec(url);
+      if (m) {
+        const d = dashboards.find((x) => x.dashboard_id === m[1]);
+        if (!d) return json({ detail: "No such dashboard", code: "not_found" }, 404);
+        const rest = m[2] ?? "";
+        const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+        if (!rest && method === "PATCH") {
+          Object.assign(d, body);
+          return json(d);
+        }
+        if (!rest && method === "DELETE") {
+          dashboards.splice(dashboards.indexOf(d), 1);
+          return new Response(null, { status: 204 });
+        }
+        const panel = /^\/panels\/([^/]+)$/.exec(rest);
+        if (panel && method === "PUT") {
+          const found = d.panels.find((p) => p.schedule_id === panel[1]);
+          if (found) Object.assign(found, body);
+          else
+            d.panels.push({
+              schedule_id: panel[1],
+              section: "",
+              position: d.panels.length + 1,
+              size: "third",
+              view: "table",
+              ...body,
+            });
+          return json(d);
+        }
+        if (panel && method === "DELETE") {
+          d.panels = d.panels.filter((p) => p.schedule_id !== panel[1]);
+          return new Response(null, { status: 204 });
+        }
+        if (rest === "/order" && method === "PUT") {
+          (body.schedule_ids as string[]).forEach((sid, i) => {
+            const p = d.panels.find((x) => x.schedule_id === sid);
+            if (p) p.position = i + 1;
+          });
+          return json(d);
+        }
+        if (rest === "/layout" && method === "PUT") {
+          const secs = body.sections as { name: string; schedule_ids: string[] }[];
+          let pos = 0;
+          for (const sec of secs)
+            for (const sid of sec.schedule_ids) {
+              const p = d.panels.find((x) => x.schedule_id === sid);
+              if (p) Object.assign(p, { section: sec.name, position: ++pos });
+            }
+          d.sections = secs.map((x) => x.name).filter(Boolean);
+          return json(d);
+        }
+        if (rest === "/sections" && method === "PATCH") {
+          d.sections = d.sections.map((n) => (n === body.old ? String(body.new) : n));
+          for (const p of d.panels) if (p.section === body.old) p.section = body.new;
+          return json(d);
+        }
+        if (rest === "/acknowledge" && method === "POST") {
+          d.acks[String(body.schedule_id)] = String(body.run_id);
+          return new Response(null, { status: 204 });
+        }
+      }
     }
     if (url.endsWith("/api/schedules") && method === "GET") return json(schedules);
     if (url.endsWith("/api/schedules") && method === "POST") {

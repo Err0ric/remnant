@@ -1,0 +1,10 @@
+{
+  "description": "Observe-only: sends one metadata record per event to your SIEM. Never blocks.",
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/send.sh\"", "async": true }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/send.sh\"", "async": true }] }],
+    "PreToolUse": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/send.sh\"", "async": true }] }],
+    "PostToolUse": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/send.sh\"", "async": true }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/send.sh\"", "async": true }] }]
+  }
+}
