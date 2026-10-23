@@ -67,7 +67,7 @@ def lab(ai_lab: dict[str, Any], tmp_path: Path) -> dict[str, Any]:  # noqa: F811
 def test_observations_come_from_logons_and_user_id(lab: dict[str, Any]) -> None:
     res = lab["admin"].post(
         "/api/query",
-        json={"sql": f"WITH {OBS_SQL} SELECT ip, who, host FROM addr_obs ORDER BY ip"},
+        json={"sql": f"WITH {OBS_SQL} SELECT ip, who, host FROM addr_ev ORDER BY ip"},
         headers=lab["h"],
     )
     assert res.status_code == 200, res.text

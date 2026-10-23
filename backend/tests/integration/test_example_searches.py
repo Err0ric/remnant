@@ -185,3 +185,20 @@ def test_new_service_principals_leave_out_microsofts_own(client: TestClient) -> 
 def test_user_consent(client: TestClient) -> None:
     got = rows(run(client, "m365_user_consent"))
     assert [r["user"] for r in got] == ["bob@example.com"]
+
+
+def test_built_in_resolution_names_what_the_example_search_names(client: TestClient) -> None:
+    """ADR-0029 reference test: the DHCP lease at each time, from the address lookup and
+    from AI usage, matches the who_had_ip and ai_services_by_device example searches."""
+    for at, device in (("2026-10-09T09:00:00Z", "LAPTOP-A"), ("2026-10-09T13:00:00Z", "LAPTOP-B")):
+        res = client.get("/api/addresses/10.20.1.5", params={"at": at})
+        assert res.status_code == 200, res.text
+        spans = res.json()["spans"]
+        dhcp = [s for s in spans if s["kind"] == "dhcp"]
+        assert dhcp[0]["machine"] == device and dhcp[0]["person"] is None  # never a person
+        assert dhcp[0]["mac"] and dhcp[0]["source"]
+    usage = client.get("/api/ai/usage", params={"start": RANGE["start"], "end": RANGE["end"]})
+    machines = {
+        (u["service"]["id"], m) for u in usage.json()["services"] for m in u["top_machines"]
+    }
+    assert {("chatgpt", "LAPTOP-A"), ("claude", "LAPTOP-B")} <= machines

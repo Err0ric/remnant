@@ -69,6 +69,10 @@ Per-person AI usage is sensitive: it says what a named employee did and when. A 
 | C6 | Stored alert text never carries a name | AI Watch items store references (subject, device, match ids); names are filled in for each viewer when the item is read, under C4 and G2. Messages to targets follow G5 |
 | C7 | After it lands, AI Watch, Alerts, AI usage, and Investigations use people wherever a match exists | Same resolution function everywhere |
 
+## Implementation notes
+
+- 2026-10-23, part 1: `search/addresses.py` builds `addr_span` from logon, User-ID, GlobalProtect (logout ends), and Palo Alto DHCP leases (rows 1 to 3), with `capped` when the end was assumed; the person and machine per address and hour follow row 5's precedence, and a machine's person comes from a successful `m365_signin` on it in the 24 hours before when only one person signed in (row 5a, C2). `addr` carries how each was matched (`rwho_how`, `rwho_at`, `rwho_capped`, `rwho_src`, `rwho_dev`, and the same for the machine) for C1. Microsoft 365 sign-ins are left out of address logons (their address is public egress). FortiGate, UniFi, and Windows DHCP Server mappings, corrections (C3), G1 to G6, and people-with-evidence in every surface follow.
+
 ## Consequences
 
 - Office machines on DHCP and remote users on GlobalProtect resolve across long sessions.

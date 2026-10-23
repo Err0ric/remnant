@@ -31,7 +31,7 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 
 | Method | Path | What it does | Query | JSON body (`?` optional) |
 |---|---|---|---|---|
-| `GET` | `/api/addresses/{ip}` | People and machines seen with this address in the 12 hours up to `at` (default now), newest first. | `?at` (optional): date-time |  |
+| `GET` | `/api/addresses/{ip}` | The spans that held this address at `at` (default now), newest first: logons, User-ID, GlobalProtect, DHCP leases, and the sign-ins that name a machine's person (ADR-0029). | `?at` (optional): date-time |  |
 
 ### Ai
 

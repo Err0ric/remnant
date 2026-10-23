@@ -484,6 +484,20 @@ export interface AddressHolders {
   at: string;
   max_age_hours: number;
   holders: { kind: "user" | "host"; name: string; last_seen: string; events: number }[];
+  /** What held the address at the time, with how it was matched (ADR-0029 / D107). */
+  spans: AddressSpan[];
+}
+
+export interface AddressSpan {
+  kind: "vpn" | "userid" | "logon" | "dhcp" | "signin";
+  start: string;
+  end: string | null;
+  /** No end was seen: assumed until `end` (the cap). Never shown as fact. */
+  capped: boolean;
+  person: string | null;
+  machine: string | null;
+  mac: string | null;
+  source: string;
 }
 
 /** Health page (ADR-0019). */

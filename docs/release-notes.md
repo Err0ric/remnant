@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Who had an address: sessions with ends, DHCP, and sign-ins on a machine (ADR-0029, part 1)
+
+- Addresses resolve from **spans**, not single moments: a GlobalProtect session ends at its logout, a User-ID mapping at its logout, a DHCP lease or logon at the next one on the address. When no end is seen, a span is assumed to last at most 24 hours (VPN, DHCP) or 12 hours (User-ID, logon), and it says so: "no logout seen, assumed until 9:02 PM". Before, the newest login named the address for 12 hours even after a logout.
+- **DHCP leases** from the Palo Alto system log now name the machine on an address (with its MAC). DHCP never names a person.
+- A machine gets its person through a **successful Microsoft 365 sign-in on that machine** in the 24 hours before, when only one person signed in on it ("several people" otherwise). Microsoft 365 sign-in addresses are never used: they are the office's public egress.
+- In an event's detail, "At that time 10.20.1.5 was held by" now lists each match with what it was and when: "DHCP lease Oct 9, 8:55 AM: WS-0042 (MAC ...)", "Company sign-in Oct 9, 9:02 AM: alice@example.com on WS-0042". The address lookup API returns these spans.
+- Next for ADR-0029: admin corrections, people shown with how they were matched everywhere, and the View people in AI usage permission.
+
 ### Dashboard: AI Watch first, and nothing empty on a quiet day (F62)
 
 - The header is one row: name, dashboard picker, New dashboard, Edit layout, and when it was updated.
