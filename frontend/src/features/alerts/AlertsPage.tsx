@@ -1,19 +1,13 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ApiError, api, type AlertItem, type AlertKind, type CloseReason } from "@/lib/api";
+import { ApiError, api, type AlertItem, type CloseReason } from "@/lib/api";
 import { kindForColumn, type EntityKind } from "@/lib/entity";
 import { cn } from "@/lib/cn";
 import { navigate, pathFor, useSection } from "@/lib/route";
 import { EntityLink } from "@/components/EntityLink";
 import { When } from "@/components/When";
 import { CloseForm } from "./CloseForm";
-
-export const KIND_LABEL: Record<AlertKind, string> = {
-  schedule: "Saved search flagged",
-  rule: "Rule matched",
-  gap: "Source stopped sending",
-  ai_watch: "AI Watch",
-};
+import { KIND_LABEL } from "./kinds";
 
 type Tab = "open" | "closed" | "muted";
 

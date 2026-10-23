@@ -40,7 +40,7 @@ from app.ingest.connectors.m365 import M365Settings, check_certificate
 from app.ingest.connectors.registry import API_KINDS, probe, secret_text
 from app.ingest.discovery import DiscoveryReport, discover
 from app.ingest.listener import ListenerStatus, SyslogListeners
-from app.ingest.quiet import MAX_QUIET_S, MIN_QUIET_S, QuietWatch, Watch
+from app.ingest.quiet import MAX_QUIET_S, MIN_QUIET_S, QuietWatch, Watch, default_quiet_s
 from app.ingest.skew import skew_text
 from app.ingest.sources import SourceConfig, SourceStore, spool_dir
 from app.ingest.watcher import IngestService, SourceStatus, source_state
@@ -278,6 +278,16 @@ async def add_source(body: SourceCreate, request: Request, user: AdminUser) -> S
         user.user_id,
         client_ip(request),
         {**config.model_dump(), "has_secret": secret is not None},
+    )
+    # Alert if quiet starts on, with no targets: a gap becomes an alert item, and messages
+    # go out once an admin adds targets (ADR-0037). Audited as source.quiet_alert_change.
+    await run_in_threadpool(
+        _quiet(request).set,
+        created.source_id,
+        default_quiet_s(created.kind or "file"),
+        [],
+        user,
+        client_ip(request),
     )
     return SourceCreated(**created.model_dump(), otlp_token=token)
 

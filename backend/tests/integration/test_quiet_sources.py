@@ -15,6 +15,17 @@ from tests.integration.test_schedules import NOW, make_lab
 def lab(tmp_path: Path) -> Any:
     out = make_lab(tmp_path)
     app = out["app"]
+    # New sources start with Alert if quiet on (ADR-0037; tested below); these tests set
+    # their own watches, so the defaults are turned off first.
+    for sid in ("lin_auth", "win_dc"):
+        off = out["admin"].put(
+            f"/api/sources/{sid}/watch",
+            json={"quiet_after_s": None, "target_ids": []},
+            headers=out["h"],
+        )
+        assert off.status_code == 200, off.text
+    with app.state.meta.connect() as con:
+        out["audit_from"] = con.execute("SELECT max(rowid) FROM audit_log").fetchone()[0]
     app.state.alert_dispatcher._clock = out["clock"]
     app.state.quiet._clock = out["clock"]
     received: dict[str, datetime | None] = {"lin_auth": NOW, "win_dc": NOW}
@@ -46,8 +57,9 @@ def tick(lab: dict[str, Any]) -> int:
 def actions(lab: dict[str, Any]) -> list[str]:
     with lab["app"].state.meta.connect() as con:
         rows = con.execute(
-            "SELECT action FROM audit_log WHERE action LIKE 'source.quiet%'"
-            " OR action = 'source.resumed' ORDER BY rowid"
+            "SELECT action FROM audit_log WHERE rowid > ? AND (action LIKE 'source.quiet%'"
+            " OR action = 'source.resumed') ORDER BY rowid",
+            (lab["audit_from"],),
         ).fetchall()
     return [r[0] for r in rows]
 
@@ -157,3 +169,32 @@ def test_overview_shows_quiet_sources_to_readers_of_them(lab: dict[str, Any]) ->
     assert rows["win_dc"]["quiet_since"] is None
     ana = {s["source_id"]: s for s in lab["ana"].get("/api/overview").json()["sources"]}
     assert set(ana) == {"lin_auth"} and ana["lin_auth"]["quiet_since"] is not None
+
+
+def test_new_sources_start_with_alert_if_quiet_on_by_kind(lab: dict[str, Any]) -> None:
+    """ADR-0037 owner answer 3: on by default, 60 min, 3 h for API connectors, no targets,
+    audited, editable."""
+    from app.ingest.quiet import default_quiet_s
+
+    assert (default_quiet_s("file"), default_quiet_s("syslog"), default_quiet_s("loki")) == (
+        3600,
+        3600,
+        3600,
+    )
+    assert default_quiet_s("m365") == default_quiet_s("anthropic") == 3 * 3600
+    logs = Path(lab["app"].state.config.paths.allowed_roots[0]) / "lin"
+    body = {
+        "source_id": "lin_two",
+        "format": "syslog",
+        "path": str(logs),
+        "template_id": "linux_sshd",
+    }
+    assert lab["admin"].post("/api/sources", json=body, headers=lab["h"]).status_code == 201
+    w = next(x for x in lab["app"].state.quiet.all() if x.source_id == "lin_two")
+    assert (w.quiet_after_s, w.target_ids, w.state) == (3600, [], "ok")
+    with lab["app"].state.meta.connect() as con:
+        row = con.execute(
+            "SELECT user_id, detail FROM audit_log WHERE action = 'source.quiet_alert_change'"
+            " ORDER BY rowid DESC LIMIT 1"
+        ).fetchone()
+    assert json.loads(row["detail"])["source_id"] == "lin_two" and row["user_id"]

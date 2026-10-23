@@ -167,11 +167,10 @@ def test_a_gap_on_a_watched_source_is_an_item_and_the_message_links_to_it(
     lab["clock"].now = NOW
     sent: list[Any] = []
     app.state.quiet._dispatcher.enqueue = lambda alert, *a, **k: sent.append(alert)
-    res = lab["admin"].put(
-        "/api/sources/lin_auth/watch",
-        json={"quiet_after_s": 3600, "target_ids": []},
-        headers=lab["h"],
-    )
+    for body in ({"quiet_after_s": None}, {"quiet_after_s": 3600}):  # restart its clock
+        res = lab["admin"].put(
+            "/api/sources/lin_auth/watch", json={**body, "target_ids": []}, headers=lab["h"]
+        )
     assert res.status_code == 200, res.text
     lab["clock"].now = NOW + timedelta(minutes=61)
     app.state.quiet.tick()

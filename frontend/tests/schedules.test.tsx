@@ -115,23 +115,27 @@ describe("Dashboard panels (trial finding, ADR-0034)", () => {
 });
 
 describe("Dashboards at scale (ADR-0034)", () => {
-  it("collects flagged panels in Needs attention until acknowledged", async () => {
+  it("opens on the morning answer, with open alerts closable in place (ADR-0037)", async () => {
     const spy = await renderAt("/dashboard");
-    const strip = await screen.findByRole("region", { name: "Needs attention" });
-    expect(within(strip).getByText("Failed SSH daily")).toBeVisible();
-    // The same words as the panel: what a row is, from the run's first column.
-    expect(await within(strip).findByText("12 addresses over threshold (10)")).toBeVisible();
-    expect(within(strip).getByText("12 addresses")).toBeVisible();
-    await userEvent.click(
-      within(strip).getByRole("button", { name: "Acknowledge Failed SSH daily" }),
+    const top = await screen.findByRole("region", { name: "This morning" });
+    // The open alert, a source with errors, and a restricted alert: all count.
+    expect(
+      await within(top).findByText(
+        /^3 things need you: Failed logons, win_dc has errors and 1 more\./,
+      ),
+    ).toBeVisible();
+    expect(within(top).getByRole("link", { name: "Failed logons" })).toHaveAttribute(
+      "href",
+      "/alerts#item=a1",
     );
+    await userEvent.click(within(top).getByRole("button", { name: "Close Failed logons" }));
+    const form = within(top).getByRole("form", { name: "Close Failed logons" });
+    await userEvent.click(within(form).getByLabelText("Benign or expected"));
+    await userEvent.click(within(form).getByRole("button", { name: "Close alert" }));
     await vi.waitFor(() =>
-      expect(sent(spy, "POST", (u) => u.endsWith("/api/dashboards/d1/acknowledge"))).toEqual([
-        { schedule_id: "s1", run_id: "sr2" },
+      expect(sent(spy, "POST", (u) => u.endsWith("/api/alerts/a1/close"))).toEqual([
+        { reason: "benign", note: null },
       ]),
-    );
-    await vi.waitFor(() =>
-      expect(screen.queryByRole("region", { name: "Needs attention" })).toBeNull(),
     );
   });
 

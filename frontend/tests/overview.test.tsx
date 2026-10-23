@@ -65,6 +65,28 @@ describe("Health: the former Overview (F55, ADR-0034 row 11)", () => {
     expect(screen.queryByRole("button", { name: /^Alert delivery/ })).toBeNull();
   });
 
+  it("opens a source's Health row from a link, then its settings with the same gap (F61)", async () => {
+    await renderAt("/health#source=linux_sshd");
+    const flow = await screen.findByRole("list", { name: "Sources" });
+    const row = within(flow).getByText("linux_sshd").closest("li") as HTMLElement;
+    await vi.waitFor(() => expect(row).toHaveAttribute("aria-current", "true"));
+    await userEvent.click(within(row).getByRole("button", { name: "linux_sshd" }));
+    expect(window.location.pathname + window.location.hash).toBe("/sources#source=linux_sshd");
+    const setting = await vi.waitFor(() => {
+      const tr = document.getElementById("source-linux_sshd");
+      if (!tr) throw new Error("not yet");
+      return tr;
+    });
+    expect(setting).toHaveAttribute("aria-current", "true");
+    expect(
+      await within(setting).findByText(/^No events .+ \(5 h\)\. Other sources kept flowing\.$/),
+    ).toBeVisible();
+    expect(within(setting).getByRole("link", { name: "Show on Health" })).toHaveAttribute(
+      "href",
+      "/health#source=linux_sshd",
+    );
+  });
+
   it("writes gaps in local time, naming the day only when it is not today", async () => {
     const { gapText, changeText } = await import("@/features/health/flow");
     const zone = "America/Los_Angeles";
@@ -145,14 +167,13 @@ function noSchedules(spy: ReturnType<typeof mockApi>) {
 }
 
 describe("Landing page (ADR-0031)", () => {
-  it("opens the Dashboard first when there is a panel, with health on the first screen", async () => {
+  it("opens the Dashboard first when there is a panel, with sources in the morning answer", async () => {
     await renderAt("/");
     expect(await screen.findByRole("heading", { name: "My dashboard", level: 1 })).toBeVisible();
     expect(window.location.pathname).toBe("/dashboard");
-    const health = await screen.findByRole("region", { name: "Health" });
-    expect(health).toHaveTextContent("1 source with errors");
-    expect(health).toHaveTextContent("1 quiet source");
-    expect(health).toHaveTextContent("1 source with a gap in 24 hours");
+    const health = await screen.findByRole("region", { name: "This morning" });
+    expect(await within(health).findByRole("button", { name: /has errors/ })).toBeVisible();
+    expect(health).toHaveTextContent("1 gap in 24 hours");
     await userEvent.click(within(health).getByRole("button", { name: "Open Health" }));
     expect(await screen.findByRole("heading", { name: "Health", level: 1 })).toBeVisible();
   });

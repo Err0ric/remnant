@@ -2,7 +2,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AUTO_PARSER } from "@/lib/parsers";
 import { ParserEditor } from "./ParserEditor";
 import { ParserMix } from "./ParserMix";
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
+import { useSection } from "@/lib/route";
+import { GapNote } from "@/features/health/GapNote";
 import { Command, PageHeader } from "@/components/shell/PageHeader";
 import { ApiError, api, type Source, type SourceInput } from "@/lib/api";
 import { AddSourceForm } from "./AddSourceForm";
@@ -70,6 +72,14 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
     queryFn: api.sources,
     refetchInterval: 5000,
   });
+  // Gaps in the last 24 hours, as Health shows them (F61), and the source a link opened.
+  const overview = useQuery({ queryKey: ["overview"], queryFn: api.overview });
+  const gapsOf = new Map((overview.data?.volume ?? []).map((v) => [v.source_id, v.gaps]));
+  const section = useSection();
+  const focus = section.startsWith("source=") ? decodeURIComponent(section.slice(7)) : null;
+  useEffect(() => {
+    if (focus) document.getElementById(`source-${focus}`)?.scrollIntoView?.({ block: "center" });
+  }, [focus, sources.isSuccess]);
   // Server folder layout is admin-only; analysts never request it.
   const settings = useQuery({
     queryKey: ["source-list", "settings"],
@@ -221,7 +231,9 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
                     return (
                       <tr
                         key={s.source_id}
-                        className="border-b border-border align-top last:border-0"
+                        id={`source-${s.source_id}`}
+                        aria-current={focus === s.source_id ? "true" : undefined}
+                        className={`border-b border-border align-top last:border-0 ${focus === s.source_id ? "bg-accent-subtle" : ""}`}
                       >
                         <td className="px-3 py-2.5">
                           <div className="font-mono [overflow-wrap:anywhere]">{s.source_id}</div>
@@ -284,6 +296,11 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
                               sourceId={s.source_id}
                               quiet={s.quiet}
                               canManage={canManage}
+                            />
+                            <GapNote
+                              sourceId={s.source_id}
+                              gaps={gapsOf.get(s.source_id) ?? []}
+                              now={overview.data?.generated_at ?? new Date().toISOString()}
                             />
                           </div>
                         </td>

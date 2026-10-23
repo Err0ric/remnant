@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import type { Overview, SourceGap } from "@/lib/api";
 import { stamp } from "@/features/overview/time";
 import { gapText, lag, localHour, zoneName } from "./flow";
@@ -21,6 +22,8 @@ interface SourceFlowProps {
   notice?: string | null;
   /** For tests; the viewer's own zone otherwise. */
   timeZone?: string;
+  /** The source a link opened (`/health#source=<id>`): marked and scrolled into view. */
+  focused?: string | null;
 }
 
 const DOT: Record<FlowLevel, string> = {
@@ -125,7 +128,17 @@ function Spark({ counts, hours, gaps, name, timeZone }: SparkProps) {
 
 /** Health > Sources (F55): one row per source, flow over 24 hours, totals, current rate,
  * and lag, with gaps written out under the row. */
-export function SourceFlow({ overview, sources, now, notice, timeZone }: SourceFlowProps) {
+export function SourceFlow({
+  overview,
+  sources,
+  now,
+  notice,
+  timeZone,
+  focused = null,
+}: SourceFlowProps) {
+  useEffect(() => {
+    if (focused) document.getElementById(`flow-${focused}`)?.scrollIntoView?.({ block: "center" });
+  }, [focused, sources.length]);
   const hours = overview?.hours ?? [];
   const volume = new Map((overview?.volume ?? []).map((v) => [v.source_id, v]));
   const health = new Map((overview?.sources ?? []).map((s) => [s.source_id, s]));
@@ -177,7 +190,12 @@ export function SourceFlow({ overview, sources, now, notice, timeZone }: SourceF
           const last = h?.last_event_at ?? s.last;
           const ago = lag(last, now);
           return (
-            <li key={s.source_id} className="border-b border-border px-3 py-2 last:border-0">
+            <li
+              key={s.source_id}
+              id={`flow-${s.source_id}`}
+              aria-current={focused === s.source_id ? "true" : undefined}
+              className={`border-b border-border px-3 py-2 last:border-0 ${focused === s.source_id ? "bg-accent-subtle" : ""}`}
+            >
               <div className={`${COLS} items-center`}>
                 <div className="min-w-0">
                   {s.onOpen ? (

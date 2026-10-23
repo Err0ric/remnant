@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Every source link lands on its row, and Settings agrees with Health
+
+- A source name on the Dashboard, in an alert, or in a quiet-source message opens Health > Sources at that source's row, marked, with its gap shaded and written out (`/health#source=...`). The name there opens that source's settings, at the same row (F61).
+- Settings > Sources now shows the same gap sentence Health does for the last 24 hours, with **Show on Health**, so the two pages no longer disagree.
+- **Alert if quiet** is on for every new source: 60 minutes, or 3 hours for Microsoft 365 and the Anthropic admin API, which deliver late and in batches. It starts with no alert targets, so a gap becomes an alert on Alerts and the Dashboard; add targets to get messages too. Change or turn it off on Settings > Sources as before. Existing sources keep their setting.
+
+### The Dashboard opens on the morning answer
+
+- The top of the Dashboard is now one sentence and two columns: "2 things need you: Failed SSH by address (2 runs) and demo_dns has sent nothing for 14 h." **Needs you** lists open alerts, newest first, each linking to its alert and closable in place; **Sources** says how many are flowing, names any with errors or that stopped sending, and links each to Health. Panels sit below as before (ADR-0037 rows 5 to 8).
+- This replaces the Health strip and the Needs attention list with Acknowledge: closing an alert is the one way to clear it, with a reason, on the Dashboard or on Alerts. Health's tile is now **Open alerts** and opens Alerts.
+
 ### Alerts: one queue, and a nav in the morning's order
 
 - **Alerts** is a new page, second in the left nav with its open count. Open, Closed, and Muted tabs; each alert opens to what fired, its range and sources, its history, **Close**, and the rows the run kept (every address, person, and machine a link). A gap links to its Health row. Auditors read; Admins and Analysts close and reopen.

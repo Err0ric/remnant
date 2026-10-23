@@ -27,6 +27,14 @@ from app.meta.db import MetaDB
 MIN_QUIET_S = 300  # 5 minutes
 MAX_QUIET_S = 7 * 86400
 MAX_TARGETS = 10
+# Alert if quiet is on for every new source (ADR-0037 owner answer 3), with a default by kind:
+# API connectors deliver late and in batches, so they get longer. Editable afterwards.
+DEFAULT_QUIET_S = 3600
+DEFAULT_QUIET_BY_KIND = {"m365": 3 * 3600, "anthropic": 3 * 3600}
+
+
+def default_quiet_s(kind: str) -> int:
+    return DEFAULT_QUIET_BY_KIND.get(kind, DEFAULT_QUIET_S)
 
 
 @dataclass(frozen=True, slots=True)

@@ -14,8 +14,7 @@ import { navigate } from "@/lib/route";
 import { rangeWords } from "./headline";
 import { since, stamp } from "@/features/overview/time";
 import { currentDashboard, rememberDashboard } from "./choice";
-import { HealthStrip } from "./HealthStrip";
-import { NeedsAttention } from "./NeedsAttention";
+import { MorningAnswer } from "./MorningAnswer";
 import { layoutOf, placed, sectionAdded, sectionRemoved, sectionStepped, stepped } from "./layout";
 import { SchedulePanel } from "./SchedulePanel";
 
@@ -171,6 +170,7 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
         }
       />
       <div className="flex flex-col gap-3 px-5 py-3">
+        <MorningAnswer canClose={canCreate} isAdmin={isAdmin} />
         {list.length > 0 || canCreate ? (
           <div className="flex flex-wrap items-center gap-2 text-sm">
             {list.length > 1 ? (
@@ -213,7 +213,6 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
             ) : null}
           </div>
         ) : null}
-        <HealthStrip />
         {error ? (
           <p role="alert" className="text-sm text-danger">
             {error instanceof ApiError ? error.message : "Could not load"}
@@ -230,7 +229,6 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
             }}
           />
         ) : null}
-        {board ? <NeedsAttention dashboard={board} schedules={byId} /> : null}
         {boards.isSuccess && (!board || board.panels.length === 0) ? (
           <div className="rounded-card border border-border bg-surface px-3 py-8 text-center text-sm">
             <p className="font-semibold">No panels yet</p>

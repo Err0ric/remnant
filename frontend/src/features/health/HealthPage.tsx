@@ -4,9 +4,8 @@ import { Command, PageHeader } from "@/components/shell/PageHeader";
 import { FormError } from "@/features/auth/FormError";
 import { since, stamp } from "@/features/overview/time";
 import { ApiError, api, type Source, type WatchedDevice } from "@/lib/api";
-import { navigate, useSectionTab, type PageId } from "@/lib/route";
+import { navigate, useSection, useSectionTab, type PageId } from "@/lib/route";
 import { EntityLink } from "@/components/EntityLink";
-import { useAttention } from "@/features/dashboard/attention";
 import { lag } from "./flow";
 import { SourceFlow } from "./SourceFlow";
 import { StatusLine } from "./StatusLine";
@@ -145,6 +144,9 @@ interface HealthPageProps {
 export function HealthPage({ isAdmin }: HealthPageProps) {
   const client = useQueryClient();
   const [tab, setTab] = useSectionTab<TabId>(TAB_IDS);
+  // `#source=<id>` (alert messages, the Dashboard, Settings) opens Sources at that row.
+  const section = useSection();
+  const focused = section.startsWith("source=") ? decodeURIComponent(section.slice(7)) : null;
   const [filter, setFilter] = useState<Level | null>(null);
   const [adding, setAdding] = useState(false);
   const sources = useQuery({ queryKey: ["source-list"], queryFn: api.sources });
@@ -160,7 +162,7 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
     queryFn: api.overview,
     refetchInterval: 60_000,
   });
-  const attention = useAttention();
+  const alerts = useQuery({ queryKey: ["alerts", "open"], queryFn: () => api.alerts("open") });
   const enrichment = useQuery({ queryKey: ["enrichment"], queryFn: api.enrichment });
   const targets = useQuery({
     queryKey: ["alert-targets"],
@@ -328,12 +330,12 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
         <SystemStrip
           overview={o}
           tally={tally}
-          attention={attention.items}
+          alerts={alerts.data}
           isAdmin={isAdmin}
           now={now}
           onEvents={() => navigate("search")}
           onSources={() => setTab("sources")}
-          onAttention={() => navigate("dashboard")}
+          onAttention={() => navigate("alerts")}
           onDelivery={() => setTab("alerts")}
         />
         {o ? <StatusLine overview={o} now={now} /> : null}
@@ -430,6 +432,7 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
               overview={o}
               now={now}
               notice={shown.find((r) => r.key === "lake-quarantine")?.reason ?? null}
+              focused={focused}
               sources={shown
                 .filter((r) => r.key !== "lake-quarantine")
                 // Problems first: errors, then gaps, then the rest that needs a look.
@@ -442,7 +445,13 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
                   word: r.word,
                   reason: r.reason,
                   last: r.last,
-                  onOpen: r.page ? () => navigate(r.page as PageId) : undefined,
+                  // Its settings, at the same row (F61): one more click from Health.
+                  onOpen: r.page
+                    ? () =>
+                        r.page === "sources"
+                          ? navigate("sources", `source=${encodeURIComponent(r.name)}`)
+                          : navigate(r.page as PageId)
+                    : undefined,
                 }))}
             />
           ) : shown.length === 0 ? (

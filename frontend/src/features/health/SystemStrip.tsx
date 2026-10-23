@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { Overview, Schedule } from "@/lib/api";
+import type { AlertList, Overview } from "@/lib/api";
 import { since, stamp } from "@/features/overview/time";
 import { eventsChange } from "./flow";
 
@@ -44,7 +44,8 @@ function Tile({ label, value, lines, tone, onClick, title }: TileProps) {
 interface SystemStripProps {
   overview: Overview | undefined;
   tally: SourceTally;
-  attention: Schedule[];
+  /** Open alerts the viewer may read (ADR-0037). */
+  alerts: AlertList | undefined;
   isAdmin: boolean;
   now: string;
   onEvents: () => void;
@@ -58,7 +59,8 @@ interface SystemStripProps {
 export function SystemStrip(p: SystemStripProps) {
   const o = p.overview;
   const change = o ? eventsChange(o) : null;
-  const newest = p.attention[0];
+  const newest = p.alerts?.items[0];
+  const open = p.alerts?.open ?? 0;
   const failed = o?.alerts?.failed_deliveries ?? 0;
   const failing = (o?.alerts?.targets ?? []).filter((t) => t.failing);
   const sourcesOk = p.tally.healthy === p.tally.total && p.tally.gaps === 0;
@@ -96,13 +98,13 @@ export function SystemStrip(p: SystemStripProps) {
         onClick={p.onSources}
       />
       <Tile
-        label="Needs attention"
-        value={p.attention.length}
-        tone={p.attention.length ? "warn" : undefined}
+        label="Open alerts"
+        value={p.alerts ? open : "·"}
+        tone={open ? "warn" : undefined}
         lines={[
           newest
-            ? `Newest: ${newest.name}${newest.recent[0] ? `, ${since(newest.recent[0].started_at, p.now)}` : ""}`
-            : "Nothing flagged on your dashboards",
+            ? `Newest: ${newest.title}, ${since(newest.created_at, p.now)}`
+            : "Nothing needs a decision",
         ]}
         onClick={p.onAttention}
       />
