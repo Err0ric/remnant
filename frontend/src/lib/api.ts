@@ -1395,6 +1395,8 @@ export interface AiWatchCard {
   /** "a Microsoft 365 source": the install has none. */
   needs: string | null;
   restricted: boolean;
+  /** People card: devices or addresses with no person matched, never added to `value`. */
+  devices?: number | null;
 }
 
 export interface AiWatchDay {

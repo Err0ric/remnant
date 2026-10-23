@@ -310,6 +310,9 @@ def test_review_items_on_alerts_without_alert_messages(lab: dict[str, Any]) -> N
     chatgpt = items["service:chatgpt"]
     assert chatgpt["title"] == "New AI service: ChatGPT" and chatgpt["why"] == "Not reviewed yet"
     assert chatgpt["sources"] == ["dns"] and chatgpt["severity"] == "medium"
+    # DNS names no person: the addresses are devices, apart, never counted as people.
+    assert chatgpt["count"] == 0
+    assert chatgpt["detail"] == "1 device not matched to a person: 10.20.1.5"
     assert "service:bzr" not in " ".join(items)  # an ad tag is not AI use
     sens = next(i for r, i in items.items() if r.startswith("sensitive:alice@example.com:"))
     assert sens["severity"] == "high" and sens["why"] == "aws_access_key x1"
@@ -352,7 +355,9 @@ def test_ai_watch_summary_cards_chart_and_top(lab: dict[str, Any]) -> None:
     assert list(cards) == ["services", "people", "agents", "consent", "sensitive"]
     assert cards["services"]["value"] >= 3 and cards["services"]["previous"] == 0
     assert "not reviewed yet" in cards["services"]["context"]
-    assert cards["people"]["value"] == 3  # 10.20.1.5, .6, .7; the ad tag host is not use
+    # DNS names no person: 0 people, and 10.20.1.5, .6, .7 as devices apart (never added in);
+    # the ad tag host is not use.
+    assert cards["people"]["value"] == 0 and cards["people"]["devices"] == 3
     assert cards["consent"]["value"] is None
     assert cards["consent"]["needs"] == "a Microsoft 365 source"
     assert cards["sensitive"]["value"] == 1 and "alice@example.com" in cards["sensitive"]["context"]
@@ -382,3 +387,16 @@ def test_cards_know_telemetry_and_m365_read_from_files() -> None:
         ]
     )
     assert got == {"telemetry": ["cc", "inv", "otel"], "m365": ["aud", "m365"]}
+
+
+def test_ai_flow_shows_devices_apart_from_people(lab: dict[str, Any]) -> None:
+    """Owner, 2026-10-22: a device or address with no person named is never a person."""
+    rng = {
+        "start": (NOW - timedelta(days=1)).isoformat(),
+        "end": (NOW + timedelta(hours=1)).isoformat(),
+    }
+    g = lab["admin"].get("/api/entities/graph", params={"mode": "ai", **rng}).json()
+    lane0 = {c["label"]: c["group"] for c in g["cards"] if c["lane"] == 0}
+    assert lane0["alice@example.com"] == "People"
+    assert lane0["10.20.1.5"] == "Addresses"  # an address with no person stays apart
+    assert lane0.get("ws-0042") in (None, "Devices not matched to a person")

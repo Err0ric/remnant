@@ -16,7 +16,14 @@ const CARD_BADGE_H = 72;
 const CARD_GAP = 8;
 const RADIUS = 6;
 // Groups that are the point of a lane come before the leftovers in it.
-const GROUP_LAST = new Set(["Addresses", "Built-in tools", "Other hosts", "IP addresses", "Other"]);
+const GROUP_LAST = new Set([
+  "Addresses",
+  "Devices not matched to a person",
+  "Built-in tools",
+  "Other hosts",
+  "IP addresses",
+  "Other",
+]);
 
 /** Width of the element, following resizes (falls back to a desktop width in tests). */
 function useWidth(): [RefObject<HTMLDivElement>, number] {
@@ -96,7 +103,13 @@ type Glyph =
 function glyphFor(graph: EntityGraph, card: GraphCard): Glyph {
   const g = card.group;
   if (graph.mode === "ai") {
-    if (card.lane === 0) return g === "Addresses" ? "address" : "person";
+    // Devices with no person named are their own group, never shown as people.
+    if (card.lane === 0)
+      return g === "Addresses"
+        ? "address"
+        : g === "Devices not matched to a person"
+          ? "host"
+          : "person";
     if (card.lane === 1) return "app";
     if (card.lane === 2) return g === "MCP servers" ? "plug" : "tool";
     return g === "AI services" ? "cloud" : "globe";

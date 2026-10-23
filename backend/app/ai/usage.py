@@ -217,15 +217,15 @@ LIMIT 500"""  # noqa: S608  # fixed SQL text; domains checked against DOMAIN in 
 
 
 def daily_sql(pairs: list[tuple[str, str]], rollup: bool = False) -> str:
-    """Use per service, user (the person, else the machine or address), and UTC day: what
-    AI Watch's cards and 30-day chart are counted from (ADR-0035 rows 10, 12)."""
+    """Use per service, person, machine, and UTC day: what AI Watch's cards and 30-day
+    chart are counted from (ADR-0035 rows 10, 12). Person and machine stay apart, so a
+    count never adds people and devices together (owner, 2026-10-22)."""
     return f"""
 WITH {_use_ctes(pairs, rollup)}
-SELECT service_id, coalesce(who, machine) AS user, CAST(t AS DATE) AS day,
-       sum(n)::BIGINT AS events, max(last_t) AS last_seen, min(first_t) AS first_seen,
-       count(DISTINCT machine) AS machines
+SELECT service_id, who, machine, CAST(t AS DATE) AS day,
+       sum(n)::BIGINT AS events, max(last_t) AS last_seen, min(first_t) AS first_seen
 FROM r
-GROUP BY 1, 2, 3
+GROUP BY 1, 2, 3, 4
 LIMIT 500000"""  # noqa: S608  # fixed SQL text; domains checked against DOMAIN in _values
 
 
@@ -336,7 +336,7 @@ class Usage:
         return self._engine.run(build(self._catalog.domain_table()), scope, timeout_s=TIMEOUT_S)
 
     def daily(self, scope: QueryScope) -> tuple[list[list[Any]], list[str]]:
-        """(service id, user, day, events, last seen, first seen, machines) rows, and the
+        """(service id, person, machine, day, events, last seen, first seen) rows, and the
         sources read."""
         result = self._run_use(daily_sql, scope)
         return result.rows, result.sources

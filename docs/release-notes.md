@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### People and devices are counted apart
+
+- AI Watch's card is **People using unapproved AI** again, counting only people the events name. Devices or addresses with no person matched show as their own line under it ("3 more devices not matched to a person"), linked to AI usage > Services. Before, both were added into one number.
+- AI Watch review items say "2 people: ..." and "3 devices not matched to a person: ..." separately, and Alerts shows the people count ("no person matched" when there is none).
+- In Investigations' AI flow, the first lane groups People, Addresses, and Devices not matched to a person; machine names no longer appear as people.
+- Fixed: an address's summary sometimes showed a Windows line that did not name the address as its example; it now prefers a line that names it.
+
 ### AI Watch on the Dashboard
 
 - Under the morning answer, **AI Watch** answers "is anyone using AI we have not approved?" for the last 7 or 30 days: unapproved AI services, users of unapproved AI, new agents and MCP servers, app consent grants (Microsoft 365), and sensitive data sent to AI (Claude Code), each with the change against the period before.

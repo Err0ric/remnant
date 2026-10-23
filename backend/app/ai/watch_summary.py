@@ -58,6 +58,29 @@ class Card:
     context: str = ""
     needs: str | None = None  # "a Microsoft 365 source": the install has none
     restricted: bool = False  # the install has the source, the viewer may not read it
+    # Devices or addresses with no person matched to them, never added to `value`
+    # (people card only): "3 more devices not matched to a person".
+    devices: int | None = None
+
+
+class _Users:
+    """People, and devices seen without a person, kept apart."""
+
+    def __init__(self) -> None:
+        self.people: set[str] = set()
+        self.matched: set[str] = set()  # devices seen with a person
+        self.devices: set[str] = set()
+
+    def add(self, who: Any, machine: Any) -> None:
+        if who:
+            self.people.add(str(who))
+            if machine:
+                self.matched.add(str(machine))
+        elif machine:
+            self.devices.add(str(machine))
+
+    def unmatched(self) -> int:
+        return len(self.devices - self.matched)
 
 
 @dataclass(slots=True)
@@ -131,11 +154,13 @@ def summary(
 
     cur_svcs: set[str] = set()
     prev_svcs: set[str] = set()
-    cur_people: set[str] = set()
-    prev_people: set[str] = set()
-    users_by_svc: dict[str, set[str]] = defaultdict(set)
+    # People and devices are counted apart (owner, 2026-10-22): a device counts only when
+    # no event of the period names its person.
+    cur = _Users()
+    prev = _Users()
+    people_by_svc: dict[str, set[str]] = defaultdict(set)
     chart: dict[date, dict[str, int]] = defaultdict(lambda: defaultdict(int))
-    for sid, user, day_v, events, _last, _first, _machines in rows:
+    for sid, who, machine, day_v, events, _last, _first in rows:
         if not is_use(sid):
             continue
         d = _day(day_v)
@@ -146,15 +171,14 @@ def summary(
         if d >= cur_from:
             if unapproved:
                 cur_svcs.add(sid)
-                if user:
-                    cur_people.add(str(user))
-                    users_by_svc[sid].add(str(user))
+                cur.add(who, machine)
+                if who:
+                    people_by_svc[sid].add(str(who))
         elif d >= prev_from and unapproved:
             prev_svcs.add(sid)
-            if user:
-                prev_people.add(str(user))
+            prev.add(who, machine)
 
-    top_unapproved = sorted(cur_svcs, key=lambda s: (-len(users_by_svc[s]), s))
+    top_unapproved = sorted(cur_svcs, key=lambda s: (-len(people_by_svc[s]), s))
     lead = top_unapproved[0] if top_unapproved else None
     not_reviewed = sum(1 for s in cur_svcs if status(s) == "unreviewed")
     cards = [
@@ -172,11 +196,13 @@ def summary(
         ),
         Card(
             "people",
-            # A person where the events name one, else the device or address (DNS).
-            "Users of unapproved AI",
-            len(cur_people),
-            len(prev_people),
-            f"{len(users_by_svc[lead])} on {services[lead].name}" if lead else "",
+            "People using unapproved AI",
+            len(cur.people),
+            len(prev.people),
+            f"{len(people_by_svc[lead])} on {services[lead].name}"
+            if lead and people_by_svc[lead]
+            else "",
+            devices=cur.unmatched(),
         ),
         _agents_card(items, readable, cur_from, prev_from, kinds, allowed),
     ]

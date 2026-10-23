@@ -695,12 +695,13 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
           },
           {
             key: "people",
-            label: "Users of unapproved AI",
+            label: "People using unapproved AI",
             value: 3,
             previous: 3,
             context: "3 on DeepSeek",
             needs: null,
             restricted: false,
+            devices: 2,
           },
           {
             key: "agents",

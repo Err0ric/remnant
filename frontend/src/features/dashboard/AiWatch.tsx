@@ -126,18 +126,31 @@ function Card({ card, days }: { card: AiWatchCard; days: number }) {
               onClick={link}
               className={cn(
                 "self-start text-kpi tabular-nums hover:underline",
-                card.value === 0 ? "text-ok" : "text-text",
+                card.value === 0 && !card.devices ? "text-ok" : "text-text",
               )}
             >
               {(card.value ?? 0).toLocaleString()}
             </button>
           ) : (
             <span
-              className={cn("text-kpi tabular-nums", card.value === 0 ? "text-ok" : "text-text")}
+              className={cn(
+                "text-kpi tabular-nums",
+                card.value === 0 && !card.devices ? "text-ok" : "text-text",
+              )}
             >
               {(card.value ?? 0).toLocaleString()}
             </span>
           )}
+          {card.devices ? (
+            <button
+              type="button"
+              onClick={() => navigate("ai", "services")}
+              className="self-start text-left text-sm text-accent-text hover:underline"
+            >
+              {card.devices.toLocaleString()} {card.value ? "more " : ""}
+              {card.devices === 1 ? "device" : "devices"} not matched to a person
+            </button>
+          ) : null}
           <span className="text-sm text-text-secondary">{delta(card, days)}</span>
           <span className="truncate text-sm text-text-muted" title={card.context}>
             {card.context}

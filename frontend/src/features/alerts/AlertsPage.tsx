@@ -481,5 +481,6 @@ function countText(item: AlertItem): string {
   if (item.kind !== "ai_watch") return `${n} ${item.count === 1 ? "row" : "rows"}`;
   if (item.subject.startsWith("sensitive:"))
     return `${n} ${item.count === 1 ? "signal" : "signals"}`;
-  return `used by ${n}`;
+  // People only: devices with no person are named in the detail, never added in.
+  return item.count ? `${n} ${item.count === 1 ? "person" : "people"}` : "no person matched";
 }

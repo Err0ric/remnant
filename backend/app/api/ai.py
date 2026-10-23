@@ -207,6 +207,7 @@ class CardOut(BaseModel):
     context: str
     needs: str | None
     restricted: bool
+    devices: int | None = None  # people card: devices not matched to a person, apart
 
 
 class DayOut(BaseModel):

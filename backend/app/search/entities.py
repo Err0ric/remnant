@@ -524,13 +524,16 @@ netr AS (
   FROM netm {join_addr("netm")}
 ),
 flow AS (
-  SELECT coalesce(who, machine) AS person, client, tool, dest, sens, mcp FROM cc
-  UNION ALL SELECT coalesce(who, machine), client, tool, dest, sens, mcp FROM inv
-  UNION ALL SELECT coalesce(who, machine), client, tool, 'svc:' || service_id, sens, false
+  SELECT coalesce(who, machine) AS person, who IS NOT NULL AS named, client, tool, dest, sens,
+         mcp FROM cc
+  UNION ALL SELECT coalesce(who, machine), who IS NOT NULL, client, tool, dest, sens, mcp
+  FROM inv
+  UNION ALL SELECT coalesce(who, machine), who IS NOT NULL, client, tool,
+         'svc:' || service_id, sens, false
   FROM netr
 )
 SELECT person, client, tool, dest, count(*) AS n, coalesce(sum(sens), 0) AS sens,
-       bool_or(mcp) AS mcp
+       bool_or(mcp) AS mcp, bool_or(named) AS named
 FROM flow
 WHERE person IS NOT NULL AND {where}
 GROUP BY 1, 2, 3, 4
@@ -588,6 +591,7 @@ def ai_graph(
     )
     seen_email: dict[str, bool] = {}
     names: dict[str, set[str]] = {}
+    named_keys: dict[str, bool] = {}  # person cards that a logged person name produced
     services = {s.id: s for s in catalog.services()}
     rules = catalog.mcp_rules()
     domains = sorted(catalog.domain_table(), key=lambda p: -len(p[1]))
@@ -602,7 +606,7 @@ def ai_graph(
         return host
 
     b = _Builder(["People", "AI clients", "Tools and MCP servers", "Destinations"])
-    for person, client, tool, dest, n, sens, mcp in result.rows:
+    for person, client, tool, dest, n, sens, mcp, named in result.rows:
         if dest and str(dest).startswith("svc:"):
             hit = services.get(str(dest)[4:])
             if hit is not None and hit.kind == NON_USAGE:
@@ -612,6 +616,7 @@ def ai_graph(
         seen_email[pkey] = seen_email.get(pkey, False) or ident.org_email(str(person))
         names.setdefault(pkey, set()).add(str(person))
         p = b.card(0, pkey, pkey, n)
+        named_keys[pkey] = named_keys.get(pkey, False) or bool(named)
         cname = CLIENT_NAMES.get(str(client), str(client))
         c = b.card(1, cname.lower(), cname, n)
         b.edge(p, c, n)
@@ -657,7 +662,15 @@ def ai_graph(
             card.sublabel = f"{len(raw)} names"
         elif _is_ip(pkey):
             card.sublabel = "No user name in these logs"
-        card.group = "Addresses" if _is_ip(pkey) else "People"
+        # A device or address with no person named is shown apart, never as a person
+        # (owner, 2026-10-22): addresses, then machine names, each in their own group.
+        card.group = (
+            "People"
+            if named_keys.get(pkey)
+            else "Addresses"
+            if _is_ip(pkey)
+            else "Devices not matched to a person"
+        )
         card.search_sql = search_sql(
             f"({user_filter_sql(ident, ident.keys_for(pkey))} OR device_hostname IN"
             f" ({', '.join(quote(r) for r in sorted(raw))}))"

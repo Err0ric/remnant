@@ -42,12 +42,20 @@ ACTIVITIES_SQL = """
 SELECT {outcome} AS outcome, coalesce(class_uid, 0) AS class_uid,
        nullif(trim(actor_user_name), '') AS who, {target} AS target,
        count(*) AS n, min(coalesce(time, time_observed)) AS first,
-       max(coalesce(time, time_observed)) AS last, any_value(message) AS example
+       max(coalesce(time, time_observed)) AS last, {example} AS example
 FROM events
 WHERE {where}
 GROUP BY 1, 2, 3, 4
 ORDER BY CASE outcome WHEN 'succeeded' THEN 0 WHEN 'failed' THEN 1 ELSE 2 END, n DESC
 LIMIT 20"""
+
+# The example line: one that names the entity when there is one (a real value, not the
+# Windows text "An account failed to log on."), else the newest. Deterministic.
+EXAMPLE_NAMED = (
+    "arg_max(message, (CASE WHEN contains(coalesce(message, ''), $v) THEN 1 ELSE 0 END)"
+    " * 1e13 + epoch_ms(coalesce(time, time_observed)))"
+)
+EXAMPLE_NEWEST = "arg_max(message, coalesce(time, time_observed))"
 
 TARGETS_SQL = """
 SELECT 'host' AS kind, {target} AS value, count(*) AS n FROM events
@@ -124,7 +132,12 @@ def entity_summary(
     totals = engine.run(TOTALS_SQL.format(where=where), scope, params, timeout_s=TIMEOUT_S)
     t: list[Any] = list(totals.rows[0]) if totals.rows else [0] * 9 + [[]]
     acts = engine.run(
-        ACTIVITIES_SQL.format(where=where, outcome=OUTCOME, target=TARGET),
+        ACTIVITIES_SQL.format(
+            where=where,
+            outcome=OUTCOME,
+            target=TARGET,
+            example=EXAMPLE_NEWEST if kind == "user" else EXAMPLE_NAMED,
+        ),
         scope,
         params,
         timeout_s=TIMEOUT_S,

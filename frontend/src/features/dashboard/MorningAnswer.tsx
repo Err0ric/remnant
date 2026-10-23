@@ -138,7 +138,7 @@ function NeedsYou({
         <ul className="text-sm">
           {shown.map((i) => (
             <li key={i.item_id} className="border-b border-border py-1.5 last:border-0">
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+              <div className="flex items-center gap-x-2">
                 <span aria-hidden="true" className="h-3.5 w-1 shrink-0 rounded bg-warn" />
                 <a
                   href={`${pathFor("alerts")}#item=${i.item_id}`}
@@ -147,18 +147,22 @@ function NeedsYou({
                     e.preventDefault();
                     navigate("alerts", `item=${i.item_id}`);
                   }}
-                  className="min-w-0 font-semibold text-text hover:underline"
+                  className="min-w-0 truncate font-semibold text-text hover:underline"
+                  title={`${i.title}: ${why(i)}`}
                 >
                   {i.title}
                 </a>
-                <span className="text-text-secondary">{why(i)}</span>
-                <When iso={i.created_at} className="ml-auto text-text-muted" />
+                {/* The reason gives way first when the column is narrow. */}
+                <span className="hidden min-w-0 truncate text-text-secondary 2xl:inline">
+                  {why(i)}
+                </span>
+                <When iso={i.created_at} className="ml-auto shrink-0 text-text-muted" />
                 {canClose ? (
                   <button
                     type="button"
                     aria-label={`Close ${i.title}`}
                     onClick={() => setClosing(closing === i.item_id ? null : i.item_id)}
-                    className="h-6 rounded border border-border px-2 text-xs hover:bg-surface-head"
+                    className="h-6 shrink-0 rounded border border-border px-2 text-xs hover:bg-surface-head"
                   >
                     Close
                   </button>

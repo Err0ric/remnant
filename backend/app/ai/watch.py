@@ -56,6 +56,8 @@ class _Review:
     label: str
     status: str
     people: set[str] = field(default_factory=set)
+    devices: set[str] = field(default_factory=set)  # seen with no person named
+    matched: set[str] = field(default_factory=set)  # devices seen with a person
     sources: set[str] = field(default_factory=set)
 
 
@@ -207,7 +209,12 @@ class AiWatch:
             if status == "approved":
                 continue
             r = review.setdefault((str(kind), str(name)), _Review(label, str(status)))
-            r.people.add(subject)
+            if who:
+                r.people.add(str(who))
+                if machine:
+                    r.matched.add(str(machine))
+            elif machine:
+                r.devices.add(str(machine))
             r.sources.add(str(src))
             if status == "unreviewed" and not s.include_unreviewed:
                 continue
@@ -247,22 +254,34 @@ class AiWatch:
         if self._items is None:
             return
         not_approved = r.status == "not_approved"
-        people = len(r.people)
+        people = sorted(r.people)
+        devices = sorted(r.devices - r.matched)
+        # People and devices are never added into one number (owner, 2026-10-22).
+        parts = []
+        if people:
+            parts.append(
+                f"{len(people)} {'person' if len(people) == 1 else 'people'}: "
+                + ", ".join(people[:5])
+                + (" and more" if len(people) > 5 else "")
+            )
+        if devices:
+            parts.append(
+                f"{len(devices)} {'device' if len(devices) == 1 else 'devices'} not matched to a"
+                " person: " + ", ".join(devices[:5]) + (" and more" if len(devices) > 5 else "")
+            )
         self._items.raise_item(
             "ai_watch",
             f"{kind}:{name}",
             f"New AI service: {r.label}" if kind == "service" else f"New MCP server: {name}",
             ref_id=f"{kind}:{name}",
             why="Not approved" if not_approved else "Not reviewed yet",
-            # A person where the events name one, else the machine or address.
-            detail=f"Used by {people}: "
-            + ", ".join(sorted(r.people)[:5])
-            + (" and more" if people > 5 else ""),
-            count=people,
+            detail=". ".join(parts),
+            count=len(people),
             sources=sorted(r.sources),
             range_start=since.isoformat(),
             range_end=now.isoformat(),
-            severity="high" if not_approved and people > 1 else "medium",
+            # Breadth, for severity only: more than one person or unmatched device.
+            severity="high" if not_approved and len(people) + len(devices) > 1 else "medium",
         )
 
     def _raise_sensitive(

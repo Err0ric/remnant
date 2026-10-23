@@ -32,6 +32,10 @@ describe("AI Watch on the Dashboard (ADR-0035 Part 2)", () => {
     expect(within(watch).getByRole("button", { name: "2" })).toBeVisible();
     expect(within(watch).getAllByText("+1 vs previous 7 days")).toHaveLength(2);
     expect(within(watch).getByText("same as previous 7 days")).toBeVisible();
+    // People and devices are never one number: devices without a person are their own line.
+    expect(
+      within(watch).getByRole("button", { name: "2 more devices not matched to a person" }),
+    ).toBeVisible();
     // A card without its source says which; one the viewer cannot read says Restricted.
     expect(within(watch).getByRole("button", { name: "a Microsoft 365 source" })).toBeVisible();
     expect(within(watch).getByText("Restricted")).toBeVisible();
