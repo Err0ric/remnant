@@ -144,10 +144,11 @@ ExecStart=/opt/remnant/backend/.venv/bin/app-server
 Restart=on-failure
 RestartSec=5
 # Memory limit for the whole service (D80). Past MemoryHigh the kernel reclaims and slows
-# the service; past MemoryMax it ends it and systemd restarts it. Percentages are of the
-# machine's (or container's) memory; fixed sizes such as 3G work too.
-MemoryHigh=80%
-MemoryMax=90%
+# the service; past MemoryMax it ends it and systemd restarts it. Set them to fit this
+# machine: these are for 8 GB. Use absolute sizes in a container (LXC): there a percentage
+# can be of the host's memory. Percentages (80%, 90%) suit full VMs and bare metal only.
+MemoryHigh=6G
+MemoryMax=7G
 
 NoNewPrivileges=true
 ProtectSystem=strict
@@ -179,6 +180,7 @@ WantedBy=multi-user.target
 
 ```bash
 systemctl daemon-reload && systemctl enable --now remnant
+systemctl show -p MemoryHigh -p MemoryMax remnant   # bytes; must be below this machine's memory
 journalctl -u remnant | grep -A1 "one-time link"
 journalctl -u remnant | grep "SHA-256"
 ```
