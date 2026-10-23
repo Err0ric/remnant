@@ -31,15 +31,22 @@ export interface NavGroup {
 }
 
 // Plain labels only (CLAUDE.md rule 12). Items not built yet stay visible but inert.
-// Daily work first (install finding F48): General, Investigate, Detect, AI usage, then
-// System > Health (also reached from the Dashboard health strip). Settings sits at the
-// bottom. The group is not called Health: one heading and one item of the same name.
+// Ordered as a morning reads (ADR-0037 rows 1 to 3): the four daily places are top level,
+// with no heading over a single item; Investigate and Detect stay groups. A group with an
+// empty label has no heading. Settings sits at the bottom.
 export const NAV_GROUPS: NavGroup[] = [
   {
-    label: "General",
+    label: "",
     items: [
       // First, and the landing page when the viewer has a panel (ADR-0031).
       { id: "dashboard", label: "Dashboard", ready: true, page: "dashboard" },
+      {
+        id: "alerts",
+        label: "Alerts",
+        ready: true,
+        page: "alerts",
+        aliases: ["inbox", "queue", "close", "needs attention", "mutes", "detections"],
+      },
     ],
   },
   {
@@ -57,14 +64,7 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: "Detect",
-    items: [
-      { id: "rules", label: "Detection rules", ready: true, page: "rules" },
-      { id: "schedules", label: "Schedules", ready: true, page: "schedules" },
-    ],
-  },
-  {
-    label: "AI",
+    label: "",
     items: [
       {
         id: "ai",
@@ -80,11 +80,6 @@ export const NAV_GROUPS: NavGroup[] = [
           { id: "settings", label: "Review and alerts", adminOnly: true },
         ],
       },
-    ],
-  },
-  {
-    label: "System",
-    items: [
       {
         id: "health",
         label: "Health",
@@ -106,9 +101,16 @@ export const NAV_GROUPS: NavGroup[] = [
           // "Agents" alone is the AI agents tab; these are the log collectors (F48).
           { id: "agents", label: "Endpoint agents" },
           { id: "devices", label: "Watched devices" },
-          { id: "alerts", label: "Alerts and schedules" },
+          { id: "alerts", label: "Alert delivery and schedules" },
         ],
       },
+    ],
+  },
+  {
+    label: "Detect",
+    items: [
+      { id: "rules", label: "Detection rules", ready: true, page: "rules" },
+      { id: "schedules", label: "Schedules", ready: true, page: "schedules" },
     ],
   },
 ];
@@ -196,10 +198,10 @@ export const SETTINGS_GROUPS: NavGroup[] = [
     label: "Alerts",
     items: [
       {
-        id: "alerts",
+        id: "targets",
         label: "Alert targets",
         ready: true,
-        page: "alerts",
+        page: "targets",
         adminOnly: true,
         aliases: ["teams", "slack", "email", "webhook"],
       },

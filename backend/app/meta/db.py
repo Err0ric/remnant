@@ -851,6 +851,81 @@ MIGRATIONS: tuple[Migration, ...] = (
         FROM dashboard_panels WHERE section <> ''
         GROUP BY dashboard_id, section;
     """,
+    # 48: alert items, one queue with Close, reopen, and mutes (ADR-0037). Each schedule's
+    # latest flagged run becomes an item, closed when a dashboard had acknowledged it (the
+    # Needs attention strip as it stood), so nothing open is lost or reopened.
+    """
+    CREATE TABLE alert_items (
+        item_id      TEXT PRIMARY KEY,
+        kind         TEXT NOT NULL CHECK (kind IN ('schedule', 'rule', 'ai_watch', 'gap')),
+        subject      TEXT NOT NULL,
+        ref_id       TEXT,
+        title        TEXT NOT NULL,
+        detail       TEXT NOT NULL DEFAULT '',
+        why          TEXT,
+        count        INTEGER,
+        sources      TEXT NOT NULL DEFAULT '[]',
+        owner_id     TEXT,
+        shared       INTEGER NOT NULL DEFAULT 1 CHECK (shared IN (0, 1)),
+        range_start  TEXT,
+        range_end    TEXT,
+        created_at   TEXT NOT NULL,
+        state        TEXT NOT NULL DEFAULT 'open' CHECK (state IN ('open', 'closed')),
+        closed_at    TEXT,
+        closed_by    TEXT,
+        close_reason TEXT CHECK (close_reason IN
+            ('true_positive', 'benign', 'false_positive', 'follow_up', 'muted')),
+        note         TEXT,
+        resolved     TEXT
+    );
+    CREATE UNIQUE INDEX alert_items_ref ON alert_items (kind, ref_id) WHERE ref_id IS NOT NULL;
+    CREATE INDEX alert_items_state ON alert_items (state, created_at);
+    CREATE TABLE alert_item_history (
+        item_id TEXT NOT NULL REFERENCES alert_items(item_id),
+        at      TEXT NOT NULL,
+        user_id TEXT,
+        action  TEXT NOT NULL CHECK (action IN ('close', 'reopen')),
+        reason  TEXT,
+        note    TEXT
+    );
+    CREATE INDEX alert_item_history_item ON alert_item_history (item_id, at);
+    CREATE TABLE alert_mutes (
+        mute_id    TEXT PRIMARY KEY,
+        kind       TEXT NOT NULL,
+        subject    TEXT NOT NULL,
+        title      TEXT NOT NULL,
+        until      TEXT NOT NULL,
+        created_by TEXT,
+        created_at TEXT NOT NULL,
+        ended_at   TEXT,
+        ended_by   TEXT
+    );
+    CREATE INDEX alert_mutes_subject ON alert_mutes (kind, subject, until);
+    INSERT INTO alert_items (item_id, kind, subject, ref_id, title, why, count, sources,
+        owner_id, shared, range_start, range_end, created_at, state, closed_at, closed_by,
+        close_reason, note)
+    SELECT 'migrated-' || r.run_id,
+           CASE s.kind WHEN 'rule' THEN 'rule' ELSE 'schedule' END,
+           CASE s.kind WHEN 'rule' THEN s.target_id ELSE s.schedule_id END,
+           r.run_id, s.name, r.flag_reason, r.row_count, r.sources_in_scope, s.owner_id,
+           s.shared, r.range_start, r.range_end, r.started_at,
+           CASE WHEN a.acked_at IS NULL THEN 'open' ELSE 'closed' END,
+           a.acked_at, a.user_id,
+           CASE WHEN a.acked_at IS NULL THEN NULL ELSE 'benign' END,
+           CASE WHEN a.acked_at IS NULL THEN NULL
+                ELSE 'Acknowledged before Close existed' END
+    FROM schedule_runs r
+    JOIN schedules s ON s.schedule_id = r.schedule_id
+    LEFT JOIN (SELECT schedule_id, run_id, min(acked_at) AS acked_at, min(user_id) AS user_id
+               FROM dashboard_acks GROUP BY schedule_id, run_id) a
+        ON a.schedule_id = r.schedule_id AND a.run_id = r.run_id
+    WHERE r.flagged = 1 AND r.status = 'ok'
+      AND r.started_at = (SELECT max(started_at) FROM schedule_runs x
+                          WHERE x.schedule_id = r.schedule_id AND x.flagged = 1);
+    INSERT INTO alert_item_history (item_id, at, user_id, action, reason, note)
+    SELECT item_id, closed_at, closed_by, 'close', close_reason, note
+    FROM alert_items WHERE state = 'closed';
+    """,
 )
 
 

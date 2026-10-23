@@ -2,14 +2,8 @@ import { describe, expect, it } from "vitest";
 import { NAV_GROUPS } from "@/lib/nav";
 
 describe("Left nav (F48)", () => {
-  it("puts daily work first and Health last, with one label per meaning", () => {
-    expect(NAV_GROUPS.map((g) => g.label)).toEqual([
-      "General",
-      "Investigate",
-      "Detect",
-      "AI",
-      "System",
-    ]);
+  it("reads in the morning's order, with headings only over groups (ADR-0037)", () => {
+    expect(NAV_GROUPS.map((g) => g.label)).toEqual(["", "Investigate", "", "Detect"]);
     const labels = NAV_GROUPS.flatMap((g) =>
       g.items.flatMap((i) => [i.label, ...(i.sections ?? []).map((s) => s.label)]),
     );

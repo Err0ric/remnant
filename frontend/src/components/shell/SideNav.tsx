@@ -1,4 +1,6 @@
-import type { MouseEvent } from "react";
+import type { MouseEvent, ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import {
   NAV_GROUPS as GROUPS,
@@ -49,7 +51,7 @@ function Item({ item, active, isAdmin }: { item: NavItem; active: string; isAdmi
       : sections[0]?.id;
   return (
     <>
-      {link(item, active)}
+      {link(item, active, item.id === "alerts" ? <OpenAlerts /> : null)}
       {sections.length > 0 && item.page ? (
         <ul aria-label={`${item.label} sections`} className="mb-1 ml-3 border-l border-border pl-2">
           {sections.map((x) => (
@@ -79,7 +81,22 @@ function Item({ item, active, isAdmin }: { item: NavItem; active: string; isAdmi
   );
 }
 
-function link(item: NavItem, active: string) {
+/** The open alerts the viewer may read, beside Alerts (ADR-0037 row 2). */
+function OpenAlerts() {
+  const q = useQuery({ queryKey: ["alerts", "open"], queryFn: () => api.alerts("open") });
+  const n = q.data?.open ?? 0;
+  if (!n) return null;
+  return (
+    <span
+      aria-label={`${n} open`}
+      className="ml-auto rounded bg-accent-subtle px-1.5 font-mono text-xs tabular-nums text-accent-text"
+    >
+      {n}
+    </span>
+  );
+}
+
+function link(item: NavItem, active: string, badge: ReactNode = null) {
   return (
     <a
       href={item.page ? pathFor(item.page) : undefined}
@@ -90,7 +107,10 @@ function link(item: NavItem, active: string) {
       className={itemClass(item.id === active, item.ready)}
     >
       {item.ready ? (
-        item.label
+        <>
+          {item.label}
+          {badge}
+        </>
       ) : (
         <>
           <span>{item.label}</span>
@@ -121,9 +141,11 @@ export function SideNav({ active, isAdmin, canAudit, open = false }: SideNavProp
     >
       {/* The groups scroll on short screens; Settings below stays in view. */}
       <div className="md:min-h-0 md:flex-1 md:overflow-y-auto">
-        {GROUPS.map((group) => (
-          <div key={group.label} className="mb-3">
-            <div className="px-2.5 py-1 text-xs text-text-muted">{group.label}</div>
+        {GROUPS.map((group, i) => (
+          <div key={group.label || i} className="mb-3">
+            {group.label ? (
+              <div className="px-2.5 py-1 text-xs text-text-muted">{group.label}</div>
+            ) : null}
             {group.items
               .filter((item) => (isAdmin || !item.adminOnly) && (canAudit || !item.auditOnly))
               .map((item) => (

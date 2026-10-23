@@ -50,7 +50,7 @@ export function HandoffPanel({ eventIds, onClose }: HandoffPanelProps) {
           No alert targets yet.{" "}
           <button
             type="button"
-            onClick={() => navigate("alerts")}
+            onClick={() => navigate("targets")}
             className="text-accent-text hover:underline"
           >
             Add one under Alert targets

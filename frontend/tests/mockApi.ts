@@ -225,6 +225,57 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
     ...extra,
   });
   const watches: Record<string, unknown>[] = [];
+  const alertItems: (Record<string, unknown> & { item_id: string; state: string })[] = [
+    {
+      item_id: "a1",
+      kind: "rule",
+      subject: "win_failed_logons",
+      ref_id: "r1",
+      title: "Failed logons",
+      detail: "",
+      why: "Count 12 is above 5",
+      count: 12,
+      sources: ["linux_sshd"],
+      range_start: "2026-10-22T08:00:00+00:00",
+      range_end: "2026-10-22T09:00:00+00:00",
+      created_at: "2026-10-22T09:00:05+00:00",
+      state: "open",
+      closed_at: null,
+      closed_by: null,
+      close_reason: null,
+      close_reason_label: null,
+      note: null,
+      resolved: null,
+      schedule_id: null,
+      muted_until: null,
+      history: [],
+    },
+    {
+      item_id: "g1",
+      kind: "gap",
+      subject: "paloalto_fw",
+      ref_id: "paloalto_fw@x",
+      title: "paloalto_fw stopped sending",
+      detail: "No events received for 1 h 1 min",
+      why: null,
+      count: null,
+      sources: ["paloalto_fw"],
+      range_start: "2026-10-22T06:00:00+00:00",
+      range_end: null,
+      created_at: "2026-10-22T07:01:00+00:00",
+      state: "closed",
+      closed_at: "2026-10-22T07:30:00+00:00",
+      closed_by: "ana",
+      close_reason: "benign",
+      close_reason_label: "Benign or expected",
+      note: "Firewall reboot",
+      resolved: "Events arriving again after 25 min",
+      schedule_id: null,
+      muted_until: null,
+      history: [],
+    },
+  ];
+  const alertMutes: Record<string, unknown>[] = [];
   const alertTargets: Record<string, unknown>[] = [
     {
       target_id: "t1",
@@ -598,6 +649,43 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
           classification_default: "local_only",
         },
       ]);
+    // Alerts (ADR-0037): one open rule alert, one closed gap.
+    if (/\/api\/alerts\?state=/.test(url)) {
+      const state = new URL(url, "http://x").searchParams.get("state");
+      const items = alertItems.filter((i) => state === "all" || i.state === state);
+      return json({
+        items,
+        open: alertItems.filter((i) => i.state === "open").length,
+        restricted: 1,
+        muted: alertMutes.length,
+        reasons: {
+          true_positive: "True positive",
+          benign: "Benign or expected",
+          false_positive: "False positive (tune the rule)",
+          follow_up: "Needs follow-up",
+        },
+      });
+    }
+    if (url.endsWith("/api/alerts/mutes") && method === "GET") return json(alertMutes);
+    const closeMatch = /\/api\/alerts\/([^/?]+)\/close$/.exec(url);
+    if (closeMatch && method === "POST") {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { reason: string; note: string };
+      const item = alertItems.find((i) => i.item_id === closeMatch[1]);
+      if (!item) return json({ detail: "No such alert" }, 404);
+      Object.assign(item, {
+        state: "closed",
+        close_reason: body.reason,
+        close_reason_label: "False positive (tune the rule)",
+        closed_by: "admin",
+        note: body.note,
+      });
+      return json(item);
+    }
+    const itemMatch = /\/api\/alerts\/([^/?]+)$/.exec(url);
+    if (itemMatch && method === "GET") {
+      const item = alertItems.find((i) => i.item_id === itemMatch[1]);
+      return item ? json(item) : json({ detail: "No such alert" }, 404);
+    }
     if (url.endsWith("/api/alert-targets") && method === "GET") return json(alertTargets);
     if (url.endsWith("/api/alert-targets") && method === "POST") {
       const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;

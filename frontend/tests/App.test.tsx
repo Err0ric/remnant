@@ -45,8 +45,9 @@ describe("App shell", () => {
       "Search",
       "Saved searches",
       "Detect",
-      "AI",
+      "Alerts",
       "AI usage",
+      "Health",
       "Settings",
     ]) {
       expect(within(nav).getByText(label)).toBeInTheDocument();

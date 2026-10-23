@@ -19,6 +19,7 @@ export type PageId =
   | "schedules"
   | "dashboard"
   | "alerts"
+  | "targets"
   | "ai"
   | "investigate"
   | "identities"
@@ -43,7 +44,8 @@ const PATHS: Record<PageId, string> = {
   rules: "/rules",
   schedules: "/schedules",
   dashboard: "/dashboard",
-  alerts: "/alert-targets",
+  alerts: "/alerts",
+  targets: "/alert-targets",
   ai: "/ai",
   investigate: "/investigations",
   identities: "/identities",

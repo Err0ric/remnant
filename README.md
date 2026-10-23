@@ -259,6 +259,19 @@ Investigation pages read many events at once. On a 14 million event lake over 7 
 
 Each stays under the 20 s query limit; shorter time ranges are proportionally faster.
 
+These page times are the targets for the performance budget (product pass step 4); this table is updated when that work lands.
+
+### Local model
+
+The AI features were tested with Ollama 0.34.1 running `qwen3.5:9b` with Thinking off, on an NVIDIA RTX 3080 (10 GB) passed through to a Proxmox container, on an AMD Ryzen 9 5950X host with 32 GB RAM. Explain and parser drafting use the same model setting and have not been timed. On the Ask suite (100 questions and 10 follow-up conversations, `backend/evals/nl_queries`):
+
+| Prompt | Executable | Exact | Median per question |
+|---|---|---|---|
+| `ask.v4` (the default), two runs | 99% | 87 to 88% | 2.0 s (p90 3.3 to 3.6 s) |
+| `ask.v6` | Not yet measured on this model | | |
+
+Ingest, search, Sigma rules, schedules, and every page's numbers run on the CPU and do not use or need a GPU. Only Ask, Explain, and parser drafting call a model, and a smaller or CPU-only model makes those slower, not the rest. Details, every run, and how to run the suite against your own model: [backend/evals/nl_queries/README.md](backend/evals/nl_queries/README.md).
+
 ## Software bill of materials
 
 Every CI run publishes `sbom.cdx.json` (CycloneDX 1.5) as a build artifact: the Python packages and web UI packages that ship in the image, with hashes, plus the container base images. Development tools are left out. To make one locally:

@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.alerts.dispatch import AlertDispatcher
+from app.alerts.items import AlertItems
 from app.alerts.render import Alert
 from app.auth.users import User
 from app.core.branding import PRODUCT_NAME
@@ -62,7 +63,9 @@ class QuietWatch:
         audit: AuditLog,
         link: str | None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        items: AlertItems | None = None,
     ) -> None:
+        self._items = items
         self._meta = meta
         self._received = received
         self._source_ids = source_ids
@@ -158,17 +161,43 @@ class QuietWatch:
             quiet_for = (now - seen).total_seconds()
             if w.state == "ok" and quiet_for >= w.quiet_after_s:
                 self._update(w.source_id, state="quiet", quiet_since=now.isoformat())
-                self._alert(w, "quiet", f"No events received for {human(quiet_for)}", seen)
+                self._alert(w, "quiet", f"No events received for {human(quiet_for)}", seen, now)
                 changed += 1
             elif w.state == "quiet" and before is not None and seen > before:
                 gap = (seen - before).total_seconds()
                 self._update(w.source_id, state="ok", quiet_since=None)
-                self._alert(w, "resumed", f"Events arriving again after {human(gap)}", seen)
+                text = f"Events arriving again after {human(gap)}"
+                if self._items is not None and w.quiet_since:
+                    self._items.resolve("gap", f"{w.source_id}@{w.quiet_since}", text)
+                self._alert(w, "resumed", text, seen)
                 changed += 1
         return changed
 
-    def _alert(self, w: Watch, kind: str, detail: str, seen: datetime | None) -> None:
+    def _alert(
+        self,
+        w: Watch,
+        kind: str,
+        detail: str,
+        seen: datetime | None,
+        now: datetime | None = None,
+    ) -> None:
         action = "source.quiet" if kind == "quiet" else "source.resumed"
+        link = f"{self._link}/health#source={w.source_id}" if self._link else None
+        if kind == "quiet" and self._items is not None and now is not None:
+            # A gap on a watched source is an alert item (ADR-0037 owner answer 3).
+            item = self._items.raise_item(
+                "gap",
+                w.source_id,
+                f"{w.source_id} stopped sending",
+                ref_id=f"{w.source_id}@{now.isoformat()}",
+                detail=detail,
+                sources=[w.source_id],
+                range_start=seen.isoformat() if seen else None,
+            )
+            if item.state == "closed":
+                kind = "muted"
+            elif self._link:
+                link = f"{self._link}/alerts#item={item.item_id}"
         self._audit.write(
             action,
             "success",
@@ -176,7 +205,7 @@ class QuietWatch:
             None,
             {"source_id": w.source_id, "last_received": seen.isoformat() if seen else None},
         )
-        if not w.target_ids:
+        if not w.target_ids or kind == "muted":
             return
         alert = Alert(
             kind="quiet" if kind == "quiet" else "resumed",
@@ -186,7 +215,7 @@ class QuietWatch:
             reason=None,
             range_start=seen.isoformat() if seen else None,
             range_end=None,
-            link=f"{self._link}/sources" if self._link else None,
+            link=link,
             product=PRODUCT_NAME,
         )
         self._dispatcher.enqueue(alert, w.target_ids, None, None, source_id=w.source_id)

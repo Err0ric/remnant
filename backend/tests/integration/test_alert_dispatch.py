@@ -53,7 +53,7 @@ def test_rule_matches_send_a_summary_without_event_content(lab: dict[str, Any]) 
         6,
         "Rule: Failed logon by Jane Doe",
     )
-    assert doc["link"] == "https://siem.example.internal:8080/dashboard"
+    assert doc["link"].startswith("https://siem.example.internal:8080/alerts#item=")  # ADR-0037
     run = lab["admin"].get("/api/schedules").json()[0]["recent"][0]
     assert run["rule_run_id"] not in body.decode()  # summary only: no ids, rows, or fields
     (d,) = deliveries(lab, s["schedule_id"])

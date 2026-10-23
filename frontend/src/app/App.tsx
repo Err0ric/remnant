@@ -46,6 +46,9 @@ const RulesPage = lazy(() =>
 const DashboardPage = lazy(() =>
   import("@/features/dashboard/DashboardPage").then((m) => ({ default: m.DashboardPage })),
 );
+const AlertsPage = lazy(() =>
+  import("@/features/alerts/AlertsPage").then((m) => ({ default: m.AlertsPage })),
+);
 const AlertTargetsPage = lazy(() =>
   import("@/features/alerts/AlertTargetsPage").then((m) => ({ default: m.AlertTargetsPage })),
 );
@@ -172,8 +175,13 @@ export function App({ initialTheme, queryClient }: AppProps) {
                         isAdmin={!user || user.role === "admin"}
                         canRun={!user || user.role !== "auditor"}
                       />
-                    ) : page === "alerts" && (!user || user.role === "admin") ? (
+                    ) : page === "targets" && (!user || user.role === "admin") ? (
                       <AlertTargetsPage />
+                    ) : page === "alerts" ? (
+                      <AlertsPage
+                        canClose={!user || user.role !== "auditor"}
+                        isAdmin={!user || user.role === "admin"}
+                      />
                     ) : page === "dashboard" ? (
                       <DashboardPage me={user} />
                     ) : page === "schedules" ? (

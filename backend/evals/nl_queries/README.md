@@ -68,12 +68,12 @@ A generated result counts as exact when some of its columns, one for each refere
 
 ## Results
 
-Record each run in the PR that changes Ask, and in the table below. Rows dated before 2026-10-15 were measured on the 100 single questions, before the follow-ups and the `idp_signin` source were added; rerun `ask.v4` on the current suite to compare with `ask.v5`.
+Record each run in the PR that changes Ask, and in the table below. Every homelab run below used Ollama in a Proxmox container with an NVIDIA RTX 3080 (10 GB) passed through, on an AMD Ryzen 9 5950X host with 32 GB RAM. Latency depends mostly on the GPU; results (executable, exact) depend on the model and prompt, not the hardware. Rows dated before 2026-10-15 were measured on the 100 single questions, before the follow-ups and the `idp_signin` source were added; rerun `ask.v4` on the current suite to compare with `ask.v5`.
 
 | Model | Provider | Thinking | Executable | Exact | Median s | Date |
 |---|---|---|---|---|---|---|
-| qwen3.5:9b, `ask.v4` + answer-shape retry (#125), run 2 | Ollama 0.34.1, homelab VM (local), context 16384 | Off (`none`) | 99% | 87% | 2.04 (p90 3.27) | 2026-10-11 |
-| qwen3.5:9b, `ask.v4` + answer-shape retry (#125), run 1 | Ollama 0.34.1, homelab VM (local), context 16384 | Off (`none`) | 99% | 88% | 2.04 (p90 3.57) | 2026-10-11 |
-| qwen3.5:9b, `ask.v4` | Ollama 0.34.1, homelab VM (local), context 16384 | Off (`none`) | 95% | 85% | 1.98 | 2026-10-11 |
-| qwen3.5:9b, `ask.v3` | Ollama 0.34.1, homelab VM (local), context 16384 | Off (`none`) | 100% | 83% | 2.56 (p90 3.73) | 2026-10-11 |
-| qwen3.5:9b, `ask.v2` | Ollama 0.34.1, homelab VM (local), default context | Off (`none`) | 96% | 66% | 2.56 (p90 4.21) | 2026-10-11 |
+| qwen3.5:9b, `ask.v4` + answer-shape retry (#125), run 2 | Ollama 0.34.1, homelab RTX 3080 10 GB (local), context 16384 | Off (`none`) | 99% | 87% | 2.04 (p90 3.27) | 2026-10-11 |
+| qwen3.5:9b, `ask.v4` + answer-shape retry (#125), run 1 | Ollama 0.34.1, homelab RTX 3080 10 GB (local), context 16384 | Off (`none`) | 99% | 88% | 2.04 (p90 3.57) | 2026-10-11 |
+| qwen3.5:9b, `ask.v4` | Ollama 0.34.1, homelab RTX 3080 10 GB (local), context 16384 | Off (`none`) | 95% | 85% | 1.98 | 2026-10-11 |
+| qwen3.5:9b, `ask.v3` | Ollama 0.34.1, homelab RTX 3080 10 GB (local), context 16384 | Off (`none`) | 100% | 83% | 2.56 (p90 3.73) | 2026-10-11 |
+| qwen3.5:9b, `ask.v2` | Ollama 0.34.1, homelab RTX 3080 10 GB (local), default context | Off (`none`) | 96% | 66% | 2.56 (p90 4.21) | 2026-10-11 |

@@ -94,7 +94,7 @@ export function SetupPage() {
       label: "Add an alert target",
       hint: "Teams, Slack, email, or a webhook for flagged runs.",
       done: (targets.data ?? []).length > 0,
-      page: "alerts",
+      page: "targets",
     },
     {
       label: "Schedule your rules",

@@ -34,6 +34,7 @@ from zoneinfo import ZoneInfo
 import structlog
 
 from app.alerts.dispatch import AlertDispatcher
+from app.alerts.items import AlertItems
 from app.alerts.render import Alert, AlertKind
 from app.auth.users import LOCAL_USER, User, UserStore
 from app.core.branding import PRODUCT_NAME
@@ -156,7 +157,9 @@ class ScheduleService:
         *,
         dispatcher: AlertDispatcher | None = None,
         link: str | None = None,
+        items: AlertItems | None = None,
     ) -> None:
+        self._items = items
         self._meta = meta
         self._config = config
         self._tz = ZoneInfo(config.timezone)
@@ -424,13 +427,9 @@ class ScheduleService:
         return [r[0] for r in rows]
 
     def _notify(self, sched: Schedule, run: ScheduleRun) -> None:
-        """Queue an alert for a flagged run, a rule run with matches (when no threshold is
-        set), or a schedule that paused itself. Summaries only (ADR-0007 row 2)."""
-        if self._dispatcher is None:
-            return
-        targets = self.targets_of(sched.schedule_id)
-        if not targets:
-            return
+        """Raise an alert item and queue an alert for a flagged run or a rule run with
+        matches (when no threshold is set); queue an alert for a schedule that paused itself.
+        Summaries only (ADR-0007 row 2); the message links to the item (ADR-0037 row 9)."""
         kind: AlertKind | None = None
         if run.status == "paused":
             kind = "pause"
@@ -444,6 +443,29 @@ class ScheduleService:
         ):
             kind = "match"
         if kind is None:
+            return
+        link = f"{self._link}/dashboard" if self._link else None
+        if kind != "pause" and self._items is not None:
+            item = self._items.raise_item(
+                "rule" if sched.kind == "rule" else "schedule",
+                sched.target_id if sched.kind == "rule" else sched.schedule_id,
+                sched.name,
+                ref_id=run.run_id,
+                why=run.flag_reason,
+                count=run.row_count,
+                sources=run.sources_in_scope,
+                owner_id=sched.owner_id,
+                shared=sched.shared,
+                range_start=run.range_start,
+                range_end=run.range_end,
+            )
+            if item.state == "closed":
+                return  # muted: recorded, not sent
+            link = f"{self._link}/alerts#item={item.item_id}" if self._link else None
+        if self._dispatcher is None:
+            return
+        targets = self.targets_of(sched.schedule_id)
+        if not targets:
             return
         if kind == "pause":
             detail = f"Paused: {run.error or 'no reason given'}"
@@ -463,7 +485,7 @@ class ScheduleService:
             reason=run.flag_reason,
             range_start=run.range_start,
             range_end=run.range_end,
-            link=f"{self._link}/dashboard" if self._link else None,
+            link=link,
             product=PRODUCT_NAME,
         )
         self._dispatcher.enqueue(alert, targets, sched.schedule_id, run.run_id)

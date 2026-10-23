@@ -1322,6 +1322,67 @@ export interface DashboardPanel {
   view: "table" | "bars";
 }
 
+/** One thing that fired and needs a decision (ADR-0037): a flagged schedule run, a rule run
+ * with matches, an AI Watch item, or a gap on a source with Alert if quiet on. */
+export type AlertKind = "schedule" | "rule" | "ai_watch" | "gap";
+export type CloseReason = "true_positive" | "benign" | "false_positive" | "follow_up";
+
+export interface AlertEvent {
+  at: string;
+  user: string | null;
+  action: "close" | "reopen";
+  reason: string | null;
+  note: string | null;
+}
+
+export interface AlertItem {
+  item_id: string;
+  kind: AlertKind;
+  /** Schedule id, rule id, or source id, by kind. */
+  subject: string;
+  /** The run that fired (schedule and rule kinds). */
+  ref_id: string | null;
+  title: string;
+  detail: string;
+  why: string | null;
+  count: number | null;
+  sources: string[];
+  range_start: string | null;
+  range_end: string | null;
+  created_at: string;
+  state: "open" | "closed";
+  closed_at: string | null;
+  closed_by: string | null;
+  close_reason: CloseReason | "muted" | null;
+  close_reason_label: string | null;
+  note: string | null;
+  /** The condition ended (a quiet source sending again); the item stays open. */
+  resolved: string | null;
+  /** The schedule whose run fired: its rows are that run's sample. */
+  schedule_id: string | null;
+  muted_until: string | null;
+  history: AlertEvent[];
+}
+
+export interface AlertList {
+  items: AlertItem[];
+  open: number;
+  /** Open items the viewer may not read: counted, never described. */
+  restricted: number;
+  muted: number;
+  reasons: Record<CloseReason, string>;
+}
+
+export interface AlertMute {
+  mute_id: string;
+  kind: AlertKind;
+  subject: string;
+  title: string;
+  until: string;
+  created_by: string | null;
+  created_at: string;
+}
+
 /** A named dashboard (ADR-0034): personal or shared, with its panels and the flagged runs
  * that were acknowledged (schedule id to run id). */
 export interface Dashboard {
@@ -1444,6 +1505,18 @@ export interface AlertDelivery {
 }
 
 export const api = {
+  alerts: (state: "open" | "closed" | "all" = "open") =>
+    request<AlertList>(`/api/alerts?state=${state}`),
+  alert: (id: string) => request<AlertItem>(`/api/alerts/${encodeURIComponent(id)}`),
+  closeAlert: (id: string, reason: CloseReason, note: string | null) =>
+    request<AlertItem>(`/api/alerts/${encodeURIComponent(id)}/close`, post({ reason, note })),
+  reopenAlert: (id: string) =>
+    request<AlertItem>(`/api/alerts/${encodeURIComponent(id)}/reopen`, post({})),
+  muteAlert: (id: string, days: number) =>
+    request<AlertItem>(`/api/alerts/${encodeURIComponent(id)}/mute`, post({ days })),
+  alertMutes: () => request<AlertMute[]>("/api/alerts/mutes"),
+  unmuteAlert: (muteId: string) =>
+    request<void>(`/api/alerts/mutes/${encodeURIComponent(muteId)}`, { method: "DELETE" }),
   alertTargets: () => request<AlertTarget[]>("/api/alert-targets"),
   createAlertTarget: (body: AlertTargetInput) =>
     request<AlertTarget & { signing_key: string | null }>("/api/alert-targets", post(body)),

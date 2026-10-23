@@ -26,10 +26,12 @@ from app.ai.rollup import AiRollup
 from app.ai.usage import Usage
 from app.ai.watch import AiWatch
 from app.alerts.dispatch import AlertDispatcher
+from app.alerts.items import AlertItems
 from app.alerts.net import Egress, configure_egress
 from app.alerts.targets import TargetStore
 from app.api.addresses import router as addresses_router
 from app.api.ai import router as ai_router
+from app.api.alert_items import router as alert_items_router
 from app.api.alerts import router as alerts_router
 from app.api.ask import router as ask_router
 from app.api.audit import router as audit_router
@@ -484,6 +486,9 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         app.state.auth.audit,
     )
     app.state.dashboards = DashboardStore(meta, lambda: app.state.auth.clock())
+    app.state.alert_items = AlertItems(
+        meta, app.state.auth.audit, clock=lambda: app.state.auth.clock()
+    )
     app.state.schedules = ScheduleService(
         meta,
         config.schedules,
@@ -496,6 +501,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         app.state.auth.audit,
         dispatcher=app.state.alert_dispatcher,
         link=app.state.public_url,
+        items=app.state.alert_items,
     )
     app.state.quiet = QuietWatch(
         meta,
@@ -505,6 +511,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         audit=app.state.auth.audit,
         link=app.state.public_url,
         clock=lambda: app.state.auth.clock(),
+        items=app.state.alert_items,
     )
     app.state.health = HealthService(
         meta,
@@ -610,6 +617,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     )
     app.state.maintenance.on_verified = app.state.integrity_service.seal
     app.include_router(meta_router, prefix="/api")
+    app.include_router(alert_items_router, prefix="/api")
     app.include_router(auth_router, prefix="/api")
     app.include_router(query_router, prefix="/api")
     app.include_router(sources_router, prefix="/api")

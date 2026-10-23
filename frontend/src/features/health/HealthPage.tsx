@@ -49,7 +49,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "enrichment", label: "Enrichment feeds" },
   { id: "agents", label: "Endpoint agents" },
   { id: "devices", label: "Watched devices" },
-  { id: "alerts", label: "Alerts and schedules" },
+  { id: "alerts", label: "Alert delivery and schedules" },
 ];
 const TAB_IDS = TABS.map((t) => t.id);
 const SILENCE = [
@@ -266,7 +266,7 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
         reason: t.failing
           ? `${t.consecutive_failures} deliveries failed${t.last_error ? `: ${t.last_error}` : ""}`
           : null,
-        page: "alerts",
+        page: "targets",
       })),
       ...(schedules.data ?? []).map((s): Row => ({
         key: `s:${s.schedule_id}`,

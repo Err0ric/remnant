@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Alerts: one queue, and a nav in the morning's order
+
+- **Alerts** is a new page, second in the left nav with its open count. Open, Closed, and Muted tabs; each alert opens to what fired, its range and sources, its history, **Close**, and the rows the run kept (every address, person, and machine a link). A gap links to its Health row. Auditors read; Admins and Analysts close and reopen.
+- The nav now reads as a morning does: Dashboard, Alerts, Investigate (Search, Investigations, Saved searches), AI usage, Health, Detect (Detection rules, Schedules), then Settings. Single items no longer sit under a heading of their own.
+- Health's last tab is now **Alert delivery and schedules**, so "Alerts" means one thing.
+
+- Every flagged schedule run, scheduled rule run with matches, and gap on a source with Alert if quiet on is now an alert item: open until someone closes it with a reason (True positive, Benign or expected, False positive, Needs follow-up; a note is required for the last two). Items can be reopened, and every close, reopen, and mute is audited (ADR-0037).
+- Alert messages for flagged runs, rule matches, and quiet sources now link to that alert (`/alerts#item=...`) instead of the Dashboard or the Sources page.
+- Admins can mute alerts like one item for 1 to 30 days; new ones close themselves with reason Muted and stay on record. A mute expires on its own.
+- On upgrade, each schedule's latest flagged run becomes an item: closed if a dashboard had acknowledged it, open otherwise.
+
 ### Faster AI usage over long ranges
 
 - A daily AI rollup is built for each closed day after compaction, so AI usage > Services over 7 or 30 days reads a few rows per hour instead of every DNS event. Today and any day not yet built are still read from events, with the same totals.
