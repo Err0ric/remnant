@@ -118,16 +118,18 @@ describe("Dashboards at scale (ADR-0034)", () => {
   it("opens on the morning answer, with open alerts closable in place (ADR-0037)", async () => {
     const spy = await renderAt("/dashboard");
     const top = await screen.findByRole("region", { name: "This morning" });
-    // The open alert, a source with errors, and a restricted alert: all count.
+    // Two open alerts, a source with errors, and a restricted alert: all count.
     expect(
       await within(top).findByText(
-        /^3 things need you: Failed logons, win_dc has errors and 1 more\./,
+        /^4 things need you: Failed logons, New AI service: DeepSeek and 2 more\./,
       ),
     ).toBeVisible();
     expect(within(top).getByRole("link", { name: "Failed logons" })).toHaveAttribute(
       "href",
       "/alerts#item=a1",
     );
+    // New in 24 hours: AI services, MCP servers, and agents the AI watch raised.
+    expect(within(top).getByRole("heading", { name: /^New in 24 hours/ })).toBeVisible();
     await userEvent.click(within(top).getByRole("button", { name: "Close Failed logons" }));
     const form = within(top).getByRole("form", { name: "Close Failed logons" });
     await userEvent.click(within(form).getByLabelText("Benign or expected"));

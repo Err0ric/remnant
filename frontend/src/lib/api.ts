@@ -1360,6 +1360,8 @@ export interface AlertItem {
   resolved: string | null;
   /** The schedule whose run fired: its rows are that run's sample. */
   schedule_id: string | null;
+  /** AI Watch items (ADR-0035 row 11). */
+  severity: "high" | "medium" | null;
   muted_until: string | null;
   history: AlertEvent[];
 }
@@ -1381,6 +1383,44 @@ export interface AlertMute {
   until: string;
   created_by: string | null;
   created_at: string;
+}
+
+/** AI Watch on the Dashboard (ADR-0035 rows 10, 12, 13). */
+export interface AiWatchCard {
+  key: "services" | "people" | "agents" | "consent" | "sensitive";
+  label: string;
+  value: number | null;
+  previous: number | null;
+  context: string;
+  /** "a Microsoft 365 source": the install has none. */
+  needs: string | null;
+  restricted: boolean;
+}
+
+export interface AiWatchDay {
+  day: string;
+  approved: number;
+  unreviewed: number;
+  not_approved: number;
+}
+
+export interface AiWatchSummary {
+  days: number;
+  start: string;
+  end: string;
+  cards: AiWatchCard[];
+  chart: AiWatchDay[];
+  top: {
+    service_id: string;
+    name: string;
+    status: AiStatus;
+    people: number;
+    machines: number;
+    events: number;
+    first_seen: string | null;
+    last_seen: string | null;
+  }[];
+  sources: string[];
 }
 
 /** A named dashboard (ADR-0034): personal or shared, with its panels and the flagged runs
@@ -1855,6 +1895,7 @@ export const api = {
   setAiMcpRule: (pattern: string, status: "approved" | "not_approved" | null) =>
     request<AiMcpRule[]>("/api/ai/mcp-rules", put({ pattern, status })),
   aiWatch: () => request<AiWatch>("/api/ai/watch"),
+  aiWatchSummary: (days: number) => request<AiWatchSummary>(`/api/ai/watch/summary?days=${days}`),
   setAiWatch: (
     body: Pick<AiWatch, "enabled" | "include_unreviewed" | "sensitive" | "target_ids">,
   ) => request<AiWatch>("/api/ai/watch", put(body)),

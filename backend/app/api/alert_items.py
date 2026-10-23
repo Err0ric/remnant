@@ -53,6 +53,7 @@ class ItemOut(BaseModel):
     note: str | None
     resolved: str | None
     schedule_id: str | None  # the schedule whose run fired: its rows are that run's sample
+    severity: str | None  # high | medium for AI Watch items (ADR-0035 row 11)
     muted_until: str | None
     history: list[EventOut]
 
@@ -124,6 +125,7 @@ def _out(request: Request, i: AlertItem, mutes: list[Mute]) -> ItemOut:
         note=i.note,
         resolved=i.resolved,
         schedule_id=i.schedule_id,
+        severity=i.severity,
         muted_until=until,
         history=[
             EventOut(

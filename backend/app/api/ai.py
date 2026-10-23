@@ -17,6 +17,9 @@ from app.ai.catalog import NON_USAGE, Catalog, DataLevel, Service, ServiceDef
 from app.ai.sessions import sessions, timeline
 from app.ai.usage import ServiceUse, Usage
 from app.ai.watch import AiWatch
+from app.ai.watch_summary import source_classes
+from app.ai.watch_summary import summary as watch_summary
+from app.alerts.items import AlertItem, AlertItems
 from app.api.access import AdminUser, CurrentUser, client_ip
 from app.auth.service import AuthService
 from app.auth.users import User
@@ -196,6 +199,97 @@ def _slots(obj: object) -> dict[str, Any]:
     return {f.name: getattr(obj, f.name) for f in fields(obj)}  # type: ignore[arg-type]  # dataclass instances only
 
 
+class CardOut(BaseModel):
+    key: str
+    label: str
+    value: int | None
+    previous: int | None
+    context: str
+    needs: str | None
+    restricted: bool
+
+
+class DayOut(BaseModel):
+    day: str
+    approved: int
+    unreviewed: int
+    not_approved: int
+
+
+class TopServiceOut(BaseModel):
+    service_id: str
+    name: str
+    status: str
+    people: int
+    machines: int
+    events: int
+    first_seen: str | None
+    last_seen: str | None
+
+
+class WatchSummaryOut(BaseModel):
+    days: int
+    start: str
+    end: str
+    cards: list[CardOut]
+    chart: list[DayOut]
+    top: list[TopServiceOut]
+    sources: list[str]
+
+
+@router.get("/ai/watch/summary")
+async def ai_watch_summary(
+    request: Request, user: CurrentUser, days: Annotated[int, Query(ge=1, le=30)] = 7
+) -> WatchSummaryOut:
+    """AI Watch (ADR-0035 rows 10, 12, 13): five cards against the period before, AI use
+    over 30 days by review status, and the top services, all on the caller's view.
+    Audited ai.view."""
+    meta: MetaDB = request.app.state.meta
+    allowed = await run_in_threadpool(permitted_sources, meta, user)
+    items_store: AlertItems = request.app.state.alert_items
+    ai_items = [
+        i
+        for i in await run_in_threadpool(items_store.items, user, "all", 5000)
+        if i.kind == "ai_watch"
+    ]
+    kinds = source_classes(
+        [(s.source_id, s.kind or "file", s.template_id) for s in request.app.state.sources.list()]
+    )
+
+    def readable(i: AlertItem) -> bool:
+        return allowed is None or set(i.sources) <= set(allowed)
+
+    s = await run_in_threadpool(
+        watch_summary,
+        request.app.state.ai_usage,
+        _catalog(request),
+        request.app.state.engine,
+        allowed,
+        ai_items,
+        readable,
+        kinds,
+        request.app.state.ai_watch.now(),
+        days,
+    )
+    await run_in_threadpool(
+        _audit(request).audit.write,
+        "ai.view",
+        "success",
+        user.user_id,
+        client_ip(request),
+        {"sources_in_scope": s.sources, "view": "watch"},
+    )
+    return WatchSummaryOut(
+        days=s.days,
+        start=s.start,
+        end=s.end,
+        cards=[CardOut(**_slots(c)) for c in s.cards],
+        chart=[DayOut(**_slots(d)) for d in s.chart],
+        top=[TopServiceOut(**_slots(t)) for t in s.top],
+        sources=s.sources,
+    )
+
+
 @router.get("/ai/catalog")
 async def ai_catalog(request: Request, _: CurrentUser) -> list[ServiceOut]:
     return [_service_out(s) for s in await run_in_threadpool(_catalog(request).services)]
@@ -221,8 +315,22 @@ async def set_service_status(
         client_ip(request),
         {"service_id": service_id, "from": before, "to": body.status},
     )
+    await run_in_threadpool(_answer_review, request, user, f"service:{service_id}", body.status)
     (svc,) = [s for s in await run_in_threadpool(_catalog(request).services) if s.id == service_id]
     return _service_out(svc)
+
+
+def _answer_review(request: Request, user: User, subject: str, status: str) -> None:
+    """Approving or not approving a service or MCP server answers its open review items on
+    Alerts (ADR-0035 row 11): closed with the decision, audited as alert.close."""
+    if status == "approved":
+        reason, note = "benign", "Approved"
+    elif status == "not_approved":
+        reason, note = "true_positive", "Marked not approved"
+    else:
+        return
+    items: AlertItems = request.app.state.alert_items
+    items.close_subject("ai_watch", subject, user, reason, note, client_ip(request))
 
 
 @router.post("/ai/services", status_code=status.HTTP_201_CREATED)
@@ -286,7 +394,19 @@ async def set_mcp_rule(body: McpRuleIn, request: Request, user: AdminUser) -> li
         client_ip(request),
         {"pattern": body.pattern, "to": body.status},
     )
+    await run_in_threadpool(_answer_mcp_reviews, request, user)
     return [McpRuleOut(**_slots(r)) for r in await run_in_threadpool(_catalog(request).mcp_rules)]
+
+
+def _answer_mcp_reviews(request: Request, user: User) -> None:
+    """A rule can cover many servers: each open MCP review item whose server the rules now
+    decide is closed with that decision."""
+    items: AlertItems = request.app.state.alert_items
+    catalog = _catalog(request)
+    rules = catalog.mcp_rules()
+    for subject in items.open_subjects("ai_watch", "mcp:"):
+        status = catalog.mcp_status(subject.removeprefix("mcp:"), rules)
+        _answer_review(request, user, subject, status)
 
 
 class WatchOut(BaseModel):

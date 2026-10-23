@@ -100,9 +100,10 @@ export function MorningAnswer({ canClose, isAdmin }: MorningAnswerProps) {
       <p className="border-b border-border px-3 py-2.5 text-base font-semibold">
         {alerts.isError ? "Alerts did not load." : sentence(alerts.data, states)}
       </p>
-      <div className="grid min-w-0 md:grid-cols-[3fr_2fr]">
+      <div className="grid min-w-0 md:grid-cols-2 xl:grid-cols-[5fr_3fr_3fr]">
         <NeedsYou list={alerts.data} canClose={canClose} isAdmin={isAdmin} />
         <Sources states={states} overview={overview.data} now={now} />
+        <New now={now} />
       </div>
     </section>
   );
@@ -255,6 +256,67 @@ function Sources({
       >
         Open Health
       </button>
+    </div>
+  );
+}
+
+const DAY_MS = 86_400_000;
+
+/** First seen in 24 hours (ADR-0037 row 6): AI services, MCP servers, and agents the AI
+ * watch raised, open or closed, each linking to its alert. */
+function New({ now }: { now: string }) {
+  const all = useQuery({ queryKey: ["alerts", "all"], queryFn: () => api.alerts("all") });
+  const since = Date.parse(now) - DAY_MS;
+  const fresh = (all.data?.items ?? []).filter(
+    (i) =>
+      i.kind === "ai_watch" &&
+      !i.subject.startsWith("sensitive:") &&
+      Date.parse(i.created_at) >= since,
+  );
+  return (
+    <div className="min-w-0 border-t border-border px-3 py-2 md:col-span-2 xl:col-span-1 xl:border-l xl:border-t-0">
+      <h2 className="mb-1 text-sm font-semibold">
+        New in 24 hours{" "}
+        <span className="font-mono font-normal tabular-nums text-text-muted">{fresh.length}</span>
+      </h2>
+      {fresh.length === 0 ? (
+        <p className="text-sm text-text-secondary">No new AI services, MCP servers, or agents.</p>
+      ) : (
+        <ul className="text-sm">
+          {fresh.slice(0, 5).map((i) => (
+            <li key={i.item_id} className="flex min-w-0 items-baseline gap-2">
+              <a
+                href={`${pathFor("alerts")}#item=${i.item_id}`}
+                onClick={(e) => {
+                  if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+                  e.preventDefault();
+                  navigate("alerts", `item=${i.item_id}`);
+                }}
+                className="min-w-0 truncate text-accent-text hover:underline"
+                title={i.title}
+              >
+                {i.title.replace(/^New (AI service|MCP server|AI agent): /, "")}
+              </a>
+              <span className="shrink-0 text-text-muted">
+                {i.subject.startsWith("service:")
+                  ? "AI service"
+                  : i.subject.startsWith("mcp:")
+                    ? "MCP server"
+                    : "Agent"}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {fresh.length > 5 ? (
+        <button
+          type="button"
+          onClick={() => navigate("alerts")}
+          className="mt-1 text-sm text-accent-text hover:underline"
+        >
+          {fresh.length - 5} more on Alerts
+        </button>
+      ) : null}
     </div>
   );
 }

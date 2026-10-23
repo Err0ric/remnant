@@ -165,9 +165,11 @@ GROUP BY ALL
 LIMIT 1000000"""  # noqa: S608  # fixed SQL text; domains checked against DOMAIN in _values
 
 
-def services_sql(pairs: list[tuple[str, str]], rollup: bool = False) -> str:
-    """Use per service. Rows that name only an address get the person and machine that
-    had it at the time, from logon and User-ID events (ADR-0020 row 1).
+def _use_ctes(pairs: list[tuple[str, str]], rollup: bool) -> str:
+    """Events reduced to service, person, machine, address, and hour, with rows that name
+    only an address given the person and machine that had it at the time, from logon and
+    User-ID events (ADR-0020 row 1). Ends in `r`, one row per service, person, machine,
+    and hour.
 
     Shaped for memory (install finding F46): hosts are matched to the catalog once per
     distinct host, events are reduced to one row per service, person, machine, address,
@@ -185,8 +187,7 @@ def services_sql(pairs: list[tuple[str, str]], rollup: bool = False) -> str:
         if rollup
         else ""
     )
-    return f"""
-WITH {_match_ctes(pairs)},
+    return f"""{_match_ctes(pairs)},
 hj AS (
   SELECT hm.service_id, {_HOUR_ROWS}
   FROM events JOIN hm ON {HOST_EXPR} = hm.host
@@ -195,10 +196,16 @@ hj AS (
 ),
 {address_ctes("hj", "who0 IS NULL OR shost IS NULL")},
 r AS (
-  SELECT service_id, n, first_t, last_t, coalesce(who0, addr.rwho) AS who,
+  SELECT service_id, n, first_t, last_t, hj.t, coalesce(who0, addr.rwho) AS who,
          coalesce(shost, addr.rhost, hj.ip, dev) AS machine
   FROM hj {join_addr("hj")}
-)
+)"""  # noqa: S608  # fixed SQL text; domains checked against DOMAIN in _values
+
+
+def services_sql(pairs: list[tuple[str, str]], rollup: bool = False) -> str:
+    """Use per service (see `_use_ctes`)."""
+    return f"""
+WITH {_use_ctes(pairs, rollup)}
 SELECT service_id, sum(n)::BIGINT AS events, count(DISTINCT who) AS people,
        count(DISTINCT machine) AS machines, min(first_t) AS first_seen,
        max(last_t) AS last_seen,
@@ -207,6 +214,19 @@ SELECT service_id, sum(n)::BIGINT AS events, count(DISTINCT who) AS people,
 FROM r
 GROUP BY 1 ORDER BY 2 DESC
 LIMIT 500"""  # noqa: S608  # fixed SQL text; domains checked against DOMAIN in _values
+
+
+def daily_sql(pairs: list[tuple[str, str]], rollup: bool = False) -> str:
+    """Use per service, user (the person, else the machine or address), and UTC day: what
+    AI Watch's cards and 30-day chart are counted from (ADR-0035 rows 10, 12)."""
+    return f"""
+WITH {_use_ctes(pairs, rollup)}
+SELECT service_id, coalesce(who, machine) AS user, CAST(t AS DATE) AS day,
+       sum(n)::BIGINT AS events, max(last_t) AS last_seen, min(first_t) AS first_seen,
+       count(DISTINCT machine) AS machines
+FROM r
+GROUP BY 1, 2, 3
+LIMIT 500000"""  # noqa: S608  # fixed SQL text; domains checked against DOMAIN in _values
 
 
 MCP_SQL = f"""
@@ -276,26 +296,7 @@ class Usage:
     def all_services(self, scope: QueryScope) -> tuple[list[ServiceUse], list[str]]:
         """Every catalog match, non-usage hosts included, plus the sources read."""
         known = {s.id: s for s in self._catalog.services()}
-        covered: list[str] = []
-        if (
-            self._rollup is not None
-            and scope.start is not None
-            and scope.end is not None
-            and scope.end - scope.start >= timedelta(days=2)
-        ):
-            covered = self._rollup.covered(scope)
-        if covered:
-            result = self._engine.run(
-                services_sql(self._catalog.domain_table(), rollup=True),
-                scope,
-                {"covered": covered},
-                timeout_s=TIMEOUT_S,
-                rollup=True,
-            )
-        else:
-            result = self._engine.run(
-                services_sql(self._catalog.domain_table()), scope, timeout_s=TIMEOUT_S
-            )
+        result = self._run_use(services_sql, scope)
         out = []
         for sid, events, people, machines, first, last, top, top_m in result.rows:
             if sid in known:
@@ -312,6 +313,33 @@ class Usage:
                     )
                 )
         return out, result.sources
+
+    def _run_use(self, build: Any, scope: QueryScope) -> Any:
+        """Run a use query, reading closed days from the rollup for ranges of 2 days or
+        more when it has them (ADR-0035 row 8)."""
+        covered: list[str] = []
+        if (
+            self._rollup is not None
+            and scope.start is not None
+            and scope.end is not None
+            and scope.end - scope.start >= timedelta(days=2)
+        ):
+            covered = self._rollup.covered(scope)
+        if covered:
+            return self._engine.run(
+                build(self._catalog.domain_table(), rollup=True),
+                scope,
+                {"covered": covered},
+                timeout_s=TIMEOUT_S,
+                rollup=True,
+            )
+        return self._engine.run(build(self._catalog.domain_table()), scope, timeout_s=TIMEOUT_S)
+
+    def daily(self, scope: QueryScope) -> tuple[list[list[Any]], list[str]]:
+        """(service id, user, day, events, last seen, first seen, machines) rows, and the
+        sources read."""
+        result = self._run_use(daily_sql, scope)
+        return result.rows, result.sources
 
     def changes(
         self,

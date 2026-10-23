@@ -51,3 +51,7 @@ Items noted during a slice that belong to a later slice. Move into the slice pla
 | Azure subscription Activity Log connector (resource provider registration, resource changes, role assignments on subscriptions): not in any Microsoft 365 feed. Read through the Azure Monitor REST API or an Event Hub export; needs the sign-in choice and an ADR (ADR-0002 follow-up) | 7 | Install F45, 2026-10-22 |
 | Daily rollup for AI usage (service, device, person, day, count), built by the compaction job, so 30 and 90 day views read it instead of events. Not needed at the sizes measured after D94 (30 days of 300k DNS events a day); revisit if a larger install is slow | Later | Install F46, 2026-10-22 |
 | No sideways scroll at 1100px: AI providers and AI usage > Services scroll a little; fix them, then add 1100 to the CI width check (`scripts/check-layout.py`, owner 2026-10-22, after live mode) | F54 follow-up |
+
+## Morning answer: admin grants and app consents in "New in 24 hours"
+
+ADR-0037 row 6 lists new admin or role grants and app consents in the New column. The column shows AI services, MCP servers, and agents (AI Watch items) today; grants and consents need a small server query over Microsoft 365 directory and management audit events (the AI Watch consent card already counts consents per period).

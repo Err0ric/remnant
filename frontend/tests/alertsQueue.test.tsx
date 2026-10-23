@@ -40,7 +40,7 @@ describe("Alerts (ADR-0037)", () => {
     ]);
     await renderAt("/alerts");
     const nav = await screen.findByRole("navigation", { name: "Primary" });
-    expect(await within(nav).findByLabelText("1 open")).toBeInTheDocument();
+    expect(await within(nav).findByLabelText("2 open")).toBeInTheDocument();
   });
 
   it("lists open alerts, counts restricted ones, and closes with a required note", async () => {
@@ -76,5 +76,27 @@ describe("Alerts (ADR-0037)", () => {
     await renderAt("/alerts", { mode: "login", signedIn: true, role: "auditor" });
     await userEvent.click(await screen.findByRole("button", { name: /Failed logons/ }));
     expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
+  });
+
+  it("shows AI Watch severity and lets an admin approve from the item (ADR-0035)", async () => {
+    const spy = await renderAt("/alerts");
+    const row = await screen.findByRole("button", { name: /New AI service: DeepSeek/ });
+    expect(within(row).getByText("High")).toBeInTheDocument();
+    await userEvent.click(row);
+    await userEvent.click(screen.getByRole("button", { name: "Not approved" }));
+    await vi.waitFor(() =>
+      expect(
+        spy.mock.calls.some(
+          ([u, init]) =>
+            String(u).endsWith("/api/ai/services/deepseek/status") && init?.method === "PUT",
+        ),
+      ).toBe(true),
+    );
+  });
+
+  it("does not offer Approve to an analyst", async () => {
+    await renderAt("/alerts", { mode: "login", signedIn: true, role: "analyst" });
+    await userEvent.click(await screen.findByRole("button", { name: /New AI service: DeepSeek/ }));
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
   });
 });

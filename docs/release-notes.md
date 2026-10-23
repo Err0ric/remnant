@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### AI Watch on the Dashboard
+
+- Under the morning answer, **AI Watch** answers "is anyone using AI we have not approved?" for the last 7 or 30 days: unapproved AI services, users of unapproved AI, new agents and MCP servers, app consent grants (Microsoft 365), and sensitive data sent to AI (Claude Code), each with the change against the period before.
+- **AI use, last 30 days** stacks each day's use by review status (not approved, unreviewed, approved), and **Top services** lists the ten most used with their status, people, devices, and last seen. It reads the daily AI rollup, so 30 days loads quickly.
+- Every number is counted on your own sources. A card whose source you do not have says which source it needs; one you cannot read says Restricted.
+- The morning answer gains a third column, **New in 24 hours**: AI services, MCP servers, and agents first seen in the last day, each linking to its alert. Admin and role grants and app consents are not in it yet.
+
+### AI Watch review items on Alerts
+
+- AI use that needs a decision now lands on Alerts: a new AI service or MCP server that is not approved or not reviewed yet (with how many people used it), sensitive data sent to AI (per person and day), and a new or changed AI agent. Each has a severity: High when a service that is not approved is used by more than one person, or for sensitive data.
+- These items are raised whether or not AI watch messages are turned on in AI usage > Review and alerts; that switch now only decides whether messages go to alert targets.
+- Admins can **Approve** or mark **Not approved** right from the item. That updates the service or MCP rule, as on AI usage, and closes the item with the decision. Everyone else uses Close with a reason.
+- An item is restricted for anyone who cannot read the sources it came from.
+
 ### Every source link lands on its row, and Settings agrees with Health
 
 - A source name on the Dashboard, in an alert, or in a quiet-source message opens Health > Sources at that source's row, marked, with its gap shaded and written out (`/health#source=...`). The name there opens that source's settings, at the same row (F61).

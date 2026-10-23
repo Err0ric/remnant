@@ -165,12 +165,22 @@ function AlertRow({ item, expanded, onToggle, ...rest }: AlertRowProps) {
           aria-hidden="true"
           className={cn("h-4 w-1 shrink-0 rounded", open ? "bg-warn" : "bg-border")}
         />
+        {item.severity ? (
+          <span
+            className={cn(
+              "rounded-badge px-1.5 text-xs font-semibold",
+              item.severity === "high"
+                ? "bg-sev-high-bg text-sev-high-text"
+                : "bg-sev-medium-bg text-sev-medium-text",
+            )}
+          >
+            {item.severity === "high" ? "High" : "Medium"}
+          </span>
+        ) : null}
         <span className="min-w-0 font-semibold">{item.title}</span>
         <span className="text-text-secondary">{KIND_LABEL[item.kind]}</span>
         {item.count !== null ? (
-          <span className="font-mono tabular-nums text-text-secondary">
-            {item.count.toLocaleString()} {item.count === 1 ? "row" : "rows"}
-          </span>
+          <span className="tabular-nums text-text-secondary">{countText(item)}</span>
         ) : null}
         {item.resolved ? <span className="text-ok">{item.resolved}</span> : null}
         {!open ? (
@@ -204,6 +214,9 @@ function AlertDetail({
         <dt className="text-text-muted">What fired</dt>
         <dd className="min-w-0">
           {item.why || item.detail || KIND_LABEL[item.kind]}
+          {item.why && item.detail ? (
+            <span className="text-text-secondary">. {item.detail}</span>
+          ) : null}
           {item.kind === "gap" ? (
             <a
               href={`${pathFor("health")}#source=${encodeURIComponent(item.subject)}`}
@@ -258,6 +271,7 @@ function AlertDetail({
           </>
         ) : null}
       </dl>
+      {isAdmin && item.state === "open" ? <Decide item={item} /> : null}
       {canClose ? (
         item.state === "open" ? (
           closing ? (
@@ -415,4 +429,57 @@ function MutesList({ isAdmin }: { isAdmin: boolean }) {
       ))}
     </ul>
   );
+}
+
+/** Approve or mark not approved, from a review item (ADR-0035 row 11): the same admin-only
+ * review as AI usage, which closes the item with that decision. */
+function Decide({ item }: { item: AlertItem }) {
+  const client = useQueryClient();
+  const [kind, ...rest] = item.subject.split(":");
+  const name = rest.join(":");
+  const decide = useMutation({
+    mutationFn: async (status: "approved" | "not_approved") => {
+      if (kind === "service") await api.setAiServiceStatus(name, status);
+      else await api.setAiMcpRule(name, status);
+    },
+    onSuccess: () => client.invalidateQueries({ queryKey: ["alerts"] }),
+  });
+  if (item.kind !== "ai_watch" || (kind !== "service" && kind !== "mcp")) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-text-secondary">
+        {kind === "service" ? "This service" : "This MCP server"}:
+      </span>
+      <button
+        type="button"
+        disabled={decide.isPending}
+        onClick={() => decide.mutate("approved")}
+        className="h-8 rounded border border-border px-3 hover:bg-surface-head"
+      >
+        Approve
+      </button>
+      <button
+        type="button"
+        disabled={decide.isPending}
+        onClick={() => decide.mutate("not_approved")}
+        className="h-8 rounded border border-border px-3 hover:bg-surface-head"
+      >
+        Not approved
+      </button>
+      {decide.isError ? (
+        <span role="alert" className="text-danger">
+          {decide.error instanceof ApiError ? decide.error.message : "That did not work"}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+/** What a count is, by kind: rows a run returned, who used an AI service, or signals. */
+function countText(item: AlertItem): string {
+  const n = (item.count ?? 0).toLocaleString();
+  if (item.kind !== "ai_watch") return `${n} ${item.count === 1 ? "row" : "rows"}`;
+  if (item.subject.startsWith("sensitive:"))
+    return `${n} ${item.count === 1 ? "signal" : "signals"}`;
+  return `used by ${n}`;
 }

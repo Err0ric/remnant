@@ -50,6 +50,7 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | `GET` | `/api/ai/usage` | Services, MCP servers, and Claude usage per person, from the sources the caller may read; with a start, also what is new and what is no longer seen against the period of the same length before it. Audited ai.view. | `?start` (optional): date-time<br>`?end` (optional): date-time |  |
 | `GET` | `/api/ai/watch` | Get Watch |  |  |
 | `PUT` | `/api/ai/watch` | Put Watch |  | `enabled`: boolean<br>`include_unreviewed`?: boolean<br>`sensitive`?: boolean<br>`target_ids`?: list of string<br>`agents`?: boolean |
+| `GET` | `/api/ai/watch/summary` | AI Watch (ADR-0035 rows 10, 12, 13): five cards against the period before, AI use over 30 days by review status, and the top services, all on the caller's view. Audited ai.view. | `?days` (optional): integer |  |
 
 ### Alerts
 

@@ -926,6 +926,11 @@ MIGRATIONS: tuple[Migration, ...] = (
     SELECT item_id, closed_at, closed_by, 'close', close_reason, note
     FROM alert_items WHERE state = 'closed';
     """,
+    # 49: a severity on alert items (ADR-0035 row 11): AI Watch items are high when a
+    # service that is not approved is used by more than one person, or for sensitive data.
+    """
+    ALTER TABLE alert_items ADD COLUMN severity TEXT CHECK (severity IN ('high', 'medium'));
+    """,
 )
 
 

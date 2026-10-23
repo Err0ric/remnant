@@ -73,6 +73,7 @@ class AlertItem:
     note: str | None
     resolved: str | None  # the condition ended (a quiet source sending again)
     schedule_id: str | None = None  # the schedule whose run fired, for its rows
+    severity: str | None = None  # high | medium (AI Watch); None for the rest
     history: list[ItemEvent] = field(default_factory=list)
 
 
@@ -118,6 +119,7 @@ class AlertItems:
         shared: bool = True,
         range_start: str | None = None,
         range_end: str | None = None,
+        severity: str | None = None,
     ) -> AlertItem:
         """Write an item (once per kind and ref id). A muted subject closes it at once."""
         now = self._now()
@@ -132,8 +134,8 @@ class AlertItems:
                     return self._load(con, had["item_id"])
             con.execute(
                 "INSERT INTO alert_items (item_id, kind, subject, ref_id, title, detail, why,"
-                " count, sources, owner_id, shared, range_start, range_end, created_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " count, sources, owner_id, shared, range_start, range_end, created_at, severity)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     item_id,
                     kind,
@@ -149,6 +151,7 @@ class AlertItems:
                     range_start,
                     range_end,
                     now,
+                    severity,
                 ),
             )
             mute = con.execute(
@@ -285,6 +288,50 @@ class AlertItems:
             (item_id, now, user_id, reason, note),
         )
 
+    def open_subjects(self, kind: Kind, prefix: str) -> set[str]:
+        """Subjects of open items of one kind starting with `prefix` ("mcp:")."""
+        with self._meta.connect() as con:
+            rows = con.execute(
+                "SELECT DISTINCT subject FROM alert_items WHERE kind = ? AND state = 'open'"
+                " AND substr(subject, 1, ?) = ?",
+                (kind, len(prefix), prefix),
+            ).fetchall()
+        return {r["subject"] for r in rows}
+
+    def close_subject(
+        self, kind: Kind, subject: str, user: User, reason: str, note: str, ip: str | None
+    ) -> int:
+        """Close every open item about one subject, for a decision made elsewhere: marking
+        an AI service or MCP server approved or not approved answers its review items
+        (ADR-0035 row 11). Each close is audited like one made on Alerts."""
+        with self._meta.connect() as con:
+            ids = [
+                r["item_id"]
+                for r in con.execute(
+                    "SELECT item_id FROM alert_items WHERE kind = ? AND subject = ?"
+                    " AND state = 'open'",
+                    (kind, subject),
+                )
+            ]
+            now = self._now()
+            for item_id in ids:
+                self._set_closed(con, item_id, user.user_id, reason, note, now)
+        for item_id in ids:
+            self._audit.write(
+                "alert.close",
+                "success",
+                user.user_id,
+                ip,
+                {
+                    "item_id": item_id,
+                    "kind": kind,
+                    "subject": subject,
+                    "reason": reason,
+                    "note": note,
+                },
+            )
+        return len(ids)
+
     def reopen(self, item_id: str, user: User, ip: str | None) -> AlertItem:
         item = self.get(item_id, user)
         if item.state == "open":
@@ -417,4 +464,5 @@ def _item(r: sqlite3.Row) -> AlertItem:
         note=r["note"],
         resolved=r["resolved"],
         schedule_id=r["run_schedule"],
+        severity=r["severity"],
     )

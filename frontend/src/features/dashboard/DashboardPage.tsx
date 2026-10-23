@@ -14,6 +14,7 @@ import { navigate } from "@/lib/route";
 import { rangeWords } from "./headline";
 import { since, stamp } from "@/features/overview/time";
 import { currentDashboard, rememberDashboard } from "./choice";
+import { AiWatch } from "./AiWatch";
 import { MorningAnswer } from "./MorningAnswer";
 import { layoutOf, placed, sectionAdded, sectionRemoved, sectionStepped, stepped } from "./layout";
 import { SchedulePanel } from "./SchedulePanel";
@@ -171,6 +172,7 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
       />
       <div className="flex flex-col gap-3 px-5 py-3">
         <MorningAnswer canClose={canCreate} isAdmin={isAdmin} />
+        <AiWatch />
         {list.length > 0 || canCreate ? (
           <div className="flex flex-wrap items-center gap-2 text-sm">
             {list.length > 1 ? (

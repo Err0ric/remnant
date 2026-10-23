@@ -68,6 +68,7 @@ Depends on ADR-0034 (headline values, tiles, sections, Restricted handling).
 
 ## Implementation notes
 
+- 2026-10-22, Part 2 queue (D113): the Needs review queue is the Alerts queue (ADR-0037 row 13). Each check of the AI watch raises an `ai_watch` alert item, whether or not its messages are on: one per service or MCP server not approved or not reviewed yet (High when not approved and used by more than one person), one per person and day with sensitive-data signals (High), one per agent change (Medium). **Dismiss** is ADR-0037's **Close**, with its reasons, notes, admin-only mutes, and audit. **Approve** and **Not approved** on an item use the existing admin-only review endpoints and close its open items with that decision (audited `alert.close` as well as `ai.service_change` or `ai.mcp_change`). Items carry the sources their rows came from, so a viewer who cannot read them sees the item counted as restricted. No `ai_review_dismissals` table.
 - 2026-10-22, Part 1 (D111): the rollup is built per source and closed day after compaction and checked against a manifest (catalog domains plus the day's event files), so late events, compaction, and catalog changes rebuild the day without a migration or a stale flag in the database. A closed day with more than 200,000 grouped rows is marked and read live.
 
 ## Owner note: default Dashboard and AI Watch content (2026-10-22, design input, no build yet)
