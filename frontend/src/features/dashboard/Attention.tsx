@@ -144,7 +144,11 @@ export function attentionLines(list: AlertList | undefined, states: SourceState[
     // The reason is left out when the title already says it ("AI service not approved").
     const reason = why(i);
     const said =
-      !reason || i.kind === "gap" || i.title.toLowerCase().includes(reason.toLowerCase());
+      !reason ||
+      i.kind === "gap" ||
+      // AI Watch titles already name the decision needed ("AI service not reviewed").
+      (i.kind === "ai_watch" && /^(not reviewed yet|not approved)$/i.test(reason)) ||
+      i.title.toLowerCase().includes(reason.toLowerCase());
     const what = said ? i.title : `${i.title}: ${reason}`;
     return {
       key: `a:${i.item_id}`,

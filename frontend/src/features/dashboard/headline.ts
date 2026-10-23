@@ -40,18 +40,32 @@ export function formatHeadline(v: string): string {
   return v.trim() !== "" && Number.isFinite(n) ? n.toLocaleString() : v;
 }
 
-/** What one row of a result is, from its first column: "3 addresses", not "3 rows". */
+const NOUNS: [RegExp, string][] = [
+  [/(^|_)(ip|addr|address|src|dst)(_|$)|src_endpoint|dst_endpoint/, "addresses"],
+  [/user|person|actor|account|who/, "people"],
+  [/host|device|machine|computer/, "devices"],
+  [/source/, "sources"],
+  [/service|app/, "services"],
+  [/rule/, "rules"],
+  [/domain|site|url/, "domains"],
+];
+
+function nounOf(column: string): string | null {
+  const c = column.toLowerCase();
+  return NOUNS.find(([re]) => re.test(c))?.[1] ?? null;
+}
+
+/** What one row of a result is: "3 addresses", not "3 rows", but only when each row is one
+ * thing. A row keyed by several things (host, user, and address) is a row, and so is one
+ * whose columns name nothing (owner, 2026-10-23); the owner can set their own label. */
 export function rowNoun(s: Schedule, columns: string[]): string {
   if (s.kind === "rule") return "matches";
-  const c = (columns[0] ?? "").toLowerCase();
-  if (/(^|_)(ip|addr|address|src|dst)(_|$)|src_endpoint|dst_endpoint/.test(c)) return "addresses";
-  if (/user|person|actor|account|who/.test(c)) return "people";
-  if (/host|device|machine|computer/.test(c)) return "devices";
-  if (/source/.test(c)) return "sources";
-  if (/service|app/.test(c)) return "services";
-  if (/rule/.test(c)) return "rules";
-  if (/domain|site|url/.test(c)) return "domains";
-  return "results";
+  // Key columns only: a plural or count-like name ("users", "n", "failures") is a number
+  // about the row, not a second thing the row is keyed by.
+  const keys = columns.filter((c) => !/^(n|count|total)$|_count$|[^s]s$/i.test(c));
+  const named = keys.map(nounOf).filter((n): n is string => n !== null);
+  const first = nounOf(columns[0] ?? "");
+  return first && new Set(named).size === 1 ? first : "rows";
 }
 
 /** The panel's label: the owner's, else what the number counts in plain words. */

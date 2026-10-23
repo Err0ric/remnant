@@ -41,6 +41,8 @@ describe("AI Watch on the Dashboard (ADR-0035 Part 2)", () => {
     expect(within(watch).getByText(/^Not set up:/)).toHaveTextContent(
       "app consent grants (needs a Microsoft 365 source)",
     );
+    // Capitals stay on product words: "MCP servers", "AI".
+    expect(within(watch).getByText(/^Not set up:/)).not.toHaveTextContent(/mcp servers|to ai\b/);
     expect(within(watch).getByRole("button", { name: "Add a source" })).toBeVisible();
     expect(within(watch).getByText("Restricted")).toBeVisible();
     // New in 24 hours sits under the cards, from first seen.

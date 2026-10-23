@@ -10,7 +10,11 @@ describe("Panel words (ADR-0034 polish)", () => {
     expect(rowNoun(base, ["src_endpoint_ip", "users"])).toBe("addresses");
     expect(rowNoun(base, ["actor_user_name", "n"])).toBe("people");
     expect(rowNoun(base, ["device_hostname"])).toBe("devices");
-    expect(rowNoun(base, ["x"])).toBe("results");
+    expect(rowNoun(base, ["x"])).toBe("rows");
+    // A row keyed by several things is a row (owner, 2026-10-23).
+    expect(
+      rowNoun(base, ["dst_endpoint_hostname", "actor_user_name", "src_endpoint_ip", "n"]),
+    ).toBe("rows");
     expect(rowNoun({ ...base, kind: "rule" }, [])).toBe("matches");
     expect(panelLabel({ ...base, headline_label: "sprays" }, ["src"])).toBe("sprays");
   });
@@ -18,7 +22,7 @@ describe("Panel words (ADR-0034 polish)", () => {
   it("says flags in plain words", () => {
     expect(flagText(base, run, ["src_endpoint_ip"])).toBe("3 addresses over threshold (0)");
     expect(flagText({ ...base, threshold_kind: "below", threshold_value: 5 }, run, [])).toBe(
-      "3 results, under threshold (5)",
+      "3 rows, under threshold (5)",
     );
     expect(flagText(base, { ...run, flagged: false }, [])).toBeNull();
   });

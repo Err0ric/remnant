@@ -121,6 +121,8 @@ describe("Dashboards at scale (ADR-0034)", () => {
     const lines = await within(banner).findAllByRole("listitem");
     // High first: the not-approved service and the source with errors; then the alert.
     expect(lines[0]).toHaveTextContent(/^High/);
+    // The AI Watch title already says the decision needed: no trailing reason.
+    expect(within(banner).getByRole("link", { name: "New AI service: DeepSeek" })).toBeVisible();
     expect(
       within(banner).getByRole("link", { name: /^Failed logons: Count 12 is above 5/ }),
     ).toHaveAttribute("href", "/alerts#item=a1");

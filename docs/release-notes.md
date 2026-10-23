@@ -7,6 +7,7 @@
 - The header is one row: name, dashboard picker, New dashboard, Edit layout, and when it was updated.
 - **Needs you** appears only when something does: open alerts and sources with errors or that stopped, one line each with the severity first and a link to the alert or the source's Health row. On a quiet morning it is not there at all.
 - **AI Watch** comes next, then your panels. A card whose source is not set up no longer takes a card; one muted line says what is not set up and what it needs, with Add a source. **New in 24 hours** moved into AI Watch, under the cards. With less than 7 days of AI data the chart covers the days that exist ("AI use since Oct 21").
+- Copy: Needs you lines no longer repeat the status after an AI Watch title; the Not set up line keeps "MCP servers" and "AI" capitalized; a panel counts "rows" unless each row is one kind of thing (one address, one person, one device), so a row keyed by host, user, and address is no longer called a device.
 - Sources are one line at the bottom ("4 of 4 flowing, longest wait 3 min (m365), no gaps") linking to Health.
 
 ### Fixed: AI Watch review items and "New in 24 hours"
