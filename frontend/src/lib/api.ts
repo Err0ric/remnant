@@ -1174,8 +1174,14 @@ export interface Overview {
   paused: { schedule_id: string; name: string; kind: string; reason: string | null }[];
   alerts: { targets: OverviewTargetHealth[]; failed_deliveries: number } | null;
   events_24h: number;
-  /** Average of the same 24 hours on up to 7 earlier days; null without history. */
+  /** Full days of history before the window, at most 7 (F60). */
+  history_days: number;
+  /** The last 24 hours of the sources that have 7 full days. */
+  events_compared_24h: number;
+  /** Their average on the 7 earlier days; null until 7 full days exist. */
   events_usual_24h: number | null;
+  /** Sources with under 7 days of data, left out of the comparison. */
+  new_sources: string[];
 }
 
 /** GET /api/audit/... (Slice 5): admins and auditors only; reading is itself audited. */

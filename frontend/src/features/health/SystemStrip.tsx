@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import type { Overview, Schedule } from "@/lib/api";
 import { since, stamp } from "@/features/overview/time";
-import { changeText } from "./flow";
+import { eventsChange } from "./flow";
 
 export interface SourceTally {
   total: number;
@@ -57,7 +57,7 @@ interface SystemStripProps {
  * flagged, and do alerts get out. Each tile opens the detail behind it. */
 export function SystemStrip(p: SystemStripProps) {
   const o = p.overview;
-  const change = o ? changeText(o.events_24h, o.events_usual_24h) : null;
+  const change = o ? eventsChange(o) : null;
   const newest = p.attention[0];
   const failed = o?.alerts?.failed_deliveries ?? 0;
   const failing = (o?.alerts?.targets ?? []).filter((t) => t.failing);
@@ -69,7 +69,7 @@ export function SystemStrip(p: SystemStripProps) {
       <Tile
         label="Events, last 24 hours"
         value={o ? o.events_24h.toLocaleString() : "·"}
-        lines={[change ?? "No earlier days to compare yet"]}
+        lines={[change ?? ""]}
         title={o ? `Up to ${stamp(o.generated_at)} UTC` : undefined}
         onClick={p.onEvents}
       />

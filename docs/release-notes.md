@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed: Health > Sources was empty on installs that only pull
+
+- Sources from Loki, Microsoft 365, and the Anthropic admin API were on a Connectors tab, so an install with only pulled sources saw "No log sources yet" and none of the per-source lines or gap sentences (F59). **Sources** now lists every source that brings events. Enrichment feeds have their own **Enrichment feeds** tab, each judged by its own update interval ("updated daily").
+- The Events tile no longer compares a partial first day: it says "Not enough history yet (2 of 7 days)" until 7 full days exist, then compares only sources with that history and says when newer ones are left out (F60).
+
 ### Schedule many detection rules at once
 
 - **Detection rules > Schedule selected**: pick how often, the range each run looks at, and the alert targets once, and get one schedule per selected enabled rule (F58). Rules that are off or that you already schedule are skipped and named. Each schedule is created and audited as if made alone.

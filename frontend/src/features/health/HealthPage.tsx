@@ -12,7 +12,7 @@ import { StatusLine } from "./StatusLine";
 import { SystemStrip, type SourceTally } from "./SystemStrip";
 
 type Level = "unhealthy" | "attention" | "paused" | "healthy";
-type TabId = "sources" | "connectors" | "agents" | "devices" | "alerts";
+type TabId = "sources" | "enrichment" | "agents" | "devices" | "alerts";
 
 interface Row {
   key: string;
@@ -45,13 +45,12 @@ const BADGE: Record<Level, string> = {
 };
 const TABS: { id: TabId; label: string }[] = [
   { id: "sources", label: "Sources" },
-  { id: "connectors", label: "Connectors" },
+  { id: "enrichment", label: "Enrichment feeds" },
   { id: "agents", label: "Endpoint agents" },
   { id: "devices", label: "Watched devices" },
   { id: "alerts", label: "Alerts and schedules" },
 ];
 const TAB_IDS = TABS.map((t) => t.id);
-const CONNECTOR_KINDS = new Set(["loki", "m365", "anthropic"]);
 const SILENCE = [
   { s: 300, label: "5 minutes" },
   { s: 900, label: "15 minutes" },
@@ -67,6 +66,15 @@ const KIND_LABEL: Record<string, string> = {
   anthropic: "Anthropic admin API",
   syslog: "Syslog listener",
 };
+
+/** "daily", "every 6 hours": a feed's own update interval. */
+function every(seconds: number): string {
+  if (seconds >= 86400 && seconds % 86400 === 0)
+    return seconds === 86400 ? "daily" : `every ${seconds / 86400} days`;
+  if (seconds >= 3600)
+    return seconds === 3600 ? "hourly" : `every ${Math.round(seconds / 3600)} hours`;
+  return `every ${Math.max(1, Math.round(seconds / 60))} minutes`;
+}
 
 function human(seconds: number): string {
   if (seconds < 3600) return `${Math.max(1, Math.round(seconds / 60))} min`;
@@ -191,14 +199,12 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
             },
           ]
         : []),
-      ...list
-        .filter((s) => !CONNECTOR_KINDS.has(s.kind ?? "file"))
-        .map((s) => flowing(sourceRow(s))),
+      // Anything that brings events is a source, read or pulled (F59): files, the syslog
+      // listener, OpenTelemetry, Loki, Microsoft 365, the Anthropic admin API.
+      ...list.map((s) => flowing(sourceRow(s))),
     ],
-    connectors: [
-      ...list
-        .filter((s) => CONNECTOR_KINDS.has(s.kind ?? "file"))
-        .map((s) => flowing(sourceRow(s))),
+    // Feeds are judged by their own update interval, never against log freshness (F59).
+    enrichment: [
       // Enrichment feeds, once set up (ADR-0023 row 8); a fresh install lists none.
       ...(enrichment.data?.feeds ?? [])
         .filter(
@@ -211,7 +217,7 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
           key: `feed:${f.feed_id}`,
           name: f.label,
           sub: f.version ?? undefined,
-          detail: `Enrichment feed · ${f.provider}`,
+          detail: `${f.provider} · updated ${every(f.check_every_s)}`,
           last: f.installed_at,
           level:
             f.level === "missing"
@@ -275,7 +281,7 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
   const o = overview.data;
   const gapsOf = new Map((o?.volume ?? []).map((v) => [v.source_id, v.gaps.length]));
   const lastOf = new Map((o?.sources ?? []).map((s) => [s.source_id, s.last_event_at]));
-  const sourceRows = [...rows.sources, ...rows.connectors].filter((r) => !r.key.includes(":"));
+  const sourceRows = rows.sources.filter((r) => r.key !== "lake-quarantine");
   const enabled = list.filter((s) => s.enabled);
   const waits = enabled
     .map((s) => ({ id: s.source_id, last: lastOf.get(s.source_id) ?? s.status.last_event_at }))
@@ -283,10 +289,8 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
     .sort((a, b) => a.last.localeCompare(b.last));
   const worst = waits[0];
   const tally: SourceTally = {
-    total: sourceRows.filter((r) => r.key !== "lake-quarantine").length,
-    healthy: sourceRows.filter(
-      (r) => r.key !== "lake-quarantine" && r.level === "healthy" && !gapsOf.get(r.key),
-    ).length,
+    total: sourceRows.length,
+    healthy: sourceRows.filter((r) => r.level === "healthy" && !gapsOf.get(r.key)).length,
     gaps: list.reduce((n, s) => n + (gapsOf.get(s.source_id) ?? 0), 0),
     worstLag: worst ? lag(worst.last, now) : null,
     worstLagSource: worst?.id ?? null,
@@ -450,7 +454,9 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
                 <thead>
                   <tr className="border-b border-border bg-surface-head text-left text-text-secondary">
                     <th className="px-3 py-2 font-semibold">Name</th>
-                    <th className="hidden px-3 py-2 font-semibold md:table-cell">Last seen</th>
+                    <th className="hidden px-3 py-2 font-semibold md:table-cell">
+                      {tab === "enrichment" ? "Last updated" : "Last seen"}
+                    </th>
                     {tab === "devices" ? (
                       <th className="hidden px-3 py-2 font-semibold md:table-cell">
                         Last 24 hours
@@ -563,9 +569,10 @@ function RANK(r: Row): number {
 }
 
 const EMPTY: Record<TabId, ReactNode> = {
-  sources: "No log sources yet. Add one under Settings, Sources and connectors.",
-  connectors:
-    "No connectors yet: Microsoft 365, the Anthropic admin API, and Grafana Loki show here.",
+  sources:
+    "No sources yet. Add files, a syslog listener, Loki, or Microsoft 365 under Settings, Sources and connectors.",
+  enrichment:
+    "No enrichment feeds yet: GeoIP and threat intel feeds show here once set up under Settings, Enrichment.",
   agents:
     "No agents reporting. Claude Code telemetry, endpoint agents, and the MCP inventory show one row per machine.",
   devices:

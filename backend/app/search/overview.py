@@ -115,8 +115,12 @@ class Overview:
     paused: list[PausedSchedule]
     alerts: AlertHealth | None  # None for non-admins
     events_24h: int = 0
-    # Average of the same 24 hours on up to 7 earlier days with data; None without history.
-    events_usual_24h: float | None = None
+    # F60: the comparison waits for 7 full days of history and leaves out sources newer than
+    # that, so a partial first day or a source added today does not read as a jump.
+    history_days: int = 0  # full days of history before the window, at most 7
+    events_compared_24h: int = 0  # the last 24 hours of the sources compared
+    events_usual_24h: float | None = None  # their average on the 7 earlier days
+    new_sources: list[str] = field(default_factory=list)  # left out: under 7 days of data
     sources_in_scope: list[str] = field(default_factory=list)
 
 
@@ -169,7 +173,7 @@ class OverviewService:
         configured = [
             s for s in self._sources.list() if allowed is None or s.source_id in set(allowed)
         ]
-        volume, read, usual_24h = self._volume(allowed, first, now, hours)
+        volume, read, usual = self._volume(allowed, first, now, hours)
         last_seen = self._last_seen(allowed, now)
         rates = self._rates(allowed, now)
         statuses = self._ingest().status()
@@ -200,13 +204,16 @@ class OverviewService:
             paused=self._paused(user),
             alerts=self._alerts(since) if user.role == "admin" else None,
             events_24h=sum(v.total for v in volume),
-            events_usual_24h=usual_24h,
+            history_days=usual.days,
+            events_compared_24h=sum(v.total for v in volume if v.source_id in usual.compared),
+            events_usual_24h=usual.average,
+            new_sources=usual.new,
             sources_in_scope=read,
         )
 
     def _volume(
         self, allowed: list[str] | None, start: datetime, end: datetime, hours: list[datetime]
-    ) -> tuple[list[SourceVolume], list[str], float | None]:
+    ) -> tuple[list[SourceVolume], list[str], "UsualDay"]:
         early = start - timedelta(days=BASELINE_DAYS)
         result = self._engine.run(VOLUME_SQL, QueryScope(sources=allowed, start=early, end=end))
         index = {h: i for i, h in enumerate(hours)}
@@ -228,7 +235,7 @@ class OverviewService:
             others = [everyone[i] - n for i, n in enumerate(counts)]
             gaps = find_gaps(counts, hours, others)
             volume.append(SourceVolume(source_id, counts, usual, marks, sum(counts), gaps))
-        return volume, list(result.sources), _usual_day(before, start, end)
+        return volume, list(result.sources), _usual_day(before, series, start, end)
 
     def _rates(self, allowed: list[str] | None, now: datetime) -> dict[str, float]:
         # Received in the last minutes, whatever time the event itself says; the range only
@@ -315,17 +322,41 @@ def _baseline(earlier: dict[datetime, int], hours: list[datetime]) -> list[float
     return out
 
 
+@dataclass(frozen=True, slots=True)
+class UsualDay:
+    days: int  # full days of history before the window, at most BASELINE_DAYS
+    average: float | None  # None until BASELINE_DAYS full days exist
+    compared: frozenset[str]  # sources with the full history
+    new: list[str]  # sources with less, left out of the comparison
+
+
 def _usual_day(
-    earlier: dict[str, dict[datetime, int]], start: datetime, end: datetime
-) -> float | None:
-    """Average events in the same window on each earlier day that has any data."""
+    earlier: dict[str, dict[datetime, int]],
+    current: dict[str, list[int]],
+    start: datetime,
+    end: datetime,
+) -> UsualDay:
+    """The same 24 hours on each of the 7 earlier days, averaged, for sources that have all
+    7 days (F60). A source whose first event falls inside that week is new: left out and
+    named, so adding a source today does not read as a jump in events."""
+    week = start - timedelta(days=BASELINE_DAYS)
+    first = {src: min(hours) for src, hours in earlier.items() if hours}
+    names = set(current) | set(first)
+    if not first:
+        return UsualDay(0, None, frozenset(), sorted(names))
+    oldest = min(first.values())
+    days = min(BASELINE_DAYS, int((start - oldest).total_seconds() // 86400))
+    compared = frozenset(src for src, at in first.items() if at < week + timedelta(days=1))
+    new = sorted(names - compared)
+    if days < BASELINE_DAYS or not compared:
+        return UsualDay(days, None, compared, new)
     totals = []
     for back in range(1, BASELINE_DAYS + 1):
         lo, hi = start - timedelta(days=back), end - timedelta(days=back)
-        day = [n for src in earlier.values() for at, n in src.items() if lo <= at <= hi]
-        if day:
-            totals.append(sum(day))
-    return round(sum(totals) / len(totals), 1) if totals else None
+        totals.append(
+            sum(n for src in compared for at, n in earlier.get(src, {}).items() if lo <= at <= hi)
+        )
+    return UsualDay(days, round(sum(totals) / len(totals), 1), compared, new)
 
 
 def _sees(owner_id: str, shared: bool, user: User) -> bool:

@@ -98,10 +98,11 @@ export const NAV_GROUPS: NavGroup[] = [
           "collectors",
           "watched devices",
           "connectors health",
+          "enrichment health",
         ],
         sections: [
           { id: "sources", label: "Sources" },
-          { id: "connectors", label: "Connectors" },
+          { id: "enrichment", label: "Enrichment feeds" },
           // "Agents" alone is the AI agents tab; these are the log collectors (F48).
           { id: "agents", label: "Endpoint agents" },
           { id: "devices", label: "Watched devices" },

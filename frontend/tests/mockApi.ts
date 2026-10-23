@@ -1352,7 +1352,10 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
             }
           : null,
         events_24h: 70,
+        history_days: 7,
+        events_compared_24h: 70,
         events_usual_24h: 56,
+        new_sources: [],
       });
     }
     if (url.endsWith("/api/dashboards") && method === "GET") return json(dashboards);

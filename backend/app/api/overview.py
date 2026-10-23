@@ -83,7 +83,10 @@ class OverviewOut(BaseModel):
     paused: list[PausedOut]
     alerts: AlertHealthOut | None
     events_24h: int
+    history_days: int
+    events_compared_24h: int
     events_usual_24h: float | None
+    new_sources: list[str]
 
 
 @router.get("/overview")

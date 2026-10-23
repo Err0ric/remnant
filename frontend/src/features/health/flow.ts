@@ -41,6 +41,21 @@ export function gapText(gap: SourceGap, now: string, timeZone?: string): string 
   return `No events ${earlier}${start} to ${to} (${gap.hours} h).${others}`;
 }
 
+/** The Events tile's comparison (F60): only with 7 full days, only over sources that have
+ * them, and saying when newer sources are left out. */
+export function eventsChange(o: {
+  history_days: number;
+  events_compared_24h: number;
+  events_usual_24h: number | null;
+  new_sources: string[];
+}): string {
+  if (o.history_days < 7 || o.events_usual_24h === null)
+    return `Not enough history yet (${o.history_days} of 7 days)`;
+  const base = changeText(o.events_compared_24h, o.events_usual_24h) ?? "No events on earlier days";
+  const n = o.new_sources.length;
+  return n ? `${base}, leaving out ${n} new ${n === 1 ? "source" : "sources"}` : base;
+}
+
 /** "+4% vs a usual day", "same as usual", or nothing without history. */
 export function changeText(now: number, usual: number | null): string | null {
   if (usual === null || usual <= 0) return null;
