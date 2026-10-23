@@ -11,7 +11,7 @@ Keep it **local only**: every source starts `local_only`, so nothing is ever sen
 - [ ] Browser shows the sign-in page over HTTPS. Replace the self-signed certificate when convenient ([tls.md](tls.md)).
 - [ ] Optional: Entra sign-in for the team ([sso-entra.md](sso-entra.md)).
 
-**Working:** you can sign in from your workstation, and **Overview** loads.
+**Working:** you can sign in from your workstation, and **Health** loads.
 
 ## 2. Firewall logs (already on the syslog server)
 
@@ -57,7 +57,7 @@ For the AI usage view, the firewall must forward **URL filtering** or **DNS** lo
 | Look at | Healthy | If not |
 |---|---|---|
 | Sources page | Every source **Reading**; no warnings | The status says why: a folder permission, a missing license, an expired secret |
-| Overview | Events per hour look like your network | A gap means a collector or a source stopped; set a quiet-source alert ([quiet-sources.md](quiet-sources.md)) |
+| Health > Sources | Events per hour look like your network | A gap is written under its row and means a collector or a source stopped; set a quiet-source alert ([quiet-sources.md](quiet-sources.md)) |
 | Parser mix | Few Generic lines | Draft a template from a sample |
 | Search speed | Seconds for a day of firewall logs | Note the query and the row count |
 

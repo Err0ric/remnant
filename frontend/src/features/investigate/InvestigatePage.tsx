@@ -9,15 +9,14 @@ import { takeInvestigateSeed } from "@/lib/investigateSeed";
 import { CardDetail } from "./CardDetail";
 import { LaneGraph } from "./LaneGraph";
 import { RiskTable } from "./RiskTable";
+import { kindOf, PLACEHOLDER, rememberedKind, rememberKind, type EntityKind } from "./entityKind";
 
 type Mode = "entity" | "ai";
-type EntityKind = "user" | "ip" | "host";
 interface Focus {
   kind: GraphKind;
   value: string;
 }
 
-const IPV4 = /^\d{1,3}(\.\d{1,3}){3}$/;
 const KIND_LABEL: Record<EntityKind, string> = { user: "User", ip: "IP address", host: "Host" };
 
 /** Investigations (ADR-0016 rows 4 and 5): risky entities, and lanes showing how one
@@ -30,7 +29,11 @@ export function InvestigatePage() {
   const [entity, setEntity] = useState<Focus | null>(handoff);
   const [aiFocus, setAiFocus] = useState<Focus | null>(null);
   const [selected, setSelected] = useState<GraphCard | null>(null);
-  const [kind, setKind] = useState<EntityKind>(handoff?.kind ?? "user");
+  const [kind, setKind] = useState<EntityKind>(
+    (handoff?.kind as EntityKind | undefined) ?? rememberedKind(),
+  );
+  // The type follows what is typed (F56) until the user picks one from the list.
+  const [picked, setPicked] = useState(false);
   const [text, setText] = useState(handoff?.value ?? "");
   const [riskTab, setRiskTab] = useState<EntityKind>("user");
   const start = rangeStart(range);
@@ -58,7 +61,9 @@ export function InvestigatePage() {
   const pick = (row: EntityRisk) => investigate({ kind: row.kind, value: row.value });
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (text.trim()) investigate({ kind, value: text.trim() });
+    if (!text.trim()) return;
+    rememberKind(kind);
+    investigate({ kind, value: text.trim() });
   };
   const openSearch = (sql: string) => {
     seedSearch({ sql, range });
@@ -69,7 +74,8 @@ export function InvestigatePage() {
   const follow = (card: GraphCard): (() => void) | null => {
     const key = card.id.slice(card.id.indexOf(":") + 1);
     if (mode === "entity" && card.lane === 3)
-      return () => investigate({ kind: IPV4.test(card.label) ? "ip" : "host", value: card.label });
+      return () =>
+        investigate({ kind: kindOf(card.label) === "ip" ? "ip" : "host", value: card.label });
     if (mode === "ai" && card.lane === 0)
       return () => {
         setSelected(null);
@@ -121,7 +127,10 @@ export function InvestigatePage() {
       <select
         aria-label="Entity type"
         value={kind}
-        onChange={(e) => setKind(e.target.value as EntityKind)}
+        onChange={(e) => {
+          setKind(e.target.value as EntityKind);
+          setPicked(true);
+        }}
         className="h-9 rounded border border-border-strong bg-inset px-2 text-sm"
       >
         {(Object.keys(KIND_LABEL) as EntityKind[]).map((k) => (
@@ -133,8 +142,14 @@ export function InvestigatePage() {
       <input
         aria-label="Entity"
         value={text}
-        onChange={(e) => setText(e.target.value)}
-        placeholder="alice@example.com, 203.0.113.9, ws-0042"
+        onChange={(e) => {
+          const value = e.target.value;
+          setText(value);
+          const guess = kindOf(value);
+          if (!value.trim()) setPicked(false);
+          else if (!picked && guess) setKind(guess);
+        }}
+        placeholder={PLACEHOLDER[kind]}
         className="h-9 min-w-0 flex-[1_1_16rem] rounded border border-border-strong bg-inset px-3 font-mono text-sm"
       />
       <button

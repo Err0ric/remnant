@@ -472,3 +472,17 @@ def test_a_drop_to_zero_after_a_parser_change_says_so(lab: dict[str, Any]) -> No
     with app.state.meta.connect() as con:
         con.execute("UPDATE schedule_runs SET row_count = 0 WHERE run_id = 'r0'")
     assert svc._parser_change(sched, day2, end, read, sql, {}) is None
+
+
+def test_rules_scheduled_in_bulk_skip_the_dashboard_panel_and_are_each_audited(
+    lab: dict[str, Any],
+) -> None:
+    """F58: many rules at once make one schedule each without a panel per rule."""
+    res = schedule(lab["ana"], kind="rule", target_id=WIN_ID, cron="hourly", add_panel=False)
+    assert res.status_code == 201, res.text
+    sid = res.json()["schedule_id"]
+    boards = lab["ana"].get("/api/dashboards").json()
+    assert all(p["schedule_id"] != sid for b in boards for p in b["panels"])
+    with sqlite3.connect(lab["db"]) as db:
+        actions = [a for (a, d) in db.execute("SELECT action, detail FROM audit_log") if sid in d]
+    assert actions == ["schedule.create"]  # audited as one schedule, no panel row

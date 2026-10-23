@@ -5,6 +5,7 @@ import { ApiError, api, type RuleRun, type SigmaRule } from "@/lib/api";
 import { navigate } from "@/lib/route";
 import { seedSchedule } from "@/lib/scheduleSeed";
 import { TIME_RANGES } from "@/lib/search";
+import { BulkSchedule } from "./BulkSchedule";
 import { RecentRuns } from "./RecentRuns";
 import { RuleImportPanel } from "./RuleImportPanel";
 import { RuleYaml } from "./RuleYaml";
@@ -32,6 +33,7 @@ export function RulesPage({ isAdmin, canRun }: RulesPageProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [viewing, setViewing] = useState<string | null>(null);
   const [openRun, setOpenRun] = useState<RuleRun | null>(null);
+  const [bulk, setBulk] = useState(false);
   const rules = useQuery({ queryKey: ["rules"], queryFn: api.rules });
   const runs = useQuery({ queryKey: ["rule-runs"], queryFn: api.ruleRuns });
   const all = useMemo(() => rules.data ?? [], [rules.data]);
@@ -100,12 +102,28 @@ export function RulesPage({ isAdmin, canRun }: RulesPageProps) {
                 onClick={() => setEnabled.mutate(false)}
                 disabled={!selected.size || setEnabled.isPending}
               />
+              {canRun ? (
+                <Command
+                  label="Schedule selected"
+                  onClick={() => setBulk(true)}
+                  disabled={!selected.size || bulk}
+                />
+              ) : null}
             </>
           ) : null
         }
       />
       <div className="flex flex-col gap-3 px-5 py-3">
         {importing ? <RuleImportPanel onClose={() => setImporting(false)} /> : null}
+        {bulk ? (
+          <BulkSchedule
+            rules={all.filter((r) => selected.has(r.rule_id))}
+            onDone={() => {
+              setBulk(false);
+              setSelected(new Set());
+            }}
+          />
+        ) : null}
         {failure ? (
           <p role="alert" className="text-sm text-danger">
             {failure instanceof ApiError ? failure.message : "That did not work"}
@@ -201,7 +219,7 @@ export function RulesPage({ isAdmin, canRun }: RulesPageProps) {
           ) : null}
         </section>
         <p className="text-xs text-text-muted">
-          Each rule shows its author as its licence requires (SigmaHQ rules: Detection Rule License
+          Each rule shows its author as its license requires (SigmaHQ rules: Detection Rule License
           1.1). A rule runs only on sources whose template declares its log source.
         </p>
       </div>

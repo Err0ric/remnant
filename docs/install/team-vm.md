@@ -61,7 +61,7 @@ Open the link from your PC, compare the certificate fingerprint in the browser w
 Updating:
 
 ```bash
-cd /opt/remnant && git pull && docker compose up -d --build --force-recreate app
+cd /opt/remnant && git pull && GIT_COMMIT=$(git rev-parse HEAD) docker compose up -d --build --force-recreate app
 ```
 
 Database changes are applied automatically at start and only ever add to what is there.

@@ -9,7 +9,7 @@ A firewall that stops sending logs looks the same as a quiet network until you c
 
 | What happens | Detail |
 |---|---|
-| Goes quiet | One alert, "No events received for 4 h", and the row shows **Quiet** in Sources and Overview |
+| Goes quiet | One alert, "No events received for 4 h", and the row shows **Quiet** in Sources and Health |
 | Events resume | One alert, "Events arriving again after ..."; no repeats in between |
 | Measured on | When events were *received*, so a source sending old timestamps still counts as alive |
 | Restarts | The last received time is kept, so a restart neither resets nor fakes the clock |
@@ -54,5 +54,5 @@ The alert reads "0 is below 1" with the search name and a link back. A schedule 
 ## Notes
 
 - Each run ends two minutes before its time (`schedules.lag_seconds`) so slightly late events still count.
-- The **Ingest health** card on **Overview** shows each source's last event time too; this schedule is what tells you without looking.
+- **Health > Sources** shows each source's last received time and any gap too; this schedule is what tells you without looking.
 - Watching many sources at once from one schedule would need one alert per source; that is planned as a built-in check (see `docs/BACKLOG.md`).

@@ -137,10 +137,12 @@ describe("Location in results", () => {
 });
 
 describe("About and licenses", () => {
-  it("lists the version, licence, and each outside data source with its attribution", async () => {
+  it("lists the version, license, and each outside data source with its attribution", async () => {
     await renderAt("/about");
     expect(await screen.findByRole("heading", { name: "About and licenses" })).toBeInTheDocument();
     expect(screen.getByText("Apache License 2.0")).toBeInTheDocument();
+    expect(screen.queryByText(/licence/i)).toBeNull(); // US spelling throughout
+    expect(screen.getAllByRole("columnheader").map((h) => h.textContent)).toContain("License");
     const table = screen.getByRole("table");
     expect(within(table).getByRole("link", { name: "IP Geolocation by DB-IP" })).toHaveAttribute(
       "href",

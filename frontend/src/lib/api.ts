@@ -1122,6 +1122,19 @@ export interface OverviewSourceHealth {
   error: string | null;
   /** Set while the source's quiet-source alert is firing (ADR-0014). */
   quiet_since?: string | null;
+  /** Events received in the last 15 minutes, per minute (F55). */
+  rate_per_min: number;
+}
+
+/** Hours with nothing from a source that normally sends every hour (F55). */
+export interface SourceGap {
+  start: string;
+  /** End of the last empty hour; null while the silence continues. */
+  end: string | null;
+  hours: number;
+  ongoing: boolean;
+  /** Every other readable source sent events in each of those hours. */
+  others_flowing: boolean;
 }
 
 export interface OverviewDetection {
@@ -1153,11 +1166,16 @@ export interface Overview {
     /** Median of the same hour on up to 7 earlier days; null before 3 days of history. */
     typical: (number | null)[];
     marks: ("" | "busy" | "quiet")[];
+    total: number;
+    gaps: SourceGap[];
   }[];
   sources: OverviewSourceHealth[];
   detections: OverviewDetection[];
   paused: { schedule_id: string; name: string; kind: string; reason: string | null }[];
   alerts: { targets: OverviewTargetHealth[]; failed_deliveries: number } | null;
+  events_24h: number;
+  /** Average of the same 24 hours on up to 7 earlier days; null without history. */
+  events_usual_24h: number | null;
 }
 
 /** GET /api/audit/... (Slice 5): admins and auditors only; reading is itself audited. */
@@ -1293,6 +1311,8 @@ export interface ScheduleInput {
   dashboard_id?: string;
   panel_size?: PanelSize;
   panel_view?: "table" | "bars";
+  /** False: no dashboard panel (many rules scheduled at once, F58). */
+  add_panel?: boolean;
 }
 
 export interface ScheduleUpdate {

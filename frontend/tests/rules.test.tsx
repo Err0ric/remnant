@@ -119,4 +119,25 @@ describe("Detection rules", () => {
     expect(await within(src).findByText(/<b>not markup<\/b>/)).toBeInTheDocument();
     expect(src.querySelector("b")).toBeNull();
   });
+
+  it("schedules every selected rule at once with one set of settings (F58)", async () => {
+    const spy = await renderAt("/rules");
+    const table = await screen.findByRole("table", { name: "Detection rules" });
+    await userEvent.click(await within(table).findByRole("checkbox", { name: "Select all shown" }));
+    await userEvent.click(screen.getByRole("button", { name: "Schedule selected" }));
+    const form = await screen.findByRole("form", { name: "Schedule selected rules" });
+    expect(within(form).getByText("1 not enabled will be skipped.")).toBeVisible();
+    await userEvent.click(await within(form).findByRole("checkbox", { name: /SOC/ }));
+    await userEvent.click(within(form).getByRole("button", { name: "Schedule 1 rule" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Scheduled 1 rule. Skipped 1.");
+    const made = bodies(spy, (u) => u.endsWith("/api/schedules"));
+    expect(made).toHaveLength(1);
+    expect(made[0]).toMatchObject({
+      kind: "rule",
+      target_id: "r1",
+      cron: "hourly",
+      add_panel: false,
+    });
+    expect((made[0]?.target_ids as string[]).length).toBe(1);
+  });
 });

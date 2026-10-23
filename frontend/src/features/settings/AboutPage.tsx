@@ -11,7 +11,7 @@ interface DataSource {
   link: string;
 }
 
-// Data this server can load from outside, and what each licence asks for (F52).
+// Data this server can load from outside, and what each license asks for (F52).
 const SOURCES: DataSource[] = [
   {
     name: "DB-IP IP to City Lite and IP to ASN Lite",
@@ -36,8 +36,8 @@ const SOURCES: DataSource[] = [
   },
 ];
 
-/** Version, licence, and the outside data this server can use, with the attribution each
- * licence asks for. */
+/** Version, license, and the outside data this server can use, with the attribution each
+ * license asks for. */
 export function AboutPage() {
   const meta = useQuery({ queryKey: ["meta"], queryFn: api.meta });
   return (
@@ -55,7 +55,7 @@ export function AboutPage() {
                 ? `OCSF ${meta.data.ocsf_version}, schema ${meta.data.schema_version}`
                 : ""}
             </dd>
-            <dt className="text-text-secondary">Licence</dt>
+            <dt className="text-text-secondary">License</dt>
             <dd>Apache License 2.0</dd>
           </dl>
         </section>
@@ -67,7 +67,7 @@ export function AboutPage() {
                 <tr className="border-b border-border bg-surface-head text-left text-text-secondary">
                   <th className="px-3 py-2 font-semibold">Data</th>
                   <th className="px-3 py-2 font-semibold">Used for</th>
-                  <th className="px-3 py-2 font-semibold">Licence</th>
+                  <th className="px-3 py-2 font-semibold">License</th>
                   <th className="px-3 py-2 font-semibold">Attribution</th>
                 </tr>
               </thead>
@@ -94,7 +94,7 @@ export function AboutPage() {
           </div>
           <p className="text-text-muted">
             Nothing here is downloaded unless an administrator turns it on. Open-source components
-            and their licences are listed in the SBOM shipped with each release.
+            and their licenses are listed in the SBOM shipped with each release.
           </p>
         </section>
       </div>

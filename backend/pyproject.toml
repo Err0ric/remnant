@@ -47,6 +47,7 @@ dev = [
     "types-defusedxml>=0.7.0.20260504",
     "textual>=3",
     "mmdb-writer>=0.2.7",
+    "playwright>=1.63.0",
 ]
 
 [build-system]

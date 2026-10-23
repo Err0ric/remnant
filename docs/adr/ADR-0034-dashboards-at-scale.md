@@ -47,6 +47,19 @@ Accepted: (b), in the PR after the dashboard object lands, so nothing Overview s
 - Ordering is by **Earlier** and **Later** buttons in Edit layout (keyboard friendly), which write positions; drag is not built.
 - The Overview fold (option b) is the next PR.
 
+### Overview redesign inside the fold (owner F55, 2026-10-22; decided here as asked)
+
+Overview's job, "am I blind?" (is every source flowing, is anything broken, is there anything to look at), is system state, so it lands in **Health**, not as a page of its own. One page answers it; the Dashboard keeps the security panels.
+
+| # | Part | Decision |
+|---|---|---|
+| 11 | Where | Health. The F55 KPI strip and status line sit at the top of Health above its tabs; Health > Sources becomes the F55 sources card. The Overview nav item goes; `/overview` opens `/health#sources`. Home with no panels opens Health (a Dashboard empty state with Add a pack waits for ADR-0033's packs) |
+| 12 | KPI strip | Four tiles, each a link: **Events** (24 h total, change against the average of the same 24 hours on up to 7 earlier days; "no history yet" without one), **Sources** (N of N healthy, gaps today, worst lag), **Needs attention** (flagged panels across the viewer's dashboards not yet acknowledged, highest severity; opens the Dashboard), **Alert delivery** (failed deliveries in 24 h or "All delivered"; administrators only, so three tiles for other roles). Health's level counts (Unhealthy, Needs attention, Paused, Healthy) become a filter row under the tabs |
+| 13 | Sources card | One row per source the viewer can read: name, status dot and word, an area sparkline of events per hour on a shared hour axis in local time (UTC in the tooltip), 24 h total, current rate per minute (last 15 minutes), last received and lag. Real values are printed, not hover-only. The old heatmap and Ingest health card are removed |
+| 14 | Gaps | A run of 2 or more empty complete hours, or a silence from some hour until now, for a source that sent in at least 75% of the other complete hours in the window, is a gap. Needs no history. Each gap is written under its row in local time: "No events 2:00 to 7:00 AM (5 h). Other sources kept flowing." (the second sentence only when other sources did). Computed on the server from the same hourly counts, so the words and the chart agree |
+| 15 | Status line | Detections in 24 h, paused schedules, and alert delivery in one line when all clear; any that has something becomes a small card listing it |
+| 16 | Access | Unchanged: every count is read as the viewer through the guard; alert delivery is for administrators |
+
 ## Consequences
 
 - One migration moves the D82 panel columns; schedules keep running unchanged.

@@ -5,6 +5,11 @@ import { FormError } from "@/features/auth/FormError";
 import { since, stamp } from "@/features/overview/time";
 import { ApiError, api, type Source, type WatchedDevice } from "@/lib/api";
 import { navigate, useSectionTab, type PageId } from "@/lib/route";
+import { useAttention } from "@/features/dashboard/attention";
+import { lag } from "./flow";
+import { SourceFlow } from "./SourceFlow";
+import { StatusLine } from "./StatusLine";
+import { SystemStrip, type SourceTally } from "./SystemStrip";
 
 type Level = "unhealthy" | "attention" | "paused" | "healthy";
 type TabId = "sources" | "connectors" | "agents" | "devices" | "alerts";
@@ -22,6 +27,8 @@ interface Row {
   page?: PageId;
   hourly?: number[];
   device?: WatchedDevice;
+  /** Status in a word when the level alone would not say why (F55). */
+  word?: string;
 }
 
 const LEVELS: { id: Level; label: string; color: string }[] = [
@@ -138,6 +145,13 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
     refetchInterval: 60_000,
   });
   const schedules = useQuery({ queryKey: ["schedules"], queryFn: api.schedules });
+  // Flow, gaps, totals, detections, and delivery (F55; the former Overview's numbers).
+  const overview = useQuery({
+    queryKey: ["overview"],
+    queryFn: api.overview,
+    refetchInterval: 60_000,
+  });
+  const attention = useAttention();
   const enrichment = useQuery({ queryKey: ["enrichment"], queryFn: api.enrichment });
   const targets = useQuery({
     queryKey: ["alert-targets"],
@@ -151,6 +165,18 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
 
   const now = new Date().toISOString();
   const list = sources.data ?? [];
+  // A source that is read without errors but sent nothing in 24 hours is not flowing (F55).
+  // So does one with a gap: the gap is written out under its row.
+  const totals = new Map((overview.data?.volume ?? []).map((v) => [v.source_id, v.total]));
+  const gapped = new Set(
+    (overview.data?.volume ?? []).filter((v) => v.gaps.length).map((v) => v.source_id),
+  );
+  const flowing = (r: Row): Row => {
+    if (!overview.data || r.level !== "healthy") return r;
+    if (!totals.get(r.key)) return { ...r, level: "attention", word: "No events in 24 hours" };
+    if (gapped.has(r.key)) return { ...r, level: "attention", word: "Gap" };
+    return r;
+  };
   const rows: Record<TabId, Row[]> = {
     sources: [
       ...((checks.data?.quarantined_files ?? 0) > 0
@@ -165,10 +191,14 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
             },
           ]
         : []),
-      ...list.filter((s) => !CONNECTOR_KINDS.has(s.kind ?? "file")).map(sourceRow),
+      ...list
+        .filter((s) => !CONNECTOR_KINDS.has(s.kind ?? "file"))
+        .map((s) => flowing(sourceRow(s))),
     ],
     connectors: [
-      ...list.filter((s) => CONNECTOR_KINDS.has(s.kind ?? "file")).map(sourceRow),
+      ...list
+        .filter((s) => CONNECTOR_KINDS.has(s.kind ?? "file"))
+        .map((s) => flowing(sourceRow(s))),
       // Enrichment feeds, once set up (ADR-0023 row 8); a fresh install lists none.
       ...(enrichment.data?.feeds ?? [])
         .filter(
@@ -242,8 +272,26 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
       })),
     ],
   };
-  const all = Object.values(rows).flat();
-  const count = (l: Level) => all.filter((r) => r.level === l).length;
+  const o = overview.data;
+  const gapsOf = new Map((o?.volume ?? []).map((v) => [v.source_id, v.gaps.length]));
+  const lastOf = new Map((o?.sources ?? []).map((s) => [s.source_id, s.last_event_at]));
+  const sourceRows = [...rows.sources, ...rows.connectors].filter((r) => !r.key.includes(":"));
+  const enabled = list.filter((s) => s.enabled);
+  const waits = enabled
+    .map((s) => ({ id: s.source_id, last: lastOf.get(s.source_id) ?? s.status.last_event_at }))
+    .filter((w): w is { id: string; last: string } => Boolean(w.last))
+    .sort((a, b) => a.last.localeCompare(b.last));
+  const worst = waits[0];
+  const tally: SourceTally = {
+    total: sourceRows.filter((r) => r.key !== "lake-quarantine").length,
+    healthy: sourceRows.filter(
+      (r) => r.key !== "lake-quarantine" && r.level === "healthy" && !gapsOf.get(r.key),
+    ).length,
+    gaps: list.reduce((n, s) => n + (gapsOf.get(s.source_id) ?? 0), 0),
+    worstLag: worst ? lag(worst.last, now) : null,
+    worstLagSource: worst?.id ?? null,
+  };
+  const count = (l: Level) => rows[tab].filter((r) => r.level === l).length;
   const shown = rows[tab].filter((r) => !filter || r.level === filter);
   const loading = sources.isLoading || checks.isLoading;
   const error = sources.error ?? checks.error;
@@ -264,7 +312,7 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
             }}
           />
         }
-        meta="Checked every minute"
+        meta={o ? `Updated ${since(o.generated_at, now)}` : "Checked every minute"}
       />
       <div className="flex flex-col gap-3 px-5 py-3">
         {error ? (
@@ -272,22 +320,18 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
             {error instanceof ApiError ? error.message : "Could not load health"}
           </p>
         ) : null}
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          {LEVELS.map((l) => (
-            <button
-              key={l.id}
-              type="button"
-              aria-pressed={filter === l.id}
-              onClick={() => setFilter(filter === l.id ? null : l.id)}
-              className={`rounded-card border border-t-2 border-border bg-surface px-4 py-3 text-left ${l.color} ${
-                filter === l.id ? "ring-1 ring-current" : "hover:bg-surface-head"
-              }`}
-            >
-              <div className="text-kpi tabular-nums">{loading ? "·" : count(l.id)}</div>
-              <div className="text-sm text-text-secondary">{l.label}</div>
-            </button>
-          ))}
-        </div>
+        <SystemStrip
+          overview={o}
+          tally={tally}
+          attention={attention.items}
+          isAdmin={isAdmin}
+          now={now}
+          onEvents={() => navigate("search")}
+          onSources={() => setTab("sources")}
+          onAttention={() => navigate("dashboard")}
+          onDelivery={() => setTab("alerts")}
+        />
+        {o ? <StatusLine overview={o} now={now} /> : null}
 
         <div
           role="tablist"
@@ -322,6 +366,30 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
           })}
         </div>
 
+        <div
+          role="group"
+          aria-label="Show"
+          className="flex flex-wrap items-center gap-1 text-sm text-text-secondary"
+        >
+          <span className="mr-1">Show</span>
+          {[{ id: null, label: "All", color: "" }, ...LEVELS].map((l) => (
+            <button
+              key={l.id ?? "all"}
+              type="button"
+              aria-pressed={filter === l.id}
+              onClick={() => setFilter(l.id as Level | null)}
+              className={`rounded px-2 py-0.5 ${
+                filter === l.id ? "bg-surface-head font-semibold text-text" : "hover:text-text"
+              }`}
+            >
+              {l.label}{" "}
+              <span className="font-mono tabular-nums text-text-muted">
+                {loading ? "·" : l.id ? count(l.id as Level) : rows[tab].length}
+              </span>
+            </button>
+          ))}
+        </div>
+
         <section
           aria-label={TABS.find((t) => t.id === tab)?.label}
           className="rounded-card border border-border bg-surface"
@@ -352,7 +420,27 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
               onDone={() => setAdding(false)}
             />
           ) : null}
-          {shown.length === 0 ? (
+          {tab === "sources" && shown.length > 0 ? (
+            <SourceFlow
+              overview={o}
+              now={now}
+              notice={shown.find((r) => r.key === "lake-quarantine")?.reason ?? null}
+              sources={shown
+                .filter((r) => r.key !== "lake-quarantine")
+                // Problems first: errors, then gaps, then the rest that needs a look.
+                .map((r, i) => ({ r, i, rank: RANK(r) }))
+                .sort((a, b) => a.rank - b.rank || a.i - b.i)
+                .map(({ r }) => r)
+                .map((r) => ({
+                  source_id: r.name,
+                  level: r.level,
+                  word: r.word,
+                  reason: r.reason,
+                  last: r.last,
+                  onOpen: r.page ? () => navigate(r.page as PageId) : undefined,
+                }))}
+            />
+          ) : shown.length === 0 ? (
             <p className="p-4 text-sm text-text-muted">
               {loading ? "Loading…" : filter ? "Nothing in this state here." : EMPTY[tab]}
             </p>
@@ -467,6 +555,12 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
 }
 
 const PRODUCT_NOTE = "Nothing connects to the device.";
+
+function RANK(r: Row): number {
+  if (r.level === "unhealthy") return 0;
+  if (r.word === "Gap") return 1;
+  return { unhealthy: 0, attention: 2, paused: 3, healthy: 4 }[r.level];
+}
 
 const EMPTY: Record<TabId, ReactNode> = {
   sources: "No log sources yet. Add one under Settings, Sources and connectors.",

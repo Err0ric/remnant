@@ -110,7 +110,7 @@ Today most empty states explain; some link. Proposal: every empty state names wh
 
 | Page | Empty when | Button |
 |---|---|---|
-| Overview | No sources | Add a log source (Sources > Add), or Discover from Loki |
+| Health | No sources | Add a log source (Sources > Add), or Discover from Loki |
 | Dashboard | No panels | Add an example panel (imports `parser_mix` and adds it), Go to Search |
 | Search | No rows | Widen to 7 days; Remove source filter; Show parser mix for these sources |
 | Saved searches | None | Import an example (the six in `examples/saved-searches`) |

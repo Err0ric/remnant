@@ -129,3 +129,27 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test -- --reporter=default --reporter=github-actions  # failing tests become check annotations
       - run: pnpm build
+      # F54: no page scrolls sideways at 1280px, against a server with the demo lab's data.
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6
+        with:
+          python-version: "3.12"
+          prune-cache: false  # the backend job keeps the cache; pruning here failed after the check
+      - name: No page scrolls sideways (scripts/check-layout.py)
+        working-directory: backend
+        run: |
+          uv sync --frozen
+          mkdir -p /tmp/lab/logs /tmp/lab/rules /tmp/lab/data
+          APP__SERVER__HOST=127.0.0.1 APP__SERVER__PORT=8080 \
+            APP__SERVER__STATIC_DIR=$GITHUB_WORKSPACE/frontend/dist \
+            APP__PATHS__DATA_DIR=/tmp/lab/data APP__PATHS__ALLOWED_ROOTS=/tmp/lab/logs \
+            APP__PATHS__RULE_ROOTS=/tmp/lab/rules \
+            APP__PATHS__STARTER_TEMPLATES=$GITHUB_WORKSPACE/templates/starter \
+            uv run app-server > /tmp/lab/server.log 2>&1 &
+          server=$!
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8080/api/health && break; sleep 1; done
+          uv run python ../scripts/demo_lab.py --url http://127.0.0.1:8080 --logs /tmp/lab/logs/demo --rules /tmp/lab/rules/demo > /dev/null
+          if command -v google-chrome >/dev/null; then channel="--channel chrome"; else uv run playwright install chromium; channel=""; fi
+          status=0
+          uv run python ../scripts/check-layout.py --url http://127.0.0.1:8080 --width 1280 $channel || status=$?
+          kill "$server" 2>/dev/null || true
+          exit $status

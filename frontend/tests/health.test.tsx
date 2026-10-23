@@ -29,10 +29,9 @@ describe("Health (ADR-0019)", () => {
     expect(await screen.findByRole("heading", { name: "Health", level: 1 })).toBeVisible();
     const nav = screen.getByRole("navigation", { name: "Primary" });
     expect(within(nav).getByText("Health")).toHaveAttribute("aria-current", "page");
-    const sources = await screen.findByRole("table", { name: "Sources" });
+    const sources = await screen.findByRole("list", { name: "Sources" });
     expect(within(sources).getByText("linux_sshd")).toBeVisible();
-    const unhealthy = screen.getByRole("button", { name: /Unhealthy/ });
-    expect(await within(unhealthy).findByText("1")).toBeVisible(); // the silent sensor
+    const show = screen.getByRole("group", { name: "Show" });
 
     await userEvent.click(screen.getByRole("tab", { name: /Endpoint agents/ }));
     const agents = await screen.findByRole("table", { name: "Endpoint agents" });
@@ -43,6 +42,9 @@ describe("Health (ADR-0019)", () => {
     const devices = await screen.findByRole("table", { name: "Watched devices" });
     expect(within(devices).getByText("Site B network sensor")).toBeVisible();
     expect(within(devices).getByText("Silent 47 min (allowed 15 min)")).toBeVisible();
+    // The filter counts the open tab: here, the silent sensor.
+    const unhealthy = within(show).getByRole("button", { name: /Unhealthy/ });
+    expect(within(unhealthy).getByText("1")).toBeVisible();
   });
 
   it("lets administrators watch a device", async () => {

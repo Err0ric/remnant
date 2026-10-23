@@ -51,6 +51,9 @@ class ScheduleIn(BaseModel):
     dashboard_id: str | None = Field(default=None, max_length=64)
     panel_size: Literal["tile", "third", "half", "full"] | None = None
     panel_view: PanelView | None = None
+    # False when many rules are scheduled at once (F58): their matches reach Health and the
+    # alert targets without a dashboard panel each.
+    add_panel: bool = True
 
 
 class ScheduleUpdate(BaseModel):
@@ -284,14 +287,15 @@ async def create_schedule(body: ScheduleIn, request: Request, user: Author) -> S
         )
         return board.dashboard_id
 
-    board_id = await run_in_threadpool(place)
-    await run_in_threadpool(
-        _audit,
-        request,
-        "dashboard.panel_add",
-        user,
-        {"dashboard_id": board_id, "schedule_id": s.schedule_id},
-    )
+    if body.add_panel:
+        board_id = await run_in_threadpool(place)
+        await run_in_threadpool(
+            _audit,
+            request,
+            "dashboard.panel_add",
+            user,
+            {"dashboard_id": board_id, "schedule_id": s.schedule_id},
+        )
     return _out(s, user, [], _visible_to(meta, user), sorted(set(body.target_ids)))
 
 

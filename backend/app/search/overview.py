@@ -26,6 +26,7 @@ from app.engine.views import permitted_sources
 from app.ingest.sources import SourceStore
 from app.ingest.watcher import IngestService, source_state
 from app.meta.db import MetaDB
+from app.search.gaps import Gap, find_gaps
 from app.search.hour_marks import mark_hours, typical
 from app.search.schedules import ScheduleService
 
@@ -40,6 +41,11 @@ VOLUME_SQL = (
     " count(*) AS n FROM events GROUP BY 1, 2 ORDER BY 1, 2 LIMIT 100000"
 )
 LAST_SEEN_SQL = "SELECT source_id, max(time_observed) AS last FROM events GROUP BY 1 LIMIT 10000"
+RATE_MINUTES = 15  # "current rate": events received in the last 15 minutes, per minute
+RATE_SQL = (
+    "SELECT source_id, count(*) FROM events"
+    " WHERE time_observed >= CAST($since AS TIMESTAMPTZ) GROUP BY 1 LIMIT 10000"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +54,8 @@ class SourceVolume:
     counts: list[int]  # one per hour, oldest first
     typical: list[float | None]  # median of the same hour on earlier days (D65)
     marks: list[str]  # busy | quiet | "" per hour
+    total: int = 0  # events in the 24 hours
+    gaps: list[Gap] = field(default_factory=list)  # F55: hours with nothing from a steady source
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +66,7 @@ class SourceHealth:
     files_waiting: int
     records_skipped: int
     error: str | None
+    rate_per_min: float = 0.0  # received over the last RATE_MINUTES
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +114,9 @@ class Overview:
     detections: list[Detection]
     paused: list[PausedSchedule]
     alerts: AlertHealth | None  # None for non-admins
+    events_24h: int = 0
+    # Average of the same 24 hours on up to 7 earlier days with data; None without history.
+    events_usual_24h: float | None = None
     sources_in_scope: list[str] = field(default_factory=list)
 
 
@@ -157,8 +169,9 @@ class OverviewService:
         configured = [
             s for s in self._sources.list() if allowed is None or s.source_id in set(allowed)
         ]
-        volume, read = self._volume(allowed, first, now, hours)
+        volume, read, usual_24h = self._volume(allowed, first, now, hours)
         last_seen = self._last_seen(allowed, now)
+        rates = self._rates(allowed, now)
         statuses = self._ingest().status()
         health = []
         for s in configured:
@@ -174,6 +187,7 @@ class OverviewService:
                     files_waiting=st.files_waiting if st else 0,
                     records_skipped=st.records_skipped if st else 0,
                     error=error,
+                    rate_per_min=rates.get(s.source_id, 0.0),
                 )
             )
         since = now - timedelta(hours=HOURS)
@@ -185,12 +199,14 @@ class OverviewService:
             detections=self._detections(user, allowed, since),
             paused=self._paused(user),
             alerts=self._alerts(since) if user.role == "admin" else None,
+            events_24h=sum(v.total for v in volume),
+            events_usual_24h=usual_24h,
             sources_in_scope=read,
         )
 
     def _volume(
         self, allowed: list[str] | None, start: datetime, end: datetime, hours: list[datetime]
-    ) -> tuple[list[SourceVolume], list[str]]:
+    ) -> tuple[list[SourceVolume], list[str], float | None]:
         early = start - timedelta(days=BASELINE_DAYS)
         result = self._engine.run(VOLUME_SQL, QueryScope(sources=allowed, start=early, end=end))
         index = {h: i for i, h in enumerate(hours)}
@@ -204,12 +220,23 @@ class OverviewService:
             elif at < start:
                 seen = before.setdefault(str(source_id), {})
                 seen[at] = seen.get(at, 0) + int(n)
+        everyone = [sum(c[i] for c in series.values()) for i in range(len(hours))]
         volume = []
         for source_id, counts in sorted(series.items()):
             usual = _baseline(before.get(source_id, {}), hours)
             marks = mark_hours(counts, usual, current=len(hours) - 1)
-            volume.append(SourceVolume(source_id, counts, usual, marks))
-        return volume, list(result.sources)
+            others = [everyone[i] - n for i, n in enumerate(counts)]
+            gaps = find_gaps(counts, hours, others)
+            volume.append(SourceVolume(source_id, counts, usual, marks, sum(counts), gaps))
+        return volume, list(result.sources), _usual_day(before, start, end)
+
+    def _rates(self, allowed: list[str] | None, now: datetime) -> dict[str, float]:
+        # Received in the last minutes, whatever time the event itself says; the range only
+        # limits which day folders are read.
+        scope = QueryScope(sources=allowed, start=now - timedelta(days=2), end=now)
+        since = (now - timedelta(minutes=RATE_MINUTES)).isoformat()
+        result = self._engine.run(RATE_SQL, scope, {"since": since})
+        return {str(r[0]): round(int(r[1]) / RATE_MINUTES, 1) for r in result.rows}
 
     def _last_seen(self, allowed: list[str] | None, now: datetime) -> dict[str, str]:
         scope = QueryScope(sources=allowed, start=now - timedelta(days=LAST_SEEN_DAYS), end=now)
@@ -286,6 +313,19 @@ def _baseline(earlier: dict[datetime, int], hours: list[datetime]) -> list[float
             history.append(earlier.get(at, 0))
         out.append(typical(history))
     return out
+
+
+def _usual_day(
+    earlier: dict[str, dict[datetime, int]], start: datetime, end: datetime
+) -> float | None:
+    """Average events in the same window on each earlier day that has any data."""
+    totals = []
+    for back in range(1, BASELINE_DAYS + 1):
+        lo, hi = start - timedelta(days=back), end - timedelta(days=back)
+        day = [n for src in earlier.values() for at, n in src.items() if lo <= at <= hi]
+        if day:
+            totals.append(sum(day))
+    return round(sum(totals) / len(totals), 1) if totals else None
 
 
 def _sees(owner_id: str, shared: bool, user: User) -> bool:

@@ -112,6 +112,7 @@ export function ResultsTable({
       {view === "raw" ? <RawLines result={result} rows={rows} /> : null}
       <div
         ref={scroller}
+        data-scroll-x="results"
         className={cn("overflow-x-auto", view === "raw" && "hidden")}
         style={compact ? ({ "--row-h": "30px" } as CSSProperties) : undefined}
       >
@@ -243,7 +244,7 @@ export function ResultsTable({
           {result.truncated ? " (limit reached)" : ""}
         </span>
         {geo && Object.keys(geo).length ? (
-          // Attribution the DB-IP Lite licence (CC BY 4.0) asks for: once, and quiet (F52).
+          // Attribution the DB-IP Lite license (CC BY 4.0) asks for: once, and quiet (F52).
           <span className="text-xs text-text-muted">
             Locations:{" "}
             <a

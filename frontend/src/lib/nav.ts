@@ -40,7 +40,6 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       // First, and the landing page when the viewer has a panel (ADR-0031).
       { id: "dashboard", label: "Dashboard", ready: true, page: "dashboard" },
-      { id: "overview", label: "Overview", ready: true, page: "overview" },
     ],
   },
   {
@@ -92,6 +91,7 @@ export const NAV_GROUPS: NavGroup[] = [
         ready: true,
         page: "health",
         aliases: [
+          "overview",
           "status",
           "sensors",
           "endpoint agents",

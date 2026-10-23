@@ -126,3 +126,34 @@ def test_ingest_status_is_seeded_from_stored_events(lab: dict[str, Any]) -> None
     _seed_last_events(ingest, lab["app"].state.engine)
     status = ingest.status()
     assert status["lin_auth"].last_event_at is not None
+
+
+def test_a_steady_source_that_stops_has_a_gap_and_rates_are_per_minute(
+    lab: dict[str, Any],
+) -> None:
+    """F55: five empty hours from a source that sends every hour are called out, while the
+    other sources kept flowing, with the 24 h total and a current rate per source."""
+    from datetime import datetime, timedelta
+
+    from app.ingest.writer import LakeWriter
+    from tests.integration.test_schedules import _lake_rows
+
+    o = lab["admin"].get("/api/overview").json()
+    first = datetime.fromisoformat(o["hours"][0])
+    lake = lab["app"].state.engine._lake
+    for i in range(23):
+        if 9 <= i < 14:
+            continue  # nothing from 09:00 to 14:00 in the window
+        LakeWriter(lake).write(
+            _lake_rows("fw_gap", "generic_syslog", first + timedelta(hours=i), 3)
+        )
+    fresh(lab)
+    o = lab["admin"].get("/api/overview").json()
+    (fw,) = [v for v in o["volume"] if v["source_id"] == "fw_gap"]
+    assert fw["total"] == 18 * 3
+    (gap,) = fw["gaps"]
+    assert gap["start"] == (first + timedelta(hours=9)).isoformat()
+    assert gap["end"] == (first + timedelta(hours=14)).isoformat() and gap["hours"] == 5
+    assert gap["ongoing"] is False
+    assert o["events_24h"] == sum(v["total"] for v in o["volume"])
+    assert all(isinstance(s["rate_per_min"], float) for s in o["sources"])

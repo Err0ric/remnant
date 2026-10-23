@@ -1,7 +1,8 @@
 import { useSyncExternalStore } from "react";
 
 /** Pages that exist today. The root opens Home, which picks the Dashboard when the viewer
- * has a panel and the Overview otherwise (ADR-0031); unknown paths open the Overview. */
+ * has a panel and Health otherwise (ADR-0031, ADR-0034 row 11). `/overview` and unknown
+ * paths open Health > Sources, where the former Overview's numbers now live. */
 export type PageId =
   | "home"
   | "overview"
@@ -66,8 +67,8 @@ export function pathFor(page: PageId): string {
 }
 
 /** Replaces the current address with a page, without a new history entry (Home's choice). */
-export function redirect(page: PageId) {
-  window.history.replaceState(null, "", PATHS[page]);
+export function redirect(page: PageId, section?: string) {
+  window.history.replaceState(null, "", PATHS[page] + (section ? `#${section}` : ""));
   window.dispatchEvent(new Event(CHANGE));
 }
 

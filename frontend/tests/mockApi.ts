@@ -1271,15 +1271,28 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         volume: [
           {
             source_id: "linux_sshd",
-            counts: hours.map((_, i) => (i % 3) + 1),
+            // Steady, then nothing 04:00 to 09:00 UTC (F55's paloalto_fw case).
+            counts: hours.map((_, i) => (i >= 15 && i < 20 ? 0 : (i % 3) + 1)),
             typical: hours.map(() => 2),
             marks: hours.map(() => ""),
+            total: 30,
+            gaps: [
+              {
+                start: hours[15],
+                end: hours[20],
+                hours: 5,
+                ongoing: false,
+                others_flowing: true,
+              },
+            ],
           },
           {
             source_id: "win_dc",
             counts: hours.map((_, i) => (i === 23 ? 40 : 0)),
             typical: hours.map(() => 2),
             marks: hours.map((_, i) => (i === 23 ? "busy" : "")),
+            total: 40,
+            gaps: [],
           },
         ],
         sources: [
@@ -1290,10 +1303,12 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
             files_waiting: 0,
             records_skipped: 0,
             error: null,
+            rate_per_min: 2.4,
           },
           {
             source_id: "win_dc",
             state: "error",
+            rate_per_min: 0,
             last_event_at: null,
             files_waiting: 0,
             records_skipped: 0,
@@ -1336,6 +1351,8 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
               failed_deliveries: 2,
             }
           : null,
+        events_24h: 70,
+        events_usual_24h: 56,
       });
     }
     if (url.endsWith("/api/dashboards") && method === "GET") return json(dashboards);

@@ -13,11 +13,21 @@ from app.search.overview import OverviewService
 router = APIRouter(tags=["overview"])
 
 
+class GapOut(BaseModel):
+    start: str
+    end: str | None
+    hours: int
+    ongoing: bool
+    others_flowing: bool
+
+
 class SourceVolumeOut(BaseModel):
     source_id: str
     counts: list[int]
     typical: list[float | None]
     marks: list[str]
+    total: int
+    gaps: list[GapOut]
 
 
 class SourceHealthOut(BaseModel):
@@ -27,6 +37,7 @@ class SourceHealthOut(BaseModel):
     files_waiting: int
     records_skipped: int
     error: str | None
+    rate_per_min: float
     # Set while a quiet-source alert (ADR-0014) says nothing has arrived for too long.
     quiet_since: str | None = None
 
@@ -71,6 +82,8 @@ class OverviewOut(BaseModel):
     detections: list[DetectionOut]
     paused: list[PausedOut]
     alerts: AlertHealthOut | None
+    events_24h: int
+    events_usual_24h: float | None
 
 
 @router.get("/overview")

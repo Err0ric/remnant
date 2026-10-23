@@ -66,6 +66,28 @@ Depends on ADR-0034 (headline values, tiles, sections, Restricted handling).
 | 15 | Access | Every number is computed on the caller's view. A card or queue item that needs a source the viewer cannot read shows **Restricted**. `local_only` data stays local: no model call anywhere on the page | Rule 13, SPEC 6.2 |
 | 16 | Design | Built with DESIGN.md tokens and the frontend-design skill; the KPI card, queue row, and stacked bar become DESIGN.md patterns (section 6) before the build | |
 
+## Owner note: default Dashboard and AI Watch content (2026-10-22, design input, no build yet)
+
+When a new install's default Dashboard and AI Watch are designed, panels are organized around:
+
+| Group | Panels |
+|---|---|
+| Needs attention | What is flagged now (ADR-0034 row 3) |
+| First seen in 24 hours | New external IP logging in, new admin or role grant, new country, new app consent, new AI service |
+| Trends over 7 to 30 days | Sign-ins succeeded vs failed, external SSH attempts per day by host, AI use by review status |
+| Rankings | Top attacking ASNs |
+
+Chart rules for these panels (and DESIGN.md section 6 when they are built):
+
+| Shows | Chart |
+|---|---|
+| State | Big number with its change |
+| Trend | Line or area |
+| Ranking | Horizontal bars with the values printed |
+| Parts of a whole | Stacked bar, at most 3 colors |
+| Places | A table, not a world map |
+| Never | Pies or gauges |
+
 ## Consequences
 
 - The landing page shows the answer to "is anyone using AI we have not approved" without a saved search.

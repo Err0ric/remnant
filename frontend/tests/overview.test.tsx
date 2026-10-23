@@ -25,66 +25,68 @@ async function renderAt(
 
 afterEach(() => vi.restoreAllMocks());
 
-describe("Overview", () => {
-  it("shows volume, ingest health, detections, and pauses", async () => {
+describe("Health: the former Overview (F55, ADR-0034 row 11)", () => {
+  it("answers am I blind: totals, every source's flow, and gaps in words", async () => {
     await renderAt("/overview");
-    expect(await screen.findByRole("heading", { name: "Overview", level: 1 })).toBeVisible();
-    const volume = await screen.findByRole("region", { name: "Event volume" });
-    expect(within(volume).getByText("88 events · last 24 hours")).toBeVisible();
-    const rows = within(volume).getAllByRole("row");
-    // Sources with unusual hours come first, then the busiest.
-    expect(within(rows[1]!).getByText("win_dc")).toBeVisible();
-    expect(within(rows[1]!).getByText("1 busy")).toBeVisible();
-    expect(within(rows[2]!).getByText("linux_sshd")).toBeVisible();
-    // Each hour is a cell that says its count, its usual count, and its mark.
-    const cell = within(volume).getByRole("button", {
-      name: /^win_dc, .* UTC: 40 events, usually 2, busier than usual\. Open in Search$/,
-    });
-    await userEvent.hover(cell);
-    expect(await within(volume).findByRole("tooltip")).toHaveTextContent(
-      /UTC 40 events, usually 2, busier than usual/,
-    );
-    const ingest = screen.getByRole("region", { name: "Ingest health" });
-    expect(within(ingest).getByText("1 with errors · 1 quiet")).toBeVisible();
-    expect(within(ingest).getByText("Quiet")).toBeVisible(); // win_dc's quiet-source alert
-    expect(within(ingest).getByText("Received 4 min ago")).toBeVisible();
-    expect(within(ingest).getByText("Nothing received in 7 days")).toBeVisible();
-    const paused = screen.getByRole("region", { name: "Paused schedules" });
-    expect(within(paused).getByText(/saved search changed/)).toBeVisible();
-    const nav = screen.getByRole("navigation");
-    expect(within(nav).getByRole("link", { name: "Overview" })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
+    expect(await screen.findByRole("heading", { name: "Health", level: 1 })).toBeVisible();
+    expect(window.location.pathname + window.location.hash).toBe("/health#sources");
+    const events = await screen.findByRole("button", { name: /^Events, last 24 hours/ });
+    expect(events).toHaveTextContent("70");
+    expect(events).toHaveTextContent("+25% vs a usual day");
+    const sources = screen.getByRole("button", { name: /^Sources/ });
+    expect(sources).toHaveTextContent("1 gap in 24 hours");
+    const delivery = screen.getByRole("button", { name: /^Alert delivery/ });
+    expect(delivery).toHaveTextContent("Failing: SOC Slack");
+    const flow = await screen.findByRole("list", { name: "Sources" });
+    const row = within(flow).getByText("linux_sshd").closest("li") as HTMLElement;
+    expect(row).toHaveTextContent("30"); // 24 h total, printed
+    expect(row).toHaveTextContent("2.4"); // per minute, printed
+    expect(
+      within(row).getByText(/^No events .+ \(5 h\)\. Other sources kept flowing\.$/),
+    ).toBeVisible();
+    expect(within(row).getByRole("img", { name: /linux_sshd: events per hour/ })).toBeVisible();
+    const status = screen.getByRole("region", { name: "Detections and schedules" });
+    expect(within(status).getByText("Failed logon")).toBeVisible();
+    expect(within(status).getByText("Nightly sudo")).toBeVisible();
+    const nav = screen.getByRole("navigation", { name: "Primary" });
+    expect(within(nav).queryByRole("link", { name: "Overview" })).toBeNull();
   });
 
-  it("opens a rule detection's matches in Search", async () => {
-    await renderAt("/overview");
-    const detections = await screen.findByRole("region", { name: "Detections" });
-    await userEvent.click(within(detections).getByRole("button", { name: "Failed logon" }));
-    expect(await screen.findByRole("heading", { name: "Search", level: 1 })).toBeVisible();
-    expect(window.location.pathname).toBe("/search");
-  });
-
-  it("opens a source and hour from the heatmap in Search", async () => {
-    await renderAt("/overview");
-    const volume = await screen.findByRole("region", { name: "Event volume" });
-    await userEvent.click(within(volume).getByRole("button", { name: /^win_dc, .*busier/ }));
-    expect(await screen.findByRole("heading", { name: "Search", level: 1 })).toBeVisible();
-    expect(document.body.textContent).toContain("source_id = 'win_dc'");
+  it("opens a rule detection from the status card", async () => {
+    await renderAt("/health");
+    const status = await screen.findByRole("region", { name: "Detections and schedules" });
+    await userEvent.click(within(status).getByRole("button", { name: "Failed logon" }));
+    expect(await screen.findByRole("heading", { name: "Detection rules", level: 1 })).toBeVisible();
   });
 
   it("shows alert delivery to admins only", async () => {
-    await renderAt("/overview");
-    const alerts = await screen.findByRole("region", { name: "Alert delivery" });
-    expect(within(alerts).getByText("Failing")).toBeVisible();
-    expect(within(alerts).getByText("2 deliveries failed after every retry")).toBeVisible();
+    await renderAt("/health", { mode: "login", signedIn: true, role: "analyst" });
+    await screen.findByRole("button", { name: /^Events, last 24 hours/ });
+    expect(screen.queryByRole("button", { name: /^Alert delivery/ })).toBeNull();
   });
 
-  it("hides alert delivery from analysts", async () => {
-    await renderAt("/overview", { mode: "login", signedIn: true, role: "analyst" });
-    await screen.findByRole("region", { name: "Detections" });
-    expect(screen.queryByRole("region", { name: "Alert delivery" })).toBeNull();
+  it("writes gaps in local time, naming the day only when it is not today", async () => {
+    const { gapText, changeText } = await import("@/features/health/flow");
+    const zone = "America/Los_Angeles";
+    const now = "2026-10-22T21:00:00+00:00"; // 2 PM there
+    const gap = {
+      start: "2026-10-22T09:00:00+00:00",
+      end: "2026-10-22T14:00:00+00:00",
+      hours: 5,
+      ongoing: false,
+      others_flowing: true,
+    };
+    expect(gapText(gap, now, zone)).toBe(
+      "No events 2:00 to 7:00 AM (5 h). Other sources kept flowing.",
+    );
+    expect(gapText({ ...gap, end: null, ongoing: true, others_flowing: false }, now, zone)).toBe(
+      "No events since 2:00 AM (5 h so far).",
+    );
+    expect(gapText({ ...gap, start: "2026-10-22T05:00:00+00:00" }, now, zone)).toBe(
+      "No events yesterday 10:00 PM to 7:00 AM (5 h). Other sources kept flowing.",
+    );
+    expect(changeText(70, 56)).toBe("+25% vs a usual day");
+    expect(changeText(70, null)).toBeNull();
   });
 
   it("goes home from the product mark: the Dashboard when there are panels", async () => {
@@ -94,9 +96,9 @@ describe("Overview", () => {
     expect(window.location.pathname).toBe("/dashboard");
   });
 
-  it("keeps the setup checklist in Settings, not on the Overview", async () => {
-    await renderAt("/overview");
-    await screen.findByRole("region", { name: "Event volume" });
+  it("keeps the setup checklist in Settings, not on Health", async () => {
+    await renderAt("/health");
+    await screen.findByRole("button", { name: /^Events, last 24 hours/ });
     expect(screen.queryByRole("region", { name: "Required steps" })).toBeNull();
   });
 
@@ -150,14 +152,15 @@ describe("Landing page (ADR-0031)", () => {
     const health = await screen.findByRole("region", { name: "Health" });
     expect(health).toHaveTextContent("1 source with errors");
     expect(health).toHaveTextContent("1 quiet source");
-    await userEvent.click(within(health).getByRole("button", { name: "Open Overview" }));
-    expect(await screen.findByRole("heading", { name: "Overview", level: 1 })).toBeVisible();
+    expect(health).toHaveTextContent("1 source with a gap in 24 hours");
+    await userEvent.click(within(health).getByRole("button", { name: "Open Health" }));
+    expect(await screen.findByRole("heading", { name: "Health", level: 1 })).toBeVisible();
   });
 
-  it("opens the Overview when there are no panels", async () => {
+  it("opens Health when there are no panels", async () => {
     await renderAt("/", undefined, noSchedules);
-    expect(await screen.findByRole("heading", { name: "Overview", level: 1 })).toBeVisible();
-    expect(window.location.pathname).toBe("/overview");
+    expect(await screen.findByRole("heading", { name: "Health", level: 1 })).toBeVisible();
+    expect(window.location.pathname).toBe("/health");
   });
 
   it("lists Dashboard first in the nav, once", async () => {

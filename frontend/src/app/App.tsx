@@ -11,8 +11,7 @@ import { SchedulesPage } from "@/features/schedules/SchedulesPage";
 import { AuthGate } from "@/features/auth/AuthGate";
 import { TopBar } from "@/components/shell/TopBar";
 import { AccountPasswordPage } from "@/features/auth/AccountPasswordPage";
-import { OverviewPage } from "@/features/overview/OverviewPage";
-import { HomeRedirect } from "@/features/dashboard/HomeRedirect";
+import { HomeRedirect, ToHealth } from "@/features/dashboard/HomeRedirect";
 import { usePage } from "@/lib/route";
 import { SETTINGS_IDS } from "@/lib/nav";
 import { cn } from "@/lib/cn";
@@ -211,7 +210,7 @@ export function App({ initialTheme, queryClient }: AppProps) {
                     ) : page === "investigate" ? (
                       <InvestigatePage />
                     ) : page === "overview" ? (
-                      <OverviewPage />
+                      <ToHealth />
                     ) : page === "home" ? (
                       <HomeRedirect />
                     ) : page === "sources" ? (

@@ -159,7 +159,7 @@ Anything reachable from the network requires sign-in and HTTPS; there is no swit
 ### Updating
 
 ```bash
-git pull && docker compose up -d --build
+git pull && GIT_COMMIT=$(git rev-parse HEAD) docker compose up -d --build
 ```
 
 Database changes apply at start and only ever add to what is there. Take a backup first: `docker compose exec -T app app-admin backup -o - > backup.tar.gz` ([details](docs/install/backup.md)).

@@ -7,7 +7,7 @@ Use this when endpoints or servers have no log collector, or you want Windows se
 | Windows | Security, System, Application, Sysmon, PowerShell Operational, Defender. Read as event XML and parsed by the same Windows template as `.evtx` files |
 | Linux | journald (sshd, sudo, PAM, systemd land in the Linux templates). Or `/var/log/auth.log` and friends if you prefer files |
 | Optional | Host metrics (commented out in the config: many rows per host) |
-| Health | Each agent group is a source: last received time, Overview, and **Alert if quiet** |
+| Health | Each agent group is a source: last received time, events per hour, and **Alert if quiet** |
 
 ## 1. Create an agent group (Remnant admin)
 

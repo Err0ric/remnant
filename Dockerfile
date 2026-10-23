@@ -25,6 +25,9 @@ RUN useradd --system --uid 10001 --home /srv app \
 COPY --from=api /srv/backend /srv/backend
 COPY --from=web /web/dist /srv/web
 COPY templates/starter /srv/templates/starter
+# The commit shown on About ("0.3.0+1a2b3c4"); empty when the build was not given one.
+ARG GIT_COMMIT=""
+RUN printf '%s' "$GIT_COMMIT" > /srv/BUILD_COMMIT
 # Unbuffered: the one-time setup link and certificate fingerprint must reach `docker logs`
 # at once, not sit in a pipe buffer.
 ENV PYTHONUNBUFFERED=1 \

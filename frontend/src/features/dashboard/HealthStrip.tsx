@@ -2,8 +2,8 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { navigate } from "@/lib/route";
 
-/** Overview's health on the Dashboard's first screen (ADR-0031): counts only, and a link
- * to the Overview for the detail. */
+/** Health on the Dashboard's first screen (ADR-0031): counts only, and a link to Health
+ * for the detail. Gaps count too (F55): a source that stopped for hours is a problem. */
 export function HealthStrip() {
   const overview = useQuery({
     queryKey: ["overview"],
@@ -15,8 +15,10 @@ export function HealthStrip() {
   const behind = o.sources.filter((s) => s.state === "error").length;
   const quiet = o.sources.filter((s) => s.quiet_since).length;
   const failing = o.alerts?.targets.filter((t) => t.failing).length ?? 0;
+  const gaps = o.volume.filter((v) => v.gaps.length > 0).length;
   const items: [number, string, string][] = [
     [behind, "source with errors", "sources with errors"],
+    [gaps, "source with a gap in 24 hours", "sources with gaps in 24 hours"],
     [quiet, "quiet source", "quiet sources"],
     [o.paused.length, "paused schedule", "paused schedules"],
     [failing, "failing alert target", "failing alert targets"],
@@ -40,9 +42,9 @@ export function HealthStrip() {
       <button
         type="button"
         className="ml-auto rounded px-1.5 py-0.5 text-accent-text hover:bg-surface-head"
-        onClick={() => navigate("overview")}
+        onClick={() => navigate("health", "sources")}
       >
-        Open Overview
+        Open Health
       </button>
     </section>
   );

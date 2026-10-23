@@ -18,6 +18,7 @@ import { SourceState } from "./SourceState";
 import { TimeZoneEditor } from "./TimeZoneEditor";
 import { RetentionEditor } from "./RetentionEditor";
 import { ConnectorSettingsButton } from "./ConnectorSettingsEditor";
+import { since } from "@/features/overview/time";
 
 const COUNTS_SQL =
   "SELECT source_id, count(*) AS events, max(coalesce(time, time_observed)) AS last_event " +
@@ -204,13 +205,13 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border text-left text-sm text-text-secondary">
-                    <th className="px-3 py-2 font-semibold">Source</th>
-                    <th className="px-3 py-2 font-semibold">Path</th>
+                    <th className="min-w-[8rem] px-3 py-2 font-semibold xl:min-w-[10rem]">
+                      Source
+                    </th>
+                    <th className="min-w-[6rem] px-3 py-2 font-semibold xl:min-w-[8rem]">Path</th>
                     <th className="px-3 py-2 font-semibold">Status</th>
                     <th className="px-3 py-2 text-right font-semibold">Events</th>
-                    <th className="px-3 py-2 font-semibold">Latest event</th>
-                    <th className="px-3 py-2 font-semibold">Data</th>
-                    <th className="px-3 py-2 font-semibold">Retention</th>
+                    <th className="px-3 py-2 font-semibold">Data and retention</th>
                     {canManage ? <th className="px-3 py-2" aria-label="Actions" /> : null}
                   </tr>
                 </thead>
@@ -223,7 +224,7 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
                         className="border-b border-border align-top last:border-0"
                       >
                         <td className="px-3 py-2.5">
-                          <div className="font-mono">{s.source_id}</div>
+                          <div className="font-mono [overflow-wrap:anywhere]">{s.source_id}</div>
                           <ParserEditor
                             sourceId={s.source_id}
                             templateId={s.template_id}
@@ -266,7 +267,7 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
                             </div>
                           ) : (
                             <>
-                              <div className="break-words">
+                              <div className="[overflow-wrap:anywhere]">
                                 <WrappedPath path={s.path} />
                               </div>
                               <div className="text-sm text-text-muted">
@@ -286,25 +287,35 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
                             />
                           </div>
                         </td>
-                        <td className="px-3 py-2.5 text-right font-mono tabular-nums">
-                          {c ? c.events.toLocaleString() : "0"}
+                        <td className="px-3 py-2.5 text-right">
+                          <div className="font-mono tabular-nums">
+                            {c ? c.events.toLocaleString() : "0"}
+                          </div>
+                          <div
+                            className="whitespace-nowrap text-sm text-text-muted"
+                            title={typeof c?.last === "string" ? formatTime(c.last) : undefined}
+                          >
+                            {typeof c?.last === "string"
+                              ? `latest ${since(c.last, new Date().toISOString())}`
+                              : "no events"}
+                          </div>
                         </td>
-                        <td className="whitespace-nowrap px-3 py-2.5 font-mono text-sm">
-                          {formatTime(c?.last)}
-                        </td>
-                        <td className="whitespace-nowrap px-3 py-2.5">
-                          {canManage ? (
-                            <ClassificationEditor sourceId={s.source_id} value={s.classification} />
-                          ) : (
-                            <ClassificationBadge value={s.classification} />
-                          )}
-                        </td>
-                        <td className="whitespace-nowrap px-3 py-2.5">
-                          <RetentionEditor
-                            sourceId={s.source_id}
-                            value={s.retention_days}
-                            canManage={canManage}
-                          />
+                        <td className="px-3 py-2.5">
+                          <div className="flex flex-col items-start gap-1">
+                            {canManage ? (
+                              <ClassificationEditor
+                                sourceId={s.source_id}
+                                value={s.classification}
+                              />
+                            ) : (
+                              <ClassificationBadge value={s.classification} />
+                            )}
+                            <RetentionEditor
+                              sourceId={s.source_id}
+                              value={s.retention_days}
+                              canManage={canManage}
+                            />
+                          </div>
                         </td>
                         {canManage ? (
                           <td className="px-3 py-2.5 text-right">

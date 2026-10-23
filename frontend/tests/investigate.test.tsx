@@ -19,6 +19,39 @@ async function openInvestigate() {
 
 afterEach(() => vi.restoreAllMocks());
 
+describe("Entity picker (F56)", () => {
+  it("knows an address, a user, and a host from what is typed", async () => {
+    const { kindOf } = await import("@/features/investigate/entityKind");
+    expect(kindOf("203.0.113.9")).toBe("ip");
+    expect(kindOf("2001:db8::1")).toBe("ip");
+    expect(kindOf("alice@example.com")).toBe("user");
+    expect(kindOf("EXAMPLE\\alice")).toBe("user");
+    expect(kindOf("ws-0042")).toBe("host");
+    expect(kindOf("999.1.1.1")).toBe("host");
+    expect(kindOf("  ")).toBeNull();
+  });
+
+  it("starts on IP address, follows the input, keeps a picked type, and remembers it", async () => {
+    window.localStorage.removeItem("investigate.kind");
+    await openInvestigate();
+    const type = screen.getByRole("combobox", { name: "Entity type" });
+    const box = screen.getByRole("textbox", { name: "Entity" });
+    expect(type).toHaveValue("ip");
+    expect(box).toHaveAttribute("placeholder", "203.0.113.9");
+    await userEvent.type(box, "alice@example.com");
+    expect(type).toHaveValue("user");
+    expect(box).toHaveAttribute("placeholder", "alice@example.com");
+    await userEvent.clear(box);
+    await userEvent.type(box, "ws-0042");
+    expect(type).toHaveValue("host");
+    await userEvent.selectOptions(type, "user"); // an override sticks while typing
+    await userEvent.type(box, "x");
+    expect(type).toHaveValue("user");
+    await userEvent.click(screen.getByRole("button", { name: "Investigate" }));
+    expect(window.localStorage.getItem("investigate.kind")).toBe("user");
+  });
+});
+
 describe("Investigations (ADR-0016)", () => {
   it("ranks entities with the score's parts and opens one in lanes", async () => {
     const spy = await openInvestigate();

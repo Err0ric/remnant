@@ -8,7 +8,11 @@
 
 services:
   app:
-    build: .
+    build:
+      context: .
+      # Shown on About: GIT_COMMIT=$(git rev-parse HEAD) docker compose up -d --build
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-}
     image: app:dev
     environment:
       APP__SERVER__HOST: 0.0.0.0
