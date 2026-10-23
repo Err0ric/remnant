@@ -266,6 +266,25 @@ FROM t WHERE lower(name) NOT IN {NO_MCP_NAMES}
 GROUP BY 1 ORDER BY 2 DESC, 3 DESC
 LIMIT 500"""  # noqa: S608  # fixed SQL text; domains checked against DOMAIN in _values
 
+# Per MCP server: the sources it was seen in, its people, and its machines (with and
+# without a person), for the AI watch's review items (ADR-0035 row 11, D116).
+REVIEW_MCP_SQL = f"""
+WITH t AS (
+  SELECT {MCP_EXPR} AS name, {WHO_EXPR} AS who, device_hostname AS machine, source_id
+  FROM events
+  WHERE template_id = 'claude_code_otel' AND {MCP_EXPR} IS NOT NULL
+  UNION ALL
+  SELECT message, {WHO_EXPR}, device_hostname, source_id
+  FROM events WHERE template_id = 'mcp_inventory' AND message IS NOT NULL
+)
+SELECT name, list(DISTINCT source_id) AS sources,
+       list(DISTINCT who) FILTER (WHERE who IS NOT NULL) AS people,
+       list(DISTINCT machine) FILTER (WHERE machine IS NOT NULL AND who IS NULL) AS devices,
+       list(DISTINCT machine) FILTER (WHERE machine IS NOT NULL AND who IS NOT NULL) AS matched
+FROM t WHERE lower(name) NOT IN {NO_MCP_NAMES}
+GROUP BY 1
+LIMIT 500"""  # noqa: S608  # fixed SQL text
+
 PEOPLE_SQL = """
 WITH c AS (
   SELECT nullif(actor_user_name, '') AS person, message,
@@ -352,6 +371,10 @@ class Usage:
     def review(self, scope: QueryScope) -> list[list[Any]]:
         """(service id, sources, people, devices without a person, devices with one)."""
         return list(self._run_use(review_sql, scope).rows)
+
+    def review_mcp(self, scope: QueryScope) -> list[list[Any]]:
+        """(server name, sources, people, devices without a person, devices with one)."""
+        return list(self._engine.run(REVIEW_MCP_SQL, scope, timeout_s=TIMEOUT_S).rows)
 
     def daily(self, scope: QueryScope) -> tuple[list[list[Any]], list[str]]:
         """(service id, person, machine, day, events, last seen, first seen) rows, and the

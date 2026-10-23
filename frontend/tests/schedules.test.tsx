@@ -115,35 +115,24 @@ describe("Dashboard panels (trial finding, ADR-0034)", () => {
 });
 
 describe("Dashboards at scale (ADR-0034)", () => {
-  it("opens on the morning answer, with open alerts closable in place (ADR-0037)", async () => {
-    const spy = await renderAt("/dashboard");
-    const top = await screen.findByRole("region", { name: "This morning" });
-    // Two open alerts, a source with errors, and a restricted alert: all count.
+  it("puts what needs me first, one line each, severity first (F62)", async () => {
+    await renderAt("/dashboard");
+    const banner = await screen.findByRole("region", { name: "Needs you" });
+    const lines = await within(banner).findAllByRole("listitem");
+    // High first: the not-approved service and the source with errors; then the alert.
+    expect(lines[0]).toHaveTextContent(/^High/);
     expect(
-      await within(top).findByText(
-        /^4 things need you: Failed logons, New AI service: DeepSeek and 2 more\./,
-      ),
-    ).toBeVisible();
-    expect(within(top).getByRole("link", { name: "Failed logons" })).toHaveAttribute(
+      within(banner).getByRole("link", { name: /^Failed logons: Count 12 is above 5/ }),
+    ).toHaveAttribute("href", "/alerts#item=a1");
+    expect(within(banner).getByRole("link", { name: "win_dc has errors" })).toHaveAttribute(
       "href",
-      "/alerts#item=a1",
+      "/health#source=win_dc",
     );
-    // New in 24 hours: AI services, MCP servers, and agents the AI watch raised.
-    expect(within(top).getByRole("heading", { name: /^New in 24 hours/ })).toBeVisible();
-    // From first seen in the data, linking to its alert (owner, 2026-10-23).
-    expect(await within(top).findByRole("link", { name: "DeepSeek" })).toHaveAttribute(
-      "href",
-      "/alerts#item=w1",
-    );
-    await userEvent.click(within(top).getByRole("button", { name: "Close Failed logons" }));
-    const form = within(top).getByRole("form", { name: "Close Failed logons" });
-    await userEvent.click(within(form).getByLabelText("Benign or expected"));
-    await userEvent.click(within(form).getByRole("button", { name: "Close alert" }));
-    await vi.waitFor(() =>
-      expect(sent(spy, "POST", (u) => u.endsWith("/api/alerts/a1/close"))).toEqual([
-        { reason: "benign", note: null },
-      ]),
-    );
+    expect(within(banner).getByText(/1 restricted/)).toBeVisible();
+    // AI Watch comes next, then the panels, then sources in one line at the bottom.
+    const watch = screen.getByRole("region", { name: "AI Watch" });
+    expect(banner.compareDocumentPosition(watch) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByRole("link", { name: /^Sources: / })).toBeVisible();
   });
 
   it("sets the headline the panel shows, for the schedule's owner", async () => {

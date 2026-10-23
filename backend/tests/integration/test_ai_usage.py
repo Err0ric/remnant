@@ -344,7 +344,7 @@ def test_review_items_on_alerts_without_alert_messages(lab: dict[str, Any]) -> N
     app.state.ai_watch._clock = lambda: NOW
     app.state.ai_watch.tick()
     agent = next(i for r, i in _ai_items(a).items() if r.startswith("agent:"))
-    assert agent["title"].startswith("New AI agent: ") and agent["sources"] == ["claude"]
+    assert agent["title"].startswith("AI agent not reviewed: ") and agent["sources"] == ["claude"]
 
 
 def test_ai_watch_summary_cards_chart_and_top(lab: dict[str, Any]) -> None:
@@ -457,3 +457,25 @@ def test_the_hourly_check_refreshes_an_open_item_and_leaves_a_closed_one(
     assert items["service:deepseek"]["detail"].startswith("1 device not matched to a person")
     assert items["service:deepseek"]["item_id"] == old.item_id
     assert items["service:chatgpt"]["title"] == "New AI service: ChatGPT"  # closed: as decided
+
+
+def test_one_rule_for_everything_ai_watch_tracks(lab: dict[str, Any]) -> None:
+    """Owner, 2026-10-23: services, MCP servers, agents, and sensitive data in use in the
+    last 7 days without a decision all have an open item, whatever the watch's cursor."""
+    app, a, h = lab["app"], lab["admin"], lab["h"]
+    watch = app.state.ai_watch
+    watch._clock = lambda: NOW + timedelta(hours=2)  # the cursor starts after the data
+    watch.tick()
+    items = _ai_items(a)
+    mcp = items["mcp:paste-share"]
+    assert mcp["title"] == "MCP server not reviewed: paste-share"
+    assert mcp["sources"] == ["claude"] and mcp["count"] == 2  # alice, alice@example.com
+    agent = next(i for r, i in items.items() if r.startswith("agent:") and r.endswith(":agent"))
+    assert agent["title"].startswith("AI agent not reviewed: ")
+    sens = next(i for r, i in items.items() if r.startswith("sensitive:alice@example.com:"))
+    assert sens["ref_id"].endswith(NOW.date().isoformat()) and sens["state"] == "open"
+    # Closing the agent's item is its decision; the next hourly pass does not reopen it.
+    a.post(f"/api/alerts/{agent['item_id']}/close", json={"reason": "benign"}, headers=h)
+    watch._reviewed_at = None
+    watch.tick()
+    assert agent["item_id"] not in {i["item_id"] for i in _ai_items(a).values()}

@@ -1,6 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { PageHeader } from "@/components/shell/PageHeader";
 import {
   ApiError,
   api,
@@ -15,7 +14,7 @@ import { rangeWords } from "./headline";
 import { since, stamp } from "@/features/overview/time";
 import { currentDashboard, rememberDashboard } from "./choice";
 import { AiWatch } from "./AiWatch";
-import { MorningAnswer } from "./MorningAnswer";
+import { AttentionBanner, SourcesLine } from "./Attention";
 import { layoutOf, placed, sectionAdded, sectionRemoved, sectionStepped, stepped } from "./layout";
 import { SchedulePanel } from "./SchedulePanel";
 
@@ -93,12 +92,6 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
     mutationFn: (scheduleId: string) => api.removePanel(board?.dashboard_id ?? "", scheduleId),
     onSuccess: refresh,
   });
-  const flagged = board
-    ? board.panels.filter((p) => {
-        const last = byId.get(p.schedule_id)?.recent[0];
-        return last?.flagged && !last.restricted;
-      }).length
-    : 0;
   const move = (scheduleId: string, step: -1 | 1) =>
     arrange.mutate(stepped(layout, scheduleId, step));
   // The page header says which range the panels cover and when they last ran.
@@ -151,70 +144,66 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
 
   return (
     <div className="flex min-w-0 flex-1 flex-col">
-      <PageHeader
-        crumbs={["Home", "Dashboard"]}
-        title={board?.name ?? "Dashboard"}
-        meta={
-          board ? (
-            <span title={lastRun ? `Newest run ${stamp(lastRun)} UTC` : undefined}>
-              {[
-                rangeText,
-                lastRun ? `Updated ${since(lastRun, now)}` : null,
-                `${board.panels.length} ${board.panels.length === 1 ? "panel" : "panels"}`,
-                flagged ? `${flagged} flagged` : null,
-                board.shared ? "shared" : null,
-              ]
-                .filter(Boolean)
-                .join(", ")}
-            </span>
-          ) : undefined
-        }
-      />
-      <div className="flex flex-col gap-3 px-5 py-3">
-        <MorningAnswer canClose={canCreate} isAdmin={isAdmin} />
-        <AiWatch />
-        {list.length > 0 || canCreate ? (
-          <div className="flex flex-wrap items-center gap-2 text-sm">
-            {list.length > 1 ? (
-              <label className="flex items-center gap-2">
-                <span className="text-text-secondary">Dashboard</span>
-                <select
-                  aria-label="Dashboard"
-                  value={board?.dashboard_id ?? ""}
-                  onChange={(e) => pick(e.target.value)}
-                  className="h-8 rounded border border-border-strong bg-inset px-2"
-                >
-                  {list.map((d) => (
-                    <option key={d.dashboard_id} value={d.dashboard_id}>
-                      {d.name}
-                      {d.shared && !d.mine ? " (shared)" : ""}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-            {canCreate ? (
-              <button
-                type="button"
-                onClick={() => create.mutate()}
-                disabled={create.isPending}
-                className="h-8 rounded px-2 text-accent-text hover:bg-surface-head"
-              >
-                New dashboard
-              </button>
-            ) : null}
-            {board?.can_edit ? (
-              <button
-                type="button"
-                aria-pressed={editing}
-                onClick={() => setEditing((v) => !v)}
-                className={`h-8 rounded border px-2 ${editing ? "border-accent bg-accent-subtle" : "border-border hover:bg-surface-head"}`}
-              >
-                {editing ? "Done editing" : "Edit layout"}
-              </button>
-            ) : null}
-          </div>
+      {/* Compact header (F62): title, picker, New dashboard, Edit layout, and when it was
+          updated, on one row; no band under the title. */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-5 pt-3">
+        <h1 className="mr-2 text-lg font-semibold">{board?.name ?? "Dashboard"}</h1>
+        {list.length > 1 ? (
+          <select
+            aria-label="Dashboard"
+            value={board?.dashboard_id ?? ""}
+            onChange={(e) => pick(e.target.value)}
+            className="h-8 rounded border border-border-strong bg-inset px-2 text-sm"
+          >
+            {list.map((d) => (
+              <option key={d.dashboard_id} value={d.dashboard_id}>
+                {d.name}
+                {d.shared && !d.mine ? " (shared)" : ""}
+              </option>
+            ))}
+          </select>
         ) : null}
+        {canCreate ? (
+          <button
+            type="button"
+            onClick={() => create.mutate()}
+            disabled={create.isPending}
+            className="h-8 rounded px-2 text-sm text-accent-text hover:bg-surface-head"
+          >
+            New dashboard
+          </button>
+        ) : null}
+        {board?.can_edit ? (
+          <button
+            type="button"
+            aria-pressed={editing}
+            onClick={() => setEditing((v) => !v)}
+            className={`h-8 rounded border px-2 text-sm ${editing ? "border-accent bg-accent-subtle" : "border-border hover:bg-surface-head"}`}
+          >
+            {editing ? "Done editing" : "Edit layout"}
+          </button>
+        ) : null}
+        {board ? (
+          <span
+            className="ml-auto text-sm text-text-secondary"
+            title={lastRun ? `Newest run ${stamp(lastRun)} UTC` : undefined}
+          >
+            {[
+              lastRun ? `Updated ${since(lastRun, now)}` : null,
+              rangeText,
+              `${board.panels.length} ${board.panels.length === 1 ? "panel" : "panels"}`,
+              board.shared ? "shared" : null,
+            ]
+              .filter(Boolean)
+              .join(", ")}
+          </span>
+        ) : null}
+      </div>
+      <div className="flex flex-col gap-3 px-5 py-3">
+        {/* Order (F62): what needs me (only when something does), AI Watch, my panels,
+            then sources in one line. */}
+        <AttentionBanner />
+        <AiWatch />
         {error ? (
           <p role="alert" className="text-sm text-danger">
             {error instanceof ApiError ? error.message : "Could not load"}
@@ -340,6 +329,7 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
                 );
               })
           : null}
+        <SourcesLine />
       </div>
     </div>
   );

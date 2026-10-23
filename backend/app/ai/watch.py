@@ -191,7 +191,10 @@ class AiWatch:
         rules = self._catalog.mcp_rules()
         fresh_ai: list[str] = []
         sensitive: dict[str, dict[str, int]] = {}
-        sensitive_src: dict[str, set[str]] = {}
+        # Claude Code sends to the Anthropic API; a service cleared for Confidential data
+        # (ADR-0020 row 4) is where sensitive data may go, so it is not an alert or item.
+        api = services.get("anthropic_api")
+        sensitive_ok = not (api is not None and api.data_level == "confidential")
         review: dict[tuple[str, str], _Review] = {}
         for src, kind, name, who, machine, observed, sens in rows:
             seen = _parse(str(observed)) if observed is not None else None
@@ -202,7 +205,10 @@ class AiWatch:
                 counts = sensitive.setdefault(subject, {})
                 for cat, n in (json.loads(sens) if isinstance(sens, str) else (sens or {})).items():
                     counts[str(cat)] = counts.get(str(cat), 0) + int(n)
-                sensitive_src.setdefault(subject, set()).add(str(src))
+                # Items are per person and the day the signal was received.
+                if sensitive_ok:
+                    day = (seen or now).date().isoformat()
+                    self._raise_sensitive(subject, _cats(sens), [str(src)], since, now, day=day)
                 continue
             if kind == "service":
                 svc = services.get(str(name))
@@ -232,13 +238,8 @@ class AiWatch:
                 )
         for (kind, name), r in review.items():
             self._raise_use(kind, name, r, since, now)
-        # Claude Code sends to the Anthropic API; a service cleared for Confidential data
-        # (ADR-0020 row 4) is where sensitive data may go, so it is not an alert.
-        api = services.get("anthropic_api")
-        if api is not None and api.data_level == "confidential":
+        if not sensitive_ok:
             sensitive = {}
-        for who, cats in sorted(sensitive.items()):
-            self._raise_sensitive(who, cats, sorted(sensitive_src.get(who, set())), since, now)
         sent = 0
         if s.enabled and fresh_ai:
             self._alert("ai_new", fresh_ai, s.target_ids, since, now)
@@ -255,6 +256,9 @@ class AiWatch:
         sent += self._agents(s, now)
         self._reconcile(now)
         return sent
+
+    def _catalog_service(self, sid: str) -> Any:
+        return next((sv for sv in self._catalog.services() if sv.id == sid), None)
 
     def _reconcile(self, now: datetime) -> None:
         if self._usage is None or self._items is None:
@@ -276,6 +280,44 @@ class AiWatch:
             r.matched = {str(m) for m in matched or []}
             r.sources = {str(x) for x in sources or []}
             self._raise_use("service", str(sid), r, since, now, refresh=True)
+        rules = self._catalog.mcp_rules()
+        for name, sources, people, devices, matched in self._usage.review_mcp(
+            QueryScope(None, since, now)
+        ):
+            status = self._catalog.mcp_status(str(name), rules)
+            if status == "approved":
+                continue
+            r = _Review(f"MCP {name}", str(status))
+            r.people = {str(p) for p in people or []}
+            r.devices = {str(d) for d in devices or []}
+            r.matched = {str(m) for m in matched or []}
+            r.sources = {str(x) for x in sources or []}
+            self._raise_use("mcp", str(name), r, since, now, refresh=True)
+        # Sensitive data: every person and day with signals in the window has an item.
+        days: dict[tuple[str, str], tuple[dict[str, int], set[str]]] = {}
+        sens_rows = self._engine.run(
+            SENSITIVE_SQL, QueryScope(None, since, now), timeout_s=30.0
+        ).rows
+        for src, who, day, sens in sens_rows:
+            cats, srcs = days.setdefault((str(who), str(day)[:10]), ({}, set()))
+            for cat, n in _cats(sens).items():
+                cats[cat] = cats.get(cat, 0) + n
+            srcs.add(str(src))
+        api = self._catalog_service("anthropic_api")
+        if not (api is not None and api.data_level == "confidential"):
+            for (who, day), (cats, srcs) in sorted(days.items()):
+                self._raise_sensitive(who, cats, sorted(srcs), since, now, day=day, refresh=True)
+        # Agents have no approval status: Close on their item is the decision.
+        for a in agents(self._engine, None, now):
+            seen = _parse(a.last_seen)
+            if seen is None or seen < since:
+                continue
+            who = ", ".join(a.owners) if a.owners else "no person matched"
+            where = f"; device {a.machine}" if a.machine else ""
+            self._raise_agent(
+                a.agent, "agent", a.label, f"In use; owner {who}{where}", now, refresh=True,
+                count=len(a.owners),
+            )  # fmt: skip
 
     # --- review items (ADR-0035 row 11) --------------------------------------------------
 
@@ -331,7 +373,14 @@ class AiWatch:
         )
 
     def _raise_sensitive(
-        self, who: str, cats: dict[str, int], sources: list[str], since: datetime, now: datetime
+        self,
+        who: str,
+        cats: dict[str, int],
+        sources: list[str],
+        since: datetime,
+        now: datetime,
+        day: str,
+        refresh: bool = False,
     ) -> None:
         if self._items is None:
             return
@@ -339,14 +388,15 @@ class AiWatch:
             "ai_watch",
             f"sensitive:{who}",
             f"Sensitive data to AI: {who}",
-            # One item per person per day: later signals that day are the same item.
-            ref_id=f"sensitive:{who}:{now.date().isoformat()}",
+            # One item per person and day the signals were received.
+            ref_id=f"sensitive:{who}:{day}",
             why=", ".join(f"{c} x{n}" for c, n in sorted(cats.items())),
             count=sum(cats.values()),
             sources=sources,
             range_start=since.isoformat(),
             range_end=now.isoformat(),
             severity="high",
+            refresh=refresh,
         )
 
     def _agents(self, s: WatchSettings, now: datetime) -> int:
@@ -390,18 +440,31 @@ class AiWatch:
         self._alert("ai_agent", lines, s.target_ids, now - AGENT_CHECK_EVERY, now)
         return 1
 
-    def _raise_agent(self, agent: str, what: str, label: str, line: str, now: datetime) -> None:
+    def _raise_agent(
+        self,
+        agent: str,
+        what: str,
+        label: str,
+        line: str,
+        now: datetime,
+        refresh: bool = False,
+        count: int | None = None,
+    ) -> None:
+        """`what` "agent" is the agent's standing review item (one per agent, closed when
+        someone decides); anything else is a change to an agent already reviewed or not."""
         if self._items is None:
             return
         self._items.raise_item(
             "ai_watch",
             f"agent:{agent}",
-            f"AI agent changed: {label}" if what != "agent" else f"New AI agent: {label}",
+            f"AI agent changed: {label}" if what != "agent" else f"AI agent not reviewed: {label}",
             ref_id=f"agent:{agent}:{what}",
             why=line,
+            count=count,
             sources=self._agent_sources(),
             range_end=now.isoformat(),
             severity="medium",
+            refresh=refresh,
         )
 
     def _agent_first(self, agent: str, kind: str, item: str, now: datetime) -> bool:
@@ -485,6 +548,22 @@ FROM events WHERE {after} AND template_id = 'claude_code_otel'
   AND TRY_CAST(json_extract_string(unmapped, '$.attr.sensitive_total') AS BIGINT) > 0
 ) ORDER BY obs
 LIMIT {BATCH}"""  # noqa: S608  # fixed SQL text; domains checked against DOMAIN in _values
+
+
+SENSITIVE_SQL = f"""
+SELECT source_id, coalesce({WHO_EXPR}, device_hostname, 'unknown') AS who,
+       CAST(time_observed AS DATE) AS day,
+       json_extract(unmapped, '$.attr.sensitive')::VARCHAR AS sens
+FROM events
+WHERE template_id = 'claude_code_otel'
+  AND TRY_CAST(json_extract_string(unmapped, '$.attr.sensitive_total') AS BIGINT) > 0
+LIMIT 20000"""  # noqa: S608  # fixed SQL text
+
+
+def _cats(sens: Any) -> dict[str, int]:
+    """Sensitive-data categories and counts from a record (never the content)."""
+    raw = json.loads(sens) if isinstance(sens, str) else (sens or {})
+    return {str(c): int(n) for c, n in raw.items()}
 
 
 def _parse(value: str | None) -> datetime | None:

@@ -2,8 +2,16 @@
 
 ## Unreleased
 
+### Dashboard: AI Watch first, and nothing empty on a quiet day (F62)
+
+- The header is one row: name, dashboard picker, New dashboard, Edit layout, and when it was updated.
+- **Needs you** appears only when something does: open alerts and sources with errors or that stopped, one line each with the severity first and a link to the alert or the source's Health row. On a quiet morning it is not there at all.
+- **AI Watch** comes next, then your panels. A card whose source is not set up no longer takes a card; one muted line says what is not set up and what it needs, with Add a source. **New in 24 hours** moved into AI Watch, under the cards. With less than 7 days of AI data the chart covers the days that exist ("AI use since Oct 21").
+- Sources are one line at the bottom ("4 of 4 flowing, longest wait 3 min (m365), no gaps") linking to Health.
+
 ### Fixed: AI Watch review items and "New in 24 hours"
 
+- One rule for everything AI Watch tracks: an AI service or MCP server in use that is not approved, an AI agent in use (its decision is Close), and each person's day with sensitive data sent to AI always has an item on Alerts until someone decides. Agent items read "AI agent not reviewed: ..."; sensitive-data items are per the day the signals were received.
 - An AI service in use that is not approved now always has an item on Alerts until someone decides. Before, a service used only before the watch's last check never got one, so AI Watch could count unapproved services while Alerts and the morning answer said nothing needed you. The watch now checks every hour over the last 7 days. Items read "AI service not reviewed: Copilot" (or "not approved"), since the service may not be new; the hourly check also brings open items' wording and people up to date. A closed item stays as it was decided.
 - **New in 24 hours** now lists AI services, MCP servers, and agents whose use first appears in the data in the last day (not seen in the 30 days before), with the time first seen. Before, it listed items raised in the last day, so approving a service seen days earlier could make it look new.
 

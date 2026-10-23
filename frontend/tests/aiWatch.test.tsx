@@ -36,9 +36,18 @@ describe("AI Watch on the Dashboard (ADR-0035 Part 2)", () => {
     expect(
       within(watch).getByRole("button", { name: "2 more devices not matched to a person" }),
     ).toBeVisible();
-    // A card without its source says which; one the viewer cannot read says Restricted.
-    expect(within(watch).getByRole("button", { name: "a Microsoft 365 source" })).toBeVisible();
+    // A card without its source takes no card (F62): one muted line with the setup link.
+    expect(within(watch).queryByText("App consent grants")).toBeNull();
+    expect(within(watch).getByText(/^Not set up:/)).toHaveTextContent(
+      "app consent grants (needs a Microsoft 365 source)",
+    );
+    expect(within(watch).getByRole("button", { name: "Add a source" })).toBeVisible();
     expect(within(watch).getByText("Restricted")).toBeVisible();
+    // New in 24 hours sits under the cards, from first seen.
+    expect(within(watch).getByRole("link", { name: "DeepSeek (AI service)" })).toHaveAttribute(
+      "href",
+      "/alerts#item=w1",
+    );
     expect(
       within(watch).getByRole("img", { name: /^AI use per day over 30 days by review status:/ }),
     ).toBeVisible();

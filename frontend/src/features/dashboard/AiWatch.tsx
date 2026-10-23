@@ -8,7 +8,7 @@ import {
   type AiWatchSummary,
 } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { navigate } from "@/lib/route";
+import { navigate, pathFor } from "@/lib/route";
 import { EntityLink } from "@/components/EntityLink";
 import { When } from "@/components/When";
 import { StatusBadge, STATUS_LABEL } from "@/features/ai/StatusBadge";
@@ -47,6 +47,8 @@ export function AiWatch() {
   if (!s) return null;
   const used = s.chart.some((d) => d.approved + d.unreviewed + d.not_approved > 0);
   if (!used && !s.cards.some((c) => (c.value ?? 0) > 0)) return null;
+  const shown = s.cards.filter((c) => !c.needs);
+  const missing = s.cards.filter((c) => c.needs);
   return (
     <section aria-label="AI Watch" className="rounded-card border border-border bg-surface">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-3 py-2">
@@ -77,12 +79,17 @@ export function AiWatch() {
           Open AI usage
         </button>
       </div>
-      {/* Five across from 1024 px; two across below, the fifth spanning the row (no holes). */}
-      <div className="grid grid-cols-2 gap-px bg-border lg:grid-cols-5">
-        {s.cards.map((c) => (
-          <Card key={c.key} card={c} days={s.days} />
+      {/* Cards whose source is not set up take no card (F62): one muted line instead. All
+          shown cards in one row from 1024 px; two across below, an odd last one spanning. */}
+      <div
+        className={cn("grid grid-cols-2 gap-px bg-border", COLS[shown.length] ?? "lg:grid-cols-5")}
+      >
+        {shown.map((c) => (
+          <Card key={c.key} card={c} days={s.days} odd={shown.length % 2 === 1} />
         ))}
       </div>
+      {missing.length ? <NotSetUp cards={missing} /> : null}
+      <NewList items={s.new} />
       <div className="grid min-w-0 gap-4 border-t border-border p-3 lg:grid-cols-[2fr_3fr]">
         <Chart chart={s.chart} />
         <Top summary={s} />
@@ -91,7 +98,81 @@ export function AiWatch() {
   );
 }
 
-function Card({ card, days }: { card: AiWatchCard; days: number }) {
+const COLS: Record<number, string> = {
+  1: "lg:grid-cols-1",
+  2: "lg:grid-cols-2",
+  3: "lg:grid-cols-3",
+  4: "lg:grid-cols-4",
+  5: "lg:grid-cols-5",
+};
+
+/** "Not set up: App consent grants (needs a Microsoft 365 source)" with the setup link. */
+function NotSetUp({ cards }: { cards: AiWatchCard[] }) {
+  const byNeed = new Map<string, string[]>();
+  for (const c of cards) byNeed.set(c.needs ?? "", [...(byNeed.get(c.needs ?? "") ?? []), c.label]);
+  return (
+    <p className="border-t border-border px-3 py-1.5 text-sm text-text-muted">
+      Not set up:{" "}
+      {[...byNeed].map(([need, labels], i) => (
+        <span key={need}>
+          {i ? "; " : ""}
+          {labels.join(", ").toLowerCase()} (needs {need})
+        </span>
+      ))}
+      .{" "}
+      <button
+        type="button"
+        onClick={() => navigate("sources")}
+        className="text-accent-text hover:underline"
+      >
+        Add a source
+      </button>
+    </p>
+  );
+}
+
+const NEW_KIND = { service: "AI service", mcp: "MCP server", agent: "agent" } as const;
+
+/** New in 24 hours (F62): first seen in the data, never from a review decision (D116). */
+function NewList({ items }: { items: AiWatchSummary["new"] }) {
+  return (
+    <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5 border-t border-border px-3 py-1.5 text-sm">
+      <span className="font-semibold">New in 24 hours</span>
+      {items.length === 0 ? (
+        <span className="text-text-muted">nothing first seen</span>
+      ) : (
+        <>
+          {items.slice(0, 6).map((n) =>
+            n.item_id ? (
+              <a
+                key={`${n.kind}:${n.id}`}
+                href={`${pathFor("alerts")}#item=${n.item_id}`}
+                onClick={(e) => {
+                  if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+                  e.preventDefault();
+                  navigate("alerts", `item=${n.item_id}`);
+                }}
+                title={`First seen ${n.first_seen}`}
+                className="min-w-0 text-accent-text hover:underline"
+              >
+                {n.name} <span className="text-text-muted">({NEW_KIND[n.kind]})</span>
+              </a>
+            ) : (
+              <span key={`${n.kind}:${n.id}`} title={`First seen ${n.first_seen}`}>
+                {n.name} <span className="text-text-muted">({NEW_KIND[n.kind]})</span>
+              </span>
+            ),
+          )}
+          {items.length > 6 ? (
+            <span className="text-text-muted">and {items.length - 6} more</span>
+          ) : null}
+        </>
+      )}
+    </div>
+  );
+}
+
+function Card({ card, days, odd }: { card: AiWatchCard; days: number; odd: boolean }) {
   const link =
     card.key === "agents"
       ? () => navigate("alerts")
@@ -101,7 +182,12 @@ function Card({ card, days }: { card: AiWatchCard; days: number }) {
           ? () => navigate("ai", "people")
           : undefined;
   return (
-    <div className="flex min-w-0 flex-col gap-0.5 bg-surface px-3 py-2.5 last:col-span-2 lg:last:col-span-1">
+    <div
+      className={cn(
+        "flex min-w-0 flex-col gap-0.5 bg-surface px-3 py-2.5",
+        odd && "last:col-span-2 lg:last:col-span-1",
+      )}
+    >
       <span className="truncate text-sm text-text-secondary" title={card.label}>
         {card.label}
       </span>
@@ -161,8 +247,11 @@ function Card({ card, days }: { card: AiWatchCard; days: number }) {
   );
 }
 
-function Chart({ chart }: { chart: AiWatchDay[] }) {
+function Chart({ chart: all }: { chart: AiWatchDay[] }) {
   const total = (d: AiWatchDay) => d.approved + d.unreviewed + d.not_approved;
+  // With less than 7 days of data, the chart covers the days that exist (F62).
+  const first = all.findIndex((d) => total(d) > 0);
+  const chart = first > 0 && all.length - first < 7 ? all.slice(first) : all;
   const top = Math.max(1, ...chart.map(total));
   const sums = Object.fromEntries(
     ORDER.map((st) => [st, chart.reduce((n, d) => n + d[st], 0)]),
@@ -173,11 +262,14 @@ function Chart({ chart }: { chart: AiWatchDay[] }) {
   return (
     <figure className="min-w-0">
       <figcaption className="mb-2 text-sm font-semibold">
-        AI use, last 30 days <span className="font-normal text-text-muted">events per day</span>
+        {chart.length < all.length
+          ? `AI use since ${label(chart[0]?.day ?? "")}`
+          : "AI use, last 30 days"}{" "}
+        <span className="font-normal text-text-muted">events per day</span>
       </figcaption>
       <div
         role="img"
-        aria-label={`AI use per day over 30 days by review status: ${summary}`}
+        aria-label={`AI use per day over ${chart.length} days by review status: ${summary}`}
         className="flex h-28 items-end gap-px"
       >
         {chart.map((d) => (

@@ -167,14 +167,14 @@ function noSchedules(spy: ReturnType<typeof mockApi>) {
 }
 
 describe("Landing page (ADR-0031)", () => {
-  it("opens the Dashboard first when there is a panel, with sources in the morning answer", async () => {
+  it("opens the Dashboard first when there is a panel, with source problems up top and sources below", async () => {
     await renderAt("/");
     expect(await screen.findByRole("heading", { name: "My dashboard", level: 1 })).toBeVisible();
     expect(window.location.pathname).toBe("/dashboard");
-    const health = await screen.findByRole("region", { name: "This morning" });
-    expect(await within(health).findByRole("button", { name: /has errors/ })).toBeVisible();
-    expect(health).toHaveTextContent("1 gap in 24 hours");
-    await userEvent.click(within(health).getByRole("button", { name: "Open Health" }));
+    const banner = await screen.findByRole("region", { name: "Needs you" });
+    expect(await within(banner).findByRole("link", { name: /has errors/ })).toBeVisible();
+    const sources = screen.getByRole("link", { name: /^Sources: .*1 gap in 24 hours/ });
+    await userEvent.click(sources);
     expect(await screen.findByRole("heading", { name: "Health", level: 1 })).toBeVisible();
   });
 
