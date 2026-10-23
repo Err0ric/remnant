@@ -17,8 +17,10 @@ from app.auth.service import AuthService
 from app.core.errors import SearchInvalidError
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.engine.views import permitted_sources
+from app.enrich.geoip import GeoIP
 from app.meta.db import MetaDB
 from app.search.entities import ai_graph, entity_graph, entity_risk, to_json
+from app.search.entity_summary import entity_summary
 from app.search.identity import IdentityMap, IdentityStore
 
 router = APIRouter(tags=["investigate"])
@@ -64,6 +66,50 @@ class EdgeOut(BaseModel):
     source: str
     target: str
     events: int
+
+
+class ActivityOut(BaseModel):
+    outcome: str
+    kind: str
+    user: str | None
+    target: str | None
+    events: int
+    first: str | None
+    last: str | None
+    example: str
+    search_sql: str
+
+
+class TargetOut(BaseModel):
+    kind: str
+    value: str
+    events: int
+
+
+class GeoBrief(BaseModel):
+    country: str | None = None
+    country_name: str | None = None
+    asn: int | None = None
+    org: str | None = None
+
+
+class SummaryOut(BaseModel):
+    kind: str
+    value: str
+    events: int
+    sign_ins: int
+    succeeded: int
+    failed: int
+    users: int
+    hosts: int
+    addresses: int
+    first_seen: str | None
+    last_seen: str | None
+    sources: list[str]
+    activities: list[ActivityOut]
+    targets: list[TargetOut]
+    search_sql: str
+    geo: GeoBrief | None = None
 
 
 class GraphOut(BaseModel):
@@ -154,3 +200,41 @@ async def graph(
         {"mode": mode, "kind": kind, "value": (value or "")[:200], "sources_in_scope": g.sources},
     )
     return GraphOut(**to_json(g))
+
+
+@router.get("/entities/summary")
+async def summary(
+    request: Request,
+    user: CurrentUser,
+    kind: Literal["user", "ip", "host"],
+    value: str = Query(min_length=1, max_length=512),
+    start: datetime | None = None,
+    end: datetime | None = None,
+) -> SummaryOut:
+    """The top of an entity's page: counts, sign-in outcomes, who and what it touched,
+    first and last seen, and activities by outcome with a real example line."""
+    _allowed, scope = await _scope(request, user, start, end)
+    engine: QueryEngine = request.app.state.engine
+    ident = await _identities(request)
+    s = await run_in_threadpool(entity_summary, engine, scope, kind, value, ident)
+    geo = None
+    if kind == "ip":
+        geoip: GeoIP = request.app.state.geoip
+        found = await run_in_threadpool(geoip.enrich, [value])
+        if value in found:
+            info = found[value]
+            geo = GeoBrief(
+                country=info.country,
+                country_name=info.country_name,
+                asn=info.asn,
+                org=info.org,
+            )
+    await _audit(
+        request,
+        user,
+        "investigate.summary",
+        {"kind": kind, "value": value[:200], "sources_in_scope": s.read},
+    )
+    data = to_json(s)
+    data.pop("read", None)
+    return SummaryOut(**data, geo=geo)

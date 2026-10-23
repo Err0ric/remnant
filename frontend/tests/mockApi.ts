@@ -829,6 +829,48 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       });
       return json({ device_id: `d${watched.length}` }, 201);
     }
+    if (url.includes("/api/entities/summary")) {
+      const q = new URL(url, "http://x").searchParams;
+      const value = q.get("value") ?? "";
+      const kind = q.get("kind") ?? "ip";
+      return json({
+        kind,
+        value,
+        events: 2619,
+        sign_ins: 2619,
+        succeeded: 0,
+        failed: 2619,
+        users: 14,
+        hosts: 1,
+        addresses: 1,
+        first_seen: "2026-10-03T08:00:00+00:00",
+        last_seen: "2026-10-10T11:58:00+00:00",
+        sources: ["linux_sshd"],
+        activities: [
+          {
+            outcome: "failed",
+            kind: "Authentication",
+            user: "root",
+            target: "ftp-01",
+            events: 2400,
+            first: "2026-10-03T08:00:00+00:00",
+            last: "2026-10-10T11:58:00+00:00",
+            example: `Failed password for root from ${value} port 52144 ssh2`,
+            search_sql: "SELECT * FROM events WHERE src_endpoint_ip = '203.0.113.9' LIMIT 1000",
+          },
+        ],
+        targets: [
+          { kind: "host", value: "ftp-01", events: 2619 },
+          { kind: "user", value: "root", events: 2400 },
+          { kind: "user", value: "admin", events: 219 },
+        ],
+        search_sql: "SELECT * FROM events WHERE src_endpoint_ip = '203.0.113.9' LIMIT 1000",
+        geo:
+          kind === "ip"
+            ? { country: "NL", country_name: "Netherlands", asn: 64500, org: "Example Net" }
+            : null,
+      });
+    }
     if (url.includes("/api/entities/graph")) {
       const q = new URL(url, "https://x").searchParams;
       const card = (id: string, lane: number, label: string, extra: object = {}) => ({

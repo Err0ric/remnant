@@ -1,3 +1,4 @@
+import { EntityLink } from "@/components/EntityLink";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { ApiError, api, type SessionStep } from "@/lib/api";
@@ -93,7 +94,9 @@ export function SessionsCard() {
                       {s.person ?? "No user parsed"}
                     </button>
                   </td>
-                  <td className="px-3 py-2 font-mono">{s.machine ?? ""}</td>
+                  <td className="px-3 py-2 font-mono">
+                    {s.machine ? <EntityLink kind="host" value={s.machine} /> : ""}
+                  </td>
                   <td className="px-3 py-2" title={`${stamp(s.last)} UTC`}>
                     {since(s.last, now)}
                     {s.stopped ? "" : ", still open"}

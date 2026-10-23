@@ -1,3 +1,5 @@
+import { EntityLink } from "@/components/EntityLink";
+import { kindForColumn, type EntityKind } from "@/lib/entity";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type KeyboardEvent } from "react";
 import {
@@ -223,6 +225,7 @@ export function SchedulePanel({
               rows={run.sample.slice(0, TOP_BARS)}
               shape={shape}
               valueName={run.columns[shape.value] ?? "count"}
+              labelName={run.columns[shape.label] ?? ""}
               onOpen={openSql ? () => open(openSql as string) : null}
             />
           ) : rows.length && run ? (
@@ -253,7 +256,15 @@ export function SchedulePanel({
                             title={v === null ? emptyNote(run.columns[j] ?? "") : cellText(v)}
                             className="truncate px-2 py-1 font-mono"
                           >
-                            {cellText(v)}
+                            {kindForColumn(run.columns[j] ?? "") ? (
+                              <EntityLink
+                                kind={kindForColumn(run.columns[j] ?? "") as EntityKind}
+                                value={v}
+                                label={cellText(v)}
+                              />
+                            ) : (
+                              cellText(v)
+                            )}
                           </td>
                         ))}
                       </tr>
@@ -581,11 +592,14 @@ interface BarsProps {
   rows: Cell[][];
   shape: { label: number; value: number };
   valueName: string;
+  /** The label column's name, so an address, person, or machine is a link. */
+  labelName: string;
   onOpen: (() => void) | null;
 }
 
 /** Label and count per row on one shared scale (DESIGN: simple bars, one accent). */
-function Bars({ name, rows, shape, valueName, onOpen }: BarsProps) {
+function Bars({ name, rows, shape, valueName, labelName, onOpen }: BarsProps) {
+  const labelKind = kindForColumn(labelName);
   const values = rows.map((r) => Number(r[shape.value] ?? 0));
   const top = Math.max(1, ...values);
   return (
@@ -606,7 +620,11 @@ function Bars({ name, rows, shape, valueName, onOpen }: BarsProps) {
               style={{ width: `${Math.max(2, (n / top) * 100)}%` }}
             />
             <span title={label} className="relative min-w-0 flex-1 truncate font-mono">
-              {label}
+              {labelKind ? (
+                <EntityLink kind={labelKind} value={r[shape.label]} label={label} />
+              ) : (
+                label
+              )}
             </span>
             <span className="relative font-mono tabular-nums text-text-secondary">
               {n.toLocaleString()}

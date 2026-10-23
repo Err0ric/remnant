@@ -1,13 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Command, PageHeader } from "@/components/shell/PageHeader";
 import { ApiError, api, type EntityRisk, type GraphCard, type GraphKind } from "@/lib/api";
-import { navigate } from "@/lib/route";
+import { navigate, useSection } from "@/lib/route";
+import { entitySection, parseEntity } from "@/lib/entity";
 import { rangeStart, TIME_RANGES, type TimeRangeId } from "@/lib/search";
 import { seedSearch } from "@/lib/searchSeed";
-import { takeInvestigateSeed } from "@/lib/investigateSeed";
 import { CardDetail } from "./CardDetail";
 import { LaneGraph } from "./LaneGraph";
+import { EntitySummary } from "./EntitySummary";
 import { RiskTable } from "./RiskTable";
 import { kindOf, PLACEHOLDER, rememberedKind, rememberKind, type EntityKind } from "./entityKind";
 
@@ -22,21 +23,36 @@ const KIND_LABEL: Record<EntityKind, string> = { user: "User", ip: "IP address",
 /** Investigations (ADR-0016 rows 4 and 5): risky entities, and lanes showing how one
  * entity, or the organization's AI use, connects to everything it touched. */
 export function InvestigatePage() {
-  // "Investigate" on a field in Search opens the page on that entity.
-  const [handoff] = useState(takeInvestigateSeed);
   const [range, setRange] = useState<TimeRangeId>("7d");
-  const [mode, setMode] = useState<Mode>("entity");
-  const [entity, setEntity] = useState<Focus | null>(handoff);
-  const [aiFocus, setAiFocus] = useState<Focus | null>(null);
+  // The entity lives in the address (`#ip=203.0.113.9`), so every pivot link, Back, and a
+  // shared link open the same page (product pass step 2). A service opens the AI flow.
+  const linked = parseEntity(useSection());
+  const [modeChoice, setMode] = useState<Mode>("entity");
+  const mode: Mode = linked?.kind === "service" ? "ai" : modeChoice;
+  const entity: Focus | null = linked && linked.kind !== "service" ? linked : null;
+  const [aiChoice, setAiFocus] = useState<Focus | null>(null);
+  const aiFocus: Focus | null =
+    linked?.kind === "service" ? { kind: "service", value: linked.value } : aiChoice;
   const [selected, setSelected] = useState<GraphCard | null>(null);
   const [kind, setKind] = useState<EntityKind>(
-    (handoff?.kind as EntityKind | undefined) ?? rememberedKind(),
+    (linked && linked.kind !== "service" ? linked.kind : null) ?? rememberedKind(),
   );
   // The type follows what is typed (F56) until the user picks one from the list.
   const [picked, setPicked] = useState(false);
-  const [text, setText] = useState(handoff?.value ?? "");
+  const [text, setText] = useState(linked && linked.kind !== "service" ? linked.value : "");
   const [riskTab, setRiskTab] = useState<EntityKind>("user");
+  // A pivot link from another page while this one is open: the box follows the address.
+  const linkedKey = linked && linked.kind !== "service" ? `${linked.kind}=${linked.value}` : "";
+  useEffect(() => {
+    if (!linked || linked.kind === "service") return;
+    setKind(linked.kind);
+    setText(linked.value);
+    // Only when the linked entity changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkedKey]);
   const start = rangeStart(range);
+  const rangeLabel = TIME_RANGES.find((r) => r.id === range)?.label ?? "this range";
+  const rangeWords = /^last /i.test(rangeLabel) ? `the ${rangeLabel.toLowerCase()}` : rangeLabel;
 
   const risk = useQuery({
     queryKey: ["entity-risk", range],
@@ -53,10 +69,10 @@ export function InvestigatePage() {
 
   const investigate = (next: Focus) => {
     setSelected(null);
-    setEntity(next);
     setMode("entity");
     setKind(next.kind as EntityKind);
     setText(next.value);
+    navigate("investigate", entitySection({ kind: next.kind as EntityKind, value: next.value }));
   };
   const pick = (row: EntityRisk) => investigate({ kind: row.kind, value: row.value });
   const submit = (e: FormEvent) => {
@@ -70,26 +86,25 @@ export function InvestigatePage() {
     navigate("search");
   };
 
+  const focusAi = (f: Focus) => {
+    setSelected(null);
+    setMode("ai");
+    setAiFocus(f);
+    if (linked) navigate("investigate"); // leave a linked service for this person or server
+  };
+
   // What "Investigate this" does for the selected card, if anything.
   const follow = (card: GraphCard): (() => void) | null => {
     const key = card.id.slice(card.id.indexOf(":") + 1);
     if (mode === "entity" && card.lane === 3)
       return () =>
         investigate({ kind: kindOf(card.label) === "ip" ? "ip" : "host", value: card.label });
-    if (mode === "ai" && card.lane === 0)
-      return () => {
-        setSelected(null);
-        setAiFocus({ kind: "user", value: card.label });
-      };
-    if (mode === "ai" && card.lane === 2)
-      return () => {
-        setSelected(null);
-        setAiFocus({ kind: "mcp", value: card.label });
-      };
+    if (mode === "ai" && card.lane === 0) return () => focusAi({ kind: "user", value: card.label });
+    if (mode === "ai" && card.lane === 2) return () => focusAi({ kind: "mcp", value: card.label });
     if (mode === "ai" && card.lane === 3 && key.startsWith("svc:"))
       return () => {
         setSelected(null);
-        setAiFocus({ kind: "service", value: key.slice(4) });
+        navigate("investigate", entitySection({ kind: "service", value: key.slice(4) }));
       };
     return null;
   };
@@ -229,6 +244,8 @@ export function InvestigatePage() {
                 onClick={() => {
                   setSelected(null);
                   setMode(m);
+                  if (linked && (m === "entity") !== (linked.kind !== "service"))
+                    navigate("investigate");
                 }}
                 className={`h-8 px-3 text-sm ${
                   mode === m
@@ -330,8 +347,8 @@ export function InvestigatePage() {
                   type="button"
                   onClick={() => {
                     setSelected(null);
-                    setEntity(null);
                     setText("");
+                    navigate("investigate");
                   }}
                   className="text-sm text-accent-text hover:underline"
                 >
@@ -355,6 +372,8 @@ export function InvestigatePage() {
                   onClick={() => {
                     setSelected(null);
                     setAiFocus(null);
+                    setMode("ai");
+                    if (linked) navigate("investigate");
                   }}
                   className="text-accent-text hover:underline"
                 >
@@ -362,12 +381,40 @@ export function InvestigatePage() {
                 </button>
               </div>
             ) : null}
-            <section
-              aria-label="Investigation graph"
-              className="overflow-hidden rounded-card border border-border bg-inset"
-            >
-              {canvas}
-            </section>
+            {mode === "entity" && entity ? (
+              <EntitySummary
+                kind={entity.kind as "user" | "ip" | "host"}
+                value={entity.value}
+                start={start}
+                range={range}
+                rangeWords={rangeWords}
+                onSearch={openSearch}
+              />
+            ) : null}
+            {mode === "entity" && entity ? (
+              // The summary answers first; the lanes sit below it and fold away (owner critique).
+              <details open className="group rounded-card border border-border bg-surface">
+                <summary className="cursor-pointer px-3 py-2 text-sm font-semibold">
+                  How it connects{" "}
+                  <span className="font-normal text-text-muted">
+                    sources, activities, and targets as lanes
+                  </span>
+                </summary>
+                <section
+                  aria-label="Investigation graph"
+                  className="overflow-hidden border-t border-border bg-inset"
+                >
+                  {canvas}
+                </section>
+              </details>
+            ) : (
+              <section
+                aria-label="Investigation graph"
+                className="overflow-hidden rounded-card border border-border bg-inset"
+              >
+                {canvas}
+              </section>
+            )}
             {g && !selected && g.cards.length > (mode === "entity" ? 1 : 0) ? (
               <p className="text-sm text-text-muted">
                 Select a card to light its path and open its details.

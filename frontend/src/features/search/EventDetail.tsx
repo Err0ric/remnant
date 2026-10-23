@@ -6,8 +6,9 @@ import { geoLong } from "@/lib/geo";
 import { FieldActionsContext } from "./fieldActions";
 import { AddressHolders } from "./AddressHolders";
 import { FieldButton } from "./FieldButton";
-import { ENTITY_COLUMNS, seedInvestigate, type InvestigateSeed } from "@/lib/investigateSeed";
-import { navigate } from "@/lib/route";
+import { ENTITY_COLUMNS, type InvestigateSeed } from "@/lib/investigateSeed";
+import { EntityLink } from "@/components/EntityLink";
+import { kindForColumn, openEntity, type EntityKind } from "@/lib/entity";
 import { eventSql, formatCell } from "@/lib/search";
 
 interface EventDetailProps {
@@ -140,8 +141,7 @@ export function EventDetail({ columns, row, selection, geo, intel }: EventDetail
               type="button"
               title={`Investigate ${focus.value}`}
               onClick={() => {
-                seedInvestigate(focus);
-                navigate("investigate");
+                openEntity(focus);
               }}
               className="h-7 rounded border border-border-strong px-3 text-text hover:bg-surface-head"
             >
@@ -169,10 +169,18 @@ export function EventDetail({ columns, row, selection, geo, intel }: EventDetail
               <dd className="m-0 min-w-0">
                 <div className="flex min-w-0 items-start gap-2">
                   <span className="min-w-0 flex-1 break-all font-mono">
-                    {formatCell(record[k] ?? null)}
+                    {kindForColumn(k) ? (
+                      <EntityLink
+                        kind={kindForColumn(k) as EntityKind}
+                        value={record[k]}
+                        label={formatCell(record[k] ?? null)}
+                      />
+                    ) : (
+                      formatCell(record[k] ?? null)
+                    )}
                   </span>
                   {actions?.fields.has(k) && isScalar(record[k]) ? (
-                    <span className="flex shrink-0 gap-1 opacity-0 focus-within:opacity-100 group-hover:opacity-100">
+                    <span className="flex shrink-0 gap-1 opacity-60 focus-within:opacity-100 group-hover:opacity-100">
                       <FieldButton
                         label="+"
                         title={`Filter for ${k}`}
@@ -188,19 +196,6 @@ export function EventDetail({ columns, row, selection, geo, intel }: EventDetail
                         title={`Top values of ${k}`}
                         onClick={() => actions.top(k)}
                       />
-                      {ENTITY_COLUMNS[k] ? (
-                        <FieldButton
-                          label="Investigate"
-                          title={`Investigate ${String(record[k])}`}
-                          onClick={() => {
-                            seedInvestigate({
-                              kind: ENTITY_COLUMNS[k] as InvestigateSeed["kind"],
-                              value: String(record[k]),
-                            });
-                            navigate("investigate");
-                          }}
-                        />
-                      ) : null}
                     </span>
                   ) : null}
                 </div>

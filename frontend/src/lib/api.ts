@@ -413,6 +413,44 @@ export interface GraphCard {
 }
 
 /** Investigator lanes (ADR-0016 row 5). */
+/** GET /api/entities/summary: the top of an entity's page (product pass step 2). */
+export interface EntityActivity {
+  outcome: "succeeded" | "failed" | "other";
+  kind: string;
+  user: string | null;
+  target: string | null;
+  events: number;
+  first: string | null;
+  last: string | null;
+  /** One real line from the group, values intact. */
+  example: string;
+  search_sql: string;
+}
+
+export interface EntitySummary {
+  kind: "user" | "ip" | "host";
+  value: string;
+  events: number;
+  sign_ins: number;
+  succeeded: number;
+  failed: number;
+  users: number;
+  hosts: number;
+  addresses: number;
+  first_seen: string | null;
+  last_seen: string | null;
+  sources: string[];
+  activities: EntityActivity[];
+  targets: { kind: "host" | "user"; value: string; events: number }[];
+  search_sql: string;
+  geo: {
+    country: string | null;
+    country_name: string | null;
+    asn: number | null;
+    org: string | null;
+  } | null;
+}
+
 export interface EntityGraph {
   mode: "entity" | "ai";
   lanes: string[];
@@ -1720,6 +1758,11 @@ export const api = {
     if (q.value) p.set("value", q.value);
     if (q.start) p.set("start", q.start);
     return request<EntityGraph>(`/api/entities/graph?${p.toString()}`);
+  },
+  entitySummary: (q: { kind: "user" | "ip" | "host"; value: string; start?: string }) => {
+    const p = new URLSearchParams({ kind: q.kind, value: q.value });
+    if (q.start) p.set("start", q.start);
+    return request<EntitySummary>(`/api/entities/summary?${p.toString()}`);
   },
   aiUsage: (start?: string) =>
     request<AiUsage>(`/api/ai/usage${start ? `?start=${encodeURIComponent(start)}` : ""}`),

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Investigations leads with the answer
+
+- An address, person, or machine opens on one sentence that says what it did ("2,619 failed sign-ins against ftp-01 over the last 7 days, 0 succeeded. From Netherlands, AS64500."), then cards with sign-in attempts, successes, users tried, hosts targeted, first and last seen, and country and network.
+- **What it did** groups activity by outcome (succeeded, failed, other), with a real line from each group instead of a pattern with numbers masked, and View in Search for each. Hosts and users it touched are listed and linked. The lane graph sits below and folds away.
+
+### Every address, person, machine, and AI service is a link
+
+- Search results, expanded events, dashboard panels, AI usage (service names, the Who column, Claude usage people), session machines, and Health's endpoint agents now link each IP address, user, host name, and AI service to its page in Investigations. Middle-click opens it in a new tab; Back returns.
+- The address of an Investigations page names the entity (`/investigations#ip=203.0.113.9`), so it can be bookmarked or shared. An AI service opens the AI flow for that service.
+- Field buttons (+, -, Top) in an expanded event are always visible, dimmed until you point at them.
+- A capped result now reads "the newest rows; narrow the range or filters to see all" instead of "limit reached".
+
 ### Fixed: Health > Sources was empty on installs that only pull
 
 - Sources from Loki, Microsoft 365, and the Anthropic admin API were on a Connectors tab, so an install with only pulled sources saw "No log sources yet" and none of the per-source lines or gap sentences (F59). **Sources** now lists every source that brings events. Enrichment feeds have their own **Enrichment feeds** tab, each judged by its own update interval ("updated daily").

@@ -103,8 +103,8 @@ describe("Search page", () => {
   it("expands a row inline and loads the full event with its raw line", async () => {
     await renderApp();
     const row = (await screen.findByText("Failed password for invalid user oracle")).closest(
-      "button",
-    );
+      '[role="row"]',
+    ) as HTMLElement | null;
     expect(row).not.toBeNull();
     await userEvent.click(row!);
     expect(row).toHaveAttribute("aria-expanded", "true");

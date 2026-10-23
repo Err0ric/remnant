@@ -5,6 +5,7 @@ import { FormError } from "@/features/auth/FormError";
 import { since, stamp } from "@/features/overview/time";
 import { ApiError, api, type Source, type WatchedDevice } from "@/lib/api";
 import { navigate, useSectionTab, type PageId } from "@/lib/route";
+import { EntityLink } from "@/components/EntityLink";
 import { useAttention } from "@/features/dashboard/attention";
 import { lag } from "./flow";
 import { SourceFlow } from "./SourceFlow";
@@ -479,6 +480,8 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
                           >
                             {r.name}
                           </button>
+                        ) : tab === "agents" ? (
+                          <EntityLink kind="host" value={r.name} className="font-mono" />
                         ) : (
                           <span className={tab === "devices" ? "" : "break-all font-mono"}>
                             {r.name}

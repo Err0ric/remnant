@@ -64,8 +64,8 @@ describe("Simple search", () => {
   it("filters for, filters out, and counts a field from an expanded event", async () => {
     const { spy } = await renderAt("/search");
     const row = (await screen.findByText("Failed password for invalid user oracle")).closest(
-      "button",
-    );
+      '[role="row"]',
+    ) as HTMLElement | null;
     await userEvent.click(row!);
     await screen.findByText("Raw event");
     await userEvent.click(screen.getByRole("button", { name: "Filter for device_hostname" }));
@@ -91,14 +91,19 @@ describe("Simple search", () => {
   it("opens Investigations on a host from an expanded event", async () => {
     const { spy } = await renderAt("/search");
     const row = (await screen.findByText("Failed password for invalid user oracle")).closest(
-      "button",
-    );
+      '[role="row"]',
+    ) as HTMLElement | null;
     await userEvent.click(row!);
     await screen.findByText("Raw event");
-    expect(screen.queryByRole("button", { name: /Investigate linux_sshd/ })).toBeNull();
-    await userEvent.click(screen.getByRole("button", { name: "Investigate bastion" }));
+    // The value itself is the link (product pass step 2); a source id is not an entity.
+    expect(screen.queryByRole("link", { name: "linux_sshd" })).toBeNull();
+    const detail = screen.getByText("Raw event").closest("div")?.parentElement
+      ?.parentElement as HTMLElement;
+    const host = within(detail).getAllByRole("link", { name: "bastion" })[0] as HTMLElement;
+    expect(host).toHaveAttribute("href", "/investigations#host=bastion");
+    await userEvent.click(host);
     await screen.findByRole("heading", { level: 1, name: "Investigations" });
-    expect(window.location.pathname).toBe("/investigations");
+    expect(window.location.pathname + window.location.hash).toBe("/investigations#host=bastion");
     await screen.findByRole("group", { name: /Investigation lanes/ });
     const call = spy.mock.calls.find(([u]) => String(u).includes("/api/entities/graph"));
     expect(String(call?.[0])).toContain("kind=host");

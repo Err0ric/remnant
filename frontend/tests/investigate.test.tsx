@@ -4,8 +4,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mockApi } from "./mockApi";
 
-async function openInvestigate() {
-  window.history.replaceState(null, "", "/investigations");
+async function openInvestigate(path = "/investigations") {
+  window.history.replaceState(null, "", path);
   const spy = mockApi("Codename", { mode: "open" });
   vi.resetModules();
   const { loadBranding } = await import("@/lib/branding");
@@ -49,6 +49,45 @@ describe("Entity picker (F56)", () => {
     expect(type).toHaveValue("user");
     await userEvent.click(screen.getByRole("button", { name: "Investigate" }));
     expect(window.localStorage.getItem("investigate.kind")).toBe("user");
+  });
+});
+
+describe("Entity pages from a link (product pass step 2)", () => {
+  it("opens the entity in the address, and Back to all entities clears it", async () => {
+    const spy = await openInvestigate("/investigations#ip=203.0.113.9");
+    await vi.waitFor(() => {
+      const call = spy.mock.calls.find(([u]) => String(u).includes("/api/entities/graph"));
+      expect(String(call?.[0])).toContain("kind=ip");
+      expect(String(call?.[0])).toContain("value=203.0.113.9");
+    });
+    expect(screen.getByRole("textbox", { name: "Entity" })).toHaveValue("203.0.113.9");
+    // The page leads with the answer, then numbers, then what it did with real values.
+    const summary = await screen.findByRole("region", { name: "Summary" });
+    expect(
+      await within(summary).findByText(
+        "2,619 failed sign-ins against ftp-01 over the last 7 days, 0 succeeded. From Netherlands, AS64500 Example Net.",
+      ),
+    ).toBeVisible();
+    const acts = within(summary).getByRole("list", { name: "Activities" });
+    expect(
+      within(acts).getByText("Failed password for root from 203.0.113.9 port 52144 ssh2"),
+    ).toBeVisible();
+    expect(within(acts).getByRole("link", { name: "ftp-01" })).toHaveAttribute(
+      "href",
+      "/investigations#host=ftp-01",
+    );
+    expect(within(summary).getByRole("heading", { name: /Users tried/ })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: /All entities/ }));
+    expect(window.location.hash).toBe("");
+  });
+
+  it("opens an AI service in the AI flow", async () => {
+    const spy = await openInvestigate("/investigations#service=chatgpt");
+    expect(screen.getByRole("radio", { name: "AI flow" })).toHaveAttribute("aria-checked", "true");
+    await vi.waitFor(() => {
+      const call = spy.mock.calls.find(([u]) => String(u).includes("mode=ai"));
+      expect(String(call?.[0])).toContain("value=chatgpt");
+    });
   });
 });
 

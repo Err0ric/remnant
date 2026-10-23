@@ -2,6 +2,8 @@ import { ArrowDown, ArrowUp, ChevronDown, ChevronRight } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { SeverityBadge } from "@/components/SeverityBadge";
 import type { GeoInfo, QueryResult } from "@/lib/api";
+import { EntityLink } from "@/components/EntityLink";
+import { kindForColumn, type EntityKind } from "@/lib/entity";
 import { cn } from "@/lib/cn";
 import { geoShort } from "@/lib/geo";
 import { intelLine } from "@/lib/intel";
@@ -156,15 +158,23 @@ export function ResultsTable({
             const isOpen = open === index;
             return (
               <Fragment key={index}>
-                <button
-                  type="button"
+                {/* A row, not a button, so values inside can be links (product pass step 2). */}
+                <div
                   role="row"
+                  tabIndex={0}
                   aria-level={1}
                   aria-expanded={isOpen}
                   onClick={() => setOpen(isOpen ? null : index)}
+                  onKeyDown={(e) => {
+                    if (e.target !== e.currentTarget) return;
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setOpen(isOpen ? null : index);
+                    }
+                  }}
                   className={cn(
                     // Mono on the grid so the ch-based column widths match the values.
-                    "grid min-h-row w-full items-center border-b border-border px-3.5 text-left font-mono text-sm text-text hover:bg-row-selected",
+                    "grid min-h-row w-full cursor-pointer items-center border-b border-border px-3.5 text-left font-mono text-sm text-text hover:bg-row-selected focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus-ring",
                     isOpen && "bg-row-selected",
                   )}
                   style={{ gridTemplateColumns: template }}
@@ -194,9 +204,17 @@ export function ResultsTable({
                               className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-danger align-middle"
                             />
                           ) : null}
-                          <span title={formatCell(row[i] ?? null)}>
-                            {displayCell(row[i] ?? null)}
-                          </span>
+                          {kindForColumn(c) ? (
+                            <EntityLink
+                              kind={kindForColumn(c) as EntityKind}
+                              value={row[i]}
+                              label={displayCell(row[i] ?? null)}
+                            />
+                          ) : (
+                            <span title={formatCell(row[i] ?? null)}>
+                              {displayCell(row[i] ?? null)}
+                            </span>
+                          )}
                           {geoOf(row[i]) ? (
                             <span className="ml-2 text-text-muted">
                               {geoShort(geoOf(row[i]) as GeoInfo)}
@@ -206,7 +224,7 @@ export function ResultsTable({
                       )}
                     </span>
                   ))}
-                </button>
+                </div>
                 {isOpen ? (
                   <div
                     role="row"
@@ -241,7 +259,7 @@ export function ResultsTable({
         <span>
           {page * PAGE + 1} to {Math.min((page + 1) * PAGE, result.rows.length)} of{" "}
           {result.rows.length}
-          {result.truncated ? " (limit reached)" : ""}
+          {result.truncated ? " (the newest rows; narrow the range or filters to see all)" : ""}
         </span>
         {geo && Object.keys(geo).length ? (
           // Attribution the DB-IP Lite license (CC BY 4.0) asks for: once, and quiet (F52).

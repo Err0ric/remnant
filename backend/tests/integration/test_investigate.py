@@ -309,3 +309,34 @@ def test_identities_are_admin_only_and_audited(lab: dict[str, Any]) -> None:
     lab["admin"].put("/api/identities/domains", json={"domains": ["example.com"]}, headers=lab["h"])
     log = lab["admin"].get("/api/audit/events", params={"action": "identity.change"}).json()
     assert log and log[0]["action"] == "identity.change"
+
+
+def test_entity_summary_counts_outcomes_targets_and_keeps_real_lines(lab: dict[str, Any]) -> None:
+    """Product pass step 2: the entity page leads with numbers and real lines."""
+    top = lab["admin"].get("/api/entities/risk", params=RANGE).json()["ips"][0]["value"]
+    res = lab["admin"].get("/api/entities/summary", params={"kind": "ip", "value": top, **RANGE})
+    assert res.status_code == 200, res.text
+    s = res.json()
+    assert s["events"] > 0 and "lin_auth" in s["sources"]
+    assert s["failed"] > 0 and s["sign_ins"] >= s["failed"] + s["succeeded"]
+    assert s["first_seen"] and s["last_seen"] and s["first_seen"] <= s["last_seen"]
+    failed = [a for a in s["activities"] if a["outcome"] == "failed"]
+    assert failed and failed[0]["kind"] == "Authentication"
+    assert top in failed[0]["example"] and "#.#.#.#" not in failed[0]["example"]  # real values
+    ran = lab["admin"].post("/api/query", json={"sql": failed[0]["search_sql"]}, headers=lab["h"])
+    assert ran.status_code == 200 and ran.json()["row_count"] == failed[0]["events"]
+    assert any(t["kind"] in ("host", "user") for t in s["targets"])
+    assert all(t["value"] != top for t in s["targets"])
+
+
+def test_entity_summary_is_read_as_the_caller_and_audited(lab: dict[str, Any]) -> None:
+    admin = lab["admin"].get("/api/entities/risk", params=RANGE).json()
+    win_host = next(r["value"] for r in admin["hosts"] if r["rules"] == ["Failed logon"])
+    params = {"kind": "host", "value": win_host, **RANGE}
+    assert lab["admin"].get("/api/entities/summary", params=params).json()["events"] > 0
+    ana = lab["ana"].get("/api/entities/summary", params=params).json()
+    assert ana["events"] == 0 and ana["activities"] == [] and ana["targets"] == []
+    rows = lab["admin"].get("/api/audit/events", params={"action": "investigate.summary"}).json()
+    assert len(rows) >= 2
+    bad = lab["admin"].get("/api/entities/summary", params={"kind": "mcp", "value": "x"})
+    assert bad.status_code == 422

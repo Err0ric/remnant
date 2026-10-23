@@ -1,3 +1,4 @@
+import { EntityLink, EntityList } from "@/components/EntityLink";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type KeyboardEvent, type ReactNode } from "react";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
@@ -257,7 +258,7 @@ export function AiUsagePage({ isAdmin }: AiUsagePageProps) {
                     <tr key={u.service.id} className="border-b border-border last:border-0">
                       <td className={TD}>
                         <div className="flex items-center gap-2 font-semibold">
-                          {u.service.name}
+                          <EntityLink kind="service" value={u.service.id} label={u.service.name} />
                           {newServices.has(u.service.id) ? <NewBadge /> : null}
                         </div>
                         <div className="text-text-muted">
@@ -308,7 +309,7 @@ export function AiUsagePage({ isAdmin }: AiUsagePageProps) {
                       </td>
                       <td className={`${TD} whitespace-nowrap font-mono`}>{when(u.last_seen)}</td>
                       <td className={`${TD} font-mono text-text-secondary`}>
-                        {u.top_people.join(", ") || u.top_machines.join(", ") || "·"}
+                        <EntityList people={u.top_people} machines={u.top_machines} />
                       </td>
                     </tr>
                   ))}
@@ -416,7 +417,9 @@ export function AiUsagePage({ isAdmin }: AiUsagePageProps) {
                 <tbody>
                   {(data?.people ?? []).map((p) => (
                     <tr key={p.person} className="border-b border-border last:border-0">
-                      <td className={`${TD} font-mono`}>{p.person}</td>
+                      <td className={`${TD} font-mono`}>
+                        <EntityLink kind="user" value={p.person} />
+                      </td>
                       <td className={`${TD} text-right font-mono tabular-nums`}>
                         {typeof p.cost_usd === "number" && Number.isFinite(p.cost_usd)
                           ? p.cost_usd.toFixed(2)

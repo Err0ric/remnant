@@ -1,20 +1,6 @@
-/** A one-shot handoff into Investigations ("Investigate" on a field in Search), taken
- * once when the page opens. */
 export interface InvestigateSeed {
   kind: "user" | "ip" | "host";
   value: string;
-}
-
-let seed: InvestigateSeed | null = null;
-
-export function seedInvestigate(value: InvestigateSeed): void {
-  seed = value;
-}
-
-export function takeInvestigateSeed(): InvestigateSeed | null {
-  const value = seed;
-  seed = null;
-  return value;
 }
 
 /** Columns whose values are entities the investigator can open. */

@@ -169,6 +169,7 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 |---|---|---|---|---|
 | `GET` | `/api/entities/graph` | Entity mode: Entity, Sources, Activities, Targets. AI flow: People, AI clients, Tools and MCP servers, Destinations; optionally for one person, MCP server, or service. | `?mode` (optional): `entity` &#124; `ai`<br>`?kind` (optional): `user` &#124; `ip` &#124; `host` &#124; `mcp` &#124; `service`<br>`?value` (optional): string<br>`?start` (optional): date-time<br>`?end` (optional): date-time |  |
 | `GET` | `/api/entities/risk` | Users, source IPs, and hosts ranked by rule matches and flagged schedule runs. | `?start` (optional): date-time<br>`?end` (optional): date-time |  |
+| `GET` | `/api/entities/summary` | The top of an entity's page: counts, sign-in outcomes, who and what it touched, first and last seen, and activities by outcome with a real example line. | `?kind`: `user` &#124; `ip` &#124; `host`<br>`?value`: string<br>`?start` (optional): date-time<br>`?end` (optional): date-time |  |
 
 ### Mcp
 
