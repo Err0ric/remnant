@@ -152,7 +152,7 @@ log = structlog.get_logger("app")
 _ERROR_STATUS: dict[type[Exception], tuple[int, str]] = {
     QueryRejectedError: (400, "query_rejected"),
     QueryFailedError: (400, "query_failed"),
-    QueryMemoryError: (400, "query_memory"),
+    QueryMemoryError: (503, "query_memory"),  # a server limit, not a bad request (F63)
     QueryTimeoutError: (408, "query_timeout"),
     SourceRejectedError: (400, "source_rejected"),
     NotFoundError: (404, "not_found"),
@@ -652,9 +652,16 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     app.include_router(addresses_router, prefix="/api")
     app.include_router(audit_router, prefix="/api")
 
-    async def app_error(_: Request, exc: Exception) -> JSONResponse:
+    async def app_error(request: Request, exc: Exception) -> JSONResponse:
         code, kind = _ERROR_STATUS[type(exc)]
         headers = {}
+        if isinstance(exc, QueryMemoryError):
+            log.warning(
+                "query.memory",
+                request_id=getattr(request.state, "request_id", None),
+                query=exc.query,
+                path=request.url.path,
+            )
         if (
             isinstance(exc, RateLimitedError | ProviderBusyError | QueryBusyError)
             and exc.retry_after_s

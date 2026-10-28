@@ -121,3 +121,55 @@ def test_late_events_and_catalog_changes_rebuild_and_retention_removes(
     assert not (rollup._dir / "source=dns_a" / f"day={day}").exists()
     manifest = json.loads(next(rollup._dir.glob("source=dns_a/day=*/_built.json")).read_text())
     assert manifest["catalog"] == rollup.catalog_key()
+
+
+def test_each_closed_day_records_what_was_first_seen_there(lab: dict[str, Any]) -> None:
+    """F63: the first-seen index lives in the day manifests and is scoped by source."""
+    lab["rollup"].run()
+    usage: Usage = lab["app"].state.ai_usage
+    everything = usage.first_seen(None)
+    assert everything["service:chatgpt"].date() == (NOW - timedelta(days=3)).date()
+    assert everything["service:claude"].date() == (NOW - timedelta(days=2)).date()
+    only_b = usage.first_seen(["dns_b"])
+    assert "service:claude" in only_b and "service:chatgpt" not in only_b
+
+
+def test_days_built_before_the_index_get_it_without_a_rebuild(lab: dict[str, Any]) -> None:
+    rollup = lab["rollup"]
+    rollup.run()
+    for m in rollup._dir.glob("source=*/day=*/_built.json"):
+        body = json.loads(m.read_text())
+        del body["first"]
+        m.write_text(json.dumps(body))
+    assert lab["app"].state.ai_usage.first_seen(None) == {}
+    assert rollup.covered(week())  # still read from the rollup meanwhile
+    report = rollup.run()
+    assert report.built == 0 and report.indexed == 6
+    assert "service:chatgpt" in lab["app"].state.ai_usage.first_seen(None)
+
+
+def test_new_in_24_hours_knows_use_older_than_the_window(lab: dict[str, Any]) -> None:
+    """A service last seen 40 days ago is not new today: the index remembers it, so the
+    summary never scans 30 days of events to find out (F63)."""
+    app, a = lab["app"], lab["admin"]
+    lake = app.state.engine._lake
+    LakeWriter(lake).write(_dns("dns_a", NOW - timedelta(days=40), 3, host="gemini.google.com"))
+    LakeWriter(lake).write(_dns("dns_a", NOW - timedelta(hours=2), 3, host="gemini.google.com"))
+    app.state.ai_watch._clock = lambda: NOW
+    before = {n["id"] for n in a.get("/api/ai/watch/summary").json()["new"]}
+    assert "gemini" in before  # not seen in the window, and no index yet
+    lab["rollup"].run()
+    after = {n["id"] for n in a.get("/api/ai/watch/summary").json()["new"]}
+    assert "gemini" not in after
+
+
+def test_a_range_query_reads_only_its_days_and_not_the_skipped_ones(lab: dict[str, Any]) -> None:
+    engine = lab["app"].state.engine
+    day = (NOW - timedelta(days=2)).date().isoformat()
+    # A broken file in a day outside the range would fail the query if it were opened.
+    old = engine._lake / "source=dns_a" / "day=2026-01-01"
+    old.mkdir(parents=True)
+    (old / "part-0.parquet").write_bytes(b"not parquet")
+    sql = "SELECT count(*) FROM events WHERE source_id = 'dns_a'"
+    assert engine.run(sql, week()).rows == [[22]]
+    assert engine.run(sql, week(), skip_days=[f"dns_a|{day}"]).rows == [[16]]

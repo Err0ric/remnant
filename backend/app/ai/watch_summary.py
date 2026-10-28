@@ -17,7 +17,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from app.ai.agents import agents
-from app.ai.catalog import NON_USAGE, Catalog
+from app.ai.catalog import NON_USAGE, Catalog, Service
 from app.ai.usage import Usage
 from app.alerts.items import AlertItem
 from app.engine.duckdb import QueryEngine, QueryScope
@@ -48,6 +48,29 @@ SELECT
   arg_max(who, sens) FILTER (WHERE template_id = 'claude_code_otel' AND sens > 0
     AND ts >= $start)
 FROM e"""
+
+
+class _Use:
+    """One service's use in the period, from the daily rows."""
+
+    def __init__(self) -> None:
+        self.people: set[str] = set()
+        self.machines: set[str] = set()
+        self.events = 0
+        self.first: datetime | None = None
+        self.last: datetime | None = None
+
+    def add(self, who: Any, machine: Any, events: Any, first: datetime | None,
+            last: datetime | None) -> None:  # fmt: skip
+        if who:
+            self.people.add(str(who))
+        if machine:
+            self.machines.add(str(machine))
+        self.events += int(events or 0)
+        if first is not None and (self.first is None or first < self.first):
+            self.first = first
+        if last is not None and (self.last is None or last > self.last):
+            self.last = last
 
 
 @dataclass(slots=True)
@@ -174,11 +197,20 @@ def summary(
     prev = _Users()
     people_by_svc: dict[str, set[str]] = defaultdict(set)
     chart: dict[date, dict[str, int]] = defaultdict(lambda: defaultdict(int))
-    for sid, who, machine, day_v, events, _last, _first in rows:
+    # The top services and the first-seen times come from these same rows: one query of
+    # events for the whole section (F63).
+    use: dict[str, _Use] = {}
+    first_in_rows: dict[str, datetime] = {}
+    for sid, who, machine, day_v, events, last, first in rows:
         if not is_use(sid):
             continue
         d = _day(day_v)
         st = status(sid)
+        f = _ts(first)
+        if f is not None and (sid not in first_in_rows or f < first_in_rows[sid]):
+            first_in_rows[sid] = f
+        if d >= cur_from:
+            use.setdefault(sid, _Use()).add(who, machine, events, f, _ts(last))
         if d >= today - timedelta(days=CHART_DAYS - 1):
             chart[d][st] += int(events)
         unapproved = st != "approved"
@@ -232,21 +264,21 @@ def summary(
         )
         for i in range(CHART_DAYS - 1, -1, -1)
     ]
-    cur_scope = QueryScope(allowed, datetime.combine(cur_from, datetime.min.time(), UTC), now)
-    found, read_top = usage.services(cur_scope)
-    found.sort(key=lambda u: (-u.people, -u.events, u.service.name))
+    ranked = sorted(
+        use.items(), key=lambda p: (-len(p[1].people), -p[1].events, services[p[0]].name)
+    )
     top = [
         TopService(
-            u.service.id,
-            u.service.name,
-            u.service.status,
-            u.people,
-            u.machines,
+            sid,
+            services[sid].name,
+            services[sid].status,
+            len(u.people),
+            len(u.machines),
             u.events,
-            _iso(u.first_seen),
-            _iso(u.last_seen),
+            _iso(u.first),
+            _iso(u.last),
         )
-        for u in found[:TOP]
+        for sid, u in ranked[:TOP]
     ]
     return Summary(
         days,
@@ -255,13 +287,13 @@ def summary(
         cards,
         chart_days,
         top,
-        sorted(set(read) | set(read_top) | set(read_signals)),
-        _new(usage, engine, allowed, items, readable, now),
+        sorted(set(read) | set(read_signals)),
+        _new(usage, engine, allowed, items, readable, now, first_in_rows, services),
     )
 
 
 NEW_WINDOW = timedelta(hours=24)
-HISTORY = timedelta(days=30)  # "first seen" means not seen in the 30 days before
+HISTORY = timedelta(days=30)  # telemetry read for MCP servers and agents; older days: index
 
 
 def _ts(v: Any) -> datetime | None:
@@ -278,35 +310,48 @@ def _new(
     items: list[AlertItem],
     readable: Callable[[AlertItem], bool],
     now: datetime,
+    services_first: dict[str, datetime],
+    known: dict[str, Service],
 ) -> list[NewThing]:
+    """First seen in the last 24 hours: never seen before in the rows of the summary's
+    window, nor in any closed day the rollup's first-seen index has (D116, F63). MCP
+    servers and agents are read from telemetry, which is small; services come from the
+    summary's own rows, so this reads no further events for them."""
     cutoff = now - NEW_WINDOW
     scope = QueryScope(allowed, now - HISTORY, now)
+    index = usage.first_seen(allowed)
     item_of: dict[str, str] = {}
     for i in sorted(items, key=lambda i: i.created_at):
         if readable(i):
             item_of[i.subject] = i.item_id
+
+    def first_of(key: str, seen: datetime | None) -> datetime | None:
+        earlier = index.get(key)
+        if seen is None or (earlier is not None and earlier < seen):
+            return earlier
+        return seen
+
     out: list[NewThing] = []
-    found, _ = usage.services(scope)
-    for u in found:
-        first = _ts(u.first_seen)
-        if first is not None and first >= cutoff:
+    for sid, seen in services_first.items():
+        first = first_of(f"service:{sid}", seen)
+        if first is not None and first >= cutoff and sid in known:
             out.append(
                 NewThing(
                     "service",
-                    u.service.id,
-                    u.service.name,
+                    sid,
+                    known[sid].name,
                     first.isoformat(),
-                    item_of.get(f"service:{u.service.id}"),
+                    item_of.get(f"service:{sid}"),
                 )
             )
     for m in usage.mcp(scope):
-        first = _ts(m.first_seen)
+        first = first_of(f"mcp:{m.name}", _ts(m.first_seen))
         if first is not None and first >= cutoff:
             out.append(
                 NewThing("mcp", m.name, m.name, first.isoformat(), item_of.get(f"mcp:{m.name}"))
             )
     for a in agents(engine, allowed, now):
-        first = _ts(a.first_seen)
+        first = first_of(f"agent:{a.agent}", _ts(a.first_seen))
         if first is not None and first >= cutoff:
             out.append(
                 NewThing(

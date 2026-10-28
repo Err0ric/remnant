@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Fixed: AI Watch failing on busy installs (F63)
+
+- AI Watch no longer fails with "The query needs more memory" on an install with busy DNS. Closed days are read from the daily AI rollup and only today from events; a query with a time range now opens only that range's days of the lake. On 30 days of 300,000 DNS events a day, the summary takes about 1 second instead of 33 to 43.
+- **New in 24 hours** now remembers what was seen before the last 30 days: the rollup keeps when each AI service, MCP server, and agent was first seen.
+- When a query needs more memory than the server allows, the answer is now 503 (a server limit), not 400, and the server log has a warning with the request id and which query it was.
+- A Dashboard section that fails to load (AI Watch, Needs you, Sources) and the Alerts list now say what failed, show the request id, and offer Retry, instead of leaving an empty frame or dropping the section.
+
 ### Who had an address: sessions with ends, DHCP, and sign-ins on a machine (ADR-0029, part 1)
 
 - Addresses resolve from **spans**, not single moments: a GlobalProtect session ends at its logout, a User-ID mapping at its logout, a DHCP lease or logon at the next one on the address. When no end is seen, a span is assumed to last at most 24 hours (VPN, DHCP) or 12 hours (User-ID, logon), and it says so: "no logout seen, assumed until 9:02 PM". Before, the newest login named the address for 12 hours even after a logout.

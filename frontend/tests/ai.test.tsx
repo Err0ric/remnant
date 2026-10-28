@@ -146,7 +146,7 @@ describe("A range too big for the memory share (F46)", () => {
                   "The query needs more memory than this server allows. Narrow the time range or the sources, or aggregate before returning rows",
                 code: "query_memory",
               }),
-              { status: 400, headers: { "Content-Type": "application/json" } },
+              { status: 503, headers: { "Content-Type": "application/json" } },
             ),
           );
       }

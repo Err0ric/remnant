@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, api, type AlertItem, type CloseReason } from "@/lib/api";
+import { LoadFailed } from "@/components/LoadFailed";
 import { kindForColumn, type EntityKind } from "@/lib/entity";
 import { cn } from "@/lib/cn";
 import { navigate, pathFor, useSection } from "@/lib/route";
@@ -93,9 +94,14 @@ export function AlertsPage({ canClose, isAdmin }: AlertsPageProps) {
       ) : list.isLoading ? (
         <div className="h-24 animate-pulse rounded-card bg-surface" aria-busy="true" />
       ) : list.isError ? (
-        <p role="alert" className="text-sm text-danger">
-          Alerts did not load. {list.error instanceof ApiError ? list.error.message : ""}
-        </p>
+        <div className="rounded-card border border-border bg-surface">
+          <LoadFailed
+            what="Alerts"
+            error={list.error}
+            onRetry={() => void list.refetch()}
+            retrying={list.isFetching}
+          />
+        </div>
       ) : (
         <>
           {tab === "open" && data && data.muted > 0 ? (

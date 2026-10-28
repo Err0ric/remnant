@@ -5,6 +5,8 @@ export class ApiError extends Error {
     public readonly status: number,
     message: string,
     public readonly code?: string,
+    /** The server's X-Request-ID, to find the request in the server log. */
+    public readonly requestId?: string,
   ) {
     super(message);
     this.name = "ApiError";
@@ -51,7 +53,7 @@ async function request<T>(path: string, init?: RequestInit, asText = false): Pro
     if (unreachableStatus(res.status, code)) reportUnreachable();
     else reportReached();
     if (code === "auth_required" || code === "setup_required") onAuthLost?.();
-    throw new ApiError(res.status, detail, code);
+    throw new ApiError(res.status, detail, code, res.headers.get("X-Request-ID") ?? undefined);
   }
   reportReached();
   if (res.status === 204) return undefined as T;

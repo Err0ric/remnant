@@ -7,6 +7,9 @@ never read as events and never enter the integrity ledger (row 7: derived, rebui
 
 A day is rebuilt when its event files change (late events, compaction) or the catalog's
 domains change (rows 5 and 6); it is removed when its source day is removed (retention).
+
+Each day's manifest also records when every service, MCP server, and agent was first seen
+that day: the first-seen index, so "New in 24 hours" never scans 30 days of events (F63).
 Reads go through the engine's `ai_rollup` view, built per query from the caller's sources
 exactly like `events` (row 4), and carry each source's classification as the events had it.
 """
@@ -27,8 +30,9 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import structlog
 
+from app.ai.agents import ITEMS_SQL
 from app.ai.catalog import Catalog
-from app.ai.usage import rollup_build_sql
+from app.ai.usage import MCP_SQL, first_services_sql, rollup_build_sql
 from app.engine.duckdb import QueryEngine, QueryScope
 
 log = structlog.get_logger(__name__)
@@ -59,6 +63,7 @@ class RollupReport:
     removed: int = 0
     pending: int = 0  # stale days left for the next run
     skipped: int = 0  # days too large for the rollup; read live
+    indexed: int = 0  # days given their first-seen entries without a rebuild
 
 
 def _ts(v: Any) -> datetime | None:
@@ -66,6 +71,22 @@ def _ts(v: Any) -> datetime | None:
         return None
     d = v if isinstance(v, datetime) else datetime.fromisoformat(str(v))
     return d if d.tzinfo else d.replace(tzinfo=UTC)
+
+
+def _iso(v: Any) -> str:
+    t = _ts(v)
+    return t.isoformat() if t is not None else str(v)
+
+
+def _first_services(table: pa.Table) -> dict[str, str]:
+    """First seen per service in a day's rollup rows."""
+    out: dict[str, datetime] = {}
+    for sid, t in zip(
+        table.column("service_id").to_pylist(), table.column("first_t").to_pylist(), strict=True
+    ):
+        if sid is not None and t is not None and (sid not in out or t < out[sid]):
+            out[sid] = t
+    return {f"service:{k}": _iso(v) for k, v in out.items()}
 
 
 class AiRollup:
@@ -84,6 +105,7 @@ class AiRollup:
         self._dir = rollup_dir
         self._clock = clock
         self._max = max_days_per_run
+        self._first_cache: dict[Path, tuple[int, dict[str, datetime]]] = {}
 
     # --- freshness ----------------------------------------------------------------------
 
@@ -94,19 +116,20 @@ class AiRollup:
     def _inputs(self, lake_day: Path) -> list[list[Any]]:
         return sorted([p.name, p.stat().st_size] for p in lake_day.glob("part-*.parquet"))
 
-    def _fresh(self, source: str, day: str, key: str) -> bool:
+    def _fresh(self, source: str, day: str, key: str, readable: bool = True) -> bool:
+        """Built from the day's current files and catalog. `readable`: and has rows to read
+        (a day too large for the rollup is current but read live; it is not rebuilt until
+        its files or the catalog change)."""
         built = self._dir / f"source={source}" / f"day={day}"
         lake_day = self._lake / f"source={source}" / f"day={day}"
         try:
             m = json.loads((built / MANIFEST).read_text())
         except (OSError, ValueError):
             return False
-        return (
-            m.get("catalog") == key
-            and m.get("inputs") == self._inputs(lake_day)
-            and (built / PART).is_file()
-            and not m.get("skipped")
-        )
+        current = m.get("catalog") == key and m.get("inputs") == self._inputs(lake_day)
+        if not readable:
+            return bool(current)
+        return bool(current and (built / PART).is_file() and not m.get("skipped"))
 
     def _closed_days(self) -> list[tuple[str, str]]:
         """(source, day) for every closed day in the lake, newest first."""
@@ -135,18 +158,28 @@ class AiRollup:
         if not self._lake.is_dir():
             return report
         key = self.catalog_key()
-        stale = [(s, d) for s, d in self._closed_days() if not self._fresh(s, d, key)]
+        closed = self._closed_days()
+        stale = [(s, d) for s, d in closed if not self._fresh(s, d, key, readable=False)]
         for source, day in stale[: self._max]:
             if self._build(source, day, key):
                 report.built += 1
             else:
                 report.skipped += 1
-        report.pending = max(0, len(stale) - self._max)
-        if report.built or report.removed:
+        # Days built before the first-seen index existed get it without a rebuild, so
+        # they stay readable from the rollup meanwhile (F63).
+        left = self._max - min(len(stale), self._max)
+        done = set(stale)
+        unindexed = [(s, d) for s, d in closed if (s, d) not in done and not self._indexed(s, d)]
+        for source, day in unindexed[:left]:
+            self._index_only(source, day)
+            report.indexed += 1
+        report.pending = max(0, len(stale) - self._max) + max(0, len(unindexed) - left)
+        if report.built or report.removed or report.indexed:
             log.info(
                 "ai_rollup.run",
                 built=report.built,
                 removed=report.removed,
+                indexed=report.indexed,
                 pending=report.pending,
                 skipped=report.skipped,
             )
@@ -165,11 +198,17 @@ class AiRollup:
             row_cap=MAX_ROWS,
             timeout_s=120,
             intel=False,
+            name="ai_rollup.build",
         )
         if result.truncated:
             # Too many rows to be worth it: that day is read live, and marked so.
             (out / PART).unlink(missing_ok=True)
-            self._manifest(out, key, inputs, skipped=True)
+            svc = self._engine.run(
+                first_services_sql(self._catalog.domain_table()), scope, timeout_s=120,
+                intel=False, name="ai_rollup.first",
+            ).rows  # fmt: skip
+            first = self._first_other(scope) | {f"service:{s}": _iso(t) for s, t in svc}
+            self._manifest(out, key, inputs, skipped=True, first=first)
             return False
         cols = list(zip(*result.rows, strict=True)) if result.rows else [()] * len(SCHEMA)
         arrays = []
@@ -184,15 +223,89 @@ class AiRollup:
         tmp = out / f".{PART}.tmp"
         pq.write_table(table, tmp)
         os.replace(tmp, out / PART)
-        self._manifest(out, key, inputs)
+        self._manifest(out, key, inputs, first=self._first_other(scope) | _first_services(table))
         return True
 
     def _manifest(
-        self, out: Path, key: str, inputs: list[list[Any]], skipped: bool = False
+        self,
+        out: Path,
+        key: str,
+        inputs: list[list[Any]],
+        skipped: bool = False,
+        first: dict[str, str] | None = None,
     ) -> None:
         tmp = out / f".{MANIFEST}.tmp"
-        tmp.write_text(json.dumps({"catalog": key, "inputs": inputs, "skipped": skipped}))
+        body = {"catalog": key, "inputs": inputs, "skipped": skipped, "first": first or {}}
+        tmp.write_text(json.dumps(body))
         os.replace(tmp, out / MANIFEST)
+
+    # --- the first-seen index (F63) -----------------------------------------------------
+
+    def _first_other(self, scope: QueryScope) -> dict[str, str]:
+        """MCP servers and agents first seen in a source's day (telemetry, inventory, and
+        usage reports; a day of other events matches none of their templates)."""
+        out: dict[str, str] = {}
+        for row in self._engine.run(
+            MCP_SQL, scope, timeout_s=120, intel=False, name="ai_rollup.first"
+        ).rows:
+            out[f"mcp:{row[0]}"] = _iso(row[6])
+        for row in self._engine.run(
+            ITEMS_SQL, scope, {"recent": scope.end or self._clock()}, timeout_s=120, intel=False,
+            name="ai_rollup.first",
+        ).rows:  # fmt: skip
+            out[f"agent:{row[1]}"] = _iso(row[5])
+        return out
+
+    def _indexed(self, source: str, day: str) -> bool:
+        try:
+            m = json.loads((self._dir / f"source={source}" / f"day={day}" / MANIFEST).read_text())
+        except (OSError, ValueError):
+            return False
+        return "first" in m
+
+    def _index_only(self, source: str, day: str) -> None:
+        out = self._dir / f"source={source}" / f"day={day}"
+        m = json.loads((out / MANIFEST).read_text())
+        start = datetime.combine(date.fromisoformat(day), time(0), UTC)
+        scope = QueryScope([source], start, start + timedelta(days=1) - timedelta(microseconds=1))
+        first = self._first_other(scope)
+        if (out / PART).is_file():
+            first |= _first_services(pq.read_table(out / PART))
+        self._manifest(out, m.get("catalog", ""), m.get("inputs", []), bool(m.get("skipped")),
+                       first)  # fmt: skip
+
+    def first_seen(self, sources: list[str] | None) -> dict[str, datetime]:
+        """ "service:<id>", "mcp:<name>", or "agent:<key>" -> when first seen in any closed
+        day of these sources (None: all) that the rollup has indexed. Read from the day
+        manifests, cached per file, so a dashboard load reads no events for it."""
+        out: dict[str, datetime] = {}
+        if not self._dir.is_dir():
+            return out
+        wanted = None if sources is None else set(sources)
+        for src in self._dir.glob("source=*"):
+            if wanted is not None and src.name.removeprefix("source=") not in wanted:
+                continue
+            for path in src.glob(f"day=*/{MANIFEST}"):
+                for k, t in self._day_first(path).items():
+                    if k not in out or t < out[k]:
+                        out[k] = t
+        return out
+
+    def _day_first(self, path: Path) -> dict[str, datetime]:
+        try:
+            stamp = path.stat().st_mtime_ns
+        except OSError:
+            return {}
+        hit = self._first_cache.get(path)
+        if hit is not None and hit[0] == stamp:
+            return hit[1]
+        try:
+            raw = json.loads(path.read_text()).get("first") or {}
+        except (OSError, ValueError):
+            raw = {}
+        parsed = {str(k): t for k, v in raw.items() if (t := _ts(v)) is not None}
+        self._first_cache[path] = (stamp, parsed)
+        return parsed
 
     # --- reading ------------------------------------------------------------------------
 

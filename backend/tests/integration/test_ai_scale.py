@@ -3,25 +3,32 @@ per-query memory share, without spilling to disk, because each query reduces eve
 small groups before any join. The full-size run (300k a day for 30 days) is `-m scale`."""
 
 import shutil
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from structlog.testing import capture_logs
 
 from app.core.config import load_config
 from app.main import create_app
-from tests.scale_lake import write_dns
+from tests.scale_lake import write_dns, write_identity
 
 
-def _app(tmp: Path, lake: Path, memory_mb: int, spill: bool) -> TestClient:
-    config = load_config(Path("missing.yaml"), {"APP__PATHS__DATA_DIR": str(tmp / "data")})
+def _app(
+    tmp: Path, lake: Path, memory_mb: int | None, spill: bool, env: dict[str, str] | None = None
+) -> TestClient:
+    config = load_config(
+        Path("missing.yaml"), {"APP__PATHS__DATA_DIR": str(tmp / "data"), **(env or {})}
+    )
     app = create_app(config)
     dest = app.state.engine._lake
     shutil.rmtree(dest, ignore_errors=True)
     shutil.copytree(lake, dest)
-    app.state.engine._memory_mb = memory_mb
+    if memory_mb is not None:
+        app.state.engine._memory_mb = memory_mb
     if not spill:
         # A file where the spill folder should be: any query that needs to spill fails.
         blocker = tmp / "no-spill"
@@ -60,21 +67,49 @@ def test_queries_spill_to_the_data_folder(tmp_path: Path) -> None:
     assert app.state.engine._temp_dir.is_dir()
 
 
+# The dashboard's first section answers well inside a page load (F63). Before F63 this run
+# took 33 s (7 days) and 43 s (30 days) on a 2 vCPU runner, and failed with query_memory
+# on a 4 GB install with real resolver data.
+SUMMARY_BUDGET_S = 10.0
+
+
 @pytest.mark.scale
 def test_full_size_300k_a_day_for_30_days(tmp_path: Path) -> None:
     lake = tmp_path / "lake"
-    write_dns(lake, per_day=300_000, days=30, end=datetime.now(UTC))
-    c = _app(tmp_path, lake, memory_mb=1024, spill=True)
+    end = datetime.now(UTC)
+    write_dns(lake, per_day=300_000, days=30, end=end, names=150_000, daily_names=True)
+    write_identity(lake, days=30, end=end)
+    # The default share of a 4 GB server (D80), as on the install that found F63.
+    c = _app(
+        tmp_path, lake, memory_mb=None, spill=True, env={"APP__SERVER__MEMORY_LIMIT_MB": "4096"}
+    )
+    rollup = c.app.state.ai_rollup  # type: ignore[attr-defined]  # the app under test
+    rollup._max = 1000
+    assert rollup.run().built > 0
     for days in (1, 7, 30):
         _every_tab(c, days)
+    for days in (7, 30):
+        started = time.perf_counter()
+        res = c.get("/api/ai/watch/summary", params={"days": days})
+        took = time.perf_counter() - started
+        assert res.status_code == 200, res.text
+        assert took < SUMMARY_BUDGET_S, f"AI Watch summary ({days} days) took {took:.1f} s"
+        assert res.json()["top"], "AI use in the data"
 
 
-def test_too_little_memory_is_its_own_error_code(tmp_path: Path) -> None:
+def test_too_little_memory_is_a_server_limit_with_its_own_code(tmp_path: Path) -> None:
+    """A server-side memory limit is not a bad request: 503 with its own code, logged at
+    WARN with the request id and which query it was (F63)."""
     lake = tmp_path / "lake"
     write_dns(lake, per_day=50_000, days=2, end=datetime.now(UTC))
     c = _app(tmp_path, lake, memory_mb=16, spill=True)
     start = (datetime.now(UTC) - timedelta(days=2)).isoformat()
-    res = c.get("/api/ai/usage", params={"start": start})
-    assert res.status_code == 400
+    with capture_logs() as logs:
+        res = c.get("/api/ai/usage", params={"start": start})
+    assert res.status_code == 503
     assert res.json()["code"] == "query_memory"
     assert res.json()["detail"].startswith("The query needs more memory")
+    warn = [e for e in logs if e["event"] == "query.memory"]
+    assert warn and warn[0]["log_level"] == "warning"
+    assert warn[0]["request_id"] == res.headers["X-Request-ID"]
+    assert warn[0]["query"].startswith("ai_use.")

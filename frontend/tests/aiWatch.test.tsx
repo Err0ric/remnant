@@ -64,3 +64,47 @@ describe("AI Watch on the Dashboard (ADR-0035 Part 2)", () => {
     );
   });
 });
+
+describe("A dashboard section that fails to load (F63)", () => {
+  it("stays on the page with a plain error and Retry", async () => {
+    const real = mockApi("Codename", { mode: "login", signedIn: true, role: "admin" });
+    const impl = real.getMockImplementation() as typeof fetch;
+    real.mockRestore();
+    window.history.replaceState(null, "", "/dashboard");
+    let fail = true;
+    vi.spyOn(globalThis, "fetch").mockImplementation((url, init) => {
+      if (fail && String(url).includes("/api/ai/watch/summary"))
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              detail: "The query needs more memory than this server allows.",
+              code: "query_memory",
+            }),
+            {
+              status: 503,
+              headers: { "Content-Type": "application/json", "X-Request-ID": "a1b2c3d4e5f6" },
+            },
+          ),
+        );
+      return impl(url, init);
+    });
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<App initialTheme="dark" queryClient={client} />);
+    const watch = await screen.findByRole("region", { name: "AI Watch" });
+    const alert = await within(watch).findByRole("alert");
+    expect(alert).toHaveTextContent(
+      "AI Watch did not load: the query needed more memory than this server allows.",
+    );
+    expect(alert).toHaveTextContent("Request a1b2c3d4e5f6");
+    // The server is not "unreachable": a limit with a code is an answer.
+    expect(screen.queryByText(/cannot reach the server/i)).toBeNull();
+    fail = false;
+    await userEvent.click(within(alert).getByRole("button", { name: "Retry" }));
+    expect(await within(watch).findByText("Unapproved AI services")).toBeVisible();
+    expect(within(watch).queryByRole("alert")).toBeNull();
+  });
+});

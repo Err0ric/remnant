@@ -7,8 +7,8 @@ like any other, so people see only sources they may read.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import timedelta
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from app.ai.catalog import DOMAIN, NON_USAGE, Catalog, Service, Status
@@ -136,10 +136,11 @@ _HOUR_ROWS = f"""{WHO_EXPR} AS who0, nullif(src_endpoint_hostname, '') AS shost,
          date_trunc('hour', coalesce(time, time_observed)) AS t,
          count(*) AS n, min(coalesce(time, time_observed)) AS first_t,
          max(coalesce(time, time_observed)) AS last_t"""
-_DAY_KEY = "source_id || '|' || strftime(coalesce(time, time_observed), '%Y-%m-%d')"
 
 
 def _match_ctes(pairs: list[tuple[str, str]]) -> str:
+    """Catalog domains, the distinct hosts of the events `where` selects, and which
+    service each host is."""
     return f"""cat(service_id, domain) AS (VALUES {_values(pairs)}),
 hosts AS (
   SELECT DISTINCT {HOST_EXPR} AS host FROM events
@@ -165,6 +166,18 @@ GROUP BY ALL
 LIMIT 1000000"""  # noqa: S608  # fixed SQL text; domains checked against DOMAIN in _values
 
 
+def first_services_sql(pairs: list[tuple[str, str]]) -> str:
+    """When each service was first seen in the events in scope: for a closed day too large
+    for the rollup, so the first-seen index still has it (F63)."""
+    return f"""
+WITH {_match_ctes(pairs)}
+SELECT hm.service_id, min(coalesce(time, time_observed)) AS first_t
+FROM events JOIN hm ON {HOST_EXPR} = hm.host
+WHERE {_ANY_HOST}
+GROUP BY 1
+LIMIT 5000"""  # noqa: S608  # fixed SQL text; domains checked against DOMAIN in _values
+
+
 def _use_ctes(pairs: list[tuple[str, str]], rollup: bool) -> str:
     """Events reduced to service, person, machine, address, and hour, with rows that name
     only an address given the person and machine that had it at the time, from logon and
@@ -177,8 +190,9 @@ def _use_ctes(pairs: list[tuple[str, str]], rollup: bool) -> str:
     step holds a row per event, so a week of busy DNS fits a small per-query budget.
 
     With `rollup`, the days listed in `$covered` ("source|YYYY-MM-DD") come from the daily
-    AI rollup and only the rest is read from events (ADR-0035 rows 3 and 8)."""
-    live_where = _ANY_HOST + (f" AND NOT list_contains($covered, {_DAY_KEY})" if rollup else "")
+    AI rollup and only the rest is read from events (ADR-0035 rows 3 and 8). The engine
+    leaves those days' files out of `events` altogether (`skip_days`), so closed days are
+    never scanned again, not even to be filtered out (F63)."""
     from_rollup = (
         """
   UNION ALL
@@ -191,7 +205,7 @@ def _use_ctes(pairs: list[tuple[str, str]], rollup: bool) -> str:
 hj AS (
   SELECT hm.service_id, source_id, {_HOUR_ROWS}
   FROM events JOIN hm ON {HOST_EXPR} = hm.host
-  WHERE {live_where}
+  WHERE {_ANY_HOST}
   GROUP BY ALL{from_rollup}
 ),
 {address_ctes("hj", "who0 IS NULL OR shost IS NULL")},
@@ -329,7 +343,7 @@ class Usage:
     def all_services(self, scope: QueryScope) -> tuple[list[ServiceUse], list[str]]:
         """Every catalog match, non-usage hosts included, plus the sources read."""
         known = {s.id: s for s in self._catalog.services()}
-        result = self._run_use(services_sql, scope)
+        result = self._run_use(services_sql, scope, "ai_use.services")
         out = []
         for sid, events, people, machines, first, last, top, top_m in result.rows:
             if sid in known:
@@ -347,17 +361,19 @@ class Usage:
                 )
         return out, result.sources
 
-    def _run_use(self, build: Any, scope: QueryScope) -> Any:
+    def _run_use(self, build: Any, scope: QueryScope, name: str = "ai_use") -> Any:
         """Run a use query, reading closed days from the rollup for ranges of 2 days or
-        more when it has them (ADR-0035 row 8)."""
+        more when it has them (ADR-0035 row 8). A range with a start and no end (the AI
+        usage page sends only a start) uses the rollup's closed days too, and still reads
+        everything after the start, events stamped ahead of the clock included."""
+        upto = scope.end or datetime.now(UTC)
         covered: list[str] = []
         if (
             self._rollup is not None
             and scope.start is not None
-            and scope.end is not None
-            and scope.end - scope.start >= timedelta(days=2)
+            and upto - scope.start >= timedelta(days=2)
         ):
-            covered = self._rollup.covered(scope)
+            covered = self._rollup.covered(replace(scope, end=upto))
         if covered:
             return self._engine.run(
                 build(self._catalog.domain_table(), rollup=True),
@@ -365,12 +381,22 @@ class Usage:
                 {"covered": covered},
                 timeout_s=TIMEOUT_S,
                 rollup=True,
+                skip_days=covered,
+                name=name,
             )
-        return self._engine.run(build(self._catalog.domain_table()), scope, timeout_s=TIMEOUT_S)
+        return self._engine.run(
+            build(self._catalog.domain_table()), scope, timeout_s=TIMEOUT_S, name=name
+        )
+
+    def first_seen(self, sources: list[str] | None) -> dict[str, datetime]:
+        """When each service, MCP server, and agent was first seen in the closed days the
+        rollup has indexed ("service:<id>", "mcp:<name>", "agent:<key>"); empty without
+        the rollup (F63)."""
+        return {} if self._rollup is None else dict(self._rollup.first_seen(sources))
 
     def review(self, scope: QueryScope) -> list[list[Any]]:
         """(service id, sources, people, devices without a person, devices with one)."""
-        return list(self._run_use(review_sql, scope).rows)
+        return list(self._run_use(review_sql, scope, "ai_use.review").rows)
 
     def review_mcp(self, scope: QueryScope) -> list[list[Any]]:
         """(server name, sources, people, devices without a person, devices with one)."""
@@ -379,7 +405,7 @@ class Usage:
     def daily(self, scope: QueryScope) -> tuple[list[list[Any]], list[str]]:
         """(service id, person, machine, day, events, last seen, first seen) rows, and the
         sources read."""
-        result = self._run_use(daily_sql, scope)
+        result = self._run_use(daily_sql, scope, "ai_use.daily")
         return result.rows, result.sources
 
     def changes(

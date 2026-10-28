@@ -10,6 +10,7 @@ import {
 import { cn } from "@/lib/cn";
 import { navigate, pathFor } from "@/lib/route";
 import { EntityLink } from "@/components/EntityLink";
+import { LoadFailed } from "@/components/LoadFailed";
 import { When } from "@/components/When";
 import { StatusBadge, STATUS_LABEL } from "@/features/ai/StatusBadge";
 
@@ -43,6 +44,18 @@ export function AiWatch() {
   });
   if (q.isLoading)
     return <div aria-busy="true" className="h-48 animate-pulse rounded-card bg-surface" />;
+  if (q.isError && !q.data)
+    return (
+      <section aria-label="AI Watch" className="rounded-card border border-border bg-surface">
+        <h2 className="border-b border-border px-3 py-2 text-base font-semibold">AI Watch</h2>
+        <LoadFailed
+          what="AI Watch"
+          error={q.error}
+          onRetry={() => void q.refetch()}
+          retrying={q.isFetching}
+        />
+      </section>
+    );
   const s = q.data;
   if (!s) return null;
   const used = s.chart.some((d) => d.approved + d.unreviewed + d.not_approved > 0);

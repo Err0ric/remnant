@@ -8,7 +8,7 @@ configuration locked. The guard runs before any of this.
 
 import threading
 import time
-from collections.abc import Iterator, Mapping
+from collections.abc import Collection, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
@@ -31,6 +31,7 @@ from app.engine.narrow import pinned_sources
 
 ALLOWED_TABLES = frozenset({"events"})
 LAKE_FILES = "day=*/part-*.parquet"  # under each source=<id> folder
+DAY_FILES = "part-*.parquet"  # under each day=<date> folder
 # Threat intel lists (ADR-0023 row 7) are readable in SQL, but never by a model: Ask's
 # previews and the MCP server run with intel=False, so feed text cannot reach a prompt.
 INTEL_TABLES = ALLOWED_TABLES | {"threat_intel"}
@@ -120,10 +121,14 @@ class QueryEngine:
         timeout_s: float | None = None,
         intel: bool = True,
         rollup: bool = False,
+        skip_days: Collection[str] = (),
+        name: str = "query",
     ) -> QueryResult:
         """Run guarded SQL. `params` are bound by the driver ($name), never formatted in.
         `row_cap` lowers both the implicit and the maximum LIMIT (Ask previews use 5), and
-        `timeout_s` can only shorten the configured timeout."""
+        `timeout_s` can only shorten the configured timeout. `skip_days` ("source|day")
+        leaves those day folders out of `events` (the AI rollup has them, F63); `name` is
+        what a memory error reports, for the log."""
         limit_s = min(self._timeout_s, timeout_s) if timeout_s else self._timeout_s
         default = min(self._default_limit, row_cap) if row_cap else self._default_limit
         cap = min(self._max_limit, row_cap) if row_cap else self._max_limit
@@ -137,7 +142,9 @@ class QueryEngine:
             keep = pinned if scope.sources is None else pinned & set(scope.sources)
             scope = replace(scope, sources=sorted(keep))
         with self._slot(limit_s):
-            return self._execute(guarded, scope, params, intel, limit_s, cap, rollup)
+            return self._execute(
+                guarded, scope, params, intel, limit_s, cap, rollup, frozenset(skip_days), name
+            )
 
     def _execute(
         self,
@@ -148,8 +155,10 @@ class QueryEngine:
         limit_s: float,
         cap: int,
         rollup: bool = False,
+        skip: frozenset[str] = frozenset(),
+        name: str = "query",
     ) -> QueryResult:
-        con = self._connect(scope, intel=intel, rollup=rollup)
+        con = self._connect(scope, intel=intel, rollup=rollup, skip=skip)
         timer = threading.Timer(limit_s, con.interrupt)
         started = time.perf_counter()
         try:
@@ -163,7 +172,8 @@ class QueryEngine:
         except (duckdb.OutOfMemoryException, MemoryError) as exc:
             raise QueryMemoryError(
                 "The query needs more memory than this server allows. Narrow the time range "
-                "or the sources, or aggregate before returning rows"
+                "or the sources, or aggregate before returning rows",
+                query=name,
             ) from exc
         except duckdb.Error as exc:
             raise QueryFailedError(self._scrub(str(exc).splitlines()[0])[:300]) from exc
@@ -258,8 +268,33 @@ class QueryEngine:
             dirs = [d for d in dirs if d.name.removeprefix("source=") in wanted]
         return [d for d in dirs if any(d.glob(ROLLUP_FILES))]
 
+    def _lake_globs(self, dirs: list[Path], scope: QueryScope, skip: frozenset[str]) -> list[str]:
+        """File patterns for `events`. With a time range, only the day folders it touches
+        (the writer files events by their UTC day), so a 7-day query never opens the other
+        days' files; `skip` leaves out days the caller reads from the AI rollup (F63)."""
+        if scope.start is None and scope.end is None and not skip:
+            return [str(d / LAKE_FILES) for d in dirs]
+        first = scope.start.astimezone(UTC).date().isoformat() if scope.start else ""
+        last = scope.end.astimezone(UTC).date().isoformat() if scope.end else "9999-12-31"
+        out = []
+        for d in dirs:
+            source = d.name.removeprefix("source=")
+            for day_dir in d.glob("day=*"):
+                day = day_dir.name.removeprefix("day=")
+                if (
+                    first <= day <= last
+                    and f"{source}|{day}" not in skip
+                    and any(day_dir.glob(DAY_FILES))
+                ):
+                    out.append(str(day_dir / DAY_FILES))
+        return sorted(out)
+
     def _connect(
-        self, scope: QueryScope, intel: bool = False, rollup: bool = False
+        self,
+        scope: QueryScope,
+        intel: bool = False,
+        rollup: bool = False,
+        skip: frozenset[str] = frozenset(),
     ) -> duckdb.DuckDBPyConnection:
         dirs = self._source_dirs(scope)
         # Threads and memory at creation: connecting with the defaults first starts one
@@ -274,8 +309,9 @@ class QueryEngine:
             config["temp_directory"] = str(self._temp_dir)
         con = duckdb.connect(":memory:", config=config)
         con.execute("SET TimeZone = 'UTC'")
-        if dirs:
-            globs = ", ".join(_sql_str(str(d / LAKE_FILES)) for d in dirs)
+        files = self._lake_globs(dirs, scope, skip)
+        if files:
+            globs = ", ".join(_sql_str(f) for f in files)
             base = f"read_parquet([{globs}], hive_partitioning = false, union_by_name = true)"
         else:
             con.execute(duckdb_create_table_sql("_empty_events"))

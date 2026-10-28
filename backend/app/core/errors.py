@@ -20,7 +20,12 @@ class QueryFailedError(AppError):
 
 
 class QueryMemoryError(QueryFailedError):
-    """The query needed more memory than its share; a narrower range may work (F46)."""
+    """The query needed more memory than its share; a narrower range may work (F46). A
+    server limit, not a bad request: 503 (F63). `query` names the query for the log."""
+
+    def __init__(self, message: str, query: str = "query") -> None:
+        super().__init__(message)
+        self.query = query
 
 
 class QueryBusyError(AppError):

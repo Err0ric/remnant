@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { LoadFailed } from "@/components/LoadFailed";
 import { api, type AlertItem, type AlertList, type Overview, type Source } from "@/lib/api";
 import { navigate, pathFor } from "@/lib/route";
 import { When } from "@/components/When";
@@ -59,6 +60,21 @@ export function AttentionBanner() {
     queryFn: api.overview,
     refetchInterval: 60_000,
   });
+  const failed = [alerts, sources, overview].filter((q) => q.isError && !q.data);
+  if (failed.length)
+    return (
+      <section
+        aria-label="Needs you"
+        className="rounded-card border border-border border-l-4 border-l-warn bg-surface"
+      >
+        <LoadFailed
+          what="Needs you"
+          error={failed[0]?.error}
+          onRetry={() => failed.forEach((q) => void q.refetch())}
+          retrying={failed.some((q) => q.isFetching)}
+        />
+      </section>
+    );
   const states = sourceStates(sources.data ?? [], overview.data);
   const lines = attentionLines(alerts.data, states);
   const restricted = alerts.data?.restricted ?? 0;
@@ -185,6 +201,18 @@ export function SourcesLine() {
     queryFn: api.overview,
     refetchInterval: 60_000,
   });
+  const failed = [sources, overview].filter((q) => q.isError && !q.data);
+  if (failed.length)
+    return (
+      <section aria-label="Sources" className="rounded-card border border-border bg-surface">
+        <LoadFailed
+          what="Sources"
+          error={failed[0]?.error}
+          onRetry={() => failed.forEach((q) => void q.refetch())}
+          retrying={failed.some((q) => q.isFetching)}
+        />
+      </section>
+    );
   if (!sources.data || !overview.data) return null;
   const states = sourceStates(sources.data, overview.data);
   if (!states.length) return null;
