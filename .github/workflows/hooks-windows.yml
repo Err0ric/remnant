@@ -1,0 +1,34 @@
+name: hooks-windows
+
+# The Windows hooks plugin under Windows PowerShell 5.1 (ADR-0026 amendment 2026-10-29):
+# what PowerShell 7 on Linux cannot show (the 5.1 JSON fallback and the CA_FILE check).
+# Runs only when the Windows script or its check changes, or by hand: Windows minutes cost
+# more and the private repo's minutes are limited.
+on:
+  pull_request:
+    paths:
+      - "backend/app/ai/claude_plugin/windows/**"
+      - "scripts/check_hooks_windows.py"
+      - ".github/workflows/hooks-windows.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: hooks-windows-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  windows-powershell:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6
+        with:
+          python-version: "3.12"
+      - name: Windows PowerShell version
+        shell: powershell
+        run: $PSVersionTable.PSVersion.ToString()
+      - name: Check the script
+        run: uv run --no-project --with "cryptography==44.0.0" python scripts/check_hooks_windows.py

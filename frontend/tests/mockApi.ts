@@ -986,7 +986,12 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         ],
       });
     if (url.endsWith("/api/sources/claude-plugin") && method === "GET")
-      return json({ version: "1.0.0", script_sha256: "ab".repeat(32) });
+      return json({
+        version: "2.0.0",
+        script_sha256: "ab".repeat(32),
+        scripts: { windows: "cd".repeat(32), posix: "ab".repeat(32) },
+        self_signed: true,
+      });
     if (/\/api\/sources\/[^/]+\/claude-plugin$/.test(url) && method === "POST")
       return new Response("PK", {
         status: 200,

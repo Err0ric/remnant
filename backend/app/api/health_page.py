@@ -38,6 +38,7 @@ class AgentOut(BaseModel):
     events_24h: int
     state: str
     reason: str | None
+    dropped_24h: int = 0  # records the hooks plugin could not send
 
 
 class HealthOut(BaseModel):

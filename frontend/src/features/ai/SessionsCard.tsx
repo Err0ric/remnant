@@ -9,6 +9,7 @@ const ROLE: Record<string, string> = {
   user: "Prompt",
   tool_call: "Tool call",
   tool_result: "Result",
+  turn: "Turn",
 };
 
 const EVENT: Record<string, string> = {
@@ -16,7 +17,9 @@ const EVENT: Record<string, string> = {
   user_prompt_submit: "Prompt",
   pre_tool_use: "Calls",
   post_tool_use: "Returned",
-  stop: "Stopped",
+  post_tool_use_failure: "Failed",
+  stop: "Turn end",
+  session_end: "Ended",
 };
 
 /** What a step touched, in one line: the file, the web host, the program, the MCP tool. */

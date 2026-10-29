@@ -33,7 +33,7 @@ from xml.etree.ElementTree import Element
 import defusedxml.ElementTree as SafeET
 from defusedxml import DefusedXmlException
 
-from app.ai.sensitive import scan
+from app.ai.sensitive import mask, scan
 from app.core.errors import ParamInvalidError
 from app.ingest.sources import SPOOL_SUFFIX, spool_name
 
@@ -60,6 +60,7 @@ CONTENT_KEYS = frozenset(
         # The hooks plugin (ADR-0026): tool output and the whole hook input, sent only when
         # the plugin was downloaded with content on, kept only when the source keeps it.
         "tool_response",
+        "tool_error",
         "hook_payload",
     }
 )
@@ -326,11 +327,34 @@ def signals(
     found = (
         scan(payload)
         if isinstance(payload, str) and payload
-        else scan(src.get("prompt"), src.get("tool_input"), src.get("tool_parameters"), body)
+        else scan(
+            src.get("prompt"),
+            src.get("tool_input"),
+            src.get("tool_parameters"),
+            src.get("tool_response"),
+            src.get("tool_error"),
+            body,
+        )
     )
     if found:
         attr["sensitive"] = found
         attr["sensitive_total"] = sum(found.values())
+
+
+def redact(record: dict[str, Any]) -> dict[str, Any]:
+    """Content a source keeps, with detected secrets masked before it is stored (ADR-0026
+    amendment 2026-10-29 row 5); the sensitive-data counts were taken first."""
+    attr = record.get("attr")
+    if isinstance(attr, dict):
+        for k in CONTENT_KEYS:
+            if isinstance(attr.get(k), str):
+                attr[k] = mask(attr[k])
+    # A body is content only on events that carry what a person typed or the model said;
+    # other logs' bodies are their message and stay as sent.
+    event = str(record.get("event") or "")
+    if event.split(".")[-1] in CONTENT_EVENTS and isinstance(record.get("body"), str):
+        record["body"] = mask(record["body"])
+    return record
 
 
 def minimize(record: dict[str, Any]) -> dict[str, Any]:
@@ -393,7 +417,7 @@ def log_records(payload: Any, keep_content: bool) -> Iterator[dict[str, Any] | N
                     attributes(lr.get("attributes"), clip=False),
                     any_value(lr.get("body"), clip=False),
                 )
-                yield record if keep_content else minimize(record)
+                yield redact(record) if keep_content else minimize(record)
 
 
 def metric_records(payload: Any) -> Iterator[dict[str, Any]]:

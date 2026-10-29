@@ -1,0 +1,5 @@
+{
+  "name": "siem-claude-hooks-posix",
+  "version": "2.0.0",
+  "description": "Observe-only hooks for Claude Code on macOS and Linux: sends one metadata record per event to your SIEM. Never blocks or changes anything."
+}

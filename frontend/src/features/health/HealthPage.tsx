@@ -242,7 +242,9 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
       key: `${a.source_id}:${a.machine}`,
       name: a.machine,
       sub: a.source_id,
-      detail: `${a.kind} · ${a.events_24h.toLocaleString()} events in 24 h`,
+      detail:
+        `${a.kind} · ${a.events_24h.toLocaleString()} events in 24 h` +
+        (a.dropped_24h ? ` · ${a.dropped_24h.toLocaleString()} dropped` : ""),
       last: a.last_seen,
       level: a.state === "unknown" ? "attention" : a.state,
       reason: a.reason,

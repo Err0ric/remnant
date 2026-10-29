@@ -68,7 +68,11 @@ AGENT_SQL = """
 SELECT source_id, coalesce(nullif(device_hostname, ''), nullif(src_endpoint_hostname, ''),
                            src_endpoint_ip, '(unknown machine)') AS machine,
        max(time_observed) AS last,
-       count(*) FILTER (WHERE time_observed >= $since) AS n24
+       count(*) FILTER (WHERE time_observed >= $since) AS n24,
+       bool_or(template_id = 'claude_hooks') AS hooks,
+       -- Records the hooks plugin could not send, reported by its next record (ADR-0026).
+       coalesce(sum(TRY_CAST(json_extract_string(unmapped, '$.attr.dropped_since_last')
+         AS BIGINT)) FILTER (WHERE time_observed >= $since), 0) AS dropped
 FROM events
 WHERE list_contains($sources, source_id) OR template_id = 'mcp_inventory'
 GROUP BY 1, 2
@@ -124,13 +128,14 @@ class DeviceStatus:
 
 @dataclass(frozen=True, slots=True)
 class AgentStatus:
-    kind: str  # "OpenTelemetry" or "MCP inventory"
+    kind: str  # "OpenTelemetry", "Claude hooks plugin", or "MCP inventory"
     source_id: str
     machine: str
     last_seen: str | None
     events_24h: int
     state: State
     reason: str | None
+    dropped_24h: int = 0  # records the hooks plugin could not send (ADR-0026 row 15)
 
 
 def evaluate(
@@ -295,7 +300,7 @@ class HealthService:
             timeout_s=TIMEOUT_S,
         )
         out = []
-        for source_id, machine, last, n24 in result.rows:
+        for source_id, machine, last, n24, hooks, dropped in result.rows:
             t = _parse(last)
             inventory = str(source_id) not in otlp
             limit = INVENTORY_ATTENTION if inventory else AGENT_ATTENTION
@@ -307,15 +312,26 @@ class HealthService:
                     state, reason = "unhealthy", f"Last reported {human(gap.total_seconds())} ago"
                 elif gap > limit:
                     state, reason = "attention", f"Last reported {human(gap.total_seconds())} ago"
+            lost = int(dropped or 0)
+            if lost and state == "healthy":
+                noun = "event" if lost == 1 else "events"
+                state = "attention"
+                reason = (
+                    f"{lost} {noun} dropped in 24 hours: the plugin could not reach this server"
+                )
+            kind = "MCP inventory" if inventory else "OpenTelemetry"
+            if hooks and not inventory:
+                kind = "Claude hooks plugin"
             out.append(
                 AgentStatus(
-                    "MCP inventory" if inventory else "OpenTelemetry",
+                    kind,
                     str(source_id),
                     str(machine),
                     t.isoformat() if t else None,
                     int(n24 or 0),
                     state,
                     reason,
+                    lost,
                 )
             )
         return out

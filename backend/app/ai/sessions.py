@@ -33,7 +33,11 @@ SELECT {_a("session_id")} AS session_id,
        list(DISTINCT coalesce({_a("mcp_server_name")}, {_a("tool_name")}))
          FILTER (WHERE {_a("tool_name")} IS NOT NULL) AS tools,
        list(DISTINCT {_a("web_host")}) FILTER (WHERE {_a("web_host")} IS NOT NULL) AS hosts,
-       bool_or(message = 'claude_hooks.stop') AS stopped
+       -- Ended: a session end, or for the first plugin (no session end event) a stop.
+       bool_or(message = 'claude_hooks.session_end')
+         OR (NOT bool_or({_a("plugin_variant")} IS NOT NULL)
+             AND bool_or(message = 'claude_hooks.stop')) AS stopped,
+       count(*) FILTER (WHERE message = 'claude_hooks.post_tool_use_failure') AS failed
 FROM events
 WHERE template_id = 'claude_hooks' AND {_a("session_id")} IS NOT NULL
 GROUP BY 1
@@ -64,7 +68,8 @@ class Session:
     tool_calls: int
     tools: list[str] = field(default_factory=list)
     hosts: list[str] = field(default_factory=list)
-    stopped: bool = False
+    stopped: bool = False  # ended
+    failed: int = 0  # tool calls that failed
 
 
 @dataclass(slots=True)
@@ -113,8 +118,11 @@ def sessions(
             sorted(str(t) for t in (tools or [])),
             sorted(str(h) for h in (hosts or [])),
             bool(stopped),
+            int(failed or 0),
         )
-        for sid, person, machine, started, last, prompts, calls, tools, hosts, stopped in rows
+        for sid, person, machine, started, last, prompts, calls, tools, hosts, stopped, failed in (
+            rows
+        )
     ]
 
 

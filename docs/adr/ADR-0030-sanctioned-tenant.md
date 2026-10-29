@@ -84,3 +84,25 @@ Microsoft 365 sign-ins now carry the device name (`device_hostname`) as well as 
 ## Out of scope
 
 - Reading account identifiers from TLS or proxy logs (needs decryption or vendor tenant headers; a later option where a proxy already adds them).
+
+## Amendment 2026-10-29 (owner: Claude account email from the hooks plugin, with tiers)
+
+The hooks plugin now reports the signed-in Claude account email for Claude Code and Cowork sessions (ADR-0026 amendment 2026-10-29 row 4). That names the account in use directly, which a sign-in window can only infer; but it is reported by the device (the file it comes from can be edited), so it is a tier of its own below an Entra sign-in. This amends condition C2 for Claude Code and Cowork use only; browser use still needs an Entra sign-in.
+
+| Tier | When | Row label | Counts as |
+|---|---|---|---|
+| Company, confirmed | Company-domain account email, and an Entra sign-in to the app by the same person within the window (C3) | "Company account: reported by device, sign-in 9:02 AM" | Approved |
+| Company, reported | Company-domain account email; no Microsoft 365 sign-in source is configured | "Claude account (reported by device)" | Approved |
+| Company, not confirmed | Company-domain account email; a sign-in source is configured but has no sign-in to the app by that person within the window | "Reported company account, not confirmed by sign-in" | Approved, flagged for review. Report-only: no alert item unless an admin turns on **Raise alerts for unconfirmed company accounts** (off by default; audited `ai.watch_change`) |
+| Personal | Account email outside the company domains | "Personal Claude account" (a fact the device reported, not "possible") | Unapproved. An alert item per person and day once **Raise alerts for possible personal accounts** (C5) is on |
+| Not checked | No account email (API key sessions, or no plugin) | "Not checked: no Claude account reported" | Never company: not cleared, counted with Can't verify (C7) |
+
+| # | Rule |
+|---|---|
+| T1 | **Company domains** are the ADR-0018 organization email domains setting (one list for identity and this check). Compared case-insensitively on the exact domain. With the list empty, every row with an email is Not checked, and the service says so |
+| T2 | **What the email clears**: the hook records themselves, and network use of the Claude API host (`api.anthropic.com`) from the same device within the window. Network use of `claude.ai`, which a browser and the desktop chat share, still needs an Entra sign-in (C2) |
+| T3 | **Corroboration**: when the Anthropic compliance or usage connector is configured and names the same account email in the window, the row adds "seen in the Anthropic usage report". It raises Company, reported and Company, not confirmed to the same standing as confirmed (the report comes from Anthropic, not the device) |
+| T4 | **Shown evidence (C8)**: every row names the tier, the email's source (`managed`, `env`, `claude_json`), the device, and the sign-in or report that matched, or what was looked for and not found |
+| T5 | Nothing acts on a tier (row 7b): no blocking, ticket, or message; items go only to targets the admin chose, and name people only under ADR-0029 G5 |
+
+Threat: a device reports a forged company email to hide personal use (T63): mitigated by the "not confirmed" tier against Entra sign-ins, corroboration from Anthropic's own report, and labelling every tier with its source.

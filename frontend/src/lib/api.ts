@@ -1,5 +1,23 @@
 import { reportReached, reportUnreachable, unreachableStatus } from "@/lib/connectivity";
 
+/** One hooks plugin per platform (ADR-0026 amendment 2026-10-29). */
+export type PluginPlatform = "windows" | "posix";
+
+export interface ClaudePluginRequest {
+  server_url?: string;
+  pilot_users: string[];
+  platform: PluginPlatform;
+  managed: boolean;
+  trust_server_certificate: boolean;
+}
+
+export interface ClaudePluginInfo {
+  version: string;
+  script_sha256: string;
+  scripts: Record<PluginPlatform, string>;
+  self_signed: boolean;
+}
+
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
@@ -528,6 +546,8 @@ export interface AgentHealth {
   events_24h: number;
   state: HealthState;
   reason: string | null;
+  /** Records the hooks plugin on this machine could not send (ADR-0026 row 15). */
+  dropped_24h?: number;
 }
 
 export interface IntegrityFinding {
@@ -954,6 +974,7 @@ export interface AgentSession {
   tools: string[];
   hosts: string[];
   stopped: boolean;
+  failed?: number;
 }
 
 export interface SessionStep {
@@ -1784,12 +1805,11 @@ export const api = {
   setKeepContent: (id: string, keep: boolean) =>
     request<Source>(`/api/sources/${encodeURIComponent(id)}`, patch({ otlp_keep_content: keep })),
   /** The hooks plugin for an OTLP source (ADR-0026): issues a new token for the source. */
-  claudePlugin: (id: string, body: { server_url?: string; pilot_users: string[] }) =>
+  claudePlugin: (id: string, body: ClaudePluginRequest) =>
     postForFile(`/api/sources/${encodeURIComponent(id)}/claude-plugin`, body),
   aiSessions: (days = 7) => request<AgentSession[]>(`/api/ai/sessions?days=${days}`),
   aiSession: (id: string) => request<SessionTimeline>(`/api/ai/sessions/${encodeURIComponent(id)}`),
-  claudePluginInfo: () =>
-    request<{ version: string; script_sha256: string }>("/api/sources/claude-plugin"),
+  claudePluginInfo: () => request<ClaudePluginInfo>("/api/sources/claude-plugin"),
   agentConfig: (id: string, os: "windows" | "linux") =>
     requestText(`/api/sources/${encodeURIComponent(id)}/agent-config?os=${os}`),
   testLoki: (body: LokiSettings & { secret?: string }) =>

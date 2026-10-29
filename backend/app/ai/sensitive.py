@@ -65,3 +65,19 @@ def scan(*texts: object) -> dict[str, int]:
         if cards:
             found["payment_card"] = found.get("payment_card", 0) + cards
     return found
+
+
+def mask(text: str) -> str:
+    """`text` with every detected secret replaced by `[redacted:<category>]`, for content a
+    source keeps (ADR-0026 amendment 2026-10-29 row 5). The counts come from `scan`, run
+    before this on the full text."""
+    for name, pattern in _PATTERNS.items():
+        text = pattern.sub(f"[redacted:{name}]", text)
+
+    def card(m: re.Match[str]) -> str:
+        digits = re.sub(r"[ -]", "", m.group(0))
+        if 13 <= len(digits) <= 19 and _luhn(digits) and len(set(digits)) > 1:
+            return "[redacted:payment_card]"
+        return m.group(0)
+
+    return _CARD.sub(card, text)

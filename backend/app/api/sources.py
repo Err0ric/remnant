@@ -21,13 +21,21 @@ from starlette.concurrency import run_in_threadpool
 
 from app.ai.claude_plugin import SCRIPT_SHA256
 from app.ai.claude_plugin import VERSION as PLUGIN_VERSION
+from app.ai.claude_plugin import build_managed as build_plugin_bundle
 from app.ai.claude_plugin import build_zip as build_plugin_zip
 from app.alerts.dispatch import AlertDispatcher
 from app.api.access import AdminUser, CurrentUser, client_ip
 from app.api.schedules import DeliveryOut
 from app.auth.service import AuthService
+from app.auth.tls import resolve_tls
 from app.core.branding import PRODUCT_NAME
-from app.core.errors import NotFoundError, ParamInvalidError, RateLimitedError, SourceRejectedError
+from app.core.errors import (
+    ConfigError,
+    NotFoundError,
+    ParamInvalidError,
+    RateLimitedError,
+    SourceRejectedError,
+)
 from app.core.ids import AUTO_PARSER
 from app.engine.views import permitted_sources
 from app.ingest.agent import AgentOs
@@ -345,17 +353,43 @@ class ClaudePluginIn(BaseModel):
     # Where the plugin sends: the address people's machines reach this server at. Fixed in
     # the plugin; nothing on the machine or in a session can change it.
     server_url: str | None = Field(default=None, max_length=300)
+    # One plugin per platform (ADR-0026 amendment 2026-10-29 row 3).
+    platform: Literal["windows", "posix"] = "posix"
+    # A bundle for endpoint management: the plugin plus the machine-wide hooks.conf that
+    # wins over the plugin's own copy (row 7). Off: the plugin's own config holds it all.
+    managed: bool = False
+    # Bundle this server's certificate when it is the generated self-signed one, so the
+    # scripts check the server against it (row 16). Never a switch to skip checking.
+    trust_server_certificate: bool = True
 
 
 class ClaudePluginInfo(BaseModel):
     version: str
-    script_sha256: str
+    script_sha256: str  # the macOS and Linux script, as before
+    scripts: dict[str, str]  # platform -> SHA-256 of its script
+    self_signed: bool  # this server serves its generated self-signed certificate
 
 
 @router.get("/sources/claude-plugin")
-async def claude_plugin_info(_: AdminUser) -> ClaudePluginInfo:
-    """The hooks plugin's version and the SHA-256 of its script, to check a copy against."""
-    return ClaudePluginInfo(version=PLUGIN_VERSION, script_sha256=SCRIPT_SHA256)
+async def claude_plugin_info(request: Request, _: AdminUser) -> ClaudePluginInfo:
+    """The hooks plugins' version and the SHA-256 of each script, to check a copy against."""
+    return ClaudePluginInfo(
+        version=PLUGIN_VERSION,
+        script_sha256=SCRIPT_SHA256["posix"],
+        scripts=dict(SCRIPT_SHA256),
+        self_signed=_self_signed_pem(request) is not None,
+    )
+
+
+def _self_signed_pem(request: Request) -> bytes | None:
+    """This server's certificate when it is the generated self-signed one (public)."""
+    try:
+        tls = resolve_tls(request.app.state.config)
+    except ConfigError:
+        return None
+    if tls is None or not tls.self_signed:
+        return None
+    return tls.cert.read_bytes()
 
 
 def _plugin_url(raw: str) -> str:
@@ -388,8 +422,13 @@ async def claude_plugin(
         raise ParamInvalidError("Give the address people's machines reach this server at")
     url = _plugin_url(base)
     send_content = bool(found[0].otlp_keep_content)
+    ca = _self_signed_pem(request) if body.trust_server_certificate else None
     token = await run_in_threadpool(store.issue_otlp_token, source_id)
-    data = build_plugin_zip(url, token, send_content, body.pilot_users)
+    if body.managed:
+        data = build_plugin_bundle(url, token, send_content, body.pilot_users, body.platform, ca)
+    else:
+        data = build_plugin_zip(url, token, send_content, body.pilot_users, body.platform, ca)
+    sha = SCRIPT_SHA256[body.platform]
     await run_in_threadpool(
         _audit(request).audit.write,
         "source.claude_plugin",
@@ -402,16 +441,20 @@ async def claude_plugin(
             "send_content": send_content,
             "pilot_users": body.pilot_users,
             "version": PLUGIN_VERSION,
-            "script_sha256": SCRIPT_SHA256,
+            "platform": body.platform,
+            "managed": body.managed,
+            "server_certificate": ca is not None,
+            "script_sha256": sha,
         },
     )
-    name = f"{PRODUCT_NAME.lower()}-claude-hooks-{source_id}.zip"
+    kind = "managed" if body.managed else "plugin"
+    name = f"{PRODUCT_NAME.lower()}-claude-hooks-{body.platform}-{kind}-{source_id}.zip"
     return Response(
         data,
         media_type="application/zip",
         headers={
             "Content-Disposition": f'attachment; filename="{name}"',
-            "X-Script-Sha256": SCRIPT_SHA256,
+            "X-Script-Sha256": sha,
             "Cache-Control": "no-store",
         },
     )

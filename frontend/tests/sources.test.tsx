@@ -430,7 +430,24 @@ describe("OTLP sources (ADR-0015)", () => {
     ).toEqual({
       server_url: "https://siem.example.internal",
       pilot_users: ["dana@example.com", "erin@example.com"],
+      platform: "windows",
+      managed: false,
+      trust_server_certificate: true,
     });
+    // One plugin per platform, each with its own script hash; a bundle for endpoint
+    // management puts the address and token in the machine-wide file instead.
+    expect(plugin).toHaveTextContent("cd".repeat(32));
+    await userEvent.click(within(plugin).getByLabelText(/macOS and Linux/));
+    expect(plugin).toHaveTextContent("ab".repeat(32));
+    await userEvent.click(within(plugin).getByLabelText(/In a machine-wide file/));
+    await userEvent.click(within(plugin).getByLabelText(/self-signed certificate/));
+    await userEvent.click(within(plugin).getByRole("button", { name: "Download bundle" }));
+    await vi.waitFor(() =>
+      expect(posts(spy, "/api/sources/claude_hooks/claude-plugin")).toHaveLength(2),
+    );
+    expect(
+      JSON.parse(String(posts(spy, "/api/sources/claude_hooks/claude-plugin")[1]?.[1]?.body)),
+    ).toMatchObject({ platform: "posix", managed: true, trust_server_certificate: false });
   });
 
   it("adds a syslog listener with protocol, port, and allowed senders", async () => {

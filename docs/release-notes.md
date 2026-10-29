@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Claude Code hooks: a plugin per platform, the Claude account, and dropped records (ADR-0026 amendment)
+
+- **Windows plugin**: Windows PowerShell 5.1, nothing to install; Git Bash is no longer needed. The **macOS and Linux** plugin keeps using `sh` and `curl`. Each stands aside on the other platform and in Cowork, so nothing is sent twice. Download each from the source's **Claude plugin** form.
+- **Machine-wide config**: download a bundle with `hooks.conf` for your endpoint management tool. It wins over the plugin's own copy, which is then not read, so nothing in a user's folder can redirect records.
+- Records now carry the **Claude account email** (from the managed config, `CLAUDE_CODE_USER_EMAIL`, or the signed-in account in `.claude.json`) apart from the OS user. ADR-0030 will use it to tell company from personal accounts.
+- New events: **failed tool calls** and **session end**. **Stop** is now shown as a turn end; a session counts as ended at its session end.
+- **Dropped records**: a record the plugin cannot send is counted on the machine and reported with its next record; Health > Endpoint agents shows "N dropped".
+- **Certificates**: the download can bundle this server's self-signed certificate, and `CA_FILE` names another; there is no option to skip checking.
+- Every script prints only `{}` and exits 0; the server's answer is never shown to Claude.
+- Content, when the source keeps it: each piece is cut to its first and last 4 KB on the machine, and the server masks detected secrets before storing (also for Claude Code telemetry content).
+- Pilot guide with the path for your proxy admin and pass/fail checks: `docs/install/claude-hooks.md`.
+
 ### Fixed: AI Watch failing on busy installs (F63)
 
 - AI Watch no longer fails with "The query needs more memory" on an install with busy DNS. Closed days are read from the daily AI rollup and only today from events; a query with a time range now opens only that range's days of the lake. On 30 days of 300,000 DNS events a day, the summary takes about 1 second instead of 33 to 43.

@@ -535,7 +535,8 @@ class SessionOut(BaseModel):
     tool_calls: int
     tools: list[str]
     hosts: list[str]
-    stopped: bool
+    stopped: bool  # ended
+    failed: int = 0  # tool calls that failed
 
 
 class StepOut(BaseModel):
