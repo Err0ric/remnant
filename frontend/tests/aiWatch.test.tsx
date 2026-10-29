@@ -108,3 +108,29 @@ describe("A dashboard section that fails to load (F63)", () => {
     expect(within(watch).queryByRole("alert")).toBeNull();
   });
 });
+
+describe("AI Watch wording and chart (owner nits, 2026-10-29)", () => {
+  it("keeps capitals inside the Not set up sentence", async () => {
+    const { midSentence } = await import("@/features/dashboard/AiWatch");
+    expect(midSentence("New agents and MCP servers")).toBe("new agents and MCP servers");
+    expect(midSentence("Sensitive data to AI")).toBe("sensitive data to AI");
+    expect(midSentence("MCP servers")).toBe("MCP servers");
+    expect(midSentence("App consent grants")).toBe("app consent grants");
+  });
+
+  it("covers only the days that exist until there are 30", async () => {
+    const { Chart } = await import("@/features/dashboard/AiWatch");
+    const chart = Array.from({ length: 30 }, (_, i) => ({
+      day: new Date(Date.UTC(2026, 8, 30 + i)).toISOString().slice(0, 10),
+      approved: i >= 22 ? 3 : 0, // 8 days of data: Oct 22 to Oct 29
+      unreviewed: 0,
+      not_approved: 0,
+    }));
+    render(<Chart chart={chart} />);
+    expect(screen.getByText(/^AI use since Oct 22/)).toBeVisible();
+    expect(screen.getByRole("img")).toHaveAttribute(
+      "aria-label",
+      expect.stringContaining("over 8 days"),
+    );
+  });
+});

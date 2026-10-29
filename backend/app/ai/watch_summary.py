@@ -264,6 +264,14 @@ def summary(
         )
         for i in range(CHART_DAYS - 1, -1, -1)
     ]
+    # First seen is the earliest event ever: the window's rows or, earlier, the rollup's
+    # first-seen index (owner 2026-10-29), never just the start of the window.
+    index = usage.first_seen(allowed)
+
+    def first_ever(sid: str, seen: datetime | None) -> datetime | None:
+        found = [t for t in (seen, first_in_rows.get(sid), index.get(f"service:{sid}")) if t]
+        return min(found) if found else None
+
     ranked = sorted(
         use.items(), key=lambda p: (-len(p[1].people), -p[1].events, services[p[0]].name)
     )
@@ -275,7 +283,7 @@ def summary(
             len(u.people),
             len(u.machines),
             u.events,
-            _iso(u.first),
+            _iso(first_ever(sid, u.first)),
             _iso(u.last),
         )
         for sid, u in ranked[:TOP]
@@ -288,7 +296,7 @@ def summary(
         chart_days,
         top,
         sorted(set(read) | set(read_signals)),
-        _new(usage, engine, allowed, items, readable, now, first_in_rows, services),
+        _new(usage, engine, allowed, items, readable, now, first_in_rows, services, index),
     )
 
 
@@ -312,6 +320,7 @@ def _new(
     now: datetime,
     services_first: dict[str, datetime],
     known: dict[str, Service],
+    index: dict[str, datetime],
 ) -> list[NewThing]:
     """First seen in the last 24 hours: never seen before in the rows of the summary's
     window, nor in any closed day the rollup's first-seen index has (D116, F63). MCP
@@ -319,7 +328,6 @@ def _new(
     summary's own rows, so this reads no further events for them."""
     cutoff = now - NEW_WINDOW
     scope = QueryScope(allowed, now - HISTORY, now)
-    index = usage.first_seen(allowed)
     item_of: dict[str, str] = {}
     for i in sorted(items, key=lambda i: i.created_at):
         if readable(i):

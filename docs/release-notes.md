@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed: AI Watch wording, chart, and first seen
+
+- The Not set up line keeps capitals inside the sentence ("new agents and MCP servers", "sensitive data to AI").
+- The AI use chart covers only the days that have data until there are 30 ("AI use since Oct 22"); before, 8 days of data sat in the right third of a 30-day axis.
+- Top services' **First seen** is the earliest event for the service, from the rollup's first-seen record when it is older than the window; it no longer moves forward to the start of the 7-day range.
+
 ### Claude Code hooks: a plugin per platform, the Claude account, and dropped records (ADR-0026 amendment)
 
 - **Windows plugin**: Windows PowerShell 5.1, nothing to install; Git Bash is no longer needed. The **macOS and Linux** plugin keeps using `sh` and `curl`. Each stands aside on the other platform and in Cowork, so nothing is sent twice. Download each from the source's **Claude plugin** form.

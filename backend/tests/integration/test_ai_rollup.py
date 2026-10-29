@@ -159,8 +159,11 @@ def test_new_in_24_hours_knows_use_older_than_the_window(lab: dict[str, Any]) ->
     before = {n["id"] for n in a.get("/api/ai/watch/summary").json()["new"]}
     assert "gemini" in before  # not seen in the window, and no index yet
     lab["rollup"].run()
-    after = {n["id"] for n in a.get("/api/ai/watch/summary").json()["new"]}
-    assert "gemini" not in after
+    summary = a.get("/api/ai/watch/summary").json()
+    assert "gemini" not in {n["id"] for n in summary["new"]}
+    # Top services show when a service was first seen at all, not the start of the window.
+    (top,) = [t for t in summary["top"] if t["service_id"] == "gemini"]
+    assert top["first_seen"][:10] == (NOW - timedelta(days=40)).date().isoformat()
 
 
 def test_a_range_query_reads_only_its_days_and_not_the_skipped_ones(lab: dict[str, Any]) -> None:

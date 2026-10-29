@@ -119,6 +119,15 @@ const COLS: Record<number, string> = {
   5: "lg:grid-cols-5",
 };
 
+/** A card label inside a sentence: the first letter lowered unless it starts a word in
+ * capitals, so "MCP servers" and "AI" keep theirs ("new agents and MCP servers"). */
+export function midSentence(label: string): string {
+  const [a, b] = [label[0] ?? "", label[1] ?? ""];
+  return b && b === b.toUpperCase() && b !== b.toLowerCase()
+    ? label
+    : a.toLowerCase() + label.slice(1);
+}
+
 /** "Not set up: App consent grants (needs a Microsoft 365 source)" with the setup link. */
 function NotSetUp({ cards }: { cards: AiWatchCard[] }) {
   const byNeed = new Map<string, string[]>();
@@ -129,7 +138,7 @@ function NotSetUp({ cards }: { cards: AiWatchCard[] }) {
       {[...byNeed].map(([need, labels], i) => (
         <span key={need}>
           {i ? "; " : ""}
-          {labels.join(", ").toLowerCase()} (needs {need})
+          {labels.map(midSentence).join(", ")} (needs {need})
         </span>
       ))}
       .{" "}
@@ -260,11 +269,12 @@ function Card({ card, days, odd }: { card: AiWatchCard; days: number; odd: boole
   );
 }
 
-function Chart({ chart: all }: { chart: AiWatchDay[] }) {
+export function Chart({ chart: all }: { chart: AiWatchDay[] }) {
   const total = (d: AiWatchDay) => d.approved + d.unreviewed + d.not_approved;
-  // With less than 7 days of data, the chart covers the days that exist (F62).
+  // Until there are 30 days of data, the chart covers the days that exist (F62, owner
+  // 2026-10-29): "AI use since Oct 22", never bars squeezed into the right third.
   const first = all.findIndex((d) => total(d) > 0);
-  const chart = first > 0 && all.length - first < 7 ? all.slice(first) : all;
+  const chart = first > 0 ? all.slice(first) : all;
   const top = Math.max(1, ...chart.map(total));
   const sums = Object.fromEntries(
     ORDER.map((st) => [st, chart.reduce((n, d) => n + d[st], 0)]),
