@@ -546,8 +546,14 @@ export interface AgentHealth {
   events_24h: number;
   state: HealthState;
   reason: string | null;
-  /** Records the hooks plugin on this machine could not send (ADR-0026 row 15). */
+  /** Records the hooks plugin on this machine lost: queue full or over 7 days old. */
   dropped_24h?: number;
+  /** The plugin's offline queue: waiting at its last check-in, delivered late in 24 h. */
+  queued?: number;
+  late_24h?: number;
+  /** Sequence numbers that never arrived over 8 days, and the first few gaps. */
+  missing?: number;
+  gaps?: string[];
 }
 
 export interface IntegrityFinding {
@@ -991,6 +997,8 @@ export interface SessionStep {
   input_chars: number | null;
   output_chars: number | null;
   event_id: string;
+  /** Delivered this many seconds after it happened (the plugin's offline queue). */
+  late_s?: number | null;
 }
 
 export interface SessionTimeline {

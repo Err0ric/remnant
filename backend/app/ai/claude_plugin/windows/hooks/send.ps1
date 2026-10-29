@@ -11,6 +11,10 @@
 # or program name a tool touched, sizes, and SHA-256 hashes of the prompt and tool input.
 # Prompt text, tool input, tool output, and tool errors are sent only when the config
 # says SEND_CONTENT=1, each cut to its first and last 4 KB.
+#
+# Offline: a record that cannot be sent waits in ${CLAUDE_PLUGIN_DATA}\spool (metadata
+# only) and goes out after the next record that reaches the server. Each record carries
+# this install's id and a sequence number, so the server sees what never arrived.
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -215,17 +219,35 @@ try {
         return $s.Substring(0, $max)
     }
 
-    $attrs = New-Object System.Collections.ArrayList
-    function Add-Attr([string]$key, $value) {
-        if ($null -ne $value -and "$value" -ne '') {
-            [void]$attrs.Add(@{ key = $key; value = @{ stringValue = "$value" } })
+    # --- Sequence, spool, and lost records (offline queue) -----------------------------
+    # Each record gets the next number of this install, so the server can see gaps; a new
+    # install (a new random id) starts again at 1. A named mutex keeps parallel hooks apart.
+    $spool = Join-Path $data 'spool'
+    [void](New-Item -ItemType Directory -Force -Path $spool)
+    $installFile = Join-Path $data 'install'
+    if (-not [System.IO.File]::Exists($installFile)) {
+        [System.IO.File]::WriteAllText($installFile, [Guid]::NewGuid().ToString('N').Substring(0, 16))
+    }
+    $install = ([System.IO.File]::ReadAllText($installFile) -replace '[^0-9a-f]', '')
+    $seq = 0
+    $mutex = New-Object System.Threading.Mutex($false, 'Local\siem-claude-hooks-seq')
+    $owned = $false
+    try {
+        try { $owned = $mutex.WaitOne(2000) } catch [System.Threading.AbandonedMutexException] { $owned = $true }
+        if ($owned) {
+            $seqFile = Join-Path $data 'seq'
+            $last = 0
+            if ([System.IO.File]::Exists($seqFile)) {
+                [void][long]::TryParse(([System.IO.File]::ReadAllText($seqFile)).Trim(), [ref]$last)
+            }
+            $seq = $last + 1
+            [System.IO.File]::WriteAllText($seqFile, "$seq`n")
         }
-    }
-    function Add-Num([string]$key, [long]$value) {
-        if ($value -ne 0) { [void]$attrs.Add(@{ key = $key; value = @{ intValue = "$value" } }) }
-    }
+    } finally { if ($owned) { $mutex.ReleaseMutex() } }
+    $queued = @([System.IO.Directory]::GetFiles($spool, '*.rec')).Count
 
-    # Records this machine could not send earlier: counted, and reported with this one.
+    # Records lost on this machine (the queue was full or a record was older than 7 days):
+    # counted, and reported with the next record that reaches the server.
     $droppedFile = Join-Path $data 'dropped'
     $pending = $null
     $dropped = 0
@@ -239,9 +261,21 @@ try {
         } catch { $pending = $null }
     }
 
+    $attrs = New-Object System.Collections.ArrayList
+    function Add-Attr([string]$key, $value) {
+        if ($null -ne $value -and "$value" -ne '') {
+            [void]$attrs.Add(@{ key = $key; value = @{ stringValue = "$value" } })
+        }
+    }
+    function Add-Num([string]$key, [long]$value) {
+        if ($value -ne 0) { [void]$attrs.Add(@{ key = $key; value = @{ intValue = "$value" } }) }
+    }
+
     Add-Attr 'event_name' "claude_hooks.$name"
     Add-Attr 'role' $role
     Add-Attr 'plugin_variant' 'windows'
+    Add-Attr 'install_id' $install
+    Add-Num 'seq' $seq
     Add-Attr 'session_id' (Clip ([string](Get-Field $hook 'session_id')) 512)
     Add-Attr 'session_source' (Clip ([string](Get-Field $hook 'source')) 64)
     Add-Attr 'end_reason' (Clip ([string](Get-Field $hook 'reason')) 64)
@@ -264,7 +298,9 @@ try {
     Add-Num 'tool_input_chars' $toolInText.Length
     Add-Num 'tool_response_chars' $toolOutText.Length
     Add-Num 'error_chars' $errorText.Length
+    $metaCount = $attrs.Count
     Add-Num 'dropped_since_last' $dropped
+    Add-Num 'queued_at_send' $queued
     if ($sendContent) {
         Add-Attr 'prompt' (Limit $prompt)
         Add-Attr 'tool_input' (Limit $toolInText)
@@ -273,23 +309,24 @@ try {
     }
 
     $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-    $record = @{
-        resourceLogs = @(@{
-            resource  = @{ attributes = @(
-                @{ key = 'service.name'; value = @{ stringValue = 'claude-hooks' } },
-                @{ key = 'host.name'; value = @{ stringValue = [Environment]::MachineName } }
-            ) }
-            scopeLogs = @(@{
-                scope      = @{ name = 'claude-hooks'; version = '2.0.0' }
-                logRecords = @(@{
-                    timeUnixNano = "$($now)000000000"
-                    body         = @{ stringValue = "claude_hooks.$name" }
-                    attributes   = $attrs.ToArray()
-                })
-            })
-        })
+    function Record-Json($list) {
+        $r = @{
+            timeUnixNano = "$($now)000000000"
+            body         = @{ stringValue = "claude_hooks.$name" }
+            attributes   = @($list)
+        }
+        return (ConvertTo-Json -InputObject $r -Depth 8 -Compress)
     }
-    $bytes = [System.Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject $record -Depth 12 -Compress))
+    $resource = ConvertTo-Json -Compress -Depth 6 -InputObject @{ attributes = @(
+        @{ key = 'service.name'; value = @{ stringValue = 'claude-hooks' } },
+        @{ key = 'host.name'; value = @{ stringValue = [Environment]::MachineName } }
+    ) }
+    function Wrap([string]$records) {
+        $text = '{"resourceLogs":[{"resource":' + $resource +
+            ',"scopeLogs":[{"scope":{"name":"claude-hooks","version":"2.1.0"},"logRecords":[' +
+            $records + ']}]}]}'
+        return ,([System.Text.Encoding]::UTF8.GetBytes($text))  # one byte[], not unrolled
+    }
 
     # One HTTP/1.1 POST over a direct connection: TLS 1.2, the host name always checked, and
     # with CA_FILE the server's chain must end at that CA. The certificate check runs on
@@ -305,65 +342,119 @@ try {
     if ($ca -and [System.IO.File]::Exists($ca)) {
         $script:caCert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($ca)
     }
-    $sent = $false
-    $client = $null
-    try {
-        $target = [Uri]("$($url.TrimEnd('/'))/api/otlp/v1/logs")
-        if ($target.Scheme -ne 'https' -and $target.Scheme -ne 'http') { throw 'scheme' }
-        $client = New-Object System.Net.Sockets.TcpClient
-        if (-not $client.ConnectAsync($target.Host, $target.Port).Wait(1000)) { throw 'connect' }
-        $stream = $client.GetStream()
-        $stream.ReadTimeout = 1000
-        $stream.WriteTimeout = 1000
-        if ($target.Scheme -eq 'https') {
-            $check = {
-                param($sender, $cert, $chain, $errors)
-                if ($errors -eq [Net.Security.SslPolicyErrors]::None) { return $true }
-                # A wrong host name still fails; only an unknown issuer is checked further.
-                if ($null -eq $script:caCert -or
-                    $errors -ne [Net.Security.SslPolicyErrors]::RemoteCertificateChainErrors) { return $false }
-                $c = New-Object System.Security.Cryptography.X509Certificates.X509Chain
-                $c.ChainPolicy.RevocationMode = 'NoCheck'
-                $c.ChainPolicy.VerificationFlags = 'AllowUnknownCertificateAuthority'
-                [void]$c.ChainPolicy.ExtraStore.Add($script:caCert)
-                if (-not $c.Build((New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($cert)))) { return $false }
-                $root = $c.ChainElements[$c.ChainElements.Count - 1].Certificate
-                return ($root.Thumbprint -eq $script:caCert.Thumbprint)
+    function Send-Body([byte[]]$bytes) {
+        $sent = $false
+        $client = $null
+        try {
+            $target = [Uri]("$($url.TrimEnd('/'))/api/otlp/v1/logs")
+            if ($target.Scheme -ne 'https' -and $target.Scheme -ne 'http') { throw 'scheme' }
+            $client = New-Object System.Net.Sockets.TcpClient
+            if (-not $client.ConnectAsync($target.Host, $target.Port).Wait(1000)) { throw 'connect' }
+            $stream = $client.GetStream()
+            $stream.ReadTimeout = 1000
+            $stream.WriteTimeout = 1000
+            if ($target.Scheme -eq 'https') {
+                $check = {
+                    param($sender, $cert, $chain, $errors)
+                    if ($errors -eq [Net.Security.SslPolicyErrors]::None) { return $true }
+                    # A wrong host name still fails; only an unknown issuer is checked further.
+                    if ($null -eq $script:caCert -or
+                        $errors -ne [Net.Security.SslPolicyErrors]::RemoteCertificateChainErrors) { return $false }
+                    $c = New-Object System.Security.Cryptography.X509Certificates.X509Chain
+                    $c.ChainPolicy.RevocationMode = 'NoCheck'
+                    $c.ChainPolicy.VerificationFlags = 'AllowUnknownCertificateAuthority'
+                    [void]$c.ChainPolicy.ExtraStore.Add($script:caCert)
+                    if (-not $c.Build((New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($cert)))) { return $false }
+                    $root = $c.ChainElements[$c.ChainElements.Count - 1].Certificate
+                    return ($root.Thumbprint -eq $script:caCert.Thumbprint)
+                }
+                $ssl = New-Object System.Net.Security.SslStream($stream, $false, [System.Net.Security.RemoteCertificateValidationCallback]$check)
+                $ssl.ReadTimeout = 1000
+                $ssl.WriteTimeout = 1000
+                $ssl.AuthenticateAsClient($target.Host, $null, [System.Security.Authentication.SslProtocols]::Tls12, $false)
+                $stream = $ssl
             }
-            $ssl = New-Object System.Net.Security.SslStream($stream, $false, [System.Net.Security.RemoteCertificateValidationCallback]$check)
-            $ssl.ReadTimeout = 1000
-            $ssl.WriteTimeout = 1000
-            $ssl.AuthenticateAsClient($target.Host, $null, [System.Security.Authentication.SslProtocols]::Tls12, $false)
-            $stream = $ssl
-        }
-        $head = "POST $($target.PathAndQuery) HTTP/1.1`r`nHost: $($target.Authority)`r`n" +
-            "Content-Type: application/json`r`nAuthorization: Bearer $token`r`n" +
-            "Content-Length: $($bytes.Length)`r`nConnection: close`r`n`r`n"
-        $headBytes = [System.Text.Encoding]::ASCII.GetBytes($head)
-        $stream.Write($headBytes, 0, $headBytes.Length)
-        $stream.Write($bytes, 0, $bytes.Length)
-        $stream.Flush()
-        # The status line only: "HTTP/1.1 200 OK".
-        $line = New-Object System.Text.StringBuilder
-        while ($line.Length -lt 64) {
-            $b = $stream.ReadByte()
-            if ($b -lt 0 -or $b -eq 10) { break }
-            [void]$line.Append([char]$b)
-        }
-        $parts = $line.ToString().Split(' ')
-        $code = 0
-        if ($parts.Length -ge 2 -and [int]::TryParse($parts[1], [ref]$code)) {
-            $sent = ($code -ge 200 -and $code -lt 300)
-        }
-    } catch { $sent = $false }
-    if ($client) { $client.Close() }
+            $head = "POST $($target.PathAndQuery) HTTP/1.1`r`nHost: $($target.Authority)`r`n" +
+                "Content-Type: application/json`r`nAuthorization: Bearer $token`r`n" +
+                "Content-Length: $($bytes.Length)`r`nConnection: close`r`n`r`n"
+            $headBytes = [System.Text.Encoding]::ASCII.GetBytes($head)
+            $stream.Write($headBytes, 0, $headBytes.Length)
+            $stream.Write($bytes, 0, $bytes.Length)
+            $stream.Flush()
+            # The status line only: "HTTP/1.1 200 OK".
+            $line = New-Object System.Text.StringBuilder
+            while ($line.Length -lt 64) {
+                $b = $stream.ReadByte()
+                if ($b -lt 0 -or $b -eq 10) { break }
+                [void]$line.Append([char]$b)
+            }
+            $parts = $line.ToString().Split(' ')
+            $code = 0
+            if ($parts.Length -ge 2 -and [int]::TryParse($parts[1], [ref]$code)) {
+                $sent = ($code -ge 200 -and $code -lt 300)
+            }
+        } catch { $sent = $false }
+        if ($client) { $client.Close() }
+        return $sent
+    }
 
-    if ($sent) {
+    if (Send-Body (Wrap (Record-Json $attrs.ToArray()))) {
         if ($pending) { [System.IO.File]::Delete($pending) }
+        if ($queued -gt 0) {
+            # Queued records go out after the live one, oldest first, 50 to a request, for
+            # at most 15 seconds. This hook runs in the background, so Claude never waits
+            # for it. One hook flushes at a time; a record older than 7 days is dropped and
+            # counted as lost.
+            $flush = New-Object System.Threading.Mutex($false, 'Local\siem-claude-hooks-flush')
+            $mine = $false
+            try { $mine = $flush.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $mine = $true }
+            if ($mine) {
+                try {
+                    $began = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+                    $cutoff = $began - 604800
+                    while ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - $began -lt 15) {
+                        $files = @([System.IO.Directory]::GetFiles($spool, '*.rec') | Sort-Object | Select-Object -First 50)
+                        if ($files.Count -eq 0) { break }
+                        $batch = New-Object System.Collections.ArrayList
+                        $names = New-Object System.Collections.ArrayList
+                        foreach ($f in $files) {
+                            $t = 0
+                            if (-not [long]::TryParse(([System.IO.Path]::GetFileName($f) -split '-')[0], [ref]$t)) {
+                                [System.IO.File]::Delete($f); continue
+                            }
+                            if ($t -lt $cutoff) {
+                                [System.IO.File]::Delete($f)
+                                [System.IO.File]::AppendAllText($droppedFile, 'x')
+                                continue
+                            }
+                            [void]$batch.Add([System.IO.File]::ReadAllText($f).Trim())
+                            [void]$names.Add($f)
+                        }
+                        if ($batch.Count -eq 0) { continue }
+                        if (-not (Send-Body (Wrap ($batch -join ',')))) { break }
+                        foreach ($f in $names) { [System.IO.File]::Delete($f) }
+                    }
+                } finally { $flush.ReleaseMutex() }
+            }
+        }
     } else {
-        $old = ''
-        if ($pending) { $old = [System.IO.File]::ReadAllText($pending); [System.IO.File]::Delete($pending) }
-        [System.IO.File]::AppendAllText($droppedFile, $old + 'x')
+        # Not sent: the lost count waits for the next record, and this record is queued
+        # (metadata only: content is never written to disk). At most 10,000 records (about
+        # 20 MB) are kept; past that the oldest are dropped and counted as lost.
+        if ($pending) {
+            [System.IO.File]::AppendAllText($droppedFile, [System.IO.File]::ReadAllText($pending))
+            [System.IO.File]::Delete($pending)
+        }
+        $meta = $attrs.GetRange(0, $metaCount).ToArray()
+        $file = Join-Path $spool ('{0}-{1:D12}-{2}.rec' -f $now, $seq, $PID)
+        [System.IO.File]::WriteAllText("$file.tmp", (Record-Json $meta))
+        [System.IO.File]::Move("$file.tmp", $file)
+        $all = @([System.IO.Directory]::GetFiles($spool, '*.rec') | Sort-Object)
+        $over = $all.Count - 10000
+        for ($i = 0; $i -lt $over; $i++) {
+            [System.IO.File]::Delete($all[$i])
+            [System.IO.File]::AppendAllText($droppedFile, 'x')
+        }
     }
 } catch { }
 Finish

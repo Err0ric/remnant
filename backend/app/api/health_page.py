@@ -38,7 +38,11 @@ class AgentOut(BaseModel):
     events_24h: int
     state: str
     reason: str | None
-    dropped_24h: int = 0  # records the hooks plugin could not send
+    dropped_24h: int = 0  # records the hooks plugin lost (queue full or over 7 days old)
+    queued: int = 0  # records waiting on the machine at its last check-in
+    late_24h: int = 0  # delivered more than 5 minutes after they happened
+    missing: int = 0  # sequence numbers that never arrived, over 8 days
+    gaps: list[str] = []
 
 
 class HealthOut(BaseModel):

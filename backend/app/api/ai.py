@@ -553,6 +553,7 @@ class StepOut(BaseModel):
     input_chars: int | None
     output_chars: int | None
     event_id: str
+    late_s: int | None = None  # delivered this long after it happened (offline queue)
 
 
 class TimelineOut(BaseModel):

@@ -242,12 +242,20 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
       key: `${a.source_id}:${a.machine}`,
       name: a.machine,
       sub: a.source_id,
-      detail:
-        `${a.kind} · ${a.events_24h.toLocaleString()} events in 24 h` +
-        (a.dropped_24h ? ` · ${a.dropped_24h.toLocaleString()} dropped` : ""),
+      detail: [
+        a.kind,
+        `${a.events_24h.toLocaleString()} events in 24 h`,
+        // The hooks plugin's offline queue (ADR-0026): waiting, late, lost, never arrived.
+        a.queued ? `${a.queued.toLocaleString()} queued at last check-in` : "",
+        a.late_24h ? `${a.late_24h.toLocaleString()} delivered late` : "",
+        a.dropped_24h ? `${a.dropped_24h.toLocaleString()} lost` : "",
+        a.missing ? `${a.missing.toLocaleString()} missing` : "",
+      ]
+        .filter(Boolean)
+        .join(" · "),
       last: a.last_seen,
       level: a.state === "unknown" ? "attention" : a.state,
-      reason: a.reason,
+      reason: [a.reason, ...(a.gaps ?? [])].filter(Boolean).join("; "),
     })),
     devices: (checks.data?.devices ?? []).map((d) => ({
       key: d.device_id,

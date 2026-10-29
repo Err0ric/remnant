@@ -221,7 +221,9 @@ def main() -> int:
     took = time.monotonic() - started
     check(took < 10, f"a hung receiver costs little ({took:.1f} s)")
     run(ok.url)
-    check(ok.attrs(1).get("dropped_since_last") == "2", "two dropped records reported")
+    check(ok.attrs(1).get("queued_at_send") == "2", "two records waited in the queue")
+    backlog = json.loads(ok.bodies[2])["resourceLogs"][0]["scopeLogs"][0]["logRecords"] if len(ok.bodies) > 2 else []
+    check(len(backlog) == 2, "the queue went out after the live record")
 
     c, k = cert(tmp / "tls")
     other, _ = cert(tmp / "other")

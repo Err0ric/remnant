@@ -80,6 +80,44 @@ ORDER BY 3 DESC
 LIMIT 2000"""
 
 
+_HOOK = "json_extract_string(unmapped, '$.attr.{}')"
+# The hooks plugin per machine over 8 days (its queue keeps 7): records queued at its last
+# check-in, records delivered more than 5 minutes after they happened in the last 24 hours
+# (ADR-0026 offline queue).
+HOOKS_SQL = f"""
+SELECT source_id, coalesce(nullif(device_hostname, ''), '(unknown machine)') AS machine,
+       arg_max(TRY_CAST({_HOOK.format("queued_at_send")} AS BIGINT), time_observed)
+         FILTER (WHERE {_HOOK.format("queued_at_send")} IS NOT NULL) AS queued,
+       count(*) FILTER (WHERE time_observed >= $since
+         AND epoch(time_observed) - epoch(time) > 300) AS late
+FROM events
+WHERE template_id = 'claude_hooks'
+GROUP BY 1, 2
+LIMIT 2000"""  # noqa: S608  # fixed SQL text
+
+# Sequence numbers that never arrived, per machine and install (a reinstall starts a new
+# install id at 1, so it is not a gap). Each row is one gap: the numbers on either side
+# and the times they happened.
+GAP_SQL = f"""
+WITH s AS (
+  SELECT source_id, coalesce(nullif(device_hostname, ''), '(unknown machine)') AS machine,
+         {_HOOK.format("install_id")} AS install_id,
+         TRY_CAST({_HOOK.format("seq")} AS BIGINT) AS n, min(time) AS t
+  FROM events
+  WHERE template_id = 'claude_hooks' AND {_HOOK.format("seq")} IS NOT NULL
+  GROUP BY 1, 2, 3, 4
+), g AS (
+  SELECT source_id, machine, install_id, n, t,
+         lag(n) OVER (PARTITION BY source_id, machine, install_id ORDER BY n) AS prev,
+         lag(t) OVER (PARTITION BY source_id, machine, install_id ORDER BY n) AS prev_t
+  FROM s
+)
+SELECT source_id, machine, n - prev - 1 AS missing, prev_t, t
+FROM g WHERE n - prev > 1
+ORDER BY t DESC
+LIMIT 500"""  # noqa: S608  # fixed SQL text
+
+
 def normalize(value: str) -> str:
     """An IP address (any form) or a host name, lower case; anything else is refused."""
     v = value.strip().lower().rstrip(".")
@@ -90,6 +128,12 @@ def normalize(value: str) -> str:
     if not v or len(v) > 253 or not HOST_RE.fullmatch(v):
         raise ParamInvalidError("Give an IP address or a host name")
     return v
+
+
+def _utc(value: Any) -> str:
+    """'2026-10-27 09:00 UTC', for a sentence."""
+    t = _parse(value)
+    return t.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC") if t else str(value)
 
 
 def _parse(value: Any) -> datetime | None:
@@ -126,7 +170,7 @@ class DeviceStatus:
     hourly: list[int] = field(default_factory=list)  # oldest first, HOURS values
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class AgentStatus:
     kind: str  # "OpenTelemetry", "Claude hooks plugin", or "MCP inventory"
     source_id: str
@@ -135,7 +179,11 @@ class AgentStatus:
     events_24h: int
     state: State
     reason: str | None
-    dropped_24h: int = 0  # records the hooks plugin could not send (ADR-0026 row 15)
+    dropped_24h: int = 0  # records the hooks plugin lost (queue full or over 7 days old)
+    queued: int = 0  # records waiting on the machine at its last check-in
+    late_24h: int = 0  # delivered more than 5 minutes after they happened
+    missing: int = 0  # sequence numbers that never arrived, over 8 days
+    gaps: list[str] = field(default_factory=list)  # "120 missing between Oct 27 9:00 and ..."
 
 
 def evaluate(
@@ -317,7 +365,8 @@ class HealthService:
                 noun = "event" if lost == 1 else "events"
                 state = "attention"
                 reason = (
-                    f"{lost} {noun} dropped in 24 hours: the plugin could not reach this server"
+                    f"{lost} {noun} lost in 24 hours: the queue on the machine was full or "
+                    "older than 7 days"
                 )
             kind = "MCP inventory" if inventory else "OpenTelemetry"
             if hooks and not inventory:
@@ -334,7 +383,45 @@ class HealthService:
                     lost,
                 )
             )
+        self._hook_detail(out, allowed, now)
         return out
+
+    def _hook_detail(
+        self, out: list[AgentStatus], allowed: list[str] | None, now: datetime
+    ) -> None:
+        """Queue, late, and gap figures for the hooks plugin's machines (ADR-0026)."""
+        rows = [a for a in out if a.kind == "Claude hooks plugin"]
+        if not rows:
+            return
+        sources = sorted({a.source_id for a in rows})
+        if allowed is not None:
+            sources = [x for x in sources if x in set(allowed)]
+        scope = QueryScope(sources, now - timedelta(days=8), now)
+        by = {(a.source_id, a.machine): a for a in rows}
+        since = {"since": now - timedelta(hours=24)}
+        for src, machine, queued, late in self._engine.run(
+            HOOKS_SQL, scope, since, timeout_s=TIMEOUT_S
+        ).rows:
+            a = by.get((str(src), str(machine)))
+            if a is not None:
+                a.queued, a.late_24h = int(queued or 0), int(late or 0)
+        for src, machine, missing, before, after in self._engine.run(
+            GAP_SQL, scope, timeout_s=TIMEOUT_S
+        ).rows:
+            a = by.get((str(src), str(machine)))
+            if a is None:
+                continue
+            a.missing += int(missing)
+            if len(a.gaps) < 5:
+                a.gaps.append(f"{int(missing)} missing between {_utc(before)} and {_utc(after)}")
+        for a in rows:
+            if a.missing and a.state == "healthy":
+                noun = "event" if a.missing == 1 else "events"
+                a.state = "attention"
+                a.reason = (
+                    f"{a.missing} {noun} never arrived (gaps in the plugin's sequence): "
+                    "lost on the machine, or removed"
+                )
 
     def _rows(self, devices: list[DeviceWatch], scope: QueryScope) -> list[list[Any]]:
         keys = sorted({d.match for d in devices})

@@ -22,7 +22,17 @@ def _a(key: str) -> str:
     return f"json_extract_string(unmapped, '$.attr.{key}')"
 
 
+# A queued batch can be sent twice when an answer is lost; the install id and sequence
+# number name a record, so the copy is left out (ADR-0026 offline queue).
+_ONE_COPY = f"""hooks AS (
+  SELECT * FROM events
+  WHERE template_id = 'claude_hooks'
+  QUALIFY {_a("seq")} IS NULL OR row_number() OVER (
+    PARTITION BY {_a("install_id")}, {_a("seq")} ORDER BY time_observed, event_id) = 1
+)"""  # noqa: S608  # fixed SQL text
+
 SESSIONS_SQL = f"""
+WITH {_ONE_COPY}
 SELECT {_a("session_id")} AS session_id,
        any_value(nullif(actor_user_name, '')) AS person,
        any_value(device_hostname) AS machine,
@@ -38,21 +48,23 @@ SELECT {_a("session_id")} AS session_id,
          OR (NOT bool_or({_a("plugin_variant")} IS NOT NULL)
              AND bool_or(message = 'claude_hooks.stop')) AS stopped,
        count(*) FILTER (WHERE message = 'claude_hooks.post_tool_use_failure') AS failed
-FROM events
-WHERE template_id = 'claude_hooks' AND {_a("session_id")} IS NOT NULL
+FROM hooks
+WHERE {_a("session_id")} IS NOT NULL
 GROUP BY 1
 ORDER BY last DESC
 LIMIT {MAX_SESSIONS}"""  # noqa: S608  # fixed SQL text
 
 STEPS_SQL = f"""
+WITH {_ONE_COPY}
 SELECT coalesce(time, time_observed) AS t, message, {_a("role")}, {_a("tool_name")},
        {_a("mcp_server_name")}, {_a("mcp_tool_name")}, {_a("path")}, {_a("web_host")},
        {_a("program")}, TRY_CAST({_a("prompt_chars")} AS BIGINT),
        TRY_CAST({_a("tool_input_chars")} AS BIGINT),
        TRY_CAST({_a("tool_response_chars")} AS BIGINT), event_id,
-       nullif(actor_user_name, ''), device_hostname
-FROM events
-WHERE template_id = 'claude_hooks' AND {_a("session_id")} = $session
+       nullif(actor_user_name, ''), device_hostname,
+       epoch(time_observed) - epoch(coalesce(time, time_observed)) AS late_s
+FROM hooks
+WHERE {_a("session_id")} = $session
 ORDER BY t, event_id
 LIMIT {MAX_STEPS}"""  # noqa: S608  # fixed SQL text; the session id is a parameter
 
@@ -87,6 +99,7 @@ class Step:
     input_chars: int | None
     output_chars: int | None
     event_id: str
+    late_s: int | None = None  # delivered this long after it happened, when over 5 minutes
 
 
 @dataclass(slots=True)
@@ -150,8 +163,9 @@ def timeline(
             ic,
             oc,
             str(eid),
+            int(late) if late is not None and late > 300 else None,
         )
-        for t, msg, role, tool, srv, mtool, path, host, prog, pc, ic, oc, eid, _, _ in rows
+        for t, msg, role, tool, srv, mtool, path, host, prog, pc, ic, oc, eid, _, _, late in rows
     ]
     person = next((r[13] for r in rows if r[13]), None)
     machine = next((r[14] for r in rows if r[14]), None)

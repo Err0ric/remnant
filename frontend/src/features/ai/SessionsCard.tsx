@@ -22,6 +22,13 @@ const EVENT: Record<string, string> = {
   session_end: "Ended",
 };
 
+/** "3 h", "2 d": how late a queued step arrived. */
+function late(seconds: number): string {
+  if (seconds < 3600) return `${Math.max(1, Math.round(seconds / 60))} min`;
+  if (seconds < 86400) return `${Math.round(seconds / 3600)} h`;
+  return `${Math.round(seconds / 86400)} d`;
+}
+
 /** What a step touched, in one line: the file, the web host, the program, the MCP tool. */
 function target(s: SessionStep): string {
   if (s.mcp_server) return `${s.mcp_server} ${s.mcp_tool ?? ""}`.trim();
@@ -141,7 +148,14 @@ export function SessionsCard() {
                     <span className="font-mono text-text-secondary"> {target(st)}</span>
                   ) : null}
                 </span>
-                <span className="text-text-muted tabular-nums">{size(st)}</span>
+                <span className="text-text-muted tabular-nums">
+                  {size(st)}
+                  {st.late_s ? (
+                    <span title="Sent from the plugin's queue after the computer was offline">
+                      {size(st) ? " · " : ""}delivered {late(st.late_s)} late
+                    </span>
+                  ) : null}
+                </span>
               </li>
             ))}
           </ol>

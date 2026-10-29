@@ -12,6 +12,10 @@
 # Prompt text, tool input, tool output, and tool errors are sent only when the config
 # says SEND_CONTENT=1, each cut to its first and last 4 KB.
 #
+# Offline: a record that cannot be sent waits in ${CLAUDE_PLUGIN_DATA}/spool (metadata
+# only) and goes out after the next record that reaches the server. Each record carries
+# this install's id and a sequence number, so the server sees what never arrived.
+#
 # Needs: sh, awk, sed, curl, and sha256sum or shasum.
 
 trap 'printf "{}\n"' EXIT
@@ -238,7 +242,34 @@ num() { [ -n "$2" ] && [ "$2" != 0 ] && printf ',{"key":"%s","value":{"intValue"
 # Text for a JSON string: backslashes, quotes, and control characters escaped.
 esc() { printf '%s' "$1" | awk '{ gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); gsub(/\t/, "\\t"); gsub(/\r/, "\\r"); printf "%s%s", (NR > 1 ? "\\n" : ""), $0 }'; }
 
-# Records this machine could not send earlier: counted, and reported with this one.
+# --- Sequence, spool, and lost records (offline queue) ---------------------------------
+# Each record gets the next number of this install, so the server can see gaps; a new
+# install (a new random id) starts again at 1. A lock folder keeps parallel hooks apart.
+spool="$data/spool"
+mkdir -p "$spool" 2>/dev/null
+[ -s "$data/install" ] || od -An -N8 -tx1 /dev/urandom | tr -d ' \n' > "$data/install"
+install=$(head -c 32 "$data/install" | tr -cd '0-9a-f')
+lock() {
+  i=0
+  while ! mkdir "$1" 2>/dev/null; do
+    # A lock older than a minute was left by a hook that was killed.
+    [ -n "$(find "$1" -maxdepth 0 -mmin +1 2>/dev/null)" ] && rmdir "$1" && continue
+    i=$((i + 1)); [ "$i" -gt 100 ] && return 1
+    sleep 0.02 || sleep 1
+  done
+}
+seq=""
+if lock "$data/seq.lock"; then
+  last=$(head -n 1 "$data/seq" 2>/dev/null)
+  case "$last" in '' | *[!0-9]*) last=0 ;; esac
+  seq=$((last + 1))
+  printf '%s\n' "$seq" > "$data/seq.tmp" && mv "$data/seq.tmp" "$data/seq"
+  rmdir "$data/seq.lock"
+fi
+queued=$(ls "$spool" 2>/dev/null | wc -l | tr -d ' ')
+
+# Records lost on this machine (the queue was full or a record was older than 7 days):
+# counted, and reported with the next record that reaches the server.
 pending="" dropped=0
 if [ -s "$data/dropped" ] && mv "$data/dropped" "$data/dropped.$$" 2>/dev/null; then
   pending="$data/dropped.$$"
@@ -248,10 +279,12 @@ fi
 prompt=""
 [ "$event" = UserPromptSubmit ] && prompt=$(content prompt 1)
 tool_input=$(content tool_input 1)
-attrs=$(
+meta=$(
   printf '{"key":"event_name","value":{"stringValue":"claude_hooks.%s"}}' "$name"
   attr role "$role"
   attr plugin_variant posix
+  attr install_id "$install"
+  num seq "$seq"
   attr session_id "$(get session)"
   attr session_source "$(get source)"
   attr end_reason "$(get reason)"
@@ -274,7 +307,10 @@ attrs=$(
   num tool_input_chars "$(get tool_input_chars)"
   num tool_response_chars "$(get tool_response_chars)"
   num error_chars "$(get error_chars)"
+)
+extra=$(
   num dropped_since_last "$dropped"
+  num queued_at_send "$queued"
   if [ "$send_content" = 1 ]; then
     [ "$event" = UserPromptSubmit ] && attr prompt "$(content prompt)"
     attr tool_input "$(esc "$(content tool_input)")"
@@ -284,18 +320,62 @@ attrs=$(
   fi
 )
 
-body=$(printf '{"resourceLogs":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"claude-hooks"}},{"key":"host.name","value":{"stringValue":"%s"}}]},"scopeLogs":[{"scope":{"name":"claude-hooks","version":"2.0.0"},"logRecords":[{"timeUnixNano":"%s000000000","body":{"stringValue":"claude_hooks.%s"},"attributes":[%s]}]}]}]}' \
-  "$(esc "$(uname -n)")" "$(date +%s)" "$name" "$attrs")
+now=$(date +%s)
+host=$(esc "$(uname -n)")
+record() { printf '{"timeUnixNano":"%s000000000","body":{"stringValue":"claude_hooks.%s"},"attributes":[%s]}' "$now" "$name" "$1"; }
+wrap() { printf '{"resourceLogs":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"claude-hooks"}},{"key":"host.name","value":{"stringValue":"%s"}}]},"scopeLogs":[{"scope":{"name":"claude-hooks","version":"2.1.0"},"logRecords":[%s]}]}]}' "$host" "$1"; }
+# One POST of a body on stdin: 2 seconds at most, only the CA named in the config when one
+# is named (never a switch to skip checking), and the answer is never read.
+post() {
+  if [ -n "$ca" ] && [ -r "$ca" ]; then
+    curl --silent --fail --output /dev/null --max-time 2 --connect-timeout 1 --cacert "$ca" \
+      -X POST "$url/api/otlp/v1/logs" -H "Content-Type: application/json" \
+      -H "Authorization: Bearer $token" --data-binary @- >/dev/null 2>&1
+  else
+    curl --silent --fail --output /dev/null --max-time 2 --connect-timeout 1 \
+      -X POST "$url/api/otlp/v1/logs" -H "Content-Type: application/json" \
+      -H "Authorization: Bearer $token" --data-binary @- >/dev/null 2>&1
+  fi
+}
 
-# Only the CA named in the config, when one is named; never a switch to skip checking.
-set -- --silent --fail --output /dev/null --max-time 2 --connect-timeout 1
-[ -n "$ca" ] && [ -r "$ca" ] && set -- "$@" --cacert "$ca"
-if printf '%s' "$body" | curl "$@" -X POST "$url/api/otlp/v1/logs" \
-  -H "Content-Type: application/json" -H "Authorization: Bearer $token" \
-  --data-binary @- >/dev/null 2>&1; then
+# Queued records go out after the live one, oldest first, 50 to a request, for at most 15
+# seconds. This hook runs in the background, so Claude never waits for it. One hook flushes
+# at a time; a record older than 7 days is dropped and counted as lost.
+flush() {
+  lock "$data/flush.lock" || return 0
+  began=$(date +%s)
+  cutoff=$((began - 604800))
+  while [ $(($(date +%s) - began)) -lt 15 ]; do
+    files=$(ls "$spool" 2>/dev/null | head -n 50)
+    [ -n "$files" ] || break
+    batch="" names=""
+    for f in $files; do
+      t=${f%%-*}
+      case "$t" in '' | *[!0-9]*) rm -f "$spool/$f"; continue ;; esac
+      if [ "$t" -lt "$cutoff" ]; then rm -f "$spool/$f"; printf x >> "$data/dropped"; continue; fi
+      batch="${batch:+$batch,}$(cat "$spool/$f")"
+      names="$names $f"
+    done
+    [ -n "$batch" ] || continue
+    wrap "$batch" | post || break
+    for f in $names; do rm -f "$spool/$f"; done
+  done
+  rmdir "$data/flush.lock"
+}
+
+if wrap "$(record "$meta$extra")" | post; then
   [ -n "$pending" ] && rm -f "$pending"
+  [ "$queued" -gt 0 ] && flush
 else
-  { [ -n "$pending" ] && cat "$pending"; printf x; } >> "$data/dropped" 2>/dev/null
-  [ -n "$pending" ] && rm -f "$pending"
+  # Not sent: the lost count waits for the next record, and this record is queued
+  # (metadata only: content is never written to disk). At most 10,000 records (about
+  # 20 MB) are kept; past that the oldest are dropped and counted as lost.
+  [ -n "$pending" ] && { cat "$pending" >> "$data/dropped"; rm -f "$pending"; }
+  n=$(printf '%012d' "${seq:-0}")
+  record "$meta" > "$spool/.$now-$n-$$" && mv "$spool/.$now-$n-$$" "$spool/$now-$n-$$.rec"
+  over=$(($(ls "$spool" | wc -l) - 10000))
+  if [ "$over" -gt 0 ]; then
+    for f in $(ls "$spool" | head -n "$over"); do rm -f "$spool/$f"; printf x >> "$data/dropped"; done
+  fi
 fi
 exit 0

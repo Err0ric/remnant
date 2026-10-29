@@ -68,3 +68,17 @@ Context: the owner reviewed a commercial vendor's Claude hook plugins (reference
 Build order (owner, 2026-10-29): (a) this amendment and the ADR-0030 tiers; (b) the Windows and POSIX plugins, managed config, account email, events, TLS, dropped count with its Health line, and the pilot guide; (c) the Cowork plugin after the reachability check; (d) ADR-0030 evidence, after ADR-0029 parts 2 and 3.
 
 ATLAS and ATT&CK: AML.T0051 (the receiver cannot steer Claude: row 2); AML.T0057 (content off by default, capped and masked when on: row 5); AML.T0010 and T1546 (the plugin as code on every tool call: short, pinned, hashed, optionally signed); T1059.001 (row 17). Threats T61 (updated), T63, and T64 in SPEC section 7.
+
+## Amendment 2026-10-29 b (owner: offline queue)
+
+People often work from home without VPN, where the receiver is out of reach; until now those records were dropped and counted. The receiver stays off the internet.
+
+| # | Change | Why |
+|---|---|---|
+| 19 | **Offline queue**: a record that cannot be sent is written to `${CLAUDE_PLUGIN_DATA}/spool`, one file per record named by its time and sequence number (no shared file, so parallel hooks cannot interleave). **Metadata only**: content is never written to disk, even when the source keeps content | Most Claude use may happen off the network |
+| 20 | **Backlog**: after the next record that reaches the server (the live one first, within the 2-second rule), the same background hook sends the queue oldest first, 50 records to a request, for at most 15 seconds; one hook flushes at a time (a lock folder in sh, a named mutex in PowerShell). Claude never waits for it: the hook is async | Never slows a tool call |
+| 21 | **Caps**: at most 10,000 queued records (about 20 MB) and 7 days. Past either, the oldest are deleted and counted as lost (`dropped_since_last`, now meaning lost), reported with the next record that arrives | Bounded disk use on the laptop |
+| 22 | **Sequence**: every record carries `install_id` (random, made once per install) and `seq` (1, 2, 3, per install, taken under the same lock), plus `queued_at_send` on live records. A reinstall starts a new install id at 1, so it is not a gap | The server can tell what never arrived |
+| 23 | **Server**: records keep their original time (`time`); `time_observed` is when they arrived. Health > Endpoint agents shows per machine: queued at last check-in, delivered late (over 5 minutes) in 24 hours, lost, and missing (gaps in `seq` per install over 8 days, with "120 missing between ... and ... UTC"); a gap marks the row for attention. Session steps say "delivered 3 h late". A batch resent after a lost answer is shown once (one copy per install id and seq) | Late, lost, and missing are visible and separate |
+
+The spool is in the user's own folder: the user, malware, or an agent with file tools can read, change, or delete queued records (T63-adjacent). Integrity does not come from the file: it comes from the sequence numbers (a deleted record leaves a gap, counted against what the device itself reported lost) and from metadata-only contents (nothing sensitive at rest). A forged record can still be added with the source token, as before (T57).

@@ -100,7 +100,7 @@ access_control:
       policy: bypass
 ```
 
-Records the plugin could not send (refused, timed out, unreachable) are counted on the machine and reported with its next record: **Health > Endpoint agents** shows "12 dropped" on the machine's row. A row with drops and no other problem is marked for attention.
+Records the plugin cannot send (refused, timed out, unreachable: at home without VPN, for example) wait on the machine in `${CLAUDE_PLUGIN_DATA}/spool`, metadata only, and go out after the next record that reaches the server, oldest first, in the background. The queue keeps at most 10,000 records and 7 days; past that the oldest are lost and counted. Every record carries a per-install sequence number, so **Health > Endpoint agents** shows per machine: queued at its last check-in, delivered late, lost, and missing (numbers that never arrived, with when). Session steps that arrived late say so ("delivered 3 h late"). Do not expose the receiver to the internet to reach people at home: the queue covers that.
 
 ## 6. PowerShell, execution policy, and EDR
 
@@ -113,7 +113,7 @@ Run each on one Windows and one Mac (or Linux) pilot machine. Each is pass or fa
 | # | Check | Pass |
 |---|---|---|
 | 1 | Start a session, send a prompt, let Claude read a file, fetch a page, run a command that fails, end the session | **AI usage > Agents > Sessions** shows one session with each event in order: Started, Prompt, Calls, Returned, Failed, Turn end, Ended |
-| 2 | Stop the server (or block its port), then use Claude Code for a few tool calls | Claude is no slower than without the plugin; nothing appears on screen; after the server is back, Health shows the drops on that machine |
+| 2 | Stop the server (or take a laptop off the network), then use Claude Code for a few tool calls | Claude is no slower than without the plugin; nothing appears on screen; after the server is back and one more tool call runs, the queued steps appear in the session marked "delivered late", and Health shows them as late, none missing |
 | 3 | Point a test copy at a receiver that answers 403 with a body that asks to deny the tool | Claude's behavior does not change; the tool runs |
 | 4 | Point a test copy at a receiver that waits 30 seconds | No delay in Claude |
 | 5 | Use Claude Code as someone not on the pilot list | Nothing arrives |

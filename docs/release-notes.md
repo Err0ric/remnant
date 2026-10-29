@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Claude Code hooks: offline queue (ADR-0026 amendment b)
+
+- A record the plugin cannot send (at home without VPN, a server restart) now waits on the laptop instead of being dropped, and goes out after the next record that reaches the server, oldest first, in the background. Metadata only: content is never written to disk. At most 10,000 records and 7 days are kept.
+- Every record carries a per-install sequence number. **Health > Endpoint agents** shows, per machine, records queued at its last check-in, delivered late, lost, and missing (with when), and marks a machine with missing records for attention. Session steps that arrived late say "delivered 3 h late".
+- Plugin version 2.1.0: download and publish again to get it.
+
+**What changes for existing installs:** "dropped" on Health now means lost from the queue (full or older than 7 days); records that could not be sent are no longer counted as dropped, they arrive late.
+
 ### Fixed: AI Watch wording, chart, and first seen
 
 - The Not set up line keeps capitals inside the sentence ("new agents and MCP servers", "sensitive data to AI").
