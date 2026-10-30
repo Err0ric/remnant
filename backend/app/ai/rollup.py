@@ -34,6 +34,7 @@ from app.ai.agents import ITEMS_SQL
 from app.ai.catalog import Catalog
 from app.ai.usage import MCP_SQL, first_services_sql, rollup_build_sql
 from app.engine.duckdb import QueryEngine, QueryScope
+from app.search.addresses import OBS_SQL
 
 log = structlog.get_logger(__name__)
 
@@ -64,6 +65,13 @@ class RollupReport:
     pending: int = 0  # stale days left for the next run
     skipped: int = 0  # days too large for the rollup; read live
     indexed: int = 0  # days given their first-seen entries without a rebuild
+
+
+# Rows that tell who or which machine had an address (logons, User-ID, VPN, DHCP, sign-ins
+# on a machine). A day with any of them is never skipped: the address lookup reads them
+# from events, so leaving the day out would leave AI use on closed days with no person.
+IDENTITY_SQL = f"""WITH {OBS_SQL}
+SELECT (SELECT count(*) FROM addr_ev) + (SELECT count(*) FROM dev_sign)"""  # noqa: S608
 
 
 def _ts(v: Any) -> datetime | None:
@@ -131,6 +139,15 @@ class AiRollup:
             return bool(current)
         return bool(current and (built / PART).is_file() and not m.get("skipped"))
 
+    @staticmethod
+    def _identity(built: Path) -> bool:
+        """The day has rows naming who or which machine had an address; True when unknown."""
+        try:
+            m = json.loads((built / MANIFEST).read_text())
+        except (OSError, ValueError):
+            return True
+        return m.get("identity") is not False
+
     def _closed_days(self) -> list[tuple[str, str]]:
         """(source, day) for every closed day in the lake, newest first."""
         today = self._clock().astimezone(UTC).date().isoformat()
@@ -165,8 +182,8 @@ class AiRollup:
                 report.built += 1
             else:
                 report.skipped += 1
-        # Days built before the first-seen index existed get it without a rebuild, so
-        # they stay readable from the rollup meanwhile (F63).
+        # Days built before the first-seen index or the identity flag existed get them
+        # without a rebuild (F63; people on closed days, 2026-10-29).
         left = self._max - min(len(stale), self._max)
         done = set(stale)
         unindexed = [(s, d) for s, d in closed if (s, d) not in done and not self._indexed(s, d)]
@@ -192,6 +209,7 @@ class AiRollup:
         scope = QueryScope([source], start, start + timedelta(days=1) - timedelta(microseconds=1))
         out = self._dir / f"source={source}" / f"day={day}"
         out.mkdir(parents=True, exist_ok=True)
+        identity = self._has_identity(scope)
         result = self._engine.run(
             rollup_build_sql(self._catalog.domain_table()),
             scope,
@@ -208,7 +226,7 @@ class AiRollup:
                 intel=False, name="ai_rollup.first",
             ).rows  # fmt: skip
             first = self._first_other(scope) | {f"service:{s}": _iso(t) for s, t in svc}
-            self._manifest(out, key, inputs, skipped=True, first=first)
+            self._manifest(out, key, inputs, skipped=True, first=first, identity=identity)
             return False
         cols = list(zip(*result.rows, strict=True)) if result.rows else [()] * len(SCHEMA)
         arrays = []
@@ -223,8 +241,17 @@ class AiRollup:
         tmp = out / f".{PART}.tmp"
         pq.write_table(table, tmp)
         os.replace(tmp, out / PART)
-        self._manifest(out, key, inputs, first=self._first_other(scope) | _first_services(table))
+        self._manifest(
+            out, key, inputs, first=self._first_other(scope) | _first_services(table),
+            identity=identity,
+        )  # fmt: skip
         return True
+
+    def _has_identity(self, scope: QueryScope) -> bool:
+        rows = self._engine.run(
+            IDENTITY_SQL, scope, timeout_s=120, intel=False, name="ai_rollup.identity"
+        ).rows
+        return bool(rows and int(rows[0][0] or 0) > 0)
 
     def _manifest(
         self,
@@ -233,9 +260,14 @@ class AiRollup:
         inputs: list[list[Any]],
         skipped: bool = False,
         first: dict[str, str] | None = None,
+        identity: bool | None = None,
     ) -> None:
         tmp = out / f".{MANIFEST}.tmp"
-        body = {"catalog": key, "inputs": inputs, "skipped": skipped, "first": first or {}}
+        body: dict[str, Any] = {
+            "catalog": key, "inputs": inputs, "skipped": skipped, "first": first or {},
+        }  # fmt: skip
+        if identity is not None:
+            body["identity"] = identity
         tmp.write_text(json.dumps(body))
         os.replace(tmp, out / MANIFEST)
 
@@ -261,7 +293,7 @@ class AiRollup:
             m = json.loads((self._dir / f"source={source}" / f"day={day}" / MANIFEST).read_text())
         except (OSError, ValueError):
             return False
-        return "first" in m
+        return "first" in m and "identity" in m
 
     def _index_only(self, source: str, day: str) -> None:
         out = self._dir / f"source={source}" / f"day={day}"
@@ -272,7 +304,7 @@ class AiRollup:
         if (out / PART).is_file():
             first |= _first_services(pq.read_table(out / PART))
         self._manifest(out, m.get("catalog", ""), m.get("inputs", []), bool(m.get("skipped")),
-                       first)  # fmt: skip
+                       first, self._has_identity(scope))  # fmt: skip
 
     def first_seen(self, sources: list[str] | None) -> dict[str, datetime]:
         """ "service:<id>", "mcp:<name>", or "agent:<key>" -> when first seen in any closed
@@ -311,7 +343,8 @@ class AiRollup:
 
     def covered(self, scope: QueryScope) -> list[str]:
         """ "source|YYYY-MM-DD" for every fresh rollup day in scope: those are read from the
-        rollup, the rest of the range from events."""
+        rollup, the rest of the range from events. A day with identity rows (or not yet
+        checked for them) is read live: the address lookup needs its events."""
         if scope.start is None or scope.end is None:
             return []
         first = scope.start.astimezone(UTC).date().isoformat()
@@ -322,6 +355,10 @@ class AiRollup:
             source = d.name.removeprefix("source=")
             for built in d.glob("day=*"):
                 day = built.name.removeprefix("day=")
-                if first <= day <= last and self._fresh(source, day, key):
+                if (
+                    first <= day <= last
+                    and self._fresh(source, day, key)
+                    and not self._identity(built)
+                ):
                     out.append(f"{source}|{day}")
         return sorted(out)

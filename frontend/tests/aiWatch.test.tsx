@@ -83,6 +83,11 @@ describe("AI Watch on the Dashboard (ADR-0035 Part 2)", () => {
     const spy = await renderAt("/dashboard");
     const watch = await screen.findByRole("region", { name: "AI Watch" });
     expect(within(watch).getByText("Unapproved AI services")).toBeVisible();
+    // Not reviewed links to those alerts, closed ones included (owner, 2026-10-29).
+    expect(within(watch).getByRole("link", { name: "1 not reviewed" })).toHaveAttribute(
+      "href",
+      "/alerts#review",
+    );
     expect(within(watch).getByRole("button", { name: "2" })).toBeVisible();
     expect(within(watch).getAllByText("+1 vs previous 7 days")).toHaveLength(2);
     expect(within(watch).getByText("same as previous 7 days")).toBeVisible();

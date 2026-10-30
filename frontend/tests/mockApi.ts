@@ -114,6 +114,7 @@ export const SOURCE = {
 
 export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "open" }) {
   const state = { ...auth };
+  const install = { name: "" };
   const sources: Record<string, unknown>[] = [{ ...SOURCE }];
   const watched: Record<string, unknown>[] = [
     {
@@ -717,6 +718,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
             context: "DeepSeek most used",
             needs: null,
             restricted: false,
+            unreviewed: 1,
           },
           {
             key: "people",
@@ -798,8 +800,13 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
     }
     // Alerts (ADR-0037): one open rule alert, one closed gap.
     if (/\/api\/alerts\?state=/.test(url)) {
-      const state = new URL(url, "http://x").searchParams.get("state");
-      const items = alertItems.filter((i) => state === "all" || i.state === state);
+      const params = new URL(url, "http://x").searchParams;
+      const state = params.get("state");
+      const items = alertItems.filter(
+        (i) =>
+          (state === "all" || i.state === state) &&
+          (params.get("unreviewed") !== "true" || i.kind === "ai_watch"),
+      );
       return json({
         items,
         open: alertItems.filter((i) => i.state === "open").length,
@@ -2157,6 +2164,11 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       if (state.logoutFails) return json({ detail: "boom", code: "internal" }, 500);
       state.signedIn = false;
       return new Response(null, { status: 204 });
+    }
+    if (url.endsWith("/api/install")) {
+      if (method === "PUT")
+        install.name = (JSON.parse(String(init?.body)) as { name: string }).name;
+      return json({ name: install.name });
     }
     if (url.endsWith("/api/meta"))
       return json({

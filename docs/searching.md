@@ -39,6 +39,21 @@ When a scheduled search drops to zero right after a source it reads switched par
 | `template_id = 'paloalto_system'` | The firewall's description text |
 | `template_id = 'paloalto_globalprotect'` | The GlobalProtect event id |
 
+## Microsoft 365 columns
+
+Since the F66 parser update (directory audit 1.1.0, Management Activity 1.2.0, sign-ins 1.1.0), Microsoft 365 records fill these columns. Earlier events have them empty; Sources says from which day.
+
+| You are looking for | Column | Filled from |
+|---|---|---|
+| Correlation id (the same operation in Graph and the Management API) | `metadata_correlation_uid` | Graph `correlationId`; Management API `InterSystemsId`; sign-ins `correlationId` |
+| The app | `resource_name` (name), `resource_uid` (application id) | Graph target or `AppId` detail; Management API target and extended properties; sign-ins `appDisplayName`, `appId` |
+| What kind of object | `resource_type` | `ServicePrincipal`, `Application` |
+| Why it failed | `status_detail` | `resultReason`, `LogonError`, `status.failureReason` |
+| Permissions asked for | `privileges` | The consent's scope list |
+| Consent type, permission resource | `unmapped` (`$.consent_type`, `$.permission_resource`) | No OCSF column for these |
+
+There is no `correlation_id` column. Count an operation once with `count(DISTINCT metadata_correlation_uid)`, as `m365_user_consent` does.
+
 ## Example saved searches
 
 Eight examples ship in `examples/saved-searches/`. Import one on **Saved searches > Import**, then adapt it. Each reads parsed columns and carries the time range, so it works on the Dashboard as a schedule.
@@ -52,7 +67,7 @@ Eight examples ship in `examples/saved-searches/`. Import one on **Saved searche
 | `ssh_logins` | SSH sign-ins per user, client, and result | `linux_sshd` columns |
 | `firewall_maintenance` | HA changes, commits, restarts, installs, and medium or higher system events per firewall | `paloalto_system` subtype, event id, severity |
 | `m365_new_service_principals` | Enterprise apps added to the tenant, without the ones Microsoft provisions itself (actor Azure Resource Manager, or an app owned by Microsoft's tenants `f8cdef31-...` and `72f988bf-...`) | M365 directory audit and Management Activity rows; the owner is matched on `raw` |
-| `m365_user_consent` | People consenting to applications (the start of OAuth consent phishing) | Same two templates, `Consent to application` |
+| `m365_user_consent` | People consenting to applications (the start of OAuth consent phishing), one row per consent with result, app, permissions, and correlation id | Same two templates, `Consent to application`, merged on `metadata_correlation_uid` |
 
 Notes:
 

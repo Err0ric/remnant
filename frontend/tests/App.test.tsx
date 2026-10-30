@@ -51,11 +51,11 @@ describe("App shell", () => {
     await renderApp();
     const nav = screen.getByRole("navigation", { name: "Primary" });
     // One row per area (ADR-0038), in the morning's order, Settings at the foot.
-    expect(
-      within(nav)
-        .getAllByRole("link")
-        .map((a) => a.textContent),
-    ).toEqual(["Dashboard", "Alerts", "Investigate", "AI usage", "Agents", "Health", "Settings"]);
+    const areas = Array.from(within(nav).getByRole("list", { name: "Areas" }).children).map(
+      (li) => li.querySelector("a")?.textContent,
+    );
+    expect(areas).toEqual(["Dashboard", "Alerts", "Investigate", "AI usage", "Agents", "Health"]);
+    expect(within(nav).getByRole("link", { name: "Settings" })).toBeInTheDocument();
     expect(within(nav).getByRole("link", { name: "Investigate" })).toHaveAttribute(
       "aria-current",
       "page",
@@ -63,7 +63,7 @@ describe("App shell", () => {
     expect(within(nav).queryByText("Ask")).not.toBeInTheDocument(); // a tab of Search now
     // Admin pages live in the Settings area, not on the main rail.
     expect(within(nav).queryByText("Users and access")).not.toBeInTheDocument();
-    await userEvent.click(within(nav).getByText("Settings"));
+    await userEvent.click(within(nav).getByRole("link", { name: "Settings" }));
     const sub = screen.getByRole("navigation", { name: "Settings" });
     // Ordered as an install is set up: start, data, access, AI, alerts, records.
     const text = sub.textContent ?? "";
@@ -74,6 +74,39 @@ describe("App shell", () => {
     expect(within(sub).getByText("Users and access")).toBeInTheDocument();
     expect(within(sub).getByText("Audit log")).toBeInTheDocument();
     expect(screen.queryByText(/grimoire|seance|séance|ossuary/i)).not.toBeInTheDocument();
+  });
+
+  it("lists the open area's pages under it, the current one marked (ADR-0038 nav pass 2)", async () => {
+    await renderApp();
+    const nav = screen.getByRole("navigation", { name: "Primary" });
+    const pages = within(nav).getByRole("list", { name: "Investigate pages" });
+    expect(within(pages).getByRole("link", { name: "Search" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(within(pages).getByRole("link", { name: "Saved searches" })).toHaveAttribute(
+      "href",
+      "/investigate/saved",
+    );
+    // Other areas stay one line; their pages are only in the icon rail's hover menu.
+    expect(within(nav).queryByRole("list", { name: "Health pages" })).toBeNull();
+    expect(within(nav).getByRole("list", { name: "Health pages menu" })).toBeInTheDocument();
+  });
+
+  it("shows the install name only when an admin set one", async () => {
+    await renderApp();
+    const top = screen.getByRole("banner");
+    expect(within(top).queryByText("Security workspace")).toBeNull();
+    await userEvent.click(
+      within(screen.getByRole("navigation", { name: "Primary" })).getByRole("link", {
+        name: "Settings",
+      }),
+    );
+    await userEvent.click(screen.getByRole("link", { name: "About and licenses" }));
+    const box = await screen.findByRole("region", { name: "Install name" });
+    await userEvent.type(within(box).getByLabelText("Install name"), "Example SOC");
+    await userEvent.click(within(box).getByRole("button", { name: "Save" }));
+    expect(await within(top).findByText("Example SOC")).toBeInTheDocument();
   });
 
   it("toggles the theme on the root element", async () => {
@@ -92,7 +125,7 @@ describe("App shell", () => {
       "aria-expanded",
       "true",
     );
-    await userEvent.click(within(nav).getByText("Health"));
+    await userEvent.click(within(nav).getByRole("link", { name: "Health" }));
     await screen.findByRole("heading", { level: 1, name: "Health" });
     expect(nav).toHaveClass("hidden");
   });

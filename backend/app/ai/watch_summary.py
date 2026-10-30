@@ -79,6 +79,8 @@ class Card:
     # (people card only): "3 more devices not matched to a person".
     devices: int | None = None
     # Consent card: attempts a policy blocked, never added to `value`, and the newest.
+    # Unapproved services card: those still not reviewed (open or closed alerts list).
+    unreviewed: int | None = None
     blocked: int | None = None
     blocked_context: str = ""
     # Search SQL for the rows behind the card and behind `blocked` (consent card).
@@ -232,12 +234,8 @@ def summary(
             "Unapproved AI services",
             len(cur_svcs),
             len(prev_svcs),
-            (
-                f"{services[lead].name} most used"
-                + (f"; {not_reviewed} not reviewed yet" if not_reviewed else "")
-            )
-            if lead
-            else "None in use",
+            f"{services[lead].name} most used" if lead else "None in use",
+            unreviewed=not_reviewed,
         ),
         Card(
             "people",

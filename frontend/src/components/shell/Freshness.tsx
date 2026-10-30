@@ -74,3 +74,18 @@ export function AlertsButton() {
     </a>
   );
 }
+
+/** The optional install name an admin set (Settings > About); nothing when unset. */
+export function InstallLabel() {
+  const q = useQuery({ queryKey: ["install"], queryFn: api.install, staleTime: 300_000 });
+  const name = q.data?.name;
+  if (!name) return null;
+  return (
+    <>
+      <span className="hidden text-white/40 lg:inline" aria-hidden="true">
+        |
+      </span>
+      <span className="hidden truncate text-base text-white/75 lg:inline">{name}</span>
+    </>
+  );
+}

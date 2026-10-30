@@ -1,3 +1,5 @@
+import { InstallName } from "./InstallName";
+import { useViewer } from "@/lib/viewer";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { api } from "@/lib/api";
@@ -39,6 +41,7 @@ const SOURCES: DataSource[] = [
 /** Version, license, and the outside data this server can use, with the attribution each
  * license asks for. */
 export function AboutPage() {
+  const { isAdmin } = useViewer();
   const meta = useQuery({ queryKey: ["meta"], queryFn: api.meta });
   return (
     <div className="flex min-w-0 flex-1 flex-col">
@@ -59,6 +62,7 @@ export function AboutPage() {
             <dd>Apache License 2.0</dd>
           </dl>
         </section>
+        <InstallName canEdit={isAdmin} />
         <section aria-label="Data sources and licenses" className="flex flex-col gap-2">
           <h2 className="text-base font-semibold">Data sources and licenses</h2>
           <div className="overflow-x-auto rounded-card border border-border">

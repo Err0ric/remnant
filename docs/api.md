@@ -61,11 +61,11 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | `PATCH` | `/api/alert-targets/{target_id}` | Update Target |  | `name`?: string<br>`url`?: string<br>`email`?: EmailSettings<br>`password`?: string |
 | `DELETE` | `/api/alert-targets/{target_id}` | Delete Target |  |  |
 | `POST` | `/api/alert-targets/{target_id}/test` | Test Target |  |  |
-| `GET` | `/api/alerts` | The viewer's alerts, newest first: open by default, or closed, or all. | `?state` (optional): `open` &#124; `closed` &#124; `all` |  |
+| `GET` | `/api/alerts` | The viewer's alerts, newest first: open by default, or closed, or all. With `unreviewed`, only AI Watch items whose service or MCP server is still not reviewed, closed ones included: what AI Watch's "not reviewed" line links to. | `?state` (optional): `open` &#124; `closed` &#124; `all`<br>`?unreviewed` (optional): boolean |  |
 | `GET` | `/api/alerts/mutes` | Active mutes, soonest to expire first. Everyone may see what is muted. |  |  |
 | `DELETE` | `/api/alerts/mutes/{mute_id}` | End a mute early. Audited as alert.unmute. |  |  |
 | `GET` | `/api/alerts/{item_id}` | Get Alert |  |  |
-| `POST` | `/api/alerts/{item_id}/close` | Close with a reason; a note is required for False positive and Needs follow-up. Audited as alert.close. |  | `reason`: `true_positive` &#124; `benign` &#124; `false_positive` &#124; `follow_up`<br>`note`?: string |
+| `POST` | `/api/alerts/{item_id}/close` | Close with a reason; a note is required for False positive and Needs follow-up. Audited as alert.close. With `review_status` (admins, AI Watch service and MCP server items), the service or server is approved or not approved as on AI usage, audited as ai.service_change or ai.mcp_change. |  | `reason`: `true_positive` &#124; `benign` &#124; `false_positive` &#124; `follow_up`<br>`note`?: string<br>`review_status`?: `approved` &#124; `not_approved` |
 | `POST` | `/api/alerts/{item_id}/mute` | Close new alerts like this one (same kind and subject) for 1 to 30 days; the mute expires on its own. Admins only; audited as alert.mute. |  | `days`: integer |
 | `POST` | `/api/alerts/{item_id}/reopen` | Audited as alert.reopen. |  |  |
 
@@ -191,6 +191,8 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | Method | Path | What it does | Query | JSON body (`?` optional) |
 |---|---|---|---|---|
 | `GET` | `/api/health` | Health |  |  |
+| `GET` | `/api/install` | The optional install name (ADR-0038 nav pass 2). Signed-in people only: it may name the organization, so the sign-in page never shows it. |  |  |
+| `PUT` | `/api/install` | Put Install |  | `name`?: string |
 | `GET` | `/api/meta` | Meta |  |  |
 | `GET` | `/api/schema/columns` | Columns |  |  |
 

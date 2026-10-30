@@ -38,12 +38,20 @@ describe("Health (ADR-0019)", () => {
     expect(within(sources).getByText("linux_sshd")).toBeVisible();
     const show = screen.getByRole("group", { name: "Show" });
 
-    await userEvent.click(screen.getByRole("link", { name: /Endpoint agents/ }));
+    await userEvent.click(
+      within(await screen.findByRole("navigation", { name: "Health tabs" })).getByRole("link", {
+        name: /Endpoint agents/,
+      }),
+    );
     const agents = await screen.findByRole("table", { name: "Endpoint agents" });
     expect(within(agents).getByText("ws-0042")).toBeVisible();
     expect(within(agents).getByText("Last reported 2 d ago")).toBeVisible();
 
-    await userEvent.click(screen.getByRole("link", { name: /Watched devices/ }));
+    await userEvent.click(
+      within(await screen.findByRole("navigation", { name: "Health tabs" })).getByRole("link", {
+        name: /Watched devices/,
+      }),
+    );
     const devices = await screen.findByRole("table", { name: "Watched devices" });
     expect(within(devices).getByText("Site B network sensor")).toBeVisible();
     expect(within(devices).getByText("Silent 47 min (allowed 15 min)")).toBeVisible();
@@ -54,7 +62,12 @@ describe("Health (ADR-0019)", () => {
 
   it("lets administrators watch a device", async () => {
     const spy = await renderAt("/health");
-    await userEvent.click(await screen.findByRole("link", { name: /Watched devices/ }));
+    await userEvent.click(
+      await within(await screen.findByRole("navigation", { name: "Health tabs" })).findByRole(
+        "link",
+        { name: /Watched devices/ },
+      ),
+    );
     await userEvent.click(screen.getByRole("button", { name: "Watch a device" }));
     const form = screen.getByRole("form", { name: "Watch a device" });
     await userEvent.type(within(form).getByLabelText("Name"), "Core firewall");
@@ -69,7 +82,12 @@ describe("Health (ADR-0019)", () => {
 
   it("does not offer device changes to analysts", async () => {
     await renderAt("/health", { mode: "login", signedIn: true, role: "analyst" });
-    await userEvent.click(await screen.findByRole("link", { name: /Watched devices/ }));
+    await userEvent.click(
+      await within(await screen.findByRole("navigation", { name: "Health tabs" })).findByRole(
+        "link",
+        { name: /Watched devices/ },
+      ),
+    );
     await screen.findByRole("table", { name: "Watched devices" });
     expect(screen.queryByRole("button", { name: "Watch a device" })).toBeNull();
     expect(screen.queryByRole("button", { name: /Stop watching/ })).toBeNull();
@@ -134,7 +152,9 @@ function pulledOnly(spy: ReturnType<typeof mockApi>) {
 describe("Health with pulled sources only (F59, F60)", () => {
   it("lists Loki and Microsoft 365 on the Sources tab with their flow and gaps", async () => {
     await renderAt("/health#sources", undefined, pulledOnly);
-    const tab = await screen.findByRole("link", { name: /^Sources/ });
+    const tab = await within(
+      await screen.findByRole("navigation", { name: "Health tabs" }),
+    ).findByRole("link", { name: /^Sources/ });
     await within(tab).findByText("4");
     const flow = await screen.findByRole("list", { name: "Sources" });
     for (const id of ["paloalto_fw", "unifi", "dns", "m365"])
@@ -144,7 +164,9 @@ describe("Health with pulled sources only (F59, F60)", () => {
       within(fw).getByText(/^No events .+\(5 h\)\. Other sources kept flowing\.$/),
     ).toBeVisible();
     expect(screen.queryByText(/No sources yet/)).toBeNull();
-    const enrichment = screen.getByRole("link", { name: /Enrichment feeds/ });
+    const enrichment = within(
+      await screen.findByRole("navigation", { name: "Health tabs" }),
+    ).getByRole("link", { name: /Enrichment feeds/ });
     expect(enrichment).not.toHaveTextContent("4");
     const events = screen.getByRole("button", { name: /^Events, last 24 hours/ });
     expect(events).toHaveTextContent("Not enough history yet (2 of 7 days)");

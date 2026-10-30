@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Fixed: people on closed days, and app names on older sign-ins
+
+- AI usage and AI Watch showed 0 people for every service over ranges of 2 days or more. Since F63, closed days were read from the AI rollup and their event files skipped, including the logon, User-ID, VPN, DHCP, and sign-in events that say who had an address, so use on closed days had no person. A day with those events is now read live; the rollup's day record notes whether a day has them (checked once for existing days on the next rollup run).
+- The consent card named an app "an app with no name" when the person's sign-in just before was stored before the sign-ins parser 1.1.0: those sign-ins carry the app only in `message`, which is now used.
+
+**What changes for existing installs:** after the update, the next rollup run checks each existing day once; until then those days are read live (slower on a busy install for a few minutes, never wrong).
+
+### Navigation, second pass (ADR-0038)
+
+- The open area lists its pages under it in the left menu, the current one marked; other areas stay one line. In the icon-only menu (768 to 1100 px), hovering or focusing an area shows its pages. The tabs in the page header stay.
+- **Jump to** (Ctrl+K) lists every page by its own name: "MCP servers", "Rules", "Endpoint agents", "People & devices".
+- "Security workspace" is gone from the top bar. An admin can set an optional **install name** under **Settings > About and licenses**; it shows in the top bar to signed-in people only (never on the sign-in page), and nothing shows when it is unset. Changes are audited (`install.update`).
+
+### AI Watch: closing an alert can review it; "not reviewed" opens those alerts
+
+- Closing an AI Watch alert for an AI service or MCP server asks for its review status: **Leave unreviewed** (the default), **Approve**, or **Not approved**. Approve and Not approved change it on AI usage too, audited as `ai.service_change` or `ai.mcp_change` with `via: alert.close`. Administrators only; analysts still close, and the status stays not reviewed.
+- AI Watch's Unapproved AI services card shows **N not reviewed** as a link to the AI Watch alerts whose service or MCP server is still not reviewed, open and closed (`/alerts#review`). Approve and Not approved are offered on closed ones too.
+
+**What changes for existing installs:** alerts you closed before this keep their service not reviewed; they now appear under **N not reviewed**, where you can approve or not approve each one.
+
 ### Areas with tabs (ADR-0038, part 1: navigation)
 
 - The left nav lists **areas**, one row each with an icon: Dashboard, Alerts, Investigate, AI usage, Agents, Health, and Settings at the foot. Between 768 and 1100 px wide it shows icons only.
@@ -23,7 +43,7 @@
 
 ### Microsoft 365: app, permissions, failure reason, and correlation columns (F66, part 1)
 
-- Six new columns: `resource_name` and `resource_uid` (the app and its application id), `resource_type`, `status_detail` (why a result failed), `privileges` (permissions asked for), and `metadata_correlation_uid`. The directory audit, Management Activity, and sign-in parsers fill them; a Graph record and the Management Activity record of the same operation carry the same correlation id.
+- Six new columns: `resource_name` and `resource_uid` (the app and its application id), `resource_type`, `status_detail` (why a result failed), `privileges` (permissions asked for), and `metadata_correlation_uid`. The correlation id column is **`metadata_correlation_uid`** (there is no `correlation_id`): Graph `correlationId` and Management API `InterSystemsId` land there, confirmed equal for the same consent on a live tenant. Column table: `docs/searching.md`, Microsoft 365 columns. The directory audit, Management Activity, and sign-in parsers fill them; a Graph record and the Management Activity record of the same operation carry the same correlation id.
 - Consent records now name the app even when Graph writes "Unknown" in the display name, from the app id in the additional details. Consent type and the resource the permissions are for stay in `unmapped`.
 - Parsers declare what an update changes. **Sources** shows each recent parser update, the day it started on this server, and any saved search or scheduled search that filters on a column whose meaning changed (admins only; `GET /api/templates/changes`).
 - New parser step `find`: picks the item of a list whose key equals a value (for the name/value lists Microsoft uses).

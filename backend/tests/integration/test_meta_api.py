@@ -61,3 +61,26 @@ def test_web_ui_routes_fall_back_to_index(tmp_path: Path) -> None:
     assert c.get("/assets/app.js").text == "console.log(1)"
     assert c.get("/api/nope").status_code == 404
     assert "root" not in c.get("/api/nope").text
+
+
+def test_install_name_is_set_by_admins_and_shown_only_when_signed_in(tmp_path: Path) -> None:
+    import sqlite3
+
+    from tests.integration.test_schedules import make_lab
+
+    lab = make_lab(tmp_path)
+    assert lab["admin"].get("/api/install").json() == {"name": ""}
+    res = lab["admin"].put("/api/install", json={"name": "  Example   SOC "}, headers=lab["h"])
+    assert res.status_code == 200 and res.json() == {"name": "Example SOC"}
+    assert lab["ana"].get("/api/install").json() == {"name": "Example SOC"}
+    assert lab["ana"].put("/api/install", json={"name": "x"}).status_code == 403
+    bad = lab["admin"].put("/api/install", json={"name": "<b>x</b>"}, headers=lab["h"])
+    assert bad.status_code == 422
+    # Not on the unauthenticated meta: it may name the organization.
+    assert "Example SOC" not in TestClient(lab["app"]).get("/api/meta").text
+    assert TestClient(lab["app"]).get("/api/install").status_code == 401
+    with sqlite3.connect(lab["db"]) as db:
+        (detail,) = db.execute(
+            "SELECT detail FROM audit_log WHERE action = 'install.update'"
+        ).fetchone()
+    assert "Example SOC" in detail

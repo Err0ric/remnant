@@ -19,15 +19,25 @@ export function CloseForm({ item, reasons, isAdmin, onDone }: CloseFormProps) {
   const [reason, setReason] = useState<CloseReason | null>(null);
   const [note, setNote] = useState("");
   const [days, setDays] = useState(0);
+  // AI Watch service and MCP server alerts: closing can decide the review status too
+  // (owner, 2026-10-29). Admins only, as on AI usage.
+  const reviewable =
+    item.kind === "ai_watch" &&
+    (item.subject.startsWith("service:") || item.subject.startsWith("mcp:"));
+  const [review, setReview] = useState<"approved" | "not_approved" | null>(null);
   const needsNote = reason !== null && NOTE_REQUIRED.includes(reason);
   const close = useMutation({
     mutationFn: async () => {
       if (!reason) return;
-      await api.closeAlert(item.item_id, reason, note.trim() || null);
+      await api.closeAlert(item.item_id, reason, note.trim() || null, review);
       if (days > 0) await api.muteAlert(item.item_id, days);
     },
     onSuccess: async () => {
       await client.invalidateQueries({ queryKey: ["alerts"] });
+      if (review) {
+        await client.invalidateQueries({ queryKey: ["ai-usage"] });
+        await client.invalidateQueries({ queryKey: ["ai-watch"] });
+      }
       onDone();
     },
   });
@@ -55,6 +65,39 @@ export function CloseForm({ item, reasons, isAdmin, onDone }: CloseFormProps) {
           </label>
         ))}
       </fieldset>
+      {reviewable && isAdmin ? (
+        <fieldset className="grid gap-1">
+          <legend className="mb-1 text-sm font-semibold">
+            Review status of this {item.subject.startsWith("mcp:") ? "MCP server" : "service"}
+          </legend>
+          {(
+            [
+              [null, "Leave unreviewed"],
+              ["approved", "Approve"],
+              ["not_approved", "Not approved"],
+            ] as const
+          ).map(([value, label]) => (
+            <label key={label} className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                name={`review-${item.item_id}`}
+                checked={review === value}
+                onChange={() => setReview(value)}
+              />
+              {label}
+            </label>
+          ))}
+          {review === null ? (
+            <span className="text-sm text-text-muted">
+              It stays on AI Watch as not reviewed until someone decides.
+            </span>
+          ) : null}
+        </fieldset>
+      ) : reviewable ? (
+        <p className="text-sm text-text-muted">
+          An administrator sets the review status; closing leaves it not reviewed.
+        </p>
+      ) : null}
       <label className="grid gap-1 text-sm">
         <span>
           Note <span className="text-text-muted">{needsNote ? "(required)" : "(optional)"}</span>

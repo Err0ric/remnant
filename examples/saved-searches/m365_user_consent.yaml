@@ -4,15 +4,27 @@ name: Users consenting to applications
 description: >-
   "Consent to application" events: a person granted an app access to their data (or, as
   an admin, to the organization's). The usual start of an OAuth consent-phishing case.
-  Check the app in raw (targetResources or ModifiedProperties) and whether the consent was
-  for the whole tenant.
+  One row per consent: Graph and the Management API both report it with the same
+  correlation id (metadata_correlation_uid), so the two copies are merged. status_id 2 is
+  a blocked attempt. resource_name is the app (empty when Entra wrote "Unknown"),
+  resource_uid its application id, privileges the permissions asked for.
 tags: [m365, identity, apps, example]
 mode: query
 sql: |-
-  SELECT time, actor_user_name AS "user", src_endpoint_ip AS client, status_id, template_id, raw
+  SELECT min(time) AS time,
+         any_value(actor_user_name) AS "user",
+         CASE WHEN min(status_id) = 1 THEN 'granted'
+              WHEN max(status_id) = 2 THEN 'blocked' ELSE 'unknown' END AS result,
+         max(resource_name) AS app,
+         max(resource_uid) AS app_id,
+         max(privileges) AS permissions,
+         max(status_detail) AS reason,
+         metadata_correlation_uid,
+         count(*) AS copies
   FROM events
   WHERE template_id IN ('m365_directory_audit', 'm365_management_activity')
     AND message IN ('Consent to application', 'Consent to application.')
     AND time BETWEEN {{start}} AND {{end}}
+  GROUP BY coalesce(metadata_correlation_uid, event_id), metadata_correlation_uid
   ORDER BY time DESC
 params: []

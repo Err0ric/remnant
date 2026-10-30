@@ -1455,6 +1455,8 @@ export interface AiWatchCard {
   restricted: boolean;
   /** People card: devices or addresses with no person matched, never added to `value`. */
   devices?: number | null;
+  /** Unapproved services card: those still not reviewed. */
+  unreviewed?: number | null;
   /** Consent card: attempts a policy blocked, never added to `value`. */
   blocked?: number | null;
   blocked_context?: string;
@@ -1621,9 +1623,19 @@ export interface AlertDelivery {
 export const api = {
   alerts: (state: "open" | "closed" | "all" = "open") =>
     request<AlertList>(`/api/alerts?state=${state}`),
+  /** AI Watch alerts whose service or MCP server is still not reviewed, closed included. */
+  unreviewedAlerts: () => request<AlertList>("/api/alerts?state=all&unreviewed=true"),
   alert: (id: string) => request<AlertItem>(`/api/alerts/${encodeURIComponent(id)}`),
-  closeAlert: (id: string, reason: CloseReason, note: string | null) =>
-    request<AlertItem>(`/api/alerts/${encodeURIComponent(id)}/close`, post({ reason, note })),
+  closeAlert: (
+    id: string,
+    reason: CloseReason,
+    note: string | null,
+    reviewStatus: "approved" | "not_approved" | null = null,
+  ) =>
+    request<AlertItem>(
+      `/api/alerts/${encodeURIComponent(id)}/close`,
+      post(reviewStatus ? { reason, note, review_status: reviewStatus } : { reason, note }),
+    ),
   reopenAlert: (id: string) =>
     request<AlertItem>(`/api/alerts/${encodeURIComponent(id)}/reopen`, post({})),
   muteAlert: (id: string, days: number) =>
@@ -1876,6 +1888,8 @@ export const api = {
   deleteSource: (id: string) =>
     request<void>(`/api/sources/${encodeURIComponent(id)}`, { method: "DELETE" }),
   meta: () => request<Meta>("/api/meta"),
+  install: () => request<{ name: string }>("/api/install"),
+  setInstall: (name: string) => request<{ name: string }>("/api/install", put({ name })),
   health: () => request<Health>("/api/health"),
   /** Server-side CSV of the same query, audited as an export. */
   exportCsv: (body: QueryRequest) => request<string>("/api/query/export", post(body), true),

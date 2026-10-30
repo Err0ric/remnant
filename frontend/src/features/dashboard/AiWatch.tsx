@@ -273,6 +273,19 @@ function Card({ card, days, odd }: { card: AiWatchCard; days: number; odd: boole
           <span className="truncate text-sm text-text-muted" title={card.context}>
             {card.context}
           </span>
+          {card.unreviewed ? (
+            <a
+              href={`${pathFor("alerts")}#review`}
+              onClick={(e) => {
+                if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+                e.preventDefault();
+                navigate("alerts", "review");
+              }}
+              className="self-start text-sm text-accent-text no-underline hover:underline"
+            >
+              {card.unreviewed.toLocaleString()} not reviewed
+            </a>
+          ) : null}
           {card.blocked ? (
             <>
               <button

@@ -105,7 +105,7 @@ Shown as a filled badge with a text label, never color alone.
 
 ```
 +-------------------------------------------------------------------------------------+
-| [logo] Remnant | Security workspace [ Jump to Ctrl K ]  Updated 1 min ago  Refresh  [bell 9]  (sun)  user |  48px
+| [logo] Remnant | [install name] [ Jump to Ctrl K ]  Updated 1 min ago  Refresh  [bell 9]  (sun)  user |  48px
 +------------------+------------------------------------------------------------------+
 | Dashboard        | Investigate                                         (area title) |
 | Alerts         9 | Search | People & devices | Saved searches 17          (tabs)     |
@@ -122,8 +122,8 @@ Shown as a filled badge with a text label, never color alone.
 +------------------+------------------------------------------------------------------+
 ```
 
-- **Top bar** is dark in both themes, 48px, and stays in view on scroll. Contains product mark, workspace label, a compact **Jump to** button with the shortcut (it opens the command palette, so it is styled as a button, not a text field), an optional environment label (`server.environment_label`, for example "Lab"; hidden when unset, never the raw host or IP), theme toggle, and user menu.
-- **Left nav** (ADR-0038) lists **areas**, one row each, with a 16px icon and a label, in the morning's order: Dashboard, Alerts (with the open count), Investigate, AI usage, Agents, Microsoft 365 (once built), Health; **Settings** is pinned to its foot below a divider and opens its own sub-nav (Start here, Data, Access, AI, Alerts, Records; D70). 200px wide; between 768 and 1100px it shows icons only, with the label as a tooltip; on phones it opens from the Menu button. Items hidden by role. One label per meaning: **Agents** is the AI agents area; the Health tab for log collectors is **Endpoint agents**.
+- **Top bar** is dark in both themes, 48px, and stays in view on scroll. Contains product mark, the optional install name (set by an admin; signed-in people only; nothing when unset), a compact **Jump to** button with the shortcut (it opens the command palette, so it is styled as a button, not a text field), an optional environment label (`server.environment_label`, for example "Lab"; hidden when unset, never the raw host or IP), theme toggle, and user menu.
+- **Left nav** (ADR-0038) lists **areas**, one row each, with a 16px icon and a label, in the morning's order: Dashboard, Alerts (with the open count), Investigate, AI usage, Agents, Microsoft 365 (once built), Health; **Settings** is pinned to its foot below a divider and opens its own sub-nav (Start here, Data, Access, AI, Alerts, Records; D70). 200px wide. The open area lists its pages under it, indented on a hairline, the current one in accent; other areas stay one line. Between 768 and 1100px it shows icons only, with the label as a tooltip, and hovering or focusing an area shows a menu of its pages; on phones it opens from the Menu button. Items hidden by role. One label per meaning: **Agents** is the AI agents area; the Health tab for log collectors is **Endpoint agents**.
 - **Top bar** right side (ADR-0038 row 9): **Updated N min ago** and **Refresh** (refetches everything on the page), the **Alerts** button with the open count (the same number as the rail, for a collapsed rail), the theme toggle as a sun or moon icon with a tooltip, and the user.
 - **Page header**: the area title, then the area's **tabs** (a tab row with counts; each tab has its own URL, `/<area>/<tab>`), then a command bar of text buttons. No breadcrumb, except on entity pages. The primary command is in accent text; destructive commands are never in the command bar.
 

@@ -140,11 +140,14 @@ def test_days_built_before_the_index_get_it_without_a_rebuild(lab: dict[str, Any
     for m in rollup._dir.glob("source=*/day=*/_built.json"):
         body = json.loads(m.read_text())
         del body["first"]
+        del body["identity"]
         m.write_text(json.dumps(body))
     assert lab["app"].state.ai_usage.first_seen(None) == {}
-    assert rollup.covered(week())  # still read from the rollup meanwhile
+    # Not yet checked for identity rows: read live meanwhile, so nobody loses a person.
+    assert rollup.covered(week()) == []
     report = rollup.run()
     assert report.built == 0 and report.indexed == 6
+    assert rollup.covered(week())
     assert "service:chatgpt" in lab["app"].state.ai_usage.first_seen(None)
 
 
@@ -176,3 +179,22 @@ def test_a_range_query_reads_only_its_days_and_not_the_skipped_ones(lab: dict[st
     sql = "SELECT count(*) FROM events WHERE source_id = 'dns_a'"
     assert engine.run(sql, week()).rows == [[22]]
     assert engine.run(sql, week(), skip_days=[f"dns_a|{day}"]).rows == [[16]]
+
+
+def test_people_on_closed_days_come_from_that_days_user_id(lab: dict[str, Any]) -> None:
+    """The address lookup reads logons and User-ID from events, so a day with them is
+    never skipped (people were 0 on closed days after F63, owner 2026-10-29)."""
+    app = lab["app"]
+    day = NOW - timedelta(days=2)
+    uid = [
+        {**r, "src_endpoint_ip": "10.0.0.5", "actor_user_name": "alice", "activity_id": 1}
+        for r in _lake_rows("userid", "paloalto_userid", day - timedelta(hours=1), 1)
+    ]
+    LakeWriter(app.state.engine._lake).write(uid)
+    live = _by_service(Usage(app.state.engine, app.state.ai_catalog), week())
+    assert live["chatgpt"][1] == 1  # alice, from User-ID
+    lab["rollup"].run()
+    covered = lab["rollup"].covered(week())
+    assert f"userid|{day.date()}" not in covered  # read live: it names people
+    assert f"dns_a|{day.date()}" in covered  # DNS has no identity rows: from the rollup
+    assert _by_service(app.state.ai_usage, week()) == live

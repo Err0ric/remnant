@@ -42,6 +42,28 @@ describe("Command palette", () => {
     expect(await screen.findByRole("dialog", { name: "Command palette" })).toBeInTheDocument();
   });
 
+  it("lists every sub-page by its own name (ADR-0038 nav pass 2)", async () => {
+    await renderAt("/overview");
+    const dialog = await openWithKeys();
+    const box = within(dialog).getByRole("combobox");
+    for (const [typed, label] of [
+      ["mcp servers", "Agents › MCP servers"],
+      ["rules", "Alerts › Rules"],
+      ["endpoint agents", "Health › Endpoint agents"],
+      ["people & devices", "Investigate › People & devices"],
+    ] as const) {
+      await userEvent.clear(box);
+      await userEvent.type(box, typed);
+      const labels = within(dialog)
+        .getAllByRole("option")
+        .map((o) => o.textContent ?? "");
+      expect(
+        labels.some((l) => l.includes(label)),
+        `${typed}: ${labels.join(" | ")}`,
+      ).toBe(true);
+    }
+  });
+
   it("finds pages by flavor names and goes there with Enter", async () => {
     await renderAt("/overview");
     const dialog = await openWithKeys();

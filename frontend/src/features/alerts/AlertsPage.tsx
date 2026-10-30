@@ -25,9 +25,13 @@ export function AlertsPage({ canClose, isAdmin }: AlertsPageProps) {
   const section = useSection();
   const focus = section.startsWith("item=") ? decodeURIComponent(section.slice(5)) : null;
   const [tab, setTab] = useSectionTab<Tab>(["open", "closed", "muted"]);
+  // `#review`: AI Watch alerts whose service or MCP server is still not reviewed, open
+  // and closed (what AI Watch's "not reviewed" count opens; owner, 2026-10-29).
+  const reviewing = section === "review";
   const list = useQuery({
-    queryKey: ["alerts", tab === "closed" ? "closed" : "open"],
-    queryFn: () => api.alerts(tab === "closed" ? "closed" : "open"),
+    queryKey: ["alerts", reviewing ? "unreviewed" : tab === "closed" ? "closed" : "open"],
+    queryFn: () =>
+      reviewing ? api.unreviewedAlerts() : api.alerts(tab === "closed" ? "closed" : "open"),
   });
   const focused = useQuery({
     queryKey: ["alerts", "item", focus],
@@ -69,7 +73,21 @@ export function AlertsPage({ canClose, isAdmin }: AlertsPageProps) {
             )}
           </section>
         ) : null}
-        {tab === "muted" ? (
+        {reviewing ? (
+          <p className="mb-2 text-sm text-text-secondary">
+            AI services and MCP servers still not reviewed, with their alerts open and closed.
+            Closing an alert does not review it: open one and choose Approve or Not approved, or set
+            it on AI usage.{" "}
+            <button
+              type="button"
+              onClick={() => navigate("alerts")}
+              className="text-accent-text hover:underline"
+            >
+              Back to open alerts
+            </button>
+          </p>
+        ) : null}
+        {tab === "muted" && !reviewing ? (
           <MutesList isAdmin={isAdmin} />
         ) : list.isLoading ? (
           <div className="h-24 animate-pulse rounded-card bg-surface" aria-busy="true" />
@@ -258,7 +276,8 @@ function AlertDetail({
           </>
         ) : null}
       </dl>
-      {isAdmin && item.state === "open" ? <Decide item={item} /> : null}
+      {/* Closed too: closing never reviewed it (owner, 2026-10-29). */}
+      {isAdmin ? <Decide item={item} /> : null}
       {canClose ? (
         item.state === "open" ? (
           closing ? (
@@ -429,7 +448,11 @@ function Decide({ item }: { item: AlertItem }) {
       if (kind === "service") await api.setAiServiceStatus(name, status);
       else await api.setAiMcpRule(name, status);
     },
-    onSuccess: () => client.invalidateQueries({ queryKey: ["alerts"] }),
+    onSuccess: async () => {
+      await client.invalidateQueries({ queryKey: ["alerts"] });
+      await client.invalidateQueries({ queryKey: ["ai-watch"] });
+      await client.invalidateQueries({ queryKey: ["ai-usage"] });
+    },
   });
   if (item.kind !== "ai_watch" || (kind !== "service" && kind !== "mcp")) return null;
   return (

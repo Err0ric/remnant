@@ -16,7 +16,7 @@ from starlette.concurrency import run_in_threadpool
 from app.alerts.items import MAX_MUTE_DAYS, MAX_NOTE, REASONS, AlertItem, AlertItems, Mute
 from app.api.access import AdminUser, CurrentUser, client_ip, require_role
 from app.auth.users import User
-from app.core.errors import ForbiddenError
+from app.core.errors import ForbiddenError, ParamInvalidError
 from app.engine.views import permitted_sources
 
 router = APIRouter(tags=["alerts"])
@@ -79,6 +79,9 @@ class ListOut(BaseModel):
 class CloseIn(BaseModel):
     reason: Literal["true_positive", "benign", "false_positive", "follow_up"]
     note: str | None = Field(default=None, max_length=MAX_NOTE)
+    # AI Watch items for a service or MCP server: closing may also decide its review
+    # status (owner, 2026-10-29). Admins only; None leaves it unreviewed.
+    review_status: Literal["approved", "not_approved"] | None = None
 
 
 class MuteIn(BaseModel):
@@ -140,10 +143,27 @@ def _out(request: Request, i: AlertItem, mutes: list[Mute]) -> ItemOut:
     )
 
 
-def _list(request: Request, user: User, state: str) -> ListOut:
+def _unreviewed(request: Request, item: AlertItem) -> bool:
+    """An AI Watch item whose service or MCP server is still not reviewed."""
+    if item.kind != "ai_watch":
+        return False
+    catalog = request.app.state.ai_catalog
+    if item.subject.startswith("service:"):
+        sid = item.subject.removeprefix("service:")
+        svc = next((s for s in catalog.services() if s.id == sid), None)
+        return svc is None or svc.status == "unreviewed"
+    if item.subject.startswith("mcp:"):
+        name = item.subject.removeprefix("mcp:")
+        return bool(catalog.mcp_status(name, catalog.mcp_rules()) == "unreviewed")
+    return False
+
+
+def _list(request: Request, user: User, state: str, unreviewed: bool = False) -> ListOut:
     store = _store(request)
     readable = _readable(request, user)
     found = store.items(user, state)
+    if unreviewed:
+        found = [i for i in found if _unreviewed(request, i)]
     opened = found if state == "open" else store.items(user, "open")
     mutes = store.mutes()
     return ListOut(
@@ -157,10 +177,15 @@ def _list(request: Request, user: User, state: str) -> ListOut:
 
 @router.get("/alerts")
 async def list_alerts(
-    request: Request, user: CurrentUser, state: Annotated[State, Query()] = "open"
+    request: Request,
+    user: CurrentUser,
+    state: Annotated[State, Query()] = "open",
+    unreviewed: Annotated[bool, Query()] = False,
 ) -> ListOut:
-    """The viewer's alerts, newest first: open by default, or closed, or all."""
-    return await run_in_threadpool(_list, request, user, state)
+    """The viewer's alerts, newest first: open by default, or closed, or all. With
+    `unreviewed`, only AI Watch items whose service or MCP server is still not reviewed,
+    closed ones included: what AI Watch's "not reviewed" line links to."""
+    return await run_in_threadpool(_list, request, user, state, unreviewed)
 
 
 def _one(request: Request, user: User, item_id: str) -> ItemOut:
@@ -197,12 +222,50 @@ async def get_alert(item_id: str, request: Request, user: CurrentUser) -> ItemOu
 @router.post("/alerts/{item_id}/close")
 async def close_alert(item_id: str, body: CloseIn, request: Request, user: Decider) -> ItemOut:
     """Close with a reason; a note is required for False positive and Needs follow-up.
-    Audited as alert.close."""
-    await run_in_threadpool(_one, request, user, item_id)
+    Audited as alert.close. With `review_status` (admins, AI Watch service and MCP server
+    items), the service or server is approved or not approved as on AI usage, audited
+    as ai.service_change or ai.mcp_change."""
+    item = await run_in_threadpool(_one, request, user, item_id)
+    target = _review_target(item) if body.review_status else None
+    if body.review_status:
+        if user.role != "admin":
+            raise ForbiddenError("Only an administrator sets the review status")
+        if target is None:
+            raise ParamInvalidError("This alert has no service or MCP server to review")
     await run_in_threadpool(
         _store(request).close, item_id, user, body.reason, body.note, client_ip(request)
     )
+    if target is not None and body.review_status:
+        await run_in_threadpool(_set_review, request, user, target, body.review_status)
     return await run_in_threadpool(_one, request, user, item_id)
+
+
+def _review_target(item: ItemOut) -> tuple[str, str] | None:
+    if item.kind != "ai_watch":
+        return None
+    for kind in ("service", "mcp"):
+        if item.subject.startswith(f"{kind}:"):
+            return kind, item.subject.removeprefix(f"{kind}:")
+    return None
+
+
+def _set_review(request: Request, user: User, target: tuple[str, str], status: str) -> None:
+    kind, name = target
+    catalog = request.app.state.ai_catalog
+    audit = request.app.state.auth.audit
+    if kind == "service":
+        before = catalog.set_status(name, status, "Set when closing its alert", user.user_id)
+        audit.write(
+            "ai.service_change",
+            "success",
+            user.user_id,
+            client_ip(request),
+            {"service_id": name, "from": before, "to": status, "via": "alert.close"},
+        )
+    else:
+        catalog.set_mcp_rule(name, status, "Set when closing its alert", user.user_id)
+        audit.write("ai.mcp_change", "success", user.user_id, client_ip(request),
+                    {"pattern": name, "to": status, "via": "alert.close"})  # fmt: skip
 
 
 @router.post("/alerts/{item_id}/reopen")

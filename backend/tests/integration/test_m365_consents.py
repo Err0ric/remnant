@@ -118,3 +118,19 @@ def test_the_consent_card_counts_granted_and_shows_blocked_apart(tmp_path: Path)
     # A viewer who may not read the M365 sources sees it restricted, with no SQL.
     cards, _ = _signal_cards(engine, ["other"], kinds, date(2026, 10, 28), date(2026, 10, 27), now)
     assert cards[0].restricted and cards[0].rows_sql is None
+
+
+def test_a_sign_in_stored_before_the_app_columns_still_names_it(tmp_path: Path) -> None:
+    """Owner's install: the sign-ins were parsed before m365_signin 1.1.0, so only their
+    message carries the app; 12 seconds before the blocked consent."""
+    engine = make_lab(tmp_path)["app"].state.engine
+    old = _row(
+        "m365_signin", "successful sign-in", "m365_signin",
+        userPrincipalName="erin@example.com", createdDateTime="2026-10-28T16:40:00Z",
+        appDisplayName="Example Ads Portal", appId="0a1b2c3d-0000-4000-8000-0000000000b7",
+    )  # fmt: skip
+    old["resource_name"] = None
+    old["resource_uid"] = None
+    _write(engine, [old])
+    latest_blocked = engine.run(COUNTS_SQL, QueryScope(None), {"start": START}).rows[0][4]
+    assert describe(latest_blocked).startswith("Example Ads Portal (")

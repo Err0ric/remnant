@@ -1,6 +1,7 @@
 """AI usage page and AI watch end to end (ADR-0015 rows 1, 2, 6 to 9, 13)."""
 
 import json
+import sqlite3
 import sys
 from datetime import timedelta
 from pathlib import Path
@@ -357,7 +358,7 @@ def test_ai_watch_summary_cards_chart_and_top(lab: dict[str, Any]) -> None:
     cards = {c["key"]: c for c in s["cards"]}
     assert list(cards) == ["services", "people", "agents", "consent", "sensitive"]
     assert cards["services"]["value"] >= 3 and cards["services"]["previous"] == 0
-    assert "not reviewed yet" in cards["services"]["context"]
+    assert cards["services"]["unreviewed"] >= 1  # linked to the review list (owner, 2026-10-29)
     # DNS names no person: 0 people, and 10.20.1.5, .6, .7 as devices apart (never added in);
     # the ad tag host is not use.
     assert cards["people"]["value"] == 0 and cards["people"]["devices"] == 3
@@ -479,3 +480,48 @@ def test_one_rule_for_everything_ai_watch_tracks(lab: dict[str, Any]) -> None:
     watch._reviewed_at = None
     watch.tick()
     assert agent["item_id"] not in {i["item_id"] for i in _ai_items(a).values()}
+
+
+def test_closing_an_ai_watch_alert_can_set_its_review_status(lab: dict[str, Any]) -> None:
+    """Owner, 2026-10-29: closing an AI Watch alert asks for the review status, and the
+    "not reviewed" line lists those alerts, closed ones included."""
+    app, a, h = lab["app"], lab["admin"], lab["h"]
+    store = app.state.alert_items
+    chat = store.raise_item("ai_watch", "service:chatgpt", "AI service not reviewed: ChatGPT")
+    deep = store.raise_item("ai_watch", "service:deepseek", "AI service not reviewed: DeepSeek")
+    mcp = store.raise_item("ai_watch", "mcp:paste-share", "MCP server not reviewed: paste-share")
+    # Closed without a decision: still not reviewed, and still listed for review.
+    a.post(f"/api/alerts/{deep.item_id}/close", json={"reason": "benign"}, headers=h)
+    review = a.get("/api/alerts", params={"state": "all", "unreviewed": True}).json()
+    assert {i["subject"] for i in review["items"]} >= {"service:deepseek", "service:chatgpt"}
+    # Closed with Approve: approved on AI usage, audited, and off the review list.
+    res = a.post(
+        f"/api/alerts/{chat.item_id}/close",
+        json={"reason": "benign", "review_status": "approved"},
+        headers=h,
+    )
+    assert res.status_code == 200, res.text
+    svc = {s["id"]: s for s in a.get("/api/ai/catalog").json()}
+    assert svc["chatgpt"]["status"] == "approved"
+    res = a.post(
+        f"/api/alerts/{mcp.item_id}/close",
+        json={"reason": "true_positive", "review_status": "not_approved"},
+        headers=h,
+    )
+    assert res.status_code == 200, res.text
+    review = a.get("/api/alerts", params={"state": "all", "unreviewed": True}).json()
+    subjects = {i["subject"] for i in review["items"]}
+    assert "service:chatgpt" not in subjects and "mcp:paste-share" not in subjects
+    assert "service:deepseek" in subjects
+    with sqlite3.connect(lab["db"]) as db:
+        actions = [
+            r[0] for r in db.execute("SELECT detail FROM audit_log WHERE action LIKE 'ai.%'")
+        ]
+    assert any('"via":"alert.close"' in d for d in actions)
+    # Analysts close but never decide the status.
+    other = store.raise_item("ai_watch", "service:gemini", "AI service not reviewed: Gemini")
+    ana = lab["ana"].post(
+        f"/api/alerts/{other.item_id}/close",
+        json={"reason": "benign", "review_status": "approved"},
+    )
+    assert ana.status_code in (403, 404)

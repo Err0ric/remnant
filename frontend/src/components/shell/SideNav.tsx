@@ -76,7 +76,8 @@ export function SideNav({ active, activeTab, isAdmin, canAudit, open = false }: 
   const items = settings.flatMap((g) => g.items);
   const first = (items.find((i) => i.id === "sources") ?? items[0])?.page;
   const inSettings = SETTINGS_IDS.has(active);
-  const here = areaOf(active as PageId, activeTab)?.area.id;
+  const place = areaOf(active as PageId, activeTab);
+  const here = place?.area.id;
   return (
     <nav
       id="primary-nav"
@@ -87,24 +88,70 @@ export function SideNav({ active, activeTab, isAdmin, canAudit, open = false }: 
         open ? "block" : "hidden",
       )}
     >
-      <ul className="md:min-h-0 md:flex-1 md:overflow-y-auto">
+      <ul aria-label="Areas" className="md:min-h-0 md:flex-1 min-[1100px]:overflow-y-auto">
         {AREAS.map((area) => {
-          const tab = visibleTabs(area, isAdmin)[0];
+          const tabs = visibleTabs(area, isAdmin);
+          const tab = tabs[0];
           if (!tab) return null;
           const Icon = ICONS[area.id] ?? LayoutGrid;
+          const on = here === area.id;
+          const subs = tabs.length > 1 ? tabs : [];
+          const sub = (cls: string, label: string) => (
+            <ul aria-label={label} className={cls}>
+              {subs.map((t) => {
+                const current = on && place?.tab === t;
+                return (
+                  <li key={`${t.page}:${t.tab ?? ""}`}>
+                    <a
+                      href={pathFor(t.page, t.tab)}
+                      onClick={go(t.page, t.tab)}
+                      aria-current={current ? "page" : undefined}
+                      className={cn(
+                        "block whitespace-nowrap rounded px-2.5 py-1 text-sm no-underline",
+                        current
+                          ? "font-semibold text-accent-text"
+                          : "text-text-secondary hover:bg-surface-head hover:text-text",
+                      )}
+                    >
+                      {t.label}
+                    </a>
+                  </li>
+                );
+              })}
+            </ul>
+          );
           return (
-            <li key={area.id}>
+            <li key={area.id} className="group relative">
               <a
                 href={pathFor(tab.page, tab.tab)}
                 onClick={go(tab.page, tab.tab)}
-                aria-current={here === area.id ? "page" : undefined}
+                aria-current={on ? "page" : undefined}
                 title={area.label}
-                className={itemClass(here === area.id)}
+                className={itemClass(on)}
               >
                 <Icon size={16} aria-hidden className="shrink-0" />
                 <span className="md:sr-only min-[1100px]:not-sr-only">{area.label}</span>
                 {area.id === "alerts" ? <OpenAlerts /> : null}
               </a>
+              {/* The open area lists its pages under it (owner, 2026-10-29); others stay
+                  one line so the menu stays short. */}
+              {on && subs.length
+                ? sub(
+                    "mb-1 ml-5 border-l border-border pl-2 md:hidden min-[1100px]:block",
+                    `${area.label} pages`,
+                  )
+                : null}
+              {/* Icon-only rail: hovering or focusing an area shows its pages. */}
+              {subs.length ? (
+                // The transparent left padding bridges the gap to the rail, so moving the
+                // pointer onto the menu does not close it.
+                <div className="absolute left-full top-0 z-40 hidden pl-2 md:group-focus-within:block md:group-hover:block min-[1100px]:!hidden">
+                  <div className="min-w-48 rounded-card border border-border bg-surface p-1.5 shadow-lg">
+                    <div className="px-2.5 py-1 text-sm font-semibold">{area.label}</div>
+                    {sub("", `${area.label} pages menu`)}
+                  </div>
+                </div>
+              ) : null}
             </li>
           );
         })}

@@ -941,6 +941,16 @@ MIGRATIONS: tuple[Migration, ...] = (
         PRIMARY KEY (template_id, version)
     );
     """,
+    # 51: the optional install name shown in the top bar to signed-in people (ADR-0038
+    # nav pass 2). One row; empty name means none.
+    """
+    CREATE TABLE install_settings (
+        id         INTEGER PRIMARY KEY CHECK (id = 1),
+        name       TEXT NOT NULL DEFAULT '',
+        updated_at TEXT,
+        updated_by TEXT
+    );
+    """,
 )
 
 

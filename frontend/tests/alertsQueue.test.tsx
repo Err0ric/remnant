@@ -83,6 +83,35 @@ describe("Alerts (ADR-0037)", () => {
     );
   });
 
+  it("closing an AI Watch alert can set the review status (owner, 2026-10-29)", async () => {
+    const spy = await renderAt("/alerts");
+    await userEvent.click(await screen.findByRole("button", { name: /New AI service: DeepSeek/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Close" }));
+    const form = screen.getByRole("form", { name: "Close New AI service: DeepSeek" });
+    const review = within(form).getByRole("group", { name: "Review status of this service" });
+    expect(within(review).getByLabelText("Leave unreviewed")).toBeChecked();
+    await userEvent.click(within(review).getByLabelText("Not approved"));
+    await userEvent.click(within(form).getByLabelText("True positive"));
+    await userEvent.click(within(form).getByRole("button", { name: "Close alert" }));
+    await vi.waitFor(() => {
+      const call = spy.mock.calls.find(([u]) => String(u).endsWith("/api/alerts/w1/close"));
+      expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({
+        reason: "true_positive",
+        review_status: "not_approved",
+      });
+    });
+  });
+
+  it("lists AI Watch alerts still not reviewed, closed included", async () => {
+    const spy = await renderAt("/alerts#review");
+    expect(await screen.findByText(/still not reviewed, with their alerts open and closed/)).toBe(
+      screen.getByText(/still not reviewed, with their alerts open and closed/),
+    );
+    expect(await screen.findByRole("button", { name: /New AI service: DeepSeek/ })).toBeVisible();
+    expect(spy.mock.calls.some(([u]) => String(u).includes("unreviewed=true"))).toBe(true);
+    expect(screen.queryByRole("button", { name: /stopped sending/ })).toBeNull();
+  });
+
   it("does not offer Approve to an analyst", async () => {
     await renderAt("/alerts", { mode: "login", signedIn: true, role: "analyst" });
     await userEvent.click(await screen.findByRole("button", { name: /New AI service: DeepSeek/ }));

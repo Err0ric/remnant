@@ -1,6 +1,6 @@
 import { LogOut, Menu, Moon, Search, Sun, X } from "lucide-react";
 import type { User } from "@/lib/api";
-import { AlertsButton, Freshness } from "./Freshness";
+import { AlertsButton, Freshness, InstallLabel } from "./Freshness";
 import { navigate } from "@/lib/route";
 import { ENVIRONMENT_LABEL, PRODUCT_NAME } from "@/lib/branding";
 import type { Theme } from "@/lib/theme";
@@ -66,10 +66,7 @@ export function TopBar({
         </svg>
         {PRODUCT_NAME}
       </a>
-      <span className="hidden text-white/40 lg:inline" aria-hidden="true">
-        |
-      </span>
-      <span className="hidden text-base text-white/75 lg:inline">Security workspace</span>
+      {user !== undefined ? <InstallLabel /> : null}
       <button
         type="button"
         onClick={onOpenPalette}

@@ -51,11 +51,13 @@ names AS (
   GROUP BY 1
 ),
 signins AS (
+  -- Sign-ins stored before m365_signin 1.1.0 have no resource_name; their message is the
+  -- app's display name (the template's message), so it names the app for them.
   SELECT lower(actor_user_name) AS who_l, coalesce(time, time_observed) AS ts,
-         nullif(nullif(resource_name, ''), 'Unknown') AS app
+         nullif(nullif(coalesce(resource_name, message), ''), 'Unknown') AS app
   FROM events
   WHERE template_id = 'm365_signin' AND actor_user_name IS NOT NULL
-    AND nullif(nullif(resource_name, ''), 'Unknown') IS NOT NULL
+    AND nullif(nullif(coalesce(resource_name, message), ''), 'Unknown') IS NOT NULL
 ),
 consents AS (
   SELECT o.ts, o.who, o.status_id, o.app_id, o.privileges, o.reason, o.event_id,
