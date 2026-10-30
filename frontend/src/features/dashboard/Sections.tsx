@@ -1,25 +1,59 @@
-import type { ReactNode } from "react";
+import { createContext, useContext, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   api,
   type DashboardSections,
   type PageWindow,
   type SectionKpi,
+  type SectionHistory,
   type SectionRow,
   type SectionSeries,
 } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { navigate } from "@/lib/route";
+import { openDrill } from "@/lib/drill";
 import { EntityLink } from "@/components/EntityLink";
 import { LoadFailed } from "@/components/LoadFailed";
 import { useViewer } from "@/lib/viewer";
 import { previousPhrase } from "./pageWindow";
+import { TrendChart, TrendLegend } from "./TrendChart";
+import { compareLine, NoHistory } from "./History";
 
-/** Round a chart's top up to 1, 2, or 5 times a power of ten. */
-function niceTop(n: number): number {
-  const p = 10 ** Math.floor(Math.log10(Math.max(1, n)));
-  return ([1, 2, 5, 10].find((m) => m * p >= n) ?? 10) * p;
+/** The section around a card: its comparison state and what drill-throughs need. */
+interface Ctx {
+  history: SectionHistory;
+  before: string;
+  title: string;
+  s: DashboardSections | null;
 }
+const Compare = createContext<Ctx>({
+  history: { compared: true, since: null },
+  before: "",
+  title: "",
+  s: null,
+});
+
+type Span = "now" | "before" | { from: string; to: string };
+
+/** Opens a number's rows in Search (ADR-0039): the page window, the window before, or one
+ * chart point. Undefined when the server sent no query. */
+function useDrill() {
+  const c = useContext(Compare);
+  return (sql: string | null | undefined, label: string, span: Span = "now") => {
+    if (!sql || !c.s) return undefined;
+    const s = c.s;
+    const [from, to] =
+      span === "now"
+        ? [s.start, s.end]
+        : span === "before"
+          ? [s.before, s.start]
+          : [span.from, span.to];
+    return () => openDrill({ sql, from, to, origin: `Dashboard > ${c.title} > ${label}` });
+  };
+}
+
+const DRILL =
+  "cursor-pointer rounded-sm decoration-1 underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-1 focus-visible:outline-focus-ring";
 
 function bucketLabel(iso: string, w: PageWindow): string {
   const d = new Date(iso);
@@ -28,47 +62,107 @@ function bucketLabel(iso: string, w: PageWindow): string {
     : d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 }
 
-/** The change as a neutral pill beside the number: more is not good or bad by itself. */
-function Delta({ kpi }: { kpi: SectionKpi }) {
+/** The change as a neutral pill beside the number: more is not good or bad by itself.
+ * It opens the same search over the window before. */
+function Delta({ kpi, label, noun }: { kpi: SectionKpi; label: string; noun: string }) {
+  const { before } = useContext(Compare);
+  const drill = useDrill();
   if (kpi.before === null) return null;
   const d = kpi.value - kpi.before;
+  const open = drill(kpi.drill_before ?? kpi.drill, `${label} (${before})`, "before");
+  const text = d === 0 ? "same" : `${d > 0 ? "↑" : "↓"} ${Math.abs(d).toLocaleString()}`;
+  const cls =
+    "rounded-badge bg-surface-head px-1.5 font-mono text-xs font-semibold tabular-nums text-text";
+  if (!open)
+    return (
+      <span className={cls}>
+        {text}
+        <span className="sr-only"> against the window before</span>
+      </span>
+    );
   return (
-    <span className="rounded-badge bg-surface-head px-1.5 font-mono text-xs font-semibold tabular-nums text-text">
-      {d === 0 ? "same" : `${d > 0 ? "↑" : "↓"} ${Math.abs(d).toLocaleString()}`}
-      <span className="sr-only"> against the window before</span>
-    </span>
+    <button
+      type="button"
+      data-drill=""
+      onClick={open}
+      title={`Open ${kpi.before.toLocaleString()} ${noun} from ${before} in Search`}
+      className={cn(
+        cls,
+        "cursor-pointer hover:bg-border focus-visible:outline focus-visible:outline-1 focus-visible:outline-focus-ring",
+      )}
+    >
+      {text}
+      <span className="sr-only"> against the window before; open its {noun} in Search</span>
+    </button>
   );
 }
 
 interface KpiProps {
   label: string;
   kpi: SectionKpi | null;
+  /** What the number counts, for "Open 12 events in Search". */
+  noun?: string;
   context?: ReactNode;
+  /** A sub-line with its own list ("2 blocked"): opens `kpi.extra_drill`. */
+  extra?: { text: string; label: string; noun: string };
   /** Shown instead of a number when the count needs a setting or a source. */
   empty?: ReactNode;
 }
 
-function Kpi({ label, kpi, context, empty }: KpiProps) {
+function Kpi({ label, kpi, noun = "events", context, extra, empty }: KpiProps) {
+  const { history, before } = useContext(Compare);
+  const drill = useDrill();
+  const partial = !history.compared && kpi !== null && kpi.before !== null;
+  const open = kpi ? drill(kpi.drill, label) : undefined;
+  const openExtra = kpi && extra ? drill(kpi.extra_drill, extra.label) : undefined;
+  const value = kpi ? (
+    <span
+      className={cn(
+        "text-kpi tabular-nums min-[1500px]:text-kpi-lg",
+        kpi.value === 0 ? "text-ok" : "text-text",
+      )}
+    >
+      {kpi.value.toLocaleString()}
+    </span>
+  ) : null;
   return (
-    <div className="flex min-w-0 flex-col gap-0.5 bg-surface px-3 py-2.5">
+    <div data-kpi={label} className="flex min-w-0 flex-col gap-0.5 bg-surface px-3 py-2.5">
       <span className="truncate text-sm text-text-secondary" title={label}>
         {label}
       </span>
       {kpi ? (
         <span className="flex flex-wrap items-center gap-x-2">
-          <span
-            className={cn(
-              "text-kpi tabular-nums min-[1500px]:text-kpi-lg",
-              kpi.value === 0 ? "text-ok" : "text-text",
-            )}
-          >
-            {kpi.value.toLocaleString()}
-          </span>
-          <Delta kpi={kpi} />
+          {open ? (
+            <button
+              type="button"
+              data-drill=""
+              onClick={open}
+              title={`Open ${kpi.value.toLocaleString()} ${noun} in Search`}
+              aria-label={`${label}: ${kpi.value.toLocaleString()}. Open ${noun} in Search`}
+              className={DRILL}
+            >
+              {value}
+            </button>
+          ) : (
+            value
+          )}
+          {partial ? null : <Delta kpi={kpi} label={label} noun={noun} />}
         </span>
       ) : (
         <span className="py-1.5 text-sm text-text-muted">{empty}</span>
       )}
+      {partial ? <NoHistory since={history.since} before={before} /> : null}
+      {openExtra && extra ? (
+        <button
+          type="button"
+          data-drill=""
+          onClick={openExtra}
+          title={`Open ${extra.noun} in Search`}
+          className={cn(DRILL, "self-start text-sm text-text-muted")}
+        >
+          {extra.text}
+        </button>
+      ) : null}
       {context ? <span className="line-clamp-2 text-sm text-text-muted">{context}</span> : null}
     </div>
   );
@@ -92,7 +186,9 @@ function SetCountries() {
 interface SectionProps {
   title: string;
   from?: string;
+  s: DashboardSections;
   window: PageWindow;
+  history: SectionHistory;
   note?: ReactNode;
   kpis: ReactNode;
   count: number;
@@ -101,92 +197,94 @@ interface SectionProps {
 }
 
 /** The page grammar: header, a KPI strip, then a chart and a top-N table. */
-function Section({ title, from, window, note, kpis, count, chart, table }: SectionProps) {
+function Section({
+  title,
+  from,
+  s,
+  window,
+  history,
+  note,
+  kpis,
+  count,
+  chart,
+  table,
+}: SectionProps) {
+  const before = previousPhrase(window);
   return (
-    <section aria-label={title} className="rounded-card border border-border bg-surface">
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 border-b border-border px-3 py-2">
-        <h2 className="text-base font-semibold">{title}</h2>
-        {from ? <span className="text-sm text-text-muted">from {from}</span> : null}
-        <span className="ml-auto text-sm text-text-muted">
-          Changes against {previousPhrase(window)}
-        </span>
-      </div>
-      {note ? <div className="border-b border-border px-3 py-1.5 text-sm">{note}</div> : null}
-      <div
-        className={cn(
-          "grid gap-px bg-border",
-          count === 4
-            ? "grid-cols-2 lg:grid-cols-4"
-            : "grid-cols-2 lg:grid-cols-[repeat(auto-fit,minmax(150px,1fr))]",
-        )}
-      >
-        {kpis}
-      </div>
-      <div className="grid min-w-0 gap-4 border-t border-border p-3 lg:grid-cols-2 min-[1500px]:grid-cols-[3fr_2fr]">
-        <div className="min-w-0">{chart}</div>
-        <div className="min-w-0">{table}</div>
-      </div>
-    </section>
+    <Compare.Provider value={{ history, before, title, s }}>
+      <section aria-label={title} className="rounded-card border border-border bg-surface">
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 border-b border-border px-3 py-2">
+          <h2 className="text-base font-semibold">{title}</h2>
+          {from ? <span className="text-sm text-text-muted">from {from}</span> : null}
+          <span className="ml-auto text-sm text-text-muted">
+            {compareLine(history.compared, history.since, before)}
+          </span>
+        </div>
+        {note ? <div className="border-b border-border px-3 py-1.5 text-sm">{note}</div> : null}
+        <div
+          className={cn(
+            "grid gap-px bg-border",
+            count === 4
+              ? "grid-cols-2 lg:grid-cols-4"
+              : "grid-cols-2 lg:grid-cols-[repeat(auto-fit,minmax(150px,1fr))]",
+          )}
+        >
+          {kpis}
+        </div>
+        <div className="grid min-w-0 gap-4 border-t border-border p-3 lg:grid-cols-2 min-[1500px]:grid-cols-[3fr_2fr]">
+          <div className="min-w-0">{chart}</div>
+          <div className="min-w-0">{table}</div>
+        </div>
+      </section>
+    </Compare.Provider>
   );
 }
 
-interface BarsProps {
-  title: string;
-  note: string;
-  counts: number[];
-  buckets: string[];
-  window: PageWindow;
-}
+const hourFmt = (d: Date) => d.toLocaleTimeString("en-US", { hour: "numeric", timeZone: "UTC" });
+const dayFmt = (d: Date) =>
+  d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 
-/** One series of bars in the warn tone (failures are routine, not severity; owner edit 2),
- * with a y axis of three ticks and dated x labels. */
-function Bars({ title, note, counts, buckets, window }: BarsProps) {
-  const top = niceTop(Math.max(2, ...counts));
-  const mid = Math.floor((buckets.length - 1) / 2);
-  const total = counts.reduce((a, b) => a + b, 0);
+/** Failed sign-ins over the window: one amber line (failures are routine, not severity;
+ * owner edit 2), hourly through 7 days, with the window before dashed. */
+function FailedTrend({ s }: { s: DashboardSections }) {
+  const drill = useDrill();
+  const id = s.identity;
+  if (!id) return null;
+  const t = id.failed_trend;
+  const hourly = s.window !== "30d";
+  const at = (i: number) => new Date(t.points[i] ?? "");
+  const rate = id.sign_ins ? ((id.failed.value / id.sign_ins) * 100).toFixed(1) : "0";
+  const before = previousPhrase(s.window).replace(/^the p/, "P");
+  const pointName = (i: number) =>
+    hourly ? `${dayFmt(at(i))}, ${hourFmt(at(i))} UTC` : dayFmt(at(i));
   return (
-    <figure className="min-w-0">
-      <figcaption className="mb-2 text-sm font-semibold">
-        {title} <span className="font-normal text-text-muted">{note}</span>
-      </figcaption>
-      <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2">
-        <div
-          aria-hidden="true"
-          className="flex h-28 flex-col justify-between text-right font-mono text-xs tabular-nums text-text-muted"
-        >
-          <span className="-mt-1.5">{top.toLocaleString()}</span>
-          <span>{(top / 2).toLocaleString()}</span>
-          <span className="-mb-1.5">0</span>
-        </div>
-        <div
-          role="img"
-          aria-label={`${title}: ${total.toLocaleString()} over ${counts.length} ${window === "24h" ? "hours" : "days"}`}
-          className="relative flex h-28 items-end gap-px border-b border-l border-border"
-        >
-          <div
-            aria-hidden="true"
-            className="absolute inset-x-0 top-1/2 border-t border-dashed border-border"
-          />
-          {counts.map((n, i) => (
-            <div
-              key={buckets[i] ?? i}
-              title={`${bucketLabel(buckets[i] ?? "", window)}: ${n.toLocaleString()}`}
-              className="flex h-full min-w-0 flex-1 flex-col justify-end"
-            >
-              {n ? (
-                <div className="bg-warn" style={{ height: `${Math.max(2, (n / top) * 100)}%` }} />
-              ) : null}
-            </div>
-          ))}
-        </div>
-        <span />
-        <div className="mt-1 flex justify-between font-mono text-xs tabular-nums text-text-muted">
-          <span>{bucketLabel(buckets[0] ?? "", window)}</span>
-          {buckets.length > 2 ? <span>{bucketLabel(buckets[mid] ?? "", window)}</span> : null}
-          <span>{bucketLabel(buckets[buckets.length - 1] ?? "", window)}</span>
-        </div>
-      </div>
-    </figure>
+    <TrendChart
+      title={`Failed sign-ins per ${hourly ? "hour" : "day"}`}
+      note={`${id.failed.value.toLocaleString()} of ${id.sign_ins.toLocaleString()} sign-ins failed (${rate}%)`}
+      series={[{ key: "failed", label: "Failed sign-ins", values: t.counts, color: "warn" }]}
+      onOpen={(i) =>
+        drill(id.failed.drill, `Failed sign-ins, ${pointName(i)}`, {
+          from: t.points[i] ?? s.start,
+          to: t.points[i + 1] ?? s.end,
+        })?.()
+      }
+      previous={id.history.compared ? { label: before, values: t.before } : undefined}
+      pointLabel={(i) => (hourly ? `${dayFmt(at(i))}, ${hourFmt(at(i))} UTC` : dayFmt(at(i)))}
+      axisLabel={(i) => (s.window === "24h" ? hourFmt(at(i)) : dayFmt(at(i)))}
+      summary={`Failed sign-ins per ${hourly ? "hour" : "day"}: ${id.failed.value.toLocaleString()} in this window${
+        id.history.compared
+          ? `, ${t.before.reduce((a, b) => a + b, 0).toLocaleString()} in the window before`
+          : ""
+      }`}
+      legend={
+        <TrendLegend
+          items={[
+            { label: "This window", color: "warn" },
+            ...(id.history.compared ? [{ label: before, dashed: true }] : []),
+          ]}
+        />
+      }
+    />
   );
 }
 
@@ -202,6 +300,7 @@ interface MultiplesProps {
 /** Small multiples: one row of bars per host or rule on its own scale, with its peak and
  * total, instead of a stack of colors (severity colors stay reserved; call 5). */
 function Multiples({ title, series, buckets, window, mono, empty }: MultiplesProps) {
+  const drill = useDrill();
   return (
     <figure className="min-w-0">
       <figcaption className="mb-2 text-sm font-semibold">
@@ -226,14 +325,38 @@ function Multiples({ title, series, buckets, window, mono, empty }: MultiplesPro
             {series.map((s) => {
               const peak = Math.max(...s.counts);
               const total = s.counts.reduce((a, b) => a + b, 0);
+              const open = drill(s.drill, `${title} > ${s.label}`);
               return (
-                <tr key={s.label} className="border-b border-border last:border-b-0">
+                <tr
+                  key={s.label}
+                  data-row={s.label}
+                  onClick={open}
+                  className={cn(
+                    "border-b border-border last:border-b-0",
+                    open && "cursor-pointer hover:bg-surface-head",
+                  )}
+                >
                   <td
                     className={cn("max-w-0 truncate py-1.5 pr-3", mono ? "font-mono" : "")}
                     title={s.label}
                     style={{ width: "34%" }}
                   >
-                    {s.label}
+                    {open ? (
+                      <button
+                        type="button"
+                        data-drill=""
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          open();
+                        }}
+                        title={`Open ${total.toLocaleString()} events in Search`}
+                        className={cn(DRILL, "max-w-full truncate text-left")}
+                      >
+                        {s.label}
+                      </button>
+                    ) : (
+                      s.label
+                    )}
                   </td>
                   <td className="py-1.5 pr-3" style={{ width: "46%" }}>
                     <div
@@ -245,7 +368,7 @@ function Multiples({ title, series, buckets, window, mono, empty }: MultiplesPro
                         <div
                           key={buckets[i] ?? i}
                           title={`${bucketLabel(buckets[i] ?? "", window)}: ${n}`}
-                          className={cn("min-w-0 flex-1", n ? "bg-accent" : "bg-border")}
+                          className={cn("min-w-0 max-w-5 flex-1", n ? "bg-accent" : "bg-border")}
                           style={{
                             height: n ? `${Math.max(12, (n / Math.max(1, peak)) * 100)}%` : "1px",
                           }}
@@ -305,6 +428,7 @@ function Top({ title, columns, rows, cells, empty }: TopProps) {
               {rows.map((r) => (
                 <tr
                   key={`${r.kind}:${r.label}:${r.detail}`}
+                  data-row={r.label}
                   className="border-b border-border last:border-b-0"
                 >
                   {cells(r).map((c, i, all) => (
@@ -331,7 +455,6 @@ function Top({ title, columns, rows, cells, empty }: TopProps) {
 function Identity({ s }: { s: DashboardSections }) {
   const id = s.identity;
   if (!id) return null;
-  const rate = id.sign_ins ? ((id.failed.value / id.sign_ins) * 100).toFixed(1) : "0";
   const kpis = [
     <Kpi key="f" label="Failed sign-ins" kpi={id.failed} />,
     <Kpi
@@ -341,32 +464,35 @@ function Identity({ s }: { s: DashboardSections }) {
       context={id.outside ? "Successful sign-ins, by GeoIP of the address" : undefined}
       empty={<SetCountries />}
     />,
-    <Kpi key="i" label="Inbox rules and forwarding" kpi={id.inbox_rules} />,
+    <Kpi key="i" label="Inbox rules and forwarding" kpi={id.inbox_rules} noun="changes" />,
     <Kpi
       key="c"
       label="App consents"
       kpi={id.consents}
-      context={id.consents.extra ? `${id.consents.extra.toLocaleString()} blocked` : undefined}
+      noun="consents"
+      extra={
+        id.consents.extra
+          ? {
+              text: `${id.consents.extra.toLocaleString()} blocked`,
+              label: "Blocked app consents",
+              noun: "blocked consents",
+            }
+          : undefined
+      }
     />,
-    <Kpi key="r" label="Admin role grants" kpi={id.role_grants} />,
-    <Kpi key="a" label="Conditional Access edits" kpi={id.ca_edits} />,
+    <Kpi key="r" label="Admin role grants" kpi={id.role_grants} noun="changes" />,
+    <Kpi key="a" label="Conditional Access edits" kpi={id.ca_edits} noun="changes" />,
   ];
   return (
     <Section
       title="Identity"
+      s={s}
       from="Microsoft 365"
       window={s.window}
+      history={id.history}
       kpis={kpis}
       count={kpis.length}
-      chart={
-        <Bars
-          title={`Failed sign-ins per ${s.window === "24h" ? "hour" : "day"}`}
-          note={`${id.failed.value.toLocaleString()} of ${id.sign_ins.toLocaleString()} sign-ins failed (${rate}%)`}
-          counts={id.failed_by_bucket}
-          buckets={s.buckets}
-          window={s.window}
-        />
-      }
+      chart={<FailedTrend s={s} />}
       table={
         <Top
           title="Top failing users"
@@ -394,8 +520,8 @@ function Attacks({ s }: { s: DashboardSections }) {
       kpi={a.failures}
       context="SSH, Windows, VPN, and other logins"
     />,
-    <Kpi key="a" label="Attacking addresses" kpi={a.addresses} />,
-    <Kpi key="c" label="Countries" kpi={a.countries} empty="Needs a GeoIP file" />,
+    <Kpi key="a" label="Attacking addresses" kpi={a.addresses} noun="addresses" />,
+    <Kpi key="c" label="Countries" kpi={a.countries} noun="countries" empty="Needs a GeoIP file" />,
     <Kpi
       key="v"
       label="VPN logins outside approved countries"
@@ -406,7 +532,9 @@ function Attacks({ s }: { s: DashboardSections }) {
   return (
     <Section
       title="Attacks and access"
+      s={s}
       window={s.window}
+      history={a.history}
       note={
         !s.has_public ? (
           <span className="text-text-secondary">
@@ -435,28 +563,98 @@ function Attacks({ s }: { s: DashboardSections }) {
           empty="No failures from external addresses in this window."
         />
       }
-      table={
-        <Top
-          title="Top sources"
-          columns={["Country", "Network", "Addresses", "Failures"]}
-          rows={a.top_sources}
-          cells={(r) => {
-            const [network = "", addresses = ""] = r.detail.split("|");
-            return [
-              r.label,
-              <span key="n" className="font-mono" title={network}>
-                {network || "Unknown"}
-              </span>,
-              <span key="a" className="font-mono tabular-nums">
-                {addresses}
-              </span>,
-              r.count.toLocaleString(),
-            ];
-          }}
-          empty="No external failures in this window."
-        />
-      }
+      table={<TopSources s={s} rows={a.top_sources} />}
     />
+  );
+}
+
+// Why an address has no country (app.search.dashboard.unplaced).
+const NOT_IN_GEOIP = "Not in GeoIP file";
+const UNPLACED = new Set(["Not an address", "Not a public address", NOT_IN_GEOIP, "No GeoIP file"]);
+
+/** Top sources by country and network. Addresses with no country say why, and when the
+ * GeoIP file does not list them, admins are offered the update (owner 2026-10-30). */
+function TopSources({ s, rows }: { s: DashboardSections; rows: SectionRow[] }) {
+  const { isAdmin } = useViewer();
+  const drill = useDrill();
+  const missing = rows.find((r) => r.label === NOT_IN_GEOIP);
+  const fileDate = s.geoip_date
+    ? new Date(s.geoip_date).toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        timeZone: "UTC",
+      })
+    : null;
+  return (
+    <div className="min-w-0">
+      <Top
+        title="Top sources"
+        columns={["Country", "Network", "Addresses", "Failures"]}
+        rows={rows}
+        cells={(r) => {
+          const [network = "", addresses = ""] = r.detail.split("|");
+          const why = UNPLACED.has(r.label);
+          const open = drill(r.drill, `Top sources > ${r.label}${network ? `, ${network}` : ""}`);
+          const place = why ? (
+            <span
+              key="c"
+              className="text-text-secondary"
+              title={
+                r.label === NOT_IN_GEOIP && fileDate
+                  ? `Public addresses the GeoIP file (installed ${fileDate}) does not list`
+                  : r.label
+              }
+            >
+              {r.label}
+            </span>
+          ) : (
+            r.label
+          );
+          return [
+            open ? (
+              <button
+                key="c"
+                type="button"
+                data-drill=""
+                onClick={open}
+                title={`Open ${r.count.toLocaleString()} events in Search`}
+                className={cn(DRILL, "max-w-full truncate text-left")}
+              >
+                {place}
+              </button>
+            ) : (
+              place
+            ),
+            <span key="n" className="font-mono" title={network}>
+              {network || (why ? "" : "Unknown")}
+            </span>,
+            <span key="a" className="font-mono tabular-nums">
+              {addresses}
+            </span>,
+            r.count.toLocaleString(),
+          ];
+        }}
+        empty="No external failures in this window."
+      />
+      {missing ? (
+        <p role="note" className="mt-2 text-sm text-text-secondary">
+          {Number(missing.detail.split("|")[1] ?? 0).toLocaleString()} addresses are not in the
+          GeoIP file{fileDate ? ` (installed ${fileDate})` : ""}.{" "}
+          {isAdmin ? (
+            <button
+              type="button"
+              onClick={() => navigate("enrichment")}
+              className="text-accent-text hover:underline"
+            >
+              Update GeoIP
+            </button>
+          ) : (
+            "An admin can update it in Settings > Enrichment."
+          )}
+        </p>
+      ) : null}
+    </div>
   );
 }
 
@@ -464,24 +662,35 @@ function Detections({ s }: { s: DashboardSections }) {
   const d = s.detections;
   if (!d) return null;
   const kpis = [
-    <Kpi key="m" label="Rule matches" kpi={d.matches} />,
+    <Kpi key="m" label="Rule matches" kpi={d.matches} noun="matched events" />,
     <Kpi
       key="r"
       label="Rules that matched"
       kpi={d.rules_matched}
+      noun="matches"
       context={
-        d.rules_matched.extra !== null
-          ? `of ${d.rules_matched.extra.toLocaleString()} enabled`
-          : undefined
+        d.rules_matched.extra !== null ? (
+          <button
+            type="button"
+            data-drill=""
+            onClick={() => navigate("rules")}
+            title="Open the rules"
+            className={DRILL}
+          >
+            of {d.rules_matched.extra.toLocaleString()} enabled
+          </button>
+        ) : undefined
       }
     />,
-    <Kpi key="h" label="Hosts involved" kpi={d.hosts} />,
-    <Kpi key="u" label="Users involved" kpi={d.users} />,
+    <Kpi key="h" label="Hosts involved" kpi={d.hosts} noun="hosts" />,
+    <Kpi key="u" label="Users involved" kpi={d.users} noun="people" />,
   ];
   return (
     <Section
       title="Detections"
+      s={s}
       window={s.window}
+      history={d.history}
       kpis={kpis}
       count={kpis.length}
       chart={

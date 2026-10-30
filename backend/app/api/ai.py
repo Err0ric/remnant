@@ -257,6 +257,8 @@ class WatchSummaryOut(BaseModel):
     top: list[TopServiceOut]
     sources: list[str]
     new: list[NewOut] = []  # first seen in 24 hours, from the data (ADR-0037 row 6)
+    compared: bool = True  # False: under 90% of the period before has AI use data
+    since: str | None = None
     people_pending_days: int = 0  # see UsageOut
     people_days: int = 0
 
@@ -317,6 +319,8 @@ async def ai_watch_summary(
         top=[TopServiceOut(**_slots(t)) for t in s.top],
         sources=s.sources,
         new=[NewOut(**_slots(n)) for n in s.new],
+        compared=s.compared,
+        since=s.since,
         people_pending_days=pending,
         people_days=of,
     )

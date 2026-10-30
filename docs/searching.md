@@ -54,6 +54,27 @@ Since the F66 parser update (directory audit 1.1.0, Management Activity 1.2.0, s
 
 There is no `correlation_id` column. Count an operation once with `count(DISTINCT metadata_correlation_uid)`, as `m365_user_consent` does.
 
+## Countries, networks, and internal addresses
+
+Four functions answer from local data on the server, never the network (ADR-0039):
+
+| Function | Returns |
+|---|---|
+| `ip_country(ip)` | Two-letter country code from the GeoIP file, or NULL (not an address, not public, or not in the file) |
+| `ip_asn(ip)` | Autonomous system number from the ASN file, or NULL |
+| `ip_org(ip)` | The network's organization from the ASN file, or NULL |
+| `is_internal(ip)` | True when the address is in Settings > Enrichment > Internal networks |
+
+```sql
+SELECT src_endpoint_ip, ip_country(src_endpoint_ip) AS country, ip_org(src_endpoint_ip) AS network,
+       count(*) AS failures
+FROM events
+WHERE class_uid = 3002 AND status_id = 2 AND NOT is_internal(src_endpoint_ip)
+GROUP BY 1, 2, 3 ORDER BY failures DESC
+```
+
+Put the cheap filters (`class_uid`, `status_id`, `template_id`) first so the lookups see few rows. The answers follow the files and the list as they are now: after a GeoIP update or a change to Internal networks, the same search can return different rows.
+
 ## Example saved searches
 
 Eight examples ship in `examples/saved-searches/`. Import one on **Saved searches > Import**, then adapt it. Each reads parsed columns and carries the time range, so it works on the Dashboard as a schedule.

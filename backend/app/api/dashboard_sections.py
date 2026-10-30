@@ -24,12 +24,17 @@ class KpiOut(BaseModel):
     value: int
     before: int | None
     extra: int | None
+    # Search query templates with `{from}` and `{to}` for the window (ADR-0039).
+    drill: str | None = None
+    drill_before: str | None = None
+    extra_drill: str | None = None
 
 
 class SeriesOut(BaseModel):
     label: str
     counts: list[int]
     level: str | None
+    drill: str | None = None
 
 
 class RowOut(BaseModel):
@@ -38,6 +43,18 @@ class RowOut(BaseModel):
     kind: str
     detail: str
     last: str | None
+    drill: str | None = None
+
+
+class HistoryOut(BaseModel):
+    compared: bool
+    since: datetime | None
+
+
+class TrendOut(BaseModel):
+    points: list[datetime]
+    counts: list[int]
+    before: list[int]
 
 
 class IdentityOut(BaseModel):
@@ -48,8 +65,9 @@ class IdentityOut(BaseModel):
     role_grants: KpiOut
     ca_edits: KpiOut
     sign_ins: int
-    failed_by_bucket: list[int]
+    failed_trend: TrendOut
     top_failing: list[RowOut]
+    history: HistoryOut
 
 
 class AttacksOut(BaseModel):
@@ -60,6 +78,7 @@ class AttacksOut(BaseModel):
     has_vpn: bool
     by_host: list[SeriesOut]
     top_sources: list[RowOut]
+    history: HistoryOut
 
 
 class DetectionsOut(BaseModel):
@@ -69,15 +88,18 @@ class DetectionsOut(BaseModel):
     users: KpiOut
     by_rule: list[SeriesOut]
     involved: list[RowOut]
+    history: HistoryOut
 
 
 class SectionsOut(BaseModel):
     window: Literal["24h", "7d", "30d"]
     start: datetime
     end: datetime
+    before: datetime
     buckets: list[datetime]
     approved_set: bool
     has_public: bool
+    geoip_date: str | None
     identity: IdentityOut | None
     attacks: AttacksOut | None
     detections: DetectionsOut | None
@@ -95,7 +117,8 @@ async def dashboard_sections(
     geoip: GeoIP = request.app.state.geoip
 
     def geo(ips: list[str]) -> dict[str, GeoInfo]:
-        return geoip.enrich(ips)
+        # Every address the card counts (at most MAX_IPS), not the page lookup cap.
+        return geoip.enrich(ips, limit=len(ips))
 
     srcs = [
         (s.source_id, s.kind or "file", s.template_id) for s in request.app.state.sources.list()
@@ -114,5 +137,6 @@ async def dashboard_sections(
         {"window": window, "sources_in_scope": out.read},
     )
     data = to_json(out)
+    data["geoip_date"] = request.app.state.feeds.state("geoip_country").installed_at
     data.pop("read", None)
     return SectionsOut(**data)

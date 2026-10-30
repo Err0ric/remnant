@@ -138,7 +138,7 @@ describe("AI Watch on the Dashboard (ADR-0035 Part 2)", () => {
     );
   });
 
-  it("shades the days after the data stops and prints values over 7 bars or fewer", async () => {
+  it("stacks AI use as an area, shades days after the data stops, and shows values on the keys", async () => {
     const { Chart } = await import("@/features/dashboard/AiWatch");
     const chart = Array.from({ length: 30 }, (_, i) => ({
       day: new Date(Date.UTC(2026, 9, i + 1)).toISOString().slice(0, 10),
@@ -148,10 +148,17 @@ describe("AI Watch on the Dashboard (ADR-0035 Part 2)", () => {
     }));
     render(<Chart chart={chart} days={7} dataUntil="2026-10-25T18:00:00+00:00" />);
     const img = screen.getByRole("img", { name: /over 7 days/ });
-    expect(img).toHaveAccessibleName(/No data after Oct 25$/);
+    expect(img).toHaveAccessibleName(/No data after Oct 25\./);
     expect(screen.getByText(/no data after Oct 25/)).toBeVisible();
-    expect(screen.getAllByTitle(/: no data$/)).toHaveLength(5); // Oct 26 to 30, hatched
-    expect(within(img).getAllByText("5")).toHaveLength(2); // Oct 24 and 25 printed
+    img.focus();
+    await userEvent.keyboard("{End}");
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/Oct 30: No data yet/);
+    for (let i = 0; i < 5; i++) await userEvent.keyboard("{ArrowLeft}");
+    expect(screen.getByRole("tooltip")).toHaveTextContent(
+      "Oct 25: Not approved 0, Unreviewed 3, Approved 2, total 5",
+    );
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   });
 });
 
@@ -236,11 +243,30 @@ describe("Dashboard sections (ADR-0038 edit 10)", () => {
     expect(within(identity).getByRole("button", { name: "Set approved countries" })).toBeVisible();
     expect(within(identity).getByText("12 of 400 sign-ins failed (3.0%)")).toBeVisible();
     expect(within(identity).getByRole("link", { name: "dana.k@example.com" })).toBeVisible();
+    // Failed sign-ins: an amber line with the window before dashed, values on the keys.
+    const trend = within(identity).getByRole("img", { name: /^Failed sign-ins per hour: 12 in/ });
+    expect(trend).toHaveAccessibleName(/8 in the window before/);
+    trend.focus();
+    await userEvent.keyboard("{Home}{ArrowRight}{ArrowRight}{ArrowRight}");
+    expect(within(identity).getByRole("tooltip")).toHaveTextContent(
+      "Oct 27, 12 AM UTC: Failed sign-ins 4, Previous 7 days 2",
+    );
     const attacks = screen.getByRole("region", { name: "Attacks and access" });
     expect(within(attacks).getByText(/office addresses count as external/)).toBeVisible();
     expect(within(attacks).getByRole("img", { name: "bastion: peak 9, total 14" })).toBeVisible();
     expect(within(attacks).getByText("AS64500 Example Net")).toBeVisible();
     expect(within(attacks).getByText("No VPN logs")).toBeVisible();
+    // The week before is only partly there: no change pills, a plain line instead.
+    expect(within(attacks).getByText("No comparison yet: data starts Oct 21")).toBeVisible();
+    expect(within(attacks).getAllByText("Not enough history for comparison")).toHaveLength(3);
+    expect(within(attacks).queryByText("↑ 18")).not.toBeInTheDocument();
+    expect(within(identity).getByText("↑ 4")).toBeVisible();
+    // Addresses with no country say why; the admin is offered the GeoIP update.
+    expect(within(attacks).getByText("Not in GeoIP file")).toBeVisible();
+    expect(within(attacks).getByRole("note")).toHaveTextContent(
+      "3 addresses are not in the GeoIP file (installed Oct 1, 2026).",
+    );
+    expect(within(attacks).getByRole("button", { name: "Update GeoIP" })).toBeVisible();
     const det = screen.getByRole("region", { name: "Detections" });
     expect(within(det).getByText("of 142 enabled")).toBeVisible();
     expect(within(det).getByText("SSH failed password")).toBeVisible();

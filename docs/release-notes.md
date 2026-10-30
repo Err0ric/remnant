@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Dashboard: every number opens its rows in Search
+
+- On Identity, Attacks and access, and Detections, click a number to open Search with the query behind it, already run over the page window. The change pill opens the window before; a point on the failed sign-ins chart opens that hour or day; a "Failures by host" or "Matches by rule" row opens that host's or rule's rows; a Top sources row opens its addresses; "2 blocked" opens the blocked consents.
+- Search says where the query came from ("From Dashboard > Identity > Failed sign-ins, Oct 24 to Oct 30"), and Save and Schedule work as for any query. Back returns to the Dashboard where you were.
+- Counts by country or network use `ip_country`, `ip_asn`, and `is_internal` in the query, so it reads as a filter, not a list of addresses. Detections open the matched rules' own conditions.
+- AI Watch follows in the next update.
+- What changes for existing installs: nothing to do. `/api/dashboard/sections` adds `before` and a `drill` query on each number, series, and row.
+
+### Search: country, network, and internal-address functions
+
+- Four functions work in any search: `ip_country(ip)`, `ip_asn(ip)`, `ip_org(ip)`, and `is_internal(ip)`. They answer from the local GeoIP files and your Internal networks list, never the network. See `docs/searching.md`.
+- They are what Dashboard numbers will open in Search (ADR-0039), so counts like "external sign-in failures" and "outside approved countries" can be shown as a readable query.
+- What changes for existing installs: nothing to do. The backend adds `numpy` (DuckDB needs it for server functions).
+
+### Dashboard: no comparison without history, and why an address has no country
+
+- A Dashboard section, and AI Watch, now compares with the window before only when the sources behind it have data for at least 90% of that window. Until then the header says "No comparison yet: data starts Oct 21" and each card says "Not enough history for comparison" instead of showing a change.
+- **Top sources** no longer groups addresses as "Unknown". Each row says why there is no country: Not an address, Not a public address, Not in GeoIP file, or No GeoIP file. When the GeoIP file does not list some addresses, a note gives its install date and, for admins, an Update GeoIP link.
+- Fixed: the Dashboard looked up countries for only the first 1,000 addresses, so the rest showed as Unknown. It now looks up every address the card counts (up to 5,000).
+- What changes for existing installs: nothing to do. `/api/dashboard/sections` adds `history` to each section and `geoip_date`; `/api/ai/watch/summary` adds `compared` and `since`.
+
+### Dashboard: shorter trend charts
+
+- **AI use** is a stacked area by day: approved at the bottom, then unreviewed, then not approved. Point at a day, or use the arrow keys, for its values and total.
+- **Failed sign-ins** (Identity) is one amber line, hourly for 24 hours and 7 days and daily for 30 days, with the window before as a faint dashed line to compare against.
+- Dashboard charts are at most 160 px tall, and bars in the "Failures by host" and "Matches by rule" rows are at most 20 px wide.
+- What changes for existing installs: nothing to do. The `/api/dashboard/sections` field `identity.failed_by_bucket` is replaced by `identity.failed_trend` (points, counts, and the window before).
+
 ### Dashboard: one time window and three new sections (ADR-0038 edit 10)
 
 - The Dashboard has one time window, **24 hours**, **7 days**, or **30 days**, beside its title; AI Watch and the new sections follow it, and each says once what it is compared against.

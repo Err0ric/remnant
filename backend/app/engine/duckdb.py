@@ -30,6 +30,7 @@ from app.core.errors import (
 )
 from app.core.schema import COLUMN_NAMES, COLUMNS_BY_NAME, duckdb_create_table_sql
 from app.engine.guard import DEFAULT_LIMIT, MAX_LIMIT, guard
+from app.engine.lookups import Lookups, register
 from app.engine.narrow import pinned_sources
 
 ALLOWED_TABLES = frozenset({"events"})
@@ -122,6 +123,11 @@ class QueryEngine:
         self._default_limit = default_limit
         self._max_limit = max_limit
         self._timeout_s = timeout_s
+        self._lookups: Lookups | None = None
+
+    def set_lookups(self, lookups: Lookups) -> None:
+        """The local lookups behind ip_country, ip_asn, ip_org, and is_internal (ADR-0039)."""
+        self._lookups = lookups
 
     def run(
         self,
@@ -406,6 +412,8 @@ class QueryEngine:
                 readable.append(self._intel.parent.resolve())
             else:
                 con.execute(f"CREATE TABLE threat_intel ({INTEL_COLUMNS})")
+        if self._lookups is not None:
+            register(con, self._lookups)
         allowed = ", ".join(_sql_str(str(d)) for d in readable)
         con.execute(f"SET allowed_directories = [{allowed}]")
         con.execute("SET enable_external_access = false")

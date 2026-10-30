@@ -544,6 +544,9 @@ export function SearchPage({
             aria-labelledby="search-tab-sql"
             className="flex flex-col gap-2.5"
           >
+            {seed?.origin && sql === seed.sql ? (
+              <p className="text-sm text-text-secondary">{seed.origin}</p>
+            ) : null}
             <Suspense fallback={<div className="h-40 rounded border border-border bg-inset" />}>
               <SqlEditor
                 label="SQL query"

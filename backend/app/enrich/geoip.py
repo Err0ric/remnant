@@ -109,8 +109,8 @@ class GeoIP:
         )
         return info if (info.country or info.asn) else None
 
-    def enrich(self, values: Iterable[Any]) -> dict[str, GeoInfo]:
-        """Distinct IP-shaped strings among `values`, up to MAX_LOOKUPS, that resolve."""
+    def enrich(self, values: Iterable[Any], limit: int = MAX_LOOKUPS) -> dict[str, GeoInfo]:
+        """Distinct IP-shaped strings among `values`, up to `limit`, that resolve."""
         if not self.available():
             return {}
         out: dict[str, GeoInfo] = {}
@@ -119,7 +119,7 @@ class GeoIP:
             if not isinstance(v, str) or v in seen or not _LOOKS_LIKE_IP.match(v):
                 continue
             seen.add(v)
-            if len(seen) > MAX_LOOKUPS:
+            if len(seen) > limit:
                 break
             info = self.lookup(v)
             if info is not None:

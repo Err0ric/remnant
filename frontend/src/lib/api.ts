@@ -292,16 +292,22 @@ export interface EnrichmentFeed {
 /** GET /api/dashboard/sections (ADR-0038 edit 10). */
 export type PageWindow = "24h" | "7d" | "30d";
 
+/** A Dashboard number. `drill`: the Search query behind it, with `{from}` and `{to}` for
+ * the window (ADR-0039); `drill_before` when the window before needs another query. */
 export interface SectionKpi {
   value: number;
   before: number | null;
   extra: number | null;
+  drill?: string | null;
+  drill_before?: string | null;
+  extra_drill?: string | null;
 }
 
 export interface SectionSeries {
   label: string;
   counts: number[];
   level: string | null;
+  drill?: string | null;
 }
 
 export interface SectionRow {
@@ -310,15 +316,26 @@ export interface SectionRow {
   kind: string;
   detail: string;
   last: string | null;
+  drill?: string | null;
+}
+
+/** False while the window before is under 90% covered by the section's sources. */
+export interface SectionHistory {
+  compared: boolean;
+  since: string | null;
 }
 
 export interface DashboardSections {
   window: PageWindow;
   start: string;
   end: string;
+  /** Start of the window before. */
+  before: string;
   buckets: string[];
   approved_set: boolean;
   has_public: boolean;
+  /** When the GeoIP country file was installed; null without one. */
+  geoip_date: string | null;
   identity: {
     failed: SectionKpi;
     outside: SectionKpi | null;
@@ -327,8 +344,9 @@ export interface DashboardSections {
     role_grants: SectionKpi;
     ca_edits: SectionKpi;
     sign_ins: number;
-    failed_by_bucket: number[];
+    failed_trend: { points: string[]; counts: number[]; before: number[] };
     top_failing: SectionRow[];
+    history: SectionHistory;
   } | null;
   attacks: {
     failures: SectionKpi;
@@ -338,6 +356,7 @@ export interface DashboardSections {
     has_vpn: boolean;
     by_host: SectionSeries[];
     top_sources: SectionRow[];
+    history: SectionHistory;
   } | null;
   detections: {
     matches: SectionKpi;
@@ -346,6 +365,7 @@ export interface DashboardSections {
     users: SectionKpi;
     by_rule: SectionSeries[];
     involved: SectionRow[];
+    history: SectionHistory;
   } | null;
 }
 
@@ -1562,6 +1582,9 @@ export interface AiWatchDay {
 
 export interface AiWatchSummary {
   days: number;
+  /** False while AI use was seen for under 90% of the period before; `since`: first use. */
+  compared?: boolean;
+  since?: string | null;
   /** See AiUsage. */
   people_pending_days?: number;
   people_days?: number;

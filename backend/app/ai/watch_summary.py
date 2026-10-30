@@ -138,6 +138,10 @@ class Summary:
     top: list[TopService]
     sources: list[str] = field(default_factory=list)
     new: list[NewThing] = field(default_factory=list)
+    # False while AI use was seen for less than 90% of the period before (owner
+    # 2026-10-30): the cards then show no change. `since`: the first use seen.
+    compared: bool = True
+    since: str | None = None
 
 
 @dataclass(slots=True)
@@ -285,6 +289,12 @@ def summary(
         )
         for sid, u in ranked[:TOP]
     ]
+    prev_start = datetime.combine(prev_from, datetime.min.time(), UTC)
+    cur_start = datetime.combine(cur_from, datetime.min.time(), UTC)
+    oldest = min(first_in_rows.values(), default=None)
+    compared = oldest is None or (cur_start - max(prev_start, oldest)) >= 0.9 * (
+        cur_start - prev_start
+    )
     return Summary(
         days,
         datetime.combine(cur_from, datetime.min.time(), UTC).isoformat(),
@@ -294,6 +304,8 @@ def summary(
         top,
         sorted(set(read) | set(read_signals)),
         _new(usage, engine, allowed, items, readable, now, first_in_rows, services, index),
+        compared=compared,
+        since=oldest.isoformat() if oldest is not None and oldest > prev_start else None,
     )
 
 

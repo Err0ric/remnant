@@ -25,6 +25,7 @@ dependencies = [
     "pysigma>=1.5,<2",
     "pyjwt>=2.9",
     "maxminddb>=3.2.0",
+    "numpy>=2",
 ]
 
 [project.optional-dependencies]

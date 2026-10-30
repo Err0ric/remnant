@@ -114,6 +114,8 @@ from app.core.threads import cap_allocator_arenas, query_threads
 from app.detect.runner import RuleRunner
 from app.detect.store import RuleStore
 from app.engine.duckdb import QueryEngine, QueryScope, spill_dir
+from app.engine.lookups import Lookups
+from app.enrich import networks
 from app.enrich.feeds import FeedStore
 from app.enrich.geoip import GeoIP
 from app.enrich.intel import ThreatIntel
@@ -584,6 +586,17 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     )
     app.state.integrity = IntegrityLedger(meta, lake_dir)
     app.state.geoip = GeoIP(app.state.feeds)
+    geoip_ = app.state.geoip
+
+    def geo_tuple(value: str) -> tuple[str | None, int | None, str | None] | None:
+        info = geoip_.lookup(value)
+        return (info.country, info.asn, info.org) if info else None
+
+    def internal_test() -> Callable[[str], bool]:
+        nets = networks.load(meta).networks()
+        return lambda value: networks.is_internal(value, nets)
+
+    app.state.engine.set_lookups(Lookups(geo=geo_tuple, internal=internal_test))
     app.state.intel = ThreatIntel(app.state.feeds.intel_file)
     box = SecretBox(config.paths.data_dir)
 

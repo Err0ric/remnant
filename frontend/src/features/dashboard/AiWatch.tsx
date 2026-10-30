@@ -14,14 +14,9 @@ import { PeoplePending } from "@/components/PeoplePending";
 import { LoadFailed } from "@/components/LoadFailed";
 import { When } from "@/components/When";
 import { StatusBadge, STATUS_LABEL } from "@/features/ai/StatusBadge";
+import { TrendChart, TrendLegend } from "./TrendChart";
+import { compareLine, NoHistory } from "./History";
 
-/** Bar fills per review status: the same meaning as the status badges, at most 3 colors
- * (ADR-0035 owner note: parts of a whole). */
-const FILL: Record<AiStatus, string> = {
-  not_approved: "bg-sev-critical-text",
-  unreviewed: "bg-text-muted",
-  approved: "bg-local-text",
-};
 const ORDER: AiStatus[] = ["not_approved", "unreviewed", "approved"];
 
 /** "+1 vs previous 7 days", "same as previous 7 days". */
@@ -105,7 +100,11 @@ export function AiWatch({ days = 7 }: { days?: number }) {
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-3 py-2">
         <h2 className="text-base font-semibold">AI Watch</h2>
         <span className="text-sm text-text-muted">
-          Changes against {days === 1 ? "the previous 24 hours" : `the previous ${days} days`}
+          {compareLine(
+            s.compared ?? true,
+            s.since ?? null,
+            days === 1 ? "the previous 24 hours" : `the previous ${days} days`,
+          )}
         </span>
         <button
           type="button"
@@ -126,7 +125,13 @@ export function AiWatch({ days = 7 }: { days?: number }) {
         className={cn("grid grid-cols-2 gap-px bg-border", COLS[shown.length] ?? "lg:grid-cols-5")}
       >
         {shown.map((c) => (
-          <Card key={c.key} card={c} days={s.days} odd={shown.length % 2 === 1} />
+          <Card
+            key={c.key}
+            card={c}
+            days={s.days}
+            odd={shown.length % 2 === 1}
+            history={{ compared: s.compared ?? true, since: s.since ?? null }}
+          />
         ))}
       </div>
       {missing.length ? <NotSetUp cards={missing} /> : null}
@@ -229,7 +234,15 @@ function openRows(sql: string) {
   navigate("search");
 }
 
-function Card({ card, days, odd }: { card: AiWatchCard; days: number; odd: boolean }) {
+interface CardProps {
+  card: AiWatchCard;
+  days: number;
+  odd: boolean;
+  history: { compared: boolean; since: string | null };
+}
+
+function Card({ card, days, odd, history }: CardProps) {
+  const partial = !history.compared && card.value !== null && card.previous !== null;
   const rowsSql = card.rows_sql;
   const blockedSql = card.blocked_sql;
   const link = rowsSql
@@ -298,8 +311,14 @@ function Card({ card, days, odd }: { card: AiWatchCard; days: number; odd: boole
                 {(card.value ?? 0).toLocaleString()}
               </span>
             )}
-            <DeltaPill card={card} days={days} />
+            {partial ? null : <DeltaPill card={card} days={days} />}
           </span>
+          {partial ? (
+            <NoHistory
+              since={history.since}
+              before={days === 1 ? "the previous 24 hours" : `the previous ${days} days`}
+            />
+          ) : null}
           {card.devices ? (
             <button
               type="button"
@@ -348,18 +367,20 @@ function Card({ card, days, odd }: { card: AiWatchCard; days: number; odd: boole
   );
 }
 
-/** Round a chart's top up to 1, 2, or 5 times a power of ten, so ticks read easily. */
-function niceTop(n: number): number {
-  const p = 10 ** Math.floor(Math.log10(Math.max(1, n)));
-  return ([1, 2, 5, 10].find((m) => m * p >= n) ?? 10) * p;
-}
-
 const dayLabel = (iso: string) =>
   new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
     timeZone: "UTC",
   });
+
+/** Stack order, bottom first (owner 2026-10-30): approved, unreviewed, not approved. */
+const STACK: AiStatus[] = ["approved", "unreviewed", "not_approved"];
+const COLOR: Record<AiStatus, string> = {
+  approved: "local-text",
+  unreviewed: "text-muted",
+  not_approved: "sev-critical-text",
+};
 
 interface ChartProps {
   chart: AiWatchDay[];
@@ -369,117 +390,57 @@ interface ChartProps {
   dataUntil?: string | null;
 }
 
-/** AI use per day by review status, in the block's window (ADR-0038 rows 11, 15): a y axis
- * with three ticks, dated x labels, totals printed over 7 bars or fewer, and a thin
- * hatched band over days after the data stops, so the bars before it stay readable. */
+/** AI use per day by review status as a stacked area (ADR-0038 rows 11, 15; owner
+ * 2026-10-30), values on hover, and a hatched band over days after the data stops. */
 export function Chart({ chart: all, days = 30, dataUntil = null }: ChartProps) {
   const total = (d: AiWatchDay) => d.approved + d.unreviewed + d.not_approved;
   const windowed = all.slice(-days);
   // Until there is a full window of data, the chart covers the days that exist (F62,
-  // owner 2026-10-29): "AI use since Oct 22", never bars squeezed into a corner.
+  // owner 2026-10-29): "AI use since Oct 22", never a line squeezed into a corner.
   const first = windowed.findIndex((d) => total(d) > 0);
   const chart = first > 0 ? windowed.slice(first) : windowed;
-  const top = niceTop(Math.max(2, ...chart.map(total))); // at least 2: whole-number ticks
   const sums = Object.fromEntries(
     ORDER.map((st) => [st, chart.reduce((n, d) => n + d[st], 0)]),
   ) as Record<AiStatus, number>;
   const summary = ORDER.map((st) => `${STATUS_LABEL[st]} ${sums[st].toLocaleString()}`).join(", ");
   const lastDay = dataUntil ? dataUntil.slice(0, 10) : null;
   const stopped = lastDay && chart.some((d) => d.day > lastDay) ? lastDay : null;
-  const printed = chart.length <= 7;
-  const mid = chart[Math.floor((chart.length - 1) / 2)];
+  const lastWithData = stopped ? chart.filter((d) => d.day <= stopped).length - 1 : undefined;
   return (
-    <figure className="min-w-0">
-      <figcaption className="mb-2 text-sm font-semibold">
-        {chart.length < windowed.length
+    <TrendChart
+      title={
+        chart.length < windowed.length
           ? `AI use since ${dayLabel(chart[0]?.day ?? "")}`
-          : `AI use, last ${days} days`}{" "}
-        <span className="font-normal text-text-muted">
-          events per day{stopped ? `; no data after ${dayLabel(stopped)}` : ""}
-        </span>
-      </figcaption>
-      <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2">
-        <div
-          aria-hidden="true"
-          className="flex h-28 flex-col justify-between text-right font-mono text-xs tabular-nums text-text-muted"
-        >
-          <span className="-mt-1.5">{top.toLocaleString()}</span>
-          <span>{(top / 2).toLocaleString()}</span>
-          <span className="-mb-1.5">0</span>
-        </div>
-        <div
-          role="img"
-          aria-label={`AI use per day over ${chart.length} days by review status: ${summary}${
-            stopped ? `. No data after ${dayLabel(stopped)}` : ""
-          }`}
-          className="relative flex h-28 items-end gap-px border-b border-l border-border"
-        >
-          <div
-            aria-hidden="true"
-            className="absolute inset-x-0 top-0 border-t border-dashed border-border"
-          />
-          <div
-            aria-hidden="true"
-            className="absolute inset-x-0 top-1/2 border-t border-dashed border-border"
-          />
-          {chart.map((d) => {
-            const none = stopped !== null && d.day > stopped;
-            return (
-              <div
-                key={d.day}
-                title={
-                  none
-                    ? `${dayLabel(d.day)}: no data`
-                    : `${dayLabel(d.day)}: ${ORDER.map((st) => `${STATUS_LABEL[st]} ${d[st].toLocaleString()}`).join(", ")}`
-                }
-                className="relative flex h-full min-w-0 flex-1 flex-col justify-end"
-                style={
-                  none
-                    ? {
-                        backgroundImage:
-                          "repeating-linear-gradient(135deg, var(--border) 0 1px, transparent 1px 6px)",
-                      }
-                    : undefined
-                }
-              >
-                {printed && !none ? (
-                  <span
-                    className="absolute inset-x-0 text-center font-mono text-xs tabular-nums text-text-secondary"
-                    style={{ bottom: `calc(${(total(d) / top) * 100}% + 2px)` }}
-                  >
-                    {total(d).toLocaleString()}
-                  </span>
-                ) : null}
-                {ORDER.map((st) =>
-                  d[st] ? (
-                    <div
-                      key={st}
-                      className={FILL[st]}
-                      style={{ height: `${Math.max(2, (d[st] / top) * 100)}%` }}
-                    />
-                  ) : null,
-                )}
-              </div>
-            );
-          })}
-        </div>
-        <span />
-        <div className="mt-1 flex justify-between font-mono text-xs tabular-nums text-text-muted">
-          <span>{dayLabel(chart[0]?.day ?? "")}</span>
-          {chart.length > 2 && mid ? <span>{dayLabel(mid.day)}</span> : null}
-          <span>{dayLabel(chart[chart.length - 1]?.day ?? "")}</span>
-        </div>
-      </div>
-      <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-text-secondary">
-        {ORDER.map((st) => (
-          <li key={st} className="flex items-center gap-1.5">
-            <span aria-hidden="true" className={cn("inline-block size-2.5 rounded-sm", FILL[st])} />
-            {STATUS_LABEL[st]}{" "}
-            <span className="font-mono tabular-nums">{sums[st].toLocaleString()}</span>
-          </li>
-        ))}
-      </ul>
-    </figure>
+          : `AI use, last ${days} days`
+      }
+      note={`events per day${stopped ? `; no data after ${dayLabel(stopped)}` : ""}`}
+      stacked
+      series={STACK.map((st) => ({
+        key: st,
+        label: STATUS_LABEL[st],
+        values: chart.map((d) => d[st]),
+        color: COLOR[st],
+      }))}
+      lastWithData={lastWithData}
+      pointLabel={(i) => dayLabel(chart[i]?.day ?? "")}
+      axisLabel={(i) => dayLabel(chart[i]?.day ?? "")}
+      summary={`AI use per day over ${chart.length} days by review status: ${summary}${
+        stopped ? `. No data after ${dayLabel(stopped)}` : ""
+      }`}
+      legend={
+        <TrendLegend
+          items={[...STACK].reverse().map((st) => ({
+            label: (
+              <>
+                {STATUS_LABEL[st]}{" "}
+                <span className="font-mono tabular-nums">{sums[st].toLocaleString()}</span>
+              </>
+            ),
+            color: COLOR[st],
+          }))}
+        />
+      }
+    />
   );
 }
 

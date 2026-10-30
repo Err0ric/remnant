@@ -382,9 +382,40 @@ def test_dashboard_sections_follow_the_callers_sources_and_networks(
     assert attacks["failures"]["value"] > 0 and attacks["addresses"]["value"] > 0
     assert all(len(s["counts"]) == 30 for s in attacks["by_host"])
     assert attacks["vpn_outside"] is None  # no approved countries, no VPN source
+    assert set(attacks["history"]) == {"compared", "since"} and "geoip_date" in body
     det = body["detections"]
     assert det["matches"]["value"] > 0 and det["rules_matched"]["extra"] == 2
     assert {s["label"] for s in det["by_rule"]} == {"SSH failed password", "Failed logon"}
+
+    # Every number has a drill-through that runs in Search and counts the same rows
+    # (ADR-0039).
+    def fill(sql: str, start: str, end: str) -> str:
+        return sql.replace("{from}", start).replace("{to}", end)
+
+    def count(sql: str) -> int:
+        res = admin.post(
+            "/api/query",
+            json={"sql": f"SELECT count(*) AS n FROM ({sql})", "range": "all"},
+            headers=h,
+        )
+        assert res.status_code == 200, (sql, res.text)
+        return int(res.json()["rows"][0][0])
+
+    win = (body["start"], body["end"])
+    prev = (body["before"], body["start"])
+    assert count(fill(attacks["failures"]["drill"], *win)) == attacks["failures"]["value"]
+    assert count(fill(attacks["failures"]["drill"], *prev)) == attacks["failures"]["before"]
+    assert count(fill(attacks["addresses"]["drill"], *win)) == attacks["addresses"]["value"]
+    assert count(fill(det["matches"]["drill"], *win)) >= det["matches"]["value"]
+    drills = [
+        k["drill"]
+        for k in (*attacks.values(), *det.values())
+        if isinstance(k, dict) and "value" in k
+    ]
+    drills += [r["drill"] for r in attacks["top_sources"] + attacks["by_host"] + det["by_rule"]]
+    assert all(drills)
+    for sql in drills:
+        count(fill(sql, *win))
     # The Linux-only analyst never sees the Windows rule or its hosts.
     mine = ana.get("/api/dashboard/sections", params={"window": "30d"}).json()
     assert {s["label"] for s in mine["detections"]["by_rule"]} == {"SSH failed password"}
@@ -394,6 +425,15 @@ def test_dashboard_sections_follow_the_callers_sources_and_networks(
     assert admin.put("/api/enrichment/places", json=everything, headers=h).status_code == 200
     quiet = admin.get("/api/dashboard/sections", params={"window": "30d"}).json()
     assert quiet["attacks"] is None
+    # The lookups behind drill-throughs run in Search (ADR-0039 row 4): with every address
+    # listed as internal, no failure is external.
+    sql = (
+        "SELECT count(*) AS n FROM events WHERE class_uid = 3002 AND status_id = 2"
+        " AND NOT is_internal(src_endpoint_ip) AND ip_country(src_endpoint_ip) IS NULL"
+    )
+    ran = admin.post("/api/query", json={"sql": sql, "range": "all"}, headers=h)
+    assert ran.status_code == 200, ran.text
+    assert ran.json()["rows"] == [[0]]
     hourly = admin.get("/api/dashboard/sections", params={"window": "24h"}).json()
     assert len(hourly["buckets"]) == 24
     assert admin.get("/api/dashboard/sections", params={"window": "1y"}).status_code == 422

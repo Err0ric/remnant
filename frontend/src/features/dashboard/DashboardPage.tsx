@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ApiError,
   api,
@@ -10,6 +10,7 @@ import {
   type User,
 } from "@/lib/api";
 import { navigate } from "@/lib/route";
+import { takeDashboardScroll } from "@/lib/drill";
 import { rangeWords } from "./headline";
 import { stamp } from "@/features/overview/time";
 import { currentDashboard, rememberDashboard } from "./choice";
@@ -57,6 +58,21 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
   const [picked, setPicked] = useState<string | null>(currentDashboard);
   const [editing, setEditing] = useState(false);
   const [win, setWin] = useState<PageWindow>(readWindow);
+  // Back from a drill-through returns to where the reader was (ADR-0039 row 6): the page
+  // grows as sections load, so try for up to two seconds.
+  useEffect(() => {
+    const y = takeDashboardScroll();
+    if (y === null || y <= 0) return;
+    let frame = 0;
+    const until = Date.now() + 2000;
+    const step = () => {
+      const fits = document.documentElement.scrollHeight - window.innerHeight >= y;
+      if (fits || Date.now() > until) window.scrollTo(0, y);
+      else frame = window.requestAnimationFrame(step);
+    };
+    frame = window.requestAnimationFrame(step);
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
   const list = boards.data ?? [];
   const board = list.find((d) => d.dashboard_id === picked) ?? list[0] ?? null;
   const byId = new Map((schedules.data ?? []).map((s) => [s.schedule_id, s]));

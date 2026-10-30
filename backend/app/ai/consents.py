@@ -96,6 +96,20 @@ def rows_sql(blocked: bool, start: datetime) -> str:
     )
 
 
+def drill_sql(blocked: bool) -> str:
+    """rows_sql for a Dashboard drill-through: the window's bounds are `{from}` and `{to}`,
+    filled in by the page (ADR-0039)."""
+    cond = "status_id = 2" if blocked else "coalesce(status_id, 1) <> 2"
+    return (
+        f"WITH {CONSENTS_CTE.strip()}\n"
+        "SELECT ts AS time, who AS person, app, app_id, privileges AS permissions,"
+        " reason, event_id, event_ids\n"
+        f"FROM consents\nWHERE {cond}\n"
+        "  AND ts >= TIMESTAMPTZ '{from}' AND ts < TIMESTAMPTZ '{to}'\n"
+        "ORDER BY ts DESC"
+    )
+
+
 def describe(latest: Any) -> str:
     """'Lab Notes App (User.Read, Mail.Read) by sam@example.com'."""
     if not isinstance(latest, dict):

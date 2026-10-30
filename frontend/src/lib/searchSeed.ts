@@ -14,6 +14,8 @@ export interface SearchSeed {
   range?: TimeRangeId;
   /** A saved search to open for editing (Saved searches > Edit, F37). */
   savedId?: string;
+  /** Where the query came from, shown above it ("From Dashboard > Identity > ..."). */
+  origin?: string;
 }
 
 let seed: SearchSeed | null = null;

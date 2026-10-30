@@ -1078,21 +1078,31 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       return json({ device_id: `d${watched.length}` }, 201);
     }
     if (url.includes("/api/dashboard/sections")) {
+      // Every number carries its Search query (ADR-0039).
       const k = (value: number, before: number | null = 0, extra: number | null = null) => ({
         value,
         before,
         extra,
+        drill: `SELECT * FROM events WHERE status_id = ${value} AND time >= TIMESTAMPTZ '{from}' AND time < TIMESTAMPTZ '{to}'`,
+        extra_drill:
+          extra === null
+            ? null
+            : "SELECT * FROM events WHERE status_id = 2 AND time >= TIMESTAMPTZ '{from}'",
       });
+      const q =
+        "SELECT * FROM events WHERE time >= TIMESTAMPTZ '{from}' AND time < TIMESTAMPTZ '{to}'";
       const buckets = Array.from({ length: 7 }, (_, i) =>
         new Date(Date.UTC(2026, 9, 24 + i)).toISOString(),
       );
       return json({
         window: new URL(url, "http://x").searchParams.get("window") ?? "7d",
         start: buckets[0],
+        before: "2026-10-17T00:00:00Z",
         end: "2026-10-30T11:00:00Z",
         buckets,
         approved_set: false,
         has_public: false,
+        geoip_date: "2026-10-01T04:00:00Z",
         identity: {
           failed: k(12, 8),
           outside: null,
@@ -1101,10 +1111,15 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
           role_grants: k(0),
           ca_edits: k(0),
           sign_ins: 400,
-          failed_by_bucket: [1, 2, 0, 4, 3, 1, 1],
+          failed_trend: {
+            points: buckets,
+            counts: [1, 2, 0, 4, 3, 1, 1],
+            before: [0, 1, 1, 2, 1, 2, 1],
+          },
           top_failing: [
             { label: "dana.k@example.com", count: 5, kind: "user", detail: "", last: null },
           ],
+          history: { compared: true, since: null },
         },
         attacks: {
           failures: k(40, 22),
@@ -1112,7 +1127,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
           countries: k(3, 2),
           vpn_outside: null,
           has_vpn: false,
-          by_host: [{ label: "bastion", counts: [0, 2, 9, 1, 0, 2, 0], level: null }],
+          by_host: [{ label: "bastion", counts: [0, 2, 9, 1, 0, 2, 0], level: null, drill: q }],
           top_sources: [
             {
               label: "Netherlands",
@@ -1120,16 +1135,34 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
               kind: "network",
               detail: "AS64500 Example Net|4",
               last: null,
+              drill: q,
+            },
+            {
+              label: "Not in GeoIP file",
+              count: 8,
+              kind: "network",
+              detail: "|3",
+              last: null,
+              drill: q,
             },
           ],
+          history: { compared: false, since: "2026-10-21T09:00:00Z" },
         },
         detections: {
           matches: k(20, 10),
           rules_matched: k(2, 1, 142),
           hosts: k(3, null),
           users: k(2, null),
-          by_rule: [{ label: "SSH failed password", counts: [0, 1, 5, 2, 0, 0, 1], level: "high" }],
+          by_rule: [
+            {
+              label: "SSH failed password",
+              counts: [0, 1, 5, 2, 0, 0, 1],
+              level: "high",
+              drill: q,
+            },
+          ],
           involved: [{ label: "bastion", count: 9, kind: "host", detail: "", last: null }],
+          history: { compared: true, since: null },
         },
       });
     }
