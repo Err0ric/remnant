@@ -118,15 +118,20 @@ describe("Dashboards at scale (ADR-0034)", () => {
   it("puts what needs me first, one line each, severity first (F62)", async () => {
     await renderAt("/dashboard");
     const banner = await screen.findByRole("region", { name: "Needs you" });
-    const lines = await within(banner).findAllByRole("listitem");
+    const lines = (await within(banner).findAllByRole("row")).slice(1); // after the header
     // High first: the not-approved service and the source with errors; then the alert.
     expect(lines[0]).toHaveTextContent(/^High/);
+    // The badge column is severity only; the kind is in the text (ADR-0038).
+    const badges = lines.map((l) => within(l).getAllByRole("cell")[0]?.textContent);
+    expect(badges.every((b) => b === "High" || b === "Medium")).toBe(true);
     // The AI Watch title already says the decision needed: no trailing reason.
-    expect(within(banner).getByRole("link", { name: "New AI service: DeepSeek" })).toBeVisible();
     expect(
-      within(banner).getByRole("link", { name: /^Failed logons: Count 12 is above 5/ }),
+      within(banner).getByRole("link", { name: "AI Watch: New AI service: DeepSeek" }),
+    ).toBeVisible();
+    expect(
+      within(banner).getByRole("link", { name: /^Rule: Failed logons: Count 12 is above 5/ }),
     ).toHaveAttribute("href", "/alerts#item=a1");
-    expect(within(banner).getByRole("link", { name: "win_dc has errors" })).toHaveAttribute(
+    expect(within(banner).getByRole("link", { name: "Source: win_dc has errors" })).toHaveAttribute(
       "href",
       "/health#source=win_dc",
     );

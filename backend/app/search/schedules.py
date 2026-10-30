@@ -24,6 +24,7 @@ schedule; every run is in the audit log regardless (`schedule.run`).
 
 import hashlib
 import json
+import re
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -60,6 +61,49 @@ PanelView = Literal["table", "bars"]
 # The number on a Dashboard panel (ADR-0034 row 1): row count, or a value of one column
 # over the whole result.
 HeadlineKind = Literal["rows", "sum", "distinct", "first"]
+
+# What one row is, from its key columns (the panels' `rowNoun` in headline.ts): "3
+# addresses" only when every key column names the same kind of thing; else "rows".
+_NOUNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"(^|_)(ip|addr|address|src|dst)(_|$)|src_endpoint|dst_endpoint"), "addresses"),
+    (re.compile(r"user|person|actor|account|who"), "people"),
+    (re.compile(r"host|device|machine|computer"), "devices"),
+    (re.compile(r"source"), "sources"),
+    (re.compile(r"service|app"), "services"),
+    (re.compile(r"rule"), "rules"),
+    (re.compile(r"domain|site|url"), "domains"),
+]
+_NOT_KEY = re.compile(r"^(n|count|total)$|_count$|[^s]s$", re.IGNORECASE)
+
+
+_ONE = {
+    "addresses": "address", "people": "person", "devices": "device", "sources": "source",
+    "services": "service", "rules": "rule", "domains": "domain", "matches": "match",
+    "rows": "row",
+}  # fmt: skip
+
+
+def counted(n: int, noun: str) -> str:
+    """ "1 address", "32 addresses"; an owner's own label is kept as written."""
+    return f"{n:,} {_ONE.get(noun, noun) if n == 1 else noun}"
+
+
+def _noun_of(column: str) -> str | None:
+    c = column.lower()
+    return next((n for rx, n in _NOUNS if rx.search(c)), None)
+
+
+def row_noun(sched: "Schedule", columns: list[str]) -> str:
+    if sched.kind == "rule":
+        return "matches"
+    if sched.headline_label and sched.headline_kind == "rows":
+        return sched.headline_label
+    keys = [c for c in columns if not _NOT_KEY.search(c)]
+    named = {n for c in keys if (n := _noun_of(c)) is not None}
+    first = _noun_of(columns[0]) if columns else None
+    return first if first and len(named) == 1 else "rows"
+
+
 COLUMN_NAME_MAX = 120
 LATE = timedelta(minutes=5)  # a run this late covers up to now, not just to its fire time
 MAX_LAST_INTERVAL = timedelta(days=31)
@@ -612,7 +656,9 @@ class ScheduleService:
         except AppError as exc:
             status, error = "failed", f"{type(exc).__name__}: {exc}"[:500]
         flagged, reason = (
-            self._flag(sched, count) if status == "ok" and count is not None else (False, None)
+            self._flag(sched, count, columns)
+            if status == "ok" and count is not None
+            else (False, None)
         )
         changed = (
             self._parser_change(sched, start, last, read, search_sql, values)
@@ -794,14 +840,27 @@ class ScheduleService:
             return False
         return bool(result.rows and int(result.rows[0][0]) > 0)
 
-    def _flag(self, sched: Schedule, count: int) -> tuple[bool, str | None]:
+    def _flag(
+        self, sched: Schedule, count: int, columns: list[str] | None = None
+    ) -> tuple[bool, str | None]:
+        """Whether the run is flagged, and why in plain words: "32 addresses over
+        threshold (0)", never "32 is above 0" (ADR-0038, owner 16:21)."""
         v = sched.threshold_value
         if sched.threshold_kind is None or v is None:
             return False, None
+        noun = row_noun(sched, columns or [])
         if sched.threshold_kind == "above":
-            return (count > v, f"{count} is above {v:g}") if count > v else (False, None)
+            return (
+                (True, f"{counted(count, noun)} over threshold ({v:g})")
+                if count > v
+                else (False, None)
+            )
         if sched.threshold_kind == "below":
-            return (count < v, f"{count} is below {v:g}") if count < v else (False, None)
+            return (
+                (True, f"{counted(count, noun)} under threshold ({v:g})")
+                if count < v
+                else (False, None)
+            )
         with self._meta.connect() as con:
             prev = con.execute(
                 "SELECT row_count FROM schedule_runs WHERE schedule_id = ? AND status = 'ok'"
@@ -812,10 +871,10 @@ class ScheduleService:
             return False, None
         before = int(prev["row_count"])
         if before == 0:
-            return (count > 0, f"{count} after 0") if count > 0 else (False, None)
+            return (count > 0, f"{counted(count, noun)}, up from 0") if count > 0 else (False, None)
         change = abs(count - before) / before * 100
         if change > v:
-            return True, f"{count} vs {before}: changed {change:.0f}%"
+            return True, f"{counted(count, noun)}, was {before:,}: changed {change:.0f}%"
         return False, None
 
     def _headline(

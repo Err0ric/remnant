@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Dashboard: Needs you and AI Watch restyled (ADR-0038, part 2)
+
+- **Needs you**: the first column is severity only (High, Medium); what fired says its kind in the text ("Schedule: Failed SSH by address: 32 addresses over threshold (0)", "Source gap: ...", "AI Watch: ...", "Rule: ...").
+- Flagged runs say what they counted: "32 addresses over threshold (0)", "1 source under threshold (1)", "12 rows, was 4: changed 200%", never "32 is above 0". The noun comes from what each row is (addresses, people, devices), or the panel's own label.
+- **AI Watch** stays one block with its 7 or 30 days toggle, and everything in it follows the toggle: the cards, the chart (now 7 bars for 7 days), and top services.
+- Cards: an (i) on each says what it counts; the change against the previous period is a neutral pill with an arrow ("↓ 6 vs previous 7 days"); the context line wraps to two lines and shows the rest on hover.
+- The chart has a y axis with three ticks and dated labels, prints each day's total when it shows 7 days or fewer, and shades the days after the AI sources' newest event with a thin hatched band, saying "no data after Oct 25".
+
+**What changes for existing installs:** runs flagged before the update keep their old reason text ("32 is above 0"); new runs use the new wording.
+
 ### Fixed: AI Watch and AI usage failing with query_memory after the people fix (#276)
 
 - #276 read older days' logon, User-ID, VPN, DHCP, and sign-in events straight from the lake, and treated every day built before it as not yet checked, so on a busy install AI Watch and AI usage read 30 days of raw DNS again and failed with `query_memory`. Closed days are read from the AI rollup again, always.

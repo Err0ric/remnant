@@ -115,8 +115,12 @@ describe("AI Watch on the Dashboard (ADR-0035 Part 2)", () => {
       "href",
       "/alerts#item=w1",
     );
+    // One window for the block: the chart shows the cards' 7 days (ADR-0038 row 11).
     expect(
-      within(watch).getByRole("img", { name: /^AI use per day over 30 days by review status:/ }),
+      within(watch).getByRole("img", { name: /^AI use per day over 7 days by review status:/ }),
+    ).toBeVisible();
+    expect(
+      within(watch).getByRole("img", { name: /^About unapproved AI services:/ }),
     ).toBeVisible();
     const top = within(watch).getByRole("table", { name: "Top AI services" });
     expect(within(top).getByRole("link", { name: "DeepSeek" })).toBeVisible();
@@ -127,6 +131,22 @@ describe("AI Watch on the Dashboard (ADR-0035 Part 2)", () => {
         spy.mock.calls.some(([u]) => String(u).endsWith("/api/ai/watch/summary?days=30")),
       ).toBe(true),
     );
+  });
+
+  it("shades the days after the data stops and prints values over 7 bars or fewer", async () => {
+    const { Chart } = await import("@/features/dashboard/AiWatch");
+    const chart = Array.from({ length: 30 }, (_, i) => ({
+      day: new Date(Date.UTC(2026, 9, i + 1)).toISOString().slice(0, 10),
+      approved: i < 25 ? 2 : 0,
+      unreviewed: i < 25 ? 3 : 0,
+      not_approved: 0,
+    }));
+    render(<Chart chart={chart} days={7} dataUntil="2026-10-25T18:00:00+00:00" />);
+    const img = screen.getByRole("img", { name: /over 7 days/ });
+    expect(img).toHaveAccessibleName(/No data after Oct 25$/);
+    expect(screen.getByText(/no data after Oct 25/)).toBeVisible();
+    expect(screen.getAllByTitle(/: no data$/)).toHaveLength(5); // Oct 26 to 30, hatched
+    expect(within(img).getAllByText("5")).toHaveLength(2); // Oct 24 and 25 printed
   });
 });
 

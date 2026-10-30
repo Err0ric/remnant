@@ -273,7 +273,7 @@ def test_thresholds_flag_runs_and_only_the_newest_runs_are_kept(lab: dict[str, A
     for _ in range(5):
         lab["clock"].now += timedelta(minutes=1)
         detail = run_now(lab, lab["admin"], s["schedule_id"], lab["h"]).json()
-    assert detail["flagged"] is True and detail["flag_reason"] == "6 is above 5"
+    assert detail["flagged"] is True and detail["flag_reason"] == "6 matches over threshold (5)"
     recent = lab["admin"].get("/api/schedules").json()[0]["recent"]
     assert len(recent) == 3  # keep_runs
 

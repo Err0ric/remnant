@@ -34,11 +34,46 @@ export function delta(card: AiWatchCard, days: number): string {
   return d === 0 ? `same as ${span}` : `${d > 0 ? "+" : ""}${d} vs ${span}`;
 }
 
+/** What each card counts, for its (i) (ADR-0038 row 13). */
+const ABOUT: Record<AiWatchCard["key"], string> = {
+  services: "AI services in use that are not approved or not reviewed yet, in this range.",
+  people:
+    "People using those services. Devices with no person matched are counted apart, never added in.",
+  agents: "AI agents and MCP servers first seen in this range.",
+  consent:
+    "Microsoft 365 app consents granted in this range, Graph and the Management API counted once. Blocked attempts are shown apart.",
+  sensitive: "Sensitive data signals Claude Code telemetry reported (keys, tokens, card numbers).",
+};
+
+/** The change against the previous period as a neutral pill: an arrow and the number.
+ * Never green or red: more AI use is not good or bad by itself (ADR-0038 row 13). */
+function DeltaPill({ card, days }: { card: AiWatchCard; days: number }) {
+  if (card.value === null || card.previous === null) return null;
+  const d = card.value - card.previous;
+  return (
+    <span
+      className="flex items-center gap-1.5 text-sm text-text-secondary"
+      title={delta(card, days)}
+    >
+      <span className="rounded-badge bg-surface-head px-1.5 font-mono text-xs font-semibold tabular-nums text-text">
+        {d === 0 ? "same" : `${d > 0 ? "↑" : "↓"} ${Math.abs(d).toLocaleString()}`}
+      </span>
+      <span className="sr-only">{delta(card, days)}</span>
+      <span aria-hidden="true">vs previous {days} days</span>
+    </span>
+  );
+}
+
 /** AI Watch (ADR-0035 Part 2): is anyone using AI we have not approved? Five cards, AI use
  * over 30 days by review status, and the top services, on the viewer's own sources.
  * Hidden on an install with no AI use and nothing to count. */
 export function AiWatch() {
   const [days, setDays] = useState<(typeof RANGES)[number]>(7);
+  const overview = useQuery({
+    queryKey: ["overview"],
+    queryFn: api.overview,
+    refetchInterval: 60_000,
+  });
   const q = useQuery({
     queryKey: ["ai-watch", days],
     queryFn: () => api.aiWatchSummary(days),
@@ -63,6 +98,11 @@ export function AiWatch() {
   const used = s.chart.some((d) => d.approved + d.unreviewed + d.not_approved > 0);
   if (!used && !s.cards.some((c) => (c.value ?? 0) > 0)) return null;
   const shown = s.cards.filter((c) => !c.needs);
+  // The newest event of the sources AI Watch read: the chart shades the days after it.
+  const lasts = (overview.data?.sources ?? [])
+    .filter((x) => s.sources.includes(x.source_id) && x.last_event_at)
+    .map((x) => x.last_event_at as string);
+  const dataUntil = lasts.length ? (lasts.sort().slice(-1)[0] ?? null) : null;
   const missing = s.cards.filter((c) => c.needs);
   return (
     <section aria-label="AI Watch" className="rounded-card border border-border bg-surface">
@@ -111,7 +151,7 @@ export function AiWatch() {
       {missing.length ? <NotSetUp cards={missing} /> : null}
       <NewList items={s.new} />
       <div className="grid min-w-0 gap-4 border-t border-border p-3 lg:grid-cols-[2fr_3fr]">
-        <Chart chart={s.chart} />
+        <Chart chart={s.chart} days={s.days} dataUntil={dataUntil} />
         <Top summary={s} />
       </div>
     </section>
@@ -226,8 +266,18 @@ function Card({ card, days, odd }: { card: AiWatchCard; days: number; odd: boole
         odd && "last:col-span-2 lg:last:col-span-1",
       )}
     >
-      <span className="truncate text-sm text-text-secondary" title={card.label}>
-        {card.label}
+      <span className="flex min-w-0 items-center gap-1.5 text-sm text-text-secondary">
+        <span className="truncate" title={card.label}>
+          {card.label}
+        </span>
+        <span
+          role="img"
+          aria-label={`About ${midSentence(card.label)}: ${ABOUT[card.key]}`}
+          title={ABOUT[card.key]}
+          className="flex size-3.5 shrink-0 cursor-help items-center justify-center rounded-full border border-text-muted text-[10px] font-semibold leading-none text-text-muted"
+        >
+          i
+        </span>
       </span>
       {card.needs ? (
         <span className="text-sm text-text-muted">
@@ -275,8 +325,9 @@ function Card({ card, days, odd }: { card: AiWatchCard; days: number; odd: boole
               {card.devices === 1 ? "device" : "devices"} not matched to a person
             </button>
           ) : null}
-          <span className="text-sm text-text-secondary">{delta(card, days)}</span>
-          <span className="truncate text-sm text-text-muted" title={card.context}>
+          <DeltaPill card={card} days={days} />
+          {/* Two lines, then the full text on hover (owner edit 6). */}
+          <span className="line-clamp-2 text-sm text-text-muted" title={card.context}>
             {card.context}
           </span>
           {card.unreviewed ? (
@@ -302,7 +353,7 @@ function Card({ card, days, odd }: { card: AiWatchCard; days: number; odd: boole
                 {card.blocked.toLocaleString()} blocked consent{" "}
                 {card.blocked === 1 ? "attempt" : "attempts"}
               </button>
-              <span className="truncate text-sm text-text-muted" title={card.blocked_context}>
+              <span className="line-clamp-2 text-sm text-text-muted" title={card.blocked_context}>
                 {card.blocked_context}
               </span>
             </>
@@ -313,53 +364,127 @@ function Card({ card, days, odd }: { card: AiWatchCard; days: number; odd: boole
   );
 }
 
-export function Chart({ chart: all }: { chart: AiWatchDay[] }) {
+/** Round a chart's top up to 1, 2, or 5 times a power of ten, so ticks read easily. */
+function niceTop(n: number): number {
+  const p = 10 ** Math.floor(Math.log10(Math.max(1, n)));
+  return ([1, 2, 5, 10].find((m) => m * p >= n) ?? 10) * p;
+}
+
+const dayLabel = (iso: string) =>
+  new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+
+interface ChartProps {
+  chart: AiWatchDay[];
+  /** The block's window (7 or 30 days): the chart shows the same days as the cards. */
+  days?: number;
+  /** The newest event of the sources AI Watch reads: days after it have no data. */
+  dataUntil?: string | null;
+}
+
+/** AI use per day by review status, in the block's window (ADR-0038 rows 11, 15): a y axis
+ * with three ticks, dated x labels, totals printed over 7 bars or fewer, and a thin
+ * hatched band over days after the data stops, so the bars before it stay readable. */
+export function Chart({ chart: all, days = 30, dataUntil = null }: ChartProps) {
   const total = (d: AiWatchDay) => d.approved + d.unreviewed + d.not_approved;
-  // Until there are 30 days of data, the chart covers the days that exist (F62, owner
-  // 2026-10-29): "AI use since Oct 22", never bars squeezed into the right third.
-  const first = all.findIndex((d) => total(d) > 0);
-  const chart = first > 0 ? all.slice(first) : all;
-  const top = Math.max(1, ...chart.map(total));
+  const windowed = all.slice(-days);
+  // Until there is a full window of data, the chart covers the days that exist (F62,
+  // owner 2026-10-29): "AI use since Oct 22", never bars squeezed into a corner.
+  const first = windowed.findIndex((d) => total(d) > 0);
+  const chart = first > 0 ? windowed.slice(first) : windowed;
+  const top = niceTop(Math.max(2, ...chart.map(total))); // at least 2: whole-number ticks
   const sums = Object.fromEntries(
     ORDER.map((st) => [st, chart.reduce((n, d) => n + d[st], 0)]),
   ) as Record<AiStatus, number>;
   const summary = ORDER.map((st) => `${STATUS_LABEL[st]} ${sums[st].toLocaleString()}`).join(", ");
-  const label = (iso: string) =>
-    new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const lastDay = dataUntil ? dataUntil.slice(0, 10) : null;
+  const stopped = lastDay && chart.some((d) => d.day > lastDay) ? lastDay : null;
+  const printed = chart.length <= 7;
+  const mid = chart[Math.floor((chart.length - 1) / 2)];
   return (
     <figure className="min-w-0">
       <figcaption className="mb-2 text-sm font-semibold">
-        {chart.length < all.length
-          ? `AI use since ${label(chart[0]?.day ?? "")}`
-          : "AI use, last 30 days"}{" "}
-        <span className="font-normal text-text-muted">events per day</span>
+        {chart.length < windowed.length
+          ? `AI use since ${dayLabel(chart[0]?.day ?? "")}`
+          : `AI use, last ${days} days`}{" "}
+        <span className="font-normal text-text-muted">
+          events per day{stopped ? `; no data after ${dayLabel(stopped)}` : ""}
+        </span>
       </figcaption>
-      <div
-        role="img"
-        aria-label={`AI use per day over ${chart.length} days by review status: ${summary}`}
-        className="flex h-28 items-end gap-px"
-      >
-        {chart.map((d) => (
+      <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2">
+        <div
+          aria-hidden="true"
+          className="flex h-28 flex-col justify-between text-right font-mono text-xs tabular-nums text-text-muted"
+        >
+          <span className="-mt-1.5">{top.toLocaleString()}</span>
+          <span>{(top / 2).toLocaleString()}</span>
+          <span className="-mb-1.5">0</span>
+        </div>
+        <div
+          role="img"
+          aria-label={`AI use per day over ${chart.length} days by review status: ${summary}${
+            stopped ? `. No data after ${dayLabel(stopped)}` : ""
+          }`}
+          className="relative flex h-28 items-end gap-px border-b border-l border-border"
+        >
           <div
-            key={d.day}
-            title={`${label(d.day)}: ${ORDER.map((st) => `${STATUS_LABEL[st]} ${d[st].toLocaleString()}`).join(", ")}`}
-            className="flex h-full min-w-0 flex-1 flex-col justify-end"
-          >
-            {ORDER.map((st) =>
-              d[st] ? (
-                <div
-                  key={st}
-                  className={FILL[st]}
-                  style={{ height: `${Math.max(2, (d[st] / top) * 100)}%` }}
-                />
-              ) : null,
-            )}
-          </div>
-        ))}
-      </div>
-      <div className="mt-1 flex justify-between font-mono text-xs tabular-nums text-text-muted">
-        <span>{label(chart[0]?.day ?? "")}</span>
-        <span>today</span>
+            aria-hidden="true"
+            className="absolute inset-x-0 top-0 border-t border-dashed border-border"
+          />
+          <div
+            aria-hidden="true"
+            className="absolute inset-x-0 top-1/2 border-t border-dashed border-border"
+          />
+          {chart.map((d) => {
+            const none = stopped !== null && d.day > stopped;
+            return (
+              <div
+                key={d.day}
+                title={
+                  none
+                    ? `${dayLabel(d.day)}: no data`
+                    : `${dayLabel(d.day)}: ${ORDER.map((st) => `${STATUS_LABEL[st]} ${d[st].toLocaleString()}`).join(", ")}`
+                }
+                className="relative flex h-full min-w-0 flex-1 flex-col justify-end"
+                style={
+                  none
+                    ? {
+                        backgroundImage:
+                          "repeating-linear-gradient(135deg, var(--border) 0 1px, transparent 1px 6px)",
+                      }
+                    : undefined
+                }
+              >
+                {printed && !none ? (
+                  <span
+                    className="absolute inset-x-0 text-center font-mono text-xs tabular-nums text-text-secondary"
+                    style={{ bottom: `calc(${(total(d) / top) * 100}% + 2px)` }}
+                  >
+                    {total(d).toLocaleString()}
+                  </span>
+                ) : null}
+                {ORDER.map((st) =>
+                  d[st] ? (
+                    <div
+                      key={st}
+                      className={FILL[st]}
+                      style={{ height: `${Math.max(2, (d[st] / top) * 100)}%` }}
+                    />
+                  ) : null,
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <span />
+        <div className="mt-1 flex justify-between font-mono text-xs tabular-nums text-text-muted">
+          <span>{dayLabel(chart[0]?.day ?? "")}</span>
+          {chart.length > 2 && mid ? <span>{dayLabel(mid.day)}</span> : null}
+          <span>{dayLabel(chart[chart.length - 1]?.day ?? "")}</span>
+        </div>
       </div>
       <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-text-secondary">
         {ORDER.map((st) => (

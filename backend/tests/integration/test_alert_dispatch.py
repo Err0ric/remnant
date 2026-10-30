@@ -71,7 +71,11 @@ def test_saved_searches_alert_only_when_flagged(lab: dict[str, Any]) -> None:
     run_now(lab, lab["ana"], loud["schedule_id"])
     tick(lab)
     doc = json.loads(lab["rx"].got[0][1])
-    assert (doc["kind"], doc["reason"], doc["detail"]) == ("flag", "1 is above 0", "Saved search")
+    assert (doc["kind"], doc["reason"], doc["detail"]) == (
+        "flag",
+        "1 source over threshold (0)",
+        "Saved search",
+    )
 
 
 def test_a_schedule_that_pauses_itself_says_why_and_manual_pauses_stay_quiet(
@@ -132,4 +136,4 @@ def test_a_source_that_goes_quiet_alerts_with_a_below_threshold(lab: dict[str, A
     run_now(lab, lab["ana"], s["schedule_id"])  # the lab's events are older than an hour
     tick(lab)
     doc = json.loads(lab["rx"].got[0][1])
-    assert (doc["kind"], doc["reason"]) == ("flag", "0 is below 1")
+    assert (doc["kind"], doc["reason"]) == ("flag", "0 sources under threshold (1)")

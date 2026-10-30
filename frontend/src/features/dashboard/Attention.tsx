@@ -85,36 +85,56 @@ export function AttentionBanner() {
       aria-label="Needs you"
       className="rounded-card border border-border border-l-4 border-l-warn bg-surface px-3 py-2"
     >
-      <ul className="text-sm">
-        {shown.map((l) => (
-          <li key={l.key} className="flex min-w-0 items-center gap-2 py-0.5">
-            <span
-              className={`w-[4.5rem] shrink-0 rounded-badge px-1.5 text-center text-xs font-semibold ${
-                l.tone === "high"
-                  ? "bg-sev-high-bg text-sev-high-text"
-                  : l.tone === "medium"
-                    ? "bg-sev-medium-bg text-sev-medium-text"
-                    : "bg-surface-head text-text-secondary"
-              }`}
-            >
-              {l.badge}
-            </span>
-            <a
-              href={l.href}
-              onClick={(e) => {
-                if (e.metaKey || e.ctrlKey || e.shiftKey) return;
-                e.preventDefault();
-                l.open();
-              }}
-              className="min-w-0 truncate text-text hover:underline"
-              title={l.text}
-            >
-              {l.text}
-            </a>
-            {l.at ? <When iso={l.at} className="ml-auto shrink-0 text-text-muted" /> : null}
-          </li>
-        ))}
-      </ul>
+      <table className="w-full table-fixed text-sm">
+        <colgroup>
+          <col className="w-[5.5rem]" />
+          <col />
+          <col className="w-40" />
+        </colgroup>
+        <thead className="sr-only">
+          <tr>
+            <th>Severity</th>
+            <th>What fired</th>
+            <th>When</th>
+          </tr>
+        </thead>
+        <tbody>
+          {shown.map((l) => (
+            <tr key={l.key}>
+              <td className="py-0.5 pr-2 align-middle">
+                <span
+                  className={`block rounded-badge px-1.5 text-center text-xs font-semibold ${
+                    l.tone === "high"
+                      ? "bg-sev-high-bg text-sev-high-text"
+                      : l.tone === "medium"
+                        ? "bg-sev-medium-bg text-sev-medium-text"
+                        : "bg-sev-low-bg text-sev-low-text"
+                  }`}
+                >
+                  {l.badge}
+                </span>
+              </td>
+              <td className="py-0.5">
+                <a
+                  href={l.href}
+                  onClick={(e) => {
+                    if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+                    e.preventDefault();
+                    l.open();
+                  }}
+                  className="block truncate text-text hover:underline"
+                  title={l.text}
+                >
+                  {l.text}
+                </a>
+              </td>
+              <td className="whitespace-nowrap py-0.5 pl-2 text-right align-middle">
+                {l.at ? <When iso={l.at} className="text-text-muted" /> : null}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
       {lines.length > shown.length || restricted ? (
         <p className="mt-1 text-sm text-text-secondary">
           {lines.length > shown.length ? (
@@ -149,14 +169,17 @@ export function attentionLines(list: AlertList | undefined, states: SourceState[
   const lines: Line[] = [...groups.values()].map(({ item: i, runs }) => {
     // High first: High AI Watch items and gaps on watched sources; then the rest.
     const tone: Line["tone"] = i.severity === "high" || i.kind === "gap" ? "high" : "medium";
-    const badge =
-      i.severity === "high"
-        ? "High"
-        : i.kind === "gap"
-          ? "Source"
-          : i.severity
-            ? "Medium"
-            : "Alert";
+    // The badge column is severity only; what kind of alert it is goes in the text
+    // (ADR-0038, owner 16:21).
+    const badge = tone === "high" ? "High" : "Medium";
+    const kind =
+      i.kind === "schedule"
+        ? "Schedule"
+        : i.kind === "rule"
+          ? "Rule"
+          : i.kind === "gap"
+            ? "Source gap"
+            : "AI Watch";
     // The reason is left out when the title already says it ("AI service not approved").
     const reason = why(i);
     const said =
@@ -165,7 +188,7 @@ export function attentionLines(list: AlertList | undefined, states: SourceState[
       // AI Watch titles already name the decision needed ("AI service not reviewed").
       (i.kind === "ai_watch" && /^(not reviewed yet|not approved)$/i.test(reason)) ||
       i.title.toLowerCase().includes(reason.toLowerCase());
-    const what = said ? i.title : `${i.title}: ${reason}`;
+    const what = `${kind}: ${said ? i.title : `${i.title}: ${reason}`}`;
     return {
       key: `a:${i.item_id}`,
       badge,
@@ -180,9 +203,9 @@ export function attentionLines(list: AlertList | undefined, states: SourceState[
     if (s.problem && !covered.has(s.id))
       lines.push({
         key: `s:${s.id}`,
-        badge: "Source",
+        badge: "High",
         tone: "high",
-        text: `${s.id} ${s.problem}`,
+        text: `Source: ${s.id} ${s.problem}`,
         at: null,
         open: () => navigate("health", `source=${encodeURIComponent(s.id)}`),
         href: `${pathFor("health")}#source=${encodeURIComponent(s.id)}`,
