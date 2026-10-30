@@ -11,6 +11,7 @@ import { cn } from "@/lib/cn";
 import { navigate, pathFor } from "@/lib/route";
 import { seedSearch } from "@/lib/searchSeed";
 import { EntityLink } from "@/components/EntityLink";
+import { PeoplePending } from "@/components/PeoplePending";
 import { LoadFailed } from "@/components/LoadFailed";
 import { When } from "@/components/When";
 import { StatusBadge, STATUS_LABEL } from "@/features/ai/StatusBadge";
@@ -93,6 +94,11 @@ export function AiWatch() {
           Open AI usage
         </button>
       </div>
+      {s.people_pending_days ? (
+        <div className="border-b border-border px-3 py-1.5">
+          <PeoplePending pending={s.people_pending_days} of={s.people_days} />
+        </div>
+      ) : null}
       {/* Cards whose source is not set up take no card (F62): one muted line instead. All
           shown cards in one row from 1024 px; two across below, an odd last one spanning. */}
       <div

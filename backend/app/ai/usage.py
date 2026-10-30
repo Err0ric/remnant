@@ -208,7 +208,7 @@ hj AS (
   WHERE {_ANY_HOST}
   GROUP BY ALL{from_rollup}
 ),
-{address_ctes("hj", "who0 IS NULL OR shost IS NULL")},
+{address_ctes("hj", "who0 IS NULL OR shost IS NULL", kept=rollup)},
 r AS (
   SELECT service_id, hj.source_id, n, first_t, last_t, hj.t, coalesce(who0, addr.rwho) AS who,
          coalesce(shost, addr.rhost, hj.ip, dev) AS machine
@@ -387,6 +387,16 @@ class Usage:
         return self._engine.run(
             build(self._catalog.domain_table()), scope, timeout_s=TIMEOUT_S, name=name
         )
+
+    def people_pending(self, scope: QueryScope) -> tuple[int, int]:
+        """(days still being re-checked for who had an address, days read from the rollup)
+        in the range: until a day is re-checked, its AI use shows without people."""
+        upto = scope.end or datetime.now(UTC)
+        if self._rollup is None or scope.start is None or upto - scope.start < timedelta(days=2):
+            return 0, 0
+        covered = self._rollup.covered(replace(scope, end=upto))
+        pending = {c.split("|")[1] for c in covered if self._rollup.pending([c])}
+        return len(pending), len({c.split("|")[1] for c in covered})
 
     def first_seen(self, sources: list[str] | None) -> dict[str, datetime]:
         """When each service, MCP server, and agent was first seen in the closed days the

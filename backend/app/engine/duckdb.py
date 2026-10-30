@@ -13,7 +13,7 @@ import time
 from collections.abc import Collection, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -40,8 +40,15 @@ DAY_FILES = "part-*.parquet"  # under each day=<date> folder
 INTEL_TABLES = ALLOWED_TABLES | {"threat_intel"}
 # The daily AI rollup (ADR-0035 Part 1): server-built queries only. Users, saved searches,
 # Ask, and MCP never see this table; `run(..., rollup=True)` is not reachable from them.
-ROLLUP_TABLES = ALLOWED_TABLES | {"ai_rollup"}
+ROLLUP_TABLES = ALLOWED_TABLES | {"ai_rollup", "ai_ident"}
 ROLLUP_FILES = "day=*/part-*.parquet"  # under rollup/ai/source=<id>
+# Who or which machine had an address, per closed day (`app.search.addresses.IDENT_RAW`,
+# reduced): the address lookup reads closed days from here, never from events.
+IDENT_FILE = "ident.parquet"
+IDENT_COLUMNS = (
+    "kind VARCHAR, ip VARCHAR, t TIMESTAMPTZ, who VARCHAR, host VARCHAR, mac VARCHAR,"
+    " fin BOOLEAN, src VARCHAR, dev VARCHAR, day VARCHAR"
+)
 ROLLUP_COLUMNS = (
     "source_id VARCHAR, classification VARCHAR, service_id VARCHAR, who0 VARCHAR,"
     " shost VARCHAR, ip VARCHAR, dev VARCHAR, t TIMESTAMPTZ, n BIGINT,"
@@ -369,6 +376,27 @@ class QueryEngine:
                 readable += [d.resolve() for d in rdirs]
             else:
                 con.execute(f"CREATE TABLE ai_rollup ({ROLLUP_COLUMNS})")
+            # Days in the range, and the one before (a span may start the day before).
+            lo = (
+                (scope.start - timedelta(days=1)).astimezone(UTC).date().isoformat()
+                if scope.start is not None
+                else ""
+            )
+            hi = scope.end.astimezone(UTC).date().isoformat() if scope.end is not None else "~"
+            idents = [
+                str(f)
+                for d in rdirs
+                for f in sorted(d.glob(f"day=*/{IDENT_FILE}"))
+                if lo <= f.parent.name.removeprefix("day=") <= hi
+            ]
+            if idents:
+                listed = ", ".join(_sql_str(f) for f in idents)
+                con.execute(
+                    "CREATE VIEW ai_ident AS SELECT * FROM"  # noqa: S608  # escaped server paths only
+                    f" read_parquet([{listed}], hive_partitioning = false)"
+                )
+            else:
+                con.execute(f"CREATE TABLE ai_ident ({IDENT_COLUMNS})")
         if intel:
             if self._intel is not None and self._intel.is_file():
                 con.execute(

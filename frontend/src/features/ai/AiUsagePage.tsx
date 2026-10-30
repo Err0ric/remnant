@@ -1,6 +1,7 @@
 import { EntityLink, EntityList } from "@/components/EntityLink";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
+import { PeoplePending } from "@/components/PeoplePending";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Command, PageHeader } from "@/components/shell/PageHeader";
 import {
@@ -171,6 +172,7 @@ export function AiUsagePage({ isAdmin, area = "ai" }: AiUsagePageProps) {
             </span>
           ) : null}
         </div>
+        <PeoplePending pending={data?.people_pending_days} of={data?.people_days} />
         {usage.isError ? (
           <div role="alert" className="flex flex-col gap-0.5 text-sm">
             <p className="text-danger">

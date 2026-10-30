@@ -47,6 +47,8 @@ describe("AI Watch on the Dashboard (ADR-0035 Part 2)", () => {
       if (!String(input).includes("/api/ai/watch/summary")) return res;
       const body = await res.json();
       body.cards = body.cards.map((c: { key: string }) => (c.key === "consent" ? consent : c));
+      body.people_pending_days = 3;
+      body.people_days = 30;
       return new Response(JSON.stringify(body), {
         status: 200,
         headers: { "content-type": "application/json" },
@@ -64,6 +66,10 @@ describe("AI Watch on the Dashboard (ADR-0035 Part 2)", () => {
     expect(within(watch).getByText("App consent grants")).toBeVisible();
     expect(within(watch).getByText(/^Latest: Lab Notes App/)).toBeVisible();
     expect(within(watch).getByText(/^Blocked: Lab Notes Beta/)).toBeVisible();
+    // Older days still being re-checked: said, never a failure (owner, 2026-10-29).
+    expect(within(watch).getByRole("status")).toHaveTextContent(
+      "Rebuilding people for 3 of 30 days",
+    );
     await userEvent.click(
       within(watch).getByRole("button", { name: "2 blocked consent attempts" }),
     );

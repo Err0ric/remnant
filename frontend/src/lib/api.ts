@@ -197,6 +197,9 @@ export interface AiUsage {
   new_mcp: string[];
   /** Seen in that earlier period and not in the range. */
   gone: AiGone[];
+  /** Days whose people are still being rebuilt, of the days read from the rollup. */
+  people_pending_days?: number;
+  people_days?: number;
 }
 
 export interface AiMcpRule {
@@ -1474,6 +1477,9 @@ export interface AiWatchDay {
 
 export interface AiWatchSummary {
   days: number;
+  /** See AiUsage. */
+  people_pending_days?: number;
+  people_days?: number;
   start: string;
   end: string;
   cards: AiWatchCard[];

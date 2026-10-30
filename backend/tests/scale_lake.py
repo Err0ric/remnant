@@ -69,7 +69,9 @@ FROM range({per_day}) t(i)""")  # test data, fixed text
     return per_day * days
 
 
-def write_identity(lake: Path, days: int, end: datetime, hosts: int = 1000) -> int:
+def write_identity(
+    lake: Path, days: int, end: datetime, hosts: int = 1000, logons_per_day: int = 0
+) -> int:
     """What an office adds beside DNS (F63): Palo Alto DHCP leases renewed every hour for
     each DNS client address, and a Microsoft 365 sign-in per machine every 4 hours, so
     the address and sign-in joins run at scale. Synthetic: RFC 1918 addresses, invented
@@ -101,6 +103,23 @@ FROM range({hosts}) a(h), range(24) b(hr)""",
   3002, '203.0.113.10', 'WS-' || lpad(h::VARCHAR, 4, '0'), 'user' || h || '@example.com',
   'Claude', '{{}}'
 FROM range({hosts}) a(h), range(6) b(hr)""",
+            ),
+            *(
+                [
+                    (
+                        # Linux sign-ins (sshd, PAM) from the DNS client addresses, as on
+                        # the install that found the #276 memory failure.
+                        "linux_auth",
+                        f"""SELECT '{date}-l' || i, 'linux_auth', 'linux_sshd', '1.0.0',
+  TIMESTAMPTZ '{date} 00:00:00+00' + to_microseconds((i * 86400000000 // {logons_per_day})::BIGINT),
+  TIMESTAMPTZ '{date} 00:00:00+00' + to_microseconds((i * 86400000000 // {logons_per_day})::BIGINT),
+  3002, '10.20.' || (i % 4) || '.' || (i % 250 + 1), NULL, 'user' || (i % 300),
+  'Accepted publickey', '{{}}'
+FROM range({logons_per_day}) t(i)""",
+                    )
+                ]
+                if logons_per_day
+                else []
             ),
         ):
             out = lake / f"source={source}" / f"day={date}"

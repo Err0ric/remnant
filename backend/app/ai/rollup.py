@@ -24,6 +24,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
+from time import monotonic
 from typing import Any
 
 import pyarrow as pa
@@ -33,8 +34,8 @@ import structlog
 from app.ai.agents import ITEMS_SQL
 from app.ai.catalog import Catalog
 from app.ai.usage import MCP_SQL, first_services_sql, rollup_build_sql
-from app.engine.duckdb import QueryEngine, QueryScope
-from app.search.addresses import OBS_SQL
+from app.engine.duckdb import IDENT_FILE, QueryEngine, QueryScope
+from app.search.addresses import IDENT_RAW
 
 log = structlog.get_logger(__name__)
 
@@ -67,11 +68,32 @@ class RollupReport:
     indexed: int = 0  # days given their first-seen entries without a rebuild
 
 
-# Rows that tell who or which machine had an address (logons, User-ID, VPN, DHCP, sign-ins
-# on a machine). A day with any of them is never skipped: the address lookup reads them
-# from events, so leaving the day out would leave AI use on closed days with no person.
-IDENTITY_SQL = f"""WITH {OBS_SQL}
-SELECT (SELECT count(*) FROM addr_ev) + (SELECT count(*) FROM dev_sign)"""  # noqa: S608
+# Who or which machine had an address on the day (logons, User-ID, VPN, DHCP, sign-ins on
+# a machine), reduced to the first and last observation of each mapping per hour: spans
+# run from one observation to the next, so the ones in between add nothing. A few
+# thousand rows a day where the events are hundreds of thousands (owner, 2026-10-29).
+IDENT_SQL = f"""WITH r AS ({IDENT_RAW}
+)
+SELECT DISTINCT kind, ip, t, who, host, mac, fin, src, dev FROM (
+  SELECT kind, ip, who, host, mac, fin, src, dev, unnest([min(t), max(t)]) AS t
+  FROM r
+  GROUP BY kind, ip, who, host, mac, fin, src, dev, date_trunc('hour', t)
+)"""  # noqa: S608  # fixed text
+
+IDENT_SCHEMA = pa.schema(
+    [
+        ("kind", pa.string()),
+        ("ip", pa.string()),
+        ("t", pa.timestamp("us", "UTC")),
+        ("who", pa.string()),
+        ("host", pa.string()),
+        ("mac", pa.string()),
+        ("fin", pa.bool_()),
+        ("src", pa.string()),
+        ("dev", pa.string()),
+        ("day", pa.string()),
+    ]
+)
 
 
 def _ts(v: Any) -> datetime | None:
@@ -114,6 +136,7 @@ class AiRollup:
         self._clock = clock
         self._max = max_days_per_run
         self._first_cache: dict[Path, tuple[int, dict[str, datetime]]] = {}
+        self._recheck_total = 0  # days the running re-check started with
 
     # --- freshness ----------------------------------------------------------------------
 
@@ -138,15 +161,6 @@ class AiRollup:
         if not readable:
             return bool(current)
         return bool(current and (built / PART).is_file() and not m.get("skipped"))
-
-    @staticmethod
-    def _identity(built: Path) -> bool:
-        """The day has rows naming who or which machine had an address; True when unknown."""
-        try:
-            m = json.loads((built / MANIFEST).read_text())
-        except (OSError, ValueError):
-            return True
-        return m.get("identity") is not False
 
     def _closed_days(self) -> list[tuple[str, str]]:
         """(source, day) for every closed day in the lake, newest first."""
@@ -182,8 +196,8 @@ class AiRollup:
                 report.built += 1
             else:
                 report.skipped += 1
-        # Days built before the first-seen index or the identity flag existed get them
-        # without a rebuild (F63; people on closed days, 2026-10-29).
+        # Days built before the first-seen index existed get it without a rebuild, so
+        # they stay readable from the rollup meanwhile (F63).
         left = self._max - min(len(stale), self._max)
         done = set(stale)
         unindexed = [(s, d) for s, d in closed if (s, d) not in done and not self._indexed(s, d)]
@@ -209,7 +223,7 @@ class AiRollup:
         scope = QueryScope([source], start, start + timedelta(days=1) - timedelta(microseconds=1))
         out = self._dir / f"source={source}" / f"day={day}"
         out.mkdir(parents=True, exist_ok=True)
-        identity = self._has_identity(scope)
+        self._write_ident(out, scope, day)
         result = self._engine.run(
             rollup_build_sql(self._catalog.domain_table()),
             scope,
@@ -226,7 +240,7 @@ class AiRollup:
                 intel=False, name="ai_rollup.first",
             ).rows  # fmt: skip
             first = self._first_other(scope) | {f"service:{s}": _iso(t) for s, t in svc}
-            self._manifest(out, key, inputs, skipped=True, first=first, identity=identity)
+            self._manifest(out, key, inputs, skipped=True, first=first)
             return False
         cols = list(zip(*result.rows, strict=True)) if result.rows else [()] * len(SCHEMA)
         arrays = []
@@ -241,17 +255,28 @@ class AiRollup:
         tmp = out / f".{PART}.tmp"
         pq.write_table(table, tmp)
         os.replace(tmp, out / PART)
-        self._manifest(
-            out, key, inputs, first=self._first_other(scope) | _first_services(table),
-            identity=identity,
-        )  # fmt: skip
+        self._manifest(out, key, inputs, first=self._first_other(scope) | _first_services(table))
         return True
 
-    def _has_identity(self, scope: QueryScope) -> bool:
+    def _write_ident(self, out: Path, scope: QueryScope, day: str) -> int:
+        """The day's identity observations (IDENT_SQL), with the day they belong to."""
         rows = self._engine.run(
-            IDENTITY_SQL, scope, timeout_s=120, intel=False, name="ai_rollup.identity"
+            IDENT_SQL, scope, timeout_s=120, intel=False, name="ai_rollup.ident"
         ).rows
-        return bool(rows and int(rows[0][0] or 0) > 0)
+        cols = list(zip(*rows, strict=True)) if rows else [()] * 9
+        arrays = [
+            pa.array(list(cols[0]), pa.string()),
+            pa.array(list(cols[1]), pa.string()),
+            pa.array([_ts(v) for v in cols[2]], pa.timestamp("us", "UTC")),
+            *(pa.array(list(cols[i]), pa.string()) for i in (3, 4, 5)),
+            pa.array([bool(v) for v in cols[6]], pa.bool_()),
+            *(pa.array(list(cols[i]), pa.string()) for i in (7, 8)),
+            pa.array([day] * len(rows), pa.string()),
+        ]
+        tmp = out / f".{IDENT_FILE}.tmp"
+        pq.write_table(pa.Table.from_arrays(arrays, schema=IDENT_SCHEMA), tmp)
+        os.replace(tmp, out / IDENT_FILE)
+        return len(rows)
 
     def _manifest(
         self,
@@ -260,16 +285,70 @@ class AiRollup:
         inputs: list[list[Any]],
         skipped: bool = False,
         first: dict[str, str] | None = None,
-        identity: bool | None = None,
     ) -> None:
         tmp = out / f".{MANIFEST}.tmp"
         body: dict[str, Any] = {
             "catalog": key, "inputs": inputs, "skipped": skipped, "first": first or {},
         }  # fmt: skip
-        if identity is not None:
-            body["identity"] = identity
         tmp.write_text(json.dumps(body))
         os.replace(tmp, out / MANIFEST)
+
+    # --- who had an address on closed days (owner, 2026-10-29) ------------------------
+
+    def _no_ident(self) -> list[tuple[str, str]]:
+        """Built days with no identity file yet, newest first (built before it existed)."""
+        out = []
+        for built in self._dir.glob("source=*/day=*") if self._dir.is_dir() else []:
+            if (built / MANIFEST).is_file() and not (built / IDENT_FILE).is_file():
+                out.append(
+                    (built.parent.name.removeprefix("source="), built.name.removeprefix("day="))
+                )
+        return sorted(out, key=lambda p: (p[1], p[0]), reverse=True)
+
+    def recheck(self, budget_s: float = 20.0) -> int:
+        """Write the identity file for days built before it existed, newest first, for at
+        most `budget_s` per call (each maintenance tick), logged as `rollup.recheck`: start,
+        each day, and finish. Until a day has it, AI pages show its use without people
+        and say how many days are left; they never read that day's events instead."""
+        todo = self._no_ident()
+        if not todo:
+            if self._recheck_total:
+                log.info("rollup.recheck.finished", days=self._recheck_total)
+                self._recheck_total = 0
+            return 0
+        if not self._recheck_total:
+            self._recheck_total = len(todo)
+            log.info("rollup.recheck.started", days=len(todo))
+        done = 0
+        started = monotonic()
+        for source, day in todo:
+            if done and monotonic() - started >= budget_s:
+                break
+            out = self._dir / f"source={source}" / f"day={day}"
+            start = datetime.combine(date.fromisoformat(day), time(0), UTC)
+            scope = QueryScope(
+                [source], start, start + timedelta(days=1) - timedelta(microseconds=1)
+            )
+            rows = self._write_ident(out, scope, day)
+            done += 1
+            log.info(
+                "rollup.recheck.day", source=source, day=day, rows=rows,
+                left=len(todo) - done,
+            )  # fmt: skip
+        if done == len(todo):
+            log.info("rollup.recheck.finished", days=self._recheck_total)
+            self._recheck_total = 0
+        return done
+
+    def pending(self, covered: list[str]) -> int:
+        """Covered days ("source|day") whose identity file is not written yet."""
+        return sum(
+            1
+            for c in covered
+            if not (
+                self._dir / f"source={c.split('|')[0]}" / f"day={c.split('|')[1]}" / IDENT_FILE
+            ).is_file()
+        )
 
     # --- the first-seen index (F63) -----------------------------------------------------
 
@@ -293,7 +372,7 @@ class AiRollup:
             m = json.loads((self._dir / f"source={source}" / f"day={day}" / MANIFEST).read_text())
         except (OSError, ValueError):
             return False
-        return "first" in m and "identity" in m
+        return "first" in m
 
     def _index_only(self, source: str, day: str) -> None:
         out = self._dir / f"source={source}" / f"day={day}"
@@ -304,7 +383,7 @@ class AiRollup:
         if (out / PART).is_file():
             first |= _first_services(pq.read_table(out / PART))
         self._manifest(out, m.get("catalog", ""), m.get("inputs", []), bool(m.get("skipped")),
-                       first, self._has_identity(scope))  # fmt: skip
+                       first)  # fmt: skip
 
     def first_seen(self, sources: list[str] | None) -> dict[str, datetime]:
         """ "service:<id>", "mcp:<name>", or "agent:<key>" -> when first seen in any closed
@@ -343,8 +422,8 @@ class AiRollup:
 
     def covered(self, scope: QueryScope) -> list[str]:
         """ "source|YYYY-MM-DD" for every fresh rollup day in scope: those are read from the
-        rollup, the rest of the range from events. A day with identity rows (or not yet
-        checked for them) is read live: the address lookup needs its events."""
+        rollup, the rest of the range from events. Who had an address on those days comes
+        from each day's identity file; a day without one yet (`pending`) has no people."""
         if scope.start is None or scope.end is None:
             return []
         first = scope.start.astimezone(UTC).date().isoformat()
@@ -355,10 +434,6 @@ class AiRollup:
             source = d.name.removeprefix("source=")
             for built in d.glob("day=*"):
                 day = built.name.removeprefix("day=")
-                if (
-                    first <= day <= last
-                    and self._fresh(source, day, key)
-                    and not self._identity(built)
-                ):
+                if first <= day <= last and self._fresh(source, day, key):
                     out.append(f"{source}|{day}")
         return sorted(out)

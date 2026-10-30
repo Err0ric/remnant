@@ -2,9 +2,19 @@
 
 ## Unreleased
 
+### Fixed: AI Watch and AI usage failing with query_memory after the people fix (#276)
+
+- #276 read older days' logon, User-ID, VPN, DHCP, and sign-in events straight from the lake, and treated every day built before it as not yet checked, so on a busy install AI Watch and AI usage read 30 days of raw DNS again and failed with `query_memory`. Closed days are read from the AI rollup again, always.
+- Who had an address on a closed day now lives in a small file per day beside the rollup (`ident.parquet`): the identity observations reduced to the first and last of each mapping per hour. The address lookup joins those to the rollup's per-hour rows; closed days' events are never opened for it.
+- Days built before this get their identity file from a re-check that runs every maintenance tick (about every minute, at most 20 seconds each), newest days first, logged at INFO: `rollup.recheck.started` (days), `rollup.recheck.day` (source, day, rows, left), `rollup.recheck.finished`.
+- Until a day is re-checked, AI Watch and AI usage load without people for it and say "Rebuilding people for N of M days". They never fail for it.
+- New scale test (`-m scale`): 300k DNS and 100k Linux sign-ins a day for 30 days, DHCP and Microsoft 365 sign-ins, a rollup built before the identity files; every AI page under the default share of a 4 GB server, and no AI use query opens a closed day's events. It fails on the previous release.
+
+**What changes for existing installs:** after the update, people come back over the first few minutes as the re-check runs (watch for `rollup.recheck.finished`); pages load the whole time.
+
 ### Fixed: people on closed days, and app names on older sign-ins
 
-- AI usage and AI Watch showed 0 people for every service over ranges of 2 days or more. Since F63, closed days were read from the AI rollup and their event files skipped, including the logon, User-ID, VPN, DHCP, and sign-in events that say who had an address, so use on closed days had no person. A day with those events is now read live; the rollup's day record notes whether a day has them (checked once for existing days on the next rollup run).
+- AI usage and AI Watch showed 0 people for every service over ranges of 2 days or more. Since F63, closed days were read from the AI rollup and their event files skipped, including the logon, User-ID, VPN, DHCP, and sign-in events that say who had an address, so use on closed days had no person. (The first fix read those days live and was replaced: see the query_memory fix above.)
 - The consent card named an app "an app with no name" when the person's sign-in just before was stored before the sign-ins parser 1.1.0: those sign-ins carry the app only in `message`, which is now used.
 
 **What changes for existing installs:** after the update, the next rollup run checks each existing day once; until then those days are read live (slower on a busy install for a few minutes, never wrong).

@@ -2,6 +2,7 @@
 per-query memory share, without spilling to disk, because each query reduces events to
 small groups before any join. The full-size run (300k a day for 30 days) is `-m scale`."""
 
+import json
 import shutil
 import time
 from datetime import UTC, datetime, timedelta
@@ -113,3 +114,71 @@ def test_too_little_memory_is_a_server_limit_with_its_own_code(tmp_path: Path) -
     assert warn and warn[0]["log_level"] == "warning"
     assert warn[0]["request_id"] == res.headers["X-Request-ID"]
     assert warn[0]["query"].startswith("ai_use.")
+
+
+@pytest.mark.scale
+def test_people_on_closed_days_fit_the_default_share(tmp_path: Path) -> None:
+    """Owner, 2026-10-29 (install on 15ac401): 300k DNS a day and 100k Linux sign-ins a
+    day for 30 days, with a rollup built before the identity files existed. Every AI page
+    loads under the default share of a 4 GB server while the re-check is pending (without
+    people for those days), and after it (with people). On 15ac401 these pages failed with
+    query_memory: days not yet checked were read from events."""
+    lake = tmp_path / "lake"
+    end = datetime.now(UTC)
+    write_dns(lake, per_day=300_000, days=30, end=end, names=150_000, daily_names=True)
+    write_identity(lake, days=30, end=end, logons_per_day=100_000)
+    c = _app(
+        tmp_path, lake, memory_mb=None, spill=True, env={"APP__SERVER__MEMORY_LIMIT_MB": "4096"}
+    )
+    rollup = c.app.state.ai_rollup  # type: ignore[attr-defined]  # the app under test
+    rollup._max = 1000
+    assert rollup.run().built > 0
+    # As built by an earlier version: no identity file, no identity flag.
+    for f in rollup._dir.glob("source=*/day=*/ident.parquet"):
+        f.unlink()
+    for m in rollup._dir.glob("source=*/day=*/_built.json"):
+        body = json.loads(m.read_text())
+        body.pop("identity", None)
+        m.write_text(json.dumps(body))
+
+    # Every AI use query must leave the closed days to the rollup: on 15ac401 the days
+    # not yet checked were read from events, which ran out of memory on the install.
+    engine = c.app.state.engine  # type: ignore[attr-defined]
+    real_run = engine.run
+    skipped: list[frozenset[str]] = []
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        scope = args[1] if len(args) > 1 else kwargs.get("scope")
+        week_ago = end - timedelta(days=6)
+        if (
+            str(kwargs.get("name", "")).startswith("ai_use.")
+            and scope is not None
+            and scope.start is not None
+            and scope.start <= week_ago
+            and (scope.end is None or scope.end >= end - timedelta(days=1))
+        ):
+            skipped.append(frozenset(kwargs.get("skip_days") or ()))
+        return real_run(*args, **kwargs)
+
+    engine.run = spy
+    today = end.date().isoformat()
+    closed = {
+        f"{d.parent.name.removeprefix('source=')}|{d.name.removeprefix('day=')}"
+        for d in engine._lake.glob("source=*/day=*")
+        if d.name != f"day={today}" and d.name > f"day={(end - timedelta(days=6)).date()}"
+    }
+
+    def pages() -> dict[str, Any]:
+        for days in (7, 30):
+            res = c.get("/api/ai/watch/summary", params={"days": days})
+            assert res.status_code == 200, res.text
+        return _every_tab(c, days=30)
+
+    body = pages()
+    assert skipped and all(closed <= s for s in skipped), "closed days read from events"
+    assert body["people_pending_days"] > 0 and body["people_days"] >= body["people_pending_days"]
+    while rollup.recheck(budget_s=600):
+        pass
+    body = pages()
+    assert body["people_pending_days"] == 0
+    assert any(s["people"] > 0 for s in body["services"]), "people from DHCP and sign-ins"

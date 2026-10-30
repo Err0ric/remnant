@@ -62,10 +62,13 @@ _DHCP_MAC = "nullif(regexp_extract(message, 'mac ([0-9A-Fa-f:]{17})', 1), '')"
 _CAP = "CASE kind " + " ".join(f"WHEN '{k}' THEN INTERVAL {h} HOUR" for k, h in CAPS.items())
 _CAP += " END"
 
-# Every event that starts (`fin` false) or ends (`fin` true) a span on an address.
-OBS_SQL = f"""addr_ev AS (
+# Every event that starts (`fin` false) or ends (`fin` true) a span on an address, and
+# every Microsoft 365 sign-in on a machine (`sign`, with `dev`): the raw observations, read
+# from events. Columns: kind, ip, t, who, host, mac, fin, src, dev.
+IDENT_RAW = f"""
   SELECT 'logon' AS kind, src_endpoint_ip AS ip, {_TS} AS t, {_WHO} AS who, {_HOST} AS host,
-         CAST(NULL AS VARCHAR) AS mac, false AS fin, source_id AS src
+         CAST(NULL AS VARCHAR) AS mac, false AS fin, source_id AS src,
+         CAST(NULL AS VARCHAR) AS dev
   FROM events
   WHERE class_uid = 3002 AND coalesce(status_id, 1) = 1 AND coalesce(activity_id, 1) IN (1, 3)
     AND src_endpoint_ip IS NOT NULL AND src_endpoint_ip NOT IN {_BAD_IP}
@@ -73,21 +76,43 @@ OBS_SQL = f"""addr_ev AS (
     AND template_id NOT LIKE 'm365%'
   UNION ALL
   SELECT 'userid', src_endpoint_ip, {_TS}, {_WHO}, NULL, NULL,
-         coalesce(activity_id, 1) = 2, source_id
+         coalesce(activity_id, 1) = 2, source_id, NULL
   FROM events
   WHERE template_id = 'paloalto_userid' AND src_endpoint_ip IS NOT NULL
     AND src_endpoint_ip NOT IN {_BAD_IP}
   UNION ALL
   SELECT 'vpn', json_extract_string(unmapped, '$.private_ip'), {_TS}, {_WHO},
-         nullif(trim(src_endpoint_hostname), ''), NULL, coalesce(activity_id, 1) = 2, source_id
+         nullif(trim(src_endpoint_hostname), ''), NULL, coalesce(activity_id, 1) = 2,
+         source_id, NULL
   FROM events
   WHERE template_id = 'paloalto_globalprotect' AND coalesce(activity_id, 1) IN (1, 2)
     AND coalesce(json_extract_string(unmapped, '$.private_ip'), '') NOT IN {_BAD_IP}
   UNION ALL
-  SELECT 'dhcp', {_DHCP_IP}, {_TS}, NULL, {_DHCP_HOST}, {_DHCP_MAC}, false, source_id
+  SELECT 'dhcp', {_DHCP_IP}, {_TS}, NULL, {_DHCP_HOST}, {_DHCP_MAC}, false, source_id, NULL
   FROM events
   WHERE template_id = 'paloalto_system' AND json_extract_string(unmapped, '$.subtype') = 'dhcp'
     AND {_DHCP_IP} <> ''
+  UNION ALL
+  SELECT 'sign', NULL, {_TS}, {_WHO}, NULL, NULL, false, source_id, lower(device_hostname)
+  FROM events
+  WHERE template_id = 'm365_signin' AND coalesce(status_id, 1) = 1
+    AND nullif(trim(device_hostname), '') IS NOT NULL AND {_WHO} IS NOT NULL"""  # noqa: S608
+
+# The same observations kept per closed day by the AI rollup (`ai_ident`, server queries
+# only): the days in `$covered` are read from it, their events are never opened.
+IDENT_KEPT = """
+  UNION ALL
+  SELECT kind, ip, t, who, host, mac, fin, src, dev FROM ai_ident
+  WHERE list_contains($covered, src || '|' || day)"""
+
+
+def obs_sql(kept: bool = False) -> str:
+    """CTEs from the observations to `addr_span`, `addr_user`, `addr_host`, and `dev_sign`.
+    With `kept`, closed days come from the rollup's `ai_ident` (ADR-0035 row 8, F63)."""
+    return f"""addr_raw AS ({IDENT_RAW}{IDENT_KEPT if kept else ""}
+),
+addr_ev AS (
+  SELECT kind, ip, t, who, host, mac, fin, src FROM addr_raw WHERE kind <> 'sign'
 ),
 addr_span AS (
   SELECT kind, ip, t AS start, who, host, mac, src,
@@ -108,16 +133,17 @@ addr_host AS (
   FROM addr_span WHERE host IS NOT NULL
 ),
 dev_sign AS (
-  SELECT lower(device_hostname) AS dev, {_TS} AS t, {_WHO} AS who, source_id AS src,
-         lag({_WHO}) OVER (PARTITION BY lower(device_hostname) ORDER BY {_TS}) AS prev_who,
-         lag({_TS}) OVER (PARTITION BY lower(device_hostname) ORDER BY {_TS}) AS prev_t
-  FROM events
-  WHERE template_id = 'm365_signin' AND coalesce(status_id, 1) = 1
-    AND nullif(trim(device_hostname), '') IS NOT NULL AND {_WHO} IS NOT NULL
+  SELECT dev, t, who, src,
+         lag(who) OVER (PARTITION BY dev ORDER BY t) AS prev_who,
+         lag(t) OVER (PARTITION BY dev ORDER BY t) AS prev_t
+  FROM addr_raw WHERE kind = 'sign'
 )"""  # noqa: S608  # fixed text
 
 
-def address_ctes(src: str, need: str = "true", obs: bool = True) -> str:
+OBS_SQL = obs_sql()
+
+
+def address_ctes(src: str, need: str = "true", obs: bool = True, kept: bool = False) -> str:
     """CTEs ending in `addr(ip, hr, rwho, rhost, ...)`: the person and machine behind
     each address of `src` (a CTE with columns `ip` and `t`) in each hour, for rows where
     `need` holds, with how each was matched (D107 C1): `rwho_how`, `rwho_at`,
@@ -126,7 +152,7 @@ def address_ctes(src: str, need: str = "true", obs: bool = True) -> str:
 
     `obs=False` when OBS_SQL is already earlier in the same WITH. `src` and `need` are
     fixed text from the caller, never user input."""
-    head = f"{OBS_SQL},\n" if obs else ""
+    head = f"{obs_sql(kept)},\n" if obs else ""
     return f"""{head}addr_need AS (
   SELECT DISTINCT ip, date_trunc('hour', t) AS hr FROM {src}
   WHERE ip IS NOT NULL AND ({need})

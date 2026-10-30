@@ -616,6 +616,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         integrity_interval_s=config.maintenance.integrity_interval_s,
     )
     app.state.maintenance.after_compaction = app.state.ai_rollup.run
+    app.state.maintenance.each_tick = app.state.ai_rollup.recheck
     app.state.integrity_service = IntegrityService(
         meta,
         app.state.integrity,

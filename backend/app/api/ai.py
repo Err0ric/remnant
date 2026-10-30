@@ -99,6 +99,10 @@ class UsageOut(BaseModel):
     new_services: list[str] = []
     new_mcp: list[str] = []
     gone: list[GoneOut] = []
+    # "Rebuilding people for N of M days": closed days whose identity file is not written
+    # yet show their AI use without people (owner, 2026-10-29).
+    people_pending_days: int = 0
+    people_days: int = 0
 
 
 def _catalog(request: Request) -> Catalog:
@@ -160,6 +164,7 @@ async def ai_usage(
         else:  # nothing at all before: every row would be "New" (QA F10), so no comparison
             changes = None
     people = await run_in_threadpool(usage.people, scope, ident)
+    pending, of = await run_in_threadpool(usage.people_pending, scope)
     await run_in_threadpool(
         _audit(request).audit.write,
         "ai.view",
@@ -178,6 +183,8 @@ async def ai_usage(
         new_services=changes.new_services if changes else [],
         new_mcp=changes.new_mcp if changes else [],
         gone=[GoneOut(**_slots(g)) for g in changes.gone] if changes else [],
+        people_pending_days=pending,
+        people_days=of,
     )
 
 
@@ -250,6 +257,8 @@ class WatchSummaryOut(BaseModel):
     top: list[TopServiceOut]
     sources: list[str]
     new: list[NewOut] = []  # first seen in 24 hours, from the data (ADR-0037 row 6)
+    people_pending_days: int = 0  # see UsageOut
+    people_days: int = 0
 
 
 @router.get("/ai/watch/summary")
@@ -286,6 +295,11 @@ async def ai_watch_summary(
         request.app.state.ai_watch.now(),
         days,
     )
+    now = request.app.state.ai_watch.now()
+    pending, of = await run_in_threadpool(
+        request.app.state.ai_usage.people_pending,
+        QueryScope(allowed, now - timedelta(days=30), now),
+    )
     await run_in_threadpool(
         _audit(request).audit.write,
         "ai.view",
@@ -303,6 +317,8 @@ async def ai_watch_summary(
         top=[TopServiceOut(**_slots(t)) for t in s.top],
         sources=s.sources,
         new=[NewOut(**_slots(n)) for n in s.new],
+        people_pending_days=pending,
+        people_days=of,
     )
 
 
