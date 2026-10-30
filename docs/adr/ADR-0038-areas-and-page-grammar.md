@@ -191,3 +191,26 @@ No new model call: Around this event and Likely cause are deterministic SQL, and
 | 7 | Theme toggle | Sun and moon icon button with a tooltip ("Switch to light theme"), not the word |
 | 8 | "No data after X" | A thin hatched band at the right edge of the chart where data stopped, plus a note in the card meta ("No data after Oct 25"); existing bars keep their full width and stay readable. Never a block over the chart |
 | 9 | AI Watch stays one block on the Dashboard (owner, 18:34) | The Dashboard keeps the AI Watch section as a unit: its header with the 7 or 30 days toggle and **Open AI usage**, then the cards, New in 24 hours, the chart, and top services. The redesign restyles it (KPI strip, delta pills, card states, chart axes, hatched "No data after") and does not break it up. Its toggle is the block's time window: the cards, the chart, and top services all follow it, so row 11 holds inside the block |
+
+## Owner edits (2026-10-30, shell and Dashboard on a wide monitor)
+
+Feedback from the owner's 2000 px screen, approved with the dark previews at 1920 and 1280.
+
+| # | Edit | Effect on the decision |
+|---|---|---|
+| 10 | Grouped rail replaces one row per area | The rail is 240 px from 1100 px up (the icon rail stays below that), with larger rows and four collapsible groups: **Monitor** (Dashboard, Alerts, Microsoft 365), **Investigate** (Search, People & devices, Saved searches), **AI** (AI usage, Agents), **System** (Health, Settings). Every page lists its sub-pages under it, the current one highlighted; each group's open or closed state is remembered per browser. Header tabs stay. The top bar puts a wide search in the center that finds pages and entities (an address, user, host, or AI service goes to its entity page); "Updated" appears once, in the top bar; the bell carries the open alert count. The Dashboard has one time window for the page. Amends sections 1 and 2, and DESIGN 3, 5 and 6.3 |
+
+### The eight calls behind edit 10
+
+| # | Call | Owner |
+|---|---|---|
+| 1 | Settings keeps its own sub-nav on the Settings page; its 12 sub-pages are not listed in the rail, so the rail fits a 1080 px tall screen | Approved |
+| 2 | Microsoft 365 sits under **Monitor** | Changed by the owner (proposed under Investigate) |
+| 3 | AI Watch follows the page window (24 hours, 7 days, 30 days) and drops its own 7 or 30 days toggle; supersedes the toggle in edit 9, the block otherwise stays one unit. 24 hours compares against the previous 24 hours and charts by hour. Built: the new sections chart by hour; AI Watch's cards compare 24 hours, but its chart keeps 7 days because AI use is rolled up by day | Approved |
+| 4 | Identity charts failed sign-ins per day only, in the warn tone, with the failure rate in the chart note; the succeeded and failed bar stays on the Microsoft 365 page | Approved |
+| 5 | Per-host and per-rule charts are small multiples (one row of daily bars per host or rule, own scale, peak and total printed), not colored stacks; severity colors stay reserved | Approved |
+| 6 | Approved countries (edit 1) ships with the Dashboard sections, ahead of the Microsoft 365 area; until it is set, Identity and VPN cards show **Set approved countries**. It lives on Settings > Enrichment (**Countries and networks**, beside GeoIP, which resolves the countries) with Internal networks, instead of a Microsoft 365 settings page, since VPN logins use it too | Approved |
+| 7 | Density (comfortable or compact) is a per-user choice in the user menu; comfortable by default from 1440 px wide, compact below | Approved |
+| 8 | "External" means not in the **Internal networks** list. The list takes private and public addresses and ranges (an office egress is public); it defaults to the private ranges (10/8, 172.16/12, 192.168/16, fc00::/7, loopback, link-local) and Settings prompts to add the company's egress addresses | Changed by the owner (public entries and the egress prompt) |
+
+Build order, one PR each: rail and top bar; entity search (scoped to the sources the viewer can read, like every query surface); Dashboard sections with Approved countries and Internal networks.

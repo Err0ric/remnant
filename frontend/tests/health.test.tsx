@@ -32,7 +32,7 @@ describe("Health (ADR-0019)", () => {
     const nav = screen.getByRole("navigation", { name: "Primary" });
     expect(within(nav).getByRole("link", { name: "Health" })).toHaveAttribute(
       "aria-current",
-      "page",
+      "true",
     );
     const sources = await screen.findByRole("list", { name: "Sources" });
     expect(within(sources).getByText("linux_sshd")).toBeVisible();

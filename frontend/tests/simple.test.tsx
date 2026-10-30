@@ -136,7 +136,7 @@ describe("Simple search", () => {
     );
     expect(screen.getByLabelText("Search text")).toBeVisible();
     const nav = screen.getByRole("navigation", { name: "Primary" });
-    expect(within(nav).getByRole("link", { name: "Investigate" })).toHaveAttribute(
+    expect(within(nav).getByRole("link", { name: "Search" })).toHaveAttribute(
       "aria-current",
       "page",
     );

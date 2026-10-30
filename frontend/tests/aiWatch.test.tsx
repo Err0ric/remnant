@@ -95,8 +95,10 @@ describe("AI Watch on the Dashboard (ADR-0035 Part 2)", () => {
       "/alerts#review",
     );
     expect(within(watch).getByRole("button", { name: "2" })).toBeVisible();
-    expect(within(watch).getAllByText("+1 vs previous 7 days")).toHaveLength(2);
-    expect(within(watch).getByText("same as previous 7 days")).toBeVisible();
+    // The pill sits beside the number; the block says once what it is compared against.
+    expect(within(watch).getAllByTitle("+1 vs previous 7 days")).toHaveLength(2);
+    expect(within(watch).getByTitle("same as previous 7 days")).toBeVisible();
+    expect(within(watch).getByText("Changes against the previous 7 days")).toBeVisible();
     // People and devices are never one number: devices without a person are their own line.
     expect(
       within(watch).getByRole("button", { name: "2 more devices not matched to a person" }),
@@ -125,7 +127,10 @@ describe("AI Watch on the Dashboard (ADR-0035 Part 2)", () => {
     const top = within(watch).getByRole("table", { name: "Top AI services" });
     expect(within(top).getByRole("link", { name: "DeepSeek" })).toBeVisible();
     expect(within(top).getByText("Not approved")).toBeVisible();
-    await userEvent.click(within(watch).getByRole("button", { name: "30 days" }));
+    // The page window drives the block (ADR-0038 edit 10): no toggle of its own.
+    expect(within(watch).queryByRole("button", { name: "30 days" })).toBeNull();
+    const win = screen.getByRole("group", { name: "Time window" });
+    await userEvent.click(within(win).getByRole("button", { name: "30 days" }));
     await vi.waitFor(() =>
       expect(
         spy.mock.calls.some(([u]) => String(u).endsWith("/api/ai/watch/summary?days=30")),
@@ -217,5 +222,36 @@ describe("AI Watch wording and chart (owner nits, 2026-10-29)", () => {
       "aria-label",
       expect.stringContaining("over 8 days"),
     );
+  });
+});
+
+describe("Dashboard sections (ADR-0038 edit 10)", () => {
+  it("shows Identity, Attacks and access, and Detections for the page window", async () => {
+    window.localStorage.removeItem("dashboard.window");
+    const spy = await renderAt("/dashboard");
+    const identity = await screen.findByRole("region", { name: "Identity" });
+    expect(within(identity).getByText("from Microsoft 365")).toBeVisible();
+    expect(within(identity).getByText("Failed sign-ins")).toBeVisible();
+    // Not set: an admin gets the link instead of a number.
+    expect(within(identity).getByRole("button", { name: "Set approved countries" })).toBeVisible();
+    expect(within(identity).getByText("12 of 400 sign-ins failed (3.0%)")).toBeVisible();
+    expect(within(identity).getByRole("link", { name: "dana.k@example.com" })).toBeVisible();
+    const attacks = screen.getByRole("region", { name: "Attacks and access" });
+    expect(within(attacks).getByText(/office addresses count as external/)).toBeVisible();
+    expect(within(attacks).getByRole("img", { name: "bastion: peak 9, total 14" })).toBeVisible();
+    expect(within(attacks).getByText("AS64500 Example Net")).toBeVisible();
+    expect(within(attacks).getByText("No VPN logs")).toBeVisible();
+    const det = screen.getByRole("region", { name: "Detections" });
+    expect(within(det).getByText("of 142 enabled")).toBeVisible();
+    expect(within(det).getByText("SSH failed password")).toBeVisible();
+    const win = screen.getByRole("group", { name: "Time window" });
+    await userEvent.click(within(win).getByRole("button", { name: "24 hours" }));
+    await vi.waitFor(() =>
+      expect(
+        spy.mock.calls.some(([u]) => String(u).endsWith("/api/dashboard/sections?window=24h")),
+      ).toBe(true),
+    );
+    expect(window.localStorage.getItem("dashboard.window")).toBe("24h");
+    window.localStorage.removeItem("dashboard.window");
   });
 });

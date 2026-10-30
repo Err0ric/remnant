@@ -39,7 +39,7 @@ describe("AI usage (ADR-0015)", () => {
     const nav = screen.getByRole("navigation", { name: "Primary" });
     expect(within(nav).getByRole("link", { name: "AI usage" })).toHaveAttribute(
       "aria-current",
-      "page",
+      "true",
     );
     expect(await screen.findByText("1 not approved in use")).toBeVisible();
     const table = screen.getByRole("region", { name: "AI services seen in network logs" });

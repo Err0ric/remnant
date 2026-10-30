@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { Search } from "lucide-react";
-import { useMemo, useState, type KeyboardEvent } from "react";
-import { api } from "@/lib/api";
+import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import { api, type LookupHit } from "@/lib/api";
+import { openEntity } from "@/lib/entity";
 import { setAskProvider, useAskProvider } from "@/lib/askProvider";
 import { visibleNav, visibleSections } from "@/lib/nav";
 import { arrange, readRecent, rememberRecent, type PaletteItem } from "@/lib/palette";
@@ -21,6 +22,45 @@ interface CommandPaletteProps {
   onClose: () => void;
 }
 
+const SECTIONS = {
+  ip: "Addresses",
+  user: "People",
+  host: "Hosts",
+  service: "AI services",
+} as const;
+
+function count(n: number | null): string {
+  return n === null ? "" : `${n.toLocaleString()} ${n === 1 ? "event" : "events"}`;
+}
+
+/** One entity from the lookup; opening it goes to its page. */
+function hitItem(h: LookupHit): PaletteItem {
+  const where = h.geo
+    ? [
+        h.geo.country_name ?? h.geo.country,
+        h.geo.asn ? `AS${h.geo.asn} ${h.geo.org ?? ""}`.trim() : null,
+      ]
+        .filter(Boolean)
+        .join(", ")
+    : "";
+  return {
+    key: `entity:${h.kind}:${h.value}`,
+    section: SECTIONS[h.kind],
+    label: h.label,
+    hint: h.kind === "service" ? "AI service" : [where, count(h.events)].filter(Boolean).join(", "),
+    found: true,
+    mono: h.kind === "ip" || h.kind === "host",
+    run: () => openEntity({ kind: h.kind, value: h.value }),
+  };
+}
+
+/** SQL for "Search events for": the text as one literal, matched in the raw line. The guard
+ * still checks it, on a read-only connection. */
+function textSql(text: string): string {
+  const lit = "'" + text.replace(/'/g, "''") + "'";
+  return `SELECT time, source_id, raw\nFROM events\nWHERE contains(raw, ${lit})\nORDER BY time DESC`;
+}
+
 /**
  * Ctrl+K / Cmd+K (DESIGN.md 7): jump to a page, a saved search, or a source, run the
  * current search, or switch theme and AI provider. Lists come from the same APIs as the
@@ -38,7 +78,24 @@ export function CommandPalette({
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const [recent] = useState(readRecent);
+  // Sits under the top bar's search at its width; centered when the bar is not shown.
+  const [anchor] = useState(() => {
+    const r = document.getElementById("top-search")?.getBoundingClientRect();
+    return r && r.width >= 320 ? { left: r.left, width: r.width } : null;
+  });
   const askProvider = useAskProvider();
+  // Entities (ADR-0038 edit 10): asked of the server once typing pauses, from 2 characters.
+  const [typed, setTyped] = useState("");
+  useEffect(() => {
+    const t = window.setTimeout(() => setTyped(query.trim()), 200);
+    return () => window.clearTimeout(t);
+  }, [query]);
+  const lookup = useQuery({
+    queryKey: ["entity-lookup", typed],
+    queryFn: () => api.entityLookup(typed),
+    enabled: typed.length >= 2,
+    staleTime: 30_000,
+  });
   const searches = useQuery({ queryKey: ["searches"], queryFn: api.searches, staleTime: 30_000 });
   const sources = useQuery({ queryKey: ["source-list"], queryFn: api.sources, staleTime: 30_000 });
   const providers = useQuery({
@@ -136,8 +193,25 @@ export function CommandPalette({
         },
       });
     }
+    const text = query.trim();
+    if (text.length >= 2) {
+      for (const h of lookup.data?.hits ?? []) out.push(hitItem(h));
+      out.push({
+        key: "act:search-text",
+        section: "Search",
+        label: `Search events for "${text}"`,
+        hint: "Last 7 days",
+        found: true,
+        run: () => {
+          seedSearch({ sql: textSql(text), range: "7d" });
+          navigate("search");
+        },
+      });
+    }
     return out;
   }, [
+    query,
+    lookup.data,
     isAdmin,
     canAudit,
     canAsk,
@@ -182,7 +256,11 @@ export function CommandPalette({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 px-4 pt-[12vh]"
+      // Opens under the top bar's search, at its width (ADR-0038 edit 10).
+      className={cn(
+        "fixed inset-0 z-50 flex items-start bg-black/40 pt-14",
+        anchor ? "" : "justify-center px-4",
+      )}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -191,7 +269,8 @@ export function CommandPalette({
         role="dialog"
         aria-modal="true"
         aria-label="Command palette"
-        className="w-full max-w-[560px] overflow-hidden rounded-card border border-border-strong bg-surface text-text shadow-2xl"
+        style={anchor ? { marginLeft: anchor.left, width: anchor.width } : undefined}
+        className="w-full max-w-[680px] overflow-hidden rounded-card border border-border-strong bg-surface text-text shadow-2xl"
       >
         <div className="flex items-center gap-2 border-b border-border px-3">
           <Search size={16} aria-hidden className="text-text-muted" />
@@ -201,8 +280,8 @@ export function CommandPalette({
             aria-expanded="true"
             aria-controls="palette-list"
             aria-activedescendant={flat[index] ? optionId(flat[index].key) : undefined}
-            aria-label="Search pages, saved searches, sources, and actions"
-            placeholder="Go to a page, saved search, or source"
+            aria-label="Search pages, addresses, people, hosts, and AI services"
+            placeholder="Type an address, user, host, AI service, or page"
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);
@@ -245,7 +324,7 @@ export function CommandPalette({
                       <span
                         className={cn(
                           "min-w-0 truncate",
-                          item.section === "Sources" ? "font-mono" : "",
+                          item.section === "Sources" || item.mono ? "font-mono" : "",
                         )}
                       >
                         {item.label}

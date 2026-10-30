@@ -340,3 +340,62 @@ def test_entity_summary_is_read_as_the_caller_and_audited(lab: dict[str, Any]) -
     assert len(rows) >= 2
     bad = lab["admin"].get("/api/entities/summary", params={"kind": "mcp", "value": "x"})
     assert bad.status_code == 422
+
+
+def test_lookup_finds_entities_only_in_the_callers_sources(lab: dict[str, Any]) -> None:
+    admin = lab["admin"].get("/api/entities/risk", params=RANGE).json()
+    ip = admin["ips"][0]["value"]
+    prefix = ip.rsplit(".", 1)[0]
+    res = lab["admin"].get("/api/entities/lookup", params={"q": prefix, **RANGE})
+    assert res.status_code == 200, res.text
+    hits = res.json()["hits"]
+    assert any(h["kind"] == "ip" and h["value"] == ip and h["events"] > 0 for h in hits)
+    assert all(h["value"].startswith(prefix) for h in hits if h["kind"] == "ip")
+    # A Windows-only host is offered to the admin and never to the Linux-only analyst.
+    win_host = next(r["value"] for r in admin["hosts"] if r["rules"] == ["Failed logon"])
+    seen = lab["admin"].get("/api/entities/lookup", params={"q": win_host, **RANGE}).json()
+    assert any(h["kind"] == "host" and h["value"] == win_host for h in seen["hits"])
+    hidden = lab["ana"].get("/api/entities/lookup", params={"q": win_host, **RANGE}).json()
+    assert not any(h["value"] == win_host for h in hidden["hits"])
+    # AI services come from the catalog by name; the typed text is data, not SQL.
+    ai = lab["ana"].get("/api/entities/lookup", params={"q": "claude", **RANGE}).json()
+    assert any(h["kind"] == "service" for h in ai["hits"])
+    odd = lab["ana"].get("/api/entities/lookup", params={"q": "x' OR 1=1 --", **RANGE})
+    assert odd.status_code == 200 and odd.json()["hits"] == []
+    assert lab["ana"].get("/api/entities/lookup", params={"q": "a"}).status_code == 422
+    log = lab["admin"].get("/api/audit/events", params={"action": "investigate.lookup"}).json()
+    mine = [e for e in log if (e.get("detail") or {}).get("q") == win_host]
+    assert {tuple(e["detail"]["sources_in_scope"]) for e in mine} >= {("lin_auth",)}
+
+
+def test_dashboard_sections_follow_the_callers_sources_and_networks(
+    lab: dict[str, Any],
+) -> None:
+    app, admin, ana, h = lab["app"], lab["admin"], lab["ana"], lab["h"]
+    app.state.ai_watch._clock = lambda: NOW
+    full = admin.get("/api/dashboard/sections", params={"window": "30d"})
+    assert full.status_code == 200, full.text
+    body = full.json()
+    assert len(body["buckets"]) == 30 and body["approved_set"] is False
+    assert body["identity"] is None  # no Microsoft 365 source here
+    attacks = body["attacks"]
+    assert attacks["failures"]["value"] > 0 and attacks["addresses"]["value"] > 0
+    assert all(len(s["counts"]) == 30 for s in attacks["by_host"])
+    assert attacks["vpn_outside"] is None  # no approved countries, no VPN source
+    det = body["detections"]
+    assert det["matches"]["value"] > 0 and det["rules_matched"]["extra"] == 2
+    assert {s["label"] for s in det["by_rule"]} == {"SSH failed password", "Failed logon"}
+    # The Linux-only analyst never sees the Windows rule or its hosts.
+    mine = ana.get("/api/dashboard/sections", params={"window": "30d"}).json()
+    assert {s["label"] for s in mine["detections"]["by_rule"]} == {"SSH failed password"}
+    assert mine["attacks"]["failures"]["value"] <= attacks["failures"]["value"]
+    # Addresses listed as internal are not attacks.
+    everything = {"approved_countries": [], "internal_networks": ["0.0.0.0/0", "::/0"]}
+    assert admin.put("/api/enrichment/places", json=everything, headers=h).status_code == 200
+    quiet = admin.get("/api/dashboard/sections", params={"window": "30d"}).json()
+    assert quiet["attacks"] is None
+    hourly = admin.get("/api/dashboard/sections", params={"window": "24h"}).json()
+    assert len(hourly["buckets"]) == 24
+    assert admin.get("/api/dashboard/sections", params={"window": "1y"}).status_code == 422
+    log = admin.get("/api/audit/events", params={"action": "dashboard.sections"}).json()
+    assert any(e["detail"]["window"] == "30d" for e in log)

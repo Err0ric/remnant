@@ -318,24 +318,24 @@ describe("Dashboard layout (ADR-0034, owner 2026-10-22)", () => {
     const section = await screen.findByRole("region", { name: "Windows" });
     // Add an empty section, move it up, rename it, then delete it.
     const settings = screen.getByRole("region", { name: "Dashboard settings" });
-    await userEvent.type(within(settings).getByLabelText("New section name"), "Identity");
+    await userEvent.type(within(settings).getByLabelText("New section name"), "Accounts");
     await userEvent.click(within(settings).getByRole("button", { name: "Add section" }));
-    await screen.findByRole("region", { name: "Identity" });
-    await userEvent.click(screen.getByRole("button", { name: "Move section Identity up" }));
+    await screen.findByRole("region", { name: "Accounts" });
+    await userEvent.click(screen.getByRole("button", { name: "Move section Accounts up" }));
     await vi.waitFor(() =>
       expect(
         layouts(spy)
           .at(-1)
           ?.map((x) => x.name),
-      ).toEqual(["", "Identity", "Windows"]),
+      ).toEqual(["", "Accounts", "Windows"]),
     );
-    await userEvent.click(screen.getByRole("button", { name: "Rename section Identity" }));
-    const name = screen.getByLabelText("New name for section Identity");
+    await userEvent.click(screen.getByRole("button", { name: "Rename section Accounts" }));
+    const name = screen.getByLabelText("New name for section Accounts");
     await userEvent.clear(name);
     await userEvent.type(name, "Sign-ins{enter}");
     await vi.waitFor(() =>
       expect(sent(spy, "PATCH", (u) => u.endsWith("/api/dashboards/d1/sections"))).toEqual([
-        { old: "Identity", new: "Sign-ins" },
+        { old: "Accounts", new: "Sign-ins" },
       ]),
     );
     await userEvent.click(within(section).getByRole("button", { name: "Delete section Windows" }));

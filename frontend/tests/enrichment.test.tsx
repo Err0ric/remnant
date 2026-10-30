@@ -152,3 +152,24 @@ describe("About and licenses", () => {
     expect(within(table).getByText(/Detection Rule License/)).toBeInTheDocument();
   });
 });
+
+describe("Countries and networks (ADR-0038 edit 10)", () => {
+  it("asks for company egress, names the countries, and saves both lists", async () => {
+    const spy = await renderAt("/enrichment");
+    const box = await screen.findByRole("region", { name: "Countries and networks" });
+    expect(await within(box).findByRole("note")).toHaveTextContent(/public egress addresses/);
+    await userEvent.type(within(box).getByLabelText("Approved countries"), "us, nl");
+    expect(within(box).getByText("United States (US), Netherlands (NL)")).toBeVisible();
+    await userEvent.type(within(box).getByLabelText("Internal networks"), "\n198.51.100.7");
+    await userEvent.click(within(box).getByRole("button", { name: "Save" }));
+    expect(await within(box).findByText("Saved")).toBeVisible();
+    const put = spy.mock.calls.find(
+      ([u, init]) => String(u).includes("/api/enrichment/places") && init?.method === "PUT",
+    );
+    expect(JSON.parse(String(put?.[1]?.body))).toEqual({
+      approved_countries: ["US", "NL"],
+      internal_networks: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "198.51.100.7"],
+    });
+    expect(within(box).queryByRole("note")).toBeNull();
+  });
+});

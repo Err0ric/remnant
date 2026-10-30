@@ -38,8 +38,31 @@ describe("Command palette", () => {
     expect(within(dialog).getByRole("combobox")).toHaveFocus();
     await userEvent.keyboard("{Escape}");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Open the command palette" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Search pages, addresses, users, hosts, AI services" }),
+    );
     expect(await screen.findByRole("dialog", { name: "Command palette" })).toBeInTheDocument();
+  });
+
+  it("finds addresses, people, and AI services and opens their pages (ADR-0038 edit 10)", async () => {
+    await renderAt("/overview");
+    const dialog = await openWithKeys();
+    const box = within(dialog).getByRole("combobox");
+    await userEvent.type(box, "203.0.113");
+    const addresses = await within(dialog).findByRole("group", { name: "Addresses" });
+    const hit = within(addresses).getByRole("option", { name: /203\.0\.113\.77/ });
+    expect(hit).toHaveTextContent("Netherlands, AS64500 Example Net, 61 events");
+    // The first option is the address: Enter opens its page.
+    await userEvent.keyboard("{Enter}");
+    expect(window.location.pathname).toBe("/investigate/people");
+    expect(window.location.hash).toBe("#ip=203.0.113.77");
+    const again = await openWithKeys();
+    await userEvent.type(within(again).getByRole("combobox"), "claude");
+    const ai = await within(again).findByRole("group", { name: "AI services" });
+    expect(within(ai).getByRole("option", { name: /Claude/ })).toBeInTheDocument();
+    expect(within(again).getByRole("group", { name: "Search" })).toHaveTextContent(
+      'Search events for "claude"',
+    );
   });
 
   it("lists every sub-page by its own name (ADR-0038 nav pass 2)", async () => {

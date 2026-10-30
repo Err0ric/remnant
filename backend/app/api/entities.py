@@ -4,7 +4,7 @@ Numbers come from the caller's own events view; reading them is audited
 (`investigate.risk`, `investigate.graph`) with the sources read.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Query, Request
@@ -22,6 +22,7 @@ from app.meta.db import MetaDB
 from app.search.entities import ai_graph, entity_graph, entity_risk, to_json
 from app.search.entity_summary import entity_summary
 from app.search.identity import IdentityMap, IdentityStore
+from app.search.lookup import lookup
 
 router = APIRouter(tags=["investigate"])
 
@@ -110,6 +111,20 @@ class SummaryOut(BaseModel):
     targets: list[TargetOut]
     search_sql: str
     geo: GeoBrief | None = None
+
+
+class LookupHit(BaseModel):
+    kind: Literal["ip", "user", "host", "service"]
+    value: str
+    label: str
+    events: int | None
+    last_seen: str | None
+    geo: GeoBrief | None = None
+
+
+class LookupOut(BaseModel):
+    hits: list[LookupHit]
+    days: int
 
 
 class GraphOut(BaseModel):
@@ -238,3 +253,56 @@ async def summary(
     data = to_json(s)
     data.pop("read", None)
     return SummaryOut(**data, geo=geo)
+
+
+LOOKUP_DAYS = 30
+
+
+@router.get("/entities/lookup")
+async def entity_lookup(
+    request: Request,
+    user: CurrentUser,
+    q: str = Query(min_length=2, max_length=100),
+    start: datetime | None = None,
+    end: datetime | None = None,
+) -> LookupOut:
+    """The top bar search (ADR-0038 edit 10): addresses, users, and hosts seen in the
+    caller's own sources (the last 30 days unless a range is given), and AI services by
+    name."""
+    end = end or datetime.now(UTC)
+    start = start or end - timedelta(days=LOOKUP_DAYS)
+    _allowed, scope = await _scope(request, user, start, end)
+    engine: QueryEngine = request.app.state.engine
+    catalog: Catalog = request.app.state.ai_catalog
+    services = await run_in_threadpool(catalog.services)
+    found = await run_in_threadpool(lookup, engine, scope, q, services)
+    geoip: GeoIP = request.app.state.geoip
+    ips = [h.value for h in found.hits if h.kind == "ip"]
+    geo = await run_in_threadpool(geoip.enrich, ips) if ips else {}
+    await _audit(
+        request,
+        user,
+        "investigate.lookup",
+        {"q": q[:100], "sources_in_scope": found.read},
+    )
+    hits = []
+    for h in found.hits:
+        info = geo.get(h.value) if h.kind == "ip" else None
+        hits.append(
+            LookupHit(
+                kind=h.kind,  # type: ignore[arg-type]  # one of the four, set in lookup()
+                value=h.value,
+                label=h.label,
+                events=h.events,
+                last_seen=h.last_seen,
+                geo=GeoBrief(
+                    country=info.country,
+                    country_name=info.country_name,
+                    asn=info.asn,
+                    org=info.org,
+                )
+                if info
+                else None,
+            )
+        )
+    return LookupOut(hits=hits, days=LOOKUP_DAYS)

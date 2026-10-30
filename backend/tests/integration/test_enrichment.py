@@ -227,3 +227,39 @@ def test_query_results_carry_geo_for_public_addresses(lab: dict[str, Any]) -> No
             "org": "Example Net",
         }
     }
+
+
+def test_places_default_to_private_ranges_and_take_public_egress(lab: dict[str, Any]) -> None:
+    from app.enrich import networks
+
+    h = lab["h"]
+    assert lab["ana"].get("/api/enrichment/places").status_code == 403
+    first = lab["admin"].get("/api/enrichment/places").json()
+    assert first["approved_countries"] == []
+    assert first["internal_set"] is False and first["has_public"] is False
+    assert "10.0.0.0/8" in first["internal_networks"] and "fc00::/7" in first["internal_networks"]
+    body = {
+        "approved_countries": ["us", "NL", "US"],
+        "internal_networks": [*first["internal_networks"], "198.51.100.7", "203.0.113.9/24"],
+    }
+    assert lab["ana"].put("/api/enrichment/places", json=body).status_code == 403
+    saved = lab["admin"].put("/api/enrichment/places", json=body, headers=h)
+    assert saved.status_code == 200, saved.text
+    out = saved.json()
+    assert out["approved_countries"] == ["NL", "US"]
+    assert (
+        "198.51.100.7/32" in out["internal_networks"]
+        and "203.0.113.0/24" in out["internal_networks"]
+    )
+    assert out["internal_set"] is True and out["has_public"] is True
+    for bad in ({"approved_countries": ["USA"], "internal_networks": []},
+                {"approved_countries": [], "internal_networks": ["10.0.0.0/33"]},
+                {"approved_countries": [], "internal_networks": ["not an address"]}):  # fmt: skip
+        assert lab["admin"].put("/api/enrichment/places", json=bad, headers=h).status_code == 422
+    places = networks.load(lab["app"].state.meta)
+    nets = places.networks()
+    assert networks.is_internal("203.0.113.77", nets) and networks.is_internal("10.1.2.3", nets)
+    assert not networks.is_internal("198.51.100.8", nets)
+    assert not networks.is_internal("garbage", nets)
+    log = lab["admin"].get("/api/audit/events", params={"action": "enrichment.places"}).json()
+    assert log and log[0]["detail"]["approved_countries"] == ["NL", "US"]

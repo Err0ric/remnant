@@ -37,6 +37,7 @@ from app.api.alerts import router as alerts_router
 from app.api.ask import router as ask_router
 from app.api.audit import router as audit_router
 from app.api.auth import router as auth_router
+from app.api.dashboard_sections import router as dashboard_sections_router
 from app.api.dashboards import router as dashboards_router
 from app.api.enrichment import router as enrichment_router
 from app.api.entities import router as entities_router
@@ -649,6 +650,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     app.include_router(alerts_router, prefix="/api")
     app.include_router(schedules_router, prefix="/api")
     app.include_router(dashboards_router, prefix="/api")
+    app.include_router(dashboard_sections_router, prefix="/api")
     app.include_router(overview_router, prefix="/api")
     app.include_router(health_page_router, prefix="/api")
     app.include_router(handoff_router, prefix="/api")

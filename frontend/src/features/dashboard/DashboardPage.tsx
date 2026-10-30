@@ -11,9 +11,13 @@ import {
 } from "@/lib/api";
 import { navigate } from "@/lib/route";
 import { rangeWords } from "./headline";
-import { since, stamp } from "@/features/overview/time";
+import { stamp } from "@/features/overview/time";
 import { currentDashboard, rememberDashboard } from "./choice";
 import { AiWatch } from "./AiWatch";
+import { Sections } from "./Sections";
+import { WINDOWS, daysOf, rangeText as windowRange, readWindow, saveWindow } from "./pageWindow";
+import type { PageWindow } from "@/lib/api";
+import { cn } from "@/lib/cn";
 import { AttentionBanner, SourcesLine } from "./Attention";
 import { layoutOf, placed, sectionAdded, sectionRemoved, sectionStepped, stepped } from "./layout";
 import { SchedulePanel } from "./SchedulePanel";
@@ -52,6 +56,7 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
   });
   const [picked, setPicked] = useState<string | null>(currentDashboard);
   const [editing, setEditing] = useState(false);
+  const [win, setWin] = useState<PageWindow>(readWindow);
   const list = boards.data ?? [];
   const board = list.find((d) => d.dashboard_id === picked) ?? list[0] ?? null;
   const byId = new Map((schedules.data ?? []).map((s) => [s.schedule_id, s]));
@@ -106,7 +111,6 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
     .filter((t): t is string => Boolean(t))
     .sort()
     .at(-1);
-  const now = new Date().toISOString();
   const cell = (p: DashboardPanel) => {
     const s = byId.get(p.schedule_id);
     if (s && board)
@@ -148,6 +152,33 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
           updated, on one row; no band under the title. */}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-5 pt-3">
         <h1 className="mr-2 text-lg font-semibold">{board?.name ?? "Dashboard"}</h1>
+        {/* One time window for the page (ADR-0038 edit 10). */}
+        <div
+          role="group"
+          aria-label="Time window"
+          className="flex rounded border border-border text-sm"
+        >
+          {WINDOWS.map((w) => (
+            <button
+              key={w.id}
+              type="button"
+              aria-pressed={win === w.id}
+              onClick={() => {
+                setWin(w.id);
+                saveWindow(w.id);
+              }}
+              className={cn(
+                "h-8 px-2.5",
+                win === w.id
+                  ? "bg-accent-subtle font-semibold text-accent-text"
+                  : "text-text-secondary hover:text-text",
+              )}
+            >
+              {w.label}
+            </button>
+          ))}
+        </div>
+        <span className="mr-2 text-sm text-text-muted">{windowRange(win)}</span>
         {list.length > 1 ? (
           <select
             aria-label="Dashboard"
@@ -189,7 +220,6 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
             title={lastRun ? `Newest run ${stamp(lastRun)} UTC` : undefined}
           >
             {[
-              lastRun ? `Updated ${since(lastRun, now)}` : null,
               rangeText,
               `${board.panels.length} ${board.panels.length === 1 ? "panel" : "panels"}`,
               board.shared ? "shared" : null,
@@ -203,7 +233,8 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
         {/* Order (F62): what needs me (only when something does), AI Watch, my panels,
             then sources in one line. */}
         <AttentionBanner />
-        <AiWatch />
+        <AiWatch days={daysOf(win)} />
+        <Sections window={win} />
         {error ? (
           <p role="alert" className="text-sm text-danger">
             {error instanceof ApiError ? error.message : "Could not load"}

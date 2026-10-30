@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+### Dashboard: one time window and three new sections (ADR-0038 edit 10)
+
+- The Dashboard has one time window, **24 hours**, **7 days**, or **30 days**, beside its title; AI Watch and the new sections follow it, and each says once what it is compared against.
+- **Identity** (from Microsoft 365): failed sign-ins, sign-ins outside approved countries, inbox rules and forwarding, app consents, admin role grants, Conditional Access edits, failed sign-ins per day, and top failing users.
+- **Attacks and access**: sign-in failures from external addresses, attacking addresses, countries, VPN logins outside approved countries, failures by host (one row each), and top countries and networks.
+- **Detections**: rule matches, rules that matched, hosts and users involved, matches by rule, and the hosts and users involved.
+- A section shows only when you have its source. KPI numbers are larger on wide screens, with the change as a small pill beside the number.
+
+**What changes for existing installs:** set **Approved countries** and add your company's egress to **Internal networks** (Settings > Enrichment); until then those cards ask for them and office addresses count as external. AI Watch's own 7 or 30 days buttons are gone; with 24 hours its chart still shows 7 days.
+
+### Settings: approved countries and internal networks (ADR-0038 edit 10)
+
+- Settings > Enrichment has a new **Countries and networks** box. **Approved countries** takes two-letter codes (US, CA) and shows their names. **Internal networks** takes addresses and ranges, private or public.
+- Internal networks start as the private, loopback, and link-local ranges. Until a public address is listed, the box asks for the company's egress addresses, since office sign-ins and VPN logins come from them.
+- The Dashboard's Identity and Attacks sections use both (next release). Saving is in the audit log as `enrichment.places`.
+
+**What changes for existing installs:** a database migration adds the two lists; both start empty or at the private ranges. Nothing counts differently until the Dashboard sections ship.
+
+### Search finds addresses, people, hosts, and AI services (ADR-0038 edit 10)
+
+- Type in the top bar search: an address ("203.0.113"), a user, a host, or an AI service is listed with its country and network or its event count; pick one to open its page. Pages, saved searches, and sources still show, and **Search events for "..."** opens Search on the last 7 days.
+- Only values from the sources you can read are offered (the last 30 days). Each lookup is in the audit log as `investigate.lookup`.
+
+**What changes for existing installs:** nothing to do. Typing two or more characters asks the server once typing pauses.
+
+### Shell: grouped menu, centered search, density (ADR-0038 edit 10)
+
+- The left menu is wider (240px) with larger rows, in four groups you can fold: **Monitor** (Dashboard, Alerts), **Investigate** (Search, People & devices, Saved searches), **AI** (AI usage, Agents), **System** (Health, Settings). Every page lists its sub-pages, the current one highlighted; folded groups stay folded in that browser.
+- The search sits in the middle of the top bar and is wider; Ctrl K still opens it.
+- "Updated" shows once, in the top bar; the Dashboard no longer repeats it under its title.
+- Your name in the top bar opens a menu with your account, **Density** (Comfortable or Compact), and Sign out. With no choice, screens 1440px and wider get comfortable rows, narrower ones compact.
+
+**What changes for existing installs:** nothing to do. Bookmarks and links keep working; screens narrower than 1440px start with compact rows until the person picks Comfortable.
+
 ### Dashboard: Needs you and AI Watch restyled (ADR-0038, part 2)
 
 - **Needs you**: the first column is severity only (High, Medium); what fired says its kind in the text ("Schedule: Failed SSH by address: 32 addresses over threshold (0)", "Source gap: ...", "AI Watch: ...", "Rule: ...").

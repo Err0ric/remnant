@@ -87,12 +87,14 @@ describe("Sign in", () => {
 
   it("signs out back to the sign-in page", async () => {
     await renderWith({ mode: "login", signedIn: true });
+    await userEvent.click(await screen.findByRole("button", { name: /^jordan/ }));
     await userEvent.click(await screen.findByRole("button", { name: "Sign out" }));
     expect(await screen.findByRole("button", { name: "Sign in" })).toBeInTheDocument();
   });
 
   it("says so when the sign-out did not reach the server", async () => {
     await renderWith({ mode: "login", signedIn: true, logoutFails: true });
+    await userEvent.click(await screen.findByRole("button", { name: /^jordan/ }));
     await userEvent.click(await screen.findByRole("button", { name: "Sign out" }));
     expect(await screen.findByRole("button", { name: "Sign in" })).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent(/may still be active/);

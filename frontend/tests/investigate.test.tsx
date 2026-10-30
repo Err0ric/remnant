@@ -95,7 +95,7 @@ describe("Investigations (ADR-0016)", () => {
   it("ranks entities with the score's parts and opens one in lanes", async () => {
     const spy = await openInvestigate();
     const nav = screen.getByRole("navigation", { name: "Primary" });
-    expect(within(nav).getByRole("link", { name: "Investigate" })).toHaveAttribute(
+    expect(within(nav).getByRole("link", { name: "People & devices" })).toHaveAttribute(
       "aria-current",
       "page",
     );

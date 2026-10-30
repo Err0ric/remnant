@@ -289,6 +289,76 @@ export interface EnrichmentFeed {
   check_every_s: number;
 }
 
+/** GET /api/dashboard/sections (ADR-0038 edit 10). */
+export type PageWindow = "24h" | "7d" | "30d";
+
+export interface SectionKpi {
+  value: number;
+  before: number | null;
+  extra: number | null;
+}
+
+export interface SectionSeries {
+  label: string;
+  counts: number[];
+  level: string | null;
+}
+
+export interface SectionRow {
+  label: string;
+  count: number;
+  kind: string;
+  detail: string;
+  last: string | null;
+}
+
+export interface DashboardSections {
+  window: PageWindow;
+  start: string;
+  end: string;
+  buckets: string[];
+  approved_set: boolean;
+  has_public: boolean;
+  identity: {
+    failed: SectionKpi;
+    outside: SectionKpi | null;
+    inbox_rules: SectionKpi;
+    consents: SectionKpi;
+    role_grants: SectionKpi;
+    ca_edits: SectionKpi;
+    sign_ins: number;
+    failed_by_bucket: number[];
+    top_failing: SectionRow[];
+  } | null;
+  attacks: {
+    failures: SectionKpi;
+    addresses: SectionKpi;
+    countries: SectionKpi | null;
+    vpn_outside: SectionKpi | null;
+    has_vpn: boolean;
+    by_host: SectionSeries[];
+    top_sources: SectionRow[];
+  } | null;
+  detections: {
+    matches: SectionKpi;
+    rules_matched: SectionKpi;
+    hosts: SectionKpi;
+    users: SectionKpi;
+    by_rule: SectionSeries[];
+    involved: SectionRow[];
+  } | null;
+}
+
+/** GET/PUT /api/enrichment/places (ADR-0038 edit 10, calls 6 and 8). */
+export interface Places {
+  approved_countries: string[];
+  internal_networks: string[];
+  internal_set: boolean;
+  has_public: boolean;
+  defaults: string[];
+  updated_at: string | null;
+}
+
 export interface EnrichmentStatus {
   auto_update: boolean;
   feeds: EnrichmentFeed[];
@@ -433,6 +503,21 @@ export interface GraphCard {
   search_sql: string | null;
   /** A heading inside the lane ("MCP servers"); empty for none. */
   group: string;
+}
+
+/** GET /api/entities/lookup: the top bar search (ADR-0038 edit 10). */
+export interface LookupHit {
+  kind: "ip" | "user" | "host" | "service";
+  value: string;
+  label: string;
+  events: number | null;
+  last_seen: string | null;
+  geo?: {
+    country: string | null;
+    country_name: string | null;
+    asn: number | null;
+    org: string | null;
+  } | null;
 }
 
 /** Investigator lanes (ADR-0016 row 5). */
@@ -1916,6 +2001,11 @@ export const api = {
   enrichment: () => request<EnrichmentStatus>("/api/enrichment"),
   setEnrichmentAuto: (auto_update: boolean) =>
     request<EnrichmentStatus>("/api/enrichment/settings", put({ auto_update })),
+  places: () => request<Places>("/api/enrichment/places"),
+  dashboardSections: (window: PageWindow) =>
+    request<DashboardSections>(`/api/dashboard/sections?window=${window}`),
+  setPlaces: (body: { approved_countries: string[]; internal_networks: string[] }) =>
+    request<Places>("/api/enrichment/places", put(body)),
   setFeed: (id: string, body: { enabled?: boolean; key?: string }) =>
     request<EnrichmentFeed>(`/api/enrichment/feeds/${encodeURIComponent(id)}`, put(body)),
   updateFeed: (id: string) =>
@@ -1966,6 +2056,10 @@ export const api = {
     if (q.start) p.set("start", q.start);
     return request<EntityGraph>(`/api/entities/graph?${p.toString()}`);
   },
+  entityLookup: (q: string) =>
+    request<{ hits: LookupHit[]; days: number }>(
+      `/api/entities/lookup?${new URLSearchParams({ q }).toString()}`,
+    ),
   entitySummary: (q: { kind: "user" | "ip" | "host"; value: string; start?: string }) => {
     const p = new URLSearchParams({ kind: q.kind, value: q.value });
     if (q.start) p.set("start", q.start);

@@ -23,7 +23,8 @@ afterEach(() => vi.restoreAllMocks());
 describe("Your account", () => {
   it("opens from your name in the top bar and lists tokens", async () => {
     await renderAt("/search");
-    await userEvent.click(await screen.findByTitle("Your account and tokens"));
+    await userEvent.click(await screen.findByRole("button", { name: /^jordan/ }));
+    await userEvent.click(screen.getByRole("link", { name: "Your account and tokens" }));
     expect(await screen.findByRole("heading", { name: "Your account" })).toBeInTheDocument();
     const table = await screen.findByRole("table", { name: "Tokens" });
     expect(within(table).getByText("CLI on laptop-01")).toBeInTheDocument();

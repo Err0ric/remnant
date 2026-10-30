@@ -951,6 +951,13 @@ MIGRATIONS: tuple[Migration, ...] = (
         updated_by TEXT
     );
     """,
+    # 52: approved countries and internal networks (ADR-0038 edits 1 and 10). JSON lists;
+    # NULL internal networks means the private defaults, never saved by an admin.
+    """
+    ALTER TABLE install_settings ADD COLUMN approved_countries TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE install_settings ADD COLUMN internal_networks TEXT;
+    ALTER TABLE install_settings ADD COLUMN places_updated_at TEXT;
+    """,
 )
 
 

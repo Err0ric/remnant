@@ -50,13 +50,20 @@ describe("App shell", () => {
   it("uses plain, grouped navigation labels", async () => {
     await renderApp();
     const nav = screen.getByRole("navigation", { name: "Primary" });
-    // One row per area (ADR-0038), in the morning's order, Settings at the foot.
-    const areas = Array.from(within(nav).getByRole("list", { name: "Areas" }).children).map(
-      (li) => li.querySelector("a")?.textContent,
-    );
-    expect(areas).toEqual(["Dashboard", "Alerts", "Investigate", "AI usage", "Agents", "Health"]);
-    expect(within(nav).getByRole("link", { name: "Settings" })).toBeInTheDocument();
-    expect(within(nav).getByRole("link", { name: "Investigate" })).toHaveAttribute(
+    // Four groups (ADR-0038 edit 10); Investigate lists its pages as rows.
+    const groups = within(nav)
+      .getAllByRole("region")
+      .map((g) => g.getAttribute("aria-label"));
+    expect(groups).toEqual(["Monitor", "Investigate", "AI", "System"]);
+    const rows = (name: string) =>
+      Array.from(within(within(nav).getByRole("region", { name })).getAllByRole("listitem"))
+        .filter((li) => li.parentElement?.id === `rail-${name.toLowerCase()}`)
+        .map((li) => li.querySelector("a")?.textContent);
+    expect(rows("Monitor")).toEqual(["Dashboard", "Alerts"]);
+    expect(rows("Investigate")).toEqual(["Search", "People & devices", "Saved searches"]);
+    expect(rows("AI")).toEqual(["AI usage", "Agents"]);
+    expect(rows("System")).toEqual(["Health", "Settings"]);
+    expect(within(nav).getByRole("link", { name: "Search" })).toHaveAttribute(
       "aria-current",
       "page",
     );
@@ -76,21 +83,24 @@ describe("App shell", () => {
     expect(screen.queryByText(/grimoire|seance|séance|ossuary/i)).not.toBeInTheDocument();
   });
 
-  it("lists the open area's pages under it, the current one marked (ADR-0038 nav pass 2)", async () => {
+  it("lists every page's sub-pages and folds groups, remembered (ADR-0038 edit 10)", async () => {
+    window.localStorage.removeItem("app.rail.collapsed");
     await renderApp();
     const nav = screen.getByRole("navigation", { name: "Primary" });
-    const pages = within(nav).getByRole("list", { name: "Investigate pages" });
-    expect(within(pages).getByRole("link", { name: "Search" })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
-    expect(within(pages).getByRole("link", { name: "Saved searches" })).toHaveAttribute(
+    // Every page with sub-pages lists them, not only the open one.
+    const health = within(nav).getByRole("list", { name: "Health pages" });
+    expect(within(health).getByRole("link", { name: "Endpoint agents" })).toBeInTheDocument();
+    const alerts = within(nav).getByRole("list", { name: "Alerts pages" });
+    expect(within(alerts).getByRole("link", { name: "Rules" })).toHaveAttribute(
       "href",
-      "/investigate/saved",
+      "/alerts/rules",
     );
-    // Other areas stay one line; their pages are only in the icon rail's hover menu.
-    expect(within(nav).queryByRole("list", { name: "Health pages" })).toBeNull();
-    expect(within(nav).getByRole("list", { name: "Health pages menu" })).toBeInTheDocument();
+    const fold = within(nav).getByRole("button", { name: "System group" });
+    expect(fold).toHaveAttribute("aria-expanded", "true");
+    await userEvent.click(fold);
+    expect(fold).toHaveAttribute("aria-expanded", "false");
+    expect(window.localStorage.getItem("app.rail.collapsed")).toBe('["system"]');
+    window.localStorage.removeItem("app.rail.collapsed");
   });
 
   it("shows the install name only when an admin set one", async () => {
@@ -118,7 +128,7 @@ describe("App shell", () => {
   it("on narrow screens, the Menu button shows the nav and navigating hides it again", async () => {
     await renderApp();
     const nav = screen.getByRole("navigation", { name: "Primary" });
-    expect(nav).toHaveClass("hidden", "md:flex");
+    expect(nav).toHaveClass("hidden", "md:block");
     await userEvent.click(screen.getByRole("button", { name: "Open menu" }));
     expect(nav).not.toHaveClass("hidden");
     expect(screen.getByRole("button", { name: "Close menu" })).toHaveAttribute(

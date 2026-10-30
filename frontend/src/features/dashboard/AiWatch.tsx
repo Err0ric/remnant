@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   api,
@@ -24,13 +23,12 @@ const FILL: Record<AiStatus, string> = {
   approved: "bg-local-text",
 };
 const ORDER: AiStatus[] = ["not_approved", "unreviewed", "approved"];
-const RANGES = [7, 30] as const;
 
 /** "+1 vs previous 7 days", "same as previous 7 days". */
 export function delta(card: AiWatchCard, days: number): string {
   if (card.value === null || card.previous === null) return "";
   const d = card.value - card.previous;
-  const span = `previous ${days} ${days === 1 ? "day" : "days"}`;
+  const span = days === 1 ? "previous 24 hours" : `previous ${days} days`;
   return d === 0 ? `same as ${span}` : `${d > 0 ? "+" : ""}${d} vs ${span}`;
 }
 
@@ -52,14 +50,13 @@ function DeltaPill({ card, days }: { card: AiWatchCard; days: number }) {
   const d = card.value - card.previous;
   return (
     <span
-      className="flex items-center gap-1.5 text-sm text-text-secondary"
+      className="rounded-badge bg-surface-head px-1.5 font-mono text-xs font-semibold tabular-nums text-text"
       title={delta(card, days)}
     >
-      <span className="rounded-badge bg-surface-head px-1.5 font-mono text-xs font-semibold tabular-nums text-text">
+      <span aria-hidden="true">
         {d === 0 ? "same" : `${d > 0 ? "↑" : "↓"} ${Math.abs(d).toLocaleString()}`}
       </span>
       <span className="sr-only">{delta(card, days)}</span>
-      <span aria-hidden="true">vs previous {days} days</span>
     </span>
   );
 }
@@ -67,8 +64,7 @@ function DeltaPill({ card, days }: { card: AiWatchCard; days: number }) {
 /** AI Watch (ADR-0035 Part 2): is anyone using AI we have not approved? Five cards, AI use
  * over 30 days by review status, and the top services, on the viewer's own sources.
  * Hidden on an install with no AI use and nothing to count. */
-export function AiWatch() {
-  const [days, setDays] = useState<(typeof RANGES)[number]>(7);
+export function AiWatch({ days = 7 }: { days?: number }) {
   const overview = useQuery({
     queryKey: ["overview"],
     queryFn: api.overview,
@@ -108,24 +104,9 @@ export function AiWatch() {
     <section aria-label="AI Watch" className="rounded-card border border-border bg-surface">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-3 py-2">
         <h2 className="text-base font-semibold">AI Watch</h2>
-        <div role="group" aria-label="Range" className="flex text-sm">
-          {RANGES.map((d) => (
-            <button
-              key={d}
-              type="button"
-              aria-pressed={days === d}
-              onClick={() => setDays(d)}
-              className={cn(
-                "rounded px-2 py-0.5",
-                days === d
-                  ? "bg-surface-head font-semibold text-text"
-                  : "text-text-secondary hover:text-text",
-              )}
-            >
-              {d} days
-            </button>
-          ))}
-        </div>
+        <span className="text-sm text-text-muted">
+          Changes against {days === 1 ? "the previous 24 hours" : `the previous ${days} days`}
+        </span>
         <button
           type="button"
           onClick={() => navigate("ai", "services")}
@@ -151,7 +132,8 @@ export function AiWatch() {
       {missing.length ? <NotSetUp cards={missing} /> : null}
       <NewList items={s.new} />
       <div className="grid min-w-0 gap-4 border-t border-border p-3 lg:grid-cols-[2fr_3fr]">
-        <Chart chart={s.chart} days={s.days} dataUntil={dataUntil} />
+        {/* The rollup is daily: with the 24 hour window the chart shows the last 7 days. */}
+        <Chart chart={s.chart} days={Math.max(7, s.days)} dataUntil={dataUntil} />
         <Top summary={s} />
       </div>
     </section>
@@ -294,27 +276,30 @@ function Card({ card, days, odd }: { card: AiWatchCard; days: number; odd: boole
         <span className="text-sm text-text-muted">Restricted</span>
       ) : (
         <>
-          {link ? (
-            <button
-              type="button"
-              onClick={link}
-              className={cn(
-                "self-start text-kpi tabular-nums hover:underline",
-                card.value === 0 && !card.devices ? "text-ok" : "text-text",
-              )}
-            >
-              {(card.value ?? 0).toLocaleString()}
-            </button>
-          ) : (
-            <span
-              className={cn(
-                "text-kpi tabular-nums",
-                card.value === 0 && !card.devices ? "text-ok" : "text-text",
-              )}
-            >
-              {(card.value ?? 0).toLocaleString()}
-            </span>
-          )}
+          <span className="flex flex-wrap items-center gap-x-2">
+            {link ? (
+              <button
+                type="button"
+                onClick={link}
+                className={cn(
+                  "self-start text-kpi tabular-nums hover:underline min-[1500px]:text-kpi-lg",
+                  card.value === 0 && !card.devices ? "text-ok" : "text-text",
+                )}
+              >
+                {(card.value ?? 0).toLocaleString()}
+              </button>
+            ) : (
+              <span
+                className={cn(
+                  "text-kpi tabular-nums min-[1500px]:text-kpi-lg",
+                  card.value === 0 && !card.devices ? "text-ok" : "text-text",
+                )}
+              >
+                {(card.value ?? 0).toLocaleString()}
+              </span>
+            )}
+            <DeltaPill card={card} days={days} />
+          </span>
           {card.devices ? (
             <button
               type="button"
@@ -325,7 +310,6 @@ function Card({ card, days, odd }: { card: AiWatchCard; days: number; odd: boole
               {card.devices === 1 ? "device" : "devices"} not matched to a person
             </button>
           ) : null}
-          <DeltaPill card={card} days={days} />
           {/* Two lines, then the full text on hover (owner edit 6). */}
           <span className="line-clamp-2 text-sm text-text-muted" title={card.context}>
             {card.context}

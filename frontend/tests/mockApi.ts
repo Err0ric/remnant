@@ -169,6 +169,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
     },
   ];
   let askBusySeen = false;
+  let places: Record<string, unknown> | null = null;
   const tokens: Record<string, unknown>[] = [
     {
       token_id: "t1",
@@ -1076,6 +1077,90 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       });
       return json({ device_id: `d${watched.length}` }, 201);
     }
+    if (url.includes("/api/dashboard/sections")) {
+      const k = (value: number, before: number | null = 0, extra: number | null = null) => ({
+        value,
+        before,
+        extra,
+      });
+      const buckets = Array.from({ length: 7 }, (_, i) =>
+        new Date(Date.UTC(2026, 9, 24 + i)).toISOString(),
+      );
+      return json({
+        window: new URL(url, "http://x").searchParams.get("window") ?? "7d",
+        start: buckets[0],
+        end: "2026-10-30T11:00:00Z",
+        buckets,
+        approved_set: false,
+        has_public: false,
+        identity: {
+          failed: k(12, 8),
+          outside: null,
+          inbox_rules: k(1),
+          consents: k(3, 2, 1),
+          role_grants: k(0),
+          ca_edits: k(0),
+          sign_ins: 400,
+          failed_by_bucket: [1, 2, 0, 4, 3, 1, 1],
+          top_failing: [
+            { label: "dana.k@example.com", count: 5, kind: "user", detail: "", last: null },
+          ],
+        },
+        attacks: {
+          failures: k(40, 22),
+          addresses: k(9, 4),
+          countries: k(3, 2),
+          vpn_outside: null,
+          has_vpn: false,
+          by_host: [{ label: "bastion", counts: [0, 2, 9, 1, 0, 2, 0], level: null }],
+          top_sources: [
+            {
+              label: "Netherlands",
+              count: 30,
+              kind: "network",
+              detail: "AS64500 Example Net|4",
+              last: null,
+            },
+          ],
+        },
+        detections: {
+          matches: k(20, 10),
+          rules_matched: k(2, 1, 142),
+          hosts: k(3, null),
+          users: k(2, null),
+          by_rule: [{ label: "SSH failed password", counts: [0, 1, 5, 2, 0, 0, 1], level: "high" }],
+          involved: [{ label: "bastion", count: 9, kind: "host", detail: "", last: null }],
+        },
+      });
+    }
+    if (url.includes("/api/entities/lookup")) {
+      const q = new URL(url, "http://x").searchParams.get("q") ?? "";
+      const all = [
+        {
+          kind: "ip",
+          value: "203.0.113.77",
+          label: "203.0.113.77",
+          events: 61,
+          last_seen: "2026-10-30T10:00:00Z",
+          geo: { country: "NL", country_name: "Netherlands", asn: 64500, org: "Example Net" },
+        },
+        {
+          kind: "user",
+          value: "dana.k@example.com",
+          label: "dana.k@example.com",
+          events: 9,
+          last_seen: null,
+        },
+        { kind: "service", value: "claude", label: "Claude", events: null, last_seen: null },
+      ];
+      return json({
+        hits: all.filter(
+          (h) =>
+            h.value.includes(q.toLowerCase()) || h.label.toLowerCase().includes(q.toLowerCase()),
+        ),
+        days: 30,
+      });
+    }
     if (url.includes("/api/entities/summary")) {
       const q = new URL(url, "http://x").searchParams;
       const value = q.get("value") ?? "";
@@ -1389,6 +1474,32 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         withheld_local_only: 0,
         not_found: 0,
       });
+    }
+    if (url.includes("/api/enrichment/places")) {
+      const defaults = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"];
+      if (method === "PUT") {
+        const body = JSON.parse(String(init?.body)) as {
+          approved_countries: string[];
+          internal_networks: string[];
+        };
+        places = {
+          ...body,
+          internal_set: true,
+          has_public: body.internal_networks.some((n) => !defaults.includes(n)),
+          defaults,
+          updated_at: "2026-10-30T12:00:00Z",
+        };
+      }
+      return json(
+        places ?? {
+          approved_countries: [],
+          internal_networks: defaults,
+          internal_set: false,
+          has_public: false,
+          defaults,
+          updated_at: null,
+        },
+      );
     }
     if (url.includes("/api/enrichment")) {
       const feed = (id: string, label: string, installed: boolean) => ({

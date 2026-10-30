@@ -59,6 +59,8 @@ export default {
       lg: ["22px", { lineHeight: "28px", fontWeight: "600" }],
       xl: ["24px", { lineHeight: "32px", fontWeight: "700" }],
       kpi: ["28px", { lineHeight: "36px", fontWeight: "700" }],
+      // Dashboard KPI numbers on wide screens (ADR-0038 edit 10).
+      "kpi-lg": ["34px", { lineHeight: "40px", fontWeight: "700" }],
     },
     spacing: {
       0: "0",

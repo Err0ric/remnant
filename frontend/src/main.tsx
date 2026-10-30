@@ -10,9 +10,12 @@ import { createRoot } from "react-dom/client";
 import { App } from "./app/App";
 import { loadBranding } from "./lib/branding";
 import { applyTheme, initialTheme } from "./lib/theme";
+import { applyDensity, defaultDensity } from "./lib/density";
 
 const theme = initialTheme();
 applyTheme(theme);
+// The signed-in user's own choice replaces this once the user menu loads.
+applyDensity("", defaultDensity());
 
 const root = document.getElementById("root");
 if (!root) throw new Error("Missing #root element");

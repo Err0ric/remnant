@@ -99,6 +99,7 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 
 | Method | Path | What it does | Query | JSON body (`?` optional) |
 |---|---|---|---|---|
+| `GET` | `/api/dashboard/sections` | The Dashboard's default sections for the caller, against the window before. A section is null when the caller has no source for it. | `?window` (optional): `24h` &#124; `7d` &#124; `30d` |  |
 | `GET` | `/api/dashboards` | Dashboards the viewer sees, their own first. A user with none yet gets an empty "My dashboard" the first time they create a panel, not on reading. |  |  |
 | `POST` | `/api/dashboards` | Create Dashboard |  | `name`: string<br>`shared`?: boolean |
 | `PATCH` | `/api/dashboards/{dashboard_id}` | Update Dashboard |  | `name`?: string<br>`shared`?: boolean |
@@ -118,6 +119,8 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | `PUT` | `/api/enrichment/feeds/{feed_id}` | Switch a threat intel list on or off, or set its key (stored encrypted). Audited; the key itself is never logged or returned. |  | `enabled`?: boolean<br>`key`?: string |
 | `POST` | `/api/enrichment/feeds/{feed_id}/update` | Check one feed now and download a newer edition if there is one. Audited. |  |  |
 | `POST` | `/api/enrichment/feeds/{feed_id}/upload` | Install a file by hand, for networks that cannot reach the feed: an .mmdb (or the .mmdb.gz as downloaded) for GeoIP, a list for threat intel (one address, domain, URL, or hash per line; `value,description` also works). Checked before it replaces anything. Audited. |  |  |
+| `GET` | `/api/enrichment/places` | Approved countries and internal networks (ADR-0038 edit 10). Admins only. |  |  |
+| `PUT` | `/api/enrichment/places` | Save both lists. An empty internal list is allowed (every address is then external). Audited with the lists saved. |  | `approved_countries`: list of string<br>`internal_networks`: list of string |
 | `PUT` | `/api/enrichment/settings` | Turn automatic updates on or off (off on a fresh install). Audited. |  | `auto_update`: boolean |
 
 ### Explain
@@ -176,6 +179,7 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | Method | Path | What it does | Query | JSON body (`?` optional) |
 |---|---|---|---|---|
 | `GET` | `/api/entities/graph` | Entity mode: Entity, Sources, Activities, Targets. AI flow: People, AI clients, Tools and MCP servers, Destinations; optionally for one person, MCP server, or service. | `?mode` (optional): `entity` &#124; `ai`<br>`?kind` (optional): `user` &#124; `ip` &#124; `host` &#124; `mcp` &#124; `service`<br>`?value` (optional): string<br>`?start` (optional): date-time<br>`?end` (optional): date-time |  |
+| `GET` | `/api/entities/lookup` | The top bar search (ADR-0038 edit 10): addresses, users, and hosts seen in the caller's own sources (the last 30 days unless a range is given), and AI services by name. | `?q`: string<br>`?start` (optional): date-time<br>`?end` (optional): date-time |  |
 | `GET` | `/api/entities/risk` | Users, source IPs, and hosts ranked by rule matches and flagged schedule runs. | `?start` (optional): date-time<br>`?end` (optional): date-time |  |
 | `GET` | `/api/entities/summary` | The top of an entity's page: counts, sign-in outcomes, who and what it touched, first and last seen, and activities by outcome with a real example line. | `?kind`: `user` &#124; `ip` &#124; `host`<br>`?value`: string<br>`?start` (optional): date-time<br>`?end` (optional): date-time |  |
 

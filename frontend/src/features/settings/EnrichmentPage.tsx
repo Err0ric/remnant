@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState, type FormEvent } from "react";
 import { PageHeader } from "@/components/shell/PageHeader";
+import { PlacesSettings } from "./PlacesSettings";
 import { since, stamp } from "@/features/overview/time";
 import { ApiError, api, type EnrichmentFeed, type FeedLevel } from "@/lib/api";
 
@@ -322,6 +323,8 @@ export function EnrichmentPage() {
           </div>
           <FeedTable label="Threat intel lists" feeds={intel} now={now} intel />
         </section>
+
+        <PlacesSettings />
 
         {status.isPending ? <p className="text-text-secondary">Loading…</p> : null}
 
