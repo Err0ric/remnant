@@ -22,10 +22,10 @@ CASES, SCOPE = load_suite()
 BY_QUESTION = {c.question: c.sql for c in CASES}
 
 
-def test_suite_has_100_questions_and_10_follow_ups() -> None:
-    assert len(CASES) == 110
-    assert len({c.id for c in CASES}) == 110
-    assert len(BY_QUESTION) == 110
+def test_suite_has_106_questions_and_10_follow_ups() -> None:
+    assert len(CASES) == 116
+    assert len({c.id for c in CASES}) == 116
+    assert len(BY_QUESTION) == 116
     assert sum(1 for c in CASES if c.history) == 9  # f006 names a person with no history
 
 

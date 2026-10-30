@@ -144,6 +144,7 @@ from app.search.identity import IdentityStore
 from app.search.overview import OverviewService
 from app.search.saved import SavedSearchStore
 from app.search.schedules import ScheduleService
+from app.templates.changes import record as record_template_versions
 from app.templates.drafts import DraftStore
 from app.templates.registry import STARTER_DIR, TemplateRegistry
 
@@ -471,6 +472,8 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     )
     for problem in app.state.templates.problems:
         log.warning("template.not_loaded", file=problem.file, reason=problem.message[:300])
+    # The day each template version is first loaded: where a changed mapping starts (F66).
+    record_template_versions(meta, app.state.templates.all(), datetime.now(UTC))
     app.state.alert_targets = TargetStore(
         meta, SecretBox(config.paths.data_dir), lambda: app.state.auth.clock()
     )

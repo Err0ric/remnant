@@ -68,6 +68,7 @@ TransformOp = Literal[
     "join",
     "replace",
     "pick",
+    "find",
 ]
 Name = Annotated[str, StringConstraints(min_length=1, max_length=128)]
 # "#" reaches the "#text" and "#attributes" keys the evtx library writes.
@@ -279,6 +280,12 @@ class Transform(_Strict):
                 _check_ref(TypeAdapter(FieldRef).validate_python(ref))
             if not isinstance(a.get("into"), str):
                 raise ValueError("pick needs args.into")
+        if self.op == "find":
+            # One entry of a list of name/value objects (Microsoft's modifiedProperties,
+            # ExtendedProperties, additionalDetails): the first whose `key` equals `equals`.
+            for k in ("key", "equals", "value", "into"):
+                if not isinstance(a.get(k), str) or not a.get(k):
+                    raise ValueError("find needs args.key, args.equals, args.value, args.into")
         if self.op == "timestamp":
             fmt = a.get("format")
             formats = fmt if isinstance(fmt, list) else [fmt]
@@ -438,6 +445,25 @@ class SigmaSpec(_Strict):
     logsource: list[SigmaLogSource] = Field(default_factory=list, max_length=100)
 
 
+class TemplateChange(_Strict):
+    """What a template version changes for events already stored (F66 release safety):
+    events keep the mapping they were parsed with, so the Sources page names the day a new
+    mapping starts, and searches that filter on `fields` (columns whose meaning changed)
+    are listed for review."""
+
+    version: Annotated[str, StringConstraints(min_length=1, max_length=20)]
+    note: Annotated[str, StringConstraints(min_length=1, max_length=400)]
+    fields: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator("fields")
+    @classmethod
+    def _fields(cls, value: list[str]) -> list[str]:
+        unknown = [f for f in value if f not in COLUMNS_BY_NAME]
+        if unknown:
+            raise ValueError(f"changes.fields are column names; unknown: {', '.join(unknown)}")
+        return value
+
+
 class Template(_Strict):
     schema_version: Literal[1]
     id: str
@@ -460,6 +486,8 @@ class Template(_Strict):
     transforms: list[Transform] = Field(default_factory=list, max_length=100)
     mapping: MappingSpec
     tests: list[TemplateTest] = Field(min_length=3, max_length=100)
+    # Newest first; only versions that change what stored events mean or show (F66).
+    changes: list[TemplateChange] = Field(default_factory=list, max_length=50)
 
     @field_validator("id")
     @classmethod

@@ -9,6 +9,7 @@ import {
 } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { navigate, pathFor } from "@/lib/route";
+import { seedSearch } from "@/lib/searchSeed";
 import { EntityLink } from "@/components/EntityLink";
 import { LoadFailed } from "@/components/LoadFailed";
 import { When } from "@/components/When";
@@ -194,9 +195,18 @@ function NewList({ items }: { items: AiWatchSummary["new"] }) {
   );
 }
 
+/** Opens the rows behind a card in Search. */
+function openRows(sql: string) {
+  seedSearch({ sql, range: "30d" });
+  navigate("search");
+}
+
 function Card({ card, days, odd }: { card: AiWatchCard; days: number; odd: boolean }) {
-  const link =
-    card.key === "agents"
+  const rowsSql = card.rows_sql;
+  const blockedSql = card.blocked_sql;
+  const link = rowsSql
+    ? () => openRows(rowsSql)
+    : card.key === "agents"
       ? () => navigate("alerts")
       : card.key === "services" || card.key === "people"
         ? () => navigate("ai", "services")
@@ -263,6 +273,21 @@ function Card({ card, days, odd }: { card: AiWatchCard; days: number; odd: boole
           <span className="truncate text-sm text-text-muted" title={card.context}>
             {card.context}
           </span>
+          {card.blocked ? (
+            <>
+              <button
+                type="button"
+                onClick={() => (blockedSql ? openRows(blockedSql) : undefined)}
+                className="self-start text-left text-sm text-accent-text hover:underline"
+              >
+                {card.blocked.toLocaleString()} blocked consent{" "}
+                {card.blocked === 1 ? "attempt" : "attempts"}
+              </button>
+              <span className="truncate text-sm text-text-muted" title={card.blocked_context}>
+                {card.blocked_context}
+              </span>
+            </>
+          ) : null}
         </>
       )}
     </div>

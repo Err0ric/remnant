@@ -931,6 +931,16 @@ MIGRATIONS: tuple[Migration, ...] = (
     """
     ALTER TABLE alert_items ADD COLUMN severity TEXT CHECK (severity IN ('high', 'medium'));
     """,
+    # 50: when this server first loaded each template version (F66 release safety): the day
+    # a changed mapping starts, since stored events keep the mapping they were parsed with.
+    """
+    CREATE TABLE template_versions (
+        template_id     TEXT NOT NULL,
+        version         TEXT NOT NULL,
+        first_loaded_at TEXT NOT NULL,
+        PRIMARY KEY (template_id, version)
+    );
+    """,
 )
 
 

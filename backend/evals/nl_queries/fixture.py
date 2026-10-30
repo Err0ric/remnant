@@ -18,7 +18,7 @@ from app.ingest.writer import LakeWriter
 
 START = datetime(2026, 10, 1, tzinfo=UTC)
 END = datetime(2026, 10, 8, tzinfo=UTC)
-SOURCES = ("linux_auth", "fw_edge", "dns", "edr", "idp_signin")
+SOURCES = ("linux_auth", "fw_edge", "dns", "edr", "idp_signin", "m365_graph", "m365_mgmt")
 
 USERS = ("alice", "bob", "carol", "dave", "erin", "svc_backup")
 SERVERS = ("bastion", "web-01", "web-02", "db-01")
@@ -341,6 +341,65 @@ def _idp(g: _Gen, seed: int) -> None:
             )
 
 
+# Microsoft 365 app consents (F66). Graph and the Management API each report every consent,
+# with the same correlation id, so a count of consents is a count of distinct ids. Graph
+# often names the app "Unknown"; the app id is always there.
+CONSENT_APPS = {
+    "0a1b2c3d-0000-4000-8000-0000000000a1": "Lab Notes App",
+    "0a1b2c3d-0000-4000-8000-0000000000a2": "Quick Summaries",
+    "0a1b2c3d-0000-4000-8000-0000000000a3": "Mail Helper Pro",
+}
+CONSENT_SCOPES = (
+    "User.Read",
+    "User.Read Mail.Read",
+    "openid profile offline_access Files.Read.All",
+)
+
+
+def _consents(g: _Gen, seed: int) -> None:
+    rng = random.Random(seed + 3)  # noqa: S311  # its own stream: earlier events stay identical
+    people = ("alice@example.com", "priya.n@example.com", "steve.jones@example.com")
+    for n in range(12):
+        t = START + timedelta(seconds=rng.randrange(int((END - START).total_seconds())))
+        who = people[n % 3] if n < 9 else "steve.jones@example.com"
+        app_id = rng.choice(list(CONSENT_APPS))
+        blocked = n % 4 == 3
+        scopes = rng.choice(CONSENT_SCOPES)
+        corr = str(uuid.UUID(int=rng.getrandbits(128), version=4))
+        common: dict[str, Any] = {
+            "class_uid": 3001,
+            "category_uid": 3,
+            "status_id": 2 if blocked else 1,
+            "status_detail": "Microsoft.Online.Security.AuthorizationException"
+            if blocked
+            else None,
+            "actor_user_name": who,
+            "resource_uid": app_id,
+            "resource_type": "ServicePrincipal",
+            "privileges": scopes,
+            "metadata_correlation_uid": corr,
+        }
+        graph_name = None if blocked else CONSENT_APPS[app_id]
+        g.add(
+            "m365_graph",
+            t,
+            json.dumps({"activityDisplayName": "Consent to application", "correlationId": corr}),
+            template_id="m365_directory_audit",
+            message="Consent to application",
+            resource_name=graph_name,
+            **common,
+        )
+        g.add(
+            "m365_mgmt",
+            t + timedelta(seconds=rng.randrange(1, 40)),
+            json.dumps({"Operation": "Consent to application.", "InterSystemsId": corr}),
+            template_id="m365_management_activity",
+            message="Consent to application.",
+            resource_name=CONSENT_APPS[app_id],
+            **common,
+        )
+
+
 def build_rows(seed: int = 7) -> list[dict[str, Any]]:
     g = _Gen(seed)
     _auth(g)
@@ -348,6 +407,7 @@ def build_rows(seed: int = 7) -> list[dict[str, Any]]:
     _dns(g)
     _edr(g)
     _idp(g, seed)
+    _consents(g, seed)
     return g.rows
 
 

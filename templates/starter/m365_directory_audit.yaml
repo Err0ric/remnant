@@ -1,13 +1,17 @@
 schema_version: 1
 id: m365_directory_audit
 name: Microsoft Entra directory audits (Graph)
-version: 1.0.0
+version: 1.1.0
 author: starter-pack
 description: >-
   Directory changes from Microsoft Graph auditLogs/directoryAudits, pulled by the Microsoft
   365 connector (ADR-0002): users, groups, roles, apps, and policies. Each line is Graph's
   JSON, unchanged. The activity is the message; the actor is the initiating user or app.
-  Target resources, category, and the service that logged it stay in unmapped.
+  The first target resource is the resource (an app's name and application id, a role, a
+  policy), with the failure reason, the permissions asked for, and the correlation id that
+  the Management API record of the same operation shares (D121, F66). Consents add
+  unmapped.consent_type (user or admin) and unmapped.permission_resource. Entra writes
+  "Unknown" as the app name on failed consents; that becomes no name.
 category: identity
 vendor: microsoft
 classification_default: local_only
@@ -28,6 +32,16 @@ transforms:
   - field: result
     op: map
     args: { into: outcome, values: { success: 1, failure: 2, timeout: 2 }, optional: true }
+  # The resource: its name (not Entra's "Unknown"), its application id, and for consents
+  # what was asked for and by whom (D121, F66).
+  - { field: targetResources.0.displayName, op: regex_extract, args: { pattern: '^(?!Unknown$)(.+)$', into: app_name, optional: true } }
+  - { field: additionalDetails, op: find, args: { key: key, equals: AppId, value: value, into: app_id } }
+  - { field: targetResources.0.modifiedProperties, op: find, args: { key: displayName, equals: ConsentContext.IsAdminConsent, value: newValue, into: consent_admin } }
+  - { field: consent_admin, op: replace, args: { pattern: '"', with: "" } }
+  - { field: consent_admin, op: map, args: { into: consent_type, values: { "True": admin, "False": user }, optional: true } }
+  - { field: targetResources.0.modifiedProperties, op: find, args: { key: displayName, equals: ConsentAction.Permissions, value: newValue, into: consent_permissions } }
+  - { field: consent_permissions, op: regex_extract, args: { pattern: 'Scope:\s*([^,\]]+?)\s*(?:,|\])', into: permissions, optional: true } }
+  - { field: consent_permissions, op: regex_extract, args: { pattern: 'ResourceId:\s*([0-9A-Fa-f-]{36})', into: permission_resource, optional: true } }
 
 mapping:
   class_uid: 3004            # Entity Management
@@ -37,6 +51,12 @@ mapping:
     src_endpoint_ip: { from: initiatedBy.user.ipAddress }
     message: { from: activityDisplayName }
     status_id: { from: outcome }
+    resource_name: { from: app_name }
+    resource_uid: { from: [app_id, targetResources.0.id] }
+    resource_type: { from: targetResources.0.type }
+    status_detail: { from: resultReason }
+    privileges: { from: permissions }
+    metadata_correlation_uid: { from: correlationId }
   severity:
     from: activityDisplayName
     map: { Add member to role: 3, Add eligible member to role: 3, Add service principal credentials: 3, Update conditional access policy: 3, Delete conditional access policy: 4, Add owner to application: 3 }
@@ -60,3 +80,20 @@ tests:
       parse_status: ok
       class_uid: 3004
       fields: { actor_user_name: carol@example.com, severity_id: 4, time: "2026-10-14T17:12:00+00:00" }
+  - name: a blocked consent (Entra writes Unknown as the app name)
+    input: '{"id":"Directory_C001","category":"ApplicationManagement","correlationId":"7f1c2e4a-0000-4000-8000-00000000c001","result":"failure","resultReason":"Microsoft.Online.Security.AuthorizationException","activityDisplayName":"Consent to application","activityDateTime":"2026-10-28T16:40:12Z","loggedByService":"Core Directory","operationType":"Assign","initiatedBy":{"user":{"id":"u-1","userPrincipalName":"erin@example.com","ipAddress":"203.0.113.40"}},"targetResources":[{"id":"5b1e0000-0000-4000-8000-00000000a001","displayName":"Unknown","type":"ServicePrincipal","modifiedProperties":[{"displayName":"ConsentContext.IsAdminConsent","oldValue":null,"newValue":"\"False\""},{"displayName":"ConsentContext.IsAppOnly","oldValue":null,"newValue":"\"False\""},{"displayName":"ConsentAction.Permissions","oldValue":null,"newValue":"\"[] => [[Id: , ClientId: 5b1e0000-0000-4000-8000-00000000a001, PrincipalId: u-1, ResourceId: 00000000-0000-4000-8000-0000000000f1, ConsentType: Principal, Scope:  openid profile email offline_access User.Read, CreatedDateTime: , LastModifiedDateTime ]]; \""}]}],"additionalDetails":[{"key":"User-Agent","value":"Mozilla/5.0"},{"key":"AppId","value":"0a1b2c3d-0000-4000-8000-0000000000a1"}]}'
+    expect:
+      parse_status: ok
+      fields: { actor_user_name: erin@example.com, message: Consent to application, status_id: 2, status_detail: Microsoft.Online.Security.AuthorizationException, resource_uid: 0a1b2c3d-0000-4000-8000-0000000000a1, resource_type: ServicePrincipal, privileges: openid profile email offline_access User.Read, metadata_correlation_uid: 7f1c2e4a-0000-4000-8000-00000000c001 }
+  - name: a granted admin consent names its app
+    input: '{"id":"Directory_C002","category":"ApplicationManagement","correlationId":"7f1c2e4a-0000-4000-8000-00000000c002","result":"success","resultReason":"","activityDisplayName":"Consent to application","activityDateTime":"2026-10-28T17:00:00Z","loggedByService":"Core Directory","operationType":"Assign","initiatedBy":{"user":{"userPrincipalName":"admin@example.com","ipAddress":"203.0.113.5"}},"targetResources":[{"id":"5b1e0000-0000-4000-8000-00000000a002","displayName":"Lab Notes App","type":"ServicePrincipal","modifiedProperties":[{"displayName":"ConsentContext.IsAdminConsent","oldValue":null,"newValue":"\"True\""},{"displayName":"ConsentAction.Permissions","oldValue":null,"newValue":"\"[] => [[Id: x, ClientId: 5b1e0000-0000-4000-8000-00000000a002, PrincipalId: , ResourceId: 00000000-0000-4000-8000-0000000000f1, ConsentType: AllPrincipals, Scope:  User.Read Mail.Read, CreatedDateTime: , LastModifiedDateTime ]]; \""}]}],"additionalDetails":[{"key":"AppId","value":"0a1b2c3d-0000-4000-8000-0000000000a2"}]}'
+    expect:
+      parse_status: ok
+      fields: { status_id: 1, resource_name: Lab Notes App, resource_uid: 0a1b2c3d-0000-4000-8000-0000000000a2, privileges: User.Read Mail.Read }
+
+# What this version changes for events already stored (F66): none of the existing columns
+# changes meaning, so no saved search needs updating; earlier events keep the old mapping.
+changes:
+  - version: 1.1.0
+    note: "New columns: resource_name and resource_uid (the app and its application id), resource_type, status_detail (why a result failed), privileges (permissions asked for), and metadata_correlation_uid; consent_type and permission_resource in unmapped. Earlier events have these empty."
+    fields: []

@@ -30,6 +30,16 @@ function posts(spy: ReturnType<typeof mockApi>, path: string) {
 afterEach(() => vi.restoreAllMocks());
 
 describe("Sources page", () => {
+  it("tells an admin about recent parser updates and the searches they affect (F66)", async () => {
+    await openSources();
+    const box = await screen.findByRole("region", { name: "Parser updates" });
+    expect(within(box).getByText(/New columns: resource_name/)).toBeInTheDocument();
+    expect(
+      within(box).getByText(/saved search "Failed sign-ins" \(status_detail\)/),
+    ).toBeInTheDocument();
+    expect(within(box).queryByText(/Old change/)).not.toBeInTheDocument();
+  });
+
   it("discovers a folder and prefills the add form from a suggestion", async () => {
     const spy = await openSources();
     await userEvent.click(screen.getByRole("button", { name: "Discover" }));

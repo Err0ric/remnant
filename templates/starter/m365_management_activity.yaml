@@ -1,7 +1,7 @@
 schema_version: 1
 id: m365_management_activity
 name: Microsoft 365 audit (Management Activity API)
-version: 1.1.0
+version: 1.2.0
 author: starter-pack
 description: >-
   Unified audit records from the Office 365 Management Activity API, pulled by the
@@ -10,7 +10,10 @@ description: >-
   DLP.All (DlpRuleMatch). Each line is Microsoft's JSON, unchanged. The operation is the
   message; Workload, RecordType, ObjectId, and the Copilot and DLP details stay in unmapped.
   Status comes from the operation for logons (UserLoginFailed is a failure even though
-  Microsoft writes ResultStatus "Success" on it), otherwise from ResultStatus.
+  Microsoft writes ResultStatus "Success" on it), otherwise from ResultStatus. Entra
+  records (Audit.AzureActiveDirectory) also fill the resource (the app's name and
+  application id), the failure reason, the permissions asked for, and the correlation id
+  (InterSystemsId) that the Graph directory audit of the same operation shares (D121, F66).
 category: identity
 vendor: microsoft
 classification_default: local_only
@@ -36,6 +39,18 @@ transforms:
   - field: Operation
     op: map
     args: { into: outcome, values: { UserLoginFailed: 2, UserLoggedIn: 1 }, optional: true }
+  # Entra records: the resource and why a result failed (D121, F66).
+  - { field: Target, op: find, args: { key: Type, equals: "1", value: ID, into: target_name } }
+  - { field: target_name, op: regex_extract, args: { pattern: '^(?!Unknown$)(.+)$', into: app_name, optional: true } }
+  - { field: ExtendedProperties, op: find, args: { key: Name, equals: additionalDetails, value: Value, into: details } }
+  - { field: details, op: regex_extract, args: { pattern: '"AppId"\s*:\s*"([0-9A-Fa-f-]{36})"', into: app_id, optional: true } }
+  - { field: ExtendedProperties, op: find, args: { key: Name, equals: resultReason, value: Value, into: result_reason } }
+  - { field: ExtendedProperties, op: find, args: { key: Name, equals: extendedAuditEventCategory, value: Value, into: resource_kind } }
+  - { field: ModifiedProperties, op: find, args: { key: Name, equals: ConsentContext.IsAdminConsent, value: NewValue, into: consent_admin } }
+  - { field: consent_admin, op: map, args: { into: consent_type, values: { "True": admin, "False": user }, optional: true } }
+  - { field: ModifiedProperties, op: find, args: { key: Name, equals: ConsentAction.Permissions, value: NewValue, into: consent_permissions } }
+  - { field: consent_permissions, op: regex_extract, args: { pattern: 'Scope:\s*([^,\]]+?)\s*(?:,|\])', into: permissions, optional: true } }
+  - { field: consent_permissions, op: regex_extract, args: { pattern: 'ResourceId:\s*([0-9A-Fa-f-]{36})', into: permission_resource, optional: true } }
   - { field: ClientIP, op: regex_extract, args: { pattern: '^(?|\[([0-9A-Fa-f:.]+)\](?::\d+)?|(\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?|([0-9A-Fa-f:]*:[0-9A-Fa-f:.]*))$', into: client_ip, optional: true } }
 
 mapping:
@@ -46,6 +61,12 @@ mapping:
     src_endpoint_ip: { from: [client_ip, ClientIPAddress, ActorIpAddress] }
     message: { from: Operation }
     status_id: { from: outcome }
+    resource_name: { from: app_name }
+    resource_uid: { from: app_id }
+    resource_type: { from: resource_kind }
+    status_detail: { from: [result_reason, LogonError] }
+    privileges: { from: permissions }
+    metadata_correlation_uid: { from: InterSystemsId }
   severity:
     from: Operation
     map: { DlpRuleMatch: 3, DLPRuleMatch: 3, AlertTriggered: 3, Add member to role.: 3, Add service principal credentials.: 3 }
@@ -91,3 +112,15 @@ tests:
       parse_status: ok
       class_uid: 6003
       fields: { src_endpoint_ip: "2001:db8::5", status_id: 1 }
+  - name: the same blocked consent from the Management API
+    input: '{"CreationTime":"2026-10-28T16:40:13","Id":"6b2f3a10-0000-4000-8000-00000000c002","Operation":"Consent to application.","OrganizationId":"00000000-0000-4000-8000-0000000000aa","RecordType":8,"ResultStatus":"Failure","UserKey":"10030000AAAAAAAA@example.com","UserType":0,"Version":1,"Workload":"AzureActiveDirectory","ClientIP":"203.0.113.40","ObjectId":"5b1e0000-0000-4000-8000-00000000a001","UserId":"erin@example.com","AzureActiveDirectoryEventType":1,"ExtendedProperties":[{"Name":"resultType","Value":"Failure"},{"Name":"resultReason","Value":"Microsoft.Online.Security.AuthorizationException"},{"Name":"additionalDetails","Value":"{\"User-Agent\":\"Mozilla/5.0\",\"AppId\":\"0a1b2c3d-0000-4000-8000-0000000000a1\"}"},{"Name":"extendedAuditEventCategory","Value":"ServicePrincipal"}],"ModifiedProperties":[{"Name":"ConsentContext.IsAdminConsent","NewValue":"False","OldValue":""},{"Name":"ConsentAction.Permissions","NewValue":"[] => [[Id: , ClientId: 5b1e0000-0000-4000-8000-00000000a001, PrincipalId: u-1, ResourceId: 00000000-0000-4000-8000-0000000000f1, ConsentType: Principal, Scope:  openid profile email offline_access User.Read, CreatedDateTime: , LastModifiedDateTime ]]; ","OldValue":""}],"Actor":[{"ID":"erin@example.com","Type":5}],"InterSystemsId":"7f1c2e4a-0000-4000-8000-00000000c001","Target":[{"ID":"ServicePrincipal_5b1e0000-0000-4000-8000-00000000a001","Type":2},{"ID":"ServicePrincipal","Type":2},{"ID":"Unknown","Type":1}]}'
+    expect:
+      parse_status: ok
+      fields: { actor_user_name: erin@example.com, message: Consent to application., status_id: 2, status_detail: Microsoft.Online.Security.AuthorizationException, resource_uid: 0a1b2c3d-0000-4000-8000-0000000000a1, resource_type: ServicePrincipal, privileges: openid profile email offline_access User.Read, metadata_correlation_uid: 7f1c2e4a-0000-4000-8000-00000000c001 }
+
+# What this version changes for events already stored (F66): none of the existing columns
+# changes meaning, so no saved search needs updating; earlier events keep the old mapping.
+changes:
+  - version: 1.2.0
+    note: "Entra records fill resource_name and resource_uid (the app and its application id), resource_type, status_detail (why a result failed), privileges (permissions asked for), and metadata_correlation_uid (shared with the Graph record of the same operation). Earlier events have these empty."
+    fields: []

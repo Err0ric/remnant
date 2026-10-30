@@ -208,6 +208,10 @@ class CardOut(BaseModel):
     needs: str | None
     restricted: bool
     devices: int | None = None  # people card: devices not matched to a person, apart
+    blocked: int | None = None  # consent card: attempts a policy blocked, apart
+    blocked_context: str = ""
+    rows_sql: str | None = None  # Search SQL for the card's rows (consent card)
+    blocked_sql: str | None = None
 
 
 class DayOut(BaseModel):

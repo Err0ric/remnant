@@ -2,6 +2,8 @@
 
 import contextlib
 from collections.abc import AsyncIterator
+from dataclasses import asdict
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from fastapi import APIRouter, Request, Response, status
@@ -13,6 +15,8 @@ from app.api.cancel import watch_disconnect
 from app.auth.service import AuthService
 from app.llm.parser_draft import ParserDrafter
 from app.meta.audit import Outcome
+from app.templates.changes import record as record_template_versions
+from app.templates.changes import report as template_report
 from app.templates.drafts import Approval, Draft, DraftInfo, DraftStore, Preview, SampleKind
 from app.templates.registry import TemplateRegistry
 from app.templates.validator import Template
@@ -59,6 +63,42 @@ def _registry(request: Request) -> TemplateRegistry:
 @router.get("/templates")
 async def list_templates(request: Request, _: CurrentUser) -> list[TemplateOut]:
     return [_out(t) for t in _registry(request).all()]
+
+
+class AffectedOut(BaseModel):
+    kind: str
+    id: str
+    name: str
+    fields: list[str]
+
+
+class TemplateChangeOut(BaseModel):
+    template_id: str
+    template_name: str
+    version: str
+    note: str
+    fields: list[str]
+    since: str | None
+    current: bool
+    affected: list[AffectedOut]
+
+
+@router.get("/templates/changes")
+async def template_changes(request: Request, _: AdminUser) -> list[TemplateChangeOut]:
+    """Recent template changes that affect stored events (F66): the day each new mapping
+    started on this server (events before keep the old one) and the saved searches and
+    schedules that filter on a column whose meaning changed. Admins only."""
+    reg = _registry(request)
+    meta = request.app.state.meta
+    templates = reg.all()
+    await run_in_threadpool(record_template_versions, meta, templates, datetime.now(UTC))
+    found = await run_in_threadpool(template_report, meta, templates)
+    return [
+        TemplateChangeOut(
+            **{**asdict(c), "affected": [AffectedOut(**asdict(a)) for a in c.affected]}
+        )
+        for c in found
+    ]
 
 
 @router.get("/templates/problems")

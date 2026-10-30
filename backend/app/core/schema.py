@@ -102,6 +102,47 @@ COLUMNS: Final[tuple[Column, ...]] = (
     # Reporting device
     Column("device_hostname", _S, _G.OCSF, "Reporting device host.", ocsf_path="device.hostname"),
     Column("device_ip", _S, _G.OCSF, "Reporting device IP.", ocsf_path="device.ip"),
+    # What an action was on, and why it ended as it did (D121, F66): the app a consent or a
+    # sign-in was for, a role or policy changed, the reason a result failed, and the id
+    # Microsoft gives one operation across its logs.
+    Column(
+        "resource_name",
+        _S,
+        _G.OCSF,
+        "Resource acted on: app, role, policy, file.",
+        ocsf_path="resources.name",
+    ),
+    Column(
+        "resource_uid", _S, _G.OCSF, "Its id (an app's application id).", ocsf_path="resources.uid"
+    ),
+    Column(
+        "resource_type",
+        _S,
+        _G.OCSF,
+        "Its kind (ServicePrincipal, Role, Policy).",
+        ocsf_path="resources.type",
+    ),
+    Column(
+        "status_detail",
+        _S,
+        _G.OCSF,
+        "Why the result was what it was (failure reason).",
+        ocsf_path="status_detail",
+    ),
+    Column(
+        "privileges",
+        _S,
+        _G.OCSF,
+        "Permissions requested or granted, space separated.",
+        ocsf_path="privileges",
+    ),
+    Column(
+        "metadata_correlation_uid",
+        _S,
+        _G.OCSF,
+        "Id shared by one operation's records.",
+        ocsf_path="metadata.correlation_uid",
+    ),
     # Escape hatches
     Column(
         "unmapped", _J, _G.ESCAPE_HATCH, "Parsed fields with no OCSF target.", ocsf_path="unmapped"

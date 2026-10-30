@@ -15,6 +15,7 @@ import { ApiSummary } from "./ApiSummary";
 import { ListenerSummary } from "./ListenerSummary";
 import { LokiSummary } from "./LokiSummary";
 import { OtlpControls } from "./OtlpSetup";
+import { MappingChanges } from "./MappingChanges";
 import { QuietAlert } from "./QuietAlert";
 import { SourceState } from "./SourceState";
 import { TimeZoneEditor } from "./TimeZoneEditor";
@@ -187,6 +188,8 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
             onClose={() => setDiscovering(false)}
           />
         ) : null}
+
+        {canManage ? <MappingChanges /> : null}
 
         {sources.isError ? (
           <p role="alert" className="text-sm text-danger">

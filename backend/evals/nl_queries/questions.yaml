@@ -388,6 +388,40 @@ questions:
   - id: q100
     question: Which users started processes on ws-01?
     sql: SELECT DISTINCT actor_user_name FROM events WHERE class_uid = 1007 AND device_hostname = 'ws-01'
+  # --- Microsoft 365 app consents (F66): both feeds report each consent once -----------
+  - id: q101
+    question: How many app consents were granted?
+    sql: >-
+      SELECT count(DISTINCT metadata_correlation_uid) FROM events
+      WHERE message ILIKE 'Consent to application%' AND status_id = 1
+  - id: q102
+    question: How many consent attempts were blocked?
+    sql: >-
+      SELECT count(DISTINCT metadata_correlation_uid) FROM events
+      WHERE message ILIKE 'Consent to application%' AND status_id = 2
+  - id: q103
+    question: Who had app consents blocked, and how many each?
+    sql: >-
+      SELECT lower(actor_user_name), count(DISTINCT metadata_correlation_uid) FROM events
+      WHERE message ILIKE 'Consent to application%' AND status_id = 2 GROUP BY 1
+  - id: q104
+    question: Which apps did people consent to?
+    sql: >-
+      SELECT DISTINCT resource_name FROM events
+      WHERE message ILIKE 'Consent to application%' AND status_id = 1
+        AND resource_name IS NOT NULL
+  - id: q105
+    question: Which person granted the most app consents?
+    compare: ordered
+    sql: >-
+      SELECT lower(actor_user_name) FROM events
+      WHERE message ILIKE 'Consent to application%' AND status_id = 1
+      GROUP BY 1 ORDER BY count(DISTINCT metadata_correlation_uid) DESC LIMIT 1
+  - id: q106
+    question: Which app consents asked for Mail.Read?
+    sql: >-
+      SELECT DISTINCT metadata_correlation_uid FROM events
+      WHERE message ILIKE 'Consent to application%' AND privileges ILIKE '%Mail.Read%'
   # --- follow-ups and people (ask.v5) ---------------------------------------------------
   # Each `history` is the conversation so far, as if the analyst asked and kept those
   # queries. A person named casually matches every logged form of their name.

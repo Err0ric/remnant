@@ -295,6 +295,7 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | Method | Path | What it does | Query | JSON body (`?` optional) |
 |---|---|---|---|---|
 | `GET` | `/api/templates` | List Templates |  |  |
+| `GET` | `/api/templates/changes` | Recent template changes that affect stored events (F66): the day each new mapping started on this server (events before keep the old one) and the saved searches and schedules that filter on a column whose meaning changed. Admins only. |  |  |
 | `GET` | `/api/templates/drafts` | List Drafts |  |  |
 | `POST` | `/api/templates/drafts` | Create Draft |  | `template_id`: string<br>`from_template`?: string<br>`sample`?: SampleIn |
 | `GET` | `/api/templates/drafts/{template_id}` | Get Draft |  |  |

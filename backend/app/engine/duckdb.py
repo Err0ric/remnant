@@ -6,6 +6,8 @@ sandboxed: file access limited to those sources' folders, external access off,
 configuration locked. The guard runs before any of this.
 """
 
+import glob
+import os
 import threading
 import time
 from collections.abc import Collection, Iterator, Mapping
@@ -18,6 +20,7 @@ from typing import Any
 from uuid import UUID
 
 import duckdb
+import pyarrow.parquet as pq
 
 from app.core.errors import (
     QueryBusyError,
@@ -25,7 +28,7 @@ from app.core.errors import (
     QueryMemoryError,
     QueryTimeoutError,
 )
-from app.core.schema import duckdb_create_table_sql
+from app.core.schema import COLUMN_NAMES, COLUMNS_BY_NAME, duckdb_create_table_sql
 from app.engine.guard import DEFAULT_LIMIT, MAX_LIMIT, guard
 from app.engine.narrow import pinned_sources
 
@@ -96,6 +99,7 @@ class QueryEngine:
     ) -> None:
         self._lake = lake_dir
         self._rollup = rollup_dir
+        self._columns_cache: dict[tuple[str, int], frozenset[str]] = {}
         # Where a query spills when it needs more than its memory share (F46). DuckDB's
         # default is ".tmp" in the working directory, which a read-only container or a
         # sandboxed service cannot write: the query then fails instead of spilling.
@@ -289,6 +293,26 @@ class QueryEngine:
                     out.append(str(day_dir / DAY_FILES))
         return sorted(out)
 
+    def _missing_columns(self, patterns: list[str]) -> list[str]:
+        """Schema columns no file in scope has. The writer always writes every current
+        column, so the newest file shows what all of them have; its footer is read once per
+        file version and cached."""
+        newest: Path | None = None
+        newest_t = -1
+        for pattern in patterns:
+            for name in glob.glob(pattern):
+                t = os.stat(name).st_mtime_ns
+                if t > newest_t:
+                    newest, newest_t = Path(name), t
+        if newest is None:
+            return []
+        key = (str(newest), newest_t)
+        cols = self._columns_cache.get(key)
+        if cols is None:
+            cols = frozenset(pq.read_schema(newest).names)
+            self._columns_cache = {key: cols}  # one entry: the newest file changes as data comes
+        return [c for c in COLUMN_NAMES if c not in cols]
+
     def _connect(
         self,
         scope: QueryScope,
@@ -312,7 +336,17 @@ class QueryEngine:
         files = self._lake_globs(dirs, scope, skip)
         if files:
             globs = ", ".join(_sql_str(f) for f in files)
-            base = f"read_parquet([{globs}], hive_partitioning = false, union_by_name = true)"
+            # Every schema column exists in `events`, typed, even when no file in scope has
+            # it yet: a column added later (additive migrations, CLAUDE.md rule 9) reads as
+            # NULL in files written before it.
+            missing = self._missing_columns(files)
+            extra = "".join(
+                f", CAST(NULL AS {COLUMNS_BY_NAME[c].duckdb_type}) AS {c}" for c in missing
+            )
+            base = (
+                f"(SELECT *{extra} FROM "  # noqa: S608  # schema names and escaped server paths only
+                f"read_parquet([{globs}], hive_partitioning = false, union_by_name = true))"
+            )
         else:
             con.execute(duckdb_create_table_sql("_empty_events"))
             base = "_empty_events"

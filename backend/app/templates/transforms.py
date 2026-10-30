@@ -75,6 +75,11 @@ class TransformRunner:
                 ]
                 fields[str(t.args["into"])] = str(t.args.get("sep", ":")).join(text)
                 continue
+            if t.op == "find":
+                found = _find(value, t.args)
+                if found is not None:
+                    fields[str(t.args["into"])] = found
+                continue  # no matching entry is no error: the list holds other names
             if t.op == "pick":
                 ref = t.args["from"].get(str(value)) if not isinstance(value, dict | list) else None
                 picked = get_path(fields, ref) if ref is not None else MISSING
@@ -100,6 +105,17 @@ class TransformRunner:
             if not ok:
                 errors.append(f"transform_{t.op}:{t.field}"[:80])
         return errors
+
+
+def _find(value: Any, a: dict[str, Any]) -> Any:
+    """The `value` of the first object in a list whose `key` equals `equals` (as text)."""
+    if not isinstance(value, list):
+        return None
+    for item in value[:200]:
+        if isinstance(item, dict) and str(item.get(a["key"])) == a["equals"]:
+            out = item.get(a["value"])
+            return out if isinstance(out, str | int | float | bool) else None
+    return None
 
 
 def _prepare(t: Transform) -> regex.Pattern[str] | None:

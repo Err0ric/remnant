@@ -679,6 +679,19 @@ export interface SourceInput {
   template_id?: string | null;
 }
 
+/** A template version that changed what a column means (F66 release safety). */
+export interface TemplateChange {
+  template_id: string;
+  template_name: string;
+  version: string;
+  note: string;
+  fields: string[];
+  /** When this server first loaded the version: events from then on use it. */
+  since: string | null;
+  current: boolean;
+  affected: { kind: string; id: string; name: string; fields: string[] }[];
+}
+
 export interface TemplateInfo {
   id: string;
   name: string;
@@ -1442,6 +1455,12 @@ export interface AiWatchCard {
   restricted: boolean;
   /** People card: devices or addresses with no person matched, never added to `value`. */
   devices?: number | null;
+  /** Consent card: attempts a policy blocked, never added to `value`. */
+  blocked?: number | null;
+  blocked_context?: string;
+  /** Search SQL for the rows behind the card and behind `blocked` (consent card). */
+  rows_sql?: string | null;
+  blocked_sql?: string | null;
 }
 
 export interface AiWatchDay {
@@ -1725,6 +1744,7 @@ export const api = {
     ),
   sources: () => request<Source[]>("/api/sources"),
   templates: () => request<TemplateInfo[]>("/api/templates"),
+  templateChanges: () => request<TemplateChange[]>("/api/templates/changes"),
   drafts: () => request<DraftInfo[]>("/api/templates/drafts"),
   draft: (id: string) => request<Draft>(`/api/templates/drafts/${encodeURIComponent(id)}`),
   createDraft: (body: {

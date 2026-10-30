@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### AI Watch: app consents counted once, blocked attempts apart (F66, part 2)
+
+- **App consent grants** counts granted consents only, once each: Graph and the Management API report the same consent, and they are matched by correlation id (else person, minute, and operation). Blocked attempts show under it ("2 blocked consent attempts", "Blocked: Lab Notes App (User.Read) by erin@example.com").
+- The card names the app and the permissions asked for. When Entra writes "Unknown", the name comes from another record of the app id, else from the person's sign-in up to 60 seconds before.
+- Every AI Watch card opens its rows: the consent counts open the consents in Search, one row per consent with both feeds' event ids.
+- Ask knows app consents: the vocabulary says to count distinct correlation ids, and the accuracy suite has six consent questions (116 in all).
+
+**What changes for existing installs:** the consent count can go down: a consent both feeds reported used to count twice, and blocked attempts used to count as grants. Consents stored before the F66 parser update have no correlation id, so they are matched by person and minute.
+
+### Microsoft 365: app, permissions, failure reason, and correlation columns (F66, part 1)
+
+- Six new columns: `resource_name` and `resource_uid` (the app and its application id), `resource_type`, `status_detail` (why a result failed), `privileges` (permissions asked for), and `metadata_correlation_uid`. The directory audit, Management Activity, and sign-in parsers fill them; a Graph record and the Management Activity record of the same operation carry the same correlation id.
+- Consent records now name the app even when Graph writes "Unknown" in the display name, from the app id in the additional details. Consent type and the resource the permissions are for stay in `unmapped`.
+- Parsers declare what an update changes. **Sources** shows each recent parser update, the day it started on this server, and any saved search or scheduled search that filters on a column whose meaning changed (admins only; `GET /api/templates/changes`).
+- New parser step `find`: picks the item of a list whose key equals a value (for the name/value lists Microsoft uses).
+
+**What changes for existing installs:** the new parsers apply to events received after the update. Events already stored keep the mapping they were parsed with, so the new columns are empty before that day (the Sources page says which day). No existing column changed meaning.
+
 ### Claude Code hooks: offline queue (ADR-0026 amendment b)
 
 - A record the plugin cannot send (at home without VPN, a server restart) now waits on the laptop instead of being dropped, and goes out after the next record that reaches the server, oldest first, in the background. Metadata only: content is never written to disk. At most 10,000 records and 7 days are kept.

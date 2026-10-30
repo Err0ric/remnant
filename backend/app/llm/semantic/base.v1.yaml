@@ -91,3 +91,13 @@ terms:
     aliases: [when it happened, timestamp]
     sql: "coalesce(time, time_observed) IS NOT NULL"
     note: Use coalesce(time, time_observed) for ordering and time buckets
+  - term: app consent
+    aliases: [consent grant, consented to an app, oauth consent, app permission grant, consent to application]
+    sql: "message ILIKE 'Consent to application%'"
+    note: "Microsoft 365. Graph and the Management API both report each consent with the same metadata_correlation_uid: count DISTINCT metadata_correlation_uid, never rows. resource_name is the app (may be NULL), resource_uid its id, privileges the permissions asked for, status_detail why it failed"
+  - term: blocked consent
+    aliases: [failed consent, denied consent, consent attempt blocked]
+    sql: "message ILIKE 'Consent to application%' AND status_id = 2"
+  - term: granted consent
+    aliases: [successful consent, approved consent]
+    sql: "message ILIKE 'Consent to application%' AND status_id = 1"

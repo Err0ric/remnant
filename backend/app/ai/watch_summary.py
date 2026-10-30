@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
+from app.ai import consents
 from app.ai.agents import agents
 from app.ai.catalog import NON_USAGE, Catalog, Service
 from app.ai.usage import Usage
@@ -26,27 +27,19 @@ CHART_DAYS = 30
 TOP = 10
 TIMEOUT_S = 20.0
 
-# Microsoft 365 app consents and Claude Code sensitive-data signals, now and in the period
-# before. Only the M365 and telemetry sources are read, never the whole lake.
+# Claude Code sensitive-data signals, now and in the period before. Only the telemetry
+# sources are read, never the whole lake. Consents are counted in `consents`.
 SIGNALS_SQL = """
 WITH e AS (
-  SELECT coalesce(time, time_observed) AS ts, template_id, message,
-         nullif(actor_user_name, '') AS who,
+  SELECT coalesce(time, time_observed) AS ts, nullif(actor_user_name, '') AS who,
          TRY_CAST(json_extract_string(unmapped, '$.attr.sensitive_total') AS BIGINT) AS sens
   FROM events
-  WHERE template_id IN ('m365_directory_audit', 'm365_management_activity', 'claude_code_otel')
+  WHERE template_id = 'claude_code_otel'
 )
 SELECT
-  count(*) FILTER (WHERE template_id <> 'claude_code_otel'
-    AND message ILIKE 'Consent to application%' AND ts >= $start),
-  count(*) FILTER (WHERE template_id <> 'claude_code_otel'
-    AND message ILIKE 'Consent to application%' AND ts < $start),
-  arg_max(who, ts) FILTER (WHERE template_id <> 'claude_code_otel'
-    AND message ILIKE 'Consent to application%' AND ts >= $start),
-  coalesce(sum(sens) FILTER (WHERE template_id = 'claude_code_otel' AND ts >= $start), 0),
-  coalesce(sum(sens) FILTER (WHERE template_id = 'claude_code_otel' AND ts < $start), 0),
-  arg_max(who, sens) FILTER (WHERE template_id = 'claude_code_otel' AND sens > 0
-    AND ts >= $start)
+  coalesce(sum(sens) FILTER (WHERE ts >= $start), 0),
+  coalesce(sum(sens) FILTER (WHERE ts < $start), 0),
+  arg_max(who, sens) FILTER (WHERE sens > 0 AND ts >= $start)
 FROM e"""
 
 
@@ -85,6 +78,12 @@ class Card:
     # Devices or addresses with no person matched to them, never added to `value`
     # (people card only): "3 more devices not matched to a person".
     devices: int | None = None
+    # Consent card: attempts a policy blocked, never added to `value`, and the newest.
+    blocked: int | None = None
+    blocked_context: str = ""
+    # Search SQL for the rows behind the card and behind `blocked` (consent card).
+    rows_sql: str | None = None
+    blocked_sql: str | None = None
 
 
 class _Users:
@@ -433,34 +432,43 @@ def _signal_cards(
     m365, have_m365 = _readable_kind(kinds, allowed, {"m365"})
     tel, have_tel = _readable_kind(kinds, allowed, {"telemetry"})
     consent_label, sens_label = "App consent grants", "Sensitive data to AI"
-    values: list[Any] = [0, 0, None, 0, 0, None]
-    read = sorted(set(m365) | set(tel))
-    sources: list[str] = []
-    if read:
-        start = datetime.combine(cur_from, datetime.min.time(), UTC)
-        scope = QueryScope(read, datetime.combine(prev_from, datetime.min.time(), UTC), now)
-        res = engine.run(SIGNALS_SQL, scope, {"start": start}, timeout_s=TIMEOUT_S)
-        if res.rows:
-            values = list(res.rows[0])
-        sources = list(res.sources)
-    c_cur, c_prev, c_who, s_cur, s_prev, s_who = values
+    start = datetime.combine(cur_from, datetime.min.time(), UTC)
+    before = datetime.combine(prev_from, datetime.min.time(), UTC)
+    sources: set[str] = set()
     if not have_m365:
         consent = Card("consent", consent_label, None, None, needs="a Microsoft 365 source")
     elif not m365:
         consent = Card("consent", consent_label, None, None, restricted=True)
     else:
+        res = engine.run(
+            consents.COUNTS_SQL, QueryScope(m365, before, now), {"start": start},
+            timeout_s=TIMEOUT_S,
+        )  # fmt: skip
+        sources.update(res.sources)
+        granted, prev, blocked, latest, latest_blocked = (
+            res.rows[0] if res.rows else (0, 0, 0, None, None)
+        )
         consent = Card(
             "consent",
             consent_label,
-            int(c_cur or 0),
-            int(c_prev or 0),
-            f"Latest by {c_who}" if c_who else "None granted",
+            int(granted or 0),
+            int(prev or 0),
+            f"Latest: {consents.describe(latest)}" if granted else "None granted",
+            blocked=int(blocked or 0),
+            blocked_context=f"Blocked: {consents.describe(latest_blocked)}" if blocked else "",
+            rows_sql=consents.rows_sql(False, start),
+            blocked_sql=consents.rows_sql(True, start),
         )
     if not have_tel:
         sens = Card("sensitive", sens_label, None, None, needs="Claude Code telemetry")
     elif not tel:
         sens = Card("sensitive", sens_label, None, None, restricted=True)
     else:
+        res = engine.run(
+            SIGNALS_SQL, QueryScope(tel, before, now), {"start": start}, timeout_s=TIMEOUT_S
+        )
+        sources.update(res.sources)
+        s_cur, s_prev, s_who = res.rows[0] if res.rows else (0, 0, None)
         sens = Card(
             "sensitive",
             sens_label,
@@ -468,4 +476,4 @@ def _signal_cards(
             int(s_prev or 0),
             f"Most from {s_who}" if s_who else "None in Claude Code",
         )
-    return [consent, sens], sources
+    return [consent, sens], sorted(sources)

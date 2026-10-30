@@ -1,14 +1,15 @@
 schema_version: 1
 id: m365_signin
 name: Microsoft Entra sign-ins (Graph)
-version: 1.0.0
+version: 1.1.0
 author: starter-pack
 description: >-
   Interactive and non-interactive sign-ins from Microsoft Graph auditLogs/signIns, pulled
   by the Microsoft 365 connector (ADR-0002; needs Entra ID P1 or P2). Each line is Graph's
   JSON, unchanged. The app signed in to is the message; status is success when
-  status.errorCode is 0. Location, device, client app, conditional access, and risk stay
-  in unmapped.
+  status.errorCode is 0. The app is also the resource (its name and application id), with
+  the failure reason and the correlation id (D121, F66). Location, device, client app,
+  conditional access, the resource signed in to, and risk stay in unmapped.
 category: identity
 vendor: microsoft
 classification_default: local_only
@@ -38,6 +39,11 @@ mapping:
     device_hostname: { from: deviceDetail.displayName }
     message: { from: appDisplayName }
     status_id: { from: outcome }
+    resource_name: { from: appDisplayName }
+    resource_uid: { from: appId }
+    resource_type: { default: Application }
+    status_detail: { from: status.failureReason }
+    metadata_correlation_uid: { from: correlationId }
   severity:
     from: riskLevelDuringSignIn
     map: { low: 2, medium: 3, high: 4 }
@@ -61,3 +67,10 @@ tests:
       parse_status: ok
       class_uid: 3002
       fields: { actor_user_name: carol@example.com, src_endpoint_ip: "2001:db8::17", message: Microsoft Teams, status_id: 2, severity_id: 3 }
+
+# What this version changes for events already stored (F66): none of the existing columns
+# changes meaning, so no saved search needs updating; earlier events keep the old mapping.
+changes:
+  - version: 1.1.0
+    note: "New columns: resource_name and resource_uid (the app and its application id), status_detail (the failure reason), and metadata_correlation_uid. Earlier events have these empty."
+    fields: []

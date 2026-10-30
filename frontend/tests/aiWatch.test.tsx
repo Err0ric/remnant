@@ -25,6 +25,60 @@ async function renderAt(
 afterEach(() => vi.restoreAllMocks());
 
 describe("AI Watch on the Dashboard (ADR-0035 Part 2)", () => {
+  it("counts granted consents, shows blocked ones apart, and opens each card's rows (F66)", async () => {
+    const consent = {
+      key: "consent",
+      label: "App consent grants",
+      value: 1,
+      previous: 0,
+      context: "Latest: Lab Notes App (User.Read, Mail.Read) by admin@example.com",
+      needs: null,
+      restricted: false,
+      blocked: 2,
+      blocked_context: "Blocked: Lab Notes Beta (openid, profile) by erin@example.com",
+      rows_sql: "SELECT 'granted' AS which",
+      blocked_sql: "SELECT 'blocked' AS which",
+    };
+    window.history.replaceState(null, "", "/dashboard");
+    const spy = mockApi("Codename", { mode: "login", signedIn: true, role: "admin" });
+    const base = spy.getMockImplementation()!;
+    spy.mockImplementation(async (input, init) => {
+      const res = await base(input, init);
+      if (!String(input).includes("/api/ai/watch/summary")) return res;
+      const body = await res.json();
+      body.cards = body.cards.map((c: { key: string }) => (c.key === "consent" ? consent : c));
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(<App initialTheme="dark" queryClient={client} />);
+    const watch = await screen.findByRole("region", { name: "AI Watch" });
+    expect(within(watch).getByText("App consent grants")).toBeVisible();
+    expect(within(watch).getByText(/^Latest: Lab Notes App/)).toBeVisible();
+    expect(within(watch).getByText(/^Blocked: Lab Notes Beta/)).toBeVisible();
+    await userEvent.click(
+      within(watch).getByRole("button", { name: "2 blocked consent attempts" }),
+    );
+    await vi.waitFor(() => expect(window.location.pathname).toBe("/search"));
+    await vi.waitFor(() =>
+      expect(
+        spy.mock.calls.some(
+          ([u, init]) =>
+            String(u).endsWith("/api/query") &&
+            String(init?.body).includes("SELECT 'blocked' AS which"),
+        ),
+      ).toBe(true),
+    );
+  });
+
   it("shows five cards against the previous period, the 30-day chart, and top services", async () => {
     const spy = await renderAt("/dashboard");
     const watch = await screen.findByRole("region", { name: "AI Watch" });

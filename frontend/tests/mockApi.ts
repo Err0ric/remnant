@@ -662,6 +662,31 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         );
       return new Response(null, { status: 204 });
     }
+    if (url.endsWith("/api/templates/changes"))
+      return json([
+        {
+          template_id: "m365_signin",
+          template_name: "Microsoft 365 sign-ins",
+          version: "1.1.0",
+          note: "New columns: resource_name and resource_uid. Earlier events have these empty.",
+          fields: ["status_detail"],
+          since: new Date(Date.now() - 86400_000).toISOString(),
+          current: true,
+          affected: [
+            { kind: "saved search", id: "s1", name: "Failed sign-ins", fields: ["status_detail"] },
+          ],
+        },
+        {
+          template_id: "linux_sshd",
+          template_name: "sshd",
+          version: "1.0.0",
+          note: "Old change",
+          fields: [],
+          since: "2020-01-01T00:00:00+00:00",
+          current: true,
+          affected: [],
+        },
+      ]);
     if (url.endsWith("/api/templates"))
       return json([
         {
