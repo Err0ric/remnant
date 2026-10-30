@@ -34,7 +34,7 @@ afterEach(() => vi.restoreAllMocks());
 describe("Saving a search", () => {
   it("turns {{placeholders}} into typed parameters", async () => {
     const spy = await renderAt("/search");
-    await screen.findByRole("heading", { name: "Search", level: 1 });
+    await screen.findByRole("heading", { name: "Investigate", level: 1 });
     await setSql("SELECT * FROM events WHERE time > {{start}} LIMIT {{top}}");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     const form = screen.getByRole("form", { name: "Save search" });
@@ -61,7 +61,7 @@ describe("Saving a search", () => {
 
   it("is not offered to auditors", async () => {
     await renderAt("/search", { mode: "login", signedIn: true, role: "auditor" });
-    await screen.findByRole("heading", { name: "Search", level: 1 });
+    await screen.findByRole("heading", { name: "Investigate", level: 1 });
     expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
   });
 });
@@ -138,7 +138,7 @@ describe("Saved searches page", () => {
 
   it("opens a saved search on the Search page, fills its parameters, and saves changes", async () => {
     const spy = await renderAt("/search");
-    await screen.findByRole("heading", { name: "Search", level: 1 });
+    await screen.findByRole("heading", { name: "Investigate", level: 1 });
     await userEvent.click(screen.getByRole("button", { name: "Open" }));
     const panel = await screen.findByRole("region", { name: "Open a saved search" });
     await userEvent.type(within(panel).getByLabelText("Open a saved search"), "ssh");
@@ -222,7 +222,7 @@ describe("Edit (F37)", () => {
     const { App } = await import("@/app/App");
     render(<App initialTheme="dark" queryClient={new QueryClient()} />);
     await userEvent.click(await screen.findByRole("button", { name: "Edit My search" }));
-    await waitFor(() => expect(window.location.pathname).toBe("/search"));
+    await waitFor(() => expect(window.location.pathname).toBe("/investigate/search"));
     expect(await screen.findByText("Save changes to My search")).toBeInTheDocument();
   });
 
@@ -242,7 +242,7 @@ describe("Add to dashboard (D89)", () => {
 
   it("saves a label-and-count result, then adds it hourly over 24 hours as bars", async () => {
     const spy = await renderAt("/search");
-    await screen.findByRole("heading", { name: "Search", level: 1 });
+    await screen.findByRole("heading", { name: "Investigate", level: 1 });
     await setSql("SELECT source_id, count(*) AS events FROM events GROUP BY source_id");
     await userEvent.click(screen.getByRole("button", { name: "Run query" }));
     await screen.findAllByText("paloalto_traffic");

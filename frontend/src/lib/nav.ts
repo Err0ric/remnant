@@ -30,90 +30,141 @@ export interface NavGroup {
   items: NavItem[];
 }
 
-// Plain labels only (CLAUDE.md rule 12). Items not built yet stay visible but inert.
-// Ordered as a morning reads (ADR-0037 rows 1 to 3): the four daily places are top level,
-// with no heading over a single item; Investigate and Detect stay groups. A group with an
-// empty label has no heading. Settings sits at the bottom.
-export const NAV_GROUPS: NavGroup[] = [
+// Plain labels only (CLAUDE.md rule 12). The rail lists areas, one row each; an area's
+// tabs sit in the page header (ADR-0038). Each tab is a page, or a page's tab (`tab`).
+export interface AreaTab {
+  label: string;
+  page: PageId;
+  tab?: string;
+  adminOnly?: boolean;
+  aliases?: string[];
+}
+
+export interface Area {
+  id: string;
+  label: string;
+  tabs: AreaTab[];
+  aliases?: string[];
+}
+
+export const AREAS: Area[] = [
+  // First, and the landing page when the viewer has a panel (ADR-0031).
+  { id: "dashboard", label: "Dashboard", tabs: [{ label: "Dashboard", page: "dashboard" }] },
   {
-    label: "",
-    items: [
-      // First, and the landing page when the viewer has a panel (ADR-0031).
-      { id: "dashboard", label: "Dashboard", ready: true, page: "dashboard" },
-      {
-        id: "alerts",
-        label: "Alerts",
-        ready: true,
-        page: "alerts",
-        aliases: ["inbox", "queue", "close", "needs attention", "mutes", "detections"],
-      },
+    id: "alerts",
+    label: "Alerts",
+    aliases: ["inbox", "queue", "close", "needs attention", "mutes", "detections", "detect"],
+    tabs: [
+      { label: "Open", page: "alerts", tab: "open" },
+      { label: "Closed", page: "alerts", tab: "closed" },
+      { label: "Muted", page: "alerts", tab: "muted" },
+      { label: "Rules", page: "rules", aliases: ["detection rules", "sigma"] },
+      { label: "Schedules", page: "schedules", aliases: ["scheduled searches"] },
     ],
   },
   {
+    id: "investigate",
     label: "Investigate",
-    items: [
-      { id: "search", label: "Search", ready: true, page: "search" },
+    tabs: [
+      { label: "Search", page: "search" },
       {
-        id: "investigate",
-        label: "Investigations",
-        ready: true,
+        label: "People & devices",
         page: "investigate",
-        aliases: ["entities", "risk", "investigator", "graph", "ai flow"],
+        aliases: ["investigations", "entities", "risk", "investigator", "graph", "ai flow"],
       },
-      { id: "saved", label: "Saved searches", ready: true, page: "saved", aliases: ["grimoire"] },
+      { label: "Saved searches", page: "saved", aliases: ["grimoire"] },
     ],
   },
   {
-    label: "",
-    items: [
-      {
-        id: "ai",
-        label: "AI usage",
-        ready: true,
-        page: "ai",
-        aliases: ["shadow ai", "mcp servers", "claude usage", "dlp", "ai agents"],
-        sections: [
-          { id: "services", label: "Services" },
-          { id: "agents", label: "Agents" },
-          { id: "mcp", label: "MCP servers" },
-          { id: "people", label: "Claude usage" },
-          { id: "settings", label: "Review and alerts", adminOnly: true },
-        ],
-      },
-      {
-        id: "health",
-        label: "Health",
-        ready: true,
-        page: "health",
-        aliases: [
-          "overview",
-          "status",
-          "sensors",
-          "endpoint agents",
-          "collectors",
-          "watched devices",
-          "connectors health",
-          "enrichment health",
-        ],
-        sections: [
-          { id: "sources", label: "Sources" },
-          { id: "enrichment", label: "Enrichment feeds" },
-          // "Agents" alone is the AI agents tab; these are the log collectors (F48).
-          { id: "agents", label: "Endpoint agents" },
-          { id: "devices", label: "Watched devices" },
-          { id: "alerts", label: "Alert delivery and schedules" },
-        ],
-      },
+    id: "ai",
+    label: "AI usage",
+    aliases: ["shadow ai", "claude usage", "dlp"],
+    tabs: [
+      { label: "Services", page: "ai", tab: "services" },
+      { label: "People", page: "ai", tab: "people", aliases: ["claude usage"] },
+      { label: "Review", page: "ai", tab: "settings", adminOnly: true },
     ],
   },
   {
-    label: "Detect",
-    items: [
-      { id: "rules", label: "Detection rules", ready: true, page: "rules" },
-      { id: "schedules", label: "Schedules", ready: true, page: "schedules" },
+    id: "agents",
+    label: "Agents",
+    aliases: ["ai agents", "claude code", "sessions", "mcp servers"],
+    tabs: [
+      { label: "Sessions", page: "agents", tab: "agents" },
+      { label: "MCP servers", page: "agents", tab: "mcp" },
+    ],
+  },
+  {
+    id: "health",
+    label: "Health",
+    aliases: [
+      "overview",
+      "status",
+      "sensors",
+      "collectors",
+      "connectors health",
+      "enrichment health",
+    ],
+    tabs: [
+      { label: "Sources", page: "health", tab: "sources" },
+      { label: "Enrichment feeds", page: "health", tab: "enrichment" },
+      // "Agents" alone is the AI agents area; these are the log collectors (F48).
+      { label: "Endpoint agents", page: "health", tab: "agents" },
+      { label: "Watched devices", page: "health", tab: "devices" },
+      { label: "Delivery", page: "health", tab: "alerts", aliases: ["alert delivery"] },
     ],
   },
 ];
+
+/** Tabs this user can open. */
+export function visibleTabs(area: Area, isAdmin: boolean): AreaTab[] {
+  return area.tabs.filter((t) => isAdmin || !t.adminOnly);
+}
+
+/** The area a page belongs to, and which of its tabs is open. */
+export function areaOf(page: PageId, tab: string): { area: Area; tab: AreaTab } | null {
+  // Ask is a mode of Search (ADR-0008); /ask still opens it.
+  if (page === "ask") return areaOf("search", tab);
+  for (const area of AREAS) {
+    const hits = area.tabs.filter((t) => t.page === page);
+    if (hits.length === 0) continue;
+    const open = hits.find((t) => (t.tab ?? "") === tab) ?? hits[0];
+    return { area, tab: open as AreaTab };
+  }
+  return null;
+}
+
+/** Areas and their tabs as nav items, for the command palette ("Alerts › Rules"). */
+function areaItems(): NavItem[] {
+  return AREAS.flatMap((a): NavItem[] =>
+    a.tabs.length === 1
+      ? [{ id: a.id, label: a.label, ready: true, page: a.tabs[0]?.page, aliases: a.aliases }]
+      : [
+          {
+            id: a.id,
+            label: a.label,
+            ready: true,
+            page: a.tabs[0]?.page,
+            aliases: a.aliases,
+            sections: a.tabs
+              .filter((t) => t.page === a.tabs[0]?.page && t.tab)
+              .map((t) => ({ id: t.tab as string, label: t.label, adminOnly: t.adminOnly })),
+          },
+          ...a.tabs
+            .filter((t) => t.page !== a.tabs[0]?.page)
+            .map((t) => ({
+              id: `${a.id}:${t.page}`,
+              label: `${a.label} › ${t.label}`,
+              ready: true,
+              page: t.page,
+              aliases: t.aliases,
+              adminOnly: t.adminOnly,
+            })),
+        ],
+  );
+}
+
+export const NAV_GROUPS: NavGroup[] = [{ label: "", items: areaItems() }];
 
 // Admin and setup pages live in the Settings area, with their own sub-nav, so the main
 // rail holds only daily work. URLs are unchanged. Ordered as a new install sets up:

@@ -1,5 +1,8 @@
 import { TIME_RANGES, type TimeRangeId } from "@/lib/search";
 
+/** Where Search lives (ADR-0038); `/search` addresses from before still open it. */
+export const SEARCH_PATH = "/investigate/search";
+
 /**
  * The Search page's state in its address (D90): each run records the tab, the query or the
  * open saved search, and the time range, so Back and Forward step through earlier searches
@@ -34,7 +37,7 @@ export function searchUrl(state: SearchUrlState): string {
     if (state.q && state.q.length <= MAX_Q) p.set("q", state.q);
   }
   p.set("range", state.range);
-  return `/search#${p.toString()}`;
+  return `${SEARCH_PATH}#${p.toString()}`;
 }
 
 /** Read the state from a fragment (`#tab=...`). An address from before the fragment change
@@ -90,7 +93,7 @@ function bump() {
 
 if (typeof window !== "undefined") {
   window.addEventListener("popstate", () => {
-    if (window.location.pathname === "/search") bump();
+    if (window.location.pathname === SEARCH_PATH || window.location.pathname === "/search") bump();
   });
 }
 
@@ -136,7 +139,7 @@ export function recentSearches(): RecentSearch[] {
     // Entries kept before the fragment change used `/search?`; never send those again.
     return list
       .slice(0, RECENT_MAX)
-      .map((r) => ({ ...r, url: r.url.replace(/^\/search\?/, "/search#") }));
+      .map((r) => ({ ...r, url: r.url.replace(/^\/search[?#]/, `${SEARCH_PATH}#`) }));
   } catch {
     return []; // storage blocked or unreadable
   }

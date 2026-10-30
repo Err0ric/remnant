@@ -56,7 +56,7 @@ describe("Detection rules", () => {
     const [body] = bodies(spy, (u) => u.endsWith("/api/rules/r1/run"));
     expect(Date.parse(String(body?.end)) - Date.parse(String(body?.start))).toBe(86_400_000);
     await userEvent.click(within(panel).getByRole("button", { name: "Open in Search" }));
-    await vi.waitFor(() => expect(window.location.pathname).toBe("/search"));
+    await vi.waitFor(() => expect(window.location.pathname).toBe("/investigate/search"));
     const seeded = await vi.waitFor(() => {
       const q = bodies(spy, (u) => u.endsWith("/api/query")).find((b) =>
         String(b.sql).includes("WHERE event_id IN"),
@@ -93,7 +93,7 @@ describe("Detection rules", () => {
     await userEvent.click(
       await within(table).findByRole("button", { name: "Schedule Failed logon burst" }),
     );
-    await vi.waitFor(() => expect(window.location.pathname).toBe("/schedules"));
+    await vi.waitFor(() => expect(window.location.pathname).toBe("/alerts/schedules"));
     const form = await screen.findByRole("form", { name: "New schedule" });
     expect(within(form).getByLabelText("Runs")).toHaveValue("rule");
     await vi.waitFor(() => expect(within(form).getByLabelText("Rule")).toHaveValue("r1"));

@@ -17,7 +17,7 @@ async function renderApp() {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   render(<App initialTheme="dark" queryClient={client} />);
-  await screen.findByRole("heading", { level: 1, name: "Search" });
+  await screen.findByRole("heading", { level: 1, name: "Investigate" });
   return fetchSpy;
 }
 
@@ -33,26 +33,33 @@ describe("App shell", () => {
   it("shows the product name from the API and the page hierarchy", async () => {
     await renderApp();
     expect(screen.getByText("Codename")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 1, name: "Search" })).toBeInTheDocument();
-    expect(screen.getByText(/Home\s+›\s+Investigate\s+›\s+Search/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Investigate" })).toBeInTheDocument();
+    // The area's tabs say where you are (ADR-0038); no breadcrumb.
+    const tabs = screen.getByRole("navigation", { name: "Investigate tabs" });
+    expect(within(tabs).getByRole("link", { name: "Search" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(within(tabs).getByRole("link", { name: "People & devices" })).toHaveAttribute(
+      "href",
+      "/investigate/people",
+    );
+    expect(window.location.pathname).toBe("/investigate/search");
   });
 
   it("uses plain, grouped navigation labels", async () => {
     await renderApp();
     const nav = screen.getByRole("navigation", { name: "Primary" });
-    for (const label of [
-      "Investigate",
-      "Search",
-      "Saved searches",
-      "Detect",
-      "Alerts",
-      "AI usage",
-      "Health",
-      "Settings",
-    ]) {
-      expect(within(nav).getByText(label)).toBeInTheDocument();
-    }
-    expect(within(nav).getByText("Search")).toHaveAttribute("aria-current", "page");
+    // One row per area (ADR-0038), in the morning's order, Settings at the foot.
+    expect(
+      within(nav)
+        .getAllByRole("link")
+        .map((a) => a.textContent),
+    ).toEqual(["Dashboard", "Alerts", "Investigate", "AI usage", "Agents", "Health", "Settings"]);
+    expect(within(nav).getByRole("link", { name: "Investigate" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
     expect(within(nav).queryByText("Ask")).not.toBeInTheDocument(); // a tab of Search now
     // Admin pages live in the Settings area, not on the main rail.
     expect(within(nav).queryByText("Users and access")).not.toBeInTheDocument();
@@ -85,8 +92,8 @@ describe("App shell", () => {
       "aria-expanded",
       "true",
     );
-    await userEvent.click(within(nav).getByText("Saved searches"));
-    await screen.findByRole("heading", { level: 1, name: "Saved searches" });
+    await userEvent.click(within(nav).getByText("Health"));
+    await screen.findByRole("heading", { level: 1, name: "Health" });
     expect(nav).toHaveClass("hidden");
   });
 });

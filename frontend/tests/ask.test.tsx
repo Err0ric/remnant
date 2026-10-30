@@ -125,7 +125,7 @@ describe("Ask", () => {
 
   it("is hidden from auditors", async () => {
     await renderAt("/ask", { mode: "login", signedIn: true, role: "auditor" });
-    await screen.findByRole("heading", { name: "Search", level: 1 });
+    await screen.findByRole("heading", { name: "Investigate", level: 1 });
     const nav = screen.getByRole("navigation", { name: "Primary" });
     expect(within(nav).queryByText("Ask")).not.toBeInTheDocument();
   });

@@ -50,7 +50,7 @@ describe("Dashboard", () => {
     const spy = await renderAt("/dashboard");
     const panel = await screen.findByRole("region", { name: "Failed SSH daily" });
     await userEvent.click(await within(panel).findByRole("button", { name: "Open in Search" }));
-    await vi.waitFor(() => expect(window.location.pathname).toBe("/search"));
+    await vi.waitFor(() => expect(window.location.pathname).toBe("/investigate/search"));
     await vi.waitFor(() =>
       expect(sent(spy, "POST", (u) => u.endsWith("/api/query")).map((b) => b?.sql)).toContain(
         "SELECT 1 LIMIT 5",
@@ -90,7 +90,7 @@ describe("Dashboard panels (trial finding, ADR-0034)", () => {
     const table = await within(panel).findByRole("table", { name: "Top rows of Failed SSH daily" });
     expect(within(table).getByText("203.0.113.9")).toHaveAttribute("title", "203.0.113.9");
     await userEvent.click(within(table).getByRole("button", { name: "Open row 1 in Search" }));
-    await vi.waitFor(() => expect(window.location.pathname).toBe("/search"));
+    await vi.waitFor(() => expect(window.location.pathname).toBe("/investigate/search"));
   });
 
   it("says when a source's parser changed before a run (F36)", async () => {
@@ -247,7 +247,7 @@ describe("Schedules", () => {
     await userEvent.click(
       await screen.findByRole("button", { name: "Schedule Failed SSH by source" }),
     );
-    await vi.waitFor(() => expect(window.location.pathname).toBe("/schedules"));
+    await vi.waitFor(() => expect(window.location.pathname).toBe("/alerts/schedules"));
     const form = await screen.findByRole("form", { name: "New schedule" });
     await vi.waitFor(() =>
       expect(within(form).getByLabelText("Saved search")).toHaveValue("failed_by_ip"),
@@ -260,7 +260,7 @@ describe("Schedules", () => {
     const save = await screen.findByRole("form", { name: "Save search" });
     await userEvent.type(within(save).getByLabelText("Name"), "Nightly check");
     await userEvent.click(within(save).getByRole("button", { name: "Save" }));
-    await vi.waitFor(() => expect(window.location.pathname).toBe("/schedules"));
+    await vi.waitFor(() => expect(window.location.pathname).toBe("/alerts/schedules"));
     const form = await screen.findByRole("form", { name: "New schedule" });
     await vi.waitFor(() =>
       expect(within(form).getByLabelText("Saved search")).toHaveValue("nightly_check"),

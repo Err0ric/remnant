@@ -13,7 +13,7 @@ async function openInvestigate(path = "/investigations") {
   const { App } = await import("@/app/App");
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(<App initialTheme="dark" queryClient={client} />);
-  await screen.findByRole("heading", { level: 1, name: "Investigations" });
+  await screen.findByRole("heading", { level: 1, name: "Investigate" });
   return spy;
 }
 
@@ -54,7 +54,7 @@ describe("Entity picker (F56)", () => {
 
 describe("Entity pages from a link (product pass step 2)", () => {
   it("opens the entity in the address, and Back to all entities clears it", async () => {
-    const spy = await openInvestigate("/investigations#ip=203.0.113.9");
+    const spy = await openInvestigate("/investigate/people#ip=203.0.113.9");
     await vi.waitFor(() => {
       const call = spy.mock.calls.find(([u]) => String(u).includes("/api/entities/graph"));
       expect(String(call?.[0])).toContain("kind=ip");
@@ -74,7 +74,7 @@ describe("Entity pages from a link (product pass step 2)", () => {
     ).toBeVisible();
     expect(within(acts).getByRole("link", { name: "ftp-01" })).toHaveAttribute(
       "href",
-      "/investigations#host=ftp-01",
+      "/investigate/people#host=ftp-01",
     );
     expect(within(summary).getByRole("heading", { name: /Users tried/ })).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: /All entities/ }));
@@ -82,7 +82,7 @@ describe("Entity pages from a link (product pass step 2)", () => {
   });
 
   it("opens an AI service in the AI flow", async () => {
-    const spy = await openInvestigate("/investigations#service=chatgpt");
+    const spy = await openInvestigate("/investigate/people#service=chatgpt");
     expect(screen.getByRole("radio", { name: "AI flow" })).toHaveAttribute("aria-checked", "true");
     await vi.waitFor(() => {
       const call = spy.mock.calls.find(([u]) => String(u).includes("mode=ai"));
@@ -95,7 +95,10 @@ describe("Investigations (ADR-0016)", () => {
   it("ranks entities with the score's parts and opens one in lanes", async () => {
     const spy = await openInvestigate();
     const nav = screen.getByRole("navigation", { name: "Primary" });
-    expect(within(nav).getByText("Investigations")).toHaveAttribute("aria-current", "page");
+    expect(within(nav).getByRole("link", { name: "Investigate" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
     const table = await screen.findByRole("table", { name: "User" });
     expect(within(table).getByText("4 high")).toBeVisible();
     await userEvent.click(within(table).getByRole("button", { name: "root" }));
@@ -120,8 +123,8 @@ describe("Investigations (ADR-0016)", () => {
     const detail = screen.getByRole("region", { name: "Selected card" });
     expect(within(detail).getByText("Authentication")).toBeVisible();
     await userEvent.click(within(detail).getByRole("button", { name: "Open in Search" }));
-    await screen.findByRole("heading", { level: 1, name: "Search" });
-    expect(window.location.pathname).toBe("/search");
+    await screen.findByRole("heading", { level: 1, name: "Investigate" });
+    expect(window.location.pathname).toBe("/investigate/search");
     // Search opens over the same range the investigation used (Last 7 days by default).
     expect(screen.getByLabelText("Time range")).toHaveValue("7d");
   });

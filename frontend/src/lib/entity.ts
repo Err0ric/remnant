@@ -1,4 +1,4 @@
-import { navigate } from "@/lib/route";
+import { navigate, pathFor } from "@/lib/route";
 
 /** What a value can be opened as (product pass step 2): an address, a person, a machine,
  * or an AI service. */
@@ -56,7 +56,7 @@ export function entitySection(e: Entity): string {
 }
 
 export function entityHref(e: Entity): string {
-  return `/investigations#${entitySection(e)}`;
+  return `${pathFor("investigate")}#${entitySection(e)}`;
 }
 
 export function parseEntity(section: string): Entity | null {

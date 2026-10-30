@@ -155,7 +155,7 @@ describe("AI providers", () => {
 
   it("is not shown to analysts", async () => {
     await renderAt("/providers", { mode: "login", signedIn: true, role: "analyst" });
-    await screen.findByRole("heading", { name: "Search", level: 1 });
+    await screen.findByRole("heading", { name: "Investigate", level: 1 });
     const nav = screen.getByRole("navigation", { name: "Primary" });
     expect(within(nav).queryByText("AI providers")).not.toBeInTheDocument();
   });

@@ -4,7 +4,8 @@ import { ApiError, api, type AlertItem, type CloseReason } from "@/lib/api";
 import { LoadFailed } from "@/components/LoadFailed";
 import { kindForColumn, type EntityKind } from "@/lib/entity";
 import { cn } from "@/lib/cn";
-import { navigate, pathFor, useSection } from "@/lib/route";
+import { navigate, pathFor, useSection, useSectionTab } from "@/lib/route";
+import { PageHeader } from "@/components/shell/PageHeader";
 import { EntityLink } from "@/components/EntityLink";
 import { When } from "@/components/When";
 import { CloseForm } from "./CloseForm";
@@ -23,8 +24,7 @@ interface AlertsPageProps {
 export function AlertsPage({ canClose, isAdmin }: AlertsPageProps) {
   const section = useSection();
   const focus = section.startsWith("item=") ? decodeURIComponent(section.slice(5)) : null;
-  const tab: Tab = section === "closed" || section === "muted" ? section : "open";
-  const setTab = (t: Tab) => navigate("alerts", t === "open" ? undefined : t);
+  const [tab, setTab] = useSectionTab<Tab>(["open", "closed", "muted"]);
   const list = useQuery({
     queryKey: ["alerts", tab === "closed" ? "closed" : "open"],
     queryFn: () => api.alerts(tab === "closed" ? "closed" : "open"),
@@ -39,111 +39,92 @@ export function AlertsPage({ canClose, isAdmin }: AlertsPageProps) {
   const reasons = data?.reasons ?? ({} as Record<CloseReason, string>);
   const rowProps = { canClose, isAdmin, reasons };
   return (
-    <div className="mx-auto w-full max-w-5xl min-w-0 p-4">
-      <h1 className="text-lg font-semibold">Alerts</h1>
-      <p className="mb-3 text-sm text-text-secondary">
-        Everything that fired and needs a decision. Close each one with a reason.
-      </p>
-      {focus ? (
-        <section aria-label="This alert" className="mb-4">
-          {focused.data ? (
-            <AlertRow
-              item={focused.data}
-              expanded
-              onToggle={() => navigate("alerts")}
-              {...rowProps}
-            />
-          ) : focused.isError ? (
-            <p className="rounded-card border border-border bg-surface px-3 py-2 text-sm">
-              {focused.error instanceof ApiError && focused.error.status === 403
-                ? "This alert read a source you cannot see."
-                : "This alert is not there any more, or you cannot see it."}
-            </p>
-          ) : (
-            <div className="h-12 animate-pulse rounded-card bg-surface" aria-busy="true" />
-          )}
-        </section>
-      ) : null}
-      <div role="tablist" aria-label="Alerts" className="mb-2 flex gap-1 border-b border-border">
-        {(["open", "closed", "muted"] as Tab[]).map((t) => (
-          <button
-            key={t}
-            type="button"
-            role="tab"
-            aria-selected={tab === t}
-            onClick={() => setTab(t)}
-            className={cn(
-              "-mb-px border-b-2 px-3 py-1.5 text-sm",
-              tab === t
-                ? "border-accent font-semibold text-accent-text"
-                : "border-transparent text-text-secondary hover:text-text",
+    <div className="flex min-w-0 flex-1 flex-col">
+      <PageHeader
+        title="Alerts"
+        meta="Everything that fired and needs a decision. Close each one with a reason."
+        tabExtras={{
+          ...(data ? { Open: data.open } : {}),
+          ...(data?.muted ? { Muted: data.muted } : {}),
+        }}
+      />
+      <div className="mx-auto w-full max-w-5xl min-w-0 p-4">
+        {focus ? (
+          <section aria-label="This alert" className="mb-4">
+            {focused.data ? (
+              <AlertRow
+                item={focused.data}
+                expanded
+                onToggle={() => navigate("alerts")}
+                {...rowProps}
+              />
+            ) : focused.isError ? (
+              <p className="rounded-card border border-border bg-surface px-3 py-2 text-sm">
+                {focused.error instanceof ApiError && focused.error.status === 403
+                  ? "This alert read a source you cannot see."
+                  : "This alert is not there any more, or you cannot see it."}
+              </p>
+            ) : (
+              <div className="h-12 animate-pulse rounded-card bg-surface" aria-busy="true" />
             )}
-          >
-            {t === "open" ? "Open" : t === "closed" ? "Closed" : "Muted"}
-            {t === "open" && data ? (
-              <span className="ml-1.5 font-mono tabular-nums text-text-muted">{data.open}</span>
+          </section>
+        ) : null}
+        {tab === "muted" ? (
+          <MutesList isAdmin={isAdmin} />
+        ) : list.isLoading ? (
+          <div className="h-24 animate-pulse rounded-card bg-surface" aria-busy="true" />
+        ) : list.isError ? (
+          <div className="rounded-card border border-border bg-surface">
+            <LoadFailed
+              what="Alerts"
+              error={list.error}
+              onRetry={() => void list.refetch()}
+              retrying={list.isFetching}
+            />
+          </div>
+        ) : (
+          <>
+            {tab === "open" && data && data.muted > 0 ? (
+              <p className="mb-2 text-sm text-text-secondary">
+                <button
+                  type="button"
+                  onClick={() => setTab("muted")}
+                  className="text-accent-text hover:underline"
+                >
+                  {data.muted} muted
+                </button>
+                : new alerts like those close themselves until the mute ends.
+              </p>
             ) : null}
-            {t === "muted" && data?.muted ? (
-              <span className="ml-1.5 font-mono tabular-nums text-text-muted">{data.muted}</span>
+            {data && data.restricted > 0 && tab === "open" ? (
+              <p className="mb-2 text-sm text-text-secondary">
+                {data.restricted} restricted: {data.restricted === 1 ? "it read" : "they read"} a
+                source you cannot see.
+              </p>
             ) : null}
-          </button>
-        ))}
+            {data && data.items.length === 0 ? (
+              <p className="rounded-card border border-border bg-surface px-3 py-6 text-center text-sm text-text-secondary">
+                {tab === "open"
+                  ? "Nothing needs a decision. New flagged runs, rule matches, and gaps on sources with Alert if quiet on land here."
+                  : "Nothing closed yet."}
+              </p>
+            ) : (
+              <ul className="rounded-card border border-border bg-surface">
+                {data?.items.map((i) => (
+                  <li key={i.item_id} className="border-b border-border last:border-0">
+                    <AlertRow
+                      item={i}
+                      expanded={openId === i.item_id}
+                      onToggle={() => setOpenId(openId === i.item_id ? null : i.item_id)}
+                      {...rowProps}
+                    />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>
+        )}
       </div>
-      {tab === "muted" ? (
-        <MutesList isAdmin={isAdmin} />
-      ) : list.isLoading ? (
-        <div className="h-24 animate-pulse rounded-card bg-surface" aria-busy="true" />
-      ) : list.isError ? (
-        <div className="rounded-card border border-border bg-surface">
-          <LoadFailed
-            what="Alerts"
-            error={list.error}
-            onRetry={() => void list.refetch()}
-            retrying={list.isFetching}
-          />
-        </div>
-      ) : (
-        <>
-          {tab === "open" && data && data.muted > 0 ? (
-            <p className="mb-2 text-sm text-text-secondary">
-              <button
-                type="button"
-                onClick={() => setTab("muted")}
-                className="text-accent-text hover:underline"
-              >
-                {data.muted} muted
-              </button>
-              : new alerts like those close themselves until the mute ends.
-            </p>
-          ) : null}
-          {data && data.restricted > 0 && tab === "open" ? (
-            <p className="mb-2 text-sm text-text-secondary">
-              {data.restricted} restricted: {data.restricted === 1 ? "it read" : "they read"} a
-              source you cannot see.
-            </p>
-          ) : null}
-          {data && data.items.length === 0 ? (
-            <p className="rounded-card border border-border bg-surface px-3 py-6 text-center text-sm text-text-secondary">
-              {tab === "open"
-                ? "Nothing needs a decision. New flagged runs, rule matches, and gaps on sources with Alert if quiet on land here."
-                : "Nothing closed yet."}
-            </p>
-          ) : (
-            <ul className="rounded-card border border-border bg-surface">
-              {data?.items.map((i) => (
-                <li key={i.item_id} className="border-b border-border last:border-0">
-                  <AlertRow
-                    item={i}
-                    expanded={openId === i.item_id}
-                    onToggle={() => setOpenId(openId === i.item_id ? null : i.item_id)}
-                    {...rowProps}
-                  />
-                </li>
-              ))}
-            </ul>
-          )}
-        </>
-      )}
     </div>
   );
 }

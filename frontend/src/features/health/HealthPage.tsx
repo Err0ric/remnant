@@ -48,7 +48,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "enrichment", label: "Enrichment feeds" },
   { id: "agents", label: "Endpoint agents" },
   { id: "devices", label: "Watched devices" },
-  { id: "alerts", label: "Alert delivery and schedules" },
+  { id: "alerts", label: "Delivery" },
 ];
 const TAB_IDS = TABS.map((t) => t.id);
 const SILENCE = [
@@ -316,8 +316,25 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       <PageHeader
-        crumbs={["Home", "System", "Health"]}
         title="Health"
+        tabExtras={Object.fromEntries(
+          TABS.map((t) => {
+            const bad = rows[t.id].filter(
+              (r) => r.level === "unhealthy" || r.level === "attention",
+            ).length;
+            return [
+              t.label,
+              <>
+                {rows[t.id].length}
+                {bad ? (
+                  <span className="ml-1 rounded-badge bg-sev-medium-bg px-1 text-xs font-semibold text-sev-medium-text">
+                    {bad}
+                  </span>
+                ) : null}
+              </>,
+            ];
+          }),
+        )}
         commands={
           <Command
             label={checks.isFetching || sources.isFetching ? "Refreshing…" : "Refresh"}
@@ -349,39 +366,6 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
           onDelivery={() => setTab("alerts")}
         />
         {o ? <StatusLine overview={o} now={now} /> : null}
-
-        <div
-          role="tablist"
-          aria-label="Health checks"
-          className="flex overflow-x-auto border-b border-border"
-        >
-          {TABS.map((t) => {
-            const bad = rows[t.id].filter(
-              (r) => r.level === "unhealthy" || r.level === "attention",
-            ).length;
-            return (
-              <button
-                key={t.id}
-                type="button"
-                role="tab"
-                aria-selected={tab === t.id}
-                onClick={() => setTab(t.id)}
-                className={`-mb-px whitespace-nowrap border-b-2 px-3 py-2 text-sm ${
-                  tab === t.id
-                    ? "border-accent font-semibold text-text"
-                    : "border-transparent text-text-secondary hover:text-text"
-                }`}
-              >
-                {t.label} <span className="text-text-muted">{rows[t.id].length}</span>
-                {bad ? (
-                  <span className="ml-1 rounded-badge bg-sev-medium-bg px-1 text-xs text-sev-medium-text">
-                    {bad}
-                  </span>
-                ) : null}
-              </button>
-            );
-          })}
-        </div>
 
         <div
           role="group"

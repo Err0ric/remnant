@@ -1,6 +1,6 @@
 import { EntityLink, EntityList } from "@/components/EntityLink";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState, type KeyboardEvent, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Command, PageHeader } from "@/components/shell/PageHeader";
 import {
@@ -19,13 +19,6 @@ import { AiSettings } from "./AiSettings";
 import { StatusBadge, StatusPicker } from "./StatusBadge";
 
 type Tab = "services" | "agents" | "mcp" | "people" | "settings";
-const LABELS: Record<Tab, string> = {
-  services: "Services",
-  agents: "Agents",
-  mcp: "MCP servers",
-  people: "Claude usage",
-  settings: "Review and alerts",
-};
 const KIND: Record<string, string> = {
   chat: "Chat",
   api: "API",
@@ -54,10 +47,12 @@ const TD = "px-3 py-2 align-top";
 
 interface AiUsagePageProps {
   isAdmin: boolean;
+  /** AI usage (services, people, review) or Agents (sessions, MCP servers); ADR-0038. */
+  area?: "ai" | "agents";
 }
 
 /** AI usage (ADR-0015 row 8): services, agents and MCP servers, and Claude usage. */
-export function AiUsagePage({ isAdmin }: AiUsagePageProps) {
+export function AiUsagePage({ isAdmin, area = "ai" }: AiUsagePageProps) {
   const client = useQueryClient();
   const [range, setRange] = useState<TimeRangeId>("7d");
   const usage = useQuery({
@@ -91,19 +86,13 @@ export function AiUsagePage({ isAdmin }: AiUsagePageProps) {
       void client.invalidateQueries({ queryKey: ["ai-mcp-rules"] });
     },
   });
-  const tabs: Tab[] = isAdmin
-    ? ["services", "agents", "mcp", "people", "settings"]
-    : ["services", "agents", "mcp", "people"];
-  const [tab, setTab] = useSectionTab<Tab>(tabs);
-  const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
-    if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
-    const i = tabs.indexOf(tab);
-    const next = tabs[(i + (e.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length];
-    if (next) {
-      setTab(next);
-      document.getElementById(`ai-tab-${next}`)?.focus();
-    }
-  };
+  const tabs: Tab[] =
+    area === "agents"
+      ? ["agents", "mcp"]
+      : isAdmin
+        ? ["services", "people", "settings"]
+        : ["services", "people"];
+  const [tab] = useSectionTab<Tab>(tabs);
   const data = tooBig ? fallback.data : usage.data;
   const notApproved =
     (data?.services.filter((s) => s.service.status === "not_approved").length ?? 0) +
@@ -128,7 +117,7 @@ export function AiUsagePage({ isAdmin }: AiUsagePageProps) {
     <div className="flex min-w-0 flex-1 flex-col">
       <PageHeader
         crumbs={["Home", "AI", "AI usage"]}
-        title="AI usage"
+        title={area === "agents" ? "Agents" : "AI usage"}
         commands={
           <Command
             label={usage.isFetching ? "Refreshing…" : "Refresh"}
@@ -181,31 +170,6 @@ export function AiUsagePage({ isAdmin }: AiUsagePageProps) {
               <span className="font-mono tabular-nums text-text">{gone.length}</span> no longer seen
             </span>
           ) : null}
-        </div>
-        <div
-          role="tablist"
-          aria-label="AI usage"
-          onKeyDown={onKey}
-          className="flex gap-1 border-b border-border"
-        >
-          {tabs.map((t) => (
-            <button
-              key={t}
-              id={`ai-tab-${t}`}
-              type="button"
-              role="tab"
-              aria-selected={tab === t}
-              tabIndex={tab === t ? 0 : -1}
-              onClick={() => setTab(t)}
-              className={`-mb-px border-b-2 px-3 py-1.5 text-sm ${
-                tab === t
-                  ? "border-accent font-semibold text-text"
-                  : "border-transparent text-text-secondary hover:text-text"
-              }`}
-            >
-              {LABELS[t]}
-            </button>
-          ))}
         </div>
         {usage.isError ? (
           <div role="alert" className="flex flex-col gap-0.5 text-sm">

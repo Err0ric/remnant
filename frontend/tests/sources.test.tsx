@@ -81,7 +81,10 @@ describe("Sources page", () => {
     await openSources();
     expect(window.location.pathname).toBe("/sources");
     const nav = screen.getByRole("navigation", { name: "Primary" });
-    expect(within(nav).getByText("Settings")).toHaveAttribute("aria-current", "page");
+    expect(within(nav).getByRole("link", { name: "Settings" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
     const sub = screen.getByRole("navigation", { name: "Settings" });
     expect(within(sub).getByText("Sources and connectors")).toHaveAttribute("aria-current", "page");
     const row = (await screen.findByText("linux_sshd")).closest("tr") as HTMLElement;

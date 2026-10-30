@@ -29,7 +29,9 @@ describe("First-run setup", () => {
     await userEvent.type(screen.getByLabelText("Password"), "a long passphrase");
     await userEvent.type(screen.getByLabelText("Confirm password"), "a long passphrase");
     await userEvent.click(screen.getByRole("button", { name: "Create administrator account" }));
-    expect(await screen.findByRole("heading", { level: 1, name: "Search" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Investigate" }),
+    ).toBeInTheDocument();
     // The setup token is gone; Search records its own state after `#` (D90).
     expect(window.location.hash).not.toContain("good-token");
     expect(screen.getByText("jordan")).toBeInTheDocument();
@@ -71,7 +73,9 @@ describe("Sign in", () => {
     await userEvent.clear(screen.getByLabelText("Password"));
     await userEvent.type(screen.getByLabelText("Password"), "right password");
     await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
-    expect(await screen.findByRole("heading", { level: 1, name: "Search" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Investigate" }),
+    ).toBeInTheDocument();
 
     await waitFor(() => {
       const call = spy.mock.calls.find(([u]) => String(u).endsWith("/api/query"));
@@ -96,7 +100,9 @@ describe("Sign in", () => {
 
   it("open mode skips sign-in and shows no account menu", async () => {
     await renderWith({ mode: "open" });
-    expect(await screen.findByRole("heading", { level: 1, name: "Search" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Investigate" }),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Sign out" })).not.toBeInTheDocument();
   });
 });

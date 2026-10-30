@@ -2,7 +2,7 @@ import { QueryClient } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { NAV_GROUPS } from "@/lib/nav";
+import { AREAS } from "@/lib/nav";
 import { mockApi, type MockAuth } from "./mockApi";
 
 async function renderAt(
@@ -26,18 +26,7 @@ afterEach(() => vi.restoreAllMocks());
 
 describe("Alerts (ADR-0037)", () => {
   it("is second in the nav, in the morning's order, with the open count", async () => {
-    const top = NAV_GROUPS.flatMap((g) => g.items.map((i) => i.label));
-    expect(top).toEqual([
-      "Dashboard",
-      "Alerts",
-      "Search",
-      "Investigations",
-      "Saved searches",
-      "AI usage",
-      "Health",
-      "Detection rules",
-      "Schedules",
-    ]);
+    expect(AREAS.map((a) => a.label).slice(0, 2)).toEqual(["Dashboard", "Alerts"]);
     await renderAt("/alerts");
     const nav = await screen.findByRole("navigation", { name: "Primary" });
     expect(await within(nav).findByLabelText("2 open")).toBeInTheDocument();

@@ -30,7 +30,7 @@ afterEach(() => vi.restoreAllMocks());
 describe("Simple search", () => {
   it("is the first tab and sends its values as bound parameters", async () => {
     const { spy } = await renderAt("/search");
-    expect(await screen.findByRole("tab", { name: "Search", selected: true })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Investigate", level: 1 })).toBeVisible();
     expect(
       screen.getByRole("button", { name: "Ask in plain English", pressed: false }),
     ).toBeVisible();
@@ -100,10 +100,12 @@ describe("Simple search", () => {
     const detail = screen.getByText("Raw event").closest("div")?.parentElement
       ?.parentElement as HTMLElement;
     const host = within(detail).getAllByRole("link", { name: "bastion" })[0] as HTMLElement;
-    expect(host).toHaveAttribute("href", "/investigations#host=bastion");
+    expect(host).toHaveAttribute("href", "/investigate/people#host=bastion");
     await userEvent.click(host);
-    await screen.findByRole("heading", { level: 1, name: "Investigations" });
-    expect(window.location.pathname + window.location.hash).toBe("/investigations#host=bastion");
+    await screen.findByRole("heading", { level: 1, name: "Investigate" });
+    expect(window.location.pathname + window.location.hash).toBe(
+      "/investigate/people#host=bastion",
+    );
     await screen.findByRole("group", { name: /Investigation lanes/ });
     const call = spy.mock.calls.find(([u]) => String(u).includes("/api/entities/graph"));
     expect(String(call?.[0])).toContain("kind=host");
@@ -124,7 +126,7 @@ describe("Simple search", () => {
     expect(screen.queryByRole("button", { name: "Ask in plain English" })).toBeNull();
     view.unmount();
     await renderAt("/ask");
-    expect(await screen.findByRole("heading", { name: "Search", level: 1 })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Investigate", level: 1 })).toBeVisible();
     expect(
       screen.getByRole("button", { name: "Ask in plain English", pressed: true }),
     ).toBeVisible();
@@ -134,7 +136,10 @@ describe("Simple search", () => {
     );
     expect(screen.getByLabelText("Search text")).toBeVisible();
     const nav = screen.getByRole("navigation", { name: "Primary" });
-    expect(within(nav).getByText("Search")).toHaveAttribute("aria-current", "page");
+    expect(within(nav).getByRole("link", { name: "Investigate" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
   });
 
   it("saves the compiled SQL with the Simple text as its origin", async () => {

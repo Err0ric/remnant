@@ -4,8 +4,22 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mockApi, type MockAuth } from "./mockApi";
 
+/** A rail area, then one of its tabs in the page header (ADR-0038). */
+async function goTo(area: string, tab?: string) {
+  const nav = screen.getByRole("navigation", { name: "Primary" });
+  await userEvent.click(within(nav).getByRole("link", { name: area }));
+  if (tab) {
+    const tabs = await screen.findByRole("navigation", { name: `${area} tabs` });
+    await userEvent.click(within(tabs).getByRole("link", { name: tab }));
+  }
+}
+
 async function openAi(auth: MockAuth = { mode: "open" }) {
   window.history.replaceState(null, "", "/ai");
+  return openAiAt(auth);
+}
+
+async function openAiAt(auth: MockAuth = { mode: "open" }) {
   const spy = mockApi("Codename", auth);
   vi.resetModules();
   const { loadBranding } = await import("@/lib/branding");
@@ -13,7 +27,7 @@ async function openAi(auth: MockAuth = { mode: "open" }) {
   const { App } = await import("@/app/App");
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(<App initialTheme="dark" queryClient={client} />);
-  await screen.findByRole("heading", { level: 1, name: "AI usage" });
+  await screen.findByRole("heading", { level: 1 });
   return spy;
 }
 
@@ -23,7 +37,10 @@ describe("AI usage (ADR-0015)", () => {
   it("shows services with review status and lets an admin change it", async () => {
     const spy = await openAi();
     const nav = screen.getByRole("navigation", { name: "Primary" });
-    expect(within(nav).getByText("AI usage")).toHaveAttribute("aria-current", "page");
+    expect(within(nav).getByRole("link", { name: "AI usage" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
     expect(await screen.findByText("1 not approved in use")).toBeVisible();
     const table = screen.getByRole("region", { name: "AI services seen in network logs" });
     const row = within(table).getByText("ChatGPT").closest("tr") as HTMLElement;
@@ -72,7 +89,7 @@ describe("AI usage (ADR-0015)", () => {
       ([u, i]) => String(u).endsWith("/api/ai/services/chatgpt/data-level") && i?.method === "PUT",
     );
     expect(JSON.parse(String(put?.[1]?.body))).toEqual({ data_level: "internal" });
-    await userEvent.click(screen.getByRole("tab", { name: "Agents" }));
+    await goTo("Agents");
     const agents = await screen.findByRole("table", { name: "Agents" });
     expect(within(agents).getByText("Claude Code on ws-0042")).toBeVisible();
     expect(within(agents).getByText("Changed")).toBeVisible();
@@ -81,43 +98,47 @@ describe("AI usage (ADR-0015)", () => {
 
   it("shows MCP servers and Claude usage with sensitive-data signals", async () => {
     await openAi();
-    await userEvent.click(screen.getByRole("tab", { name: "MCP servers" }));
+    await goTo("Agents", "MCP servers");
     const mcp = await screen.findByRole("region", { name: "MCP servers" });
     expect(within(mcp).getByText("paste-share")).toBeVisible();
     expect(within(mcp).getByText("inventory, telemetry")).toBeVisible();
-    await userEvent.click(screen.getByRole("tab", { name: "Claude usage" }));
+    await goTo("AI usage", "People");
     const people = await screen.findByRole("region", { name: "Claude Code by person" });
     const row = within(people).getByText("alice@example.com").closest("tr") as HTMLElement;
     expect(within(row).getByText("12.50")).toBeVisible();
     expect(within(row).getByText("1 signal")).toBeVisible();
   });
 
-  it("lists its tabs in the left nav and keeps the open one in the URL", async () => {
+  it("shows its tabs in the page header and keeps the open one in the path (ADR-0038)", async () => {
     await openAi();
-    const nav = screen.getByRole("navigation", { name: "Primary" });
-    const sections = within(nav).getByRole("list", { name: "AI usage sections" });
-    expect(within(sections).getByText("Services")).toHaveAttribute("aria-current", "location");
-    await userEvent.click(within(sections).getByText("MCP servers"));
-    expect(window.location.hash).toBe("#mcp");
-    expect(screen.getByRole("tab", { name: "MCP servers" })).toHaveAttribute(
-      "aria-selected",
-      "true",
+    const tabs = screen.getByRole("navigation", { name: "AI usage tabs" });
+    expect(within(tabs).getByRole("link", { name: "Services" })).toHaveAttribute(
+      "aria-current",
+      "page",
     );
-    await userEvent.click(screen.getByRole("tab", { name: "Agents" }));
-    expect(window.location.hash).toBe("#agents");
-    expect(within(sections).getByText("Agents")).toHaveAttribute("aria-current", "location");
+    await userEvent.click(within(tabs).getByRole("link", { name: "People" }));
+    expect(window.location.pathname).toBe("/ai/people");
+    await goTo("Agents", "MCP servers");
+    expect(window.location.pathname).toBe("/agents/mcp");
+  });
+
+  it("opens links from before the areas at their new address", async () => {
+    window.history.replaceState(null, "", "/ai#mcp");
+    await openAiAt();
+    await screen.findByRole("region", { name: "MCP servers" });
+    expect(window.location.pathname + window.location.hash).toBe("/agents/mcp");
   });
 
   it("gives analysts read-only status and no settings", async () => {
     await openAi({ mode: "login", signedIn: true, role: "analyst" });
     expect(await screen.findByText("Not approved")).toBeVisible();
     expect(screen.queryByLabelText("Review status of ChatGPT")).toBeNull();
-    expect(screen.queryByRole("tab", { name: "Review and alerts" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Review" })).toBeNull();
   });
 
   it("saves the AI watch", async () => {
     const spy = await openAi();
-    await userEvent.click(screen.getByRole("tab", { name: "Review and alerts" }));
+    await goTo("AI usage", "Review");
     const watch = await screen.findByRole("region", { name: "AI watch" });
     await userEvent.click(within(watch).getByLabelText("Watch for new AI use"));
     await userEvent.click(within(watch).getByRole("button", { name: "Save" }));

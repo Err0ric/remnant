@@ -14,7 +14,7 @@ Tokens below are the contract. They land in `frontend/src/styles/tokens.css` and
 
 | Principle | In practice |
 |---|---|
-| Enterprise, not app-like | Full app chrome (top bar, labeled nav, breadcrumbs, command bar). No floating gimmicks, no oversized hero text |
+| Enterprise, not app-like | Full app chrome (top bar, labeled nav, area tabs, command bar). No floating gimmicks, no oversized hero text |
 | Readable first, dense second | 14px UI text, 13px data. Density toggles exist, but the default is comfortable to read for a whole shift |
 | One accent | Blue marks interaction and selection. Severity colors only mean severity |
 | Show the work | SQL, filters, time range, source scope, and "computed from" lines are always visible |
@@ -104,32 +104,28 @@ Shown as a filled badge with a text label, never color alone.
 ## 5. Application shell
 
 ```
-+-------------------------------------------------------------------------------+
-| [logo] Remnant | Security workspace  [ Jump to  Ctrl K ]     env  theme  user  sign out |  48px top bar
-+------------------+------------------------------------------------------------+
-| General          | Home > Investigate > Search                                |
-|   Dashboard      | Search                                       (page title)  |
-|   Search         | Run query  Save  Schedule  Export  Columns   Last run ...  |  command bar
-| Investigate      |------------------------------------------------------------|
-| > Search         | [Time range: Last 24h] [Source: linux_sshd] + Add filter   |  filter chips
-|   Investigations | Simple | Ask in plain English | SQL     (tabs)            |
-|   Saved searches | +--------------------------------------------------------+ |
-| Detect           | | Results  23 items                                      | |
-|   Detection rules| | > row                                                  | |
-|   Schedules      | | v row (expanded: fields | raw, actions)                | |
-| AI               | | > row                                                  | |
-|   AI usage       | | 1 to 10 of 23                    Previous  Next         | |
-| System           | +--------------------------------------------------------+ |
-|   Health         |                                                            |
-|                  |                                                            |
-| ---------------- |                                                            |
-|   Settings       |  (pinned to the foot; opens its own sub-nav)               |
-+------------------+------------------------------------------------------------+
++-------------------------------------------------------------------------------------+
+| [logo] Remnant | Security workspace [ Jump to Ctrl K ]  Updated 1 min ago  Refresh  [bell 9]  (sun)  user |  48px
++------------------+------------------------------------------------------------------+
+| Dashboard        | Investigate                                         (area title) |
+| Alerts         9 | Search | People & devices | Saved searches 17          (tabs)     |
+| Investigate      |------------------------------------------------------------------|
+| AI usage         | Run query  Save  Schedule  Export  Columns          Last run ... |
+| Agents           |------------------------------------------------------------------|
+| Microsoft 365    | [Last 24 hours] [Source: linux_sshd] + Filter  (o 9 sources)     |
+| Health           | +--------------------------------------------------------------+ |
+|                  | | Results  23 items                                            | |
+|                  | | > row                                                        | |
+|                  | | v row (expanded: fields | raw, Around this event)            | |
+| ---------------- | +--------------------------------------------------------------+ |
+| Settings         |                                                                  |
++------------------+------------------------------------------------------------------+
 ```
 
 - **Top bar** is dark in both themes, 48px, and stays in view on scroll. Contains product mark, workspace label, a compact **Jump to** button with the shortcut (it opens the command palette, so it is styled as a button, not a text field), an optional environment label (`server.environment_label`, for example "Lab"; hidden when unset, never the raw host or IP), theme toggle, and user menu.
-- **Left nav** is 220px, labeled, grouped by section in order of daily use (F48): General (Dashboard), Investigate, Detect, AI, System (Health, also reached from the Dashboard health strip). One label per meaning: **Agents** is the AI agents tab of AI usage; the Health tab for log collectors is **Endpoint agents**. Configuration lives under **Settings**, which has its own sub-nav (Start here, Data, Access, AI, Alerts, Records; D70). Items hidden by role (an Auditor sees no Settings items they cannot use). Settings stays in view on short screens: the section list scrolls, the pinned entry does not. Collapses to an icon rail below 1100px and stacks on phones. From tablet width up it stays in view under the top bar, and **Settings** is pinned to its foot below a divider, out of the way of daily work. A page with tabs (AI usage, Health) always lists them under its nav item, indented on a hairline, so every tab is one click away; only the open page marks its current tab; the tab lives in the URL (`/ai#agents`) so nav links, Back, and the command palette (`AI usage › Agents`) all reach it.
-- **Page header**: breadcrumb, title, then a command bar of text buttons. The primary command is in accent text; destructive commands are never in the command bar.
+- **Left nav** (ADR-0038) lists **areas**, one row each, with a 16px icon and a label, in the morning's order: Dashboard, Alerts (with the open count), Investigate, AI usage, Agents, Microsoft 365 (once built), Health; **Settings** is pinned to its foot below a divider and opens its own sub-nav (Start here, Data, Access, AI, Alerts, Records; D70). 200px wide; between 768 and 1100px it shows icons only, with the label as a tooltip; on phones it opens from the Menu button. Items hidden by role. One label per meaning: **Agents** is the AI agents area; the Health tab for log collectors is **Endpoint agents**.
+- **Top bar** right side (ADR-0038 row 9): **Updated N min ago** and **Refresh** (refetches everything on the page), the **Alerts** button with the open count (the same number as the rail, for a collapsed rail), the theme toggle as a sun or moon icon with a tooltip, and the user.
+- **Page header**: the area title, then the area's **tabs** (a tab row with counts; each tab has its own URL, `/<area>/<tab>`), then a command bar of text buttons. No breadcrumb, except on entity pages. The primary command is in accent text; destructive commands are never in the command bar.
 
 ---
 
@@ -207,8 +203,8 @@ Icons: Lucide, 16px in nav and buttons, 14px in tables, 1.5px stroke. No emoji a
 
 | Do | Don't |
 |---|---|
-| Labeled nav grouped by task | Icon-only navigation as the default |
-| Breadcrumbs and a page title on every page | Pages without a clear "where am I" |
+| Labeled nav, one row per area, tabs in the page header | Icon-only navigation as the default (icons only on a collapsed rail) |
+| An area title and its tabs on every page | Pages without a clear "where am I" |
 | Expand detail inline under the row | Side drawers or modals for reading an event |
 | Show SQL, filters, scope, and timing | Hide the query behind "AI magic" |
 | Severity only for severity, always with a label | Red buttons for emphasis, color-only status |

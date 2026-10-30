@@ -20,7 +20,7 @@ async function renderAt(path: string) {
       queryClient={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
     />,
   );
-  await screen.findByRole("heading", { name: "Search", level: 1 });
+  await screen.findByRole("heading", { name: "Investigate", level: 1 });
   return spy;
 }
 
@@ -157,6 +157,6 @@ describe("Search text stays out of server requests (D90)", () => {
       ]),
     );
     const { recentSearches } = await import("@/lib/searchUrl");
-    expect(recentSearches()[0]!.url).toBe("/search#tab=sql&q=SELECT%208&range=24h");
+    expect(recentSearches()[0]!.url).toBe("/investigate/search#tab=sql&q=SELECT%208&range=24h");
   });
 });

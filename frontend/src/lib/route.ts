@@ -28,26 +28,28 @@ export type PageId =
   | "mcp"
   | "enrichment"
   | "audit"
-  | "about";
+  | "about"
+  | "agents";
 
 const PATHS: Record<PageId, string> = {
   home: "/",
   overview: "/overview",
-  search: "/search",
+  search: "/investigate/search",
   ask: "/ask",
   sources: "/sources",
   templates: "/templates",
   users: "/users",
   providers: "/providers",
   me: "/me",
-  saved: "/saved",
-  rules: "/rules",
-  schedules: "/schedules",
+  saved: "/investigate/saved",
+  rules: "/alerts/rules",
+  schedules: "/alerts/schedules",
   dashboard: "/dashboard",
   alerts: "/alerts",
   targets: "/alert-targets",
   ai: "/ai",
-  investigate: "/investigations",
+  investigate: "/investigate/people",
+  agents: "/agents",
   identities: "/identities",
   setup: "/setup",
   health: "/health",
@@ -59,26 +61,103 @@ const PATHS: Record<PageId, string> = {
 };
 const CHANGE = "app:navigate";
 
-export function pageFromPath(pathname: string): PageId {
-  const match = (Object.keys(PATHS) as PageId[]).find((id) => pathname === PATHS[id]);
-  return match ?? "overview";
+/** Tabs a page shows as `/<page path>/<tab>` (ADR-0038 row 3). The first is the default
+ * and has no segment of its own. */
+export const PAGE_TABS: Partial<Record<PageId, readonly string[]>> = {
+  ai: ["services", "people", "settings"],
+  agents: ["agents", "mcp"],
+  health: ["sources", "enrichment", "agents", "devices", "alerts"],
+  alerts: ["open", "closed", "muted"],
+  audit: ["activity", "ai", "integrity"],
+};
+
+/** Paths before ADR-0038, kept so links already sent (alert messages, bookmarks) open the
+ * same place. A legacy path's `#tab` becomes the tab segment. */
+const LEGACY: Record<string, PageId> = {
+  "/search": "search",
+  "/saved": "saved",
+  "/rules": "rules",
+  "/schedules": "schedules",
+  "/investigations": "investigate",
+};
+/** Tabs that moved from AI usage to the Agents area. */
+const AI_TO_AGENTS = new Set(["agents", "mcp"]);
+
+interface Place {
+  page: PageId;
+  tab: string;
 }
 
-export function pathFor(page: PageId): string {
-  return PATHS[page];
+function parse(pathname: string, hash: string): Place {
+  const path = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+  const exact = (Object.keys(PATHS) as PageId[]).find((id) => path === PATHS[id]);
+  const legacyHashTab = (page: PageId) =>
+    PAGE_TABS[page]?.includes(hash) && hash !== PAGE_TABS[page]?.[0] ? hash : "";
+  if (exact) {
+    if (exact === "ai" && AI_TO_AGENTS.has(hash)) return { page: "agents", tab: hash };
+    return { page: exact, tab: legacyHashTab(exact) };
+  }
+  if (LEGACY[path]) return { page: LEGACY[path], tab: "" };
+  for (const id of Object.keys(PAGE_TABS) as PageId[]) {
+    const base = PATHS[id];
+    if (path.startsWith(`${base}/`)) {
+      const tab = path.slice(base.length + 1);
+      if (PAGE_TABS[id]?.includes(tab)) return { page: id, tab };
+    }
+  }
+  return { page: "overview", tab: "" };
+}
+
+function here(): Place {
+  return parse(window.location.pathname, window.location.hash.replace(/^#/, ""));
+}
+
+export function pageFromPath(pathname: string): PageId {
+  return parse(pathname, "").page;
+}
+
+export function pathFor(page: PageId, tab?: string): string {
+  const first = PAGE_TABS[page]?.[0];
+  return tab && tab !== first ? `${PATHS[page]}/${tab}` : PATHS[page];
+}
+
+/** The canonical address for the current one: legacy paths and `#tab` hashes become
+ * `/<page>/<tab>`; other hash state (`#item=...`) is kept. Returns null when unchanged. */
+export function canonical(): string | null {
+  const { page, tab } = here();
+  const hash = window.location.hash.replace(/^#/, "");
+  const keep =
+    hash && !PAGE_TABS[page]?.includes(hash) && !AI_TO_AGENTS.has(hash) ? `#${hash}` : "";
+  if (page === "overview" && window.location.pathname !== PATHS.overview) return null;
+  const target = pathFor(page, tab) + window.location.search + keep;
+  return target === window.location.pathname + window.location.search + window.location.hash
+    ? null
+    : target;
+}
+
+function target(page: PageId, section?: string): string {
+  if (section && PAGE_TABS[page]?.includes(section)) return pathFor(page, section);
+  return PATHS[page] + (section ? `#${section}` : "");
 }
 
 /** Replaces the current address with a page, without a new history entry (Home's choice). */
 export function redirect(page: PageId, section?: string) {
-  window.history.replaceState(null, "", PATHS[page] + (section ? `#${section}` : ""));
+  window.history.replaceState(null, "", target(page, section));
   window.dispatchEvent(new Event(CHANGE));
 }
 
-/** Opens a page; `section` picks one of its tabs (kept in the URL as `#section`). */
+/** Opens a page. `section` is one of its tabs (`/health/sources`) or other state kept in
+ * the URL fragment (`#item=<id>`). */
 export function navigate(page: PageId, section?: string) {
-  const target = PATHS[page] + (section ? `#${section}` : "");
-  if (window.location.pathname + window.location.hash === target) return;
-  window.history.pushState(null, "", target);
+  const to = target(page, section);
+  if (window.location.pathname + window.location.hash === to) return;
+  window.history.pushState(null, "", to);
+  window.dispatchEvent(new Event(CHANGE));
+}
+
+/** Opens a tab of a page with other state in the fragment: `/health/sources#source=x`. */
+export function navigateTab(page: PageId, tab: string, state: string) {
+  window.history.pushState(null, "", `${pathFor(page, tab)}#${state}`);
   window.dispatchEvent(new Event(CHANGE));
 }
 
@@ -92,26 +171,29 @@ function subscribe(callback: () => void) {
 }
 
 export function usePage(): PageId {
-  return useSyncExternalStore(subscribe, () => pageFromPath(window.location.pathname));
+  return useSyncExternalStore(subscribe, () => here().page);
+}
+
+/** The open tab of the current page, "" for its first. */
+export function useTab(): string {
+  return useSyncExternalStore(subscribe, () => here().tab);
 }
 
 function currentHash(): string {
   return window.location.hash.replace(/^#/, "");
 }
 
-/** The section named in the URL (`/ai#agents`), or "" when there is none. */
+/** State kept in the URL fragment (`#item=<id>`, `#source=<id>`), or "" when there is none. */
 export function useSection(): string {
   return useSyncExternalStore(subscribe, currentHash);
 }
 
-/** A page's tab, kept in the URL so the left nav can link to it and Back works.
- * Unknown or missing sections fall back to the first allowed tab. */
+/** A page's tab, kept in the path so links reach it and Back works (ADR-0038). Unknown or
+ * missing tabs fall back to the first allowed one. */
 export function useSectionTab<T extends string>(allowed: readonly T[]): [T, (next: T) => void] {
-  const hash = useSection();
-  const tab = (allowed as readonly string[]).includes(hash) ? (hash as T) : (allowed[0] as T);
-  const set = (next: T) => {
-    window.history.replaceState(null, "", `${window.location.pathname}#${next}`);
-    window.dispatchEvent(new Event(CHANGE));
-  };
+  const current = useTab();
+  const page = usePage();
+  const tab = (allowed as readonly string[]).includes(current) ? (current as T) : (allowed[0] as T);
+  const set = (next: T) => navigate(page, next);
   return [tab, set];
 }

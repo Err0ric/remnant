@@ -29,7 +29,7 @@ describe("Health: the former Overview (F55, ADR-0034 row 11)", () => {
   it("answers am I blind: totals, every source's flow, and gaps in words", async () => {
     await renderAt("/overview");
     expect(await screen.findByRole("heading", { name: "Health", level: 1 })).toBeVisible();
-    expect(window.location.pathname + window.location.hash).toBe("/health#sources");
+    expect(window.location.pathname + window.location.hash).toBe("/health");
     const events = await screen.findByRole("button", { name: /^Events, last 24 hours/ });
     expect(events).toHaveTextContent("70");
     expect(events).toHaveTextContent("+25% vs a usual day");
@@ -56,7 +56,7 @@ describe("Health: the former Overview (F55, ADR-0034 row 11)", () => {
     await renderAt("/health");
     const status = await screen.findByRole("region", { name: "Detections and schedules" });
     await userEvent.click(within(status).getByRole("button", { name: "Failed logon" }));
-    expect(await screen.findByRole("heading", { name: "Detection rules", level: 1 })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Alerts", level: 1 })).toBeVisible();
   });
 
   it("shows alert delivery to admins only", async () => {

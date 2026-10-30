@@ -67,7 +67,7 @@ describe("AI Watch on the Dashboard (ADR-0035 Part 2)", () => {
     await userEvent.click(
       within(watch).getByRole("button", { name: "2 blocked consent attempts" }),
     );
-    await vi.waitFor(() => expect(window.location.pathname).toBe("/search"));
+    await vi.waitFor(() => expect(window.location.pathname).toBe("/investigate/search"));
     await vi.waitFor(() =>
       expect(
         spy.mock.calls.some(

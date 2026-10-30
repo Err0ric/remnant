@@ -1,5 +1,6 @@
 import { LogOut, Menu, Moon, Search, Sun, X } from "lucide-react";
 import type { User } from "@/lib/api";
+import { AlertsButton, Freshness } from "./Freshness";
 import { navigate } from "@/lib/route";
 import { ENVIRONMENT_LABEL, PRODUCT_NAME } from "@/lib/branding";
 import type { Theme } from "@/lib/theme";
@@ -91,14 +92,20 @@ export function TopBar({
             {ENVIRONMENT_LABEL}
           </span>
         ) : null}
+        {user !== undefined ? (
+          <>
+            <Freshness />
+            <AlertsButton />
+          </>
+        ) : null}
         <button
           type="button"
           onClick={onToggleTheme}
           aria-label={`Switch to ${next} theme`}
-          className="flex h-8 items-center gap-1.5 rounded border border-white/20 px-2.5 hover:bg-white/10"
+          title={`Switch to ${next} theme`}
+          className="flex h-8 w-8 items-center justify-center rounded border border-white/20 hover:bg-white/10"
         >
           {theme === "dark" ? <Sun size={16} aria-hidden /> : <Moon size={16} aria-hidden />}
-          <span className="hidden sm:inline">{theme === "dark" ? "Light" : "Dark"}</span>
         </button>
         {user && onSignOut ? (
           <>

@@ -50,7 +50,7 @@ describe("Command palette", () => {
     expect(options[0]).toHaveTextContent("Saved searches");
     expect(options[0]).toHaveAttribute("aria-selected", "true");
     await userEvent.keyboard("{Enter}");
-    await waitFor(() => expect(window.location.pathname).toBe("/saved"));
+    await waitFor(() => expect(window.location.pathname).toBe("/investigate/saved"));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
@@ -69,7 +69,7 @@ describe("Command palette", () => {
     const dialog = await openWithKeys();
     await userEvent.type(within(dialog).getByRole("combobox"), "failed ssh by");
     await userEvent.click(await within(dialog).findByText("Failed SSH by source"));
-    await waitFor(() => expect(window.location.pathname).toBe("/saved"));
+    await waitFor(() => expect(window.location.pathname).toBe("/investigate/saved"));
     expect(
       await screen.findByRole("region", { name: "Run Failed SSH by source" }),
     ).toBeInTheDocument();
@@ -80,7 +80,7 @@ describe("Command palette", () => {
     const dialog = await openWithKeys();
     await userEvent.type(within(dialog).getByRole("combobox"), "linux_sshd");
     await userEvent.click(await within(dialog).findByText("linux_sshd"));
-    await waitFor(() => expect(window.location.pathname).toBe("/search"));
+    await waitFor(() => expect(window.location.pathname).toBe("/investigate/search"));
     await waitFor(() => {
       const bodies = spy.mock.calls
         .filter(([u, i]) => String(u).endsWith("/api/query") && i?.method === "POST")

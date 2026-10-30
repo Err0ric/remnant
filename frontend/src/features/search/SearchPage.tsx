@@ -14,7 +14,13 @@ import { openSavedSearch } from "@/lib/savedSeed";
 import { navigate } from "@/lib/route";
 import { seedSchedule } from "@/lib/scheduleSeed";
 import { RUN_SEARCH_EVENT, takeSearchSeed } from "@/lib/searchSeed";
-import { goToSearch, readSearchUrl, recordSearch, type SearchUrlState } from "@/lib/searchUrl";
+import {
+  SEARCH_PATH,
+  goToSearch,
+  readSearchUrl,
+  recordSearch,
+  type SearchUrlState,
+} from "@/lib/searchUrl";
 import {
   addTerm,
   filterTerm,
@@ -269,7 +275,7 @@ export function SearchPage({
     (text.trim() !== "" && text !== lastRan.current.text);
   const startNew = () => {
     storeTab("simple");
-    goToSearch("/search");
+    goToSearch(SEARCH_PATH);
   };
   const edited = opened
     ? opened.origin?.simple_text !== undefined

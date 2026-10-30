@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Areas with tabs (ADR-0038, part 1: navigation)
+
+- The left nav lists **areas**, one row each with an icon: Dashboard, Alerts, Investigate, AI usage, Agents, Health, and Settings at the foot. Between 768 and 1100 px wide it shows icons only.
+- Each area's tabs sit in the page header, under its title, and every tab has its own address: `/investigate/search`, `/investigate/people`, `/alerts/rules`, `/ai/people`, `/agents/mcp`, `/health/enrichment`.
+- **Detect** is now part of **Alerts** (Rules and Schedules tabs). **Investigations** is now **People & devices** under Investigate. **Agents** and **MCP servers** moved from AI usage to the new **Agents** area. AI usage's Claude usage tab is now **People**, and Review and alerts is now **Review**. Health's last tab is **Delivery**.
+- The top bar has **Updated N min ago**, **Refresh** for everything on the page, an **Alerts** button with the open count, and the theme toggle as a sun or moon icon.
+- No breadcrumbs: the area and its open tab say where you are.
+
+**What changes for existing installs:** old addresses keep working. `/search`, `/saved`, `/rules`, `/schedules`, `/investigations`, and `#tab` links such as `/ai#mcp` and `/health#agents` open the same place at its new address, so links in alert messages already sent still land right.
+
 ### AI Watch: app consents counted once, blocked attempts apart (F66, part 2)
 
 - **App consent grants** counts granted consents only, once each: Graph and the Management API report the same consent, and they are matched by correlation id (else person, minute, and operation). Blocked attempts show under it ("2 blocked consent attempts", "Blocked: Lab Notes App (User.Read) by erin@example.com").

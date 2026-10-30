@@ -16,7 +16,7 @@ describe("Pivot links (product pass step 2)", () => {
     expect(kindForColumn("device_hostname")).toBe("host");
     expect(kindForColumn("source_id")).toBeNull();
     const href = entityHref({ kind: "user", value: "EXAMPLE\\alice" });
-    expect(href).toBe("/investigations#user=EXAMPLE%5Calice");
+    expect(href).toBe("/investigate/people#user=EXAMPLE%5Calice");
     expect(parseEntity(href.split("#")[1] ?? "")).toEqual({
       kind: "user",
       value: "EXAMPLE\\alice",
@@ -34,21 +34,23 @@ describe("Pivot links (product pass step 2)", () => {
       </p>,
     );
     const link = screen.getByRole("link", { name: "203.0.113.9" });
-    expect(link).toHaveAttribute("href", "/investigations#ip=203.0.113.9");
+    expect(link).toHaveAttribute("href", "/investigate/people#ip=203.0.113.9");
     expect(screen.queryByRole("link", { name: "-" })).toBeNull();
     await userEvent.click(link);
-    expect(window.location.pathname + window.location.hash).toBe("/investigations#ip=203.0.113.9");
+    expect(window.location.pathname + window.location.hash).toBe(
+      "/investigate/people#ip=203.0.113.9",
+    );
   });
 
   it("tells addresses from machine names in a Who list", () => {
     render(<EntityList machines={["10.0.0.5", "ws-0042"]} />);
     expect(screen.getByRole("link", { name: "10.0.0.5" })).toHaveAttribute(
       "href",
-      "/investigations#ip=10.0.0.5",
+      "/investigate/people#ip=10.0.0.5",
     );
     expect(screen.getByRole("link", { name: "ws-0042" })).toHaveAttribute(
       "href",
-      "/investigations#host=ws-0042",
+      "/investigate/people#host=ws-0042",
     );
   });
 
