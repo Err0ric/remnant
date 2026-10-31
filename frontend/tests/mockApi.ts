@@ -1083,6 +1083,13 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       });
       return json({ device_id: `d${watched.length}` }, 201);
     }
+    if (url.endsWith("/api/rules/builtin/refusals")) {
+      return json({
+        enabled: init?.method === "PUT" ? false : true,
+        threshold: 10,
+        window_minutes: 10,
+      });
+    }
     if (url.endsWith("/api/settings/sso")) {
       return json({
         status: "on",

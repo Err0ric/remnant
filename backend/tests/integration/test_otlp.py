@@ -352,3 +352,46 @@ def test_sensitive_signals_are_searchable(lab: dict[str, Any]) -> None:
         .json()
     )
     assert res["row_count"] == 1
+
+
+def test_refusals_become_events_and_the_built_in_detection_raises_one_item(
+    lab: dict[str, Any],
+) -> None:
+    """ADR-0040: refused ingest tokens, sign-ins, and API tokens land in server_events; ten
+    from one address in ten minutes raise one item, on by default; never the token."""
+    for _ in range(8):
+        assert send(lab, {"resourceLogs": []}, token="rmt_guessing-a-token").status_code == 401
+    bad = lab["admin"].get("/api/users", headers={"Authorization": "Bearer cli_not-a-token"})
+    assert bad.status_code == 401
+    anon = lab["ana"].__class__(lab["app"], base_url=str(lab["admin"].base_url))
+    for _ in range(2):
+        anon.post("/api/auth/login", json={"username": "admin", "password": "wrong-password-1"})
+    lab["app"].state.ingest.run_once()
+    rows = (
+        lab["admin"]
+        .post(
+            "/api/query",
+            json={
+                "sql": "SELECT message, actor_user_name, status_id, raw FROM events"
+                " WHERE source_id = 'server_events' ORDER BY time"
+            },
+            headers=lab["h"],
+        )
+        .json()["rows"]
+    )
+    kinds = [r[0] for r in rows]
+    assert kinds.count("server.refused.otlp_token") == 8
+    assert "server.refused.api_token" in kinds and "server.refused.sign_in" in kinds
+    assert all(r[2] == 2 for r in rows)
+    assert not any("rmt_guessing-a-token" in r[3] or "wrong-password" in r[3] for r in rows)
+    assert any('"token_prefix":"rmt_gues"' in r[3] for r in rows)
+    watch = lab["app"].state.refusal_watch
+    assert watch.tick() >= 1
+    items = lab["admin"].get("/api/alerts", params={"state": "open"}).json()["items"]
+    mine = [i for i in items if i["subject"].startswith("refusals:")]
+    assert len(mine) == 1 and mine[0]["severity"] == "high" and mine[0]["count"] >= 10
+    assert lab["admin"].get("/api/rules/builtin/refusals").json()["enabled"] is True
+    off = lab["admin"].put(
+        "/api/rules/builtin/refusals", json={"enabled": False, "threshold": 10}, headers=lab["h"]
+    )
+    assert off.status_code == 200 and off.json()["enabled"] is False

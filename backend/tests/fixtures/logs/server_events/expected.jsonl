@@ -1,0 +1,10 @@
+{"class_uid": 3002, "message": "server.refused.otlp_token", "parse_status": "ok", "src_endpoint_ip": "2001:db8::7", "status_id": 2}
+{"actor_user_name": "dana", "class_uid": 3002, "message": "server.refused.sign_in", "parse_status": "ok", "src_endpoint_ip": "192.0.2.44", "status_id": 2}
+{"class_uid": 3002, "message": "server.refused.sso", "parse_status": "ok", "src_endpoint_ip": "192.0.2.44", "status_id": 2}
+{"class_uid": 3002, "message": "server.refused.otlp_token", "parse_status": "ok", "src_endpoint_ip": "2001:db8::7", "status_id": 2}
+{"actor_user_name": "erin@example.com", "class_uid": 3002, "message": "server.refused.sign_in", "parse_status": "ok", "src_endpoint_ip": "198.51.100.20", "status_id": 2}
+{"actor_user_name": "root", "class_uid": 3002, "message": "server.refused.sign_in", "parse_status": "ok", "src_endpoint_ip": "198.51.100.20", "status_id": 2}
+{"class_uid": 3002, "message": "server.refused.sso", "parse_status": "ok", "src_endpoint_ip": "198.51.100.20", "status_id": 2}
+{"class_uid": 3002, "message": "server.refused.otlp_token", "parse_status": "ok", "src_endpoint_ip": "203.0.113.9", "status_id": 2}
+{"class_uid": 3002, "message": "server.refused.sso", "parse_status": "ok", "src_endpoint_ip": "198.51.100.20", "status_id": 2}
+{"actor_user_name": "dana", "class_uid": 3002, "message": "server.refused.sign_in", "parse_status": "ok", "src_endpoint_ip": "192.0.2.44", "status_id": 2}

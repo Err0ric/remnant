@@ -124,8 +124,14 @@ class AuthService:
     ) -> tuple[User, str, str]:
         name = username.lower()
         keys = [f"ip:{ip}", f"user-ip:{name}|{ip}"]
-        self._reserve(keys)  # counted before the slow check, so parallel attempts cannot race it
-        self._reserve_account(name, keys)
+        try:
+            self._reserve(keys)  # counted before the slow check: parallel tries cannot race it
+            self._reserve_account(name, keys)
+        except RateLimitedError:
+            self.audit.notify(
+                "auth.login", ip, {"reason": "rate_limited", "username": username[:100]}
+            )
+            raise
         user = self.users.authenticate(username, password, allowed=self.password_allowed)
         if user is None:
             self.audit.write("auth.login", "failure", None, ip, {"username": username[:100]})

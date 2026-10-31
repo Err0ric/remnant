@@ -5,6 +5,7 @@ holds secrets, passwords, tokens, or raw event content.
 """
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -15,9 +16,26 @@ from app.meta.db import MetaDB
 Outcome = Literal["success", "failure", "denied"]
 
 
+# Refusals the server also records as events in the lake (ADR-0040): action -> event.
+REFUSALS = {"auth.login": "sign_in", "auth.sso_refused": "sso"}
+Listener = Callable[[str, str | None, dict[str, Any]], None]
+
+
 class AuditLog:
     def __init__(self, meta: MetaDB) -> None:
         self._meta = meta
+        # Called for each refusal in REFUSALS (ADR-0040); never with a password or token.
+        self.listener: Listener | None = None
+
+    def notify(self, action: str, ip: str | None, detail: dict[str, Any]) -> None:
+        """Tell the listener about a refusal that has no audit row of its own (a sign-in
+        refused by the rate limit is not written row by row)."""
+        event = REFUSALS.get(action)
+        if event and self.listener is not None:
+            try:
+                self.listener(event, ip, detail)
+            except Exception:  # noqa: S110  # recording a refusal never fails the request
+                pass
 
     def write(
         self,
@@ -49,6 +67,8 @@ class AuditLog:
                 " VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (*content, chain),
             )
+        if outcome == "failure":
+            self.notify(action, ip, detail or {})
 
 
 # --- reading (Slice 5 audit log viewer) -----------------------------------------------------

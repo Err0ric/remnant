@@ -112,6 +112,13 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | `DELETE` | `/api/dashboards/{dashboard_id}/panels/{schedule_id}` | Takes the panel off this dashboard; the schedule keeps running. |  |  |
 | `PATCH` | `/api/dashboards/{dashboard_id}/sections` | Rename Section |  | `old`: string<br>`new`: string |
 
+### Detection rules
+
+| Method | Path | What it does | Query | JSON body (`?` optional) |
+|---|---|---|---|---|
+| `GET` | `/api/rules/builtin/refusals` | Get Refusals |  |  |
+| `PUT` | `/api/rules/builtin/refusals` | Put Refusals |  | `enabled`: boolean<br>`threshold`: integer |
+
 ### Enrichment
 
 | Method | Path | What it does | Query | JSON body (`?` optional) |

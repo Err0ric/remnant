@@ -85,6 +85,13 @@ def _source(request: Request) -> tuple[SourceConfig, Match]:
             token_id=match.token_id if match else None,
             token_prefix=token[:8] if token.startswith("rmt_") and not match else None,
         )
+        request.app.state.server_events.refused(
+            "otlp_token",
+            client_ip(request),
+            reason=reason,
+            token_id=match.token_id if match else None,
+            token_prefix=token[:8] if token.startswith("rmt_") and not match else None,
+        )
         raise AuthRequiredError("Send the source's ingest token as a bearer token")
     return found[0], match
 

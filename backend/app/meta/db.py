@@ -988,6 +988,11 @@ MIGRATIONS: tuple[Migration, ...] = (
     """
     ALTER TABLE enrichment_feeds ADD COLUMN confirmed_at TEXT;
     """,
+    # 55: the built-in refused-credentials detection (ADR-0040), on by default (owner).
+    """
+    ALTER TABLE install_settings ADD COLUMN refusal_alert INTEGER NOT NULL DEFAULT 1;
+    ALTER TABLE install_settings ADD COLUMN refusal_threshold INTEGER NOT NULL DEFAULT 10;
+    """,
 )
 
 

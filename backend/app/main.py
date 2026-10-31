@@ -12,6 +12,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import structlog
 from fastapi import FastAPI, Request
@@ -57,6 +58,7 @@ from app.api.overview import router as overview_router
 from app.api.plugins import router as plugins_router
 from app.api.providers import router as providers_router
 from app.api.query import router as query_router
+from app.api.refusals import router as refusals_router
 from app.api.rules import router as rules_router
 from app.api.schedules import router as schedules_router
 from app.api.searches import router as searches_router
@@ -129,6 +131,7 @@ from app.ingest.maintenance import LakeMaintenance
 from app.ingest.otlp import Spool
 from app.ingest.otlp_tokens import OtlpTokens
 from app.ingest.quiet import QuietWatch
+from app.ingest.server_events import ServerEvents
 from app.ingest.sources import SourceStore
 from app.ingest.watcher import IngestService
 from app.llm.agent import AskAgent
@@ -149,6 +152,7 @@ from app.search.handoff import HandoffService
 from app.search.health import HealthService
 from app.search.identity import IdentityStore
 from app.search.overview import OverviewService
+from app.search.refusals import RefusalWatch
 from app.search.saved import SavedSearchStore
 from app.search.schedules import ScheduleService
 from app.templates.changes import record as record_template_versions
@@ -269,6 +273,7 @@ async def _schedule_loop(
     quiet: QuietWatch,
     ai_watch: AiWatch,
     health: HealthService,
+    refusals: RefusalWatch,
 ) -> None:
     while True:
         try:
@@ -287,6 +292,10 @@ async def _schedule_loop(
             await asyncio.to_thread(health.tick)
         except Exception as exc:  # never fatal; retried next tick
             log.warning("device_watch.failed", error=type(exc).__name__)
+        try:
+            await asyncio.to_thread(refusals.tick)
+        except Exception as exc:  # never fatal; retried next tick
+            log.warning("refusal_watch.failed", error=type(exc).__name__)
         try:
             await asyncio.to_thread(alerts.tick)
         except Exception as exc:  # never fatal; retried next tick
@@ -327,6 +336,7 @@ def _lifespan(config: AppConfig) -> Callable[[FastAPI], AbstractAsyncContextMana
                         app.state.quiet,
                         app.state.ai_watch,
                         app.state.health,
+                        app.state.refusal_watch,
                     )
                 )
             )
@@ -465,6 +475,19 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         spool_root=config.paths.data_dir / "spool",
     )
     app.state.otlp_spool = Spool(config.paths.data_dir / "spool")
+    # ADR-0040: refusals become events in the built-in server_events source.
+    app.state.server_events = ServerEvents(app.state.otlp_spool, app.state.sources)
+    events_ = app.state.server_events
+
+    def on_refusal(event: str, ip: str | None, detail: dict[str, Any]) -> None:
+        events_.refused(
+            event,
+            ip,
+            reason=str(detail.get("reason") or "") or None,
+            username=str(detail.get("username") or "") or None,
+        )
+
+    app.state.auth.audit.listener = on_refusal
     app.state.sources.web_port = config.server.port
     app.state.mcp_settings = McpSettingsStore(meta)
     app.state.mcp = McpServer(app.state.engine, meta, app.state.auth.audit, app_version())
@@ -497,9 +520,10 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         app.state.auth.audit,
     )
     app.state.dashboards = DashboardStore(meta, lambda: app.state.auth.clock())
-    app.state.alert_items = AlertItems(
+    app.state.alert_items = alert_items_ = AlertItems(
         meta, app.state.auth.audit, clock=lambda: app.state.auth.clock()
     )
+    app.state.refusal_watch = RefusalWatch(app.state.engine, meta, alert_items_)
     app.state.schedules = ScheduleService(
         meta,
         config.schedules,
@@ -652,6 +676,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     app.include_router(sources_router, prefix="/api")
     app.include_router(plugins_router, prefix="/api")
     app.include_router(sso_settings_router, prefix="/api")
+    app.include_router(refusals_router, prefix="/api")
     app.include_router(otlp_router, prefix="/api")
     app.include_router(ai_router, prefix="/api")
     app.include_router(mcp_router, prefix="/api")

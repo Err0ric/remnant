@@ -62,6 +62,12 @@ def current_user(request: Request) -> User:
 
     resolved = resolve_session(request)
     if resolved is None:
+        token, from_cookie = presented_token(request)
+        if token and not from_cookie:
+            # A bearer token that is not a live API token (ADR-0040): never the token.
+            request.app.state.server_events.refused(
+                "api_token", client_ip(request), token_prefix=token[:8]
+            )
         raise AuthRequiredError("Sign in to continue")
     info, user, from_cookie = resolved
     if from_cookie and request.method not in _SAFE_METHODS:

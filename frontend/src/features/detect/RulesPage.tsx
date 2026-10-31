@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { Command, PageHeader } from "@/components/shell/PageHeader";
+import { BuiltInRefusals } from "./BuiltInRefusals";
 import { ApiError, api, type RuleRun, type SigmaRule } from "@/lib/api";
 import { navigate } from "@/lib/route";
 import { seedSchedule } from "@/lib/scheduleSeed";
@@ -114,6 +115,7 @@ export function RulesPage({ isAdmin, canRun }: RulesPageProps) {
         }
       />
       <div className="flex flex-col gap-3 px-5 py-3">
+        <BuiltInRefusals isAdmin={isAdmin} />
         {importing ? <RuleImportPanel onClose={() => setImporting(false)} /> : null}
         {bulk ? (
           <BulkSchedule

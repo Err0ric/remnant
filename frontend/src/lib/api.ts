@@ -2082,6 +2082,15 @@ export const api = {
   aiSessions: (days = 7) => request<AgentSession[]>(`/api/ai/sessions?days=${days}`),
   aiSession: (id: string) => request<SessionTimeline>(`/api/ai/sessions/${encodeURIComponent(id)}`),
   plugins: () => request<PluginsInfo>("/api/plugins"),
+  refusalRule: () =>
+    request<{ enabled: boolean; threshold: number; window_minutes: number }>(
+      "/api/rules/builtin/refusals",
+    ),
+  setRefusalRule: (body: { enabled: boolean; threshold: number }) =>
+    request<{ enabled: boolean; threshold: number; window_minutes: number }>(
+      "/api/rules/builtin/refusals",
+      { method: "PUT", body: JSON.stringify(body) },
+    ),
   ssoSettings: () => request<SsoSettings>("/api/settings/sso"),
   ssoTest: () => request<{ ok: boolean; message: string }>("/api/settings/sso/test", post({})),
   newOtlpToken: (sourceId: string, name: string) =>

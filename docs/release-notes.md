@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Refused credentials are events, with a built-in alert (ADR-0040)
+
+- Every refusal the server makes is now an event in a built-in **server_events** source: refused ingest tokens, refused sign-ins (wrong password, the sign-in rate limit, single sign-on refusals), and refused API tokens, with the address and the reason. Never a password or a token: only a token's id or its first 8 characters. At most 300 a minute are written; the rest are counted.
+- A built-in detection, **Refused credentials from one address**, is **on by default**: one High alert per address per hour when an address has 10 or more refusals in 10 minutes. It is on Alerts > Rules, where an admin can turn it off or change the threshold. Other starter rules stay off.
+- What changes for existing installs: the `server_events` source appears after the first refusal, visible to admins only until you grant it to a group.
+
 ### Feeds: "Out of date" after a successful check (F67)
 
 - A feed whose list has not changed (the server answers Not Modified, or this month's GeoIP edition is already installed) now counts as current from that check, not from when the content last changed. Enrichment shows "Content unchanged, confirmed current 2 min ago" under the download date, and Health uses the same time.

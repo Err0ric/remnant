@@ -1,0 +1,59 @@
+schema_version: 1
+id: server_events
+name: Refused credentials on this server
+version: 1.0.0
+author: starter-pack
+description: >-
+  This server's own security events (ADR-0040), written by the server into the built-in
+  server_events source: refused ingest tokens (OTLP), refused sign-ins (wrong password,
+  the sign-in rate limit, single sign-on refusals), and refused API tokens. Never a
+  password or a token: the token's id or its first 8 characters, the reason, and the
+  address the request came from stay in unmapped.
+category: identity
+vendor: generic
+classification_default: local_only
+
+envelope:
+  type: none
+
+match:
+  regex: '^\{"signal":"log".*"service":"app-server".*"event":"server\.refused\.'
+  min_confidence: 0.95
+
+payload:
+  format: json
+  json: { root: "$" }
+
+transforms:
+  - { field: time, op: timestamp, args: { format: iso8601 } }
+
+mapping:
+  class_uid: 3002            # Authentication
+  fields:
+    time: { from: time }
+    activity_id: { default: 1 }   # Logon
+    status_id: { default: 2 }     # Failure
+    src_endpoint_ip: { from: attr.client }
+    actor_user_name: { from: attr.username }
+    message: { from: event }
+    status_detail: { from: attr.reason }
+
+tests:
+  - name: a refused ingest token names the token by its id
+    input: '{"signal":"log","time":"2026-10-30T20:00:01+00:00","service":"app-server","event":"server.refused.otlp_token","attr":{"reason":"revoked","token_id":"7d2b0e1c-0000-4000-8000-000000000001","client":"198.51.100.20","dropped_since_last":0},"resource":{"service_name":"app-server"}}'
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { src_endpoint_ip: 198.51.100.20, message: server.refused.otlp_token, status_id: 2, status_detail: revoked }
+  - name: a refused sign-in names the user name tried
+    input: '{"signal":"log","time":"2026-10-30T20:00:02+00:00","service":"app-server","event":"server.refused.sign_in","attr":{"username":"admin","client":"203.0.113.9","dropped_since_last":0},"resource":{"service_name":"app-server"}}'
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { src_endpoint_ip: 203.0.113.9, actor_user_name: admin, message: server.refused.sign_in, status_id: 2 }
+  - name: a refused API token keeps only its first characters
+    input: '{"signal":"log","time":"2026-10-30T20:00:03+00:00","service":"app-server","event":"server.refused.api_token","attr":{"token_prefix":"cli_7Hq2","client":"192.0.2.44","dropped_since_last":0},"resource":{"service_name":"app-server"}}'
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { src_endpoint_ip: 192.0.2.44, message: server.refused.api_token, status_id: 2 }

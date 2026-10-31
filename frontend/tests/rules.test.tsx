@@ -141,3 +141,20 @@ describe("Detection rules", () => {
     expect((made[0]?.target_ids as string[]).length).toBe(1);
   });
 });
+
+describe("Built-in detection (ADR-0040)", () => {
+  it("shows refused credentials as on, and an admin can turn it off", async () => {
+    const spy = await renderAt("/rules");
+    const card = await screen.findByRole("region", { name: "Built-in detection" });
+    expect(within(card).getByText("On")).toBeVisible();
+    expect(card).toHaveTextContent("10 or more refused ingest tokens");
+    await userEvent.click(within(card).getByRole("button", { name: "Turn off" }));
+    await vi.waitFor(() =>
+      expect(
+        spy.mock.calls.some(
+          ([u, i]) => String(u).endsWith("/api/rules/builtin/refusals") && i?.method === "PUT",
+        ),
+      ).toBe(true),
+    );
+  });
+});
