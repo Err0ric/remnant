@@ -1010,6 +1010,10 @@ MIGRATIONS: tuple[Migration, ...] = (
     ALTER TABLE alert_items ADD COLUMN people TEXT;
     ALTER TABLE alert_items ADD COLUMN devices TEXT;
     """,
+    # 58: the live search time limit (ADR-0036 row 5), one setting for every role.
+    """
+    ALTER TABLE install_settings ADD COLUMN live_limit_minutes INTEGER NOT NULL DEFAULT 30;
+    """,
 )
 
 

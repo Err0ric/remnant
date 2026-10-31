@@ -81,7 +81,22 @@ APP_PUBLIC_NAME=siem.corp.example
 APP_PUBLIC_URL=https://siem.corp.example
 ```
 
-The UI makes ordinary requests only (no WebSocket or server-sent events), so no buffering or upgrade settings are needed; keep `proxy_read_timeout` above the 30 second query timeout.
+The UI makes ordinary requests, plus one server-sent event stream for **Live** on Search (`/api/search/live`, ADR-0036). Keep `proxy_read_timeout` above the 30 second query timeout for ordinary requests. For Live:
+
+- The server sends `X-Accel-Buffering: no` and `Cache-Control: no-cache`, which nginx honors; if your proxy ignores them, turn buffering off for that path.
+- A stream lasts up to the live time limit (Settings, default 30 minutes). A proxy read timeout shorter than that ends a quiet stream early; the page then shows it stopped and offers Resume. The server sends a keep-alive line every 2 seconds, so a read timeout of 60 seconds or more is enough.
+
+```nginx
+location /api/search/live {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_buffering off;
+    proxy_read_timeout 120s;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+}
+```
+
+Caddy streams `text/event-stream` responses without buffering by default; no change is needed.
 
 Allow port 8080 on the app's host only from the proxy nodes. `APP_PUBLIC_URL` must be the address users type, because the setup link, alert links, and the SSO return address are built from it. The generated certificate is valid for 825 days; to renew it, stop the app, delete `data/tls/`, and start it again.
 

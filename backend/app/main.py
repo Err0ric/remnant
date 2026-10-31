@@ -50,6 +50,7 @@ from app.api.health_page import router as health_page_router
 from app.api.identities import router as identities_router
 from app.api.integrity import router as integrity_router
 from app.api.library import router as library_router
+from app.api.live import router as live_router
 from app.api.m365 import router as m365_router
 from app.api.mcp import router as mcp_router
 from app.api.meta import app_version
@@ -155,6 +156,7 @@ from app.search.handoff import HandoffService
 from app.search.health import HealthService
 from app.search.identity import IdentityStore
 from app.search.library import LIBRARY_DIR, Library, load_dir
+from app.search.live import LiveRegistry
 from app.search.overview import OverviewService
 from app.search.refusals import RefusalWatch
 from app.search.saved import SavedSearchStore
@@ -446,6 +448,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     )
     app.state.searches = SavedSearchStore(meta, lambda: app.state.auth.clock())
     app.state.library = Library(load_dir(config.paths.library or LIBRARY_DIR))
+    app.state.live = LiveRegistry(meta)
     app.state.groups = GroupStore(meta, app.state.auth.audit, lambda: app.state.auth.clock())
     budget = server_budget_mb(config.server.memory_limit_mb)
     qt = query_threads(config.server.query_threads, config.server.max_concurrent_queries)
@@ -709,6 +712,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     app.include_router(addresses_router, prefix="/api")
     app.include_router(around_router, prefix="/api")
     app.include_router(library_router, prefix="/api")
+    app.include_router(live_router, prefix="/api")
     app.include_router(timeline_router, prefix="/api")
     app.include_router(audit_router, prefix="/api")
 

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Live search, server side (ADR-0036 part 1)
+
+- `GET /api/search/live?q=<sql>` follows new event rows of a row query as server-sent events (`start`, `rows`, `lag`, `notice`, `end`). It polls every 2 seconds on your own sources through the query guard. Queries with GROUP BY, aggregates, DISTINCT, window functions, UNION, WITH, joins, or LIMIT are refused with the reason ("Live works on event rows. Remove GROUP BY, or use Run.").
+- At most 2 live searches per person (browser, CLI, and TUI together); a third is refused naming the open ones, which can be stopped (`GET /api/search/live/streams`, `DELETE .../{id}`). Each stops after the live time limit, one administrator setting (default 30 minutes, `PUT /api/settings/live`, audited `settings.live_limit`). More than 1,000 new events in one poll stops the stream and says so; Resume (`since`) first sends what arrived while paused, the newest 1,000.
+- A stream ends at the next poll if your source access shrinks. Each source's freshness is sent every 10 seconds, with a connector's pull interval.
+- One audit row at start (`search.live_start`, with the SQL and its hash) and one at stop (`search.live_stop`, with the reason, duration, and events sent).
+- Live reads events whose own time is within a day before the stream started; an older event that arrives late is in Search, not in Live.
+- What changes for existing installs: migration 58 adds the time limit setting. Behind nginx, see `docs/install/tls.md` for the Live location block. The Search toggle and the CLI move to this stream in the next changes.
+
 ### Dashboard: Add a pack (ADR-0033 row 5)
 
 - In a dashboard's settings (Edit), **Add a pack** lists the query library packs that fit your sources. Tick queries and **Add**: each becomes your private saved search (your existing copy if you have one), a private schedule with the query's suggested interval (hourly or daily, last 24 hours) and flag, and a panel in a section named after the query's group. Each panel runs once at once so it fills.

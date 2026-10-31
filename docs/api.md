@@ -298,6 +298,11 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | `POST` | `/api/library/{pack_id}/{query_id}/copy` | Save as my own (row 4): a private saved search the user owns. Audited search.create with the library entry. |  |  |
 | `POST` | `/api/library/{pack_id}/{query_id}/replace` | Replace my copy (row 7): the user's copy takes the pack's current SQL and version. Audited search.update; the user's schedules of it take the change as an edit does. |  |  |
 | `GET` | `/api/people/{person}/timeline` | One row per action by this person across the sources the caller may read, newest first, with the forms of the name that matched. Audited `search.timeline`. | `?days` (optional): integer |  |
+| `GET` | `/api/search/live` | Follow new rows of `q` (row queries only). With `since` (Resume), first sends what arrived after it, up to 1,000 rows, newest kept. Audited `search.live_start` and `search.live_stop`. | `?q`: string<br>`?client` (optional): `browser` &#124; `cli` &#124; `tui`<br>`?sources` (optional): list of string<br>`?since` (optional): date-time<br>`?after` (optional): list of string |  |
+| `GET` | `/api/search/live/streams` | The caller's open live streams, browser, CLI, and TUI together (row 5). |  |  |
+| `DELETE` | `/api/search/live/streams/{stream_id}` | Stop one of the caller's streams; it ends at its next poll. |  |  |
+| `GET` | `/api/settings/live` | Get Limit |  |  |
+| `PUT` | `/api/settings/live` | The live time limit for every role (row 5). Audited `settings.live_limit`. |  | `minutes`: integer |
 
 ### Searches
 

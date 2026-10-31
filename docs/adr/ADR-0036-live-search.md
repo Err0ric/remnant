@@ -39,6 +39,13 @@ Events reach the lake within a few seconds of arrival: the file watcher polls ev
 
 **Pause** ends the server-side stream (row 12) and keeps the table still; **Resume** starts a new stream from the last event shown; **Stop** ends it and clears Live. New rows get a short `--accent-subtle` row tint that fades once (one motion, respecting reduced motion).
 
+## As built (2026-10-31, part 1: server)
+
+- `app/search/live.py`: the shape check (sqlglot: one SELECT from `events`, no WITH, JOIN, subquery, GROUP BY, HAVING, DISTINCT, aggregate, window, UNION, or LIMIT; placeholders only `{{start}}`/`{{end}}`), the cursor columns `_live_t`/`_live_id` and `time_observed >= $since` added server side, the registry (2 per user), and the lag query. `app/api/live.py`: the SSE endpoint, streams list and stop, the limit setting.
+- The cursor reads partitions from one day before the stream's start (`LOOKBACK`), so a poll stays a small query; an event whose own time is older than that and arrives during the stream is not followed. Recorded in the release note.
+- The refusal of a third stream is a 409 naming the open streams; the page lists them with Stop from `/api/search/live/streams`.
+- A keep-alive comment is sent on polls with no rows, so proxies with a 60 s read timeout keep the stream.
+
 ## Consequences
 
 - Watching something happen no longer means pressing Run repeatedly, and the CLI, TUI, and browser follow the same way.
