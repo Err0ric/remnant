@@ -8,7 +8,7 @@ from dataclasses import fields
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Query, Request, Response, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
@@ -16,16 +16,19 @@ from app.ai.accounts import accounts
 from app.ai.agents import agents
 from app.ai.agents_overview import overview as agents_overview
 from app.ai.catalog import NON_USAGE, Catalog, DataLevel, Service, ServiceDef
+from app.ai.inventory import Exclusions, inventory
+from app.ai.inventory import export as inventory_export
 from app.ai.sessions import sessions, timeline
 from app.ai.usage import ServiceUse, Usage
 from app.ai.watch import AiWatch
 from app.ai.watch_summary import source_classes
 from app.ai.watch_summary import summary as watch_summary
 from app.alerts.items import AlertItem, AlertItems
-from app.api.access import AdminUser, CurrentUser, client_ip
+from app.api.access import AdminUser, CurrentUser, client_ip, require_role
 from app.api.dashboard_sections import HistoryOut, KpiOut
 from app.auth.service import AuthService
 from app.auth.users import User
+from app.core.errors import NotFoundError
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.engine.views import permitted_sources, scope_sources
 from app.meta.db import MetaDB
@@ -798,3 +801,142 @@ async def agents_overview_get(
         missing_devices=out.missing_devices,
         tools=[ToolRowOut(**_slots(t)) for t in out.tools],
     )
+
+
+InventoryType = Literal["service", "agent", "mcp", "m365_app"]
+Exporter = Annotated[User, Depends(require_role("admin", "analyst"))]
+
+
+class ExclusionOut(BaseModel):
+    reason: str
+    by: str
+    at: str
+
+
+class InventoryItemOut(BaseModel):
+    type: InventoryType
+    key: str
+    name: str
+    status: Status | None
+    people: int
+    devices: int | None
+    first_seen: str | None
+    last_seen: str | None
+    where: list[str]
+    excluded: ExclusionOut | None
+
+
+class InventoryOut(BaseModel):
+    days: int
+    items: list[InventoryItemOut]
+    sources_in_scope: list[str]
+
+
+class ExcludeIn(BaseModel):
+    type: InventoryType
+    key: str = Field(min_length=1, max_length=500)
+    reason: str = Field(min_length=1, max_length=500)
+
+
+async def _inventory(request: Request, user: User, days: int) -> tuple[list[Any], list[str]]:
+    meta: MetaDB = request.app.state.meta
+    allowed = await run_in_threadpool(permitted_sources, meta, user)
+    ident = await run_in_threadpool(request.app.state.identities.load)
+    excluded = await run_in_threadpool(Exclusions(meta).all)
+    return await run_in_threadpool(
+        inventory,
+        request.app.state.engine,
+        request.app.state.ai_usage,
+        _catalog(request),
+        allowed,
+        ident,
+        excluded,
+        datetime.now(UTC),
+        days,
+    )
+
+
+def _item_out(i: Any) -> InventoryItemOut:
+    d = _slots(i)
+    d["excluded"] = ExclusionOut(**_slots(i.excluded)) if i.excluded else None
+    return InventoryItemOut(**d)
+
+
+@router.get("/ai/inventory")
+async def ai_inventory(
+    request: Request, user: CurrentUser, days: Annotated[int, Query(ge=1, le=90)] = 30
+) -> InventoryOut:
+    """Everything AI seen (ADR-0038 section 7): services, agents, MCP servers, and
+    Microsoft 365 apps with a granted consent, each with its exclusion if any. Audited
+    ai.view."""
+    items, sources = await _inventory(request, user, days)
+    await run_in_threadpool(
+        _audit(request).audit.write, "ai.view", "success", user.user_id, client_ip(request),
+        {"sources_in_scope": sources, "view": "inventory"},
+    )  # fmt: skip
+    return InventoryOut(days=days, items=[_item_out(i) for i in items], sources_in_scope=sources)
+
+
+@router.get("/ai/inventory/export")
+async def ai_inventory_export(
+    request: Request,
+    user: Exporter,
+    format: Literal["csv", "json"] = "csv",  # the query parameter's name
+    days: Annotated[int, Query(ge=1, le=90)] = 30,
+    type: InventoryType | None = None,  # the query parameter's name
+    excluded: bool = False,
+) -> Response:
+    """The current view as a file (row 22): admins and analysts only, every export
+    audited `ai.inventory_export` with its filters and row count."""
+    items, sources = await _inventory(request, user, days)
+    rows = [
+        i for i in items
+        if (type is None or i.type == type) and (i.excluded is not None) == excluded
+    ]  # fmt: skip
+    body = inventory_export(rows, format)
+    await run_in_threadpool(
+        _audit(request).audit.write, "ai.inventory_export", "success", user.user_id,
+        client_ip(request),
+        {"format": format, "days": days, "type": type, "excluded": excluded,
+         "rows": len(rows), "sources_in_scope": sources},
+    )  # fmt: skip
+    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M")
+    return Response(
+        body,
+        media_type="text/csv" if format == "csv" else "application/json",
+        headers={"Content-Disposition": f'attachment; filename="ai-inventory-{stamp}.{format}"'},
+    )
+
+
+@router.put("/ai/inventory/exclusions")
+async def ai_inventory_exclude(body: ExcludeIn, request: Request, user: AdminUser) -> ExclusionOut:
+    """Move an item to Excluded with a reason (row 21). It still shows in Search, alerts,
+    and AI Watch. Audited ai.inventory_exclude."""
+    meta: MetaDB = request.app.state.meta
+    ex = await run_in_threadpool(
+        Exclusions(meta).set, body.type, body.key, body.reason, user.username
+    )
+    await run_in_threadpool(
+        _audit(request).audit.write, "ai.inventory_exclude", "success", user.user_id,
+        client_ip(request), {"type": body.type, "key": body.key[:200], "reason": ex.reason},
+    )  # fmt: skip
+    return ExclusionOut(**_slots(ex))
+
+
+@router.delete("/ai/inventory/exclusions", status_code=status.HTTP_204_NO_CONTENT)
+async def ai_inventory_include(
+    request: Request,
+    user: AdminUser,
+    type: InventoryType,  # the query parameter's name
+    key: Annotated[str, Query(min_length=1, max_length=500)],
+) -> Response:
+    """Move an item back to Active. Audited ai.inventory_include."""
+    meta: MetaDB = request.app.state.meta
+    found = await run_in_threadpool(Exclusions(meta).clear, type, key)
+    if not found:
+        raise NotFoundError("That item is not excluded")
+    await run_in_threadpool(
+        _audit(request).audit.write, "ai.inventory_include", "success", user.user_id,
+        client_ip(request), {"type": type, "key": key[:200]},
+    )  # fmt: skip
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

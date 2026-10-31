@@ -1170,6 +1170,57 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         downloadable: true,
       });
     }
+    if (url.includes("/api/ai/inventory/export")) {
+      return new Response("type,name\nMCP server,github\n", { status: 200 });
+    }
+    if (url.includes("/api/ai/inventory/exclusions") && method === "PUT") {
+      return json({ reason: "IT's own server", by: "admin", at: "2026-10-30T12:00:00Z" });
+    }
+    if (url.includes("/api/ai/inventory")) {
+      const base = {
+        first_seen: "2026-10-20T10:00:00+00:00",
+        last_seen: "2026-10-30T10:00:00+00:00",
+      };
+      return json({
+        days: 30,
+        sources_in_scope: ["proxy"],
+        items: [
+          {
+            ...base,
+            type: "service",
+            key: "chatgpt",
+            name: "ChatGPT",
+            status: "not_approved",
+            people: 4,
+            devices: 5,
+            where: ["Network and proxy logs"],
+            excluded: null,
+          },
+          {
+            ...base,
+            type: "mcp",
+            key: "github",
+            name: "github",
+            status: "approved",
+            people: 2,
+            devices: 2,
+            where: ["Claude Code hooks plugin"],
+            excluded: null,
+          },
+          {
+            ...base,
+            type: "m365_app",
+            key: "Lab Notes App",
+            name: "Lab Notes App",
+            status: null,
+            people: 1,
+            devices: null,
+            where: ["Microsoft 365 consents"],
+            excluded: { reason: "Pilot app", by: "admin", at: "2026-10-29T10:00:00Z" },
+          },
+        ],
+      });
+    }
     if (url.includes("/api/agents/overview")) {
       const kpi = (n: number, b: number | null, d: string) => ({
         value: n,

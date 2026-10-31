@@ -993,6 +993,17 @@ MIGRATIONS: tuple[Migration, ...] = (
     ALTER TABLE install_settings ADD COLUMN refusal_alert INTEGER NOT NULL DEFAULT 1;
     ALTER TABLE install_settings ADD COLUMN refusal_threshold INTEGER NOT NULL DEFAULT 10;
     """,
+    # 56: AI inventory exclusions (ADR-0038 row 21): who excluded an item, when, and why.
+    """
+    CREATE TABLE ai_inventory_exclusions (
+        item_type   TEXT NOT NULL,
+        item_key    TEXT NOT NULL,
+        reason      TEXT NOT NULL,
+        excluded_by TEXT NOT NULL,
+        excluded_at TEXT NOT NULL,
+        PRIMARY KEY (item_type, item_key)
+    );
+    """,
 )
 
 

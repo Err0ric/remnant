@@ -100,6 +100,12 @@ export const AREAS: Area[] = [
     tabs: [
       { label: "Services", page: "ai", tab: "services" },
       { label: "People", page: "ai", tab: "people", aliases: ["claude usage"] },
+      {
+        label: "Inventory",
+        page: "ai",
+        tab: "inventory",
+        aliases: ["ai inventory", "export ai inventory"],
+      },
       { label: "Review", page: "ai", tab: "settings", adminOnly: true },
     ],
   },

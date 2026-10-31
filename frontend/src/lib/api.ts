@@ -1213,6 +1213,27 @@ export interface AgentAccounts {
   counts: Record<AccountTier, number>;
 }
 
+export type InventoryType = "service" | "agent" | "mcp" | "m365_app";
+
+export interface InventoryItem {
+  type: InventoryType;
+  key: string;
+  name: string;
+  status: AiStatus | null;
+  people: number;
+  devices: number | null;
+  first_seen: string | null;
+  last_seen: string | null;
+  where: string[];
+  excluded: { reason: string; by: string; at: string } | null;
+}
+
+export interface AiInventory {
+  days: number;
+  items: InventoryItem[];
+  sources_in_scope: string[];
+}
+
 export interface AgentTool {
   tool: string;
   mcp: boolean;
@@ -2277,6 +2298,24 @@ export const api = {
   deleteAiService: (id: string) =>
     request<void>(`/api/ai/services/${encodeURIComponent(id)}`, { method: "DELETE" }),
   aiMcpRules: () => request<AiMcpRule[]>("/api/ai/mcp-rules"),
+  aiInventory: (days = 30) => request<AiInventory>(`/api/ai/inventory?days=${days}`),
+  aiInventoryExport: (
+    format: "csv" | "json",
+    f: { days: number; type: InventoryType | null; excluded: boolean },
+  ) =>
+    requestText(
+      `/api/ai/inventory/export?format=${format}&days=${f.days}&excluded=${f.excluded}` +
+        (f.type ? `&type=${f.type}` : ""),
+    ),
+  excludeInventory: (type: InventoryType, key: string, reason: string) =>
+    request<{ reason: string; by: string; at: string }>(
+      "/api/ai/inventory/exclusions",
+      put({ type, key, reason }),
+    ),
+  includeInventory: (type: InventoryType, key: string) =>
+    request<void>(`/api/ai/inventory/exclusions?type=${type}&key=${encodeURIComponent(key)}`, {
+      method: "DELETE",
+    }),
   setAiMcpRule: (pattern: string, status: "approved" | "not_approved" | null) =>
     request<AiMcpRule[]>("/api/ai/mcp-rules", put({ pattern, status })),
   aiWatch: () => request<AiWatch>("/api/ai/watch"),

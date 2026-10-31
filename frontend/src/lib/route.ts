@@ -70,7 +70,7 @@ const CHANGE = "app:navigate";
 /** Tabs a page shows as `/<page path>/<tab>` (ADR-0038 row 3). The first is the default
  * and has no segment of its own. */
 export const PAGE_TABS: Partial<Record<PageId, readonly string[]>> = {
-  ai: ["services", "people", "settings"],
+  ai: ["services", "people", "inventory", "settings"],
   m365: ["overview", "sign-ins", "mail", "apps", "admin"],
   agents: ["overview", "sessions", "tools", "mcp", "accounts"],
   health: ["sources", "enrichment", "agents", "devices", "alerts"],

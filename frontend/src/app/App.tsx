@@ -229,7 +229,11 @@ export function App({ initialTheme, queryClient }: AppProps) {
                       ) : page === "m365" ? (
                         <M365Page />
                       ) : page === "ai" || page === "agents" ? (
-                        <AiUsagePage isAdmin={!user || user.role === "admin"} area={page} />
+                        <AiUsagePage
+                          isAdmin={!user || user.role === "admin"}
+                          canExport={!user || user.role !== "auditor"}
+                          area={page}
+                        />
                       ) : page === "identities" && (!user || user.role === "admin") ? (
                         <IdentitiesPage />
                       ) : page === "mcp" && (!user || user.role === "admin") ? (

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### AI usage: Inventory tab (ADR-0038 section 7)
+
+- **AI usage > Inventory** lists everything AI seen in the last 30 days in one table: AI services, agents, MCP servers (from telemetry, the MCP inventory, and the hooks plugin), and Microsoft 365 apps with a granted consent. Each row has type, review status, people, devices, first and last seen, and where it was seen.
+- Filter by type (with counts), switch between **Active** and **Excluded**, and group by type or status. An admin can exclude an item with a reason; it moves to Excluded with who excluded it and when, and still shows in Search, alerts, and AI Watch. Audited `ai.inventory_exclude` and `ai.inventory_include`.
+- **Export CSV** and **Export JSON** of the current view, for admins and analysts. Every export writes an `ai.inventory_export` audit row with its filters and row count. CSV cells that start like a formula are escaped.
+- What changes for existing installs: nothing to do. Migration 56 adds the exclusions table.
+
 ### Agents: Overview and Tools tabs (ADR-0038 section 6)
 
 - **Agents > Overview** is the area's first tab: sessions, people, tool calls, failed tool calls, not-approved MCP servers in use, and devices delivering late (records an hour or more behind, the plugin's offline queue), each against the window before and each opening its rows in Search. Devices that sent before the window and nothing in it are named under the numbers.

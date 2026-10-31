@@ -217,6 +217,41 @@ describe("Agent sessions from the hooks plugin (ADR-0026)", () => {
   });
 });
 
+describe("AI inventory (ADR-0038 section 7)", () => {
+  it("lists every type, splits Active from Excluded, and excludes with a reason", async () => {
+    window.history.replaceState(null, "", "/ai/inventory");
+    const spy = mockApi("Codename", { mode: "open" });
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    render(
+      <App
+        initialTheme="dark"
+        queryClient={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      />,
+    );
+    const card = await screen.findByRole("region", { name: "AI inventory" });
+    await within(card).findByText("ChatGPT");
+    expect(within(card).queryByText("Lab Notes App")).toBeNull();
+    const types = within(card).getByRole("group", { name: "Type" });
+    expect(within(types).getByRole("button", { name: /^MCP servers 1/ })).toBeVisible();
+    await userEvent.click(within(card).getByRole("button", { name: "Exclude github" }));
+    const form = within(card).getByRole("form", { name: "Exclude github" });
+    await userEvent.type(within(form).getByLabelText("Reason"), "IT's own server");
+    await userEvent.click(within(form).getByRole("button", { name: "Exclude" }));
+    expect(
+      spy.mock.calls.some(
+        ([u, init]) => String(u).includes("/api/ai/inventory/exclusions") && init?.method === "PUT",
+      ),
+    ).toBe(true);
+    await userEvent.click(within(card).getByRole("button", { name: /^Excluded/ }));
+    const row = (await within(card).findByText("Lab Notes App")).closest("tr") as HTMLElement;
+    expect(row).toHaveTextContent("Pilot app");
+    expect(within(card).getByRole("button", { name: "Export CSV" })).toBeVisible();
+  });
+});
+
 describe("Agents overview and tools (ADR-0038 section 6)", () => {
   async function openAt(path: string) {
     window.history.replaceState(null, "", path);

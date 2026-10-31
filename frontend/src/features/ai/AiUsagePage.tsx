@@ -18,11 +18,20 @@ import { AgentsCard } from "./AgentsCard";
 import { SessionsCard } from "./SessionsCard";
 import { AccountsCard } from "./AccountsCard";
 import { AgentsArea } from "./AgentsOverview";
+import { InventoryCard } from "./InventoryCard";
 import { AiSettings } from "./AiSettings";
 import { StatusBadge, StatusPicker } from "./StatusBadge";
 
 type Tab =
-  "services" | "overview" | "sessions" | "tools" | "mcp" | "accounts" | "people" | "settings";
+  | "services"
+  | "overview"
+  | "sessions"
+  | "tools"
+  | "mcp"
+  | "accounts"
+  | "people"
+  | "inventory"
+  | "settings";
 const KIND: Record<string, string> = {
   chat: "Chat",
   api: "API",
@@ -51,12 +60,14 @@ const TD = "px-3 py-2 align-top";
 
 interface AiUsagePageProps {
   isAdmin: boolean;
+  /** Admins and analysts export the inventory (ADR-0038 row 22). */
+  canExport?: boolean;
   /** AI usage (services, people, review) or Agents (sessions, MCP servers); ADR-0038. */
   area?: "ai" | "agents";
 }
 
 /** AI usage (ADR-0015 row 8): services, agents and MCP servers, and Claude usage. */
-export function AiUsagePage({ isAdmin, area = "ai" }: AiUsagePageProps) {
+export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsagePageProps) {
   const client = useQueryClient();
   const [range, setRange] = useState<TimeRangeId>("7d");
   const usage = useQuery({
@@ -94,8 +105,8 @@ export function AiUsagePage({ isAdmin, area = "ai" }: AiUsagePageProps) {
     area === "agents"
       ? ["overview", "sessions", "tools", "mcp", "accounts"]
       : isAdmin
-        ? ["services", "people", "settings"]
-        : ["services", "people"];
+        ? ["services", "people", "inventory", "settings"]
+        : ["services", "people", "inventory"];
   const [tab] = useSectionTab<Tab>(tabs);
   const data = tooBig ? fallback.data : usage.data;
   const notApproved =
@@ -429,6 +440,8 @@ export function AiUsagePage({ isAdmin, area = "ai" }: AiUsagePageProps) {
           ) : null}
 
           {tab === "accounts" ? <AccountsCard /> : null}
+
+          {tab === "inventory" ? <InventoryCard isAdmin={isAdmin} canExport={canExport} /> : null}
 
           {tab === "settings" && isAdmin ? <AiSettings /> : null}
         </ErrorBoundary>
