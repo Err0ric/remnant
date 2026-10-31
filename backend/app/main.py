@@ -35,6 +35,7 @@ from app.api.addresses import router as addresses_router
 from app.api.ai import router as ai_router
 from app.api.alert_items import router as alert_items_router
 from app.api.alerts import router as alerts_router
+from app.api.around import router as around_router
 from app.api.ask import router as ask_router
 from app.api.audit import router as audit_router
 from app.api.auth import router as auth_router
@@ -702,6 +703,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     app.include_router(handoff_router, prefix="/api")
     app.include_router(integrity_router, prefix="/api")
     app.include_router(addresses_router, prefix="/api")
+    app.include_router(around_router, prefix="/api")
     app.include_router(audit_router, prefix="/api")
 
     async def app_error(request: Request, exc: Exception) -> JSONResponse:

@@ -1213,6 +1213,23 @@ export interface AgentAccounts {
   counts: Record<AccountTier, number>;
 }
 
+export interface EventAround {
+  event_id: string;
+  at: string;
+  person: string[];
+  devices: string[];
+  addresses: string[];
+  joined_by_address: boolean;
+  columns: string[];
+  rows: Cell[][];
+  more: boolean;
+  likely_cause: string | null;
+  likely_rule: string;
+  sql: string;
+  start: string;
+  end: string;
+}
+
 export type InventoryType = "service" | "agent" | "mcp" | "m365_app";
 
 export interface InventoryItem {
@@ -2298,6 +2315,10 @@ export const api = {
   deleteAiService: (id: string) =>
     request<void>(`/api/ai/services/${encodeURIComponent(id)}`, { method: "DELETE" }),
   aiMcpRules: () => request<AiMcpRule[]>("/api/ai/mcp-rules"),
+  eventAround: (id: string, at: string) =>
+    request<EventAround>(
+      `/api/events/${encodeURIComponent(id)}/around?at=${encodeURIComponent(at)}`,
+    ),
   aiInventory: (days = 30) => request<AiInventory>(`/api/ai/inventory?days=${days}`),
   aiInventoryExport: (
     format: "csv" | "json",

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Around this event (ADR-0038 section 8)
+
+- Every expanded event in Search (and in the Microsoft 365 lists and saved-search runs) has **Around this event**: the rows within 5 minutes either side by the same person or the same device, from every source you can read, at most 50 (the nearest in time), newest last. Each Agents session step has **Around** too.
+- When the event names no person, the person who held its source address then (logons, User-ID, VPN, sign-ins) is used, so a proxy row with only an address joins the person.
+- **Likely cause** marks at most one row, in the accent tint: the nearest earlier row from another source with a failure status, or a message that says denied or blocked. The rule is in its tooltip. It is a hint; it never raises or closes an alert. No model is called.
+- **Open in Search** opens the same window as SQL. Every lookup is audited `search.around`.
+- What changes for existing installs: nothing to do.
+
 ### AI usage: Inventory tab (ADR-0038 section 7)
 
 - **AI usage > Inventory** lists everything AI seen in the last 30 days in one table: AI services, agents, MCP servers (from telemetry, the MCP inventory, and the hooks plugin), and Microsoft 365 apps with a granted consent. Each row has type, review status, people, devices, first and last seen, and where it was seen.

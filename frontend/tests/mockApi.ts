@@ -1170,6 +1170,56 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         downloadable: true,
       });
     }
+    if (url.includes("/around?at=")) {
+      const cols = [
+        "time",
+        "source_id",
+        "device_hostname",
+        "actor_user_name",
+        "src_endpoint_ip",
+        "message",
+        "event_id",
+        "status_id",
+      ];
+      return json({
+        event_id: ID,
+        at: "2026-10-09T23:04:36+00:00",
+        person: [],
+        devices: ["bastion"],
+        addresses: [],
+        joined_by_address: false,
+        columns: cols,
+        more: false,
+        rows: [
+          [
+            "2026-10-09T23:02:10+00:00",
+            "paloalto_traffic",
+            "bastion",
+            null,
+            "192.0.2.7",
+            "deny tcp 22",
+            "cause-1",
+            2,
+          ],
+          [
+            "2026-10-09T23:04:36+00:00",
+            "linux_sshd",
+            "bastion",
+            null,
+            null,
+            "Failed password for invalid user oracle",
+            ID,
+            null,
+          ],
+        ],
+        likely_cause: "cause-1",
+        likely_rule:
+          "The nearest earlier row from another source with a failure status, or a message that says denied or blocked",
+        sql: "SELECT 1 FROM events WHERE time >= {from} AND time < {to}",
+        start: "2026-10-09T22:59:36+00:00",
+        end: "2026-10-09T23:09:36+00:00",
+      });
+    }
     if (url.includes("/api/ai/inventory/export")) {
       return new Response("type,name\nMCP server,github\n", { status: 200 });
     }

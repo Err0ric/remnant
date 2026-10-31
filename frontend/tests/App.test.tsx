@@ -164,6 +164,25 @@ describe("Search page", () => {
     expect(screen.getByText("Local only")).toBeInTheDocument();
   });
 
+  it("shows the rows around an event with the likely cause marked (ADR-0038 row 23)", async () => {
+    await renderApp();
+    const row = (await screen.findByText("Failed password for invalid user oracle")).closest(
+      '[role="row"]',
+    ) as HTMLElement;
+    await userEvent.click(row);
+    await userEvent.click(await screen.findByRole("button", { name: "Around this event" }));
+    const box = await screen.findByRole("region", { name: "Around this event" });
+    const cause = (await within(box).findByText("Likely cause")).closest("tr") as HTMLElement;
+    expect(cause).toHaveTextContent("deny tcp 22");
+    expect(within(cause).getByText("Likely cause")).toHaveAttribute(
+      "title",
+      expect.stringMatching(/^Likely cause: The nearest earlier row/),
+    );
+    expect(within(box).getByText("This event")).toBeVisible();
+    await userEvent.click(within(box).getByRole("button", { name: "Open in Search" }));
+    expect(await screen.findByText(/From Around this event/)).toBeVisible();
+  });
+
   it("shows guard rejections inline and runs on Ctrl+Enter", async () => {
     const spy = await renderApp();
     await screen.findByText("Failed password for invalid user oracle");

@@ -1,10 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
-import { useContext } from "react";
+import { useContext, useState } from "react";
 import { api, type Cell, type GeoInfo, type IntelHit } from "@/lib/api";
 import { intelLine } from "@/lib/intel";
 import { geoLong } from "@/lib/geo";
 import { FieldActionsContext } from "./fieldActions";
 import { AddressHolders } from "./AddressHolders";
+import { AroundEvent } from "./AroundEvent";
 import { FieldButton } from "./FieldButton";
 import { ENTITY_COLUMNS, type InvestigateSeed } from "@/lib/investigateSeed";
 import { EntityLink } from "@/components/EntityLink";
@@ -102,6 +103,7 @@ export function EventDetail({ columns, row, selection, geo, intel }: EventDetail
   const srcIp = typeof record.src_endpoint_ip === "string" ? record.src_endpoint_ip : "";
   const when = typeof record.time === "string" ? record.time : null;
   const nobody = !record.actor_user_name;
+  const [aroundOpen, setAroundOpen] = useState(false);
 
   return (
     <div className="border-b border-border bg-surface-expand py-3.5 pl-12 pr-3.5">
@@ -136,6 +138,16 @@ export function EventDetail({ columns, row, selection, geo, intel }: EventDetail
               {selection.selected ? "Selected" : "Select"}
             </button>
           ) : null}
+          {eventId && when ? (
+            <button
+              type="button"
+              aria-pressed={aroundOpen}
+              onClick={() => setAroundOpen((v) => !v)}
+              className="h-7 rounded border border-border-strong px-3 text-text hover:bg-surface-head"
+            >
+              Around this event
+            </button>
+          ) : null}
           {focus ? (
             <button
               type="button"
@@ -160,6 +172,7 @@ export function EventDetail({ columns, row, selection, geo, intel }: EventDetail
       {full.isLoading ? (
         <div className="mb-2 text-sm text-text-muted">Loading full event…</div>
       ) : null}
+      {aroundOpen && eventId && when ? <AroundEvent eventId={eventId} at={when} /> : null}
       {srcIp && nobody && eventId ? <AddressHolders ip={srcIp} at={when} /> : null}
       <div className="flex flex-wrap gap-5">
         <dl className="m-0 grid min-w-0 flex-[1_1_420px] grid-cols-[150px_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-sm">

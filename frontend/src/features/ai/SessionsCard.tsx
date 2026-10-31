@@ -1,6 +1,7 @@
 import { EntityLink } from "@/components/EntityLink";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
+import { AroundEvent } from "@/features/search/AroundEvent";
 import { ApiError, api, type AgentAccount, type AgentSession, type SessionStep } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { TIER_LABEL, TierBadge } from "./AccountsCard";
@@ -158,6 +159,7 @@ interface DetailProps {
 }
 
 function Detail({ id, person, machine, session, steps, account }: DetailProps) {
+  const [around, setAround] = useState<SessionStep | null>(null);
   const late_ = steps.reduce((m, st) => Math.max(m, st.late_s ?? 0), 0);
   return (
     <div aria-label="Session detail" role="region">
@@ -213,7 +215,7 @@ function Detail({ id, person, machine, session, steps, account }: DetailProps) {
         {steps.map((st) => (
           <li
             key={st.event_id}
-            className="grid grid-cols-[5rem_5.5rem_minmax(0,1fr)_auto] items-baseline gap-x-3 border-b border-border py-1 text-sm last:border-0"
+            className="grid grid-cols-[5rem_5.5rem_minmax(0,1fr)_auto_auto] items-baseline gap-x-3 border-b border-border py-1 text-sm last:border-0"
           >
             <time
               dateTime={st.time}
@@ -244,9 +246,23 @@ function Detail({ id, person, machine, session, steps, account }: DetailProps) {
                 </span>
               ) : null}
             </span>
+            <button
+              type="button"
+              aria-pressed={around?.event_id === st.event_id}
+              aria-label={`Around this step at ${st.time.slice(11, 19)}`}
+              onClick={() => setAround(around?.event_id === st.event_id ? null : st)}
+              className="text-xs text-accent-text hover:underline"
+            >
+              Around
+            </button>
           </li>
         ))}
       </ol>
+      {around ? (
+        <div className="mt-2">
+          <AroundEvent eventId={around.event_id} at={around.time} />
+        </div>
+      ) : null}
     </div>
   );
 }
