@@ -1170,6 +1170,57 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         downloadable: true,
       });
     }
+    if (url.includes("/api/agents/overview")) {
+      const kpi = (n: number, b: number | null, d: string) => ({
+        value: n,
+        before: b,
+        extra: null,
+        drill: d,
+        drill_before: null,
+        extra_drill: null,
+      });
+      return json({
+        days: 7,
+        start: "2026-10-23T12:00:00+00:00",
+        end: "2026-10-30T12:00:00+00:00",
+        before: "2026-10-16T12:00:00+00:00",
+        has_source: true,
+        history: { compared: true, since: null },
+        sessions: kpi(12, 9, "SELECT 1 FROM events WHERE time >= {from} AND time < {to}"),
+        people: kpi(3, 3, "SELECT 2 FROM events WHERE time >= {from} AND time < {to}"),
+        calls: kpi(240, 180, "SELECT 3 FROM events WHERE time >= {from} AND time < {to}"),
+        failed: kpi(7, 2, "SELECT 4 FROM events WHERE time >= {from} AND time < {to}"),
+        mcp_not_approved: kpi(1, null, "SELECT 5 FROM events WHERE time >= {from} AND time < {to}"),
+        late_devices: kpi(0, null, "SELECT 6 FROM events WHERE time >= {from} AND time < {to}"),
+        missing_devices: ["ws-0420"],
+        tools: [
+          {
+            tool: "Bash",
+            mcp: false,
+            status: "built_in",
+            people: 3,
+            devices: 3,
+            calls: 120,
+            failed: 5,
+            first_seen: "2026-10-23T13:00:00+00:00",
+            last_seen: "2026-10-30T11:00:00+00:00",
+            drill: "SELECT 7 FROM events WHERE time >= {from} AND time < {to}",
+          },
+          {
+            tool: "paste-share",
+            mcp: true,
+            status: "not_approved",
+            people: 1,
+            devices: 1,
+            calls: 4,
+            failed: 0,
+            first_seen: "2026-10-28T09:00:00+00:00",
+            last_seen: "2026-10-29T09:00:00+00:00",
+            drill: "SELECT 8 FROM events WHERE time >= {from} AND time < {to}",
+          },
+        ],
+      });
+    }
     if (url.includes("/api/agents/accounts")) {
       return json({
         days: 30,

@@ -38,6 +38,7 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | Method | Path | What it does | Query | JSON body (`?` optional) |
 |---|---|---|---|---|
 | `GET` | `/api/agents/accounts` | Claude accounts the hooks plugin reported, by tier (ADR-0030 amendment): company confirmed by an Entra sign-in, company reported, company not confirmed, personal, or not checked; each with its evidence. Audited ai.view. | `?days` (optional): integer |  |
+| `GET` | `/api/agents/overview` | Agents > Overview and Tools (ADR-0038 section 6): sessions, people, tool calls, failures, MCP servers not approved, late or silent devices, and one row per tool, from the hooks plugin sources the caller may read. Audited ai.view. | `?days` (optional): integer |  |
 | `GET` | `/api/ai/agents` | AI agents (Claude Code per machine and person, MCP clients per machine, API keys) and what changed in the last 24 hours against the 30 days before, from the sources the caller may read. Audited ai.view. |  |  |
 | `GET` | `/api/ai/catalog` | Ai Catalog |  |  |
 | `GET` | `/api/ai/mcp-rules` | Mcp Rules |  |  |

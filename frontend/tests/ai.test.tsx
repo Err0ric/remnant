@@ -89,7 +89,7 @@ describe("AI usage (ADR-0015)", () => {
       ([u, i]) => String(u).endsWith("/api/ai/services/chatgpt/data-level") && i?.method === "PUT",
     );
     expect(JSON.parse(String(put?.[1]?.body))).toEqual({ data_level: "internal" });
-    await goTo("Agents");
+    await goTo("Agents", "Sessions");
     const agents = await screen.findByRole("table", { name: "Agents" });
     expect(within(agents).getByText("Claude Code on ws-0042")).toBeVisible();
     expect(within(agents).getByText("Changed")).toBeVisible();
@@ -214,6 +214,49 @@ describe("Agent sessions from the hooks plugin (ADR-0026)", () => {
     expect(items[2]).toHaveTextContent("Calls Read /home/dana/app/auth.py");
     expect(items[3]).toHaveTextContent("github create_issue");
     expect(items[1]).toHaveTextContent("42 chars");
+  });
+});
+
+describe("Agents overview and tools (ADR-0038 section 6)", () => {
+  async function openAt(path: string) {
+    window.history.replaceState(null, "", path);
+    mockApi("Codename", { mode: "open" });
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    render(
+      <App
+        initialTheme="dark"
+        queryClient={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      />,
+    );
+  }
+
+  it("opens on Overview with every number opening Search", async () => {
+    await openAt("/agents");
+    const box = await screen.findByRole("region", { name: "Overview" });
+    const kpi = await within(box).findByText("Failed tool calls");
+    const card = kpi.closest("[data-kpi]") as HTMLElement;
+    expect(within(card).getByRole("button", { name: /^Failed tool calls: 7\./ })).toBeVisible();
+    expect(within(box).getByRole("note")).toHaveTextContent("ws-0420");
+    await userEvent.click(within(card).getByRole("button", { name: /^Failed tool calls: 7\./ }));
+    expect(window.location.pathname).toBe("/investigate/search");
+  });
+
+  it("lists tools with their type and status", async () => {
+    await openAt("/agents/tools");
+    const box = await screen.findByRole("region", { name: "Tools" });
+    const row = (await within(box).findByText("paste-share")).closest("tr") as HTMLElement;
+    expect(within(row).getByText("MCP server")).toBeVisible();
+    expect(within(row).getByText("Not approved")).toBeVisible();
+    const bash = within(box).getByText("Bash").closest("tr") as HTMLElement;
+    expect(within(bash).getByText("Built in")).toBeVisible();
+  });
+
+  it("sends an old session link to the Sessions tab", async () => {
+    await openAt("/agents#session=s-77");
+    await screen.findByRole("region", { name: "Agent sessions" });
   });
 });
 

@@ -14,6 +14,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.ai.accounts import accounts
 from app.ai.agents import agents
+from app.ai.agents_overview import overview as agents_overview
 from app.ai.catalog import NON_USAGE, Catalog, DataLevel, Service, ServiceDef
 from app.ai.sessions import sessions, timeline
 from app.ai.usage import ServiceUse, Usage
@@ -22,6 +23,7 @@ from app.ai.watch_summary import source_classes
 from app.ai.watch_summary import summary as watch_summary
 from app.alerts.items import AlertItem, AlertItems
 from app.api.access import AdminUser, CurrentUser, client_ip
+from app.api.dashboard_sections import HistoryOut, KpiOut
 from app.auth.service import AuthService
 from app.auth.users import User
 from app.engine.duckdb import QueryEngine, QueryScope
@@ -709,4 +711,90 @@ async def agents_accounts(
         has_signins=out.has_signins,
         rows=[AccountRowOut(**_slots(r)) for r in out.rows],
         counts=out.counts,
+    )
+
+
+class ToolRowOut(BaseModel):
+    tool: str
+    mcp: bool
+    status: str
+    people: int
+    devices: int
+    calls: int
+    failed: int
+    first_seen: str | None
+    last_seen: str | None
+    drill: str
+
+
+class AgentsOverviewOut(BaseModel):
+    days: int
+    start: str
+    end: str
+    before: str
+    has_source: bool
+    history: HistoryOut
+    sessions: KpiOut | None
+    people: KpiOut | None
+    calls: KpiOut | None
+    failed: KpiOut | None
+    mcp_not_approved: KpiOut | None
+    late_devices: KpiOut | None
+    missing_devices: list[str]
+    tools: list[ToolRowOut]
+
+
+@router.get("/agents/overview")
+async def agents_overview_get(
+    request: Request, user: CurrentUser, days: Annotated[int, Query(ge=1, le=90)] = 7
+) -> AgentsOverviewOut:
+    """Agents > Overview and Tools (ADR-0038 section 6): sessions, people, tool calls,
+    failures, MCP servers not approved, late or silent devices, and one row per tool, from
+    the hooks plugin sources the caller may read. Audited ai.view."""
+    meta: MetaDB = request.app.state.meta
+    allowed = await run_in_threadpool(permitted_sources, meta, user)
+    srcs = [
+        (s.source_id, s.kind or "file", s.template_id) for s in request.app.state.sources.list()
+    ]
+    telemetry = source_classes(srcs).get("telemetry", [])
+    if allowed is not None:
+        telemetry = [s for s in telemetry if s in set(allowed)]
+    out = await run_in_threadpool(
+        agents_overview,
+        request.app.state.engine,
+        _catalog(request),
+        telemetry,
+        datetime.now(UTC),
+        days,
+    )
+    await run_in_threadpool(
+        _audit(request).audit.write,
+        "ai.view",
+        "success",
+        user.user_id,
+        client_ip(request),
+        {"sources_in_scope": out.sources, "view": "agents_overview"},
+    )
+
+    def kpi(k: Any) -> KpiOut | None:
+        return KpiOut(**_slots(k)) if k is not None else None
+
+    return AgentsOverviewOut(
+        days=out.days,
+        start=out.start,
+        end=out.end,
+        before=out.before,
+        has_source=out.has_source,
+        history=HistoryOut(
+            compared=out.history.compared,
+            since=out.history.since,
+        ),
+        sessions=kpi(out.sessions),
+        people=kpi(out.people),
+        calls=kpi(out.calls),
+        failed=kpi(out.failed),
+        mcp_not_approved=kpi(out.mcp_not_approved),
+        late_devices=kpi(out.late_devices),
+        missing_devices=out.missing_devices,
+        tools=[ToolRowOut(**_slots(t)) for t in out.tools],
     )

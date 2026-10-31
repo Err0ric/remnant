@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Agents: Overview and Tools tabs (ADR-0038 section 6)
+
+- **Agents > Overview** is the area's first tab: sessions, people, tool calls, failed tool calls, not-approved MCP servers in use, and devices delivering late (records an hour or more behind, the plugin's offline queue), each against the window before and each opening its rows in Search. Devices that sent before the window and nothing in it are named under the numbers.
+- **Agents > Tools** lists every built-in tool and MCP server Claude Code called, with type, review status, people, devices, calls, failures, and first and last seen. Each name opens its calls in Search.
+- One time window (24 hours, 7 days, 30 days) for both tabs, remembered per browser.
+- What changes for existing installs: `/agents` now opens Overview; Sessions moved to `/agents/sessions`. Older links (`/ai#agents`, `/agents#session=...`) still open Sessions.
+
 ### Refused credentials are events, with a built-in alert (ADR-0040)
 
 - Every refusal the server makes is now an event in a built-in **server_events** source: refused ingest tokens, refused sign-ins (wrong password, the sign-in rate limit, single sign-on refusals), and refused API tokens, with the address and the reason. Never a password or a token: only a token's id or its first 8 characters. At most 300 a minute are written; the rest are counted.

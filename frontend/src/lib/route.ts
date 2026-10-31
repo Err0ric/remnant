@@ -72,7 +72,7 @@ const CHANGE = "app:navigate";
 export const PAGE_TABS: Partial<Record<PageId, readonly string[]>> = {
   ai: ["services", "people", "settings"],
   m365: ["overview", "sign-ins", "mail", "apps", "admin"],
-  agents: ["agents", "mcp", "accounts"],
+  agents: ["overview", "sessions", "tools", "mcp", "accounts"],
   health: ["sources", "enrichment", "agents", "devices", "alerts"],
   alerts: ["open", "closed", "muted"],
   audit: ["activity", "ai", "integrity"],
@@ -87,8 +87,8 @@ const LEGACY: Record<string, PageId> = {
   "/schedules": "schedules",
   "/investigations": "investigate",
 };
-/** Tabs that moved from AI usage to the Agents area. */
-const AI_TO_AGENTS = new Set(["agents", "mcp"]);
+/** Tabs that moved from AI usage to the Agents area, by their old hash. */
+const AI_TO_AGENTS: Record<string, string> = { agents: "sessions", mcp: "mcp" };
 
 interface Place {
   page: PageId;
@@ -101,7 +101,10 @@ function parse(pathname: string, hash: string): Place {
   const legacyHashTab = (page: PageId) =>
     PAGE_TABS[page]?.includes(hash) && hash !== PAGE_TABS[page]?.[0] ? hash : "";
   if (exact) {
-    if (exact === "ai" && AI_TO_AGENTS.has(hash)) return { page: "agents", tab: hash };
+    if (exact === "ai" && AI_TO_AGENTS[hash]) return { page: "agents", tab: AI_TO_AGENTS[hash] };
+    // `/agents#session=` was the Sessions tab before Overview came first.
+    if (exact === "agents" && hash.startsWith("session="))
+      return { page: "agents", tab: "sessions" };
     return { page: exact, tab: legacyHashTab(exact) };
   }
   if (LEGACY[path]) return { page: LEGACY[path], tab: "" };
@@ -133,8 +136,7 @@ export function pathFor(page: PageId, tab?: string): string {
 export function canonical(): string | null {
   const { page, tab } = here();
   const hash = window.location.hash.replace(/^#/, "");
-  const keep =
-    hash && !PAGE_TABS[page]?.includes(hash) && !AI_TO_AGENTS.has(hash) ? `#${hash}` : "";
+  const keep = hash && !PAGE_TABS[page]?.includes(hash) && !AI_TO_AGENTS[hash] ? `#${hash}` : "";
   if (page === "overview" && window.location.pathname !== PATHS.overview) return null;
   const target = pathFor(page, tab) + window.location.search + keep;
   return target === window.location.pathname + window.location.search + window.location.hash

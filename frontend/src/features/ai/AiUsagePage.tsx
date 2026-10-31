@@ -17,10 +17,12 @@ import { navigate, useSectionTab } from "@/lib/route";
 import { AgentsCard } from "./AgentsCard";
 import { SessionsCard } from "./SessionsCard";
 import { AccountsCard } from "./AccountsCard";
+import { AgentsArea } from "./AgentsOverview";
 import { AiSettings } from "./AiSettings";
 import { StatusBadge, StatusPicker } from "./StatusBadge";
 
-type Tab = "services" | "agents" | "mcp" | "accounts" | "people" | "settings";
+type Tab =
+  "services" | "overview" | "sessions" | "tools" | "mcp" | "accounts" | "people" | "settings";
 const KIND: Record<string, string> = {
   chat: "Chat",
   api: "API",
@@ -90,7 +92,7 @@ export function AiUsagePage({ isAdmin, area = "ai" }: AiUsagePageProps) {
   });
   const tabs: Tab[] =
     area === "agents"
-      ? ["agents", "mcp", "accounts"]
+      ? ["overview", "sessions", "tools", "mcp", "accounts"]
       : isAdmin
         ? ["services", "people", "settings"]
         : ["services", "people"];
@@ -417,7 +419,9 @@ export function AiUsagePage({ isAdmin, area = "ai" }: AiUsagePageProps) {
             </Card>
           ) : null}
 
-          {tab === "agents" ? (
+          {tab === "overview" || tab === "tools" ? <AgentsArea tab={tab} /> : null}
+
+          {tab === "sessions" ? (
             <div className="flex flex-col gap-3">
               <AgentsCard />
               <SessionsCard />

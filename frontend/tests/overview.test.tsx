@@ -49,9 +49,10 @@ describe("Health: the former Overview (F55, ADR-0034 row 11)", () => {
     expect(within(status).getByText("Failed logon")).toBeVisible();
     expect(within(status).getByText("Nightly sudo")).toBeVisible();
     const nav = screen.getByRole("navigation", { name: "Primary" });
-    // The former Overview page has no row; "Overview" is now only Microsoft 365's tab.
+    // The former Overview page has no row; "Overview" is now only an area's first tab.
     const overviews = within(nav).queryAllByRole("link", { name: "Overview" });
-    expect(overviews.every((a) => a.getAttribute("href") === "/m365")).toBe(true);
+    const areas = ["/m365", "/agents"];
+    expect(overviews.every((a) => areas.includes(a.getAttribute("href") ?? ""))).toBe(true);
   });
 
   it("opens a rule detection from the status card", async () => {

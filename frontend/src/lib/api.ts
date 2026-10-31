@@ -1213,6 +1213,37 @@ export interface AgentAccounts {
   counts: Record<AccountTier, number>;
 }
 
+export interface AgentTool {
+  tool: string;
+  mcp: boolean;
+  status: "approved" | "not_approved" | "unreviewed" | "built_in";
+  people: number;
+  devices: number;
+  calls: number;
+  failed: number;
+  first_seen: string | null;
+  last_seen: string | null;
+  drill: string;
+}
+
+/** Agents > Overview and Tools (ADR-0038 section 6). */
+export interface AgentsOverview {
+  days: number;
+  start: string;
+  end: string;
+  before: string;
+  has_source: boolean;
+  history: SectionHistory;
+  sessions: SectionKpi | null;
+  people: SectionKpi | null;
+  calls: SectionKpi | null;
+  failed: SectionKpi | null;
+  mcp_not_approved: SectionKpi | null;
+  late_devices: SectionKpi | null;
+  missing_devices: string[];
+  tools: AgentTool[];
+}
+
 export interface SessionStep {
   time: string;
   event: string;
@@ -2078,6 +2109,7 @@ export const api = {
   /** The hooks plugin for an OTLP source (ADR-0026): issues a new token for the source. */
   claudePlugin: (id: string, body: ClaudePluginRequest) =>
     postForFile(`/api/sources/${encodeURIComponent(id)}/claude-plugin`, body),
+  agentsOverview: (days = 7) => request<AgentsOverview>(`/api/agents/overview?days=${days}`),
   agentAccounts: (days = 30) => request<AgentAccounts>(`/api/agents/accounts?days=${days}`),
   aiSessions: (days = 7) => request<AgentSession[]>(`/api/ai/sessions?days=${days}`),
   aiSession: (id: string) => request<SessionTimeline>(`/api/ai/sessions/${encodeURIComponent(id)}`),

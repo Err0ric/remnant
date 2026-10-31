@@ -108,7 +108,14 @@ export const AREAS: Area[] = [
     label: "Agents",
     aliases: ["ai agents", "claude code", "sessions", "mcp servers"],
     tabs: [
-      { label: "Sessions", page: "agents", tab: "agents" },
+      { label: "Overview", page: "agents", tab: "overview" },
+      { label: "Sessions", page: "agents", tab: "sessions" },
+      {
+        label: "Tools",
+        page: "agents",
+        tab: "tools",
+        aliases: ["tool calls", "failed tool calls"],
+      },
       { label: "MCP servers", page: "agents", tab: "mcp" },
       {
         label: "Accounts",
