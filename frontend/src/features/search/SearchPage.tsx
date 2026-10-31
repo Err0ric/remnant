@@ -37,6 +37,7 @@ import { FieldActionsContext, type FieldActions } from "./fieldActions";
 import { FilterBar } from "./FilterBar";
 import { OpenSearchPanel } from "./OpenSearchPanel";
 import { LibraryPanel, type LibraryPick } from "./LibraryPanel";
+import { LivePanel } from "./LivePanel";
 import { downloadCsv, ResultsCard } from "./ResultsCard";
 import { SaveSearchForm } from "./SaveSearchForm";
 import { SearchTabs, type SearchArea } from "./SearchTabs";
@@ -224,6 +225,9 @@ export function SearchPage({
     run.mutate({ sql: value, params: names.length ? params : undefined });
   };
   const [libraryOpen, setLibraryOpen] = useState(seed?.library === true);
+  // Live (ADR-0036): the SQL it follows; null is off. A shared link never starts it.
+  const [liveSql, setLiveSql] = useState<string | null>(null);
+  const [liveKey, setLiveKey] = useState(0);
   const [libraryQuery, setLibraryQuery] = useState<LibraryPick | null>(null);
   const loadLibrary = (q: LibraryPick) => {
     setLibraryOpen(false);
@@ -634,6 +638,21 @@ export function SearchPage({
               >
                 {pending ? "Running…" : "Run"}
               </button>
+              <label className="flex items-center gap-1.5 text-text">
+                <input
+                  type="checkbox"
+                  role="switch"
+                  aria-checked={liveSql !== null}
+                  checked={liveSql !== null}
+                  onChange={(e) => {
+                    if (e.target.checked) {
+                      setLiveKey((k) => k + 1);
+                      setLiveSql(sql);
+                    } else setLiveSql(null);
+                  }}
+                />
+                Live
+              </label>
               <span>Ctrl+Enter to run · Ctrl+Space for columns</span>
               <span>Read-only · SELECT only · guarded by the server</span>
             </div>
@@ -735,34 +754,44 @@ export function SearchPage({
       </div>
 
       <div className="mx-5 mb-5 flex flex-col gap-3 lg:flex-row">
-        <FacetSidebar
-          request={facetRequest}
-          onTerm={
-            // The results on screen came from a Simple search: refine that search, even
-            // when the Ask or SQL tab has been opened since (the results are still its).
-            facetRequest?.text !== undefined
-              ? (term) => {
-                  const next = addTerm(facetRequest.text ?? "", term);
-                  setText(next);
-                  setTab("simple");
-                  simple.mutate({ text: next });
-                }
-              : null
-          }
-          onRefine={
-            facetRequest?.sql !== undefined
-              ? (field, value, exclude) => refine.mutate({ field, value, exclude })
-              : null
-          }
-        />
-        <FieldActionsContext.Provider value={actions}>
-          <ResultsCard
-            result={result}
-            pending={pending}
-            runKey={(result?.executed_sql ?? "") + (lastRun?.getTime() ?? 0)}
-            canExplain={canSave}
+        {liveSql !== null ? (
+          <LivePanel
+            key={liveKey}
+            sql={liveSql}
+            sources={sources}
+            onClose={() => setLiveSql(null)}
           />
-        </FieldActionsContext.Provider>
+        ) : null}
+        <div className={liveSql !== null ? "hidden" : "contents"}>
+          <FacetSidebar
+            request={facetRequest}
+            onTerm={
+              // The results on screen came from a Simple search: refine that search, even
+              // when the Ask or SQL tab has been opened since (the results are still its).
+              facetRequest?.text !== undefined
+                ? (term) => {
+                    const next = addTerm(facetRequest.text ?? "", term);
+                    setText(next);
+                    setTab("simple");
+                    simple.mutate({ text: next });
+                  }
+                : null
+            }
+            onRefine={
+              facetRequest?.sql !== undefined
+                ? (field, value, exclude) => refine.mutate({ field, value, exclude })
+                : null
+            }
+          />
+          <FieldActionsContext.Provider value={actions}>
+            <ResultsCard
+              result={result}
+              pending={pending}
+              runKey={(result?.executed_sql ?? "") + (lastRun?.getTime() ?? 0)}
+              canExplain={canSave}
+            />
+          </FieldActionsContext.Provider>
+        </div>
       </div>
     </div>
   );

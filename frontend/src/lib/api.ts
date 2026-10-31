@@ -2387,6 +2387,15 @@ export const api = {
       `/api/events/${encodeURIComponent(id)}/around?at=${encodeURIComponent(at)}`,
     ),
   library: () => request<QueryLibrary>("/api/library"),
+  liveStreams: () =>
+    request<{ stream_id: string; client: string; started_at: string; label: string }[]>(
+      "/api/search/live/streams",
+    ),
+  stopLiveStream: (id: string) =>
+    request<void>(`/api/search/live/streams/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  liveLimit: () => request<{ minutes: number }>("/api/settings/live"),
+  setLiveLimit: (minutes: number) =>
+    request<{ minutes: number }>("/api/settings/live", put({ minutes })),
   libraryCopy: (pack: string, id: string) =>
     request<SavedSearch>(
       `/api/library/${encodeURIComponent(pack)}/${encodeURIComponent(id)}/copy`,

@@ -1,4 +1,5 @@
 import { InstallName } from "./InstallName";
+import { LiveLimit } from "./LiveLimit";
 import { useViewer } from "@/lib/viewer";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "@/components/shell/PageHeader";
@@ -63,6 +64,7 @@ export function AboutPage() {
           </dl>
         </section>
         <InstallName canEdit={isAdmin} />
+        <LiveLimit canEdit={isAdmin} />
         <section aria-label="Data sources and licenses" className="flex flex-col gap-2">
           <h2 className="text-base font-semibold">Data sources and licenses</h2>
           <div className="overflow-x-auto rounded-card border border-border">

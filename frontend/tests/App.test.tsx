@@ -334,3 +334,57 @@ describe("Query library (ADR-0033)", () => {
     expect(screen.queryByRole("region", { name: "Query library" })).toBeNull();
   });
 });
+
+describe("Live search (ADR-0036)", () => {
+  it("parses server-sent events and skips keep-alives", async () => {
+    const { parseSse } = await import("@/lib/liveStream");
+    const got = parseSse(
+      'event: rows\ndata: {"a":1}\n\n: ping\n\nevent: end\ndata: {}\n\nevent: pa',
+    );
+    expect(got.events).toEqual([
+      ["rows", '{"a":1}'],
+      ["end", "{}"],
+    ]);
+    expect(got.rest).toBe("event: pa");
+  });
+
+  it("follows new rows newest first, says how fresh each source is, and offers Resume", async () => {
+    await renderApp();
+    await screen.findByText("Failed password for invalid user oracle");
+    await setSql("SELECT time, source_id, message, event_id FROM events");
+    await userEvent.click(screen.getByRole("switch", { name: "Live" }));
+    const live = await screen.findByRole("region", { name: "Live results" });
+    expect(await within(live).findByText("deny tcp 203.0.113.9:8443")).toBeVisible();
+    const rows = within(live).getAllByRole("row");
+    expect(rows[1]).toHaveTextContent("8443"); // newest at the top
+    const fresh = within(live).getByLabelText("Freshness by source");
+    expect(fresh).toHaveTextContent(
+      "fw-edge 3 s, m365 4 min (pulls every 5 min), linux-auth 67 min",
+    );
+    expect(within(fresh).getByText(/linux-auth/)).toHaveClass("text-warn");
+    expect(within(fresh).getByText(/m365/)).not.toHaveClass("text-warn");
+    expect(
+      within(live).getByText("Live stopped after 30 minutes. Resume to keep following."),
+    ).toBeVisible();
+    expect(within(live).getByRole("button", { name: "Resume" })).toBeVisible();
+    await userEvent.click(within(live).getByRole("button", { name: "Stop" }));
+    expect(screen.queryByRole("region", { name: "Live results" })).toBeNull();
+  });
+
+  it("says why a group query cannot go live, and lists open streams when refused", async () => {
+    await renderApp();
+    await screen.findByText("Failed password for invalid user oracle");
+    await setSql("SELECT source_id, count(*) FROM events GROUP BY 1");
+    await userEvent.click(screen.getByRole("switch", { name: "Live" }));
+    const live = await screen.findByRole("region", { name: "Live results" });
+    expect(await within(live).findByText(/Live works on event rows/)).toBeVisible();
+    await userEvent.click(screen.getByRole("switch", { name: "Live" }));
+    await setSql("SELECT message FROM events WHERE message = 'refuse'");
+    await userEvent.click(screen.getByRole("switch", { name: "Live" }));
+    const again = await screen.findByRole("region", { name: "Live results" });
+    expect(await within(again).findByText(/2 live searches open/)).toBeVisible();
+    expect(
+      await within(again).findByRole("button", { name: "Stop tail -f since 13:40 UTC" }),
+    ).toBeVisible();
+  });
+});

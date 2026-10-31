@@ -46,6 +46,14 @@ Events reach the lake within a few seconds of arrival: the file watcher polls ev
 - The refusal of a third stream is a 409 naming the open streams; the page lists them with Stop from `/api/search/live/streams`.
 - A keep-alive comment is sent on polls with no rows, so proxies with a 60 s read timeout keep the stream.
 
+## As built (part 2: Search)
+
+- The switch sits beside Run on the SQL tab and follows the editor's SQL at the moment it is turned on; editing the SQL afterwards does not change the stream (turn Live off and on).
+- The browser reads the stream with `fetch`, not `EventSource`, so a refusal's reason (400 shape, 409 third stream) is shown; the 409 panel lists open streams from `/api/search/live/streams` with Stop.
+- Row 11: Live is never written to the address, so a shared link cannot start it; there is no hint to show.
+- The range picker stays visible while Live is on; the panel's header states "Live since".
+- The time limit setting is on Settings > About.
+
 ## Consequences
 
 - Watching something happen no longer means pressing Run repeatedly, and the CLI, TUI, and browser follow the same way.

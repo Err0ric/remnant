@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Live on Search (ADR-0036 part 2)
+
+- A **Live** switch beside Run on the SQL tab follows new events of the query as they arrive: newest at the top, the last 500 kept, new rows tinted briefly (no motion when your system asks for reduced motion).
+- Above the table: "Live since 14:02 UTC" and each source's freshness ("fw-edge 3 s, m365 4 min (pulls every 5 min)"); a source quieter than expected is in the warning color.
+- **Pause** ends the stream on the server and keeps your place; **Resume** starts again from the last event shown and first fills in what arrived while paused. **Stop** ends Live. **Export** downloads the query's rows since Live started (audited as any export).
+- A query that cannot go live says why ("Live works on event rows. Remove GROUP BY, or use Run."). A third live search lists your open ones, each with Stop.
+- Settings > About has the **Live search time limit** (administrators).
+- A shared Search link never starts Live: the switch is not part of the address.
+- What changes for existing installs: nothing to do.
+
 ### Live search, server side (ADR-0036 part 1)
 
 - `GET /api/search/live?q=<sql>` follows new event rows of a row query as server-sent events (`start`, `rows`, `lag`, `notice`, `end`). It polls every 2 seconds on your own sources through the query guard. Queries with GROUP BY, aggregates, DISTINCT, window functions, UNION, WITH, joins, or LIMIT are refused with the reason ("Live works on event rows. Remove GROUP BY, or use Run.").

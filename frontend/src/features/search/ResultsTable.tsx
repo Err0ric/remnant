@@ -33,6 +33,8 @@ interface ResultsTableProps {
   onToggleSelect?: (eventId: string) => void;
   /** Location of public addresses, when the viewer shows it (ADR-0023 row 6). */
   geo?: Record<string, GeoInfo>;
+  /** Event ids that just arrived (Live, ADR-0036): a short tint, once. */
+  fresh?: Set<string>;
 }
 
 export function ResultsTable({
@@ -43,6 +45,7 @@ export function ResultsTable({
   selected,
   onToggleSelect,
   geo,
+  fresh,
 }: ResultsTableProps) {
   const geoOf = (v: unknown) => (geo && typeof v === "string" ? geo[v] : undefined);
   const intelOf = (v: unknown) =>
@@ -176,6 +179,8 @@ export function ResultsTable({
                     // Mono on the grid so the ch-based column widths match the values.
                     "grid min-h-row w-full cursor-pointer items-center border-b border-border px-3.5 text-left font-mono text-sm text-text hover:bg-row-selected focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus-ring",
                     isOpen && "bg-row-selected",
+                    fresh && "transition-colors duration-1000 motion-reduce:transition-none",
+                    fresh && idIndex >= 0 && fresh.has(String(row[idIndex])) && "bg-accent-subtle",
                   )}
                   style={{ gridTemplateColumns: template }}
                 >

@@ -1172,6 +1172,77 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         downloadable: true,
       });
     }
+    if (url.startsWith("/api/search/live?")) {
+      if (url.includes("GROUP")) {
+        return json(
+          {
+            detail: "Live works on event rows. Remove GROUP BY, or use Run.",
+            code: "query_rejected",
+          },
+          400,
+        );
+      }
+      if (url.includes("refuse")) {
+        return json(
+          {
+            detail:
+              "You have 2 live searches open: tail -f since 13:40 UTC, Search in a browser since 14:02 UTC. Stop one to start another.",
+            code: "conflict",
+          },
+          409,
+        );
+      }
+      const ev = (name: string, data: object) =>
+        `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`;
+      const text =
+        ev("start", {
+          stream_id: "st1",
+          since: "2026-10-31T14:02:00+00:00",
+          limit_s: 1800,
+          poll_s: 2,
+        }) +
+        ev("rows", {
+          columns: ["time", "source_id", "message", "event_id"],
+          rows: [
+            ["2026-10-31T14:09:40+00:00", "fw-edge", "deny tcp 203.0.113.9:443", "e1"],
+            ["2026-10-31T14:09:41+00:00", "fw-edge", "deny tcp 203.0.113.9:8443", "e2"],
+          ],
+          cursor: { t: "2026-10-31T14:09:41+00:00", ids: ["e2"] },
+        }) +
+        ": ping\n\n" +
+        ev("lag", {
+          sources: [
+            {
+              source: "fw-edge",
+              newest: "2026-10-31T14:09:41+00:00",
+              age_s: 3,
+              pull_every_s: null,
+            },
+            { source: "m365", newest: "2026-10-31T14:05:00+00:00", age_s: 240, pull_every_s: 300 },
+            {
+              source: "linux-auth",
+              newest: "2026-10-31T13:00:00+00:00",
+              age_s: 4000,
+              pull_every_s: null,
+            },
+          ],
+        }) +
+        ev("end", {
+          reason: "time_limit",
+          message: "Live stopped after 30 minutes. Resume to keep following.",
+        });
+      return new Response(text, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+    }
+    if (url.endsWith("/api/search/live/streams")) {
+      return json([
+        {
+          stream_id: "c1",
+          client: "cli",
+          started_at: "2026-10-31T13:40:00+00:00",
+          label: "tail -f since 13:40 UTC",
+        },
+      ]);
+    }
     if (url.endsWith("/api/library")) {
       const q = (id: string, name: string, group: string, sql: string, extra: object = {}) => ({
         id,
