@@ -152,3 +152,18 @@ describe("Investigations (ADR-0016)", () => {
     expect(within(lanes).getAllByText(/<img src=x/).length).toBeGreaterThan(0);
   });
 });
+
+describe("Person timeline (ADR-0038 section 9)", () => {
+  it("shows the forms of the name and rows by day, each opening its events", async () => {
+    await openInvestigate("/investigate/people#user=alice");
+    await userEvent.click(await screen.findByRole("tab", { name: "Timeline" }));
+    const box = await screen.findByRole("region", { name: "Timeline" });
+    expect(await within(box).findByText(/EXAMPLE\\alice, alice@example.com/)).toBeVisible();
+    const days = within(box).getByRole("list", { name: "Activity by day" });
+    expect(within(days).getAllByRole("heading", { level: 3 })).toHaveLength(2);
+    const failed = within(box).getByRole("button", { name: "Failed to Office 365" });
+    expect(failed).toHaveAttribute("title", "Open 2 events in Search");
+    await userEvent.click(failed);
+    expect(await screen.findByText(/From alice > Timeline/)).toBeVisible();
+  });
+});

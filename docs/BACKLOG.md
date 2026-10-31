@@ -60,4 +60,5 @@ ADR-0037 row 6 lists new admin or role grants and app consents in the New column
 
 - **Microsoft 365 rollup** (ADR-0038 section 5, "Speed"): closed days from a daily rollup, today from events, as the AI rollup does, so the 30-day Overview stays fast on a large tenant. The area reads events directly until then.
 - **Around this event, rest of row 23 and 25** (ADR-0038 section 8): the Around action on alert item rows (they are not event rows yet), and a first-seen entity as a second Likely cause signal (needs the first-seen index for people and devices, not only AI items).
+- **Person page Sessions, Sign-ins, and Alerts tabs** (ADR-0038 row 27): the timeline and summary are built; the three list tabs, and alert rows on the timeline (alert items carry no person field yet), are not.
 - **Accounts corroboration** (ADR-0030 T3): raise Company, reported and Company, not confirmed when the Anthropic usage or compliance connector names the same email in the window.

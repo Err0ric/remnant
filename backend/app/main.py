@@ -66,6 +66,7 @@ from app.api.searches import router as searches_router
 from app.api.sources import router as sources_router
 from app.api.sso_settings import router as sso_settings_router
 from app.api.templates import router as templates_router
+from app.api.timeline import router as timeline_router
 from app.api.tokens import router as tokens_router
 from app.api.users import router as users_router
 from app.auth.groups import GroupStore
@@ -704,6 +705,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     app.include_router(integrity_router, prefix="/api")
     app.include_router(addresses_router, prefix="/api")
     app.include_router(around_router, prefix="/api")
+    app.include_router(timeline_router, prefix="/api")
     app.include_router(audit_router, prefix="/api")
 
     async def app_error(request: Request, exc: Exception) -> JSONResponse:

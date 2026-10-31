@@ -9,6 +9,7 @@ import { seedSearch } from "@/lib/searchSeed";
 import { CardDetail } from "./CardDetail";
 import { LaneGraph } from "./LaneGraph";
 import { EntitySummary } from "./EntitySummary";
+import { PersonTimeline } from "./PersonTimeline";
 import { RiskTable } from "./RiskTable";
 import { kindOf, PLACEHOLDER, rememberedKind, rememberKind, type EntityKind } from "./entityKind";
 
@@ -41,6 +42,7 @@ export function InvestigatePage() {
   const [picked, setPicked] = useState(false);
   const [text, setText] = useState(linked && linked.kind !== "service" ? linked.value : "");
   const [riskTab, setRiskTab] = useState<EntityKind>("user");
+  const [personTab, setPersonTab] = useState<"summary" | "timeline">("summary");
   // A pivot link from another page while this one is open: the box follows the address.
   const linkedKey = linked && linked.kind !== "service" ? `${linked.kind}=${linked.value}` : "";
   useEffect(() => {
@@ -70,6 +72,7 @@ export function InvestigatePage() {
   const investigate = (next: Focus) => {
     setSelected(null);
     setMode("entity");
+    setPersonTab("summary");
     setKind(next.kind as EntityKind);
     setText(next.value);
     navigate("investigate", entitySection({ kind: next.kind as EntityKind, value: next.value }));
@@ -381,7 +384,32 @@ export function InvestigatePage() {
                 </button>
               </div>
             ) : null}
-            {mode === "entity" && entity ? (
+            {mode === "entity" && entity?.kind === "user" ? (
+              <div role="tablist" aria-label="Person" className="flex border-b border-border">
+                {(["summary", "timeline"] as const).map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    role="tab"
+                    aria-selected={personTab === t}
+                    onClick={() => setPersonTab(t)}
+                    className={`-mb-px border-b-2 px-3 py-2 text-sm ${
+                      personTab === t
+                        ? "border-accent font-semibold text-text"
+                        : "border-transparent text-text-secondary hover:text-text"
+                    }`}
+                  >
+                    {t === "summary" ? "Summary" : "Timeline"}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            {mode === "entity" && entity?.kind === "user" && personTab === "timeline" ? (
+              <PersonTimeline person={entity.value} />
+            ) : null}
+            {mode === "entity" &&
+            entity &&
+            !(entity.kind === "user" && personTab === "timeline") ? (
               <EntitySummary
                 kind={entity.kind as "user" | "ip" | "host"}
                 value={entity.value}
@@ -391,7 +419,9 @@ export function InvestigatePage() {
                 onSearch={openSearch}
               />
             ) : null}
-            {mode === "entity" && entity ? (
+            {mode === "entity" &&
+            entity?.kind === "user" &&
+            personTab === "timeline" ? null : mode === "entity" && entity ? (
               // The summary answers first; the lanes sit below it and fold away (owner critique).
               <details open className="group rounded-card border border-border bg-surface">
                 <summary className="cursor-pointer px-3 py-2 text-sm font-semibold">
@@ -415,7 +445,10 @@ export function InvestigatePage() {
                 {canvas}
               </section>
             )}
-            {g && !selected && g.cards.length > (mode === "entity" ? 1 : 0) ? (
+            {g &&
+            !selected &&
+            !(entity?.kind === "user" && personTab === "timeline") &&
+            g.cards.length > (mode === "entity" ? 1 : 0) ? (
               <p className="text-sm text-text-muted">
                 Select a card to light its path and open its details.
               </p>

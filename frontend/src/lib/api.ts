@@ -1213,6 +1213,29 @@ export interface AgentAccounts {
   counts: Record<AccountTier, number>;
 }
 
+export interface TimelineRow {
+  kind: string;
+  start: string;
+  end: string;
+  title: string;
+  detail: string;
+  count: number;
+  source: string;
+  tone: "neutral" | "warn";
+  sql: string;
+}
+
+export interface PersonTimelineData {
+  person: string;
+  forms: string[];
+  devices: string[];
+  start: string;
+  end: string;
+  rows: TimelineRow[];
+  more: boolean;
+  sql: string;
+}
+
 export interface EventAround {
   event_id: string;
   at: string;
@@ -2315,6 +2338,8 @@ export const api = {
   deleteAiService: (id: string) =>
     request<void>(`/api/ai/services/${encodeURIComponent(id)}`, { method: "DELETE" }),
   aiMcpRules: () => request<AiMcpRule[]>("/api/ai/mcp-rules"),
+  personTimeline: (person: string, days: number) =>
+    request<PersonTimelineData>(`/api/people/${encodeURIComponent(person)}/timeline?days=${days}`),
   eventAround: (id: string, at: string) =>
     request<EventAround>(
       `/api/events/${encodeURIComponent(id)}/around?at=${encodeURIComponent(at)}`,

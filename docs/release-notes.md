@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Person timeline (ADR-0038 section 9)
+
+- A person's page in People & devices has **Summary** and **Timeline** tabs. Timeline shows one row per action, newest first, grouped by day: Microsoft 365 sign-ins (per app, outcome, and hour), Claude sessions (one row each), AI services first used in the window, app consents, Microsoft 365 audit operations (counted once across Graph and the Management API), and other events grouped by source, message, and hour. Failures are in the warn color; nothing uses severity colors.
+- The person is matched across forms of the name (`dana.k@example.com`, `EXAMPLE\dana.k`, and admin aliases); the forms and devices seen are listed under the title.
+- Each row opens its own events in Search; **Open in Search** opens all of them. Windows: 24 hours, 7 days, 30 days. Every view is audited `search.timeline`.
+- What changes for existing installs: nothing to do.
+
 ### Around this event (ADR-0038 section 8)
 
 - Every expanded event in Search (and in the Microsoft 365 lists and saved-search runs) has **Around this event**: the rows within 5 minutes either side by the same person or the same device, from every source you can read, at most 50 (the nearest in time), newest last. Each Agents session step has **Around** too.

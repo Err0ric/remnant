@@ -293,6 +293,7 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | Method | Path | What it does | Query | JSON body (`?` optional) |
 |---|---|---|---|---|
 | `GET` | `/api/events/{event_id}/around` | Rows within 5 minutes of the event by the same person or device, from every source the caller may read; at most 50, newest last, with a Likely cause hint. Audited `search.around`. | `?at`: date-time |  |
+| `GET` | `/api/people/{person}/timeline` | One row per action by this person across the sources the caller may read, newest first, with the forms of the name that matched. Audited `search.timeline`. | `?days` (optional): integer |  |
 
 ### Searches
 

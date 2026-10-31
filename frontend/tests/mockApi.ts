@@ -1170,6 +1170,41 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         downloadable: true,
       });
     }
+    if (url.includes("/timeline?days=")) {
+      return json({
+        person: "alice",
+        forms: ["EXAMPLE\\alice", "alice@example.com"],
+        devices: ["ws-0042"],
+        start: "2026-10-23T12:00:00+00:00",
+        end: "2026-10-30T12:00:00+00:00",
+        more: false,
+        sql: "SELECT 1 FROM events WHERE time >= {from} AND time < {to}",
+        rows: [
+          {
+            kind: "signin",
+            start: "2026-10-30T09:58:00+00:00",
+            end: "2026-10-30T09:59:01+00:00",
+            title: "Failed to Office 365",
+            detail: "Microsoft 365",
+            count: 2,
+            source: "m365_signin",
+            tone: "warn",
+            sql: "SELECT 2 FROM events WHERE time >= {from} AND time < {to}",
+          },
+          {
+            kind: "session",
+            start: "2026-10-29T11:00:00+00:00",
+            end: "2026-10-29T11:40:01+00:00",
+            title: "Claude session on ws-0042",
+            detail: "12 tool calls",
+            count: 12,
+            source: "claude_hooks",
+            tone: "neutral",
+            sql: "SELECT 3 FROM events WHERE time >= {from} AND time < {to}",
+          },
+        ],
+      });
+    }
     if (url.includes("/around?at=")) {
       const cols = [
         "time",
