@@ -166,4 +166,26 @@ describe("Person timeline (ADR-0038 section 9)", () => {
     await userEvent.click(failed);
     expect(await screen.findByText(/From alice > Timeline/)).toBeVisible();
   });
+
+  it("has Sessions, Sign-ins, and Alerts tabs, and an alert row opens its alert", async () => {
+    await openInvestigate("/investigate/people#user=alice");
+    const tabs = await screen.findByRole("tablist", { name: "Person" });
+    expect(
+      within(tabs)
+        .getAllByRole("tab")
+        .map((t) => t.textContent),
+    ).toEqual(["Summary", "Timeline", "Sessions", "Sign-ins", "Alerts"]);
+    await userEvent.click(within(tabs).getByRole("tab", { name: "Sign-ins" }));
+    expect(await screen.findByRole("region", { name: "Sign-ins" })).toBeVisible();
+    await userEvent.click(within(tabs).getByRole("tab", { name: "Alerts" }));
+    expect(await screen.findByRole("region", { name: "Alerts" })).toBeVisible();
+    await userEvent.click(within(tabs).getByRole("tab", { name: "Sessions" }));
+    expect(await screen.findByRole("region", { name: "Sessions" })).toBeVisible();
+    await userEvent.click(within(tabs).getByRole("tab", { name: "Timeline" }));
+    const box = await screen.findByRole("region", { name: "Timeline" });
+    await userEvent.click(
+      await within(box).findByRole("button", { name: "Sensitive data to AI: alice" }),
+    );
+    expect(window.location.pathname + window.location.hash).toBe("/alerts#item=a1");
+  });
 });

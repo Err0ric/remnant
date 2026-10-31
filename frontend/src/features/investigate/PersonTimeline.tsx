@@ -5,6 +5,7 @@ import { EntityLink } from "@/components/EntityLink";
 import { api, type TimelineRow } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { openDrill } from "@/lib/drill";
+import { navigate } from "@/lib/route";
 
 const KIND: Record<string, string> = {
   signin: "Sign-in",
@@ -13,6 +14,7 @@ const KIND: Record<string, string> = {
   consent: "App consent",
   audit: "Microsoft 365",
   events: "Events",
+  alert: "Alert",
 };
 const DAYS = [1, 7, 30] as const;
 
@@ -40,9 +42,11 @@ export function PersonTimeline({ person }: { person: string }) {
     groups.set(k, [...(groups.get(k) ?? []), r]);
   }
   const open = (r: TimelineRow) =>
-    r.sql
-      ? () => openDrill({ sql: r.sql, from: r.start, to: r.end, origin: `${person} > Timeline` })
-      : undefined;
+    r.item_id
+      ? () => navigate("alerts", `item=${r.item_id}`)
+      : r.sql
+        ? () => openDrill({ sql: r.sql, from: r.start, to: r.end, origin: `${person} > Timeline` })
+        : undefined;
   return (
     <section
       aria-label="Timeline"
@@ -140,7 +144,11 @@ export function PersonTimeline({ person }: { person: string }) {
                             type="button"
                             data-drill=""
                             onClick={go}
-                            title={`Open ${r.count.toLocaleString()} events in Search`}
+                            title={
+                              r.item_id
+                                ? "Open the alert"
+                                : `Open ${r.count.toLocaleString()} events in Search`
+                            }
                             className="max-w-full truncate text-left hover:underline"
                           >
                             {r.title}

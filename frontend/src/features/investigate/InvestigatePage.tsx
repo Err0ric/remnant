@@ -10,6 +10,7 @@ import { CardDetail } from "./CardDetail";
 import { LaneGraph } from "./LaneGraph";
 import { EntitySummary } from "./EntitySummary";
 import { PersonTimeline } from "./PersonTimeline";
+import { PersonAlerts, PersonSessions, PersonSignIns } from "./PersonLists";
 import { RiskTable } from "./RiskTable";
 import { kindOf, PLACEHOLDER, rememberedKind, rememberKind, type EntityKind } from "./entityKind";
 
@@ -23,6 +24,16 @@ const KIND_LABEL: Record<EntityKind, string> = { user: "User", ip: "IP address",
 
 /** Investigations (ADR-0016 rows 4 and 5): risky entities, and lanes showing how one
  * entity, or the organization's AI use, connects to everything it touched. */
+type PersonTab = "summary" | "timeline" | "sessions" | "sign-ins" | "alerts";
+/** A person's tabs (ADR-0038 row 27). */
+const PERSON_TABS: [PersonTab, string][] = [
+  ["summary", "Summary"],
+  ["timeline", "Timeline"],
+  ["sessions", "Sessions"],
+  ["sign-ins", "Sign-ins"],
+  ["alerts", "Alerts"],
+];
+
 export function InvestigatePage() {
   const [range, setRange] = useState<TimeRangeId>("7d");
   // The entity lives in the address (`#ip=203.0.113.9`), so every pivot link, Back, and a
@@ -42,7 +53,7 @@ export function InvestigatePage() {
   const [picked, setPicked] = useState(false);
   const [text, setText] = useState(linked && linked.kind !== "service" ? linked.value : "");
   const [riskTab, setRiskTab] = useState<EntityKind>("user");
-  const [personTab, setPersonTab] = useState<"summary" | "timeline">("summary");
+  const [personTab, setPersonTab] = useState<PersonTab>("summary");
   // A pivot link from another page while this one is open: the box follows the address.
   const linkedKey = linked && linked.kind !== "service" ? `${linked.kind}=${linked.value}` : "";
   useEffect(() => {
@@ -386,7 +397,7 @@ export function InvestigatePage() {
             ) : null}
             {mode === "entity" && entity?.kind === "user" ? (
               <div role="tablist" aria-label="Person" className="flex border-b border-border">
-                {(["summary", "timeline"] as const).map((t) => (
+                {PERSON_TABS.map(([t, label]) => (
                   <button
                     key={t}
                     type="button"
@@ -399,7 +410,7 @@ export function InvestigatePage() {
                         : "border-transparent text-text-secondary hover:text-text"
                     }`}
                   >
-                    {t === "summary" ? "Summary" : "Timeline"}
+                    {label}
                   </button>
                 ))}
               </div>
@@ -407,9 +418,16 @@ export function InvestigatePage() {
             {mode === "entity" && entity?.kind === "user" && personTab === "timeline" ? (
               <PersonTimeline person={entity.value} />
             ) : null}
-            {mode === "entity" &&
-            entity &&
-            !(entity.kind === "user" && personTab === "timeline") ? (
+            {mode === "entity" && entity?.kind === "user" && personTab === "sessions" ? (
+              <PersonSessions person={entity.value} />
+            ) : null}
+            {mode === "entity" && entity?.kind === "user" && personTab === "sign-ins" ? (
+              <PersonSignIns person={entity.value} />
+            ) : null}
+            {mode === "entity" && entity?.kind === "user" && personTab === "alerts" ? (
+              <PersonAlerts person={entity.value} />
+            ) : null}
+            {mode === "entity" && entity && !(entity.kind === "user" && personTab !== "summary") ? (
               <EntitySummary
                 kind={entity.kind as "user" | "ip" | "host"}
                 value={entity.value}
@@ -421,7 +439,7 @@ export function InvestigatePage() {
             ) : null}
             {mode === "entity" &&
             entity?.kind === "user" &&
-            personTab === "timeline" ? null : mode === "entity" && entity ? (
+            personTab !== "summary" ? null : mode === "entity" && entity ? (
               // The summary answers first; the lanes sit below it and fold away (owner critique).
               <details open className="group rounded-card border border-border bg-surface">
                 <summary className="cursor-pointer px-3 py-2 text-sm font-semibold">
@@ -447,7 +465,7 @@ export function InvestigatePage() {
             )}
             {g &&
             !selected &&
-            !(entity?.kind === "user" && personTab === "timeline") &&
+            !(entity?.kind === "user" && personTab !== "summary") &&
             g.cards.length > (mode === "entity" ? 1 : 0) ? (
               <p className="text-sm text-text-muted">
                 Select a card to light its path and open its details.

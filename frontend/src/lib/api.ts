@@ -1223,6 +1223,8 @@ export interface TimelineRow {
   source: string;
   tone: "neutral" | "warn";
   sql: string;
+  /** An alert row opens its alert instead of Search. */
+  item_id?: string | null;
 }
 
 export interface PersonTimelineData {
@@ -1234,6 +1236,7 @@ export interface PersonTimelineData {
   rows: TimelineRow[];
   more: boolean;
   sql: string;
+  signins_sql: string;
 }
 
 export interface EventAround {
@@ -2175,7 +2178,12 @@ export const api = {
     postForFile(`/api/sources/${encodeURIComponent(id)}/claude-plugin`, body),
   agentsOverview: (days = 7) => request<AgentsOverview>(`/api/agents/overview?days=${days}`),
   agentAccounts: (days = 30) => request<AgentAccounts>(`/api/agents/accounts?days=${days}`),
-  aiSessions: (days = 7) => request<AgentSession[]>(`/api/ai/sessions?days=${days}`),
+  aiSessions: (days = 7, person?: string) =>
+    request<AgentSession[]>(
+      `/api/ai/sessions?days=${days}` + (person ? `&person=${encodeURIComponent(person)}` : ""),
+    ),
+  personAlerts: (person: string) =>
+    request<AlertList>(`/api/alerts?state=all&person=${encodeURIComponent(person)}`),
   aiSession: (id: string) => request<SessionTimeline>(`/api/ai/sessions/${encodeURIComponent(id)}`),
   plugins: () => request<PluginsInfo>("/api/plugins"),
   refusalRule: () =>

@@ -34,6 +34,16 @@ RULE = (
     "The nearest earlier row from another source with a failure status, or a message "
     "that says denied or blocked"
 )
+FIRST_RULE = (
+    "No failure before it: the nearest earlier row whose destination (host, app, or address) "
+    "this person or device had not reached in the 30 days before"
+)
+HISTORY = timedelta(days=30)
+# What a row reached: a host name, the app or resource, or an address.
+TARGET = (
+    "coalesce(nullif(dst_endpoint_hostname, ''), nullif(resource_name, ''),"
+    " nullif(dst_endpoint_ip, ''))"
+)
 
 EVENT_SQL = f"""
 SELECT {_TS}, source_id, actor_user_name, device_hostname, src_endpoint_ip
@@ -128,4 +138,34 @@ def around(engine: QueryEngine, allowed: list[str] | None, event_id: str, at: da
     shown = {str(r[ei]) for r in rows}
     if cause and str(cause[0][0]) in shown:
         out.likely_cause = str(cause[0][0])
+        return out
+    first = _first_seen(engine, allowed, cond, event_id, t)
+    if first and first in shown:
+        out.likely_cause, out.likely_rule = first, FIRST_RULE
     return out
+
+
+def _first_seen(
+    engine: QueryEngine, allowed: list[str] | None, cond: str, event_id: str, t: datetime
+) -> str | None:
+    """The nearest earlier row in the window whose destination is new for this person or
+    device: not reached in the HISTORY before the window. Two bounded queries."""
+    near = engine.run(
+        f"SELECT event_id, {TARGET} AS v FROM events WHERE ({cond}) AND event_id <> $id"  # noqa: S608  # escaped literals only
+        f" AND {_TS} < $at AND {TARGET} IS NOT NULL ORDER BY {_TS} DESC LIMIT {MAX_ROWS}",
+        QueryScope(allowed, t - SPAN, t), {"id": event_id, "at": t}, timeout_s=TIMEOUT_S,
+        name="around.first",
+    ).rows  # fmt: skip
+    if not near:
+        return None
+    values = sorted({str(v) for _, v in near})
+    sql = (
+        f"SELECT DISTINCT {TARGET} FROM events WHERE ({cond})"  # noqa: S608  # escaped literals only
+        f" AND list_contains($values, {TARGET})"
+    )
+    before = engine.run(
+        sql, QueryScope(allowed, t - SPAN - HISTORY, t - SPAN), {"values": values},
+        timeout_s=TIMEOUT_S, name="around.history",
+    ).rows  # fmt: skip
+    seen = {str(r[0]) for r in before}
+    return next((str(i) for i, v in near if str(v) not in seen), None)

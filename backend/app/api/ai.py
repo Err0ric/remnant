@@ -604,14 +604,22 @@ class TimelineOut(BaseModel):
 
 @router.get("/ai/sessions")
 async def ai_sessions(
-    request: Request, user: CurrentUser, days: Annotated[int, Query(ge=1, le=90)] = 7
+    request: Request,
+    user: CurrentUser,
+    days: Annotated[int, Query(ge=1, le=90)] = 7,
+    person: Annotated[str | None, Query(max_length=256)] = None,
 ) -> list[SessionOut]:
     """Recent Claude Code and Cowork sessions from the hooks plugin (ADR-0026), newest
-    first, from the sources the caller may read. Audited ai.view."""
+    first, from the sources the caller may read; with `person`, only that person's under
+    any form of the name (ADR-0038 row 27). Audited ai.view."""
     meta: MetaDB = request.app.state.meta
     allowed = await run_in_threadpool(permitted_sources, meta, user)
     engine: QueryEngine = request.app.state.engine
     rows = await run_in_threadpool(sessions, engine, allowed, datetime.now(UTC), days)
+    if person:
+        ident = await run_in_threadpool(request.app.state.identities.load)
+        keys = set(ident.keys_for(person))
+        rows = [s for s in rows if s.person and ident.key(s.person) in keys]
     await run_in_threadpool(
         _audit(request).audit.write,
         "ai.view",

@@ -43,3 +43,20 @@ def test_timeline_joins_forms_and_counts_m365_once(tmp_path: Path) -> None:
     assert "session" not in kinds  # the hook row names no person
     res = lab["admin"].get("/api/people/erin@example.com/timeline", params={"days": 30})
     assert res.status_code == 200
+
+
+def test_timeline_api_adds_alerts_about_the_person(tmp_path: Path) -> None:
+    lab = make_lab(tmp_path)
+    store = lab["app"].state.alert_items
+    store.raise_item(
+        "ai_watch", "sensitive:erin", "Sensitive data to AI: erin", ref_id="s:erin",
+        people=["EXAMPLE\\erin"],
+    )  # fmt: skip
+    store.raise_item("ai_watch", "sensitive:bob", "Sensitive data to AI: bob", ref_id="s:bob",
+                     people=["bob"])  # fmt: skip
+    got = lab["admin"].get("/api/people/erin/timeline", params={"days": 1}).json()
+    alerts = [r for r in got["rows"] if r["kind"] == "alert"]
+    assert [r["title"] for r in alerts] == ["Sensitive data to AI: erin"]
+    assert alerts[0]["item_id"] and alerts[0]["sql"] == ""
+    assert "m365_signin" in got["signins_sql"] and "{from}" in got["signins_sql"]
+    assert lab["admin"].get("/api/ai/sessions", params={"person": "erin"}).json() == []

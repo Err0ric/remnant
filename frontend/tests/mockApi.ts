@@ -1181,7 +1181,21 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         end: "2026-10-30T12:00:00+00:00",
         more: false,
         sql: "SELECT 1 FROM events WHERE time >= {from} AND time < {to}",
+        signins_sql:
+          "SELECT time FROM events WHERE template_id = 'm365_signin' AND time >= {from} AND time < {to}",
         rows: [
+          {
+            kind: "alert",
+            start: "2026-10-30T10:00:00+00:00",
+            end: "2026-10-30T10:00:00+00:00",
+            title: "Sensitive data to AI: alice",
+            detail: "Alert, open",
+            count: 1,
+            source: "alerts",
+            tone: "warn",
+            sql: "",
+            item_id: "a1",
+          },
           {
             kind: "signin",
             start: "2026-10-30T09:58:00+00:00",

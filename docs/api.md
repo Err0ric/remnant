@@ -51,7 +51,7 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | `DELETE` | `/api/ai/services/{service_id}` | Delete Service |  |  |
 | `PUT` | `/api/ai/services/{service_id}/data-level` | The most sensitive data allowed to this service (ADR-0020 row 4). Audited as ai.service_change. |  | `data_level`: `public` &#124; `internal` &#124; `confidential` |
 | `PUT` | `/api/ai/services/{service_id}/status` | Set Service Status |  | `status`: `approved` &#124; `not_approved` &#124; `unreviewed`<br>`note`?: string |
-| `GET` | `/api/ai/sessions` | Recent Claude Code and Cowork sessions from the hooks plugin (ADR-0026), newest first, from the sources the caller may read. Audited ai.view. | `?days` (optional): integer |  |
+| `GET` | `/api/ai/sessions` | Recent Claude Code and Cowork sessions from the hooks plugin (ADR-0026), newest first, from the sources the caller may read; with `person`, only that person's under any form of the name (ADR-0038 row 27). Audited ai.view. | `?days` (optional): integer<br>`?person` (optional): string |  |
 | `GET` | `/api/ai/sessions/{session_id}` | One session in order: start, prompts, each tool call and its result, stop. Audited ai.view with the session id. | `?days` (optional): integer |  |
 | `GET` | `/api/ai/usage` | Services, MCP servers, and Claude usage per person, from the sources the caller may read; with a start, also what is new and what is no longer seen against the period of the same length before it. Audited ai.view. | `?start` (optional): date-time<br>`?end` (optional): date-time |  |
 | `GET` | `/api/ai/watch` | Get Watch |  |  |

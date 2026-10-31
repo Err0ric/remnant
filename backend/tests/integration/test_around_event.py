@@ -43,3 +43,24 @@ def test_around_joins_person_and_points_at_the_likely_cause(tmp_path: Path) -> N
     assert res.status_code == 404
     ok = lab["admin"].get(f"/api/events/{event['event_id']}/around", params={"at": T.isoformat()})
     assert ok.status_code == 200 and ok.json()["likely_cause"] == out.likely_cause
+
+
+def test_with_no_failure_a_first_seen_destination_is_the_likely_cause(tmp_path: Path) -> None:
+    engine = make_lab(tmp_path)["app"].state.engine
+    event = _signin("entra2", "2026-10-29T10:00:00Z", "alice@example.com")
+    LakeWriter(engine._lake).write(
+        [
+            event,
+            _signin("m365_signin", "2026-10-15T09:00:00Z", "alice@example.com",
+                    appDisplayName="Teams"),
+            _signin("m365_signin", "2026-10-29T09:58:00Z", "alice@example.com",
+                    appDisplayName="NewApp"),
+            _signin("m365_signin", "2026-10-29T09:59:00Z", "alice@example.com",
+                    appDisplayName="Teams"),
+        ]
+    )  # fmt: skip
+    out = around(engine, None, event["event_id"], T)
+    by_id = {r[out.columns.index("event_id")]: r for r in out.rows}
+    assert out.likely_cause is not None and out.likely_rule.startswith("No failure before it")
+    cause = by_id[out.likely_cause]
+    assert cause[out.columns.index("time")].startswith("2026-10-29T09:58")

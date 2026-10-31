@@ -46,6 +46,7 @@ class Row:
     source: str
     tone: str  # neutral | warn (a failure); never a severity color
     sql: str  # Search SQL with {from} and {to}; the row's own window
+    item_id: str | None = None  # an alert row opens its alert, not Search
 
 
 @dataclass(slots=True)
@@ -58,6 +59,7 @@ class Timeline:
     rows: list[Row] = field(default_factory=list)
     more: bool = False
     sql: str = ""
+    signins_sql: str = ""  # the person's Microsoft 365 sign-ins, for the Sign-ins tab
     sources: list[str] = field(default_factory=list)
 
 
@@ -93,6 +95,15 @@ def timeline(
         end=end.isoformat(), sql=drill.events(mine),
     )  # fmt: skip
     sources: set[str] = set()
+    outcome = (
+        f"CASE WHEN status_id = 1 THEN 'Signed in' WHEN {INTERRUPTED} THEN 'Interrupted'"
+        f" WHEN {FAILED} THEN 'Failed' ELSE 'Sign-in' END"
+    )
+    out.signins_sql = drill.events(
+        f"template_id = 'm365_signin' AND {mine}",
+        f"time, actor_user_name, coalesce(resource_name, message) AS app, {outcome} AS outcome,"
+        " src_endpoint_ip, device_hostname, event_id",
+    )
 
     def run(sql: str, name: str) -> list[list[Any]]:
         res = engine.run(sql, scope, timeout_s=TIMEOUT_S, intel=False, name=f"timeline.{name}")
@@ -119,10 +130,6 @@ def timeline(
     out.forms.sort()
     out.devices.sort()
 
-    outcome = (
-        f"CASE WHEN status_id = 1 THEN 'Signed in' WHEN {INTERRUPTED} THEN 'Interrupted'"
-        f" WHEN {FAILED} THEN 'Failed' ELSE 'Sign-in' END"
-    )
     for _hour, app, how, n, s, e in run(
         f"SELECT {_HOUR}, coalesce(resource_name, message), {outcome}, count(*), min({_TS}),"  # noqa: S608  # escaped literals only
         f" max({_TS}) FROM events WHERE template_id = 'm365_signin' AND {mine}"

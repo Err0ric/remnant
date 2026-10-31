@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Likely cause: a first-seen destination
+
+- When no earlier row failed or was blocked, **Likely cause** now marks the nearest earlier row whose destination (host, app, or address) the person or device had not reached in the 30 days before. Its tooltip says which rule picked it. Still a hint; no model is called.
+- What changes for existing installs: nothing to do.
+
+### Person page: Sessions, Sign-ins, and Alerts tabs (ADR-0038 row 27)
+
+- A person's page now has five tabs: Summary, Timeline, **Sessions** (Claude sessions in the last 30 days, each opening in Agents), **Sign-ins** (their Microsoft 365 sign-ins in the last 7 days, with outcome), and **Alerts** (alerts that name them, any state).
+- The Timeline also lists alerts about the person in its window; an alert row opens the alert.
+- `GET /api/ai/sessions?person=` filters sessions to one person under any form of the name.
+- What changes for existing installs: nothing to do. Alerts raised before migration 57 name no one, so they do not appear.
+
 ### Alerts name who and which devices they are about
 
 - New alerts record the people and devices in the rows that fired: from the run's kept rows, or for a rule run from the matched events (read from the sources the run read). AI Watch items record the person for sensitive-data and Claude Code items, and the people and devices for a service or MCP server. At most 20 of each.
