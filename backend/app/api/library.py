@@ -6,15 +6,16 @@ query. Offering reads which templates the viewer's own sources produced (row 3).
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from app.api.access import CurrentUser, client_ip, require_role
 from app.auth.service import AuthService
 from app.auth.users import User
-from app.core.errors import NotFoundError
+from app.core.errors import NotFoundError, ParamInvalidError
 from app.engine.views import permitted_sources
-from app.search.library import Library, LibraryQuery, Pack, copies, copy, editor_sql
+from app.search.dashboards import DashboardStore, can_edit
+from app.search.library import Library, LibraryQuery, Pack, copies, copy, editor_sql, threshold
 from app.search.saved import SavedSearch, SavedSearchStore
 from app.search.schedules import ScheduleService
 
@@ -156,3 +157,79 @@ async def replace_mine(pack_id: str, query_id: str, request: Request, user: Auth
             {"schedule_id": sid, "definition_change": "library copy replaced"},
         )  # fmt: skip
     return updated
+
+
+class AddPackIn(BaseModel):
+    query_ids: list[str] = Field(min_length=1, max_length=100)
+    dashboard_id: str | None = Field(default=None, max_length=64)
+
+
+class AddedOut(BaseModel):
+    query_id: str
+    search_id: str
+    schedule_id: str
+
+
+class AddPackOut(BaseModel):
+    dashboard_id: str
+    added: list[AddedOut]
+
+
+@router.post("/library/{pack_id}/dashboard", status_code=status.HTTP_201_CREATED)
+async def add_pack(pack_id: str, body: AddPackIn, request: Request, user: Author) -> AddPackOut:
+    """Add a pack (ADR-0033 row 5): each ticked query becomes the user's private saved
+    search (their copy if they have one), a private schedule with the query's suggested
+    interval and flag, and a panel in a section named after the query's group. Every
+    object is ordinary and editable; each is audited as if made by hand."""
+    lib = _lib(request)
+    pack = next((p for p in lib.packs if p.id == pack_id), None)
+    if pack is None:
+        raise NotFoundError("No such pack")
+    wanted = [q for q in pack.queries if q.id in set(body.query_ids)]
+    if len(wanted) != len(set(body.query_ids)):
+        raise ParamInvalidError("Some of those queries are not in this pack")
+    store: SavedSearchStore = request.app.state.searches
+    schedules: ScheduleService = request.app.state.schedules
+    dashboards: DashboardStore = request.app.state.dashboards
+
+    def board_id() -> str:
+        board = None
+        if body.dashboard_id:
+            try:
+                board = dashboards.get(body.dashboard_id, user)
+            except NotFoundError:
+                board = None
+            if board is not None and not can_edit(board, user):
+                board = None
+        return (board or dashboards.default_for(user)).dashboard_id
+
+    target = await run_in_threadpool(board_id)
+    mine = copies(await run_in_threadpool(store.visible, user), user)
+    added: list[AddedOut] = []
+    for q in wanted:
+        search = mine.get(f"{pack.id}/{q.id}")
+        if search is None:
+            search = await run_in_threadpool(copy, store, pack, q, user)
+            await run_in_threadpool(
+                _audit, request, "search.create", user,
+                {"search_id": search.id, "library": pack.origin(q)},
+            )  # fmt: skip
+        kind, value = threshold(q.flag)
+        s = await run_in_threadpool(
+            schedules.create, user, "search", search.id, q.name,
+            q.suggested_schedule or "daily", 1440, {}, False, kind, value,
+        )  # fmt: skip
+        await run_in_threadpool(
+            _audit, request, "schedule.create", user,
+            {"schedule_id": s.schedule_id, "kind": "search", "target_id": search.id,
+             "cron": s.cron, "library": pack.origin(q)},
+        )  # fmt: skip
+        await run_in_threadpool(
+            dashboards.set_panel, target, user, s.schedule_id, q.group[:60], None, "third"
+        )
+        await run_in_threadpool(
+            _audit, request, "dashboard.panel_add", user,
+            {"dashboard_id": target, "schedule_id": s.schedule_id, "section": q.group},
+        )  # fmt: skip
+        added.append(AddedOut(query_id=q.id, search_id=search.id, schedule_id=s.schedule_id))
+    return AddPackOut(dashboard_id=target, added=added)

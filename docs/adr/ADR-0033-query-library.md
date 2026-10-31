@@ -43,7 +43,7 @@ The nine queries in the owner's notes become the `m365` pack with these changes:
 - A query may use parameters other than `start` and `end` only with a default; the Library loads it with the default written into the SQL (`who_had_ip` opens with `10.20.1.5`), and Save as my own keeps the parameter.
 - `GET /api/library`, `POST /api/library/{pack}/{query}/copy` and `/replace` (admins and analysts); copies carry `origin.library: <pack>/<id>@<version>`. Offering reads `SELECT DISTINCT template_id` over the last 30 days of the viewer's own view.
 - "Grimoire" stays a palette alias of Saved searches too; the palette's **Query library** entry also answers to it.
-- Part 2 is **Add a pack** on the Dashboard.
+- Part 2: **Add a pack** in the dashboard settings, `POST /api/library/{pack}/dashboard` (admins and analysts). Schedules are private, look back 24 hours, run at the query's `suggested_schedule` (daily when none), and take its `flag` as the threshold; panels are a third wide in a section named after the group (60 characters). An existing copy is reused, never duplicated. Panel headline settings stay the defaults; change them on the panel.
 
 ## Consequences
 

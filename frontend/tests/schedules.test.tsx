@@ -186,6 +186,28 @@ describe("Dashboards at scale (ADR-0034)", () => {
   });
 });
 
+describe("Add a pack (ADR-0033 row 5)", () => {
+  it("ticks a pack's queries and adds them as panels, running each once", async () => {
+    const spy = await renderAt("/dashboard");
+    await screen.findByRole("region", { name: "Failed SSH daily" });
+    await userEvent.click(screen.getByRole("button", { name: "New dashboard" }));
+    const settings = await screen.findByRole("region", { name: "Dashboard settings" });
+    const box = within(settings).getByRole("group", { name: "Add a pack" });
+    await userEvent.selectOptions(await within(box).findByLabelText("Pack"), "linux_auth");
+    const list = within(box).getByRole("list", { name: "Queries in Linux sign-ins and privilege" });
+    expect(within(list).getAllByRole("checkbox")).toHaveLength(2);
+    await userEvent.click(within(list).getAllByRole("checkbox")[1]!);
+    await userEvent.click(within(box).getByRole("button", { name: "Add 1 panel" }));
+    expect(await within(box).findByRole("status")).toHaveTextContent("Added 1 panel");
+    expect(
+      sent(spy, "POST", (u) => u.endsWith("/api/library/linux_auth/dashboard"))[0],
+    ).toMatchObject({
+      query_ids: ["ssh_logins"],
+    });
+    expect(spy.mock.calls.some(([u]) => String(u).endsWith("/api/schedules/lib0/run"))).toBe(true);
+  });
+});
+
 describe("Schedules", () => {
   it("creates a schedule from a preset with a threshold", async () => {
     const spy = await renderAt("/schedules");

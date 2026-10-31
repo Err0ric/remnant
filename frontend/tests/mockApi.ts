@@ -1218,6 +1218,20 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         ],
       });
     }
+    if (url.endsWith("/api/library/linux_auth/dashboard") && method === "POST") {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { query_ids: string[] };
+      return json(
+        {
+          dashboard_id: "d-new",
+          added: body.query_ids.map((q, i) => ({
+            query_id: q,
+            search_id: q,
+            schedule_id: `lib${i}`,
+          })),
+        },
+        201,
+      );
+    }
     if (url.includes("/api/library/") && method === "POST") {
       const id = url.split("/")[6] ?? "x";
       return json(

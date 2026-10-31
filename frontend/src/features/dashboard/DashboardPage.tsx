@@ -14,6 +14,7 @@ import { takeDashboardScroll } from "@/lib/drill";
 import { rangeWords } from "./headline";
 import { stamp } from "@/features/overview/time";
 import { currentDashboard, rememberDashboard } from "./choice";
+import { AddPack } from "./AddPack";
 import { AiWatch } from "./AiWatch";
 import { Sections } from "./Sections";
 import { WINDOWS, daysOf, rangeText as windowRange, readWindow, saveWindow } from "./pageWindow";
@@ -555,6 +556,7 @@ function BoardSettings({ board, schedules, onAddSection, onDeleted }: BoardSetti
           {failure instanceof ApiError ? failure.message : "That did not work"}
         </p>
       ) : null}
+      <AddPack dashboardId={board.dashboard_id} />
     </section>
   );
 }

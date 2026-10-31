@@ -199,3 +199,16 @@ def copies(searches: list[SavedSearch], user: User) -> dict[str, SavedSearch]:
         if lib and s.owner_id == user.user_id:
             out[lib.split("@", 1)[0]] = s
     return out
+
+
+def threshold(
+    flag: str | None,
+) -> tuple[Literal["above", "below", "change_pct"] | None, float | None]:
+    """A pack's flag as a schedule threshold: "above 0", "below 5", "change 100%"."""
+    if not flag:
+        return None, None
+    word, _, number = flag.partition(" ")
+    value = float(number.rstrip("%"))
+    if word == "change":
+        return "change_pct", value
+    return ("above" if word == "above" else "below"), value

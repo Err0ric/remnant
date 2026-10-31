@@ -2392,6 +2392,14 @@ export const api = {
       `/api/library/${encodeURIComponent(pack)}/${encodeURIComponent(id)}/copy`,
       { method: "POST" },
     ),
+  addPack: (pack: string, queryIds: string[], dashboardId?: string) =>
+    request<{
+      dashboard_id: string;
+      added: { query_id: string; search_id: string; schedule_id: string }[];
+    }>(
+      `/api/library/${encodeURIComponent(pack)}/dashboard`,
+      post({ query_ids: queryIds, ...(dashboardId ? { dashboard_id: dashboardId } : {}) }),
+    ),
   libraryReplace: (pack: string, id: string) =>
     request<SavedSearch>(
       `/api/library/${encodeURIComponent(pack)}/${encodeURIComponent(id)}/replace`,

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Dashboard: Add a pack (ADR-0033 row 5)
+
+- In a dashboard's settings (Edit), **Add a pack** lists the query library packs that fit your sources. Tick queries and **Add**: each becomes your private saved search (your existing copy if you have one), a private schedule with the query's suggested interval (hourly or daily, last 24 hours) and flag, and a panel in a section named after the query's group. Each panel runs once at once so it fills.
+- Everything made is an ordinary saved search, schedule, and panel you can change or remove. Each is audited as if made by hand (`search.create`, `schedule.create`, `dashboard.panel_add`, with the library entry).
+- What changes for existing installs: nothing to do.
+
 ### Query library (ADR-0033)
 
 - **Search > Library** lists shipped, tested queries for the sources you have, in five packs: Microsoft 365 (identity, mail, apps and consent, admin, Copilot, data), Linux sign-ins and privilege, Palo Alto firewalls, DNS and AI services, and ingest health. A query appears only when a source you can read sent events from one of its templates in the last 30 days.

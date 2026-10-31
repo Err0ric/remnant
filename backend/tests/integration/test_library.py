@@ -114,3 +114,38 @@ def test_library_api_offers_what_your_sources_have_and_copies(tmp_path: Path) ->
     res = ana.post("/api/library/linux_auth/ssh_logins/replace")
     assert res.status_code == 200 and res.json()["sql"].endswith("LIMIT 100")
     assert res.json()["origin"] == {"library": "linux_auth/ssh_logins@1.1.0"}
+
+
+def test_add_a_pack_makes_searches_schedules_and_panels(tmp_path: Path) -> None:
+    from app.search.library import threshold
+    from tests.integration.test_schedules import make_lab
+
+    assert threshold("above 0") == ("above", 0.0)
+    assert threshold("change 200%") == ("change_pct", 200.0)
+    assert threshold(None) == (None, None)
+    lab = make_lab(tmp_path)
+    ana = lab["ana"]
+    ids = ["ssh_logins", "ssh_failures_by_source"]
+    res = ana.post("/api/library/linux_auth/dashboard", json={"query_ids": ids})
+    assert res.status_code == 201, res.text
+    added = res.json()["added"]
+    assert [a["query_id"] for a in added] == ids
+    scheds = {s["schedule_id"]: s for s in ana.get("/api/schedules").json()}
+    fail = scheds[added[1]["schedule_id"]]
+    assert fail["threshold_kind"] == "change_pct" and fail["threshold_value"] == 200
+    assert fail["shared"] is False
+    board = next(
+        d for d in ana.get("/api/dashboards").json()
+        if d["dashboard_id"] == res.json()["dashboard_id"]
+    )  # fmt: skip
+    sections = {p["schedule_id"]: p["section"] for p in board["panels"]}
+    assert sections[added[0]["schedule_id"]] == "Linux / SSH"
+    # A second add reuses the user's copy instead of making another saved search.
+    again = ana.post("/api/library/linux_auth/dashboard", json={"query_ids": ["ssh_logins"]})
+    assert again.json()["added"][0]["search_id"] == added[0]["search_id"]
+    bad = ana.post("/api/library/linux_auth/dashboard", json={"query_ids": ["nope"]})
+    assert bad.status_code == 400
+    assert (
+        lab["aud"].post("/api/library/linux_auth/dashboard", json={"query_ids": ids}).status_code
+        == 403
+    )
