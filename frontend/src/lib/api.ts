@@ -1729,6 +1729,9 @@ export interface AlertItem {
   schedule_id: string | null;
   /** AI Watch items (ADR-0035 row 11). */
   severity: "high" | "medium" | null;
+  /** Who and which devices the rows that fired are about (ADR-0038 row 28). */
+  people?: string[];
+  devices?: string[];
   muted_until: string | null;
   history: AlertEvent[];
 }

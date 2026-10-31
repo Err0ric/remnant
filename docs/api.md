@@ -67,7 +67,7 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | `PATCH` | `/api/alert-targets/{target_id}` | Update Target |  | `name`?: string<br>`url`?: string<br>`email`?: EmailSettings<br>`password`?: string |
 | `DELETE` | `/api/alert-targets/{target_id}` | Delete Target |  |  |
 | `POST` | `/api/alert-targets/{target_id}/test` | Test Target |  |  |
-| `GET` | `/api/alerts` | The viewer's alerts, newest first: open by default, or closed, or all. With `unreviewed`, only AI Watch items whose service or MCP server is still not reviewed, closed ones included: what AI Watch's "not reviewed" line links to. | `?state` (optional): `open` &#124; `closed` &#124; `all`<br>`?unreviewed` (optional): boolean |  |
+| `GET` | `/api/alerts` | The viewer's alerts, newest first: open by default, or closed, or all. With `unreviewed`, only AI Watch items whose service or MCP server is still not reviewed, closed ones included: what AI Watch's "not reviewed" line links to. With `person`, only items about that person under any form of the name (ADR-0038 row 27). | `?state` (optional): `open` &#124; `closed` &#124; `all`<br>`?unreviewed` (optional): boolean<br>`?person` (optional): string |  |
 | `GET` | `/api/alerts/mutes` | Active mutes, soonest to expire first. Everyone may see what is muted. |  |  |
 | `DELETE` | `/api/alerts/mutes/{mute_id}` | End a mute early. Audited as alert.unmute. |  |  |
 | `GET` | `/api/alerts/{item_id}` | Get Alert |  |  |

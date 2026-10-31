@@ -359,6 +359,8 @@ class AiWatch:
                 else f"MCP server {state}: {name}"
             ),
             ref_id=f"{kind}:{name}",
+            people=list(people),
+            devices=list(devices),
             why="Not approved" if not_approved else "Not reviewed yet",
             detail=". ".join(parts),
             count=len(people),
@@ -390,6 +392,7 @@ class AiWatch:
             f"Sensitive data to AI: {who}",
             # One item per person and day the signals were received.
             ref_id=f"sensitive:{who}:{day}",
+            people=[who],
             why=", ".join(f"{c} x{n}" for c, n in sorted(cats.items())),
             count=sum(cats.values()),
             sources=sources,
@@ -459,6 +462,8 @@ class AiWatch:
             f"agent:{agent}",
             f"AI agent changed: {label}" if what != "agent" else f"AI agent not reviewed: {label}",
             ref_id=f"agent:{agent}:{what}",
+            # A Claude Code agent is keyed by its person, or its device when none was seen.
+            people=[agent[3:]] if agent.startswith("cc|") and "@" in agent else None,
             why=line,
             count=count,
             sources=self._agent_sources(),

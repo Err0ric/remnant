@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Alerts name who and which devices they are about
+
+- New alerts record the people and devices in the rows that fired: from the run's kept rows, or for a rule run from the matched events (read from the sources the run read). AI Watch items record the person for sensitive-data and Claude Code items, and the people and devices for a service or MCP server. At most 20 of each.
+- The alert shows them as links under **People** and **Devices**. `GET /api/alerts?person=` lists the alerts about one person under any form of the name, for the person page.
+- Rows that fired from a rule now have **Around** beside each event: the rows within 5 minutes by the same person or device.
+- What changes for existing installs: nothing to do. Migration 57 adds the two columns; alerts raised before it have no people or devices.
+
 ### Person timeline (ADR-0038 section 9)
 
 - A person's page in People & devices has **Summary** and **Timeline** tabs. Timeline shows one row per action, newest first, grouped by day: Microsoft 365 sign-ins (per app, outcome, and hour), Claude sessions (one row each), AI services first used in the window, app consents, Microsoft 365 audit operations (counted once across Graph and the Management API), and other events grouped by source, message, and hour. Failures are in the warn color; nothing uses severity colors.

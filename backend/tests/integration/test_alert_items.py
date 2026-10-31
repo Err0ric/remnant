@@ -227,3 +227,23 @@ def test_migration_turns_acknowledged_and_open_flags_into_items(tmp_path: Path) 
         ("s2-r2", "open", None, None, 0),
     ]
     assert db.execute("SELECT action FROM alert_item_history").fetchall() == [("close",)]
+
+
+def test_an_item_records_who_and_which_devices_fired(lab: dict[str, Any]) -> None:
+    """ADR-0038 rows 27 and 28: the person page lists the alerts about that person."""
+    flagged_rule(lab)
+    (item,) = alerts(lab["admin"])["items"]
+    assert item["devices"], "the Windows rows name their machine"
+    people = item["people"]
+    if people:
+        who = people[0]
+        found = lab["admin"].get("/api/alerts", params={"person": who.upper()}).json()
+        assert [i["item_id"] for i in found["items"]] == [item["item_id"]]
+    none = lab["admin"].get("/api/alerts", params={"person": "nobody-here"}).json()
+    assert none["items"] == []
+    store = lab["app"].state.alert_items
+    raised = store.raise_item(
+        "ai_watch", "sensitive:dana", "Sensitive data to AI: dana", ref_id="s:1",
+        people=["Dana@example.com", "dana@example.com", " "],
+    )  # fmt: skip
+    assert raised.people == ["Dana@example.com", "dana@example.com"]

@@ -232,7 +232,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       item_id: "a1",
       kind: "rule",
       subject: "win_failed_logons",
-      ref_id: "r1",
+      ref_id: "rr1",
       title: "Failed logons",
       detail: "",
       why: "Count 12 is above 5",
@@ -248,8 +248,10 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       close_reason_label: null,
       note: null,
       resolved: null,
-      schedule_id: null,
+      schedule_id: "s-rule",
       severity: null,
+      people: ["alice"],
+      devices: ["ws-0042"],
       muted_until: null,
       history: [],
     },
@@ -2261,6 +2263,13 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       schedules.push(created);
       return json(created, 201);
     }
+    if (url.endsWith("/api/schedules/s-rule/runs/rr1"))
+      return json({
+        ...runSummary("rr1", 12),
+        columns: ["event_id", "event_time", "source_id"],
+        sample: [[ID, "2026-10-09 23:04:36+00", "linux_sshd"]],
+        truncated: false,
+      });
     if (/\/api\/schedules\/[^/]+\/runs\/[^/]+$/.test(url))
       return json({
         ...runSummary("sr2", 12),

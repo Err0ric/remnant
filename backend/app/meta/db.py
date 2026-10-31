@@ -1004,6 +1004,12 @@ MIGRATIONS: tuple[Migration, ...] = (
         PRIMARY KEY (item_type, item_key)
     );
     """,
+    # 57: the people and devices an alert is about (ADR-0038 rows 27 and 28), as JSON lists
+    # taken from the rows that fired; items raised before this have none.
+    """
+    ALTER TABLE alert_items ADD COLUMN people TEXT;
+    ALTER TABLE alert_items ADD COLUMN devices TEXT;
+    """,
 )
 
 

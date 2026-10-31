@@ -117,4 +117,15 @@ describe("Alerts (ADR-0037)", () => {
     await userEvent.click(await screen.findByRole("button", { name: /New AI service: DeepSeek/ }));
     expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
   });
+
+  it("names who the alert is about and opens the rows around a fired event", async () => {
+    await renderAt("/alerts");
+    await userEvent.click(await screen.findByRole("button", { name: /Failed logons/ }));
+    expect(await screen.findByRole("link", { name: "alice" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "ws-0042" })).toBeVisible();
+    const rows = await screen.findByRole("table", { name: "Rows that fired" });
+    await userEvent.click(within(rows).getByRole("button", { name: "Around" }));
+    const box = await screen.findByRole("region", { name: "Around this event" });
+    expect(await within(box).findByText("Likely cause")).toBeVisible();
+  });
 });

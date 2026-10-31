@@ -54,6 +54,8 @@ class ItemOut(BaseModel):
     resolved: str | None
     schedule_id: str | None  # the schedule whose run fired: its rows are that run's sample
     severity: str | None  # high | medium for AI Watch items (ADR-0035 row 11)
+    people: list[str] = []
+    devices: list[str] = []
     muted_until: str | None
     history: list[EventOut]
 
@@ -129,6 +131,8 @@ def _out(request: Request, i: AlertItem, mutes: list[Mute]) -> ItemOut:
         resolved=i.resolved,
         schedule_id=i.schedule_id,
         severity=i.severity,
+        people=i.people,
+        devices=i.devices,
         muted_until=until,
         history=[
             EventOut(
@@ -158,12 +162,23 @@ def _unreviewed(request: Request, item: AlertItem) -> bool:
     return False
 
 
-def _list(request: Request, user: User, state: str, unreviewed: bool = False) -> ListOut:
+def _list(
+    request: Request,
+    user: User,
+    state: str,
+    unreviewed: bool = False,
+    person: str | None = None,
+) -> ListOut:
     store = _store(request)
     readable = _readable(request, user)
     found = store.items(user, state)
     if unreviewed:
         found = [i for i in found if _unreviewed(request, i)]
+    if person:
+        # One person under every form of the name (ADR-0018), as the person page shows it.
+        ident = request.app.state.identities.load()
+        keys = set(ident.keys_for(person))
+        found = [i for i in found if any(ident.key(p) in keys for p in i.people)]
     opened = found if state == "open" else store.items(user, "open")
     mutes = store.mutes()
     return ListOut(
@@ -181,11 +196,13 @@ async def list_alerts(
     user: CurrentUser,
     state: Annotated[State, Query()] = "open",
     unreviewed: Annotated[bool, Query()] = False,
+    person: Annotated[str | None, Query(max_length=256)] = None,
 ) -> ListOut:
     """The viewer's alerts, newest first: open by default, or closed, or all. With
     `unreviewed`, only AI Watch items whose service or MCP server is still not reviewed,
-    closed ones included: what AI Watch's "not reviewed" line links to."""
-    return await run_in_threadpool(_list, request, user, state, unreviewed)
+    closed ones included: what AI Watch's "not reviewed" line links to. With `person`, only
+    items about that person under any form of the name (ADR-0038 row 27)."""
+    return await run_in_threadpool(_list, request, user, state, unreviewed, person)
 
 
 def _one(request: Request, user: User, item_id: str) -> ItemOut:

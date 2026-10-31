@@ -7,6 +7,7 @@ import { cn } from "@/lib/cn";
 import { navigate, pathFor, useSection, useSectionTab } from "@/lib/route";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { EntityLink } from "@/components/EntityLink";
+import { AroundEvent } from "@/features/search/AroundEvent";
 import { When } from "@/components/When";
 import { CloseForm } from "./CloseForm";
 import { KIND_LABEL } from "./kinds";
@@ -249,6 +250,32 @@ function AlertDetail({
             </dd>
           </>
         ) : null}
+        {item.people?.length ? (
+          <>
+            <dt className="text-text-muted">People</dt>
+            <dd className="font-mono">
+              {item.people.map((p, i) => (
+                <span key={p}>
+                  {i ? ", " : ""}
+                  <EntityLink kind="user" value={p} />
+                </span>
+              ))}
+            </dd>
+          </>
+        ) : null}
+        {item.devices?.length ? (
+          <>
+            <dt className="text-text-muted">Devices</dt>
+            <dd className="font-mono">
+              {item.devices.map((d, i) => (
+                <span key={d}>
+                  {i ? ", " : ""}
+                  <EntityLink kind="host" value={d} />
+                </span>
+              ))}
+            </dd>
+          </>
+        ) : null}
         <dt className="text-text-muted">Sources</dt>
         <dd className="font-mono">
           {item.sources.length > 4 ? (
@@ -334,8 +361,15 @@ function AlertDetail({
 /** The rows the run kept, with every address, person, and machine a link. */
 const SHOWN = 10;
 
+/** An event time as the run kept it ("2026-10-09 20:03:57+00") in ISO form. */
+function isoTime(v: unknown): string | null {
+  if (typeof v !== "string" || !v) return null;
+  return v.replace(" ", "T").replace(/([+-]\d\d)$/, "$1:00");
+}
+
 function RunRows({ scheduleId, runId }: { scheduleId: string; runId: string }) {
   const [all, setAll] = useState(false);
+  const [around, setAround] = useState<{ id: string; at: string } | null>(null);
   const run = useQuery({
     queryKey: ["schedule-run", scheduleId, runId],
     queryFn: () => api.scheduleRun(scheduleId, runId),
@@ -345,6 +379,11 @@ function RunRows({ scheduleId, runId }: { scheduleId: string; runId: string }) {
   const { columns, sample: kept, truncated, row_count } = run.data;
   const sample = all ? kept : kept.slice(0, SHOWN);
   if (!kept.length) return null;
+  const idCol = columns.indexOf("event_id");
+  const timeCol = columns.includes("event_time")
+    ? columns.indexOf("event_time")
+    : columns.indexOf("time");
+  const canAround = idCol >= 0 && timeCol >= 0;
   return (
     <div className="min-w-0 overflow-x-auto">
       <table aria-label="Rows that fired" className="w-full text-left font-mono text-xs">
@@ -355,6 +394,11 @@ function RunRows({ scheduleId, runId }: { scheduleId: string; runId: string }) {
                 {c}
               </th>
             ))}
+            {canAround ? (
+              <th className="px-2 py-1 font-normal">
+                <span className="sr-only">Around</span>
+              </th>
+            ) : null}
           </tr>
         </thead>
         <tbody>
@@ -372,10 +416,33 @@ function RunRows({ scheduleId, runId }: { scheduleId: string; runId: string }) {
                   </td>
                 );
               })}
+              {canAround ? (
+                <td className="px-2 py-1 font-sans">
+                  {isoTime(row[timeCol]) ? (
+                    <button
+                      type="button"
+                      aria-pressed={around?.id === String(row[idCol])}
+                      onClick={() => {
+                        const id = String(row[idCol]);
+                        const at = isoTime(row[timeCol]) as string;
+                        setAround(around?.id === id ? null : { id, at });
+                      }}
+                      className="text-accent-text hover:underline"
+                    >
+                      Around
+                    </button>
+                  ) : null}
+                </td>
+              ) : null}
             </tr>
           ))}
         </tbody>
       </table>
+      {around ? (
+        <div className="mt-2 font-sans">
+          <AroundEvent eventId={around.id} at={around.at} />
+        </div>
+      ) : null}
       <p className="mt-1 text-text-muted">
         {sample.length < kept.length ? (
           <button

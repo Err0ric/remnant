@@ -74,6 +74,9 @@ class AlertItem:
     resolved: str | None  # the condition ended (a quiet source sending again)
     schedule_id: str | None = None  # the schedule whose run fired, for its rows
     severity: str | None = None  # high | medium (AI Watch); None for the rest
+    # Who and which devices the item is about, from the rows that fired (ADR-0038 row 28).
+    people: list[str] = field(default_factory=list)
+    devices: list[str] = field(default_factory=list)
     history: list[ItemEvent] = field(default_factory=list)
 
 
@@ -121,11 +124,15 @@ class AlertItems:
         range_end: str | None = None,
         severity: str | None = None,
         refresh: bool = False,
+        people: list[str] | None = None,
+        devices: list[str] | None = None,
     ) -> AlertItem:
         """Write an item (once per kind and ref id). A muted subject closes it at once.
         With `refresh`, an existing open item takes the new wording and counts."""
         now = self._now()
         item_id = str(uuid.uuid4())
+        who = _names(people)
+        dev = _names(devices)
         with self._meta.connect() as con:
             if ref_id is not None:
                 had = con.execute(
@@ -138,7 +145,8 @@ class AlertItems:
                     con.execute(
                         "UPDATE alert_items SET title = ?, detail = ?, why = ?, count = ?,"
                         " sources = ?, range_end = coalesce(?, range_end),"
-                        " severity = coalesce(?, severity)"
+                        " severity = coalesce(?, severity),"
+                        " people = coalesce(?, people), devices = coalesce(?, devices)"
                         " WHERE item_id = ? AND state = 'open'",
                         (
                             title[:300],
@@ -148,6 +156,8 @@ class AlertItems:
                             json.dumps(sorted(set(sources or []))),
                             range_end,
                             severity,
+                            who,
+                            dev,
                             had["item_id"],
                         ),
                     )
@@ -155,8 +165,9 @@ class AlertItems:
                     return self._load(con, had["item_id"])
             con.execute(
                 "INSERT INTO alert_items (item_id, kind, subject, ref_id, title, detail, why,"
-                " count, sources, owner_id, shared, range_start, range_end, created_at, severity)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " count, sources, owner_id, shared, range_start, range_end, created_at, severity,"
+                " people, devices)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     item_id,
                     kind,
@@ -173,6 +184,8 @@ class AlertItems:
                     range_end,
                     now,
                     severity,
+                    who,
+                    dev,
                 ),
             )
             mute = con.execute(
@@ -486,4 +499,23 @@ def _item(r: sqlite3.Row) -> AlertItem:
         resolved=r["resolved"],
         schedule_id=r["run_schedule"],
         severity=r["severity"],
+        people=json.loads(r["people"] or "[]"),
+        devices=json.loads(r["devices"] or "[]"),
     )
+
+
+MAX_NAMES = 20
+
+
+def _names(values: list[str] | None) -> str | None:
+    """Distinct, non-empty, at most MAX_NAMES, as stored; None when none were given."""
+    if not values:
+        return None
+    out: list[str] = []
+    for v in values:
+        s = str(v).strip()[:256]
+        if s and s not in out:
+            out.append(s)
+        if len(out) >= MAX_NAMES:
+            break
+    return json.dumps(out) if out else None

@@ -470,6 +470,27 @@ class ScheduleService:
             ).fetchall()
         return [r[0] for r in rows]
 
+    def _about(self, run: ScheduleRun) -> tuple[list[str], list[str]]:
+        """Who and which devices the run's rows are about (ADR-0038 row 28): from the kept
+        rows' own columns, or for a rule run (it keeps event ids) from those events, read
+        from the sources the run read."""
+        people, devices = _column(run, "actor_user_name"), _column(run, "device_hostname")
+        ids = _column(run, "event_id")
+        if (people or devices) or not ids or not run.sources_in_scope:
+            return people, devices
+        start = datetime.fromisoformat(run.range_start) if run.range_start else None
+        end = datetime.fromisoformat(run.range_end) if run.range_end else None
+        try:
+            rows = self._engine.run(
+                "SELECT DISTINCT actor_user_name, device_hostname FROM events"
+                " WHERE list_contains($ids, event_id) LIMIT 100",
+                QueryScope(run.sources_in_scope, start, end), {"ids": ids[:500]},
+                timeout_s=20, intel=False, name="schedule.about",
+            ).rows  # fmt: skip
+        except AppError:
+            return [], []  # the item is raised without them
+        return [str(p) for p, _ in rows if p], [str(d) for _, d in rows if d]
+
     def _notify(self, sched: Schedule, run: ScheduleRun) -> None:
         """Raise an alert item and queue an alert for a flagged run or a rule run with
         matches (when no threshold is set); queue an alert for a schedule that paused itself.
@@ -490,6 +511,7 @@ class ScheduleService:
             return
         link = f"{self._link}/dashboard" if self._link else None
         if kind != "pause" and self._items is not None:
+            about = self._about(run)
             item = self._items.raise_item(
                 "rule" if sched.kind == "rule" else "schedule",
                 sched.target_id if sched.kind == "rule" else sched.schedule_id,
@@ -502,6 +524,8 @@ class ScheduleService:
                 shared=sched.shared,
                 range_start=run.range_start,
                 range_end=run.range_end,
+                people=about[0],
+                devices=about[1],
             )
             if item.state == "closed":
                 return  # muted: recorded, not sent
@@ -1031,3 +1055,11 @@ def _range_label(minutes: int | None) -> str:
         hours = minutes // 60
         return f"last {hours} hour{'s' if hours != 1 else ''}"
     return f"last {minutes} minutes"
+
+
+def _column(run: ScheduleRun, name: str) -> list[str]:
+    """Distinct values of one column in the run's kept rows (who and which devices fired)."""
+    if name not in (run.columns or []):
+        return []
+    i = run.columns.index(name)
+    return [str(r[i]) for r in run.sample or [] if i < len(r) and r[i] not in (None, "")]
