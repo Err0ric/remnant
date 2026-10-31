@@ -176,33 +176,39 @@ def test_search_param_must_be_name_value(runner: CliRunner) -> None:
     assert "name=value" in err
 
 
-class _StopFollowError(Exception):
-    """Ends the follow loop in the test."""
-
-
-def test_tail_follow_prints_each_new_event_once(
+def test_tail_follow_reads_the_live_stream_and_prints_each_event_once(
     runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """`tail -f` follows on the server's live stream (ADR-0036 row 10): what arrived after
+    the last line shown, once, then the stream's own end message."""
     later = datetime(2026, 10, 10, 12, 5, tzinfo=UTC)
     new = b"<38>Oct 10 12:04:00 bastion sshd[9]: Accepted password for newcomer\n"
-    polls = {"n": 0}
+    n = Normalizer(SourceSpec(source_id="linux_auth", format="syslog"), clock=lambda: later)
+    rows = [r for f in Framer().frames([new]) if (r := n.normalize(decode_frame(f)))]
+    real = cli.client_factory
 
-    def sleep(_: float) -> None:
-        polls["n"] += 1
-        if polls["n"] == 1:  # an event arrives before the first poll
-            n = Normalizer(SourceSpec(source_id="linux_auth", format="syslog"), clock=lambda: later)
-            rows = [r for f in Framer().frames([new]) if (r := n.normalize(decode_frame(f)))]
-            LakeWriter(tmp_path / "lake").write(rows)
-        elif polls["n"] == 3:  # two more polls with nothing new, then stop
-            raise _StopFollowError
+    def factory(creds: Credentials) -> TestClient:
+        client = real(creds)
+        live = client.app.state.live  # type: ignore[attr-defined]  # TestClient's app
+        live.poll_s, live.limit_override_s = 0.05, 0.5
+        return client
 
-    monkeypatch.setattr(cli.time, "sleep", sleep)
+    monkeypatch.setattr(cli, "client_factory", factory)
+    # The new line arrives before -f starts following: it is after the last one shown.
+    original = cli.TailCursor.latest
+
+    def latest_then_arrive(self: cli.TailCursor, lines: int) -> dict[str, object]:
+        out = original(self, lines)
+        LakeWriter(tmp_path / "lake").write(rows)
+        return out
+
+    monkeypatch.setattr(cli.TailCursor, "latest", latest_then_arrive)
     res = runner.invoke(cli.app, ["tail", "linux_auth", "-n", "2", "-f", "-o", "raw"])
-    assert isinstance(res.exception, _StopFollowError)
+    assert res.exit_code == 0, res.output
     lines = res.stdout.splitlines()
-    assert lines[-1].endswith("Accepted password for newcomer")
-    assert sum("newcomer" in line for line in lines) == 1  # printed once, not on every poll
     assert "Failed password for admin" in lines[0]  # the first two are the latest, oldest first
+    assert sum("newcomer" in line for line in lines) == 1
+    assert "Live stopped after" in res.stderr
 
 
 def test_query_match_runs_a_simple_search_with_bound_values(runner: CliRunner) -> None:

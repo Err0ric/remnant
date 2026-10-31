@@ -91,6 +91,9 @@ async def live(
         set(after or []),
     )
     kinds = {s.source_id: s.kind or "file" for s in request.app.state.sources.list()}
+    # The partitions a poll reads start a day before the stream, or before the cursor it
+    # resumes from (a CLI follow after `tail -n`), whichever is earlier.
+    reads_from = min(now, cursor.t)
     await run_in_threadpool(
         _audit, request, "search.live_start", user,
         {"stream_id": stream.stream_id, "sql_sha256": lv.sql_hash(q), "sql": q[:4000],
@@ -127,10 +130,10 @@ async def live(
                     yield _sse("end", {"reason": "access", "message": lv.MSG_ACCESS})
                     return
                 try:
-                    got = await run_in_threadpool(lv.poll, engine, sql, scope, cursor, now)
+                    got = await run_in_threadpool(lv.poll, engine, sql, scope, cursor, reads_from)
                     if got.too_many and first and resumed:
                         got = await run_in_threadpool(
-                            lv.poll, engine, newest_sql, scope, cursor, now, True
+                            lv.poll, engine, newest_sql, scope, cursor, reads_from, True
                         )
                         yield _sse("notice", {"message": lv.MSG_BACKFILL})
                 except AppError as exc:

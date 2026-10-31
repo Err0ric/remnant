@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### CLI and TUI follow on the live stream (ADR-0036 part 3)
+
+- `remnant tail -f` and the TUI tail pane now read the server's live stream instead of polling. They share Live's limits and audit: each counts toward your 2 live searches, stops at the live time limit with a message, and writes one start and one stop audit row instead of one per poll.
+- The TUI's Ctrl+T pauses the tail by ending the stream; pressing it again resumes from the last line shown.
+- `--interval` on `tail` is still accepted and ignored (the server follows every 2 seconds); the TUI's `--interval` is likewise ignored.
+- What changes for existing installs: a long `tail -f` now stops after the live time limit (30 minutes by default; an administrator can raise it to 24 hours). Run it again to keep following.
+
 ### Live on Search (ADR-0036 part 2)
 
 - A **Live** switch beside Run on the SQL tab follows new events of the query as they arrive: newest at the top, the last 500 kept, new rows tinted briefly (no motion when your system asks for reduced motion).

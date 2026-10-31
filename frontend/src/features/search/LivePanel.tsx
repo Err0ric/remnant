@@ -41,7 +41,7 @@ export function LivePanel({ sql, sources, onClose }: LivePanelProps) {
   const [rows, setRows] = useState<Cell[][]>([]);
   const [count, setCount] = useState(0);
   const [since, setSince] = useState<string | null>(null);
-  const [lag, setLag] = useState<Lag[]>([]);
+  const [lag, setLag] = useState<Lag[] | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [ended, setEnded] = useState<string | null>(null);
   const [refused, setRefused] = useState<string | null>(null);
@@ -153,7 +153,10 @@ export function LivePanel({ sql, sources, onClose }: LivePanelProps) {
                 ? "Starting live…"
                 : "Live stopped"}
         </span>
-        {lag.length ? (
+        {lag && !lag.length ? (
+          <span className="text-warn">No source you can read sent events in the last day</span>
+        ) : null}
+        {lag?.length ? (
           <span aria-label="Freshness by source" className="text-text-muted">
             {lag.map((l, i) => (
               <span key={l.source} className={cn(late(l) && "text-warn")}>

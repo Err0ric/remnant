@@ -742,7 +742,7 @@ A first-class alternative to the web UI for quick pulls. The CLI is a thin clien
 | Command | Purpose | Slice |
 |---|---|---|
 | `remnant login` | Store an API token for a server (OS keychain, fallback file at 0600) | 1 |
-| `remnant tail <source> [-n 10] [-f]` | Last N events, optionally follow | 1 |
+| `remnant tail <source> [-n 10] [-f]` | Last N events, optionally follow on the server's live stream (ADR-0036: counts toward the 2 live searches per person, stops at the live time limit) | 1 |
 | `remnant query "<sql>"` | Run SQL through the guard | 1 |
 | `remnant query --match '<simple search>'` | Run a Simple search (ADR-0009): compiled by the server, values bound, notes printed to stderr | 4 |
 | `--since 1h`, `--where "<expr>"`, `--format table\|json\|csv\|raw` | Quick filters and pipe-friendly output | 1 |

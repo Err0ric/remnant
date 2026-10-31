@@ -5,7 +5,6 @@ import json
 import re
 import shutil
 import sys
-import time
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
@@ -329,10 +328,13 @@ def tail(
     ] = None,
     since: SinceOpt = None,
     fmt: FormatOpt = "table",
-    interval: Annotated[float, typer.Option(help="Seconds between polls with -f", min=0.5)] = 2.0,
+    interval: Annotated[
+        float, typer.Option(help="Ignored: the server follows every 2 s", min=0.5, hidden=True)
+    ] = 2.0,
     server: ServerOpt = None,
 ) -> None:
-    """Show the latest events from a source, like `tail -n`, optionally following."""
+    """Show the latest events from a source, like `tail -n`, optionally following. With -f
+    it is a live search: it counts toward your 2 and stops at the live time limit."""
     if not _SOURCE.fullmatch(source):
         raise typer.BadParameter(
             "source ids are lowercase letters, digits, and _", param_hint="SOURCE"
@@ -353,16 +355,24 @@ def tail(
         return
     _print(data, fmt)
 
-    while follow:
-        time.sleep(interval)
-        try:
-            data = cursor.poll()
-        except ApiError as exc:
-            _fail(exc)
-            return
-        if data["rows"]:
-            width = shutil.get_terminal_size((160, 40)).columns
-            typer.echo(render(data["columns"], data["rows"], fmt, width, header=False))
+    del interval  # kept so old scripts still parse
+    if not follow:
+        return
+    # Follow on the server's live stream (ADR-0036 row 10): the same limits, audit, and
+    # cursor as Live on Search; `--interval` is kept for old scripts and ignored.
+    since, after = cursor.cursor()
+    try:
+        for event, body in api.live(cursor.follow_sql(), "cli", since, after):
+            if event == "rows" and body["rows"]:
+                cursor.advance(body["cursor"])
+                width = shutil.get_terminal_size((160, 40)).columns
+                typer.echo(render(body["columns"], body["rows"], fmt, width, header=False))
+            elif event in ("notice", "end"):
+                typer.echo(clean(str(body.get("message", ""))), err=True)
+                if event == "end":
+                    return
+    except ApiError as exc:
+        _fail(exc)
 
 
 @app.command()

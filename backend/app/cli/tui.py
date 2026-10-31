@@ -68,6 +68,7 @@ class Tui(App[None]):
         self.tail_source = source
         self.tail_paused = False
         self._cursor: TailCursor | None = None
+        self._gen = 0  # bumped to end the running stream (source change, pause, quit)
 
     def compose(self) -> ComposeResult:
         yield Static(self.banner_text(), id="banner")
@@ -101,7 +102,6 @@ class Tui(App[None]):
     def on_mount(self) -> None:
         self.query_one("#query", Input).focus()
         self.load_sources()
-        self.set_interval(self.interval, self.poll_tail)
 
     # Query ------------------------------------------------------------------------------
 
@@ -166,26 +166,36 @@ class Tui(App[None]):
             self._cursor = None
             return
         self.tail_source = event.value
+        self._gen += 1
         self._cursor = TailCursor(self.api, event.value, start=self.start)
         self.fetch_tail(first=True)
 
-    def poll_tail(self) -> None:
-        if self._cursor is not None and not self.tail_paused:
-            self.fetch_tail(first=False)
-
-    @work(thread=True, exclusive=True, group="tail")
+    @work(thread=True, group="tail")
     def fetch_tail(self, first: bool) -> None:
+        """The latest lines, then the server's live stream (ADR-0036 row 10): the same
+        limits and audit as Live on Search. Pause ends the stream; Resume starts a new one
+        from the last line shown."""
         cursor = self._cursor
         if cursor is None:
             return
+        gen = self._gen
         try:
-            data = cursor.latest(TAIL_LINES) if first else cursor.poll()
+            if first:
+                data = cursor.latest(TAIL_LINES)
+                if data["rows"]:
+                    self.call_from_thread(self.write_tail, data["rows"])
+            since, after = cursor.cursor()
+            for event, body in self.api.live(
+                cursor.follow_sql(), "tui", since, after,
+                stop=lambda: gen != self._gen or self.tail_paused,
+            ):  # fmt: skip
+                if event == "rows" and body["rows"]:
+                    cursor.advance(body["cursor"])
+                    self.call_from_thread(self.write_tail, body["rows"])
+                elif event in ("notice", "end"):
+                    self.call_from_thread(self.tail_note, clean(str(body.get("message", ""))))
         except ApiError as exc:
             self.call_from_thread(self.tail_note, f"Tail stopped: {clean(exc.detail)}")
-            self._cursor = None
-            return
-        if data["rows"] and cursor is self._cursor:
-            self.call_from_thread(self.write_tail, data["rows"])
 
     def write_tail(self, rows: list[list[Any]]) -> None:
         log = self.query_one("#tail", RichLog)
@@ -203,3 +213,6 @@ class Tui(App[None]):
     def action_toggle_tail(self) -> None:
         self.tail_paused = not self.tail_paused
         self.tail_note("Tail paused." if self.tail_paused else "Tail resumed.")
+        if not self.tail_paused and self._cursor is not None:
+            self._gen += 1
+            self.fetch_tail(first=False)

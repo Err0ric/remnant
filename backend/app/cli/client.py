@@ -11,7 +11,7 @@ import os
 import socket
 import ssl
 import stat
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -285,6 +285,55 @@ class Api:
         """Source ids this user can read (the server filters by source groups)."""
         data: list[dict[str, Any]] = self._call("GET", "/api/sources")
         return sorted(str(s["source_id"]) for s in data)
+
+    def live(
+        self,
+        sql: str,
+        client: str,
+        since: str | None = None,
+        after: list[str] | None = None,
+        stop: Callable[[], bool] | None = None,
+    ) -> Iterator[tuple[str, dict[str, Any]]]:
+        """Follow a row query on the server's live stream (ADR-0036 row 10): yields
+        (event, data) for `start`, `rows`, `lag`, `notice`, and `end`. The stream counts
+        toward the 2 live searches per person; a refusal raises ApiError with the reason."""
+        params: list[tuple[str, str | int | float | bool | None]] = [("q", sql), ("client", client)]
+        if since:
+            params.append(("since", since))
+        params.extend(("after", i) for i in (after or [])[:1000])
+        timeout = httpx.Timeout(10.0, read=60.0)  # the server sends a line every 2 s
+        try:
+            with self._client.stream(
+                "GET", "/api/search/live", params=httpx.QueryParams(params), timeout=timeout,
+                headers={"Accept": "text/event-stream"},
+            ) as res:  # fmt: skip
+                if res.status_code >= 400:
+                    res.read()
+                    detail, code = res.text, None
+                    try:
+                        payload = res.json()
+                        detail, code = str(payload.get("detail", res.text)), payload.get("code")
+                    except ValueError:
+                        pass
+                    raise ApiError(res.status_code, detail, code)
+                event, data = "message", []
+                for line in res.iter_lines():
+                    if stop is not None and stop():
+                        return  # closing the stream ends it on the server too
+                    if line.startswith("event: "):
+                        event = line[7:]
+                    elif line.startswith("data: "):
+                        data.append(line[6:])
+                    elif line == "" and data:
+                        try:
+                            yield event, json.loads("\n".join(data))
+                        except ValueError:
+                            pass
+                        event, data = "message", []
+        except httpx.HTTPError as exc:
+            if _is_cert_failure(exc):
+                raise UntrustedCertificateError(0, "The server certificate is not trusted") from exc
+            raise ApiError(0, f"Live stream ended: {exc}") from exc
 
     def query(self, sql: str, **extra: Any) -> dict[str, Any]:
         body = {"sql": sql, **{k: v for k, v in extra.items() if v is not None}}

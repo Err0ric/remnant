@@ -54,6 +54,12 @@ Events reach the lake within a few seconds of arrival: the file watcher polls ev
 - The range picker stays visible while Live is on; the panel's header states "Live since".
 - The time limit setting is on Settings > About.
 
+## As built (part 3: CLI and TUI)
+
+- `Api.live` reads the stream with httpx (read timeout 60 s; the server writes every 2 s). `tail -f` prints the latest lines through `/api/query` as before, then follows from the newest line shown (`since`, `after`); the poll reads partitions from a day before that cursor or the stream's start, whichever is earlier.
+- The stream's `end` and `notice` messages go to stderr; `tail -f` exits 0 at the time limit.
+- The old polling follow (`TailCursor.poll`) is removed; `--interval` stays as an ignored, hidden option so old scripts parse.
+
 ## Consequences
 
 - Watching something happen no longer means pressing Run repeatedly, and the CLI, TUI, and browser follow the same way.

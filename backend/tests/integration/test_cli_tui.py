@@ -37,6 +37,7 @@ def _write(lake: Path, data: bytes) -> None:
 def api(tmp_path: Path) -> Api:
     _write(tmp_path / "lake", LOG)
     app = create_app(load_config(Path("missing.yaml"), {"APP__PATHS__DATA_DIR": str(tmp_path)}))
+    app.state.live.poll_s, app.state.live.limit_override_s = 0.05, 1.5
 
     def factory(creds: Credentials) -> TestClient:
         client = TestClient(app, base_url="http://127.0.0.1:8080")
@@ -84,29 +85,24 @@ def test_runs_sql_and_simple_search_only_on_enter(api: Api) -> None:
 
 
 def test_tail_follows_the_chosen_source(api: Api, tmp_path: Path) -> None:
+    """The latest lines, then the live stream (ADR-0036 row 10): a line that arrives is
+    added once, and the stream's end is noted in the pane."""
+
     async def go() -> None:
-        app = Tui(api, interval=0.5)
+        app = Tui(api)
         async with app.run_test(size=(140, 40)) as pilot:
             await app.workers.wait_for_complete()
             select = app.query_one("#tail-source", Select)
             select.set_options([("linux_auth", "linux_auth")])
             select.value = "linux_auth"
-            await pilot.pause()
-            await app.workers.wait_for_complete()
-            await pilot.pause()
-            log = app.query_one("#tail", RichLog)
-            first = [line.text for line in log.lines]
-            assert len(first) == 3
-            assert "Accepted publickey" in first[0] and "not markup" in first[2]
-
+            await pilot.pause(0.3)
             _write(tmp_path / "lake", b"<38>Oct  9 21:10:00 bastion sshd[4]: Connection closed\n")
-            for _ in range(20):
-                await pilot.pause(0.3)
-                await app.workers.wait_for_complete()
-                if len(log.lines) > 3:
-                    break
-            texts = [line.text for line in log.lines]
-            assert len(texts) == 4 and "Connection closed" in texts[3]
+            await app.workers.wait_for_complete()  # the stream ends at its time limit
+            await pilot.pause()
+            texts = [line.text for line in app.query_one("#tail", RichLog).lines]
+            assert "Accepted publickey" in texts[0] and "not markup" in texts[2]
+            assert sum("Connection closed" in t for t in texts) == 1
+            assert "Live stopped after" in texts[-1]
 
     asyncio.run(go())
 
