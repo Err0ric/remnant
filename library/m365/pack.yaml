@@ -1,0 +1,381 @@
+schema_version: 1
+id: m365
+name: Microsoft 365
+version: 1.0.0
+description: Sign-ins, mail rules, app consent, admin changes, Copilot, and data movement in Microsoft
+  365.
+queries:
+- id: m365_failed_signins_by_user
+  name: Failed sign-ins by user
+  group: Microsoft 365 / Identity
+  tags:
+  - m365
+  - identity
+  requires:
+  - m365_signin
+  - m365_management_activity
+  why: 'Who is failing to sign in, from how many addresses: the first look for guessing and lockouts.'
+  normal: A few failures per person per day (typos, expired passwords). MFA prompts are left out. Events
+    stored before m365_management_activity 1.1.0 recorded failed logons as successes, so older failures
+    are missing here.
+  suggested_schedule: hourly
+  flag: change 100%
+  description: Failed Microsoft 365 sign-ins per user from Entra sign-in logs and the Management Activity
+    API, with which feed reported them. MFA interruptions (errors 50074, 50076 and the like) are not failures.
+  sql: |-
+    SELECT actor_user_name AS "user",
+           CASE template_id WHEN 'm365_signin' THEN 'Entra sign-in' ELSE 'Management API' END AS source_kind,
+           count(*) AS failures, count(DISTINCT src_endpoint_ip) AS addresses,
+           min(time) AS first_seen, max(time) AS last_seen
+    FROM events
+    WHERE time BETWEEN {{start}} AND {{end}}
+      AND (
+          (template_id = 'm365_signin' AND status_id = 2
+           AND NOT coalesce(list_contains([50072, 50074, 50076, 50079, 50097, 50125, 50140, 50158, 81010, 81012, 81014], TRY_CAST(json_extract_string(raw, '$.status.errorCode') AS INTEGER)), false))
+          OR (template_id = 'm365_management_activity' AND message = 'UserLoginFailed' AND status_id = 2)
+        )
+    GROUP BY ALL
+    ORDER BY failures DESC
+  expect:
+    rows_at_least: 1
+- id: m365_password_spray
+  name: 'Password spray: one address, many users'
+  group: Microsoft 365 / Identity
+  tags:
+  - m365
+  - identity
+  - attack
+  requires:
+  - m365_signin
+  - m365_management_activity
+  why: One address failing for five or more people is spraying, not a person who forgot a password (T1110.003).
+  normal: Usually empty. A shared office or VPN address can reach five on a bad morning; check whether
+    the failures are spread over hours. Events stored before m365_management_activity 1.1.0 recorded failed
+    logons as successes, so older failures are missing here.
+  suggested_schedule: hourly
+  flag: above 0
+  description: Addresses with failed Microsoft 365 sign-ins for five or more different users in the range.
+  sql: |-
+    SELECT src_endpoint_ip AS address,
+           count(DISTINCT lower(actor_user_name)) AS users, count(*) AS failures,
+           min(time) AS first_seen, max(time) AS last_seen,
+           list(DISTINCT actor_user_name)[1:10] AS some_users
+    FROM events
+    WHERE time BETWEEN {{start}} AND {{end}}
+      AND src_endpoint_ip IS NOT NULL
+      AND (
+          (template_id = 'm365_signin' AND status_id = 2
+           AND NOT coalesce(list_contains([50072, 50074, 50076, 50079, 50097, 50125, 50140, 50158, 81010, 81012, 81014], TRY_CAST(json_extract_string(raw, '$.status.errorCode') AS INTEGER)), false))
+          OR (template_id = 'm365_management_activity' AND message = 'UserLoginFailed' AND status_id = 2)
+        )
+    GROUP BY src_endpoint_ip
+    HAVING count(DISTINCT lower(actor_user_name)) >= 5
+    ORDER BY users DESC
+- id: m365_failures_then_success
+  name: Failures, then a success from the same address
+  group: Microsoft 365 / Identity
+  tags:
+  - m365
+  - identity
+  - attack
+  requires:
+  - m365_signin
+  - m365_management_activity
+  why: Three or more failures followed by a success from the same address is a guessed password until
+    shown otherwise (T1078.004).
+  normal: People who mistype and then get it right show up with three or four failures a minute apart.
+    Events stored before m365_management_activity 1.1.0 recorded failed logons as successes, so older
+    failures are missing here.
+  suggested_schedule: hourly
+  flag: above 0
+  description: 'Per user and address: the failures, and the first success after the first failure. Rows
+    are reduced to user and address before comparing, never joined event to event.'
+  sql: |-
+    WITH s AS (
+      SELECT lower(actor_user_name) AS "user", src_endpoint_ip AS address,
+             count(*) FILTER (WHERE (
+          (template_id = 'm365_signin' AND status_id = 2
+           AND NOT coalesce(list_contains([50072, 50074, 50076, 50079, 50097, 50125, 50140, 50158, 81010, 81012, 81014], TRY_CAST(json_extract_string(raw, '$.status.errorCode') AS INTEGER)), false))
+          OR (template_id = 'm365_management_activity' AND message = 'UserLoginFailed' AND status_id = 2)
+        )) AS failures,
+             min(time) FILTER (WHERE (
+          (template_id = 'm365_signin' AND status_id = 2
+           AND NOT coalesce(list_contains([50072, 50074, 50076, 50079, 50097, 50125, 50140, 50158, 81010, 81012, 81014], TRY_CAST(json_extract_string(raw, '$.status.errorCode') AS INTEGER)), false))
+          OR (template_id = 'm365_management_activity' AND message = 'UserLoginFailed' AND status_id = 2)
+        )) AS first_failure,
+             max(time) FILTER (WHERE status_id = 1) AS last_success
+      FROM events
+      WHERE time BETWEEN {{start}} AND {{end}}
+        AND template_id IN ('m365_signin', 'm365_management_activity')
+        AND src_endpoint_ip IS NOT NULL AND actor_user_name IS NOT NULL
+      GROUP BY 1, 2
+    )
+    SELECT * FROM s
+    WHERE failures >= 3 AND last_success > first_failure
+    ORDER BY failures DESC
+- id: m365_signins_by_app
+  name: Sign-ins by app
+  group: Microsoft 365 / Identity
+  tags:
+  - m365
+  - identity
+  requires:
+  - m365_signin
+  why: Which apps people sign in to, and how often each fails.
+  normal: The Office apps and Teams lead. A new app near the top is worth a look.
+  suggested_schedule: daily
+  flag: null
+  description: Entra sign-ins per app (the app is appDisplayName, in resource_name, or in message for
+    events stored before m365_signin 1.1.0) with succeeded, interrupted (MFA asked), and failed counts.
+  sql: |-
+    SELECT coalesce(resource_name, message) AS app,
+           count(*) FILTER (WHERE status_id = 1) AS succeeded,
+           count(*) FILTER (WHERE status_id = 2 AND NOT NOT coalesce(list_contains([50072, 50074, 50076, 50079, 50097, 50125, 50140, 50158, 81010, 81012, 81014], TRY_CAST(json_extract_string(raw, '$.status.errorCode') AS INTEGER)), false)) AS interrupted,
+           count(*) FILTER (WHERE status_id = 2 AND NOT coalesce(list_contains([50072, 50074, 50076, 50079, 50097, 50125, 50140, 50158, 81010, 81012, 81014], TRY_CAST(json_extract_string(raw, '$.status.errorCode') AS INTEGER)), false)) AS failed,
+           count(DISTINCT lower(actor_user_name)) AS people
+    FROM events
+    WHERE template_id = 'm365_signin' AND time BETWEEN {{start}} AND {{end}}
+    GROUP BY 1
+    ORDER BY succeeded + failed DESC
+  expect:
+    rows: 4
+- id: m365_inbox_rules
+  name: Inbox rules and forwarding
+  group: Microsoft 365 / Mail
+  tags:
+  - m365
+  - mail
+  - attack
+  requires:
+  - m365_management_activity
+  why: A new inbox rule or forwarding address is how a taken-over mailbox hides replies and copies mail
+    out (T1564.008, T1114.003).
+  normal: A few a week from people tidying their mail. Rules that delete, move to RSS or Archive, or forward
+    outside are the ones to read.
+  suggested_schedule: hourly
+  flag: above 0
+  description: Inbox rule and mailbox forwarding changes from the Management Activity API, newest first,
+    with the raw record for the rule details.
+  sql: |-
+    SELECT time, actor_user_name AS "user", src_endpoint_ip AS client, message AS operation, raw
+    FROM events
+    WHERE template_id = 'm365_management_activity'
+      AND message IN ('New-InboxRule', 'Set-InboxRule', 'UpdateInboxRules', 'Set-Mailbox', 'New-TransportRule')
+      AND time BETWEEN {{start}} AND {{end}}
+    ORDER BY time DESC
+  expect:
+    rows_at_least: 1
+- id: m365_app_consent
+  name: App consents by app
+  group: Microsoft 365 / Apps and consent
+  tags:
+  - m365
+  - apps
+  requires:
+  - m365_directory_audit
+  - m365_management_activity
+  why: 'Apps people granted access to their data, per app: the start of most consent-phishing cases (T1528).'
+  normal: A handful of well-known apps. One new app consented to by many people in a short time is the
+    pattern to look for.
+  suggested_schedule: daily
+  flag: null
+  description: Consents per app, each consent counted once across Graph and the Management API (D122),
+    granted and blocked apart.
+  sql: |-
+    WITH one AS (
+      SELECT coalesce(metadata_correlation_uid, event_id) AS k,
+             max(nullif(nullif(resource_name, ''), 'Unknown')) AS app, max(resource_uid) AS app_id,
+             any_value(lower(actor_user_name)) AS who, min(time) AS time,
+             CASE WHEN min(status_id) = 1 THEN 'granted' WHEN max(status_id) = 2 THEN 'blocked' ELSE 'unknown' END AS result
+      FROM events
+      WHERE template_id IN ('m365_directory_audit', 'm365_management_activity')
+        AND message IN ('Consent to application', 'Consent to application.')
+        AND time BETWEEN {{start}} AND {{end}}
+      GROUP BY 1
+    )
+    SELECT coalesce(app, app_id, 'an app with no name') AS app, result,
+           count(*) AS consents, count(DISTINCT who) AS people, max(time) AS last_seen
+    FROM one
+    GROUP BY 1, 2
+    ORDER BY consents DESC
+  expect:
+    rows_at_least: 1
+- id: m365_user_consent
+  name: Users consenting to applications
+  description: '"Consent to application" events: a person granted an app access to their data (or, as
+    an admin, to the organization''s). The usual start of an OAuth consent-phishing case. One row per
+    consent: Graph and the Management API both report it with the same correlation id (metadata_correlation_uid),
+    so the two copies are merged. status_id 2 is a blocked attempt. resource_name is the app (empty when
+    Entra wrote "Unknown"), resource_uid its application id, privileges the permissions asked for.'
+  tags:
+  - m365
+  - identity
+  - apps
+  sql: |-
+    SELECT min(time) AS time,
+           any_value(actor_user_name) AS "user",
+           CASE WHEN min(status_id) = 1 THEN 'granted'
+                WHEN max(status_id) = 2 THEN 'blocked' ELSE 'unknown' END AS result,
+           max(resource_name) AS app,
+           max(resource_uid) AS app_id,
+           max(privileges) AS permissions,
+           max(status_detail) AS reason,
+           metadata_correlation_uid,
+           count(*) AS copies
+    FROM events
+    WHERE template_id IN ('m365_directory_audit', 'm365_management_activity')
+      AND message IN ('Consent to application', 'Consent to application.')
+      AND time BETWEEN {{start}} AND {{end}}
+    GROUP BY coalesce(metadata_correlation_uid, event_id), metadata_correlation_uid
+    ORDER BY time DESC
+  params: []
+  group: Microsoft 365 / Apps and consent
+  requires:
+  - m365_directory_audit
+  - m365_management_activity
+  why: 'Each consent, with the permissions asked for: read the scopes before deciding a consent was harmless.'
+  normal: Blocked attempts (status 2) are shown apart; they mean a policy stopped the consent.
+  suggested_schedule: daily
+  flag: null
+- id: m365_new_service_principals
+  name: New service principals not owned by Microsoft
+  description: 'Enterprise apps added to the tenant, leaving out the ones Microsoft provisions itself:
+    actor Azure Resource Manager (a resource provider was registered) or an app owned by Microsoft''s
+    own tenants. What is left is someone adding a third-party or in-house app, which is where OAuth and
+    app risk starts. Matches the owner on raw, so it works for both the Graph directory audit and the
+    Management Activity API rows.'
+  tags:
+  - m365
+  - identity
+  - apps
+  sql: |-
+    SELECT time, actor_user_name AS actor, src_endpoint_ip AS client, message, template_id, raw
+    FROM events
+    WHERE template_id IN ('m365_directory_audit', 'm365_management_activity')
+      AND message IN ('Add service principal', 'Add service principal.')
+      AND coalesce(actor_user_name, '') <> 'Azure Resource Manager'
+      AND raw NOT LIKE '%f8cdef31-a31e-4b4a-93e4-5f571e91255a%'
+      AND raw NOT LIKE '%72f988bf-86f1-41af-91ab-2d7cd011db47%'
+      AND time BETWEEN {{start}} AND {{end}}
+    ORDER BY time DESC
+  params: []
+  group: Microsoft 365 / Apps and consent
+  requires:
+  - m365_directory_audit
+  - m365_management_activity
+  why: 'Apps added to the tenant that Microsoft did not provision: where app risk starts.'
+  normal: Rare. Most rows are someone setting up an in-house or vendor integration on purpose.
+  suggested_schedule: daily
+  flag: above 0
+- id: m365_admin_changes
+  name: Admin role and policy changes
+  group: Microsoft 365 / Admin
+  tags:
+  - m365
+  - admin
+  requires:
+  - m365_directory_audit
+  - m365_management_activity
+  why: Role grants, Conditional Access edits, password resets by admins, and new app credentials change
+    who can do what (T1098).
+  normal: A few per week from the IT team. Changes outside working hours, or by an account that rarely
+    makes them, deserve a question.
+  suggested_schedule: hourly
+  flag: above 0
+  description: Admin changes from the directory audit and the Management API, each operation once (D122),
+    newest first. Microsoft's own first-party tenants are left out.
+  sql: |-
+    SELECT min(time) AS time, any_value(actor_user_name) AS actor, any_value(src_endpoint_ip) AS client,
+           lower(any_value(message)) AS operation,
+           max(nullif(resource_name, '')) AS target,
+           CASE WHEN min(status_id) = 1 THEN 'success' WHEN max(status_id) = 2 THEN 'failure' ELSE 'unknown' END AS result,
+           count(*) AS copies
+    FROM events
+    WHERE template_id IN ('m365_directory_audit', 'm365_management_activity')
+      AND message IN ('Add member to role', 'Remove member from role', 'Add eligible member to role',
+                      'Add conditional access policy', 'Update conditional access policy',
+                      'Delete conditional access policy', 'Reset user password',
+                      'Add service principal credentials', 'Update application',
+                      'Add owner to application', 'Set domain authentication', 'Update domain')
+      AND raw NOT LIKE '%f8cdef31-a31e-4b4a-93e4-5f571e91255a%'
+      AND raw NOT LIKE '%72f988bf-86f1-41af-91ab-2d7cd011db47%'
+      AND time BETWEEN {{start}} AND {{end}}
+    GROUP BY coalesce(metadata_correlation_uid, event_id)
+    ORDER BY time DESC
+  expect:
+    rows_at_least: 1
+- id: m365_copilot_activity
+  name: Copilot use by person
+  group: Microsoft 365 / Copilot
+  tags:
+  - m365
+  - ai
+  - copilot
+  requires:
+  - m365_management_activity
+  why: 'Who uses Microsoft 365 Copilot and how much: AI use the network logs cannot see (AML.T0057 monitoring).'
+  normal: Grows as licenses roll out. A person with no license showing interactions means a license or
+    audit setting changed.
+  suggested_schedule: daily
+  flag: null
+  description: CopilotInteraction records per person, matched on the operation name (not on raw text,
+    which also matches files named Copilot).
+  sql: |-
+    SELECT actor_user_name AS "user", count(*) AS interactions,
+           min(time) AS first_seen, max(time) AS last_seen
+    FROM events
+    WHERE template_id = 'm365_management_activity' AND message = 'CopilotInteraction'
+      AND time BETWEEN {{start}} AND {{end}}
+    GROUP BY 1
+    ORDER BY interactions DESC
+  expect:
+    rows_at_least: 1
+- id: m365_external_sharing
+  name: Sharing links and external invitations
+  group: Microsoft 365 / Data
+  tags:
+  - m365
+  - data
+  requires:
+  - m365_management_activity
+  why: Anyone links and invitations to outside people are how files leave the tenant on purpose or by
+    mistake (T1567).
+  normal: Daily in most tenants. Many links from one person in a short time, or Anyone links on sensitive
+    sites, are the rows to read.
+  suggested_schedule: daily
+  flag: null
+  description: SharePoint and OneDrive sharing operations per person and operation.
+  sql: |-
+    SELECT actor_user_name AS "user", message AS operation, count(*) AS events,
+           min(time) AS first_seen, max(time) AS last_seen
+    FROM events
+    WHERE template_id = 'm365_management_activity'
+      AND message IN ('SharingSet', 'AnonymousLinkCreated', 'SharingInvitationCreated',
+                      'SecureLinkCreated', 'AddedToSecureLink', 'CompanyLinkCreated')
+      AND time BETWEEN {{start}} AND {{end}}
+    GROUP BY 1, 2
+    ORDER BY events DESC
+- id: m365_dlp_matches
+  name: DLP rule matches by person
+  group: Microsoft 365 / Data
+  tags:
+  - m365
+  - data
+  - dlp
+  requires:
+  - m365_management_activity
+  why: Data loss prevention matches show sensitive data moving in mail, files, and Teams.
+  normal: Depends on your policies. A person well above the rest, or a new person at the top, is the place
+    to start.
+  suggested_schedule: daily
+  flag: null
+  description: DlpRuleMatch records per person.
+  sql: |-
+    SELECT actor_user_name AS "user", count(*) AS matches, max(time) AS last_seen
+    FROM events
+    WHERE template_id = 'm365_management_activity' AND message = 'DlpRuleMatch'
+      AND time BETWEEN {{start}} AND {{end}}
+    GROUP BY 1
+    ORDER BY matches DESC
+  expect:
+    rows_at_least: 1

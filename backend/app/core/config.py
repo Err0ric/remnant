@@ -169,6 +169,8 @@ class PathsConfig(_Strict):
     rule_roots: list[Path] = Field(default_factory=list)
     # Shipped parser templates; None means the copy next to the code (repo or image).
     starter_templates: Path | None = None
+    # Shipped query library packs (ADR-0033); None means the copy next to the code.
+    library: Path | None = None
 
     _split_roots = field_validator("allowed_roots", "rule_roots", mode="before")(_split_list)
 

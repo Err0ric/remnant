@@ -1256,6 +1256,37 @@ export interface EventAround {
   end: string;
 }
 
+export interface LibraryQuery {
+  id: string;
+  name: string;
+  group: string;
+  description: string;
+  why: string;
+  normal: string;
+  tags: string[];
+  requires: string[];
+  /** For the editor: start and end placeholders kept, other defaults written in. */
+  sql: string;
+  /** As shipped, for the difference with the viewer's copy. */
+  pack_sql: string;
+  suggested_schedule: "hourly" | "daily" | null;
+  flag: string | null;
+  my_copy: { search_id: string; version: string; updated: boolean; sql: string } | null;
+}
+
+export interface LibraryPack {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  queries: LibraryQuery[];
+}
+
+export interface QueryLibrary {
+  packs: LibraryPack[];
+  hidden: number;
+}
+
 export type InventoryType = "service" | "agent" | "mcp" | "m365_app";
 
 export interface InventoryItem {
@@ -2354,6 +2385,17 @@ export const api = {
   eventAround: (id: string, at: string) =>
     request<EventAround>(
       `/api/events/${encodeURIComponent(id)}/around?at=${encodeURIComponent(at)}`,
+    ),
+  library: () => request<QueryLibrary>("/api/library"),
+  libraryCopy: (pack: string, id: string) =>
+    request<SavedSearch>(
+      `/api/library/${encodeURIComponent(pack)}/${encodeURIComponent(id)}/copy`,
+      { method: "POST" },
+    ),
+  libraryReplace: (pack: string, id: string) =>
+    request<SavedSearch>(
+      `/api/library/${encodeURIComponent(pack)}/${encodeURIComponent(id)}/replace`,
+      { method: "POST" },
     ),
   aiInventory: (days = 30) => request<AiInventory>(`/api/ai/inventory?days=${days}`),
   aiInventoryExport: (

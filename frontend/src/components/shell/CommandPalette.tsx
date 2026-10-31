@@ -132,6 +132,17 @@ export function CommandPalette({
       });
     }
     out.push({
+      key: "nav:library",
+      section: "Navigate",
+      label: "Query library",
+      hint: "Search",
+      aliases: ["library", "grimoire", "packs", "shipped queries"],
+      run: () => {
+        seedSearch({ library: true });
+        navigate("search");
+      },
+    });
+    out.push({
       key: "nav:me",
       section: "Navigate",
       label: "Your account and API tokens",

@@ -1,0 +1,30 @@
+schema_version: 1
+id: health
+name: Ingest health
+version: 1.0.0
+description: How well each source is parsed.
+queries:
+- id: parser_mix
+  name: Parser mix by source
+  description: 'Which parser (template) read each source''s events and how well: rows per source, template,
+    and parse status. A source that is mostly generic or envelope_only needs a template; a sudden change
+    in the mix means a parser changed (see docs/searching.md).'
+  tags:
+  - ingest
+  - health
+  sql: |-
+    SELECT source_id, coalesce(template_id, 'none') AS parser, parse_status, count(*) AS events
+    FROM events
+    WHERE time BETWEEN {{start}} AND {{end}}
+    GROUP BY ALL
+    ORDER BY source_id, events DESC
+  params: []
+  group: Health / Parsing
+  requires: []
+  why: Which parser read each source and how well; a shift in the mix means a parser or a log format changed.
+  normal: Mostly ok per source. envelope_only means the line had a header the template could not read
+    past.
+  suggested_schedule: daily
+  flag: null
+  expect:
+    rows_at_least: 1

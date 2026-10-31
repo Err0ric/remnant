@@ -1172,6 +1172,74 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         downloadable: true,
       });
     }
+    if (url.endsWith("/api/library")) {
+      const q = (id: string, name: string, group: string, sql: string, extra: object = {}) => ({
+        id,
+        name,
+        group,
+        description: "",
+        why: `Why ${name}`,
+        normal: `Normal for ${name}`,
+        tags: [],
+        requires: ["linux_sshd"],
+        sql,
+        pack_sql: sql,
+        suggested_schedule: "daily",
+        flag: null,
+        my_copy: null,
+        ...extra,
+      });
+      return json({
+        hidden: 12,
+        packs: [
+          {
+            id: "linux_auth",
+            name: "Linux sign-ins and privilege",
+            version: "1.1.0",
+            description: "",
+            queries: [
+              q(
+                "ssh_logins",
+                "SSH logins by user and source",
+                "Linux / SSH",
+                "SELECT actor_user_name FROM events\nWHERE time BETWEEN {{start}} AND {{end}}\nLIMIT 100",
+              ),
+              q("sudo_denied", "sudo refused", "Linux / Privilege", "SELECT 2", {
+                my_copy: {
+                  search_id: "sudo_denied",
+                  version: "1.0.0",
+                  updated: true,
+                  sql: "SELECT 1",
+                },
+                pack_sql: "SELECT 2",
+              }),
+            ],
+          },
+        ],
+      });
+    }
+    if (url.includes("/api/library/") && method === "POST") {
+      const id = url.split("/")[6] ?? "x";
+      return json(
+        {
+          description: "",
+          tags: ["library"],
+          visibility: "private",
+          sources: null,
+          sql: "SELECT 2",
+          params: [],
+          mode: "query",
+          owner_id: "u1",
+          verified: false,
+          created_at: "2026-10-30T00:00:00Z",
+          updated_at: "2026-10-30T00:00:00Z",
+          id,
+          name: id,
+          origin: { library: `linux_auth/${id}@1.1.0` },
+        },
+        url.endsWith("/copy") ? 201 : 200,
+      );
+    }
     if (url.includes("/timeline?days=")) {
       return json({
         person: "alice",

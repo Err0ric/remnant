@@ -1,0 +1,157 @@
+schema_version: 1
+id: linux_auth
+name: Linux sign-ins and privilege
+version: 1.0.0
+description: 'SSH, sudo, su, and PAM: who signs in to Linux hosts and who uses root.'
+queries:
+- id: ssh_logins
+  name: SSH logins by user and source
+  description: sshd sign-ins per user, client address, and result, with first and last time. Reads the
+    linux_sshd template's parsed columns, so it keeps working whatever the message text.
+  tags:
+  - linux
+  - ssh
+  - identity
+  sql: |-
+    SELECT actor_user_name AS "user", src_endpoint_ip AS client,
+           CASE status_id WHEN 1 THEN 'success' WHEN 2 THEN 'failure' ELSE 'other' END AS result,
+           count(*) AS attempts, min(time) AS first_seen, max(time) AS last_seen
+    FROM events
+    WHERE template_id = 'linux_sshd' AND class_uid = 3002
+      AND time BETWEEN {{start}} AND {{end}}
+    GROUP BY ALL
+    ORDER BY attempts DESC
+  params: []
+  group: Linux / SSH
+  requires:
+  - linux_sshd
+  why: 'Every SSH sign-in per user, address, and result: the baseline everything else is compared to.'
+  normal: Service accounts (deploy, backup) from a few internal addresses, and people from their usual
+    machines.
+  suggested_schedule: daily
+  flag: null
+  expect:
+    rows_at_least: 1
+- id: ssh_failures_by_source
+  name: SSH failures by source address
+  group: Linux / SSH
+  tags:
+  - linux
+  - ssh
+  - attack
+  requires:
+  - linux_sshd
+  why: One address failing against many accounts or hosts is guessing (T1110).
+  normal: On an internet-facing host, constant background noise from scanners. On internal hosts, close
+    to none.
+  suggested_schedule: hourly
+  flag: change 200%
+  description: Failed SSH sign-ins per client address, with how many users and hosts were tried.
+  sql: |-
+    SELECT src_endpoint_ip AS address, count(*) AS failures,
+           count(DISTINCT actor_user_name) AS users, count(DISTINCT device_hostname) AS hosts,
+           min(time) AS first_seen, max(time) AS last_seen
+    FROM events
+    WHERE template_id = 'linux_sshd' AND class_uid = 3002 AND status_id = 2
+      AND src_endpoint_ip IS NOT NULL AND time BETWEEN {{start}} AND {{end}}
+    GROUP BY 1
+    ORDER BY failures DESC
+  expect:
+    rows_at_least: 1
+- id: ssh_invalid_users
+  name: SSH attempts for accounts that do not exist
+  group: Linux / SSH
+  tags:
+  - linux
+  - ssh
+  - attack
+  requires:
+  - linux_sshd
+  why: Names like admin, oracle, and ubuntu tried on a host that has no such account show a dictionary
+    list in use.
+  normal: Noise on exposed hosts; none expected inside the network.
+  suggested_schedule: daily
+  flag: null
+  description: sshd "Invalid user" lines per tried name and client address.
+  sql: |-
+    SELECT actor_user_name AS tried, src_endpoint_ip AS address, count(*) AS attempts,
+           count(DISTINCT device_hostname) AS hosts, max(time) AS last_seen
+    FROM events
+    WHERE template_id = 'linux_sshd' AND message ILIKE '%invalid user%'
+      AND time BETWEEN {{start}} AND {{end}}
+    GROUP BY 1, 2
+    ORDER BY attempts DESC
+  expect:
+    rows_at_least: 1
+- id: sudo_denied
+  name: sudo refused
+  group: Linux / Privilege
+  tags:
+  - linux
+  - sudo
+  requires:
+  - linux_sudo
+  why: A user not in sudoers trying sudo, or wrong passwords at the sudo prompt, is someone reaching for
+    root.
+  normal: Rare. New staff and scripts run as the wrong user explain most rows.
+  suggested_schedule: hourly
+  flag: above 0
+  description: Refused sudo use per user and host.
+  sql: |-
+    SELECT actor_user_name AS "user", device_hostname AS host, count(*) AS refusals,
+           max(time) AS last_seen, arg_max(message, time) AS latest
+    FROM events
+    WHERE template_id = 'linux_sudo' AND status_id = 2 AND time BETWEEN {{start}} AND {{end}}
+    GROUP BY 1, 2
+    ORDER BY refusals DESC
+  expect:
+    rows_at_least: 1
+- id: sudo_commands
+  name: Commands run with sudo
+  group: Linux / Privilege
+  tags:
+  - linux
+  - sudo
+  requires:
+  - linux_sudo
+  why: What people ran as root, per user and host.
+  normal: Package updates, service restarts, and log reads. Shells (bash, sh) and edits to sudoers or
+    authorized_keys are the ones to read.
+  suggested_schedule: daily
+  flag: null
+  description: sudo command lines (class 1007) per user, host, and command, newest first.
+  sql: |-
+    SELECT actor_user_name AS "user", device_hostname AS host, message AS command,
+           count(*) AS runs, max(time) AS last_seen
+    FROM events
+    WHERE template_id = 'linux_sudo' AND class_uid = 1007 AND time BETWEEN {{start}} AND {{end}}
+    GROUP BY 1, 2, 3
+    ORDER BY last_seen DESC
+  expect:
+    rows_at_least: 1
+- id: su_failures
+  name: Failed su and local sign-ins
+  group: Linux / Privilege
+  tags:
+  - linux
+  - pam
+  requires:
+  - linux_pam
+  why: Wrong passwords for su and console logins, and accounts locked by faillock.
+  normal: A few a week. Repeated failures to root on one host are worth a call to whoever has a shell
+    there.
+  suggested_schedule: daily
+  flag: null
+  description: PAM authentication failures and faillock lockouts per host and target account.
+  sql: |-
+    SELECT device_hostname AS host, coalesce(actor_user_name, '(unknown)') AS account,
+           count(*) FILTER (WHERE status_id = 2) AS failures,
+           count(*) FILTER (WHERE message ILIKE '%faillock%') AS lockouts,
+           max(time) AS last_seen
+    FROM events
+    WHERE template_id = 'linux_pam' AND (status_id = 2 OR message ILIKE '%faillock%')
+      AND time BETWEEN {{start}} AND {{end}}
+    GROUP BY 1, 2
+    ORDER BY failures DESC
+  expect:
+    rows_at_least: 1

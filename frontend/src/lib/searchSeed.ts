@@ -16,6 +16,8 @@ export interface SearchSeed {
   savedId?: string;
   /** Where the query came from, shown above it ("From Dashboard > Identity > ..."). */
   origin?: string;
+  /** Open the query library panel (command palette). */
+  library?: boolean;
 }
 
 let seed: SearchSeed | null = null;

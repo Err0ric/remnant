@@ -1,4 +1,5 @@
-"""The shipped example saved searches import, pass the guard, and answer on fixture data."""
+"""The query library entries that were the example saved searches (ADR-0033 row 10) save,
+pass the guard, and answer on fixture data."""
 
 import json
 from datetime import UTC, datetime
@@ -10,9 +11,9 @@ from fastapi.testclient import TestClient
 
 from app.core.config import load_config
 from app.main import create_app
+from app.search.library import LIBRARY_DIR, load_dir
 
 ROOT = Path(__file__).resolve().parents[3]
-EXAMPLES = ROOT / "examples" / "saved-searches"
 FIX = Path(__file__).parent.parent / "fixtures" / "logs"
 NOW = datetime(2026, 10, 10, 12, 0, tzinfo=UTC)
 RANGE = {"start": "2026-10-09T00:00:00Z", "end": "2026-10-10T00:00:00Z"}
@@ -128,9 +129,11 @@ def client(tmp_path_factory: pytest.TempPathFactory) -> Any:
         body = {"source_id": sid, "format": fmt, "path": str(logs / sub), "template_id": tid}
         assert c.post("/api/sources", json=body).status_code == 201
     app.state.ingest.run_once()
-    for path in sorted(EXAMPLES.glob("*.yaml")):
-        res = c.post("/api/searches/import", content=path.read_bytes())
-        assert res.status_code == 201, (path.name, res.text)
+    for pack in load_dir(LIBRARY_DIR):
+        for q in pack.queries:
+            body = q.spec(pack.origin(q)).model_dump()
+            res = c.post("/api/searches", json=body)
+            assert res.status_code == 201, (q.id, res.text)
     return c
 
 
@@ -145,10 +148,11 @@ def rows(body: dict[str, Any]) -> list[dict[str, Any]]:
     return [dict(zip(body["columns"], r, strict=True)) for r in body["rows"]]
 
 
-def test_every_example_is_tagged_and_documented(client: TestClient) -> None:
+def test_every_library_query_is_documented(client: TestClient) -> None:
     doc = (ROOT / "docs" / "searching.md").read_text()
-    for path in EXAMPLES.glob("*.yaml"):
-        assert path.stem in doc, f"{path.stem} is not in docs/searching.md"
+    for pack in load_dir(LIBRARY_DIR):
+        for q in pack.queries:
+            assert q.id in doc, f"{pack.id}/{q.id} is not in docs/searching.md"
 
 
 def test_ai_services_from_dns(client: TestClient) -> None:

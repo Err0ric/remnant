@@ -75,26 +75,53 @@ GROUP BY 1, 2, 3 ORDER BY failures DESC
 
 Put the cheap filters (`class_uid`, `status_id`, `template_id`) first so the lookups see few rows. The answers follow the files and the list as they are now: after a GeoIP update or a change to Internal networks, the same search can return different rows.
 
-## Example saved searches
+## Query library
 
-Eight examples ship in `examples/saved-searches/`. Import one on **Saved searches > Import**, then adapt it. Each reads parsed columns and carries the time range, so it works on the Dashboard as a schedule.
+The query library ships tested questions for common sources, grouped in packs: Microsoft 365, Linux sign-ins and privilege, Palo Alto firewalls, DNS and AI services, and ingest health. On **Search**, **Library** (next to Open) lists the queries whose sources you have: a query is offered only when a source you can read produced events from one of its templates in the last 30 days. Each shows why it is worth running and what normal looks like.
 
-| File | What it answers | Reads |
-|---|---|---|
-| `ai_services_dns` | Which AI services were queried, by how many clients | DNS events (`class_uid = 4003`); a short domain list, with vendor ad tags left out |
-| `ai_services_by_device` | Which device used which AI service | DNS events, named by the Palo Alto DHCP lease that held the address at the time of each query (an ASOF join, up to 7 days back) |
-| `who_had_ip` | Who held an address: DHCP device and MAC, GlobalProtect person and laptop | `paloalto_system` DHCP leases and `paloalto_globalprotect` tunnel addresses; parameter `ip` |
-| `parser_mix` | Which parser read each source, and how well | `source_id`, `template_id`, `parse_status` |
-| `ssh_logins` | SSH sign-ins per user, client, and result | `linux_sshd` columns |
-| `firewall_maintenance` | HA changes, commits, restarts, installs, and medium or higher system events per firewall | `paloalto_system` subtype, event id, severity |
-| `m365_new_service_principals` | Enterprise apps added to the tenant, without the ones Microsoft provisions itself (actor Azure Resource Manager, or an app owned by Microsoft's tenants `f8cdef31-...` and `72f988bf-...`) | M365 directory audit and Management Activity rows; the owner is matched on `raw` |
-| `m365_user_consent` | People consenting to applications (the start of OAuth consent phishing), one row per consent with result, app, permissions, and correlation id | Same two templates, `Consent to application`, merged on `metadata_correlation_uid` |
+- Clicking a query loads its SQL into the SQL tab, unsaved. Run it as any search: it goes through the query guard and reads only your sources.
+- **Save as my own** makes a private saved search from it. That copy is yours; a new version of the pack never changes it. When the pack's SQL changes, the Library shows **Updated in this version** with the difference and **Replace my copy**.
+- Every query runs in CI on the template fixtures for its sources, so a template change that would break one fails the build.
+- The packs live in `library/<pack>/pack.yaml` and are read at start. Nothing is downloaded.
+
+| Pack | Query | What it answers | Reads |
+|---|---|---|---|
+| DNS and AI services | `ai_services_dns` | Which AI services the network looks up, and from how many clients. | `dns_bind`, `dns_unbound`, `dns_windows`, `dns_powerdns` |
+| DNS and AI services | `ai_services_by_device` | AI service lookups named by the device that held the address, from Palo Alto DHCP leases. | `dns_bind`, `dns_unbound`, `dns_windows`, `dns_powerdns` |
+| DNS and AI services | `dns_top_domains` | What the network looks up most, and from how many clients. | `dns_bind`, `dns_unbound`, `dns_windows`, `dns_powerdns` |
+| DNS and AI services | `dns_random_looking_names` | Long labels of letters and digits with few vowels are typical of generated domains and DNS tunnels (T1568.002, T1071.004). | `dns_bind`, `dns_unbound`, `dns_windows`, `dns_powerdns` |
+| Ingest health | `parser_mix` | Which parser read each source and how well; a shift in the mix means a parser or a log format changed. | any source |
+| Linux sign-ins and privilege | `ssh_logins` | Every SSH sign-in per user, address, and result: the baseline everything else is compared to. | `linux_sshd` |
+| Linux sign-ins and privilege | `ssh_failures_by_source` | One address failing against many accounts or hosts is guessing (T1110). | `linux_sshd` |
+| Linux sign-ins and privilege | `ssh_invalid_users` | Names like admin, oracle, and ubuntu tried on a host that has no such account show a dictionary list in use. | `linux_sshd` |
+| Linux sign-ins and privilege | `sudo_denied` | A user not in sudoers trying sudo, or wrong passwords at the sudo prompt, is someone reaching for root. | `linux_sudo` |
+| Linux sign-ins and privilege | `sudo_commands` | What people ran as root, per user and host. | `linux_sudo` |
+| Linux sign-ins and privilege | `su_failures` | Wrong passwords for su and console logins, and accounts locked by faillock. | `linux_pam` |
+| Microsoft 365 | `m365_failed_signins_by_user` | Who is failing to sign in, from how many addresses: the first look for guessing and lockouts. | `m365_signin`, `m365_management_activity` |
+| Microsoft 365 | `m365_password_spray` | One address failing for five or more people is spraying, not a person who forgot a password (T1110.003). | `m365_signin`, `m365_management_activity` |
+| Microsoft 365 | `m365_failures_then_success` | Three or more failures followed by a success from the same address is a guessed password until shown otherwise (T1078.004). | `m365_signin`, `m365_management_activity` |
+| Microsoft 365 | `m365_signins_by_app` | Which apps people sign in to, and how often each fails. | `m365_signin` |
+| Microsoft 365 | `m365_inbox_rules` | A new inbox rule or forwarding address is how a taken-over mailbox hides replies and copies mail out (T1564.008, T1114.003). | `m365_management_activity` |
+| Microsoft 365 | `m365_app_consent` | Apps people granted access to their data, per app: the start of most consent-phishing cases (T1528). | `m365_directory_audit`, `m365_management_activity` |
+| Microsoft 365 | `m365_user_consent` | Each consent, with the permissions asked for: read the scopes before deciding a consent was harmless. | `m365_directory_audit`, `m365_management_activity` |
+| Microsoft 365 | `m365_new_service_principals` | Apps added to the tenant that Microsoft did not provision: where app risk starts. | `m365_directory_audit`, `m365_management_activity` |
+| Microsoft 365 | `m365_admin_changes` | Role grants, Conditional Access edits, password resets by admins, and new app credentials change who can do what (T1098). | `m365_directory_audit`, `m365_management_activity` |
+| Microsoft 365 | `m365_copilot_activity` | Who uses Microsoft 365 Copilot and how much: AI use the network logs cannot see (AML.T0057 monitoring). | `m365_management_activity` |
+| Microsoft 365 | `m365_external_sharing` | Anyone links and invitations to outside people are how files leave the tenant on purpose or by mistake (T1567). | `m365_management_activity` |
+| Microsoft 365 | `m365_dlp_matches` | Data loss prevention matches show sensitive data moving in mail, files, and Teams. | `m365_management_activity` |
+| Palo Alto firewalls | `firewall_maintenance` | HA changes, commits, restarts, and installs: what changed on the firewall and when. | `paloalto_system` |
+| Palo Alto firewalls | `pa_admin_signins` | Who signs in to the firewall, from where, and failed attempts: admin access is the keys to the network. | `paloalto_system` |
+| Palo Alto firewalls | `pa_denied_by_source` | Internal hosts hitting many denied destinations or ports are misconfigured or scanning. | `paloalto_traffic` |
+| Palo Alto firewalls | `pa_threats_by_signature` | Which threat signatures fired, on how many hosts, and whether the firewall blocked them. | `paloalto_threat` |
+| Palo Alto firewalls | `gp_logins_by_user` | VPN sign-ins and failures per person and public address: remote access is a favourite way in. | `paloalto_globalprotect` |
+| Palo Alto firewalls | `who_had_ip` | Which device or person had an internal address at a time: DHCP leases and VPN tunnels. | `paloalto_system`, `paloalto_globalprotect` |
 
 Notes:
 
-- The AI usage page uses the full, reviewable AI catalog and names people from logon, User-ID, and VPN events. The AI examples are a smaller, editable starting point.
-- The DHCP examples read the Palo Alto system log's DHCP lease lines. For another DHCP server (Windows DHCP, ISC dhcpd, UniFi), change the `leases` part to read that source.
-- A summary with a label and a count (`ai_services_dns`, `parser_mix`) can be shown as bars on the Dashboard.
+- The AI usage page uses the full, reviewable AI catalog and names people from logon, User-ID, and VPN events. The AI queries are a smaller, editable starting point.
+- The DHCP queries (`ai_services_by_device`, `who_had_ip`) read the Palo Alto system log's DHCP lease lines. For another DHCP server, change the `leases` part to read that source. `who_had_ip` loads with the address `10.20.1.5` written in; change it in the editor.
+- A summary with a label and a count can be shown as bars on the Dashboard.
+- The `m365` failure queries treat MFA interruptions as interruptions, not failures. Events stored before `m365_management_activity` 1.1.0 recorded failed logons as successes, so older failures are missing.
 
 ## Search addresses, history, and where search text goes
 

@@ -1,0 +1,183 @@
+schema_version: 1
+id: paloalto
+name: Palo Alto firewalls
+version: 1.0.0
+description: Traffic, threats, GlobalProtect VPN, admin sign-ins, and maintenance on Palo Alto firewalls.
+queries:
+- id: firewall_maintenance
+  name: Firewall maintenance watch
+  description: 'Palo Alto system events that mark maintenance or trouble: HA state changes, commits, restarts,
+    software and content installs, and anything medium severity or higher, per firewall and event, with
+    the newest description. Reads parsed columns (subtype, event_id, severity) from the paloalto_system
+    template.'
+  tags:
+  - firewall
+  - paloalto
+  sql: |-
+    SELECT device_hostname AS firewall,
+           json_extract_string(unmapped, '$.subtype') AS subtype,
+           json_extract_string(unmapped, '$.event_id') AS event,
+           max(severity_id) AS max_severity, count(*) AS events, max(time) AS last_seen,
+           arg_max(message, time) AS latest
+    FROM events
+    WHERE template_id = 'paloalto_system'
+      AND time BETWEEN {{start}} AND {{end}}
+      AND (
+        severity_id >= 3
+        OR json_extract_string(unmapped, '$.subtype') = 'ha'
+        OR regexp_matches(json_extract_string(unmapped, '$.event_id'),
+                          '(commit|restart|reboot|shutdown|upgrade|install|state-change)')
+      )
+    GROUP BY ALL
+    ORDER BY last_seen DESC
+  params: []
+  group: Palo Alto / System
+  requires:
+  - paloalto_system
+  why: 'HA changes, commits, restarts, and installs: what changed on the firewall and when.'
+  normal: Commits during change windows and content updates overnight. An HA state change outside a window
+    is the one to explain.
+  suggested_schedule: daily
+  flag: null
+  expect:
+    rows_at_least: 1
+- id: pa_admin_signins
+  name: Firewall admin sign-ins
+  group: Palo Alto / System
+  tags:
+  - paloalto
+  - identity
+  requires:
+  - paloalto_system
+  why: 'Who signs in to the firewall, from where, and failed attempts: admin access is the keys to the
+    network.'
+  normal: The network team from their usual machines. Failures for names that are not admins are guessing.
+  suggested_schedule: daily
+  flag: null
+  description: Web and CLI admin sign-ins and failures from the system log, per user and address.
+  sql: |-
+    SELECT coalesce(actor_user_name, regexp_extract(message, 'for user ''([^'']+)''', 1)) AS "user",
+           src_endpoint_ip AS address,
+           count(*) FILTER (WHERE status_id = 1) AS signins,
+           count(*) FILTER (WHERE status_id = 2) AS failures,
+           max(time) AS last_seen
+    FROM events
+    WHERE template_id = 'paloalto_system' AND class_uid = 3002 AND time BETWEEN {{start}} AND {{end}}
+    GROUP BY 1, 2
+    ORDER BY failures DESC, signins DESC
+  expect:
+    rows_at_least: 1
+- id: pa_denied_by_source
+  name: Denied traffic by source
+  group: Palo Alto / Traffic
+  tags:
+  - paloalto
+  - firewall
+  requires:
+  - paloalto_traffic
+  why: Internal hosts hitting many denied destinations or ports are misconfigured or scanning.
+  normal: A steady trickle from printers and old software. A host that jumps to hundreds of ports is the
+    pattern.
+  suggested_schedule: hourly
+  flag: change 200%
+  description: Denied sessions per source address with how many destinations and ports.
+  sql: |-
+    SELECT src_endpoint_ip AS source, actor_user_name AS "user", count(*) AS denied,
+           count(DISTINCT dst_endpoint_ip) AS destinations, count(DISTINCT dst_endpoint_port) AS ports,
+           max(time) AS last_seen
+    FROM events
+    WHERE template_id = 'paloalto_traffic' AND status_id = 2 AND time BETWEEN {{start}} AND {{end}}
+    GROUP BY 1, 2
+    ORDER BY denied DESC
+  expect:
+    rows_at_least: 1
+- id: pa_threats_by_signature
+  name: Threats by signature
+  group: Palo Alto / Threat
+  tags:
+  - paloalto
+  - threat
+  requires:
+  - paloalto_threat
+  why: Which threat signatures fired, on how many hosts, and whether the firewall blocked them.
+  normal: Test signatures (EICAR) and known scanners. Allowed (not blocked) high-severity rows come first.
+  suggested_schedule: hourly
+  flag: above 0
+  description: Threat log entries per signature with hosts affected and allowed versus blocked counts.
+  sql: |-
+    SELECT message AS signature, max(severity_id) AS max_severity,
+           count(DISTINCT src_endpoint_ip) AS hosts, count(*) AS events,
+           count(*) FILTER (WHERE status_id = 1) AS allowed,
+           count(*) FILTER (WHERE status_id = 2) AS blocked, max(time) AS last_seen
+    FROM events
+    WHERE template_id = 'paloalto_threat' AND time BETWEEN {{start}} AND {{end}}
+    GROUP BY 1
+    ORDER BY allowed DESC, max_severity DESC
+  expect:
+    rows_at_least: 1
+- id: gp_logins_by_user
+  name: GlobalProtect sign-ins by user
+  group: Palo Alto / VPN
+  tags:
+  - paloalto
+  - vpn
+  - identity
+  requires:
+  - paloalto_globalprotect
+  why: 'VPN sign-ins and failures per person and public address: remote access is a favourite way in.'
+  normal: People from home and travel addresses. One person from two countries in an hour, or many failures,
+    are the rows to read.
+  suggested_schedule: daily
+  flag: null
+  description: GlobalProtect portal and gateway sign-ins per user and public address.
+  sql: |-
+    SELECT actor_user_name AS "user", src_endpoint_ip AS public_address,
+           count(*) FILTER (WHERE status_id = 1) AS signins,
+           count(*) FILTER (WHERE status_id = 2) AS failures,
+           min(time) AS first_seen, max(time) AS last_seen
+    FROM events
+    WHERE template_id = 'paloalto_globalprotect' AND time BETWEEN {{start}} AND {{end}}
+    GROUP BY 1, 2
+    ORDER BY failures DESC, signins DESC
+  expect:
+    rows_at_least: 1
+- id: who_had_ip
+  name: Who had this address
+  description: 'Every Palo Alto DHCP lease and GlobalProtect tunnel assignment for one address, newest
+    first, from 7 days before the range to its end: the device name and MAC from DHCP, the person and
+    laptop from GlobalProtect. Read across both to see who held it at a moment.'
+  tags:
+  - dhcp
+  - vpn
+  - identity
+  sql: |-
+    SELECT time, 'DHCP lease' AS kind,
+           nullif(regexp_extract(message, 'hostname ([^,\s]+)', 1), '[Unavailable]') AS device,
+           regexp_extract(message, 'mac ([0-9A-Fa-f:]{17})', 1) AS mac,
+           CAST(NULL AS VARCHAR) AS person
+    FROM events
+    WHERE template_id = 'paloalto_system'
+      AND json_extract_string(unmapped, '$.subtype') = 'dhcp'
+      AND regexp_extract(message, 'lease started ip ([0-9.]+)', 1) = {{ip}}
+      AND time BETWEEN {{start}} - INTERVAL 7 DAY AND {{end}}
+    UNION ALL
+    SELECT time, 'VPN tunnel', src_endpoint_hostname, NULL, actor_user_name
+    FROM events
+    WHERE template_id = 'paloalto_globalprotect'
+      AND json_extract_string(unmapped, '$.private_ip') = {{ip}}
+      AND time BETWEEN {{start}} - INTERVAL 7 DAY AND {{end}}
+    ORDER BY time DESC
+    LIMIT 50
+  params:
+  - name: ip
+    type: string
+    default: 10.20.1.5
+    description: The internal address to look up
+  group: Palo Alto / VPN
+  requires:
+  - paloalto_system
+  - paloalto_globalprotect
+  why: 'Which device or person had an internal address at a time: DHCP leases and VPN tunnels.'
+  normal: One lease or tunnel per address at a time. Change the address in the query.
+  suggested_schedule: null
+  flag: null

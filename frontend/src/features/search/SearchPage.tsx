@@ -36,6 +36,7 @@ import { FacetSidebar } from "./FacetSidebar";
 import { FieldActionsContext, type FieldActions } from "./fieldActions";
 import { FilterBar } from "./FilterBar";
 import { OpenSearchPanel } from "./OpenSearchPanel";
+import { LibraryPanel, type LibraryPick } from "./LibraryPanel";
 import { downloadCsv, ResultsCard } from "./ResultsCard";
 import { SaveSearchForm } from "./SaveSearchForm";
 import { SearchTabs, type SearchArea } from "./SearchTabs";
@@ -222,6 +223,18 @@ export function SearchPage({
     );
     run.mutate({ sql: value, params: names.length ? params : undefined });
   };
+  const [libraryOpen, setLibraryOpen] = useState(seed?.library === true);
+  const [libraryQuery, setLibraryQuery] = useState<LibraryPick | null>(null);
+  const loadLibrary = (q: LibraryPick) => {
+    setLibraryOpen(false);
+    setOpening(false);
+    setOpened(null);
+    openedNow.current = null;
+    setSaved(null);
+    setLibraryQuery(q);
+    setSql(q.sql);
+    setTab("sql");
+  };
   const openSearch = (s: SavedSearch, given: Record<string, string> = {}) => {
     setOpening(false);
     setOpened(s);
@@ -389,7 +402,18 @@ export function SearchPage({
             <Command
               label="Open"
               title="Open a saved search here"
-              onClick={() => setOpening((v) => !v)}
+              onClick={() => {
+                setLibraryOpen(false);
+                setOpening((v) => !v);
+              }}
+            />
+            <Command
+              label="Library"
+              title="Shipped, tested queries for the sources you have"
+              onClick={() => {
+                setOpening(false);
+                setLibraryOpen((v) => !v);
+              }}
             />
             {canSave ? (
               <Command
@@ -447,6 +471,13 @@ export function SearchPage({
 
       <div className="flex flex-col gap-2.5 px-5 py-3">
         {opening ? <OpenSearchPanel onOpen={openSearch} onClose={() => setOpening(false)} /> : null}
+        {libraryOpen ? (
+          <LibraryPanel
+            onLoad={loadLibrary}
+            onClose={() => setLibraryOpen(false)}
+            canSave={canSave}
+          />
+        ) : null}
         {confirmNew ? (
           <div
             role="alertdialog"
@@ -546,6 +577,23 @@ export function SearchPage({
           >
             {seed?.origin && sql === seed.sql ? (
               <p className="text-sm text-text-secondary">{seed.origin}</p>
+            ) : null}
+            {libraryQuery && sql === libraryQuery.sql ? (
+              <div
+                role="note"
+                aria-label="From the query library"
+                className="flex flex-col gap-0.5 rounded border border-border bg-surface px-3 py-2 text-sm"
+              >
+                <span>
+                  <span className="font-semibold">{libraryQuery.name}</span>
+                  <span className="text-text-muted">
+                    {" "}
+                    from the {libraryQuery.packName} library, unsaved
+                  </span>
+                </span>
+                <span>{libraryQuery.why}</span>
+                <span className="text-text-muted">Normal: {libraryQuery.normal}</span>
+              </div>
             ) : null}
             <Suspense fallback={<div className="h-40 rounded border border-border bg-inset" />}>
               <SqlEditor

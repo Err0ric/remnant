@@ -298,3 +298,39 @@ describe("Results table controls", () => {
     expect(table.parentElement?.style.getPropertyValue("--row-h")).toBe("30px");
   });
 });
+
+describe("Query library (ADR-0033)", () => {
+  it("loads a query into the SQL tab with why and normal, saves a copy, and replaces one", async () => {
+    const spy = await renderApp();
+    await userEvent.click(screen.getByRole("button", { name: "Library" }));
+    const lib = await screen.findByRole("region", { name: "Query library" });
+    expect(await within(lib).findByText("Linux / SSH")).toBeVisible();
+    expect(
+      within(lib).getByText("12 more queries need sources you do not have events from."),
+    ).toBeVisible();
+    await userEvent.click(
+      within(lib).getByRole("button", { name: "Save SSH logins by user and source as my own" }),
+    );
+    expect(
+      spy.mock.calls.some(
+        ([u, i]) =>
+          String(u).endsWith("/api/library/linux_auth/ssh_logins/copy") && i?.method === "POST",
+      ),
+    ).toBe(true);
+    await userEvent.click(within(lib).getByRole("button", { name: "Updated in this version" }));
+    expect(within(lib).getByLabelText("Changes to sudo refused")).toHaveTextContent("- SELECT 1");
+    await userEvent.click(within(lib).getByRole("button", { name: "Replace my copy" }));
+    expect(
+      spy.mock.calls.some(([u]) =>
+        String(u).endsWith("/api/library/linux_auth/sudo_denied/replace"),
+      ),
+    ).toBe(true);
+    await userEvent.click(
+      within(lib).getByRole("button", { name: "SSH logins by user and source" }),
+    );
+    const note = await screen.findByRole("note", { name: "From the query library" });
+    expect(note).toHaveTextContent("Why SSH logins by user and source");
+    expect(note).toHaveTextContent("Normal: Normal for SSH logins by user and source");
+    expect(screen.queryByRole("region", { name: "Query library" })).toBeNull();
+  });
+});

@@ -293,6 +293,9 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | Method | Path | What it does | Query | JSON body (`?` optional) |
 |---|---|---|---|---|
 | `GET` | `/api/events/{event_id}/around` | Rows within 5 minutes of the event by the same person or device, from every source the caller may read; at most 50, newest last, with a Likely cause hint. Audited `search.around`. | `?at`: date-time |  |
+| `GET` | `/api/library` | The packs, with only the queries whose templates the viewer's sources produced in the last 30 days, and the viewer's own copies. |  |  |
+| `POST` | `/api/library/{pack_id}/{query_id}/copy` | Save as my own (row 4): a private saved search the user owns. Audited search.create with the library entry. |  |  |
+| `POST` | `/api/library/{pack_id}/{query_id}/replace` | Replace my copy (row 7): the user's copy takes the pack's current SQL and version. Audited search.update; the user's schedules of it take the change as an edit does. |  |  |
 | `GET` | `/api/people/{person}/timeline` | One row per action by this person across the sources the caller may read, newest first, with the forms of the name that matched. Audited `search.timeline`. | `?days` (optional): integer |  |
 
 ### Searches

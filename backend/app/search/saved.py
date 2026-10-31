@@ -26,7 +26,8 @@ Visibility = Literal["private", "shared"]
 
 
 # simple_text: the Simple search the SQL was compiled from (ADR-0009 row 7).
-OriginKey = Literal["ask_prompt", "llm_audit_id", "simple_text"]
+# library: the query library entry it was copied from, "<pack>/<id>@<version>" (ADR-0033).
+OriginKey = Literal["ask_prompt", "llm_audit_id", "simple_text", "library"]
 OriginValue = Annotated[str, StringConstraints(max_length=2_000)]
 
 

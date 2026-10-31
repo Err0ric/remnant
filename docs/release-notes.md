@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Query library (ADR-0033)
+
+- **Search > Library** lists shipped, tested queries for the sources you have, in five packs: Microsoft 365 (identity, mail, apps and consent, admin, Copilot, data), Linux sign-ins and privilege, Palo Alto firewalls, DNS and AI services, and ingest health. A query appears only when a source you can read sent events from one of its templates in the last 30 days.
+- Clicking a query loads its SQL into the SQL tab, unsaved, with why it matters and what normal looks like above the editor. Running it is the normal Run, through the guard, on your own sources.
+- **Save as my own** makes a private saved search (audited `search.create`, with the library entry). When a later version changes a query you copied, the Library shows **Updated in this version** with the difference and **Replace my copy** (audited `search.update`). Your copy is never changed without that.
+- Every library query runs in CI on the template fixtures of its sources, so a template change that would break one fails the build.
+- The eight example saved searches moved into the library; `examples/saved-searches/` now points there.
+- Command palette: **Query library** (also found by typing "grimoire").
+- What changes for existing installs: nothing to do. Searches you imported from the examples stay as they are. The image now includes `library/`; a systemd install from the repository reads it from there.
+
 ### Likely cause: a first-seen destination
 
 - When no earlier row failed or was blocked, **Likely cause** now marks the nearest earlier row whose destination (host, app, or address) the person or device had not reached in the 30 days before. Its tooltip says which rule picked it. Still a hint; no model is called.

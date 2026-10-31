@@ -37,6 +37,14 @@ The nine queries in the owner's notes become the `m365` pack with these changes:
 | `m365_inbox_rules`, `m365_signins_by_app`, `m365_external_sharing` | As written; `m365_signins_by_app` notes that `message` is `appDisplayName` |
 | New: `m365_new_service_principals`, `m365_user_consent` | Move in from `examples/` |
 
+## As built (2026-10-31, part 1)
+
+- `requires` means any one of the templates; an empty list means any source (the `health` pack, which holds `parser_mix`, the one example that fits no other pack).
+- A query may use parameters other than `start` and `end` only with a default; the Library loads it with the default written into the SQL (`who_had_ip` opens with `10.20.1.5`), and Save as my own keeps the parameter.
+- `GET /api/library`, `POST /api/library/{pack}/{query}/copy` and `/replace` (admins and analysts); copies carry `origin.library: <pack>/<id>@<version>`. Offering reads `SELECT DISTINCT template_id` over the last 30 days of the viewer's own view.
+- "Grimoire" stays a palette alias of Saved searches too; the palette's **Query library** entry also answers to it.
+- Part 2 is **Add a pack** on the Dashboard.
+
 ## Consequences
 
 - Shipped questions are tested against the fixtures on every PR, so a template change cannot silently break them.

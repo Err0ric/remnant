@@ -1,0 +1,171 @@
+schema_version: 1
+id: dns_ai
+name: DNS and AI services
+version: 1.0.0
+description: AI services seen in DNS, by device, plus the DNS questions that find odd names.
+queries:
+- id: ai_services_dns
+  name: AI services from DNS
+  description: 'Queries to well-known AI services in DNS logs, per service: how many queries and from
+    how many client addresses. Reads parsed DNS events only (class_uid 4003, where the DNS template put
+    the queried name in message). Vendor ad and measurement hosts (service "-") are left out. The AI usage
+    page uses the full, reviewable catalog; this is a starting point to adapt.'
+  tags:
+  - ai
+  - dns
+  sql: |-
+    WITH ai(domain, service) AS (VALUES
+      ('chatgpt.com', 'ChatGPT'), ('openai.com', 'ChatGPT'), ('oaiusercontent.com', 'ChatGPT'),
+      ('api.openai.com', 'OpenAI API'), ('claude.ai', 'Claude'), ('claude.com', 'Claude'),
+      ('api.anthropic.com', 'Anthropic API'), ('gemini.google.com', 'Gemini'),
+      ('generativelanguage.googleapis.com', 'Gemini API'), ('copilot.microsoft.com', 'Microsoft Copilot'),
+      ('githubcopilot.com', 'GitHub Copilot'), ('perplexity.ai', 'Perplexity'),
+      ('deepseek.com', 'DeepSeek'), ('mistral.ai', 'Mistral'), ('grok.com', 'Grok'),
+      ('cursor.sh', 'Cursor'), ('cursor.com', 'Cursor'), ('huggingface.co', 'Hugging Face'),
+      ('bzr.openai.com', '-'), ('bzrcdn.openai.com', '-')
+    ),
+    q AS (
+      SELECT event_id, src_endpoint_ip, lower(rtrim(message, '.')) AS qname
+      FROM events
+      WHERE class_uid = 4003 AND time BETWEEN {{start}} AND {{end}}
+    ),
+    best AS (
+      SELECT q.event_id, any_value(q.src_endpoint_ip) AS client,
+             arg_max(ai.service, length(ai.domain)) AS service,
+             max_by(ai.domain, length(ai.domain)) AS domain
+      FROM q JOIN ai ON q.qname = ai.domain OR ends_with(q.qname, '.' || ai.domain)
+      GROUP BY q.event_id
+    )
+    SELECT service, count(DISTINCT client) AS clients, count(*) AS queries
+    FROM best
+    WHERE service <> '-'
+    GROUP BY service
+    ORDER BY queries DESC
+  params: []
+  group: DNS / AI services
+  requires:
+  - dns_bind
+  - dns_unbound
+  - dns_windows
+  - dns_powerdns
+  why: Which AI services the network looks up, and from how many clients.
+  normal: ChatGPT, Copilot, and Claude in most networks. A service you have not approved is a question
+    for the AI usage page.
+  suggested_schedule: daily
+  flag: null
+- id: ai_services_by_device
+  name: AI services by device (DNS and DHCP)
+  description: 'Each AI service query from DNS, named by the device that held the client address at the
+    time: the newest Palo Alto DHCP lease for that address at or before the query (an ASOF join, so a
+    reused address is named correctly), looking back up to 7 days before the range. Devices without a
+    lease keep their address. Adapt the lease part for other DHCP servers.'
+  tags:
+  - ai
+  - dns
+  - dhcp
+  sql: |-
+    WITH ai(domain, service) AS (VALUES
+      ('chatgpt.com', 'ChatGPT'), ('openai.com', 'ChatGPT'), ('api.openai.com', 'OpenAI API'),
+      ('claude.ai', 'Claude'), ('api.anthropic.com', 'Anthropic API'), ('gemini.google.com', 'Gemini'),
+      ('copilot.microsoft.com', 'Microsoft Copilot'), ('githubcopilot.com', 'GitHub Copilot'),
+      ('perplexity.ai', 'Perplexity'), ('deepseek.com', 'DeepSeek'), ('cursor.com', 'Cursor'),
+      ('bzr.openai.com', '-'), ('bzrcdn.openai.com', '-')
+    ),
+    q AS (
+      SELECT event_id, time AS t, src_endpoint_ip AS ip, lower(rtrim(message, '.')) AS qname
+      FROM events
+      WHERE class_uid = 4003 AND time BETWEEN {{start}} AND {{end}}
+    ),
+    best AS (
+      SELECT q.event_id, any_value(q.t) AS t, any_value(q.ip) AS ip,
+             arg_max(ai.service, length(ai.domain)) AS service
+      FROM q JOIN ai ON q.qname = ai.domain OR ends_with(q.qname, '.' || ai.domain)
+      GROUP BY q.event_id
+    ),
+    leases AS (
+      SELECT time AS t,
+             regexp_extract(message, 'lease started ip ([0-9.]+)', 1) AS ip,
+             regexp_extract(message, 'mac ([0-9A-Fa-f:]{17})', 1) AS mac,
+             nullif(regexp_extract(message, 'hostname ([^,\s]+)', 1), '[Unavailable]') AS host
+      FROM events
+      WHERE template_id = 'paloalto_system'
+        AND json_extract_string(unmapped, '$.subtype') = 'dhcp'
+        AND time BETWEEN {{start}} - INTERVAL 7 DAY AND {{end}}
+    )
+    SELECT coalesce(l.host, l.mac, b.ip) AS device, b.service, count(*) AS queries,
+           max(b.t) AS last_seen
+    FROM best b
+    ASOF LEFT JOIN (SELECT * FROM leases WHERE ip <> '') l ON b.ip = l.ip AND b.t >= l.t
+    WHERE b.service <> '-'
+    GROUP BY ALL
+    ORDER BY queries DESC
+  params: []
+  group: DNS / AI services
+  requires:
+  - dns_bind
+  - dns_unbound
+  - dns_windows
+  - dns_powerdns
+  why: AI service lookups named by the device that held the address, from Palo Alto DHCP leases.
+  normal: Devices without a lease keep their address. Needs the Palo Alto system log for names.
+  suggested_schedule: daily
+  flag: null
+- id: dns_top_domains
+  name: Most queried names
+  group: DNS / Names
+  tags:
+  - dns
+  requires:
+  - dns_bind
+  - dns_unbound
+  - dns_windows
+  - dns_powerdns
+  why: What the network looks up most, and from how many clients.
+  normal: Your own domains, Microsoft, Google, and update servers at the top.
+  suggested_schedule: daily
+  flag: null
+  description: Queried names (class 4003, the name is in message) with queries and clients.
+  sql: |-
+    SELECT lower(rtrim(message, '.')) AS name, count(*) AS queries,
+           count(DISTINCT src_endpoint_ip) AS clients, max(time) AS last_seen
+    FROM events
+    WHERE class_uid = 4003 AND time BETWEEN {{start}} AND {{end}}
+    GROUP BY 1
+    ORDER BY queries DESC
+    LIMIT 200
+  expect:
+    rows_at_least: 1
+- id: dns_random_looking_names
+  name: Random-looking names
+  group: DNS / Names
+  tags:
+  - dns
+  - attack
+  requires:
+  - dns_bind
+  - dns_unbound
+  - dns_windows
+  - dns_powerdns
+  why: Long labels of letters and digits with few vowels are typical of generated domains and DNS tunnels
+    (T1568.002, T1071.004).
+  normal: CDNs and cloud services produce some (hashes in hostnames). Names queried by one or two clients
+    only are the ones to read.
+  suggested_schedule: daily
+  flag: null
+  description: Names whose first label is 8 or more characters, mixes letters and digits, and has few
+    vowels.
+  sql: |-
+    WITH n AS (
+      SELECT lower(rtrim(message, '.')) AS name, split_part(lower(message), '.', 1) AS label,
+             src_endpoint_ip AS client, time
+      FROM events
+      WHERE class_uid = 4003 AND time BETWEEN {{start}} AND {{end}}
+    )
+    SELECT name, count(*) AS queries, count(DISTINCT client) AS clients, max(time) AS last_seen
+    FROM n
+    WHERE length(label) >= 8 AND regexp_matches(label, '[0-9]') AND regexp_matches(label, '[a-z]')
+      AND length(regexp_replace(label, '[^aeiou]', '', 'g')) * 4 < length(label)
+    GROUP BY 1
+    ORDER BY clients, queries DESC
+  expect:
+    rows_at_least: 1
