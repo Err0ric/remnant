@@ -17,6 +17,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from app.ai import consents
+from app.ai import usage as usage_mod
 from app.ai.agents import agents
 from app.ai.catalog import NON_USAGE, Catalog, Service
 from app.ai.usage import Usage
@@ -41,6 +42,19 @@ SELECT
   coalesce(sum(sens) FILTER (WHERE ts < $start), 0),
   arg_max(who, sens) FILTER (WHERE sens > 0 AND ts >= $start)
 FROM e"""
+
+
+# The events behind the sensitive data card (ADR-0039), one row per event that reported any.
+SENSITIVE_DRILL = (
+    "SELECT time, actor_user_name AS person, device_hostname,\n"
+    "       TRY_CAST(json_extract_string(unmapped, '$.attr.sensitive_total') AS BIGINT)"
+    " AS sensitive, message, event_id\n"
+    "FROM events\nWHERE template_id = 'claude_code_otel'\n"
+    "  AND TRY_CAST(json_extract_string(unmapped, '$.attr.sensitive_total') AS BIGINT) > 0\n"
+    "  AND coalesce(time, time_observed) >= TIMESTAMPTZ '{from}'"
+    " AND coalesce(time, time_observed) < TIMESTAMPTZ '{to}'\n"
+    "ORDER BY coalesce(time, time_observed) DESC"
+)
 
 
 class _Use:
@@ -86,6 +100,12 @@ class Card:
     # Search SQL for the rows behind the card and behind `blocked` (consent card).
     rows_sql: str | None = None
     blocked_sql: str | None = None
+    # Drill-through templates with `{from}` and `{to}` (ADR-0039): the number, the period
+    # before when it needs another query, and the devices line.
+    drill: str | None = None
+    drill_before: str | None = None
+    devices_drill: str | None = None
+    blocked_drill: str | None = None
 
 
 class _Users:
@@ -142,6 +162,8 @@ class Summary:
     # 2026-10-30): the cards then show no change. `since`: the first use seen.
     compared: bool = True
     since: str | None = None
+    before: str = ""  # start of the period before
+    chart_drill: str | None = None  # AI use per service for one chart day (`{from}`, `{to}`)
 
 
 @dataclass(slots=True)
@@ -206,6 +228,7 @@ def summary(
     # events for the whole section (F63).
     use: dict[str, _Use] = {}
     first_in_rows: dict[str, datetime] = {}
+    chart_svcs: set[str] = set()
     for sid, who, machine, day_v, events, last, first in rows:
         if not is_use(sid):
             continue
@@ -218,6 +241,7 @@ def summary(
             use.setdefault(sid, _Use()).add(who, machine, events, f, _ts(last))
         if d >= today - timedelta(days=CHART_DAYS - 1):
             chart[d][st] += int(events)
+            chart_svcs.add(sid)
         unapproved = st != "approved"
         if d >= cur_from:
             if unapproved:
@@ -228,6 +252,13 @@ def summary(
         elif d >= prev_from and unapproved:
             prev_svcs.add(sid)
             prev.add(who, machine)
+
+    table = catalog.domain_table()
+
+    unapproved_ids = cur_svcs | prev_svcs
+
+    def use_drill(ids: set[str], kind: str) -> str | None:
+        return usage_mod.drill_sql(table, ids, kind) if ids else None
 
     top_unapproved = sorted(cur_svcs, key=lambda s: (-len(people_by_svc[s]), s))
     lead = top_unapproved[0] if top_unapproved else None
@@ -240,6 +271,7 @@ def summary(
             len(prev_svcs),
             f"{services[lead].name} most used" if lead else "None in use",
             unreviewed=not_reviewed,
+            drill=use_drill(unapproved_ids, "services"),
         ),
         Card(
             "people",
@@ -250,6 +282,8 @@ def summary(
             if lead and people_by_svc[lead]
             else "",
             devices=cur.unmatched(),
+            drill=use_drill(unapproved_ids, "people"),
+            devices_drill=use_drill(unapproved_ids, "devices"),
         ),
         _agents_card(items, readable, cur_from, prev_from, kinds, allowed),
     ]
@@ -306,6 +340,8 @@ def summary(
         _new(usage, engine, allowed, items, readable, now, first_in_rows, services, index),
         compared=compared,
         since=oldest.isoformat() if oldest is not None and oldest > prev_start else None,
+        before=prev_start.isoformat(),
+        chart_drill=use_drill(set(use) | chart_svcs, "services"),
     )
 
 
@@ -468,6 +504,8 @@ def _signal_cards(
             blocked_context=f"Blocked: {consents.describe(latest_blocked)}" if blocked else "",
             rows_sql=consents.rows_sql(False, start),
             blocked_sql=consents.rows_sql(True, start),
+            drill=consents.drill_sql(blocked=False),
+            blocked_drill=consents.drill_sql(blocked=True),
         )
     if not have_tel:
         sens = Card("sensitive", sens_label, None, None, needs="Claude Code telemetry")
@@ -485,5 +523,6 @@ def _signal_cards(
             int(s_cur or 0),
             int(s_prev or 0),
             f"Most from {s_who}" if s_who else "None in Claude Code",
+            drill=SENSITIVE_DRILL,
         )
     return [consent, sens], sorted(sources)

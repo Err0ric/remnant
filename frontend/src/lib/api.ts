@@ -9,6 +9,58 @@ export interface ClaudePluginRequest {
   platform: PluginPlatform;
   managed: boolean;
   trust_server_certificate: boolean;
+  /** The named token the package carries (D127): an existing one, or a new one by name. */
+  token_id?: string;
+  token_name?: string;
+}
+
+/** Settings > Single sign-on (F64): the server's OIDC setup, read only, never the secret. */
+export interface SsoSettings {
+  status: "off" | "on" | "misconfigured";
+  problem: string | null;
+  issuer: string | null;
+  client_id: string | null;
+  label: string;
+  required_groups: string[];
+  password_login: string;
+  redirect_uri: string | null;
+  env: { name: string; value: string }[];
+  bound: {
+    user_id: string;
+    username: string;
+    role: string;
+    disabled: boolean;
+    last_login_at: string | null;
+  }[];
+}
+
+export interface OtlpToken {
+  token_id: string;
+  source_id: string;
+  name: string;
+  prefix: string;
+  created_at: string | null;
+  created_by: string | null;
+  revoked_at: string | null;
+  last_used_at: string | null;
+  devices: number;
+  hosts: string[];
+  downloadable: boolean;
+}
+
+export interface PluginsInfo {
+  version: string;
+  variants: {
+    platform: PluginPlatform;
+    label: string;
+    script_sha256: string;
+    devices_24h: number;
+    last_event: string | null;
+    dropped_24h: number;
+  }[];
+  sources: { source_id: string; keep_content: boolean }[];
+  tokens: OtlpToken[];
+  public_url: string | null;
 }
 
 export interface ClaudePluginInfo {
@@ -284,6 +336,8 @@ export interface EnrichmentFeed {
   size: number;
   source: "download" | "upload" | null;
   installed_at: string | null;
+  /** The last check that found the content current (F67). */
+  confirmed_at?: string | null;
   checked_at: string | null;
   error: string | null;
   check_every_s: number;
@@ -323,6 +377,37 @@ export interface SectionRow {
 export interface SectionHistory {
   compared: boolean;
   since: string | null;
+}
+
+/** The Microsoft 365 area (ADR-0038 section 5). Every query has `{from}` and `{to}`. */
+export interface M365Overview {
+  window: PageWindow;
+  start: string;
+  end: string;
+  before: string;
+  has_source: boolean;
+  approved_set: boolean;
+  history: SectionHistory;
+  sign_ins: SectionKpi | null;
+  failed: SectionKpi | null;
+  outside: SectionKpi | null;
+  risky: SectionKpi | null;
+  consents: SectionKpi | null;
+  admin_changes: SectionKpi | null;
+  counts: { key: string; label: string; kpi: SectionKpi }[];
+  outcome: {
+    points: string[];
+    succeeded: number[];
+    interrupted: number[];
+    failed: number[];
+    drill_succeeded: string;
+    drill_interrupted: string;
+    drill_failed: string;
+  } | null;
+  reasons: SectionRow[];
+  outside_top: SectionRow[];
+  apps: SectionRow[];
+  lists: Record<"sign_ins" | "mail" | "consents" | "registrations" | "admin", string>;
 }
 
 export interface DashboardSections {
@@ -1104,6 +1189,30 @@ export interface AgentSession {
   failed?: number;
 }
 
+/** ADR-0030 amendment: a Claude account the hooks plugin reported, and its tier. */
+export type AccountTier =
+  "company_confirmed" | "company_reported" | "company_unconfirmed" | "personal" | "not_checked";
+
+export interface AgentAccount {
+  email: string | null;
+  tier: AccountTier;
+  account_from: string | null;
+  devices: string[];
+  os_users: string[];
+  sessions: number;
+  first_seen: string | null;
+  last_seen: string | null;
+  evidence: string;
+}
+
+export interface AgentAccounts {
+  days: number;
+  domains_set: boolean;
+  has_signins: boolean;
+  rows: AgentAccount[];
+  counts: Record<AccountTier, number>;
+}
+
 export interface SessionStep {
   time: string;
   event: string;
@@ -1571,6 +1680,11 @@ export interface AiWatchCard {
   /** Search SQL for the rows behind the card and behind `blocked` (consent card). */
   rows_sql?: string | null;
   blocked_sql?: string | null;
+  /** ADR-0039 templates with `{from}` and `{to}`. */
+  drill?: string | null;
+  drill_before?: string | null;
+  devices_drill?: string | null;
+  blocked_drill?: string | null;
 }
 
 export interface AiWatchDay {
@@ -1585,6 +1699,9 @@ export interface AiWatchSummary {
   /** False while AI use was seen for under 90% of the period before; `since`: first use. */
   compared?: boolean;
   since?: string | null;
+  /** Start of the period before; and AI use per service for one chart day. */
+  before?: string;
+  chart_drill?: string | null;
   /** See AiUsage. */
   people_pending_days?: number;
   people_days?: number;
@@ -1961,8 +2078,22 @@ export const api = {
   /** The hooks plugin for an OTLP source (ADR-0026): issues a new token for the source. */
   claudePlugin: (id: string, body: ClaudePluginRequest) =>
     postForFile(`/api/sources/${encodeURIComponent(id)}/claude-plugin`, body),
+  agentAccounts: (days = 30) => request<AgentAccounts>(`/api/agents/accounts?days=${days}`),
   aiSessions: (days = 7) => request<AgentSession[]>(`/api/ai/sessions?days=${days}`),
   aiSession: (id: string) => request<SessionTimeline>(`/api/ai/sessions/${encodeURIComponent(id)}`),
+  plugins: () => request<PluginsInfo>("/api/plugins"),
+  ssoSettings: () => request<SsoSettings>("/api/settings/sso"),
+  ssoTest: () => request<{ ok: boolean; message: string }>("/api/settings/sso/test", post({})),
+  newOtlpToken: (sourceId: string, name: string) =>
+    request<OtlpToken & { token: string }>(
+      `/api/sources/${encodeURIComponent(sourceId)}/otlp-tokens`,
+      post({ name }),
+    ),
+  revokeOtlpToken: (sourceId: string, tokenId: string) =>
+    request<OtlpToken>(
+      `/api/sources/${encodeURIComponent(sourceId)}/otlp-tokens/${encodeURIComponent(tokenId)}`,
+      { method: "DELETE" },
+    ),
   claudePluginInfo: () => request<ClaudePluginInfo>("/api/sources/claude-plugin"),
   agentConfig: (id: string, os: "windows" | "linux") =>
     requestText(`/api/sources/${encodeURIComponent(id)}/agent-config?os=${os}`),
@@ -2025,6 +2156,8 @@ export const api = {
   setEnrichmentAuto: (auto_update: boolean) =>
     request<EnrichmentStatus>("/api/enrichment/settings", put({ auto_update })),
   places: () => request<Places>("/api/enrichment/places"),
+  m365Overview: (window: PageWindow) =>
+    request<M365Overview>(`/api/m365/overview?window=${window}`),
   dashboardSections: (window: PageWindow) =>
     request<DashboardSections>(`/api/dashboard/sections?window=${window}`),
   setPlaces: (body: { approved_countries: string[]; internal_networks: string[] }) =>

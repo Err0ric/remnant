@@ -705,11 +705,14 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       ]);
     // AI Watch (ADR-0035): two services, one not approved, and a Microsoft 365 card missing.
     if (url.includes("/api/ai/watch/summary")) {
+      const AI_DRILL = "SELECT 1 AS n WHERE TIMESTAMPTZ '{from}' < TIMESTAMPTZ '{to}'";
       const days = Number(new URL(url, "http://x").searchParams.get("days") ?? "7");
       return json({
         days,
         start: "2026-10-04T00:00:00+00:00",
         end: "2026-10-10T18:00:00+00:00",
+        before: "2026-09-27T00:00:00+00:00",
+        chart_drill: AI_DRILL,
         cards: [
           {
             key: "services",
@@ -720,6 +723,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
             needs: null,
             restricted: false,
             unreviewed: 1,
+            drill: AI_DRILL,
           },
           {
             key: "people",
@@ -730,6 +734,8 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
             needs: null,
             restricted: false,
             devices: 2,
+            drill: AI_DRILL,
+            devices_drill: AI_DRILL,
           },
           {
             key: "agents",
@@ -1076,6 +1082,181 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         hourly: Array(24).fill(0),
       });
       return json({ device_id: `d${watched.length}` }, 201);
+    }
+    if (url.endsWith("/api/settings/sso")) {
+      return json({
+        status: "on",
+        problem: null,
+        issuer: "https://login.example.test/tenant-1/v2.0",
+        client_id: "0000-client",
+        label: "Microsoft",
+        required_groups: [],
+        password_login: "admins",
+        redirect_uri: "https://siem.example/api/auth/sso/callback",
+        env: [{ name: "APP__SSO__ISSUER", value: "one tenant" }],
+        bound: [
+          {
+            user_id: "u2",
+            username: "jordan",
+            role: "analyst",
+            disabled: false,
+            last_login_at: null,
+          },
+        ],
+      });
+    }
+    if (url.endsWith("/api/settings/sso/test")) {
+      return json({ ok: true, message: "Reached the provider; its issuer matches." });
+    }
+    if (url.endsWith("/api/plugins")) {
+      return json({
+        version: "2.1.0",
+        variants: [
+          {
+            platform: "windows",
+            label: "Claude Code for Windows",
+            script_sha256: "ab".repeat(32),
+            devices_24h: 3,
+            last_event: "2026-10-30T10:00:00Z",
+            dropped_24h: 0,
+          },
+          {
+            platform: "posix",
+            label: "Claude Code for macOS and Linux",
+            script_sha256: "cd".repeat(32),
+            devices_24h: 0,
+            last_event: null,
+            dropped_24h: 2,
+          },
+        ],
+        sources: [{ source_id: "claude", keep_content: false }],
+        tokens: [
+          {
+            token_id: "t1",
+            source_id: "claude",
+            name: "pilot",
+            prefix: "rmt_ab12",
+            created_at: "2026-10-29T10:00:00Z",
+            created_by: "u1",
+            revoked_at: null,
+            last_used_at: "2026-10-30T10:00:00Z",
+            devices: 3,
+            hosts: ["ws-1", "ws-2", "ws-3"],
+            downloadable: true,
+          },
+        ],
+        public_url: "https://siem.example",
+      });
+    }
+    if (url.includes("/otlp-tokens/") && init?.method === "DELETE") {
+      return json({
+        token_id: "t1",
+        source_id: "claude",
+        name: "pilot",
+        prefix: "rmt_ab12",
+        created_at: null,
+        created_by: null,
+        revoked_at: "2026-10-30T11:00:00Z",
+        last_used_at: null,
+        devices: 3,
+        hosts: [],
+        downloadable: true,
+      });
+    }
+    if (url.includes("/api/agents/accounts")) {
+      return json({
+        days: 30,
+        domains_set: true,
+        has_signins: true,
+        counts: {
+          company_confirmed: 1,
+          company_reported: 0,
+          company_unconfirmed: 0,
+          personal: 1,
+          not_checked: 0,
+        },
+        rows: [
+          {
+            email: "dana.k@example.com",
+            tier: "company_confirmed",
+            account_from: "claude_json",
+            devices: ["ws-0418"],
+            os_users: ["dana"],
+            sessions: 3,
+            first_seen: "2026-10-20T10:00:00+00:00",
+            last_seen: "2026-10-29T18:02:00+00:00",
+            evidence: "Entra sign-in to Claude Oct 28, 09:00 UTC",
+          },
+          {
+            email: "dana@mail.test",
+            tier: "personal",
+            account_from: "claude_json",
+            devices: ["ws-0418"],
+            os_users: ["dana"],
+            sessions: 1,
+            first_seen: "2026-10-27T10:00:00+00:00",
+            last_seen: "2026-10-27T11:00:00+00:00",
+            evidence: "mail.test is not an organization domain",
+          },
+        ],
+      });
+    }
+    if (url.includes("/api/m365/overview")) {
+      const q =
+        "SELECT * FROM events WHERE time >= TIMESTAMPTZ '{from}' AND time < TIMESTAMPTZ '{to}'";
+      const k = (value: number, before: number | null = 0, extra: number | null = null) => ({
+        value,
+        before,
+        extra,
+        drill: q,
+        extra_drill: extra === null ? null : q,
+      });
+      const points = Array.from({ length: 7 }, (_, i) =>
+        new Date(Date.UTC(2026, 9, 24 + i)).toISOString(),
+      );
+      return json({
+        window: new URL(url, "http://x").searchParams.get("window") ?? "7d",
+        start: points[0],
+        end: "2026-10-30T11:00:00Z",
+        before: "2026-10-17T00:00:00Z",
+        has_source: true,
+        approved_set: false,
+        history: { compared: true, since: null },
+        sign_ins: k(400, 380),
+        failed: k(12, 8),
+        outside: null,
+        risky: k(2, 0),
+        consents: k(3, 2, 1),
+        admin_changes: k(1, 0),
+        counts: [
+          { key: "mail_rules", label: "Mail rules", kpi: k(2) },
+          { key: "copilot", label: "Copilot interactions", kpi: k(31) },
+        ],
+        outcome: {
+          points,
+          succeeded: [50, 60, 55, 58, 57, 59, 49],
+          interrupted: [2, 1, 0, 3, 1, 2, 1],
+          failed: [1, 2, 0, 4, 3, 1, 1],
+          drill_succeeded: q,
+          drill_interrupted: q,
+          drill_failed: q,
+        },
+        reasons: [
+          {
+            label: "Invalid username or password.",
+            count: 9,
+            kind: "reason",
+            detail: "",
+            last: null,
+            drill: q,
+          },
+        ],
+        outside_top: [],
+        apps: [
+          { label: "Microsoft Teams", count: 200, kind: "app", detail: "", last: null, drill: q },
+        ],
+        lists: { sign_ins: q, mail: q, consents: q, registrations: q, admin: q },
+      });
     }
     if (url.includes("/api/dashboard/sections")) {
       // Every number carries its Search query (ADR-0039).
@@ -1551,7 +1732,8 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         size: installed ? 8_400_000 : 0,
         source: installed ? "download" : null,
         installed_at: installed ? "2026-10-10T12:00:00+00:00" : null,
-        checked_at: installed ? "2026-10-10T12:00:00+00:00" : null,
+        checked_at: installed ? "2026-10-18T12:00:00+00:00" : null,
+        confirmed_at: installed ? "2026-10-18T12:00:00+00:00" : null,
         error: null,
         check_every_s: 86400,
       });

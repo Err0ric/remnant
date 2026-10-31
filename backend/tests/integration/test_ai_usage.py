@@ -369,6 +369,21 @@ def test_ai_watch_summary_cards_chart_and_top(lab: dict[str, Any]) -> None:
     assert s["chart"][-1]["unreviewed"] > 0 and s["chart"][-1]["approved"] == 0
     assert {t["service_id"] for t in s["top"]} >= {"chatgpt", "deepseek"}
     assert "bzr" not in json.dumps(s["top"])
+    # Each number opens the same rows in Search (ADR-0039).
+    win = (s["start"], s["end"])
+
+    def rows(sql: str | None) -> list[list[Any]]:
+        assert sql
+        filled = sql.replace("{from}", win[0]).replace("{to}", win[1])
+        res = a.post("/api/query", json={"sql": filled, "range": "all"}, headers=lab["h"])
+        assert res.status_code == 200, (filled, res.text)
+        return list(res.json()["rows"])
+
+    assert len(rows(cards["services"]["drill"])) == cards["services"]["value"]
+    assert len(rows(cards["people"]["drill"])) == cards["people"]["value"]
+    assert len(rows(cards["people"]["devices_drill"])) == cards["people"]["devices"]
+    assert sum(r[3] for r in rows(cards["sensitive"]["drill"])) == cards["sensitive"]["value"]
+    assert rows(s["chart_drill"]) and s["before"] < s["start"]
     # Ana reads Linux only: no AI use, and the telemetry cards are restricted for her.
     ana = {c["key"]: c for c in lab["ana"].get("/api/ai/watch/summary").json()["cards"]}
     assert ana["services"]["value"] == 0 and ana["sensitive"]["restricted"] is True

@@ -16,10 +16,11 @@ import { rangeStart, TIME_RANGES, type TimeRangeId } from "@/lib/search";
 import { navigate, useSectionTab } from "@/lib/route";
 import { AgentsCard } from "./AgentsCard";
 import { SessionsCard } from "./SessionsCard";
+import { AccountsCard } from "./AccountsCard";
 import { AiSettings } from "./AiSettings";
 import { StatusBadge, StatusPicker } from "./StatusBadge";
 
-type Tab = "services" | "agents" | "mcp" | "people" | "settings";
+type Tab = "services" | "agents" | "mcp" | "accounts" | "people" | "settings";
 const KIND: Record<string, string> = {
   chat: "Chat",
   api: "API",
@@ -89,7 +90,7 @@ export function AiUsagePage({ isAdmin, area = "ai" }: AiUsagePageProps) {
   });
   const tabs: Tab[] =
     area === "agents"
-      ? ["agents", "mcp"]
+      ? ["agents", "mcp", "accounts"]
       : isAdmin
         ? ["services", "people", "settings"]
         : ["services", "people"];
@@ -422,6 +423,8 @@ export function AiUsagePage({ isAdmin, area = "ai" }: AiUsagePageProps) {
               <SessionsCard />
             </div>
           ) : null}
+
+          {tab === "accounts" ? <AccountsCard /> : null}
 
           {tab === "settings" && isAdmin ? <AiSettings /> : null}
         </ErrorBoundary>

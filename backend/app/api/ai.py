@@ -12,6 +12,7 @@ from fastapi import APIRouter, Query, Request, Response, status
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
+from app.ai.accounts import accounts
 from app.ai.agents import agents
 from app.ai.catalog import NON_USAGE, Catalog, DataLevel, Service, ServiceDef
 from app.ai.sessions import sessions, timeline
@@ -220,6 +221,10 @@ class CardOut(BaseModel):
     blocked_context: str = ""
     rows_sql: str | None = None  # Search SQL for the card's rows (consent card)
     blocked_sql: str | None = None
+    drill: str | None = None  # ADR-0039 templates with {from} and {to}
+    drill_before: str | None = None
+    devices_drill: str | None = None
+    blocked_drill: str | None = None
 
 
 class DayOut(BaseModel):
@@ -259,6 +264,8 @@ class WatchSummaryOut(BaseModel):
     new: list[NewOut] = []  # first seen in 24 hours, from the data (ADR-0037 row 6)
     compared: bool = True  # False: under 90% of the period before has AI use data
     since: str | None = None
+    before: str = ""
+    chart_drill: str | None = None
     people_pending_days: int = 0  # see UsageOut
     people_days: int = 0
 
@@ -321,6 +328,8 @@ async def ai_watch_summary(
         new=[NewOut(**_slots(n)) for n in s.new],
         compared=s.compared,
         since=s.since,
+        before=s.before,
+        chart_drill=s.chart_drill,
         people_pending_days=pending,
         people_days=of,
     )
@@ -635,4 +644,69 @@ async def ai_session(
         person=t.person,
         machine=t.machine,
         steps=[StepOut(**_slots(x)) for x in t.steps],
+    )
+
+
+class AccountRowOut(BaseModel):
+    email: str | None
+    tier: str
+    account_from: str | None
+    devices: list[str]
+    os_users: list[str]
+    sessions: int
+    first_seen: str | None
+    last_seen: str | None
+    evidence: str
+
+
+class AccountsOut(BaseModel):
+    days: int
+    domains_set: bool
+    has_signins: bool
+    rows: list[AccountRowOut]
+    counts: dict[str, int]
+
+
+@router.get("/agents/accounts")
+async def agents_accounts(
+    request: Request, user: CurrentUser, days: Annotated[int, Query(ge=1, le=90)] = 30
+) -> AccountsOut:
+    """Claude accounts the hooks plugin reported, by tier (ADR-0030 amendment): company
+    confirmed by an Entra sign-in, company reported, company not confirmed, personal, or not
+    checked; each with its evidence. Audited ai.view."""
+    meta: MetaDB = request.app.state.meta
+    allowed = await run_in_threadpool(permitted_sources, meta, user)
+    srcs = [
+        (s.source_id, s.kind or "file", s.template_id) for s in request.app.state.sources.list()
+    ]
+    kinds = source_classes(srcs)
+
+    def mine(ids: list[str]) -> list[str]:
+        return ids if allowed is None else [s for s in ids if s in set(allowed)]
+
+    domains = (await run_in_threadpool(request.app.state.identities.load)).domains
+    out = await run_in_threadpool(
+        accounts,
+        request.app.state.engine,
+        allowed,
+        mine(kinds.get("telemetry", [])),
+        mine(kinds.get("m365", [])),
+        domains,
+        datetime.now(UTC),
+        days,
+    )
+    await run_in_threadpool(
+        _audit(request).audit.write,
+        "ai.view",
+        "success",
+        user.user_id,
+        client_ip(request),
+        {"sources_in_scope": out.sources, "view": "accounts"},
+    )
+    return AccountsOut(
+        days=out.days,
+        domains_set=out.domains_set,
+        has_signins=out.has_signins,
+        rows=[AccountRowOut(**_slots(r)) for r in out.rows],
+        counts=out.counts,
     )

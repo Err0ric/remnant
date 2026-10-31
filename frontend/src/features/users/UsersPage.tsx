@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Command, PageHeader } from "@/components/shell/PageHeader";
+import { navigate } from "@/lib/route";
 import { ApiError, api, type User } from "@/lib/api";
 import { accountLink } from "@/lib/links";
 import { GroupsSection } from "./GroupsSection";
@@ -48,6 +49,17 @@ export function UsersPage({ me }: UsersPageProps) {
           />
         }
       />
+      <p className="px-5 pt-3 text-sm text-text-secondary">
+        Sign-in with your identity provider is set up on{" "}
+        <button
+          type="button"
+          onClick={() => navigate("sso")}
+          className="text-accent-text hover:underline"
+        >
+          Single sign-on
+        </button>
+        .
+      </p>
       <div className="flex flex-col gap-3 px-5 py-3">
         {shown ? (
           <OneTimeLink

@@ -139,6 +139,9 @@ class FeedState:
     last_modified: str | None = None
     enabled: bool = True
     has_key: bool = False
+    # The last check that found the installed content current (F67); freshness counts from
+    # the later of this and `installed_at`.
+    confirmed_at: str | None = None
 
 
 def _decompress(raw: bytes) -> bytes:
@@ -218,7 +221,7 @@ class FeedStore:
         with self._meta.connect() as con:
             row = con.execute(
                 "SELECT version, sha256, size, entries, source, installed_at, checked_at, error,"
-                " etag, last_modified, enabled, auth_key IS NOT NULL"
+                " etag, last_modified, enabled, auth_key IS NOT NULL, confirmed_at"
                 " FROM enrichment_feeds WHERE feed_id = ?",
                 (feed_id,),
             ).fetchone()
@@ -234,6 +237,7 @@ class FeedStore:
             )
         st = FeedState(feed_id, *row[:10])
         st.enabled, st.has_key = bool(row[10]), bool(row[11])
+        st.confirmed_at = row[12]
         return st
 
     def set_enabled(self, feed_id: str, on: bool) -> None:
@@ -316,6 +320,7 @@ class FeedStore:
             "source": st.source,
             "installed_at": st.installed_at,
             "checked_at": st.checked_at,
+            "confirmed_at": st.confirmed_at,
             "error": st.error,
             "etag": st.etag,
             "last_modified": st.last_modified,
@@ -330,12 +335,21 @@ class FeedStore:
                 (st.feed_id, *fields.values()),
             )
 
-    def record_check(self, feed_id: str, error: str | None) -> FeedState:
+    def record_check(self, feed_id: str, error: str | None, current: bool = False) -> FeedState:
+        """A check with no new content. `current`: it confirmed the installed content is
+        the latest (304 Not Modified, or this month's edition already installed)."""
         st = self.state(feed_id)
         st.checked_at = self._clock().isoformat()
         st.error = error[:300] if error else None
+        if current and error is None and st.installed_at:
+            st.confirmed_at = st.checked_at
         self._save(st)
         return st
+
+    def fresh_at(self, st: FeedState) -> str | None:
+        """When the installed content was last known to be current."""
+        times = [t for t in (st.installed_at, st.confirmed_at) if t]
+        return max(times) if times else None
 
     def install(
         self,
@@ -396,7 +410,8 @@ class FeedStore:
         spec = FEEDS[st.feed_id]
         if spec.attention_after_s is None or spec.unhealthy_after_s is None:
             return "healthy"
-        age = (self._clock() - datetime.fromisoformat(st.installed_at)).total_seconds()
+        fresh = self.fresh_at(st) or st.installed_at
+        age = (self._clock() - datetime.fromisoformat(fresh)).total_seconds()
         # The edition date matters more than when it was copied here: an old file uploaded
         # today is still old.
         if not spec.is_intel and st.version and len(st.version) >= 7:

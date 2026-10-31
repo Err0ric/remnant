@@ -330,3 +330,21 @@ def test_authelia_style_groups_from_userinfo(tmp_path: Path, idp: FakeIdp) -> No
     b = browser(c)
     assert sso_sign_in(b, idp, "sub-j", link, groups=["siem-users"]) == "/"
     assert b.get("/api/auth/state").json()["user"]["username"] == "jordan"
+
+
+def test_settings_page_shows_the_setup_and_tests_it(tmp_path: Path, idp: FakeIdp) -> None:
+    """F64: status, issuer, client id, redirect URI, and who is bound; never the secret."""
+    c = server(tmp_path, idp)
+    link = invite(c, "jordan")
+    assert sso_sign_in(browser(c), idp, "sub-jordan", link) == "/"
+    res = c.get("/api/settings/sso")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["status"] == "on" and body["problem"] is None
+    assert body["issuer"] == ISSUER and body["client_id"] == CLIENT_ID
+    assert body["redirect_uri"].endswith("/api/auth/sso/callback")
+    assert [b["username"] for b in body["bound"]] == ["jordan"]
+    assert SECRET not in res.text
+    test = c.post("/api/settings/sso/test").json()
+    assert test["ok"] is True and SECRET not in str(test)
+    assert ("sso.test", "success") in audit(tmp_path)

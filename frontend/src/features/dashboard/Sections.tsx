@@ -20,24 +20,30 @@ import { TrendChart, TrendLegend } from "./TrendChart";
 import { compareLine, NoHistory } from "./History";
 
 /** The section around a card: its comparison state and what drill-throughs need. */
+/** The window a section counts over: its start, now, and the start of the one before. */
+export type Bounds = Pick<DashboardSections, "start" | "end" | "before">;
+
 interface Ctx {
   history: SectionHistory;
   before: string;
   title: string;
-  s: DashboardSections | null;
+  s: Bounds | null;
+  /** Where the page is, for Search's origin line ("Dashboard", "Microsoft 365 > Overview"). */
+  area: string;
 }
 const Compare = createContext<Ctx>({
   history: { compared: true, since: null },
   before: "",
   title: "",
   s: null,
+  area: "Dashboard",
 });
 
 type Span = "now" | "before" | { from: string; to: string };
 
 /** Opens a number's rows in Search (ADR-0039): the page window, the window before, or one
  * chart point. Undefined when the server sent no query. */
-function useDrill() {
+export function useDrill() {
   const c = useContext(Compare);
   return (sql: string | null | undefined, label: string, span: Span = "now") => {
     if (!sql || !c.s) return undefined;
@@ -48,11 +54,12 @@ function useDrill() {
         : span === "before"
           ? [s.before, s.start]
           : [span.from, span.to];
-    return () => openDrill({ sql, from, to, origin: `Dashboard > ${c.title} > ${label}` });
+    const where = c.title ? `${c.area} > ${c.title}` : c.area;
+    return () => openDrill({ sql, from, to, origin: `${where} > ${label}` });
   };
 }
 
-const DRILL =
+export const DRILL =
   "cursor-pointer rounded-sm decoration-1 underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-1 focus-visible:outline-focus-ring";
 
 function bucketLabel(iso: string, w: PageWindow): string {
@@ -97,7 +104,7 @@ function Delta({ kpi, label, noun }: { kpi: SectionKpi; label: string; noun: str
   );
 }
 
-interface KpiProps {
+export interface KpiProps {
   label: string;
   kpi: SectionKpi | null;
   /** What the number counts, for "Open 12 events in Search". */
@@ -109,7 +116,7 @@ interface KpiProps {
   empty?: ReactNode;
 }
 
-function Kpi({ label, kpi, noun = "events", context, extra, empty }: KpiProps) {
+export function Kpi({ label, kpi, noun = "events", context, extra, empty }: KpiProps) {
   const { history, before } = useContext(Compare);
   const drill = useDrill();
   const partial = !history.compared && kpi !== null && kpi.before !== null;
@@ -168,7 +175,7 @@ function Kpi({ label, kpi, noun = "events", context, extra, empty }: KpiProps) {
   );
 }
 
-function SetCountries() {
+export function SetCountries() {
   const { isAdmin } = useViewer();
   return isAdmin ? (
     <button
@@ -183,10 +190,33 @@ function SetCountries() {
   );
 }
 
+/** Gives cards outside a Dashboard section what drill-throughs need. */
+export function DrillScope({
+  bounds,
+  area,
+  title = "",
+  history = { compared: true, since: null },
+  before,
+  children,
+}: {
+  bounds: Bounds;
+  area: string;
+  title?: string;
+  history?: SectionHistory;
+  before: string;
+  children: ReactNode;
+}) {
+  return (
+    <Compare.Provider value={{ history, before, title, s: bounds, area }}>
+      {children}
+    </Compare.Provider>
+  );
+}
+
 interface SectionProps {
   title: string;
   from?: string;
-  s: DashboardSections;
+  s: Bounds;
   window: PageWindow;
   history: SectionHistory;
   note?: ReactNode;
@@ -211,7 +241,7 @@ function Section({
 }: SectionProps) {
   const before = previousPhrase(window);
   return (
-    <Compare.Provider value={{ history, before, title, s }}>
+    <Compare.Provider value={{ history, before, title, s, area: "Dashboard" }}>
       <section aria-label={title} className="rounded-card border border-border bg-surface">
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 border-b border-border px-3 py-2">
           <h2 className="text-base font-semibold">{title}</h2>
@@ -400,7 +430,7 @@ interface TopProps {
   empty: string;
 }
 
-function Top({ title, columns, rows, cells, empty }: TopProps) {
+export function Top({ title, columns, rows, cells, empty }: TopProps) {
   return (
     <div className="min-w-0">
       <h3 className="mb-2 text-sm font-semibold">{title}</h3>

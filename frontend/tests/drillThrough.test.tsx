@@ -21,7 +21,7 @@ async function renderDashboard() {
 
 afterEach(() => vi.restoreAllMocks());
 
-const SECTIONS = ["Identity", "Attacks and access", "Detections"];
+const SECTIONS = ["AI Watch", "Identity", "Attacks and access", "Detections"];
 
 describe("Dashboard drill-through (ADR-0039)", () => {
   it("gives every KPI, chart, and table row a target", async () => {
@@ -34,11 +34,14 @@ describe("Dashboard drill-through (ADR-0039)", () => {
         // A card waiting on a setting ("Set approved countries") has no number to open.
         const needs =
           card.querySelector("button:not([data-drill])") && !card.querySelector("[data-drill]");
-        if (needs || /Needs a GeoIP file|No VPN logs|not set/i.test(card.textContent ?? ""))
+        if (
+          needs ||
+          /Needs a GeoIP file|No VPN logs|not set|Restricted|Needs a /i.test(card.textContent ?? "")
+        )
           continue;
         expect(card.querySelector("[data-drill]"), `${name} > ${card.dataset.kpi}`).not.toBeNull();
       }
-      for (const chart of region.querySelectorAll<HTMLElement>("[role=img][tabindex='0']"))
+      for (const chart of region.querySelectorAll<HTMLElement>("figure [role=img][tabindex='0']"))
         expect(chart.hasAttribute("data-drill"), `${name} chart`).toBe(true);
       for (const row of region.querySelectorAll<HTMLElement>("tr[data-row]"))
         expect(
@@ -76,5 +79,24 @@ describe("Dashboard drill-through (ADR-0039)", () => {
         /^From Dashboard > Detections > Rule matches \(the previous 7 days\), Oct 17/,
       ),
     ).toBeVisible();
+  });
+});
+
+describe("AI Watch drill-through (ADR-0039)", () => {
+  it("opens a card and a chart day in Search", async () => {
+    await renderDashboard();
+    const watch = screen.getByRole("region", { name: "AI Watch" });
+    await userEvent.click(within(watch).getByTitle("Open 2 services in Search"));
+    await waitFor(() => expect(window.location.pathname).toBe("/investigate/search"));
+    expect(
+      await screen.findByText(/^From Dashboard > AI Watch > Unapproved AI services, Oct 4/),
+    ).toBeVisible();
+    window.history.back();
+    const again = await screen.findByRole("region", { name: "AI Watch" });
+    const chart = within(again).getByRole("img", { name: /^AI use per day/ });
+    chart.focus();
+    await userEvent.keyboard("{End}{Enter}");
+    await waitFor(() => expect(window.location.pathname).toBe("/investigate/search"));
+    expect(await screen.findByText(/^From Dashboard > AI Watch > AI use, Oct 10/)).toBeVisible();
   });
 });

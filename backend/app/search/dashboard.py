@@ -39,25 +39,31 @@ Lookup = Callable[[list[str]], dict[str, GeoInfo]]
 MIN_COVERAGE = 0.9
 
 _TS = "coalesce(time, time_observed)"
+# Entra error codes that interrupt a sign-in rather than refuse it (MFA, register a method,
+# stay signed in, an external challenge, seamless SSO): not failures (owner edit 2).
+INTERRUPT_CODES = (50072, 50074, 50076, 50079, 50097, 50125, 50140, 50158, 81010, 81012, 81014)
+_CODE = "TRY_CAST(json_extract_string(raw, '$.status.errorCode') AS INTEGER)"
+INTERRUPTED = f"status_id = 2 AND list_contains({list(INTERRUPT_CODES)}, {_CODE})"
+FAILED = f"status_id = 2 AND NOT coalesce(list_contains({list(INTERRUPT_CODES)}, {_CODE}), false)"
 _BUCKET = f"date_trunc($unit, timezone('UTC', {_TS}))"
 _WHO = "nullif(trim(actor_user_name), '')"
 _HOST = "coalesce(nullif(device_hostname, ''), nullif(dst_endpoint_hostname, ''))"
 
 SIGNIN_TOTALS_SQL = f"""
 SELECT count(*) FILTER (WHERE {_TS} >= $start),
-       count(*) FILTER (WHERE {_TS} >= $start AND status_id = 2),
-       count(*) FILTER (WHERE {_TS} < $start AND status_id = 2)
+       count(*) FILTER (WHERE {_TS} >= $start AND {FAILED}),
+       count(*) FILTER (WHERE {_TS} < $start AND {FAILED})
 FROM events WHERE template_id = 'm365_signin'"""  # noqa: S608  # fixed SQL text
 
 # Failed sign-ins per trend point, this window and the one before (the chart's dashed line).
 SIGNIN_FAILED_TREND_SQL = f"""
 SELECT date_trunc($trend_unit, timezone('UTC', {_TS})) AS b, count(*) FROM events
-WHERE template_id = 'm365_signin' AND status_id = 2
+WHERE template_id = 'm365_signin' AND {FAILED}
 GROUP BY 1"""  # noqa: S608  # fixed SQL text
 
 TOP_FAILING_SQL = f"""
 SELECT {_WHO} AS who, count(*) AS n, max({_TS}) AS last FROM events
-WHERE template_id = 'm365_signin' AND status_id = 2 AND {_TS} >= $start AND {_WHO} IS NOT NULL
+WHERE template_id = 'm365_signin' AND {FAILED} AND {_TS} >= $start AND {_WHO} IS NOT NULL
 GROUP BY 1 ORDER BY n DESC, who LIMIT {TOP}"""  # noqa: S608  # fixed SQL text
 
 # Per address: successful and failed sign-ins now, successful before. Countries are looked
@@ -355,7 +361,7 @@ def _outside(
     return Kpi(now, before), found
 
 
-FAILED_SIGNIN = "template_id = 'm365_signin' AND status_id = 2"
+FAILED_SIGNIN = f"template_id = 'm365_signin' AND {FAILED}"
 # Failures from addresses outside Internal networks, as the Attacks counts read them.
 EXTERNAL_FAILURE = (
     "class_uid = 3002 AND status_id = 2 AND template_id NOT LIKE 'm365_%'\n"

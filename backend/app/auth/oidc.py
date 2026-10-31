@@ -279,6 +279,11 @@ class OidcClient:
 
     # --- provider metadata ---------------------------------------------------------------
 
+    def check(self) -> None:
+        """Fetch the discovery document now and check its issuer (Settings > Single sign-on
+        test, F64). Raises SsoRefusedError; signs nobody in and caches nothing."""
+        self._fetch_discovery()
+
     def _discover(self) -> Endpoints:
         cached = self._endpoints
         if cached and time.monotonic() - cached[0] < DISCOVERY_TTL_S:

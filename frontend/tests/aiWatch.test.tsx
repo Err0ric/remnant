@@ -36,8 +36,8 @@ describe("AI Watch on the Dashboard (ADR-0035 Part 2)", () => {
       restricted: false,
       blocked: 2,
       blocked_context: "Blocked: Lab Notes Beta (openid, profile) by erin@example.com",
-      rows_sql: "SELECT 'granted' AS which",
-      blocked_sql: "SELECT 'blocked' AS which",
+      drill: "SELECT 'granted' AS which WHERE TIMESTAMPTZ '{from}' < TIMESTAMPTZ '{to}'",
+      blocked_drill: "SELECT 'blocked' AS which WHERE TIMESTAMPTZ '{from}' < TIMESTAMPTZ '{to}'",
     };
     window.history.replaceState(null, "", "/dashboard");
     const spy = mockApi("Codename", { mode: "login", signedIn: true, role: "admin" });
@@ -96,8 +96,8 @@ describe("AI Watch on the Dashboard (ADR-0035 Part 2)", () => {
     );
     expect(within(watch).getByRole("button", { name: "2" })).toBeVisible();
     // The pill sits beside the number; the block says once what it is compared against.
-    expect(within(watch).getAllByTitle("+1 vs previous 7 days")).toHaveLength(2);
-    expect(within(watch).getByTitle("same as previous 7 days")).toBeVisible();
+    expect(within(watch).getAllByTitle(/^\+1 vs previous 7 days/)).toHaveLength(2);
+    expect(within(watch).getByTitle(/^same as previous 7 days/)).toBeVisible();
     expect(within(watch).getByText("Changes against the previous 7 days")).toBeVisible();
     // People and devices are never one number: devices without a person are their own line.
     expect(

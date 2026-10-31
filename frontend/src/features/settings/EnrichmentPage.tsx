@@ -139,6 +139,11 @@ function FeedRow({ feed, now }: FeedRowProps) {
               {feed.source === "upload" ? "Uploaded" : "Downloaded"} {since(feed.installed_at, now)}
               {feed.size ? ` · ${mb(feed.size)}` : ""}
             </div>
+            {feed.confirmed_at && feed.confirmed_at > feed.installed_at ? (
+              <div className="text-text-muted">
+                Content unchanged, confirmed current {since(feed.confirmed_at, now)}
+              </div>
+            ) : null}
           </>
         ) : (
           <span className="text-text-muted">None yet</span>

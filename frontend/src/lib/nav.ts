@@ -63,6 +63,24 @@ export const AREAS: Area[] = [
     ],
   },
   {
+    // ADR-0038 section 5, under Monitor (owner edit 10 call 2).
+    id: "m365",
+    label: "Microsoft 365",
+    aliases: ["m365", "office 365", "entra", "sign-ins", "exchange", "sharepoint"],
+    tabs: [
+      { label: "Overview", page: "m365", tab: "overview" },
+      { label: "Sign-ins", page: "m365", tab: "sign-ins", aliases: ["logins", "failed sign-ins"] },
+      { label: "Mail", page: "m365", tab: "mail", aliases: ["inbox rules", "forwarding", "dlp"] },
+      { label: "Apps", page: "m365", tab: "apps", aliases: ["consents", "app registrations"] },
+      {
+        label: "Admin",
+        page: "m365",
+        tab: "admin",
+        aliases: ["role grants", "conditional access"],
+      },
+    ],
+  },
+  {
     id: "investigate",
     label: "Investigate",
     tabs: [
@@ -92,6 +110,12 @@ export const AREAS: Area[] = [
     tabs: [
       { label: "Sessions", page: "agents", tab: "agents" },
       { label: "MCP servers", page: "agents", tab: "mcp" },
+      {
+        label: "Accounts",
+        page: "agents",
+        tab: "accounts",
+        aliases: ["claude accounts", "personal accounts", "account tiers"],
+      },
     ],
   },
   {
@@ -258,6 +282,14 @@ export const SETTINGS_GROUPS: NavGroup[] = [
     label: "Access",
     items: [
       { id: "users", label: "Users and access", ready: true, page: "users", adminOnly: true },
+      {
+        id: "sso",
+        label: "Single sign-on",
+        ready: true,
+        page: "sso",
+        adminOnly: true,
+        aliases: ["sso", "oidc", "entra", "azure ad", "openid connect", "microsoft sign-in"],
+      },
     ],
   },
   {
@@ -269,6 +301,14 @@ export const SETTINGS_GROUPS: NavGroup[] = [
         ready: true,
         page: "providers",
         adminOnly: true,
+      },
+      {
+        id: "plugins",
+        label: "Claude plugins",
+        ready: true,
+        page: "plugins",
+        adminOnly: true,
+        aliases: ["hooks plugin", "plugin download", "deployment tokens", "ingest tokens"],
       },
       {
         id: "mcp",

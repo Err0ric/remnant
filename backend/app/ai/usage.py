@@ -216,6 +216,48 @@ r AS (
 )"""  # noqa: S608  # fixed SQL text; domains checked against DOMAIN in _values
 
 
+# The page fills these with the window's bounds (ADR-0039); AI use is counted by hour.
+_DRILL_BOUNDS = "t >= TIMESTAMPTZ '{from}' AND t < TIMESTAMPTZ '{to}'"
+_DRILL_SELECT = {
+    # One row per service: what the services card and a chart day count.
+    "services": (
+        "SELECT service_id, sum(n)::BIGINT AS events, count(DISTINCT who) AS people,\n"
+        "       count(DISTINCT machine) AS devices, min(first_t) AS first_seen,"
+        " max(last_t) AS last_seen\nFROM r\nWHERE {bounds}\nGROUP BY 1 ORDER BY events DESC"
+    ),
+    # One row per person: the people card.
+    "people": (
+        "SELECT who AS person, list(DISTINCT service_id ORDER BY service_id) AS services,\n"
+        "       sum(n)::BIGINT AS events, max(last_t) AS last_seen\nFROM r\n"
+        "WHERE who IS NOT NULL AND {bounds}\nGROUP BY 1 ORDER BY events DESC"
+    ),
+    # Devices seen with no person in the window: the people card's "more devices" line.
+    "devices": (
+        "SELECT machine AS device, list(DISTINCT service_id ORDER BY service_id) AS services,\n"
+        "       sum(n)::BIGINT AS events, max(last_t) AS last_seen\nFROM r\n"
+        "WHERE machine IS NOT NULL AND {bounds}\nGROUP BY 1\nHAVING count(who) = 0\n"
+        "ORDER BY events DESC"
+    ),
+}
+
+
+def drill_pairs(table: list[tuple[str, str]], ids: set[str]) -> list[tuple[str, str]]:
+    """The catalog rows a drill needs: the services' own domains, and any more specific
+    domain of another service under them (it takes the match, as in the full catalog)."""
+    mine = [d for sid, d in table if sid in ids]
+    return [(sid, d) for sid, d in table if sid in ids or any(d.endswith("." + m) for m in mine)]
+
+
+def drill_sql(table: list[tuple[str, str]], ids: set[str], kind: str) -> str:
+    """Search SQL for an AI Watch number (ADR-0039): the same use rows as the card, read
+    from events (Search has no rollup), for these services only so the query stays
+    readable."""
+    wanted = "[" + ", ".join("'" + i.replace("'", "''") + "'" for i in sorted(ids)) + "]"
+    bounds = f"list_contains({wanted}, service_id) AND {_DRILL_BOUNDS}"
+    select = _DRILL_SELECT[kind].replace("{bounds}", bounds)
+    return f"WITH {_use_ctes(drill_pairs(table, ids), False).strip()}\n{select}"
+
+
 def services_sql(pairs: list[tuple[str, str]], rollup: bool = False) -> str:
     """Use per service (see `_use_ctes`)."""
     return f"""

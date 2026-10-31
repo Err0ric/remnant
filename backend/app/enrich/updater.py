@@ -65,6 +65,7 @@ class FeedUpdater:
         self._audit = audit
         self._client = client
         self._clock = clock
+        self._not_modified = False  # the last download answered 304 Not Modified
         self._key = key  # the feed's key, decrypted when needed; never logged
         self._intel_every = intel_every_s
         self._lock = threading.Lock()  # one update at a time (scheduler and Update now)
@@ -135,7 +136,7 @@ class FeedUpdater:
         spec = FEEDS[st.feed_id]
         month = self._clock().strftime("%Y-%m")
         if st.source == "download" and st.version == month:
-            self._store.record_check(st.feed_id, None)
+            self._store.record_check(st.feed_id, None, current=True)
             return None
         got = self._download(self._fixed(spec.feed_id, dbip_url(spec, month)))
         if got is None:
@@ -154,7 +155,13 @@ class FeedUpdater:
             headers["If-Modified-Since"] = st.last_modified
         got = self._download(self._fixed(st.feed_id, FEODO_URL), headers)
         if got is None:
-            self._store.record_check(st.feed_id, None)  # 304 Not Modified
+            # 304: the installed list is the latest. 404: the list moved; say so.
+            moved = not self._not_modified
+            self._store.record_check(
+                st.feed_id,
+                "The feed server answered HTTP 404" if moved else None,
+                current=not moved,
+            )
             return None
         raw, etag, modified = got
         return self._store.install(st.feed_id, raw, "download", etag=etag, last_modified=modified)
@@ -196,6 +203,7 @@ class FeedUpdater:
     ) -> tuple[bytes, str | None, str | None] | None:
         """The body with its ETag and Last-Modified, or None for 304 and 404."""
         with self._client() as client, client.stream("GET", url, headers=headers) as res:
+            self._not_modified = res.status_code == 304
             if res.status_code in (404, 304):
                 return None
             if res.status_code != 200:

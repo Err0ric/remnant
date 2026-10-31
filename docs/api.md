@@ -37,6 +37,7 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 
 | Method | Path | What it does | Query | JSON body (`?` optional) |
 |---|---|---|---|---|
+| `GET` | `/api/agents/accounts` | Claude accounts the hooks plugin reported, by tier (ADR-0030 amendment): company confirmed by an Entra sign-in, company reported, company not confirmed, personal, or not checked; each with its evidence. Audited ai.view. | `?days` (optional): integer |  |
 | `GET` | `/api/ai/agents` | AI agents (Claude Code per machine and person, MCP clients per machine, API keys) and what changed in the last 24 hours against the 30 days before, from the sources the caller may read. Audited ai.view. |  |  |
 | `GET` | `/api/ai/catalog` | Ai Catalog |  |  |
 | `GET` | `/api/ai/mcp-rules` | Mcp Rules |  |  |
@@ -200,6 +201,12 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | `GET` | `/api/meta` | Meta |  |  |
 | `GET` | `/api/schema/columns` | Columns |  |  |
 
+### Microsoft 365
+
+| Method | Path | What it does | Query | JSON body (`?` optional) |
+|---|---|---|---|---|
+| `GET` | `/api/m365/overview` | KPIs, the counts row, the outcome per hour or day, the tops, and each tab's list as a Search query template (`{from}` and `{to}`). `has_source` is false when the caller reads no Microsoft 365 source. | `?window` (optional): `24h` &#124; `7d` &#124; `30d` |  |
+
 ### Otlp
 
 | Method | Path | What it does | Query | JSON body (`?` optional) |
@@ -212,6 +219,14 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | Method | Path | What it does | Query | JSON body (`?` optional) |
 |---|---|---|---|---|
 | `GET` | `/api/overview` | Overview |  |  |
+
+### Plugins
+
+| Method | Path | What it does | Query | JSON body (`?` optional) |
+|---|---|---|---|---|
+| `GET` | `/api/plugins` | Each plugin variant with its version, script hash, and the last 24 hours it sent; the OTLP sources; and every named token with the devices that used it. |  |  |
+| `POST` | `/api/sources/{source_id}/otlp-tokens` | A named token for one deployment. Shown once (for a collector config); a plugin download carries it without showing it. Audited source.otlp_token (never the token). |  | `name`: string |
+| `DELETE` | `/api/sources/{source_id}/otlp-tokens/{token_id}` | Revoke one deployment's token; other tokens keep working. Audited. |  |  |
 
 ### Providers
 
@@ -275,6 +290,13 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | `POST` | `/api/searches/{search_id}/run` | Run Search |  | `params`?: object<br>`start`?: date-time<br>`end`?: date-time<br>`sources`?: list of string |
 | `PUT` | `/api/searches/{search_id}/verified` | Admins mark shared searches as verified Ask examples. Edits clear the mark. |  | `verified`: boolean |
 
+### Single sign-on
+
+| Method | Path | What it does | Query | JSON body (`?` optional) |
+|---|---|---|---|---|
+| `GET` | `/api/settings/sso` | Sso Settings |  |  |
+| `POST` | `/api/settings/sso/test` | Reach the provider's discovery document and check its issuer, as a sign-in would. It signs nobody in. |  |  |
+
 ### Sources
 
 | Method | Path | What it does | Query | JSON body (`?` optional) |
@@ -290,7 +312,7 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | `PATCH` | `/api/sources/{source_id}` | Change a source's classification (SPEC 6.2) or parser (ADR-0012). Only new events take either: events already stored keep their label, so relabelling never releases older data (T8), and keep the parser they were read with. |  | `classification`?: `local_only` &#124; `cloud_allowed`<br>`template_id`?: string<br>`otlp_keep_content`?: boolean<br>`loki_label_map`?: object<br>`timezone`?: string<br>`retention_days`?: integer<br>`connector`?: object |
 | `DELETE` | `/api/sources/{source_id}` | Delete Source |  |  |
 | `GET` | `/api/sources/{source_id}/agent-config` | OpenTelemetry Collector config for an agent group (ADR-0017 row 2). Holds no secret: the token is read from a file on the endpoint. Audited source.agent_config. | `?os` (optional): `windows` &#124; `linux`<br>`?server_name` (optional): string |  |
-| `POST` | `/api/sources/{source_id}/claude-plugin` | The hooks plugin for this OTLP source as a zip: server address, a new token for the source (earlier copies stop sending), content on only when the source keeps content, and the pilot list. Audited source.claude_plugin (never the token). |  | `pilot_users`?: list of string<br>`server_url`?: string<br>`platform`?: `windows` &#124; `posix`<br>`managed`?: boolean<br>`trust_server_certificate`?: boolean |
+| `POST` | `/api/sources/{source_id}/claude-plugin` | The hooks plugin for this OTLP source as a zip: server address, a named token (an existing one, or a new one: earlier packages keep sending until theirs is revoked), content on only when the source keeps content, and the pilot list. Audited source.claude_plugin with the token id and name (never the token). |  | `pilot_users`?: list of string<br>`server_url`?: string<br>`platform`?: `windows` &#124; `posix`<br>`managed`?: boolean<br>`trust_server_certificate`?: boolean<br>`token_id`?: string<br>`token_name`?: string |
 | `PUT` | `/api/sources/{source_id}/credentials` | Replace an API source's credentials (a renewed certificate or a new key). Reading continues from the saved position. Audited source.credentials, never the values. |  | `api_key`?: password<br>`client_secret`?: password<br>`certificate_pem`?: string<br>`private_key_pem`?: password |
 | `GET` | `/api/sources/{source_id}/deliveries` | Quiet and resumed alerts sent for this source, newest first (no message content). |  |  |
 | `POST` | `/api/sources/{source_id}/otlp-token` | A new ingest token for an OTLP source; the old one stops working at once. Shown once, stored hashed, audited source.otlp_token (never the token). |  |  |

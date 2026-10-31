@@ -8,7 +8,7 @@ import {
 } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { navigate, pathFor } from "@/lib/route";
-import { seedSearch } from "@/lib/searchSeed";
+import { openDrill } from "@/lib/drill";
 import { EntityLink } from "@/components/EntityLink";
 import { PeoplePending } from "@/components/PeoplePending";
 import { LoadFailed } from "@/components/LoadFailed";
@@ -40,19 +40,43 @@ const ABOUT: Record<AiWatchCard["key"], string> = {
 
 /** The change against the previous period as a neutral pill: an arrow and the number.
  * Never green or red: more AI use is not good or bad by itself (ADR-0038 row 13). */
-function DeltaPill({ card, days }: { card: AiWatchCard; days: number }) {
+function DeltaPill({
+  card,
+  days,
+  onOpen,
+}: {
+  card: AiWatchCard;
+  days: number;
+  onOpen?: () => void;
+}) {
   if (card.value === null || card.previous === null) return null;
   const d = card.value - card.previous;
-  return (
-    <span
-      className="rounded-badge bg-surface-head px-1.5 font-mono text-xs font-semibold tabular-nums text-text"
-      title={delta(card, days)}
-    >
+  const cls =
+    "rounded-badge bg-surface-head px-1.5 font-mono text-xs font-semibold tabular-nums text-text";
+  const body = (
+    <>
       <span aria-hidden="true">
         {d === 0 ? "same" : `${d > 0 ? "↑" : "↓"} ${Math.abs(d).toLocaleString()}`}
       </span>
       <span className="sr-only">{delta(card, days)}</span>
-    </span>
+    </>
+  );
+  if (!onOpen)
+    return (
+      <span className={cls} title={delta(card, days)}>
+        {body}
+      </span>
+    );
+  return (
+    <button
+      type="button"
+      data-drill=""
+      onClick={onOpen}
+      title={`${delta(card, days)}. Open the period before in Search`}
+      className={cn(cls, "cursor-pointer hover:bg-border")}
+    >
+      {body}
+    </button>
   );
 }
 
@@ -131,6 +155,7 @@ export function AiWatch({ days = 7 }: { days?: number }) {
             days={s.days}
             odd={shown.length % 2 === 1}
             history={{ compared: s.compared ?? true, since: s.since ?? null }}
+            bounds={{ start: s.start, end: s.end, before: s.before ?? s.start }}
           />
         ))}
       </div>
@@ -138,7 +163,24 @@ export function AiWatch({ days = 7 }: { days?: number }) {
       <NewList items={s.new} />
       <div className="grid min-w-0 gap-4 border-t border-border p-3 lg:grid-cols-[2fr_3fr]">
         {/* The rollup is daily: with the 24 hour window the chart shows the last 7 days. */}
-        <Chart chart={s.chart} days={Math.max(7, s.days)} dataUntil={dataUntil} />
+        <Chart
+          chart={s.chart}
+          days={Math.max(7, s.days)}
+          dataUntil={dataUntil}
+          onOpenDay={
+            s.chart_drill
+              ? (day) => {
+                  const from = `${day}T00:00:00Z`;
+                  const to = new Date(Date.parse(from) + 86_400_000).toISOString();
+                  opener(s.chart_drill, `AI use, ${dayLabel(day)}`, {
+                    start: from,
+                    end: to,
+                    before: from,
+                  })?.();
+                }
+              : undefined
+          }
+        />
         <Top summary={s} />
       </div>
     </section>
@@ -228,10 +270,22 @@ function NewList({ items }: { items: AiWatchSummary["new"] }) {
   );
 }
 
-/** Opens the rows behind a card in Search. */
-function openRows(sql: string) {
-  seedSearch({ sql, range: "30d" });
-  navigate("search");
+interface Bounds {
+  start: string;
+  end: string;
+  before: string;
+}
+
+/** Opens a number's rows in Search over the period, or the period before (ADR-0039). */
+function opener(sql: string | null | undefined, label: string, b: Bounds, before = false) {
+  if (!sql) return undefined;
+  return () =>
+    openDrill({
+      sql,
+      from: before ? b.before : b.start,
+      to: before ? b.start : b.end,
+      origin: `Dashboard > AI Watch > ${label}`,
+    });
 }
 
 interface CardProps {
@@ -239,23 +293,33 @@ interface CardProps {
   days: number;
   odd: boolean;
   history: { compared: boolean; since: string | null };
+  bounds: Bounds;
 }
 
-function Card({ card, days, odd, history }: CardProps) {
+function Card({ card, days, odd, history, bounds }: CardProps) {
   const partial = !history.compared && card.value !== null && card.previous !== null;
-  const rowsSql = card.rows_sql;
-  const blockedSql = card.blocked_sql;
-  const link = rowsSql
-    ? () => openRows(rowsSql)
-    : card.key === "agents"
-      ? () => navigate("alerts")
-      : card.key === "services" || card.key === "people"
-        ? () => navigate("ai", "services")
-        : card.key === "sensitive"
-          ? () => navigate("ai", "people")
-          : undefined;
+  // New agents and MCP servers are review items, not events: they open the queue.
+  const link =
+    opener(card.drill, card.label, bounds) ??
+    (card.key === "agents" ? () => navigate("alerts", "review") : undefined);
+  const before = days === 1 ? "the previous 24 hours" : `the previous ${days} days`;
+  const openBefore =
+    card.key === "agents"
+      ? () => navigate("alerts", "review")
+      : opener(card.drill_before ?? card.drill, `${card.label} (${before})`, bounds, true);
+  const noun =
+    card.key === "services"
+      ? "services"
+      : card.key === "people"
+        ? "people"
+        : card.key === "consent"
+          ? "consents"
+          : card.key === "agents"
+            ? "review items"
+            : "events";
   return (
     <div
+      data-kpi={card.label}
       className={cn(
         "flex min-w-0 flex-col gap-0.5 bg-surface px-3 py-2.5",
         odd && "last:col-span-2 lg:last:col-span-1",
@@ -293,9 +357,15 @@ function Card({ card, days, odd, history }: CardProps) {
             {link ? (
               <button
                 type="button"
+                data-drill=""
                 onClick={link}
+                title={
+                  card.key === "agents"
+                    ? "Open the review queue"
+                    : `Open ${(card.value ?? 0).toLocaleString()} ${noun} in Search`
+                }
                 className={cn(
-                  "self-start text-kpi tabular-nums hover:underline min-[1500px]:text-kpi-lg",
+                  "self-start text-kpi tabular-nums underline-offset-4 hover:underline min-[1500px]:text-kpi-lg",
                   card.value === 0 && !card.devices ? "text-ok" : "text-text",
                 )}
               >
@@ -311,18 +381,18 @@ function Card({ card, days, odd, history }: CardProps) {
                 {(card.value ?? 0).toLocaleString()}
               </span>
             )}
-            {partial ? null : <DeltaPill card={card} days={days} />}
+            {partial ? null : <DeltaPill card={card} days={days} onOpen={openBefore} />}
           </span>
-          {partial ? (
-            <NoHistory
-              since={history.since}
-              before={days === 1 ? "the previous 24 hours" : `the previous ${days} days`}
-            />
-          ) : null}
+          {partial ? <NoHistory since={history.since} before={before} /> : null}
           {card.devices ? (
             <button
               type="button"
-              onClick={() => navigate("ai", "services")}
+              data-drill=""
+              onClick={
+                opener(card.devices_drill, "Devices not matched to a person", bounds) ??
+                (() => navigate("ai", "services"))
+              }
+              title="Open these devices in Search"
               className="self-start text-left text-sm text-accent-text hover:underline"
             >
               {card.devices.toLocaleString()} {card.value ? "more " : ""}
@@ -350,7 +420,9 @@ function Card({ card, days, odd, history }: CardProps) {
             <>
               <button
                 type="button"
-                onClick={() => (blockedSql ? openRows(blockedSql) : undefined)}
+                data-drill=""
+                onClick={opener(card.blocked_drill, "Blocked consent attempts", bounds)}
+                title="Open the blocked attempts in Search"
                 className="self-start text-left text-sm text-accent-text hover:underline"
               >
                 {card.blocked.toLocaleString()} blocked consent{" "}
@@ -388,11 +460,13 @@ interface ChartProps {
   days?: number;
   /** The newest event of the sources AI Watch reads: days after it have no data. */
   dataUntil?: string | null;
+  /** Opens one day's AI use in Search (ADR-0039). */
+  onOpenDay?: (day: string) => void;
 }
 
 /** AI use per day by review status as a stacked area (ADR-0038 rows 11, 15; owner
  * 2026-10-30), values on hover, and a hatched band over days after the data stops. */
-export function Chart({ chart: all, days = 30, dataUntil = null }: ChartProps) {
+export function Chart({ chart: all, days = 30, dataUntil = null, onOpenDay }: ChartProps) {
   const total = (d: AiWatchDay) => d.approved + d.unreviewed + d.not_approved;
   const windowed = all.slice(-days);
   // Until there is a full window of data, the chart covers the days that exist (F62,
@@ -422,6 +496,7 @@ export function Chart({ chart: all, days = 30, dataUntil = null }: ChartProps) {
         color: COLOR[st],
       }))}
       lastWithData={lastWithData}
+      onOpen={onOpenDay ? (i) => chart[i] && onOpenDay(chart[i].day) : undefined}
       pointLabel={(i) => dayLabel(chart[i]?.day ?? "")}
       axisLabel={(i) => dayLabel(chart[i]?.day ?? "")}
       summary={`AI use per day over ${chart.length} days by review status: ${summary}${

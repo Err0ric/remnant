@@ -2,7 +2,7 @@
 
 import shutil
 import threading
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit, urlunsplit
@@ -361,6 +361,10 @@ class ClaudePluginIn(BaseModel):
     # Bundle this server's certificate when it is the generated self-signed one, so the
     # scripts check the server against it (row 16). Never a switch to skip checking.
     trust_server_certificate: bool = True
+    # The named token the package carries (D127): an existing one by id, or a new one
+    # with this name. Earlier packages keep sending until their token is revoked.
+    token_id: str | None = Field(default=None, max_length=64)
+    token_name: str | None = Field(default=None, min_length=1, max_length=80)
 
 
 class ClaudePluginInfo(BaseModel):
@@ -408,9 +412,10 @@ def _plugin_url(raw: str) -> str:
 async def claude_plugin(
     source_id: str, body: ClaudePluginIn, request: Request, user: AdminUser
 ) -> Response:
-    """The hooks plugin for this OTLP source as a zip: server address, a new token for the
-    source (earlier copies stop sending), content on only when the source keeps content,
-    and the pilot list. Audited source.claude_plugin (never the token)."""
+    """The hooks plugin for this OTLP source as a zip: server address, a named token (an
+    existing one, or a new one: earlier packages keep sending until theirs is revoked),
+    content on only when the source keeps content, and the pilot list. Audited
+    source.claude_plugin with the token id and name (never the token)."""
     store = _store(request)
     found = [s for s in await run_in_threadpool(store.list) if s.source_id == source_id]
     if not found:
@@ -423,7 +428,16 @@ async def claude_plugin(
     url = _plugin_url(base)
     send_content = bool(found[0].otlp_keep_content)
     ca = _self_signed_pem(request) if body.trust_server_certificate else None
-    token = await run_in_threadpool(store.issue_otlp_token, source_id)
+    tokens = request.app.state.otlp_tokens
+    if body.token_id:
+        owner, token = await run_in_threadpool(tokens.plain, body.token_id)
+        if owner != source_id:
+            raise NotFoundError("No such token for this source")
+        token_id, token_name = body.token_id, None
+    else:
+        label = body.token_name or f"{body.platform} {datetime.now(UTC):%Y-%m-%d}"
+        made, token = await run_in_threadpool(tokens.create, source_id, label, user.user_id)
+        token_id, token_name = made.token_id, made.name
     if body.managed:
         data = build_plugin_bundle(url, token, send_content, body.pilot_users, body.platform, ca)
     else:
@@ -445,6 +459,8 @@ async def claude_plugin(
             "managed": body.managed,
             "server_certificate": ca is not None,
             "script_sha256": sha,
+            "token_id": token_id,
+            "token_name": token_name,
         },
     )
     kind = "managed" if body.managed else "plugin"

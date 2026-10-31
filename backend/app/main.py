@@ -47,18 +47,21 @@ from app.api.handoff import router as handoff_router
 from app.api.health_page import router as health_page_router
 from app.api.identities import router as identities_router
 from app.api.integrity import router as integrity_router
+from app.api.m365 import router as m365_router
 from app.api.mcp import router as mcp_router
 from app.api.meta import app_version
 from app.api.meta import router as meta_router
 from app.api.middleware import HostOriginMiddleware, SecurityMiddleware, TrustedProxyMiddleware
 from app.api.otlp import router as otlp_router
 from app.api.overview import router as overview_router
+from app.api.plugins import router as plugins_router
 from app.api.providers import router as providers_router
 from app.api.query import router as query_router
 from app.api.rules import router as rules_router
 from app.api.schedules import router as schedules_router
 from app.api.searches import router as searches_router
 from app.api.sources import router as sources_router
+from app.api.sso_settings import router as sso_settings_router
 from app.api.templates import router as templates_router
 from app.api.tokens import router as tokens_router
 from app.api.users import router as users_router
@@ -124,6 +127,7 @@ from app.ingest.integrity import IntegrityLedger
 from app.ingest.listener import SyslogListeners
 from app.ingest.maintenance import LakeMaintenance
 from app.ingest.otlp import Spool
+from app.ingest.otlp_tokens import OtlpTokens
 from app.ingest.quiet import QuietWatch
 from app.ingest.sources import SourceStore
 from app.ingest.watcher import IngestService
@@ -585,6 +589,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         app.state.public_url,
     )
     app.state.integrity = IntegrityLedger(meta, lake_dir)
+    app.state.otlp_tokens = OtlpTokens(meta, SecretBox(config.paths.data_dir))
     app.state.geoip = GeoIP(app.state.feeds)
     geoip_ = app.state.geoip
 
@@ -645,6 +650,8 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     app.include_router(auth_router, prefix="/api")
     app.include_router(query_router, prefix="/api")
     app.include_router(sources_router, prefix="/api")
+    app.include_router(plugins_router, prefix="/api")
+    app.include_router(sso_settings_router, prefix="/api")
     app.include_router(otlp_router, prefix="/api")
     app.include_router(ai_router, prefix="/api")
     app.include_router(mcp_router, prefix="/api")
@@ -664,6 +671,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     app.include_router(schedules_router, prefix="/api")
     app.include_router(dashboards_router, prefix="/api")
     app.include_router(dashboard_sections_router, prefix="/api")
+    app.include_router(m365_router, prefix="/api")
     app.include_router(overview_router, prefix="/api")
     app.include_router(health_page_router, prefix="/api")
     app.include_router(handoff_router, prefix="/api")

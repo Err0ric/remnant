@@ -55,3 +55,9 @@ Items noted during a slice that belong to a later slice. Move into the slice pla
 ## Morning answer: admin grants and app consents in "New in 24 hours"
 
 ADR-0037 row 6 lists new admin or role grants and app consents in the New column. The column shows AI services, MCP servers, and agents (AI Watch items) today; grants and consents need a small server query over Microsoft 365 directory and management audit events (the AI Watch consent card already counts consents per period).
+
+## From ADR-0038 parts 3 and 4 (2026-10-30)
+
+- **Microsoft 365 rollup** (ADR-0038 section 5, "Speed"): closed days from a daily rollup, today from events, as the AI rollup does, so the 30-day Overview stays fast on a large tenant. The area reads events directly until then.
+- **Agents Overview and Tools tabs** (ADR-0038 section 6): KPIs (sessions, people, tool calls, failed calls, not-approved MCP servers in use, devices late or missing) and a typed Tools table.
+- **Accounts corroboration** (ADR-0030 T3): raise Company, reported and Company, not confirmed when the Anthropic usage or compliance connector names the same email in the window.

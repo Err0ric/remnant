@@ -173,3 +173,23 @@ describe("Countries and networks (ADR-0038 edit 10)", () => {
     expect(within(box).queryByRole("note")).toBeNull();
   });
 });
+
+describe("Feed freshness (F67)", () => {
+  it("says the content is unchanged and when a check confirmed it", async () => {
+    window.history.replaceState(null, "", "/enrichment");
+    mockApi("Codename", { mode: "open" });
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    render(
+      <App
+        initialTheme="dark"
+        queryClient={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      />,
+    );
+    expect(
+      (await screen.findAllByText(/^Content unchanged, confirmed current/)).length,
+    ).toBeGreaterThan(0);
+  });
+});

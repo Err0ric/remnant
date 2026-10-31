@@ -29,7 +29,10 @@ export type PageId =
   | "enrichment"
   | "audit"
   | "about"
-  | "agents";
+  | "agents"
+  | "m365"
+  | "plugins"
+  | "sso";
 
 const PATHS: Record<PageId, string> = {
   home: "/",
@@ -50,6 +53,9 @@ const PATHS: Record<PageId, string> = {
   ai: "/ai",
   investigate: "/investigate/people",
   agents: "/agents",
+  m365: "/m365",
+  plugins: "/plugins",
+  sso: "/sso",
   identities: "/identities",
   setup: "/setup",
   health: "/health",
@@ -65,7 +71,8 @@ const CHANGE = "app:navigate";
  * and has no segment of its own. */
 export const PAGE_TABS: Partial<Record<PageId, readonly string[]>> = {
   ai: ["services", "people", "settings"],
-  agents: ["agents", "mcp"],
+  m365: ["overview", "sign-ins", "mail", "apps", "admin"],
+  agents: ["agents", "mcp", "accounts"],
   health: ["sources", "enrichment", "agents", "devices", "alerts"],
   alerts: ["open", "closed", "muted"],
   audit: ["activity", "ai", "integrity"],

@@ -32,7 +32,7 @@ Content follows the source's **Keep prompt and tool content** setting at downloa
 
 ## 1. Make a source for it
 
-**Sources > Add source**, **Reads from: OpenTelemetry (OTLP)**, Source ID for example `claude_hooks`, Parser **Automatic**. Use a source just for the plugins: each download issues a new token for the source, and earlier copies stop sending.
+**Sources > Add source**, **Reads from: OpenTelemetry (OTLP)**, Source ID for example `claude_hooks`, Parser **Automatic**. Use a source just for the plugins. Download the plugin from **Settings > Claude plugins**: each deployment ("pilot", "all Windows") gets its own named token, and a later download for the same deployment carries the same token. Revoking one token stops that deployment only.
 
 ## 2. Download a plugin per platform
 
@@ -124,4 +124,4 @@ The script under Windows PowerShell 5.1 is also checked by the `hooks-windows` w
 
 ## Turning it off
 
-Set the plugin to **Not available** in the admin console, or make a new token for the source (**New token** on its row): every installed copy stops sending at once.
+Set the plugin to **Not available** in the admin console, or revoke the deployment's token on **Settings > Claude plugins**: every copy with that token stops sending at once, and other deployments keep sending. **New token** on the source's row still replaces the source's earlier token (from before named tokens).

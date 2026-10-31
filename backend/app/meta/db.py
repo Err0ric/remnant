@@ -958,6 +958,36 @@ MIGRATIONS: tuple[Migration, ...] = (
     ALTER TABLE install_settings ADD COLUMN internal_networks TEXT;
     ALTER TABLE install_settings ADD COLUMN places_updated_at TEXT;
     """,
+    # 53: named ingest tokens per deployment (owner, 2026-10-29): several per OTLP source,
+    # each revocable alone. The hash finds the token; the sealed copy (install key) lets a
+    # later download carry the same token without ever showing it. Hosts that sent with it.
+    """
+    CREATE TABLE otlp_tokens (
+        token_id     TEXT PRIMARY KEY,
+        source_id    TEXT NOT NULL,
+        name         TEXT NOT NULL,
+        prefix       TEXT NOT NULL,
+        token_hash   TEXT NOT NULL UNIQUE,
+        sealed       TEXT NOT NULL,
+        created_at   TEXT NOT NULL,
+        created_by   TEXT,
+        revoked_at   TEXT,
+        revoked_by   TEXT,
+        last_used_at TEXT
+    );
+    CREATE INDEX otlp_tokens_source ON otlp_tokens (source_id);
+    CREATE TABLE otlp_token_hosts (
+        token_id  TEXT NOT NULL,
+        host      TEXT NOT NULL,
+        last_seen TEXT NOT NULL,
+        PRIMARY KEY (token_id, host)
+    );
+    """,
+    # 54: when a check last found a feed's content current (F67): an unchanged list (304
+    # Not Modified, or this month's edition already installed) is up to date as of then.
+    """
+    ALTER TABLE enrichment_feeds ADD COLUMN confirmed_at TEXT;
+    """,
 )
 
 

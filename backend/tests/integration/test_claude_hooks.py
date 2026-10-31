@@ -122,6 +122,10 @@ class Catcher:
                 time.sleep(delay)
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
+                # A length, so the client never reads to end of stream: newer curl with
+                # OpenSSL 3 calls a TLS close without close_notify an error (exit 56) even
+                # though the body arrived, and the plugin then queues the record again.
+                self.send_header("Content-Length", str(len(reply)))
                 self.end_headers()
                 self.wfile.write(reply)
 
@@ -229,7 +233,7 @@ def home_with(tmp_path: Path, email: str | None = "dana@example.com") -> Path:
     return home
 
 
-def test_download_holds_the_address_a_new_token_and_the_pilot(
+def test_download_holds_the_address_a_named_token_and_the_pilot(
     lab: dict[str, Any], tmp_path: Path
 ) -> None:
     res = download(
@@ -244,8 +248,9 @@ def test_download_holds_the_address_a_new_token_and_the_pilot(
     # The lab serves its generated self-signed certificate: bundled, and named in the config.
     assert cfg["CA_FILE"] == "server-ca.pem"
     assert (plugin / "server-ca.pem").read_bytes().startswith(b"-----BEGIN CERTIFICATE-----")
-    # The download issued a new token: the old one stops, the new one works.
-    assert send(lab, {"resourceLogs": []}).status_code == 401
+    # The download carries a new named token (D127); the earlier token keeps working, so
+    # packages already out keep sending until their own token is revoked.
+    assert send(lab, {"resourceLogs": []}).status_code < 300
     assert send(lab, {"resourceLogs": []}, token=cfg["REMNANT_TOKEN"]).status_code < 300
     names = set(zipfile.ZipFile(io.BytesIO(res.content)).namelist())
     assert names == {
@@ -624,7 +629,14 @@ def test_only_the_named_certificate_is_trusted(
     assert server.bodies == []  # the wrong certificate: nothing sent (it waits in the queue)
     (plugin / "config").write_text(base + f"CA_FILE={cert}\n")
     assert quiet(run(plugin, SESSION[0], home, platform))
-    assert len(server.bodies) == 2  # this record, then the one that waited
+    # This record, then the one that waited: the queue goes out after the live record, so
+    # a slow runner may still be sending it when the hook returns.
+    deadline = time.monotonic() + 5
+    while len(server.bodies) < 2 and time.monotonic() < deadline:
+        time.sleep(0.05)
+    data = home / "plugin-data"
+    state = sorted(str(p.relative_to(data)) for p in data.rglob("*")) if data.exists() else []
+    assert len(server.bodies) == 2, f"plugin data after send: {state}"
     (plugin / "config").write_text(base.replace("localhost", "127.0.0.1") + f"CA_FILE={cert}\n")
     assert quiet(run(plugin, SESSION[0], home, platform))
     assert len(server.bodies) == 2  # the right certificate under another name: refused
@@ -665,3 +677,35 @@ def test_content_is_sent_only_when_the_source_keeps_it_capped_and_masked(
     )
     raw = " ".join(str(r[0]) for r in rows)
     assert FAKE_KEY not in raw and "[redacted:aws_access_key]" in raw
+
+
+def test_named_tokens_per_deployment(lab: dict[str, Any], tmp_path: Path) -> None:
+    """Owner 2026-10-29 (D127): each deployment has its own token, re-downloadable without
+    showing it, revocable alone, with the devices that used it; refusals name the token."""
+    admin, h = lab["admin"], lab["h"]
+    first = download(lab, server_url="https://x.example", token_name="pilot")
+    cfg = config(unpack(first.content, tmp_path / "a"))
+    listed = admin.get("/api/plugins").json()
+    pilot = next(t for t in listed["tokens"] if t["name"] == "pilot")
+    assert pilot["prefix"] == cfg["REMNANT_TOKEN"][:8] and cfg["REMNANT_TOKEN"] not in str(listed)
+    # Download again for the same deployment: the same token, never shown.
+    again = download(lab, server_url="https://x.example", token_id=pilot["token_id"])
+    assert config(unpack(again.content, tmp_path / "b"))["REMNANT_TOKEN"] == cfg["REMNANT_TOKEN"]
+    body = {
+        "resourceLogs": [
+            {"resource": {"attributes": [{"key": "host.name", "value": {"stringValue": "ws-7"}}]}}
+        ]
+    }
+    assert send(lab, body, token=cfg["REMNANT_TOKEN"]).status_code < 300
+    pilot = next(t for t in admin.get("/api/plugins").json()["tokens"] if t["name"] == "pilot")
+    assert pilot["devices"] == 1 and pilot["hosts"] == ["ws-7"] and pilot["last_used_at"]
+    # Revoke the pilot only: it stops, the earlier token still sends.
+    gone = admin.delete(f"/api/sources/claude/otlp-tokens/{pilot['token_id']}", headers=h)
+    assert gone.status_code == 200 and gone.json()["revoked_at"]
+    assert send(lab, {"resourceLogs": []}, token=cfg["REMNANT_TOKEN"]).status_code == 401
+    assert send(lab, {"resourceLogs": []}).status_code < 300
+    made = admin.post("/api/sources/claude/otlp-tokens", json={"name": "collector"}, headers=h)
+    assert made.status_code == 200 and made.json()["token"].startswith("rmt_")
+    assert lab["ana"].get("/api/plugins").status_code == 403
+    log = admin.get("/api/audit/events", params={"action": "source.otlp_token"}).json()
+    assert {e["detail"]["change"] for e in log} >= {"create", "revoke"}

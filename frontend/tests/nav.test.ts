@@ -6,6 +6,7 @@ describe("Areas (ADR-0038)", () => {
     expect(AREAS.map((a) => a.label)).toEqual([
       "Dashboard",
       "Alerts",
+      "Microsoft 365",
       "Investigate",
       "AI usage",
       "Agents",

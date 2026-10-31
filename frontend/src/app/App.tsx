@@ -23,6 +23,15 @@ import { applyTheme, type Theme } from "@/lib/theme";
 // Pages load on first visit, so the first screen does not carry every page (install
 // finding: one 961 kB chunk). Search, Schedules, and Overview stay in the main bundle;
 // the SQL editor (CodeMirror) is its own chunk, loaded after the page shows.
+const SsoPage = lazy(() =>
+  import("@/features/settings/SsoPage").then((m) => ({ default: m.SsoPage })),
+);
+const PluginsPage = lazy(() =>
+  import("@/features/settings/PluginsPage").then((m) => ({ default: m.PluginsPage })),
+);
+const M365Page = lazy(() =>
+  import("@/features/m365/M365Page").then((m) => ({ default: m.M365Page })),
+);
 const SourcesPage = lazy(() =>
   import("@/features/sources/SourcesPage").then((m) => ({ default: m.SourcesPage })),
 );
@@ -213,6 +222,12 @@ export function App({ initialTheme, queryClient }: AppProps) {
                         <AuditLogPage isAdmin={!user || user.role === "admin"} />
                       ) : page === "about" ? (
                         <AboutPage />
+                      ) : page === "sso" && (!user || user.role === "admin") ? (
+                        <SsoPage />
+                      ) : page === "plugins" && (!user || user.role === "admin") ? (
+                        <PluginsPage />
+                      ) : page === "m365" ? (
+                        <M365Page />
                       ) : page === "ai" || page === "agents" ? (
                         <AiUsagePage isAdmin={!user || user.role === "admin"} area={page} />
                       ) : page === "identities" && (!user || user.role === "admin") ? (

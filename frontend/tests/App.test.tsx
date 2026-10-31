@@ -59,7 +59,7 @@ describe("App shell", () => {
       Array.from(within(within(nav).getByRole("region", { name })).getAllByRole("listitem"))
         .filter((li) => li.parentElement?.id === `rail-${name.toLowerCase()}`)
         .map((li) => li.querySelector("a")?.textContent);
-    expect(rows("Monitor")).toEqual(["Dashboard", "Alerts"]);
+    expect(rows("Monitor")).toEqual(["Dashboard", "Alerts", "Microsoft 365"]);
     expect(rows("Investigate")).toEqual(["Search", "People & devices", "Saved searches"]);
     expect(rows("AI")).toEqual(["AI usage", "Agents"]);
     expect(rows("System")).toEqual(["Health", "Settings"]);

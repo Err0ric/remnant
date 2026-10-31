@@ -221,7 +221,11 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
           name: f.label,
           sub: f.version ?? undefined,
           detail: `${f.provider} · updated ${every(f.check_every_s)}`,
-          last: f.installed_at,
+          // F67: an unchanged list confirmed by a check is current as of that check.
+          last:
+            f.confirmed_at && f.installed_at && f.confirmed_at > f.installed_at
+              ? f.confirmed_at
+              : f.installed_at,
           level:
             f.level === "missing"
               ? "attention"

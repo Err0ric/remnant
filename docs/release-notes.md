@@ -2,12 +2,47 @@
 
 ## Unreleased
 
+### Feeds: "Out of date" after a successful check (F67)
+
+- A feed whose list has not changed (the server answers Not Modified, or this month's GeoIP edition is already installed) now counts as current from that check, not from when the content last changed. Enrichment shows "Content unchanged, confirmed current 2 min ago" under the download date, and Health uses the same time.
+- A threat list that answers Not Found is no longer treated as unchanged: the row shows "The feed server answered HTTP 404". Other failures already showed their reason and are logged as `enrichment.update_failed`.
+- What changes for existing installs: nothing to do. The next check of each feed records it.
+
+### Settings > Single sign-on (F64)
+
+- New **Settings > Single sign-on** page: whether sign-in with your identity provider is on, off, or not working (and why), the issuer and client ID in use (never the secret), the exact redirect URI to paste into Entra with **Copy**, the variables to set, **Test sign-in** (reaches the provider and checks its issuer; audited `sso.test`), and who is bound to an identity. Users and access links to it.
+- What changes for existing installs: nothing to do. The setup stays server-side, as before.
+
+### Settings > Claude plugins, with a token per deployment
+
+- New **Settings > Claude plugins** page: the hooks plugin for Windows and for macOS and Linux, each with its version, script SHA-256, devices and lost records in the last 24 hours, and two downloads (the plugin, and the managed bundle with `hooks.conf` for endpoint management).
+- Each download carries a **named token** ("pilot", "all Windows"): pick an existing one to download the same deployment again, or name a new one. The token list shows each token's first characters, last use, and devices; **Revoke** stops one deployment and leaves the others sending.
+- What changes for existing installs: a plugin download no longer replaces the source's token, so copies already installed keep sending. The source's existing token is listed as **Earlier token** and can be revoked there.
+
+### Agents: sessions list and detail, and Claude accounts
+
+- **Sessions** shows the list and the open session side by side, with the session's Claude account tier and evidence, start, calls, failed calls, tools and hosts, and late delivery, then its steps. The open session is in the address, so a link opens it.
+- New **Accounts** tab: Claude accounts the hooks plugin reported, by tier (ADR-0030 amendment). A company-domain email is **confirmed** by an Entra sign-in to Claude by the same person in the 30 days before its last use; without a Microsoft 365 source it is **reported**; with one and no match it is **not confirmed**; other domains are **Personal**; no email is **Not checked**. Nothing is blocked or alerted from a tier.
+- The Entra app is matched by name (containing "Claude" or "Anthropic"). The Anthropic usage report corroboration (T3) is not used yet.
+- What changes for existing installs: set Settings > Identities > organization email domains if you have not, or every account reads Not checked. New `GET /api/agents/accounts`.
+
+### Microsoft 365 area under Monitor
+
+- New **Microsoft 365** area (Monitor > Microsoft 365) with Overview, Sign-ins, Mail, Apps, and Admin tabs and one time window. Overview has sign-ins, failed, outside approved countries, risky, app consents (blocked apart), and admin changes; counts of mail rules, forwarding, DLP matches, file downloads, external shares, and Copilot interactions; the sign-in outcomes; and top failure reasons, countries, and apps. Every number opens its rows in Search; the other tabs list the window's events.
+- Sign-ins Entra interrupted (MFA asked, stay signed in, and the like) are now **interrupted**, not failed. The Dashboard's Identity "Failed sign-ins" count, its chart, and top failing users use the same split, so they may read lower than before.
+- What changes for existing installs: nothing to do. New `GET /api/m365/overview`.
+
+### AI Watch: every number opens its rows in Search
+
+- Unapproved AI services, People using unapproved AI, the "devices not matched to a person" line, App consent grants and blocked attempts, and Sensitive data to AI each open Search with the rows behind them; the change pill opens the period before; a day on the AI use chart opens that day's use by service. New agents and MCP servers open the review queue (they are review items, not events).
+- The AI use queries list only the services the card counts (plus any more specific catalog domain under them), so they stay readable; they read events directly, so a 30-day one can take a few seconds.
+- What changes for existing installs: nothing to do. `/api/ai/watch/summary` adds `before`, `chart_drill`, and `drill`, `drill_before`, `devices_drill`, `blocked_drill` on cards.
+
 ### Dashboard: every number opens its rows in Search
 
 - On Identity, Attacks and access, and Detections, click a number to open Search with the query behind it, already run over the page window. The change pill opens the window before; a point on the failed sign-ins chart opens that hour or day; a "Failures by host" or "Matches by rule" row opens that host's or rule's rows; a Top sources row opens its addresses; "2 blocked" opens the blocked consents.
 - Search says where the query came from ("From Dashboard > Identity > Failed sign-ins, Oct 24 to Oct 30"), and Save and Schedule work as for any query. Back returns to the Dashboard where you were.
 - Counts by country or network use `ip_country`, `ip_asn`, and `is_internal` in the query, so it reads as a filter, not a list of addresses. Detections open the matched rules' own conditions.
-- AI Watch follows in the next update.
 - What changes for existing installs: nothing to do. `/api/dashboard/sections` adds `before` and a `drill` query on each number, series, and row.
 
 ### Search: country, network, and internal-address functions

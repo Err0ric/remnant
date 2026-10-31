@@ -36,6 +36,9 @@ class FeedOut(BaseModel):
     size: int
     source: str | None
     installed_at: str | None
+    # The last check that found the content current (F67); the later of this and
+    # installed_at is when the feed was last known up to date.
+    confirmed_at: str | None = None
     checked_at: str | None
     error: str | None
     check_every_s: int
@@ -81,6 +84,7 @@ def _out(store: FeedStore, st: FeedState) -> FeedOut:
         size=st.size,
         source=st.source,
         installed_at=st.installed_at,
+        confirmed_at=st.confirmed_at,
         checked_at=st.checked_at,
         error=st.error,
         check_every_s=spec.check_every_s,

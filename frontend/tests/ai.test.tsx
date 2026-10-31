@@ -189,7 +189,7 @@ describe("A range too big for the memory share (F46)", () => {
 });
 
 describe("Agent sessions from the hooks plugin (ADR-0026)", () => {
-  it("lists sessions and opens one in order", async () => {
+  it("lists sessions and opens one beside the list, in order, with its account", async () => {
     window.history.replaceState(null, "", "/ai#agents");
     mockApi("Codename", { mode: "open" });
     vi.resetModules();
@@ -203,12 +203,42 @@ describe("Agent sessions from the hooks plugin (ADR-0026)", () => {
       />,
     );
     const card = await screen.findByRole("region", { name: "Agent sessions" });
-    await userEvent.click(await within(card).findByRole("button", { name: "dana@example.com" }));
-    const steps = await within(card).findByRole("list", { name: "Session timeline" });
+    const list = await within(card).findByRole("list", { name: "Sessions" });
+    await userEvent.click(within(list).getAllByRole("button", { name: /^dana@example\.com/ })[0]!);
+    expect(window.location.hash).toMatch(/^#session=/);
+    const detail = await within(card).findByRole("region", { name: "Session detail" });
+    expect(within(detail).getByText("Claude account")).toBeVisible();
+    const steps = await within(detail).findByRole("list", { name: "Session timeline" });
     const items = within(steps).getAllByRole("listitem");
     expect(items).toHaveLength(5);
     expect(items[2]).toHaveTextContent("Calls Read /home/dana/app/auth.py");
     expect(items[3]).toHaveTextContent("github create_issue");
     expect(items[1]).toHaveTextContent("42 chars");
+  });
+});
+
+describe("Claude accounts (ADR-0030 amendment)", () => {
+  it("lists accounts by tier with their evidence", async () => {
+    window.history.replaceState(null, "", "/agents/accounts");
+    mockApi("Codename", { mode: "open" });
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    render(
+      <App
+        initialTheme="dark"
+        queryClient={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      />,
+    );
+    const card = await screen.findByRole("region", { name: "Claude accounts" });
+    const tiers = await within(card).findByRole("list", { name: "Accounts by tier" });
+    expect(tiers).toHaveTextContent("Company, confirmed1");
+    expect(tiers).toHaveTextContent("Personal1");
+    expect(within(card).getByText("mail.test is not an organization domain")).toBeVisible();
+    expect(within(card).getAllByText("Personal")[1]).toHaveAttribute(
+      "title",
+      "Personal Claude account",
+    );
   });
 });

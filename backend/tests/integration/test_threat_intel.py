@@ -254,3 +254,37 @@ def test_feed_settings_roles_and_key_never_returned(lab: dict[str, Any]) -> None
     assert off.json()["enabled"] is False
     events = lab["aud"].get("/api/audit/events", params={"action": "enrichment.feed"}).json()
     assert events and all("abc-123" not in json.dumps(e) for e in events)
+
+
+def test_an_unchanged_list_is_current_as_of_the_check(store: FeedStore, tmp_path: Path) -> None:
+    """F67: a 304 after eight days means the list is current now, not eight days old; a
+    404 says so on the row and is never counted as current."""
+    from datetime import timedelta
+
+    later = [NOW]
+    answer = {"code": 200}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if answer["code"] != 200:
+            return httpx.Response(answer["code"])
+        return httpx.Response(200, content=FEODO, headers={"etag": '"v1"'})
+
+    up = FeedUpdater(
+        store,
+        AuditLog(MetaDB(tmp_path / "meta.sqlite")),
+        client=lambda: httpx.Client(transport=httpx.MockTransport(handler)),
+        clock=lambda: later[0],
+    )
+    up.update("intel_feodo", None)
+    store._clock = lambda: later[0]  # type: ignore[method-assign]  # the store judges age now
+    later[0] = NOW + timedelta(days=8)
+    assert store.level(store.state("intel_feodo")) == "unhealthy"
+    answer["code"] = 304
+    st = up.update("intel_feodo", None)
+    assert st.confirmed_at == later[0].isoformat() and st.error is None
+    assert store.level(st) == "healthy" and st.installed_at == NOW.isoformat()
+    later[0] = NOW + timedelta(days=17)
+    answer["code"] = 404
+    st = up.update("intel_feodo", None)
+    assert st.error == "The feed server answered HTTP 404"
+    assert st.confirmed_at == (NOW + timedelta(days=8)).isoformat()
