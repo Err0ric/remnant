@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Update script reports what it did (2026-11-01)
+
+- `update-systemd.sh` fetches `main` from `origin` itself, before stopping the service. If the fetch fails it says so and exits with an error; it no longer reports success at the old commit.
+- Already current: it prints "already up to date at X" and leaves the service running. It reports "Updated to X" only when HEAD matches `origin/main`.
+- A checkout with local commits is refused before the service stops.
+- What changes for existing installs: nothing to do. If you run the script through your own wrapper, it now exits non-zero when the fetch fails.
+
 ### Query memory follows the budget (2026-11-01)
 
 - **Search and export get more memory when it is free**: alone, a search or export can use about 40% of the memory budget (1.6 GB on a 4 GB budget) instead of 20%. Page sections keep their share, and the total never goes past the budget.

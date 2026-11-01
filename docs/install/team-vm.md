@@ -189,7 +189,7 @@ Open the link and create the administrator, as above.
 
 ### Updating
 
-Run the update script as root. It stops the service, pulls, rebuilds the web UI, syncs the Python packages, makes `/opt/remnant` readable by the service user, starts the service, and prints the startup lines. Database migrations run on start.
+Run the update script as root. It fetches `main` from `origin` and stops there if the fetch fails or the install is already up to date (it says which). Otherwise it stops the service, moves to `origin/main` and checks HEAD matches it, rebuilds the web UI, syncs the Python packages, makes `/opt/remnant` readable by the service user, starts the service, and prints the startup lines. Database migrations run on start.
 
 ```bash
 sudo sh /opt/remnant/scripts/update-systemd.sh
