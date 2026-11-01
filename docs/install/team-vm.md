@@ -193,7 +193,7 @@ Run the update script as root; never fetch or merge by hand first. It fetches `m
 
 ```bash
 sudo sh /opt/remnant/scripts/update-systemd.sh
-# With AIDE installed, also re-baseline it afterwards:
+# With AIDE installed: check first, update, then re-baseline (see File integrity):
 sudo sh /opt/remnant/scripts/update-systemd.sh --aide
 ```
 
@@ -265,7 +265,16 @@ With AIDE installed (`/etc/aide/aide.conf.d` present), every run of `update-syst
 | `.git` | Watched | The update script runs git as root, so a changed hook would run on the next update |
 | `/etc/remnant`, `/etc/systemd/system/remnant.service` | Watched | Settings and the unit |
 
-Then re-baseline: `update-systemd.sh --aide` runs `aideinit -y -f` after the update. Replace any hand-made rule for Remnant (a bare `!/var/lib/remnant` also hides `tls/`). Other tools (Wazuh syscheck, Tripwire): skip the same paths in their own syntax.
+Then update with `--aide`. Before changing anything, it runs `aide --check` against the current baseline and prints how many files were added, removed, and changed, with the changed paths outside `/opt/remnant`:
+
+| What the check finds | What `--aide` does |
+|---|---|
+| No changes, or changes only in `/opt/remnant`, the script's own rules file (`/etc/aide/aide.conf.d/90_aide_remnant`), and `/var/lib/remnant/installed_commit` | Updates, then re-baselines with `aideinit -y -f` |
+| Changes anywhere else, including any other file under `/etc/aide` (a new rules file could hide later changes) | Stops before touching anything: "AIDE found changes not made by this update". Review them (`aide --check`), then re-run with `--aide-accept` |
+| AIDE cannot check (no baseline yet, a config error) | Stops; fix AIDE, or re-run with `--aide-accept` to create the baseline |
+| Nothing to update | Reports the check, and does not re-baseline: no update explains any change. `--aide-accept` re-baselines after you have reviewed |
+
+A baseline is only ever taken after a check you have seen, never silently. Replace any hand-made rule for Remnant (a bare `!/var/lib/remnant` also hides `tls/`). Other tools (Wazuh syscheck, Tripwire): skip the same paths in their own syntax.
 
 ## After install
 

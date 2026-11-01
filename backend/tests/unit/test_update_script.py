@@ -232,25 +232,6 @@ def test_a_failed_start_leaves_the_installed_commit_alone(box: dict[str, Path]) 
     assert _installed(box).read_text().strip() == old  # the next run builds again
 
 
-def test_aide_rebaselines_even_when_up_to_date(box: dict[str, Path]) -> None:
-    _record(box, _git(box["install"], "rev-parse", "HEAD"))
-    res = subprocess.run(
-        ["sh", str(SCRIPT), "--aide"],
-        capture_output=True, text=True,
-        env={
-            "PATH": f"{box['bin']}:{os.environ['PATH']}", "INSTALL_DIR": str(box["install"]),
-            "CALLS": str(box["calls"]), "HOME": str(box["install"].parent),
-            "ENV_FILE": str(box["install"].parent / "no-env-file"),
-            "AIDE_CONF_D": str(box["install"].parent / "no-aide"),
-            "STATE_FILE": str(_installed(box)),
-            "STATE_OWNER": f"{os.getuid()}:{os.getgid()}",
-        },
-    )  # fmt: skip
-    assert res.returncode == 0, res.stderr
-    assert "already up to date" in res.stdout
-    assert "aideinit -y -f" in _calls(box) and "systemctl" not in _calls(box)
-
-
 @pytest.mark.skipif(os.geteuid() != 0, reason="checks root ownership")
 def test_the_installed_commit_is_root_owned_and_read_only_to_others(
     box: dict[str, Path],
@@ -312,3 +293,124 @@ def test_state_owner_comes_only_from_the_root_process(box: dict[str, Path]) -> N
     assert not pwned.exists()  # the env file is read for one setting, never run
     st = record.stat()
     assert (st.st_uid, st.st_gid, oct(st.st_mode & 0o777)) == (0, 0, "0o644")
+
+
+REPORT = """Start timestamp: 2026-11-01 12:00:00 -0800 (AIDE 0.18.6)
+AIDE found differences between database and filesystem!!
+
+Summary:
+  Total number of entries:\t4120
+  Added entries:\t\t{added}
+  Removed entries:\t\t0
+  Changed entries:\t\t{changed}
+
+---------------------------------------------------
+Changed entries:
+---------------------------------------------------
+
+{lines}
+"""
+
+
+def _aide(box: dict[str, Path], rc: int, paths: list[str] = ()) -> dict[str, str]:  # type: ignore[assignment]  # tuple default for a list
+    """A stub `aide --check` with this exit code and these changed paths."""
+    report = box["install"].parent / "aide-report.txt"
+    lines = "\n".join(f"f   ...    .C... : {p}" for p in paths)
+    report.write_text(REPORT.format(added=0, changed=len(paths), lines=lines))
+    stub = box["bin"] / "aide"
+    stub.write_text('#!/bin/sh\necho "aide $*" >> "$CALLS"\ncat "$AIDE_REPORT"\nexit "$AIDE_RC"\n')
+    stub.chmod(0o755)
+    return {"AIDE_REPORT": str(report), "AIDE_RC": str(rc)}
+
+
+def _run_aide(box: dict[str, Path], flag: str, **extra: str) -> subprocess.CompletedProcess[str]:
+    env = {
+        "PATH": f"{box['bin']}:{os.environ['PATH']}", "INSTALL_DIR": str(box["install"]),
+        "CALLS": str(box["calls"]), "HOME": str(box["install"].parent),
+        "ENV_FILE": str(box["install"].parent / "no-env-file"),
+        "AIDE_CONF_D": str(box["install"].parent / "no-aide"),
+        "STATE_FILE": str(_installed(box)),
+        "STATE_OWNER": f"{os.getuid()}:{os.getgid()}", **extra,
+    }  # fmt: skip
+    return subprocess.run(["sh", str(SCRIPT), flag], capture_output=True, text=True, env=env)
+
+
+def _new_commit(box: dict[str, Path]) -> str:
+    _record(box, _git(box["install"], "rev-parse", "HEAD"))
+    new = _commit(box["work"], "two")
+    _git(box["work"], "push", "-q", "origin", "main")
+    return new
+
+
+def test_a_clean_check_then_an_update_re_baselines(box: dict[str, Path]) -> None:
+    new = _new_commit(box)
+    res = _run_aide(box, "--aide", **_aide(box, 0))
+    assert res.returncode == 0, res.stderr
+    calls = _calls(box).splitlines()
+    assert calls[0].startswith("aide --config") and "--check" in calls[0]  # before anything
+    assert calls.index("systemctl start remnant") < calls.index("aideinit -y -f")
+    assert _git(box["install"], "rev-parse", "--short", "HEAD") == new
+
+
+def test_changes_outside_the_install_stop_the_update(box: dict[str, Path]) -> None:
+    head = _git(box["install"], "rev-parse", "HEAD")
+    _new_commit(box)
+    paths = [f"{box['install']}/backend/app/main.py", "/etc/passwd", "/usr/local/bin/tool"]
+    res = _run_aide(box, "--aide", **_aide(box, 4, paths))
+    assert res.returncode == 1
+    assert "AIDE: 0 added, 0 removed, 3 changed" in res.stdout
+    assert "/etc/passwd" in res.stdout and "/usr/local/bin/tool" in res.stdout
+    assert f"{box['install']}/backend/app/main.py" not in res.stdout.split("Changed outside")[1]
+    assert "not made by this update" in res.stderr and "--aide-accept" in res.stderr
+    assert "systemctl" not in _calls(box) and "aideinit" not in _calls(box)
+    assert _git(box["install"], "rev-parse", "HEAD") == head
+
+
+def test_changes_only_in_the_install_and_its_record_proceed(box: dict[str, Path]) -> None:
+    _new_commit(box)
+    rules = box["install"].parent / "no-aide" / "90_aide_remnant"  # AIDE_CONF_D in _run_aide
+    paths = [f"{box['install']}/.git/FETCH_HEAD", str(rules), str(_installed(box))]
+    res = _run_aide(box, "--aide", **_aide(box, 4, paths))
+    assert res.returncode == 0, res.stderr
+    assert "aideinit -y -f" in _calls(box)
+
+
+def test_a_no_op_run_checks_but_does_not_re_baseline(box: dict[str, Path]) -> None:
+    _record(box, _git(box["install"], "rev-parse", "HEAD"))
+    res = _run_aide(box, "--aide", **_aide(box, 0))
+    assert res.returncode == 0, res.stderr
+    assert "already up to date" in res.stdout
+    assert "Not re-baselining AIDE: nothing was updated." in res.stdout
+    assert "aide --config" in _calls(box) and "aideinit" not in _calls(box)
+    assert "systemctl" not in _calls(box)
+
+
+def test_aide_accept_proceeds_and_re_baselines(box: dict[str, Path]) -> None:
+    new = _new_commit(box)
+    res = _run_aide(box, "--aide-accept", **_aide(box, 4, ["/etc/passwd"]))
+    assert res.returncode == 0, res.stderr
+    assert "Accepted with --aide-accept" in res.stdout
+    assert "aideinit -y -f" in _calls(box)
+    assert _git(box["install"], "rev-parse", "--short", "HEAD") == new
+
+
+def test_aide_that_cannot_check_stops_the_update(box: dict[str, Path]) -> None:
+    _new_commit(box)
+    res = _run_aide(box, "--aide", **_aide(box, 18))
+    assert res.returncode == 1 and "AIDE could not check (exit 18)" in res.stderr
+    assert "systemctl" not in _calls(box) and "aideinit" not in _calls(box)
+
+
+def test_a_new_file_in_the_aide_rules_folder_stops_the_run(box: dict[str, Path]) -> None:
+    """Only the rules file the script writes is exempt: another file in aide.conf.d could
+    exclude paths and hide later tampering, so it is reported and stops the update."""
+    head = _git(box["install"], "rev-parse", "HEAD")
+    _new_commit(box)
+    conf_d = box["install"].parent / "no-aide"
+    for path in (conf_d / "95_quiet", Path("/etc/aide/aide.conf")):
+        box["calls"].unlink(missing_ok=True)
+        res = _run_aide(box, "--aide", **_aide(box, 5, [str(path)]))
+        assert res.returncode == 1, res.stdout
+        assert str(path) in res.stdout and "not made by this update" in res.stderr
+        assert "systemctl" not in _calls(box) and "aideinit" not in _calls(box)
+    assert _git(box["install"], "rev-parse", "HEAD") == head

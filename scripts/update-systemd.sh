@@ -2,12 +2,17 @@
 # Update a systemd install (docs/install/team-vm.md, option B) to the latest code.
 #
 #   sudo sh /opt/remnant/scripts/update-systemd.sh            # update and restart
-#   sudo sh /opt/remnant/scripts/update-systemd.sh --aide     # also re-baseline AIDE
+#   sudo sh /opt/remnant/scripts/update-systemd.sh --aide     # check AIDE, update, re-baseline
+#   sudo sh /opt/remnant/scripts/update-systemd.sh --aide-accept  # accept reviewed AIDE changes
 #   sudo sh /opt/remnant/scripts/update-systemd.sh --no-pull  # code already in place
 #   sh /opt/remnant/scripts/update-systemd.sh --print-aide-rules  # show the AIDE rules
 #
 # With AIDE installed, every run writes this install's AIDE rules to
 # /etc/aide/aide.conf.d/90_aide_remnant, replacing that file, and says so when it changes.
+# --aide first checks the files against the current baseline, before anything changes;
+# changes outside /opt/remnant (other than the rules file and the installed-commit record)
+# stop the update until reviewed and accepted.
+# It re-baselines only after a successful update (never when nothing was updated).
 #
 # Fetches origin's main first (a failed fetch stops here, before anything changes, and an
 # install whose last successful update was origin/main says so and exits; a checkout moved
@@ -38,15 +43,18 @@ case $STATE_OWNER in
   *[!0-9:]* | :* | *: | *:*:* | [!0-9]* ) echo "STATE_OWNER must be uid:gid" >&2; exit 2 ;;
 esac
 AIDE_CONF_D=${AIDE_CONF_D:-/etc/aide/aide.conf.d}
+AIDE_CONF=${AIDE_CONF:-/etc/aide/aide.conf}
 AIDE=0
+ACCEPT=0
 PULL=1
 PRINT_RULES=0
 for arg in "$@"; do
   case $arg in
     --aide) AIDE=1 ;;
+    --aide-accept) AIDE=1; ACCEPT=1 ;;
     --no-pull) PULL=0 ;;
     --print-aide-rules) PRINT_RULES=1 ;;
-    -h|--help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $arg (see --help)" >&2; exit 2 ;;
   esac
 done
@@ -101,6 +109,47 @@ fi
 umask 022
 step() { printf '\n== %s\n' "$1"; }
 git_() { git -C "$INSTALL_DIR" "$@"; }
+# Files against the current AIDE baseline, before this run changes anything (owner,
+# 2026-11-01: re-baselining without looking first accepts any tampering since the last
+# baseline). Sets AIDE_STATE: clean, ours (changes only in the install, the rules file this
+# script writes, or the installed-commit record), outside, or error. Nothing else under
+# /etc/aide is exempt: a new rules file could hide later tampering (owner, 2026-11-01).
+aide_check() {
+  step "Checking files against the AIDE baseline"
+  report=$(mktemp)
+  rc=0
+  aide --config "$AIDE_CONF" --check > "$report" 2>&1 || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    AIDE_STATE=clean
+    echo "AIDE: no changes since the last baseline."
+    rm -f "$report"
+    return 0
+  fi
+  if [ "$rc" -ge 8 ]; then  # 1 to 7: added, removed, changed; higher: AIDE could not check
+    AIDE_STATE=error
+    echo "AIDE could not check (exit $rc):" >&2
+    tail -n 5 "$report" >&2
+    rm -f "$report"
+    return 0
+  fi
+  count() { sed -n "s/^[[:space:]]*$1 entries:[[:space:]]*\([0-9][0-9]*\)[[:space:]]*\$/\1/p" "$report" | head -n 1; }
+  echo "AIDE: $(count Added) added, $(count Removed) removed, $(count Changed) changed since the last baseline."
+  paths=$(sed -n 's/^[^:]*: \(\/.*\)$/\1/p' "$report" | sort -u)
+  inst=$(re_escape "$INSTALL_DIR")
+  outside=$(printf '%s\n' "$paths" | grep -vE "^$inst(/|\$)" \
+    | grep -vxF -e "$STATE_FILE" -e "$AIDE_CONF_D/90_aide_remnant" | grep . || true)
+  rm -f "$report"
+  if [ -n "$outside" ]; then
+    AIDE_STATE=outside
+    echo "Changed outside $INSTALL_DIR:"
+    printf '%s\n' "$outside" | head -n 25 | sed 's/^/  /'
+    n=$(printf '%s\n' "$outside" | wc -l)
+    if [ "$n" -gt 25 ]; then echo "  ... and $((n - 25)) more (aide --check for all)"; fi
+  else
+    AIDE_STATE=ours
+  fi
+}
+
 aide_baseline() {
   step "Re-baselining AIDE"
   if command -v aideinit >/dev/null 2>&1; then
@@ -111,6 +160,30 @@ aide_baseline() {
     echo "AIDE is not installed; nothing to do."
   fi
 }
+
+AIDE_STATE=none
+BASELINE_OK=0
+if [ "$AIDE" -eq 1 ] && command -v aide >/dev/null 2>&1; then
+  aide_check
+  case $AIDE_STATE in
+    clean | ours) BASELINE_OK=1 ;;
+    outside)
+      if [ "$ACCEPT" -eq 0 ]; then
+        echo "AIDE found changes not made by this update. Review them, then re-run with --aide-accept. Nothing was changed." >&2
+        exit 1
+      fi
+      echo "Accepted with --aide-accept: the baseline will include these changes."
+      BASELINE_OK=1 ;;
+    error)
+      if [ "$ACCEPT" -eq 0 ]; then
+        echo "Fix AIDE first, or re-run with --aide-accept to re-baseline without a check. Nothing was changed." >&2
+        exit 1
+      fi
+      BASELINE_OK=1 ;;
+  esac
+elif [ "$AIDE" -eq 1 ]; then
+  BASELINE_OK=1  # aideinit without aide, or neither: aide_baseline says what it can do
+fi
 
 # Only with AIDE installed; one file at this exact path, overwritten, never a second one.
 if [ -d "$AIDE_CONF_D" ] && { command -v aide >/dev/null 2>&1 || command -v aideinit >/dev/null 2>&1; }; then
@@ -169,8 +242,13 @@ if [ "$PULL" -eq 1 ]; then
     if [ "$installed" = "$target_full" ]; then
       printf '\n%s is already up to date at %s (%s/%s, installed). Nothing to do.\n' \
         "$SERVICE" "$before" "$REMOTE" "$BRANCH"
-      # --aide still re-baselines: the rules file above may have changed.
-      if [ "$AIDE" -eq 1 ]; then aide_baseline; fi
+      # Nothing was updated, so nothing explains changes: no re-baseline unless the
+      # changes were reviewed and accepted (--aide-accept).
+      if [ "$ACCEPT" -eq 1 ]; then
+        aide_baseline
+      elif [ "$AIDE" -eq 1 ]; then
+        echo "Not re-baselining AIDE: nothing was updated."
+      fi
       exit 0
     fi
     # The checkout is current but the service is not running it (moved by hand, or a
@@ -245,7 +323,7 @@ chown "$STATE_OWNER" "$state_tmp"
 chmod 0644 "$state_tmp"
 mv -f "$state_tmp" "$STATE_FILE"
 
-if [ "$AIDE" -eq 1 ]; then aide_baseline; fi
+if [ "$AIDE" -eq 1 ] && [ "$BASELINE_OK" -eq 1 ]; then aide_baseline; fi
 
 printf '\nUpdated %s to %s. Re-baseline any file integrity monitor that watches %s.\n' \
   "$SERVICE" "$after" "$INSTALL_DIR"

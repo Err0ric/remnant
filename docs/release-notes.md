@@ -13,6 +13,13 @@
 - **Query traces**: set `server.trace_queries: true` (or `APP__SERVER__TRACE_QUERIES=true`) to log a `query.trace` line per page query with what it read and its slowest steps. Leave it off normally.
 - What changes for existing installs: nothing to do.
 
+### AIDE: check before re-baselining (2026-11-01)
+
+- `update-systemd.sh --aide` now runs `aide --check` first, before stopping the service, and prints how many files were added, removed, and changed, with the changed paths outside `/opt/remnant`.
+- Changes outside `/opt/remnant`, the script's own AIDE rules file, and the installed-commit record stop the update, including any other change under `/etc/aide`: "AIDE found changes not made by this update. Review them, then re-run with --aide-accept." So does a check AIDE cannot run (for example no baseline yet).
+- It re-baselines only after a successful update with a clean (or accepted) check. A run with nothing to update reports the check and does not re-baseline.
+- What changes for existing installs: `--aide` runs take longer (a full check before the update). The first time, if AIDE reports changes from before this version, review them and re-run with `--aide-accept`.
+
 ### Left rail: click to open (2026-11-01)
 
 - Group headers (System, Connected apps) and folded pages open and close in place when you click them, and stay as you left them. Hovering them no longer pops up a separate menu.
