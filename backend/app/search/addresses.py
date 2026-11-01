@@ -103,7 +103,7 @@ IDENT_RAW = f"""
 IDENT_KEPT = """
   UNION ALL
   SELECT kind, ip, t, who, host, mac, fin, src, dev FROM ai_ident
-  WHERE list_contains($covered, src || '|' || day)"""
+  WHERE (src || '|' || day) IN (SELECT unnest($covered))"""
 
 
 def obs_sql(kept: bool = False) -> str:

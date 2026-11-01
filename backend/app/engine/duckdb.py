@@ -9,6 +9,7 @@ configuration locked. The guard runs before any of this.
 import glob
 import json
 import os
+import re
 import shutil
 import threading
 import time
@@ -138,6 +139,56 @@ def spill_dir(data_dir: Path) -> Path:
 
 # Profiling that reports a query's peak memory and disk overflow (DuckDB 1.1 and later).
 _PEAKS = '{"SYSTEM_PEAK_BUFFER_MEMORY": "true", "SYSTEM_PEAK_TEMP_DIR_SIZE": "true"}'
+# With query tracing on: also per-operator time, rows, and details (files read, filters).
+_TRACE = (
+    '{"SYSTEM_PEAK_BUFFER_MEMORY": "true", "SYSTEM_PEAK_TEMP_DIR_SIZE": "true",'
+    ' "OPERATOR_TIMING": "true", "OPERATOR_CARDINALITY": "true", "OPERATOR_ROWS_SCANNED": "true",'
+    ' "EXTRA_INFO": "true"}'
+)
+_TRACE_INFO = ("Function", "Table", "Filters", "Total Files Read", "Aggregates", "Join Type")
+
+
+_SEP = "\x1f"  # unit separator: never in an address, key, or id the pages pass
+FAST_LIST_MIN = 64
+
+
+def _fast_lists(sql: str, params: Mapping[str, Any] | None) -> tuple[str, Mapping[str, Any] | None]:
+    """Long lists of strings bound as one joined string and split in SQL. DuckDB's Python
+    binding converts a list parameter element by element: 10,000 addresses took 0.6 s to
+    bind and 4 ms to split (owner timings, 2026-11-01). Same values, same SQL meaning."""
+    if not params:
+        return sql, params
+    out = dict(params)
+    for name, value in params.items():
+        if (
+            isinstance(value, list | tuple)
+            and len(value) >= FAST_LIST_MIN
+            and all(isinstance(v, str) and _SEP not in v for v in value)
+        ):
+            out[name] = _SEP.join(value)
+            sql = re.sub(rf"\${name}\b", f"string_split(${name}, chr(31))", sql)
+    return sql, out
+
+
+def _operators(node: dict[str, Any], out: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Every operator in a DuckDB profile, flattened."""
+    for child in node.get("children") or []:
+        extra = child.get("extra_info") or {}
+        out.append({
+            "op": child.get("operator_name") or child.get("operator_type"),
+            "ms": round(float(child.get("operator_timing") or 0) * 1000, 1),
+            "rows": child.get("operator_cardinality"),
+            "scanned": child.get("operator_rows_scanned") or None,
+            **{
+                k.lower().replace(" ", "_"): str(v)[:200]
+                for k, v in extra.items()
+                if k in _TRACE_INFO
+            },
+        })  # fmt: skip
+        _operators(child, out)
+    return out
+
+
 MB = 1 << 20
 
 
@@ -209,11 +260,14 @@ class QueryEngine:
         # burst of page loads cannot multiply threads past a container's pids limit (D79).
         # Others wait for a slot, up to the query timeout. 0: no limit.
         self._slots = threading.BoundedSemaphore(max_concurrent) if max_concurrent else None
+        self._at_once = max_concurrent
         self._bg = threading.BoundedSemaphore(1)  # rollup builds, apart from page queries
         self._default_limit = default_limit
         self._max_limit = max_limit
         self._timeout_s = timeout_s
         self._lookups: Lookups | None = None
+        # Log every page query's plan, sources, files, and timings (`server.trace_queries`).
+        self.trace = False
 
     def set_lookups(self, lookups: Lookups) -> None:
         """The local lookups behind ip_country, ip_asn, ip_org, and is_internal (ADR-0039)."""
@@ -253,6 +307,7 @@ class QueryEngine:
         tables = INTEL_TABLES if intel else ALLOWED_TABLES
         if rollup:
             tables = tables | ROLLUP_TABLES
+        sql, params = _fast_lists(sql, params)
         guarded = guard(sql, tables, default + 1, cap + 1)
         pinned = pinned_sources(guarded.sql, params)
         if pinned is not None:  # read only the sources the query can use; never widen
@@ -268,7 +323,7 @@ class QueryEngine:
             try:
                 return self._execute(
                     guarded, scope, params, intel, limit_s, cap, rollup, frozenset(skip_days),
-                    name, after, upto, background, grant,
+                    name, after, upto, background, grant, waited,
                 )  # fmt: skip
             finally:
                 if grant is not None and self._ledger is not None and not background:
@@ -276,6 +331,14 @@ class QueryEngine:
                 t = timing.current()
                 if t is not None and not background:
                     t.query(waited, time.monotonic() - started - waited)
+
+    def _busy(self) -> dict[str, int | None]:
+        """Queries running and memory reserved now, for traces (a wait with nothing
+        else running means something else holds a slot)."""
+        slots = self._slots
+        running = None if slots is None else self._at_once - slots._value
+        held = None if self._ledger is None else self._ledger.used
+        return {"queries": running, "memory_mb": held}
 
     def _grant(self, background: bool, large: bool, wait_s: float) -> Grant | None:
         if self._ledger is None:
@@ -306,6 +369,7 @@ class QueryEngine:
         upto: datetime | None = None,
         background: bool = False,
         grant: Grant | None = None,
+        waited: float = 0.0,
     ) -> QueryResult:
         limit_mb = grant.mb if grant is not None else self._memory_mb
         spill_mb = self._spill_for(limit_mb) if limit_mb else None
@@ -349,6 +413,8 @@ class QueryEngine:
             timer.cancel()
             if not background:
                 self._report(con, name, kind, limit_mb, spill_mb, grant)
+                if self.trace:
+                    self._trace(con, name, kind, scope, skip, after, started, waited, grant)
             con.close()
 
         truncated = False
@@ -390,6 +456,36 @@ class QueryEngine:
                 limit_mb=limit_mb, peak_mb=peak, disk_mb=disk, spill_limit_mb=spill_mb,
                 fell_back=fell_back,
             )  # fmt: skip
+
+    def _trace(
+        self, con: duckdb.DuckDBPyConnection, name: str, kind: str, scope: QueryScope,
+        skip: frozenset[str], after: tuple[Collection[str], datetime] | None, started: float,
+        waited: float = 0.0, grant: Grant | None = None,
+    ) -> None:  # fmt: skip
+        """One `query.trace` line per query (owner, 2026-11-01: timings on a real install
+        need to say what a query read): sources, files, days read from a rollup instead,
+        today-so-far cutoff, time in DuckDB, and the slowest operators with their files
+        and filters. Plans and counts only, never rows or values."""
+        try:
+            info = json.loads(con.get_profiling_information(format="json"))
+        except (duckdb.Error, ValueError, TypeError):
+            info = {}
+        dirs = self._source_dirs(scope)
+        ops = sorted(_operators(info, []), key=lambda o: -float(o["ms"]))
+        t = timing.current()
+        log.info(
+            "query.trace", query=name, kind=kind, path=t.path if t else None,
+            ms=round((time.perf_counter() - started) * 1000, 1),
+            # Waiting for a slot and memory, and what this server held when it started.
+            wait_ms=round(waited * 1000, 1), limit_mb=grant.mb if grant else None,
+            busy=self._busy(),
+            sources=[d.name.removeprefix("source=") for d in dirs][:30],
+            files=len(self._lake_globs(dirs, scope, skip)), rollup_days=len(skip),
+            today_after=after[1].isoformat() if after else None,
+            start=scope.start.isoformat() if scope.start else None,
+            peak_mb=int(info.get("system_peak_buffer_memory") or 0) // MB,
+            slowest=ops[:6],
+        )  # fmt: skip
 
     @contextmanager
     def _slot(self, wait_s: float) -> Iterator[None]:
@@ -689,7 +785,7 @@ class QueryEngine:
             con.execute(f"SET max_temp_directory_size = '{int(spill_mb)}MB'")
         if not background:
             con.execute("SET enable_profiling = 'no_output'")
-            con.execute(f"SET custom_profiling_settings = '{_PEAKS}'")
+            con.execute(f"SET custom_profiling_settings = '{_TRACE if self.trace else _PEAKS}'")
         files = self._lake_globs(dirs, scope, skip)
         if files:
             globs = ", ".join(_sql_str(f) for f in files)

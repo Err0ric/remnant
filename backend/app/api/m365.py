@@ -2,9 +2,11 @@
 window (ADR-0038 section 5). Router only; `app.search.m365` reads the caller's own view.
 Audited as `m365.overview` with the sources read."""
 
-from typing import Annotated, Any
+from typing import Annotated
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Query, Request, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from app.api.access import CurrentUser, client_ip
@@ -24,26 +26,29 @@ async def m365_overview(
     user: CurrentUser,
     window: Window = "7d",
     tz: Annotated[str, Query(max_length=64)] = "UTC",
-) -> dict[str, Any]:
+) -> Response:
     """KPIs, the counts row, the outcome per hour or day, the tops, and each tab's list as
     a Search query template (`{from}` and `{to}`). `has_source` is false when the caller
     reads no Microsoft 365 source."""
     meta = request.app.state.meta
     allowed = await run_in_threadpool(permitted_sources, meta, user)
-    places = await run_in_threadpool(networks.load, meta)
-    srcs = [
-        (s.source_id, s.kind or "file", s.template_id) for s in request.app.state.sources.list()
-    ]
     cache: PageCache = request.app.state.page_cache
-    key = ("m365", scope_key(allowed), window, tz, places, tuple(srcs))
+    # A hit reads nothing else and sends the stored bytes; changes empty the cache, so
+    # settings and sources need not be in the key (owner, 2026-11-01).
+    key = ("m365", scope_key(allowed), window, tz)
     hit = cache.get(key)
     if hit is not None:
-        data, read = hit
+        body, read = hit
         await run_in_threadpool(
             request.app.state.auth.audit.write, "m365.overview", "success", user.user_id,
             client_ip(request), {"window": window, "cached": True, "sources_in_scope": read},
         )  # fmt: skip
-        return dict(data)
+        return Response(body, media_type="application/json")
+    places = await run_in_threadpool(networks.load, meta)
+    srcs = [
+        (s.source_id, s.kind or "file", s.template_id)
+        for s in await run_in_threadpool(request.app.state.sources.list)
+    ]
     now = request.app.state.ai_watch.now()
     out = await run_in_threadpool(
         overview,
@@ -65,6 +70,6 @@ async def m365_overview(
         client_ip(request),
         {"window": window, "sources_in_scope": out.read},
     )
-    data = to_dict(out)
-    cache.put(key, (data, out.read))
-    return data
+    body = JSONResponse(jsonable_encoder(to_dict(out))).body
+    cache.put(key, (body, out.read))
+    return Response(body, media_type="application/json")

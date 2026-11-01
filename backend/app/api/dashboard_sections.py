@@ -5,7 +5,7 @@ caller's own view. Audited as `dashboard.sections` with the sources read."""
 from datetime import datetime
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Query, Request, Response
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
@@ -109,14 +109,14 @@ class SectionsOut(BaseModel):
 Part = Literal["identity", "attacks", "detections"]
 
 
-@router.get("/dashboard/sections")
+@router.get("/dashboard/sections", response_model=SectionsOut)
 async def dashboard_sections(
     request: Request,
     user: CurrentUser,
     window: Window = "7d",
     part: Part | None = None,
     tz: Annotated[str, Query(max_length=64)] = "UTC",
-) -> SectionsOut:
+) -> Response:
     """The Dashboard's default sections for the caller, against the window before. A
     section is null when the caller has no source for it, or when `part` asks for another
     one (the page loads each section on its own, so a slow one holds up only itself).
@@ -124,22 +124,25 @@ async def dashboard_sections(
     Numbers are kept for 60 s per caller's sources, window, and part (`app.api.cache`)."""
     meta = request.app.state.meta
     allowed = await run_in_threadpool(permitted_sources, meta, user)
-    places = await run_in_threadpool(networks.load, meta)
-    srcs = [
-        (s.source_id, s.kind or "file", s.template_id) for s in request.app.state.sources.list()
-    ]
     cache: PageCache = request.app.state.page_cache
-    # A settings or source change is a new key: only the clock makes an answer old.
-    key = ("sections", scope_key(allowed), window, part, tz, places, tuple(srcs))
+    # A hit reads nothing else and sends the stored bytes (owner, 2026-11-01: hits took
+    # 140 to 180 ms reading settings and re-serializing). Settings and source changes
+    # empty the cache (`clear_on_change`), so they need not be in the key.
+    key = ("sections", scope_key(allowed), window, part, tz)
     hit = cache.get(key)
     if hit is not None:
-        data, read = hit
+        body, read = hit
         await run_in_threadpool(
             request.app.state.auth.audit.write, "dashboard.sections", "success", user.user_id,
             client_ip(request),
             {"window": window, "part": part, "cached": True, "sources_in_scope": read},
         )  # fmt: skip
-        return SectionsOut(**data)
+        return Response(body, media_type="application/json")
+    places = await run_in_threadpool(networks.load, meta)
+    srcs = [
+        (s.source_id, s.kind or "file", s.template_id)
+        for s in await run_in_threadpool(request.app.state.sources.list)
+    ]
     geoip: GeoIP = request.app.state.geoip
 
     def geo(ips: list[str]) -> dict[str, GeoInfo]:
@@ -173,5 +176,7 @@ async def dashboard_sections(
     )
     data = to_json(out)
     data["geoip_date"] = request.app.state.feeds.state("geoip_country").installed_at
-    cache.put(key, (data, data.pop("read", None)))
-    return SectionsOut(**data)
+    read = data.pop("read", None)
+    body = SectionsOut(**data).model_dump_json().encode()
+    cache.put(key, (body, read))
+    return Response(body, media_type="application/json")

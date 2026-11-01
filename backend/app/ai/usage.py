@@ -197,10 +197,12 @@ def _use_ctes(pairs: list[tuple[str, str]], rollup: bool) -> str:
         """
   UNION ALL
   SELECT service_id, source_id, who0, shost, ip, dev, t, n, first_t, last_t FROM ai_rollup
-  WHERE list_contains($covered, source_id || '|' || strftime(t, '%Y-%m-%d'))
+  WHERE (source_id || '|' || strftime(t, '%Y-%m-%d')) IN (SELECT unnest($covered))
+    AND t >= $fact_lo AND t <= $fact_hi
   UNION ALL
   SELECT service_id, source_id, who0, shost, ip, dev, t, n, first_t, last_t FROM ai_today
-  WHERE list_contains($covered, source_id || '|' || label)"""
+  WHERE (source_id || '|' || label) IN (SELECT unnest($covered))
+    AND t >= $fact_lo AND t <= $fact_hi"""
         if rollup
         else ""
     )
@@ -369,6 +371,14 @@ GROUP BY 1 ORDER BY 2 DESC, 3 DESC
 LIMIT 1000"""
 
 
+def fact_range(scope: QueryScope, upto: datetime) -> dict[str, datetime]:
+    """The hours of rollup facts a range reads (they are per hour): a day only partly in
+    range keeps its hours in range, so the first day of a week is not counted whole, and
+    today's build before the start is left out (2026-11-01)."""
+    lo = scope.start or datetime(1970, 1, 1, tzinfo=UTC)
+    return {"fact_lo": lo.replace(minute=0, second=0, microsecond=0), "fact_hi": upto}
+
+
 class Usage:
     def __init__(self, engine: QueryEngine, catalog: Catalog, rollup: Any = None) -> None:
         self._engine = engine
@@ -376,6 +386,28 @@ class Usage:
         # The daily AI rollup (ADR-0035 row 8): ranges of 2 days or more read closed days
         # from it. `Any` to avoid an import cycle (app.ai.rollup imports this module).
         self._rollup = rollup
+        # The page cache (`app.api.cache.PageCache`): AI usage and the inventory ask the
+        # same questions, so they share answers for 60 s (owner, 2026-11-01: /ai then
+        # /ai/inventory ran it twice). Emptied by any change in the app, like the pages.
+        self.cache: Any = None
+
+    def _memo(self, key: tuple[Any, ...], compute: Any) -> Any:
+        if self.cache is None:
+            return compute()
+        hit = self.cache.get(key)
+        if hit is not None:
+            return hit
+        value = compute()
+        self.cache.put(key, value)
+        return value
+
+    @staticmethod
+    def _scope_key(scope: QueryScope) -> tuple[Any, ...]:
+        return (
+            None if scope.sources is None else tuple(sorted(scope.sources)),
+            scope.start,
+            scope.end,
+        )
 
     def _rows(self, sql: str, scope: QueryScope) -> list[list[Any]]:
         return self._engine.run(sql, scope, timeout_s=TIMEOUT_S).rows
@@ -387,6 +419,17 @@ class Usage:
 
     def all_services(self, scope: QueryScope) -> tuple[list[ServiceUse], list[str]]:
         """Every catalog match, non-usage hosts included, plus the sources read."""
+        key = ("usage.all_services", self._catalog_key(), *self._scope_key(scope))
+        return self._memo(key, lambda: self._all_services(scope))  # type: ignore[no-any-return]  # what _all_services returns
+
+    def _catalog_key(self) -> Any:
+        """The catalog and the rollup's state: a rebuilt day or today's build is a new key."""
+        rollup = self._rollup
+        if rollup is None:
+            return None
+        return (rollup.catalog_key(), getattr(rollup, "generation", 0))
+
+    def _all_services(self, scope: QueryScope) -> tuple[list[ServiceUse], list[str]]:
         known = {s.id: s for s in self._catalog.services()}
         result = self._run_use(services_sql, scope, "ai_use.services")
         out = []
@@ -432,7 +475,7 @@ class Usage:
             return self._engine.run(
                 build(self._catalog.domain_table(), rollup=True),
                 scope,
-                {"covered": keys, **(params or {})},
+                {"covered": keys, **fact_range(scope, upto), **(params or {})},
                 timeout_s=TIMEOUT_S,
                 rollup=True,
                 skip_days=covered,
@@ -512,6 +555,14 @@ class Usage:
     def mcp(self, scope: QueryScope, ident: IdentityMap | None = None) -> list[McpUse]:
         """MCP servers in use. People are counted once across names (`alice` from the
         inventory and `alice@example.com` from telemetry are one person, QA F4)."""
+        who = None if ident is None else (
+            tuple(ident.domains), tuple(sorted(ident.aliases.items())),
+            tuple(sorted(ident.email_people)),
+        )  # fmt: skip
+        key = ("usage.mcp", self._catalog_key(), who, *self._scope_key(scope))
+        return self._memo(key, lambda: self._mcp(scope, ident))  # type: ignore[no-any-return]  # what _mcp returns
+
+    def _mcp(self, scope: QueryScope, ident: IdentityMap | None = None) -> list[McpUse]:
         rules = self._catalog.mcp_rules()
         out = []
         for row in self._rows(MCP_SQL, scope):

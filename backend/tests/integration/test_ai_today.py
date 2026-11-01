@@ -40,13 +40,22 @@ def test_today_so_far_matches_events(tmp_path: Path) -> None:
     usage = app.state.ai_usage
     rollup = app.state.ai_rollup
     rollup._clock = lambda: now
-    scope = QueryScope(None, now - timedelta(hours=20), now)
+    # On the hour, as page windows start: hourly facts split exactly there.
+    scope = QueryScope(
+        None, (now - timedelta(hours=20)).replace(minute=0, second=0, microsecond=0), now
+    )
     live = _services(usage, scope)
+    odd = QueryScope(None, scope.start + timedelta(minutes=17), now)
+    live_odd = _services(usage, odd)
     assert live and any(people for _, people in live.values()), "people through DHCP"
     assert rollup.refresh_today() > 0
     assert rollup.today(scope) is not None
     rolled = _services(usage, scope)
     assert rolled == live
+    # A start inside an hour of today reads today from events, and still agrees.
+    if odd.start is not None and odd.start.date() == now.date():
+        assert rollup.today(odd) is None
+    assert _services(usage, odd) == live_odd
     # The person timeline finds the same first AI use through the build.
     person = next(p for _, people in live.values() for p in people)
     t = lab["admin"].get(f"/api/people/{person}/timeline", params={"days": 1}).json()

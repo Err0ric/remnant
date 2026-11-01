@@ -10,7 +10,7 @@ GeoIP (ADR-0023); "external" and "outside approved countries" use the install's 
 
 from __future__ import annotations
 
-import ipaddress
+import functools
 import re
 import threading
 from collections import Counter, defaultdict
@@ -25,7 +25,7 @@ from app.core.errors import RuleRejectedError
 from app.detect.rules import compile_rule
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.enrich.geoip import GeoInfo, is_public
-from app.enrich.networks import Network, Places, is_internal
+from app.enrich.networks import Network, Places, is_internal, parse_address
 from app.meta.db import MetaDB
 from app.search import drill
 
@@ -286,12 +286,12 @@ NO_GEOIP = "No GeoIP file"
 UNPLACED = (NOT_ADDRESS, NOT_PUBLIC, NOT_IN_GEOIP, NO_GEOIP)
 
 
+@functools.lru_cache(maxsize=262_144)
 def unplaced(value: str, have_geoip: bool) -> str:
     """Why an address has no country: the value is not an address, the address is not
     public (no country exists), or the GeoIP file does not list it."""
-    try:
-        addr = ipaddress.ip_address(value.strip())
-    except ValueError:
+    addr = parse_address(value)
+    if addr is None:
         return NOT_ADDRESS
     if not is_public(addr):
         return NOT_PUBLIC
@@ -567,10 +567,14 @@ def _attacks_on(
         countries = Kpi(len(c_now), len(c_before)) if have_geo else None
     hosts: dict[str, list[int]] = defaultdict(lambda: [0] * len(buckets))
     at = {b: i for i, b in enumerate(buckets)}
-    for host, b, n in fact("fail_by_host", auth, ips=now_ips):
+    counted: set[str] = set()
+    for part, k, b, n in fact("fail_detail", auth, ips=now_ips):
+        if part == "source":
+            counted.add(str(k))
+            continue
         t = _utc(b)
         if t is not None and t in at:
-            hosts[str(host)][at[t]] += int(n)
+            hosts[str(k)][at[t]] += int(n)
     ranked = sorted(hosts.items(), key=lambda kv: (-sum(kv[1]), kv[0]))[:SMALL_MULTIPLES]
     groups: dict[tuple[str, str], list[int]] = defaultdict(lambda: [0, 0])
     keys: dict[tuple[str, str], tuple[str | None, int | None]] = {}
@@ -586,7 +590,6 @@ def _attacks_on(
         g[0] += 1
         g[1] += int(now)
     top = sorted(groups.items(), key=lambda kv: (-kv[1][1], kv[0]))[:TOP]
-    counted = {str(r[0]) for r in fact("fail_sources", auth, ips=now_ips)}
     vpn_outside = None
     if vpn and places.approved_countries:
         logins = fact("vpn_by_ip", vpn)

@@ -266,7 +266,7 @@ def facts(kind: str, rollup: bool) -> str:
         return live
     return (
         f"({live})\nUNION ALL\nSELECT {FACT_COLUMNS} FROM m365_rollup\n"
-        f"WHERE kind = '{kind}' AND list_contains($covered, source_id || '|' || day)"
+        f"WHERE kind = '{kind}' AND (source_id || '|' || day) IN (SELECT unnest($covered))"
         " AND t >= $fact_lo AND t <= $fact_hi"
     )
 

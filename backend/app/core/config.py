@@ -70,6 +70,9 @@ class ServerConfig(_Strict):
     # Disk all queries together may write when they pass their memory, in MB, under
     # data/tmp/duckdb (emptied at start). 0: no limit beyond DuckDB's own (D58, D80).
     query_spill_limit_mb: int = Field(default=10_240, ge=0, le=10_485_760)
+    # Log each page query's sources, files, rollup days, timings, and slowest operators
+    # as `query.trace` (plans and counts, never values). For timing a real install.
+    trace_queries: bool = False
     # Reverse proxies whose X-Forwarded-For is believed (ADR-0027): IPs and CIDRs. Empty:
     # the header is ignored. For an HA pair, list the node addresses, not only the VIP.
     trusted_proxies: list[str] = Field(default_factory=list, max_length=64)

@@ -482,6 +482,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         max_concurrent=qt.at_once,
         temp_dir=spill,
     )
+    app.state.engine.trace = config.server.trace_queries
     app.state.gate = LLMGate(
         meta,
         app.state.providers,
@@ -616,6 +617,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         "auth_rollup", config.paths.data_dir / "rollup" / "auth", AUTH_ROLLUP_COLUMNS
     )
     app.state.ai_usage = Usage(app.state.engine, app.state.ai_catalog, app.state.ai_rollup)
+    app.state.ai_usage.cache = app.state.page_cache  # shared by AI usage and inventory
     app.state.ai_watch = AiWatch(
         meta,
         app.state.engine,

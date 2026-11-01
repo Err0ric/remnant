@@ -13,6 +13,7 @@ Countries come from local GeoIP at query time (ADR-0023); nothing here leaves th
 
 from __future__ import annotations
 
+import functools
 import ipaddress
 import json
 from collections.abc import Iterable
@@ -64,12 +65,21 @@ class Places:
         return [parse_network(n) for n in self.internal_networks]
 
 
+@functools.lru_cache(maxsize=262_144)
+def parse_address(address: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """The address, or None for text that is not one. Cached: pages ask about the same
+    addresses on every load, and parsing was most of their Python time (owner, 2026-11-01)."""
+    try:
+        return ipaddress.ip_address(address.strip())
+    except ValueError:
+        return None
+
+
 def is_internal(address: str, nets: Iterable[Network]) -> bool:
     """True when the address is in one of the networks; text that is not an address is
     never internal (the caller decides what to do with it)."""
-    try:
-        ip = ipaddress.ip_address(address.strip())
-    except ValueError:
+    ip = parse_address(address)
+    if ip is None:
         return False
     return any(ip.version == n.version and ip in n for n in nets)
 

@@ -84,7 +84,7 @@ def server_timing() -> Callable[
     ) -> Response:
         if not request.url.path.startswith("/api/"):
             return await call_next(request)
-        t = timing.start()
+        t = timing.start(request.url.path)
         response = await call_next(request)
         header = t.header()
         if header is not None:

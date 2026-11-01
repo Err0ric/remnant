@@ -14,7 +14,9 @@ from app.search.buckets import bucket_sql
 TS = "coalesce(time, time_observed)"
 HOST = "coalesce(nullif(device_hostname, ''), nullif(dst_endpoint_hostname, ''))"
 VPN_TEMPLATES = ("paloalto_globalprotect", "openvpn_server")
-MAX_IPS = 5000
+# Addresses read per window: every one on a busy install (it was 5,000, which undercounted
+# addresses and failures on the owner's data); past this many the counts are of the top.
+MAX_IPS = 100_000
 COLUMNS = "kind, source_id, t, ip, host, n"
 
 FACTS: dict[str, str] = {
@@ -43,7 +45,7 @@ def facts(kind: str, rollup: bool) -> str:
         return live
     return (
         f"({live})\nUNION ALL\nSELECT {COLUMNS} FROM auth_rollup\n"
-        f"WHERE kind = '{kind}' AND list_contains($covered, source_id || '|' || day)"
+        f"WHERE kind = '{kind}' AND (source_id || '|' || day) IN (SELECT unnest($covered))"
         " AND t >= $fact_lo AND t <= $fact_hi"
     )
 
@@ -52,22 +54,23 @@ _BY_IP = f"""
 SELECT ip, coalesce(sum(n) FILTER (WHERE t >= $start), 0) AS now,
        coalesce(sum(n) FILTER (WHERE t < $start), 0) AS before
 FROM f GROUP BY 1 ORDER BY now + before DESC LIMIT {MAX_IPS}"""  # noqa: S608  # fixed SQL text
-_BY_HOST = """
-SELECT host, {BUCKET} AS b, sum(n) FROM f
-WHERE t >= $start AND list_contains($ips, ip)
-GROUP BY 1, 2""".replace("{BUCKET}", bucket_sql())
-_SOURCES = """
-SELECT DISTINCT source_id FROM f WHERE t >= $start AND list_contains($ips, ip)"""
+# The outside addresses' failures per host and bucket, and the sources they came from, in
+# one pass over the facts (they were two, each reading the window again).
+_DETAIL = """
+, g AS MATERIALIZED (SELECT * FROM f WHERE t >= $start AND ip IN (SELECT unnest($ips)))
+SELECT 'host' AS part, host AS k, {BUCKET} AS b, sum(n) AS n FROM g GROUP BY 1, 2, 3
+UNION ALL
+SELECT 'source', source_id, NULL, NULL FROM g GROUP BY 1, 2""".replace("{BUCKET}", bucket_sql())
 
 # Query -> (fact kind, body reading `f`).
 QUERIES: dict[str, tuple[str, str]] = {
     "fail_by_ip": ("fail", _BY_IP),
-    "fail_by_host": ("fail", _BY_HOST),
-    "fail_sources": ("fail", _SOURCES),
+    "fail_detail": ("fail", _DETAIL),
     "vpn_by_ip": ("vpn", _BY_IP),
 }
 
 
 def query(name: str, rollup: bool) -> str:
     kind, body = QUERIES[name]
-    return f"WITH f AS (\n{facts(kind, rollup)}\n)\n{body.strip()}"
+    head = f"WITH f AS (\n{facts(kind, rollup)}\n)"
+    return head + body if body.startswith("\n,") else f"{head}\n{body.strip()}"

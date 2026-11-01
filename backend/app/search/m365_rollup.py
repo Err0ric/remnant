@@ -88,6 +88,19 @@ def _day_scope(source: str, day: str) -> QueryScope:
     return QueryScope([source], start, start + timedelta(days=1) - timedelta(microseconds=1))
 
 
+def on_the_hour(t: datetime | None) -> bool:
+    """Facts are per hour, so a range read from them must start on an hour. A start inside
+    an hour (a half-hour zone's midnight, a range that is not a page window) reads that
+    day from events instead: the hour would otherwise count events from before the start
+    (a 20-hour AI usage range counted one more use than events did; 2026-11-01)."""
+    return t is None or t == t.replace(minute=0, second=0, microsecond=0)
+
+
+def _start_day(t: datetime | None) -> str | None:
+    """The UTC day a range's start falls in when it is not on the hour, else None."""
+    return None if on_the_hour(t) or t is None else t.astimezone(UTC).date().isoformat()
+
+
 class FactRollup:
     """Per source and closed UTC day, the rows `build_sql` reduces events to, as Parquet,
     readable as `table` by server-built queries. Shared by the Microsoft 365 facts and the
@@ -290,6 +303,8 @@ class FactRollup:
             return None
         if mark.get("day") != now.date().isoformat() or mark.get("version") != self.version:
             return None
+        if _start_day(scope.start) == now.date().isoformat():
+            return None
         if scope.end is not None and scope.end < datetime.fromisoformat(mark["cutoff"]):
             return None
         wanted = {d.name.removeprefix("source=") for d in self._engine.rollup_dirs(
@@ -309,6 +324,7 @@ class FactRollup:
         events. Ranges start on the hour (page windows), so hours split exactly."""
         if scope.start is None or scope.end is None:
             return []
+        partial = _start_day(scope.start)
         out = []
         for d in self._engine.rollup_dirs(scope, table=self.TABLE):
             source = d.name.removeprefix("source=")
@@ -324,6 +340,7 @@ class FactRollup:
                     begins + timedelta(days=1) > scope.start
                     and begins <= scope.end
                     and begins.date() < self._clock().astimezone(UTC).date()
+                    and day != partial
                     and self._fresh(source, day)
                 ):
                     out.append(f"{source}|{day}")

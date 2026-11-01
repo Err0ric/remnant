@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Faster pages on real data (2026-11-01)
+
+- **Attacks and access**: about 15 times faster on a busy 30-day window (13.8 s to 0.9 s on a synthetic lake shaped like a small ISP). It now counts every outside address; it used to stop at 5,000.
+- **Long lists** of addresses or days are passed to the database in one piece; binding them one by one took most of the time.
+- **AI usage and the AI inventory** share their answers for a minute, so opening one after the other reads once.
+- **Cached pages** (Dashboard sections, Microsoft 365) answer without reading settings again.
+- **Correct counts**: a range starting partway through a day no longer counts that whole day from the AI rollup.
+- **Server-Timing** `db` and `wait` are now wall time; `db_sum` and `wait_sum` keep the totals across queries running in parallel.
+- **Query traces**: set `server.trace_queries: true` (or `APP__SERVER__TRACE_QUERIES=true`) to log a `query.trace` line per page query with what it read and its slowest steps. Leave it off normally.
+- What changes for existing installs: nothing to do.
+
 ### Left rail: click to open (2026-11-01)
 
 - Group headers (System, Connected apps) and folded pages open and close in place when you click them, and stay as you left them. Hovering them no longer pops up a separate menu.

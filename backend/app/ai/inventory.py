@@ -134,7 +134,8 @@ def inventory(
 ) -> tuple[list[Item], list[str]]:
     """Every item seen in the last `days`, newest last seen first, and the sources read."""
     now = now.astimezone(UTC)
-    scope = QueryScope(allowed, now - timedelta(days=days), now)
+    # Open-ended and to the minute, as AI usage asks: the two pages share the answer.
+    scope = QueryScope(allowed, (now - timedelta(days=days)).replace(second=0, microsecond=0), None)
     found, sources = usage.all_services(scope)
     out: list[Item] = [
         Item("service", u.service.id, u.service.name, u.service.status, u.people, u.machines,

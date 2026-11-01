@@ -36,6 +36,7 @@ from app.ai.catalog import Catalog
 from app.ai.usage import MCP_SQL, first_services_sql, rollup_build_sql
 from app.engine.duckdb import IDENT_FILE, TODAY_DIR, QueryEngine, QueryScope
 from app.search.addresses import IDENT_RAW
+from app.search.m365_rollup import _start_day
 
 log = structlog.get_logger(__name__)
 
@@ -140,6 +141,9 @@ class AiRollup:
         self._max = max_days_per_run
         self._first_cache: dict[Path, tuple[int, dict[str, datetime]]] = {}
         self._recheck_total = 0  # days the running re-check started with
+        # Bumped whenever the rollup's files change, so answers kept from it (AI usage
+        # and the inventory share them for 60 s) are never older than the files.
+        self.generation = 0
 
     # --- freshness ----------------------------------------------------------------------
 
@@ -190,6 +194,7 @@ class AiRollup:
                     shutil.rmtree(built, ignore_errors=True)
                     report.removed += 1
         if not self._lake.is_dir():
+            self.generation += 1
             return report
         key = self.catalog_key()
         closed = self._closed_days()
@@ -217,6 +222,7 @@ class AiRollup:
                 pending=report.pending,
                 skipped=report.skipped,
             )
+        self.generation += 1
         return report
 
     def _build(self, source: str, day: str, key: str) -> bool:
@@ -355,6 +361,7 @@ class AiRollup:
         if done == len(todo):
             log.info("rollup.recheck.finished", days=self._recheck_total)
             self._recheck_total = 0
+        self.generation += 1
         return done
 
     def pending(self, covered: list[str]) -> int:
@@ -501,6 +508,7 @@ class AiRollup:
                 f.unlink(missing_ok=True)
         if done:
             log.info("ai_rollup.today", sources=len(done), cutoff=cutoff.isoformat())
+        self.generation += 1
         return len(done)
 
     @property
@@ -525,6 +533,8 @@ class AiRollup:
         if mark.get("day") != now.date().isoformat() or mark.get("catalog") != self.catalog_key():
             return None
         cutoff = datetime.fromisoformat(str(mark["cutoff"]))
+        if _start_day(scope.start) == now.date().isoformat():
+            return None  # a start inside an hour of today: today from events
         if scope.end is not None and scope.end < cutoff:
             return None
         if scope.start is not None and scope.start >= cutoff:
@@ -557,12 +567,13 @@ class AiRollup:
             return []
         first = scope.start.astimezone(UTC).date().isoformat()
         last = scope.end.astimezone(UTC).date().isoformat()
+        partial = _start_day(scope.start)
         key = self.catalog_key()
         out = []
         for d in self._engine.rollup_dirs(scope):
             source = d.name.removeprefix("source=")
             for built in d.glob("day=*"):
                 day = built.name.removeprefix("day=")
-                if first <= day <= last and self._fresh(source, day, key):
+                if first <= day <= last and day != partial and self._fresh(source, day, key):
                     out.append(f"{source}|{day}")
         return sorted(out)

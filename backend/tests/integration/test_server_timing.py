@@ -8,7 +8,7 @@ from tests.integration.test_schedules import make_lab
 
 TIMING = re.compile(
     r'(cache;desc="(hit|miss)", )?wait;dur=[\d.]+, db;dur=[\d.]+;desc="(\d+) queries",'
-    r" app;dur=[\d.]+, total;dur=[\d.]+"
+    r" app;dur=[\d.]+, total;dur=[\d.]+, db_sum;dur=[\d.]+, wait_sum;dur=[\d.]+"
 )
 
 
@@ -67,3 +67,42 @@ def test_a_failed_build_is_unhealthy(tmp_path: Path) -> None:
     rows = {r["name"]: r for r in lab["admin"].get("/api/health-checks").json()["rollups"]}
     assert rows["m365_rollup"]["state"] == "unhealthy"
     assert rows["auth_rollup"]["state"] == "healthy"
+
+
+def test_parallel_queries_report_wall_time_not_their_sum() -> None:
+    """Owner, 2026-11-01: M365 showed db 2.78 s inside a 1.06 s total. db is now the time
+    any query ran; db_sum keeps the sum."""
+    import time
+
+    from app.core.timing import Timing
+
+    t = Timing()
+    now = time.perf_counter()
+    t.started = now - 1.0
+    t.runs = [(now - 0.9, now - 0.1), (now - 0.8, now - 0.2), (now - 0.85, now - 0.15)]
+    t.waits = [(now - 0.95, now - 0.9)]
+    t.db_ms, t.wait_ms, t.queries = 2000.0, 50.0, 3
+    parts = dict(
+        p.split(";dur=") for p in (t.header() or "").replace(';desc="3 queries"', "").split(", ")
+    )
+    assert abs(float(parts["db"]) - 800) < 5 and float(parts["db_sum"]) == 2000
+    assert (
+        float(parts["db"]) + float(parts["wait"]) + float(parts["app"]) <= float(parts["total"]) + 1
+    )
+
+
+def test_ai_inventory_reuses_what_ai_usage_just_read(tmp_path: Path) -> None:
+    """Owner, 2026-11-01: /ai then /ai/inventory read the same 30 days twice."""
+    from datetime import UTC, datetime, timedelta
+
+    lab = make_lab(tmp_path)
+    c = lab["admin"]
+    alone = c.get("/api/ai/inventory", params={"days": 30})
+    n_alone = int(TIMING.fullmatch(alone.headers["Server-Timing"]).group(3))  # type: ignore[union-attr]  # matched above
+    lab["app"].state.page_cache.clear()
+    start = (datetime.now(UTC) - timedelta(days=30)).isoformat()
+    assert c.get("/api/ai/usage", params={"start": start}).status_code == 200
+    after = c.get("/api/ai/inventory", params={"days": 30})
+    m = TIMING.fullmatch(after.headers["Server-Timing"])
+    assert m and int(m.group(3)) < n_alone
+    assert after.json()["items"] == alone.json()["items"]

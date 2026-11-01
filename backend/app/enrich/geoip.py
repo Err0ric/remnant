@@ -22,6 +22,7 @@ from app.enrich.feeds import FeedStore
 log = structlog.get_logger(__name__)
 
 MAX_LOOKUPS = 1000  # distinct addresses per response
+CACHE_MAX = 200_000  # addresses kept between pages; emptied past this or on a new file
 _LOOKS_LIKE_IP = re.compile(r"^[0-9a-fA-F:.]{3,45}$")
 
 
@@ -45,6 +46,15 @@ class _Reader:
         self._lock = threading.Lock()
 
     def get(self, ip: str) -> Any:
+        reader = self.current()
+        try:
+            return reader.get(ip) if reader is not None else None
+        except ValueError:
+            return None
+
+    def current(self) -> Any:
+        """The open reader, reopened when the file changed; one stat per call, so a page
+        that looks up thousands of addresses stats the file once, not per address."""
         with self._lock:
             try:
                 st = self._path.stat()
@@ -60,11 +70,11 @@ class _Reader:
                 except Exception as exc:  # a broken file means no answers, not an error
                     log.warning("geoip.open_failed", error=type(exc).__name__)
                     return None
-            reader = self._reader
-        try:
-            return reader.get(ip) if reader is not None else None
-        except ValueError:
-            return None
+            return self._reader
+
+    @property
+    def stamp(self) -> tuple[float, int] | None:
+        return self._stamp
 
     def available(self) -> bool:
         return self._path.is_file()
@@ -84,11 +94,17 @@ class GeoIP:
         self._country = _Reader(feeds.path("geoip_country"))
         self._asn = _Reader(feeds.path("geoip_asn"))
         self._public = public
+        self._cache: dict[str, GeoInfo | None] = {}
+        self._cache_stamps: tuple[Any, Any] = (None, None)
+        self._cache_lock = threading.Lock()
 
     def available(self) -> bool:
         return self._country.available() or self._asn.available()
 
     def lookup(self, value: str) -> GeoInfo | None:
+        return self._lookup(value, self._country.current(), self._asn.current())
+
+    def _lookup(self, value: str, country_db: Any, asn_db: Any) -> GeoInfo | None:
         try:
             addr = ipaddress.ip_address(value)
         except ValueError:
@@ -96,8 +112,8 @@ class GeoIP:
         if not self._public(addr):
             return None
         text = str(addr)
-        c = self._country.get(text) or {}
-        a = self._asn.get(text) or {}
+        c = _get(country_db, text) or {}
+        a = _get(asn_db, text) or {}
         country = c.get("country") or c.get("registered_country") or {}
         info = GeoInfo(
             country=_text(country.get("iso_code"), 2),
@@ -113,6 +129,14 @@ class GeoIP:
         """Distinct IP-shaped strings among `values`, up to `limit`, that resolve."""
         if not self.available():
             return {}
+        # The files once per call, and answers kept until either file changes (owner,
+        # 2026-11-01: per-address file checks and lookups were most of a page's Python).
+        cdb, adb = self._country.current(), self._asn.current()
+        stamps = (self._country.stamp, self._asn.stamp)
+        with self._cache_lock:
+            if stamps != self._cache_stamps or len(self._cache) > CACHE_MAX:
+                self._cache, self._cache_stamps = {}, stamps
+            cache = self._cache
         out: dict[str, GeoInfo] = {}
         seen: set[str] = set()
         for v in values:
@@ -121,10 +145,20 @@ class GeoIP:
             seen.add(v)
             if len(seen) > limit:
                 break
-            info = self.lookup(v)
+            if v in cache:
+                info = cache[v]
+            else:
+                info = cache[v] = self._lookup(v, cdb, adb)
             if info is not None:
                 out[v] = info
         return out
+
+
+def _get(reader: Any, ip: str) -> Any:
+    try:
+        return reader.get(ip) if reader is not None else None
+    except ValueError:
+        return None
 
 
 def _text(value: Any, cap: int) -> str | None:

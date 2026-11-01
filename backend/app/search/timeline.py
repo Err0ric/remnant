@@ -17,7 +17,7 @@ from typing import Any, Protocol
 
 from app.ai.consents import CONSENTS_CTE
 from app.ai.sessions import _a
-from app.ai.usage import _use_ctes
+from app.ai.usage import _use_ctes, fact_range
 from app.core.errors import ParamInvalidError
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.search import drill
@@ -157,7 +157,10 @@ def timeline(
         after: tuple[list[str], datetime] | None = None,
     ) -> list[list[Any]]:
         res = engine.run(
-            sql, scope, {"covered": covered} if covered else None, timeout_s=TIMEOUT_S,
+            sql, scope,
+            {"covered": covered, **fact_range(scope, scope.end or datetime.now(UTC))}
+            if covered else None,
+            timeout_s=TIMEOUT_S,
             intel=False, rollup=bool(covered), skip_days=skip or (), name=f"timeline.{name}",
             after=after,
         )  # fmt: skip
