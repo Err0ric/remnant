@@ -229,3 +229,22 @@ def test_days_built_before_the_identity_file_load_without_people_then_recheck(
     assert all(e["log_level"] == "info" for e in logs)
     assert rollup.pending(rollup.covered(week())) == 0
     assert _by_service(app.state.ai_usage, week())["chatgpt"][1] == 1
+
+
+def test_the_ai_flow_gives_the_same_answer_from_the_rollup(lab: dict[str, Any]) -> None:
+    """The investigator's AI flow reads browser and app use like AI usage does: closed days
+    from the rollup, not a scan of every event (owner re-time, 2026-11-01)."""
+    from app.search.entities import ai_graph
+
+    app = lab["app"]
+    engine, catalog = app.state.engine, app.state.ai_catalog
+
+    def flow(rollup: AiRollup | None) -> set[tuple[str, int]]:
+        g = ai_graph(engine, catalog, week(), None, None, None, rollup)
+        return {(c.id, c.events) for c in g.cards}
+
+    live = flow(None)
+    assert ("3:svc:chatgpt", 3 * 6 + 4) in live and ("3:svc:claude", 5) in live
+    lab["rollup"].run()
+    assert lab["rollup"].plan(week())[0]  # closed days now come from the rollup
+    assert flow(lab["rollup"]) == live

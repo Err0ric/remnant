@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import ipaddress
 import json
-from dataclasses import dataclass, field
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from app.ai.catalog import NON_USAGE, Catalog
 from app.ai.usage import (
@@ -22,13 +23,19 @@ from app.ai.usage import (
     MCP_EXPR,
     NO_MCP_NAMES,
     WHO_EXPR,
+    _use_ctes,
     catalog_values,
+    fact_range,
 )
 from app.core.errors import ParamInvalidError
+from app.core.timing import in_context
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.meta.db import MetaDB
 from app.search.addresses import OBS_SQL, address_ctes, join_addr, lookup
 from app.search.identity import IdentityMap, key_sql
+
+if TYPE_CHECKING:
+    from app.ai.rollup import AiRollup
 
 EntityKind = Literal["user", "ip", "host"]
 GraphKind = Literal["user", "ip", "host", "mcp", "service"]
@@ -556,6 +563,97 @@ def person_names(
     return sorted(found | keys | {person.strip().lower()})
 
 
+_FLOW_SELECT = """
+SELECT person, client, tool, dest, sum(w)::BIGINT AS n, coalesce(sum(sens), 0) AS sens,
+       bool_or(mcp) AS mcp, bool_or(named) AS named
+FROM flow
+WHERE person IS NOT NULL AND {where}
+GROUP BY 1, 2, 3, 4
+ORDER BY n DESC
+LIMIT 3000"""
+
+
+def ai_tools_sql(where: str) -> str:
+    """The AI flow's Claude Code and MCP inventory rows: small, by template."""
+    return f"""
+WITH cc AS (
+  SELECT {WHO_EXPR} AS who, 'Claude Code' AS client,
+         coalesce({MCP_EXPR},
+                  json_extract_string(unmapped, '$.attr.tool_name')) AS tool,
+         CASE WHEN message IN ('claude_code.api_request', 'claude_code.api_error')
+              THEN 'api.anthropic.com' END AS dest,
+         TRY_CAST(json_extract_string(unmapped, '$.attr.sensitive_total') AS BIGINT) AS sens,
+         device_hostname AS machine, {MCP_EXPR} IS NOT NULL AS mcp
+  FROM events WHERE template_id = 'claude_code_otel'
+),
+inv AS (
+  SELECT {WHO_EXPR} AS who,
+         coalesce(json_extract_string(unmapped, '$.client'),
+                  json_extract_string(unmapped, '$.attr.client'), 'MCP client') AS client,
+         message AS tool, nullif(dst_endpoint_hostname, '') AS dest, 0 AS sens,
+         device_hostname AS machine, true AS mcp
+  FROM events WHERE template_id = 'mcp_inventory'
+),
+flow AS (
+  SELECT coalesce(who, machine) AS person, who IS NOT NULL AS named, client, tool, dest, sens,
+         mcp, 1 AS w FROM cc
+  UNION ALL SELECT coalesce(who, machine), who IS NOT NULL, client, tool, dest, sens, mcp, 1
+  FROM inv
+){_FLOW_SELECT.replace("{where}", where)}"""  # noqa: S608  # fixed text
+
+
+def ai_web_sql(pairs: list[tuple[str, str]], where: str, rollup: bool) -> str:
+    """The AI flow's browser and app rows: the same use rows as AI usage (`_use_ctes`),
+    so closed days come from the daily AI rollup instead of a scan of every event
+    (owner re-time, 2026-11-01: the person graph read 30 days of DNS for each load)."""
+    return f"""
+WITH {_use_ctes(pairs, rollup)},
+flow AS (
+  SELECT coalesce(who, machine) AS person, who IS NOT NULL AS named,
+         'Browser or app' AS client, CAST(NULL AS VARCHAR) AS tool,
+         'svc:' || service_id AS dest, 0 AS sens, false AS mcp, n AS w
+  FROM r
+){_FLOW_SELECT.replace("{where}", where)}"""  # noqa: S608  # catalog domains checked in _values
+
+
+def _ai_rows_rolled(
+    engine: QueryEngine,
+    catalog: Catalog,
+    scope: QueryScope,
+    where: str,
+    params: dict[str, object],
+    skip: list[str],
+    covered: list[str],
+    after: tuple[list[str], datetime] | None,
+) -> tuple[list[Any], list[str]]:
+    """The AI flow's rows with closed days from the rollup: Claude Code and MCP inventory
+    from events (small, by template; `skip_days` would drop them), the rest from the
+    rollup and the days it does not cover, both at once."""
+    web_params = {**params, "covered": covered, **fact_range(scope, scope.end or datetime.now(UTC))}
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        tools = pool.submit(
+            in_context(engine.run),
+            ai_tools_sql(where),
+            scope,
+            params or None,
+            timeout_s=TIMEOUT_S,
+            name="graph.ai_tools",
+        )
+        web = engine.run(
+            ai_web_sql(catalog.domain_table(), where, True),
+            scope,
+            web_params,
+            timeout_s=TIMEOUT_S,
+            rollup=True,
+            skip_days=skip,
+            after=after,
+            name="graph.ai_web",
+        )
+        found = tools.result()
+    rows = sorted([*found.rows, *web.rows], key=lambda r: -int(r[4]))[:3000]
+    return rows, sorted(set(found.sources) | set(web.sources))
+
+
 def ai_graph(
     engine: QueryEngine,
     catalog: Catalog,
@@ -563,6 +661,7 @@ def ai_graph(
     kind: Literal["user", "mcp", "service"] | None,
     value: str | None,
     ident: IdentityMap | None = None,
+    rollup: AiRollup | None = None,
 ) -> Graph:
     """People -> AI clients -> Tools and MCP servers -> Destinations (ADR-0016 row 5).
     People are merged by identity (ADR-0018)."""
@@ -574,21 +673,31 @@ def ai_graph(
         "service": "dest = 'svc:' || $v",
     }[kind]
     params: dict[str, object] = {}
-    pre = "true"
     if kind == "user" and value:
         params = {"keys": ident.keys_for(value), **ident.params()}
-        # Their raw names come from a cheap distinct scan, so each branch keeps only their
-        # events before any host parsing; the exact key test in `where` still applies.
-        pre = "list_contains($names, lower(coalesce(" + WHO_EXPR + ", {m})))"
-        params["names"] = person_names(engine, scope, ident, value)
     elif kind:
         params["v"] = value
-    result = engine.run(
-        ai_sql(catalog_values(catalog.domain_table()), where, pre),
-        scope,
-        params or None,
-        timeout_s=TIMEOUT_S,
-    )
+    # Browser and app use comes from the daily AI rollup when it has days in range, like
+    # AI usage (owner re-time, 2026-11-01: the graph read 30 days of DNS on every load).
+    planned = scope if scope.end is not None else replace(scope, end=datetime.now(UTC))
+    skip, covered, after = rollup.plan(planned) if rollup is not None else ([], [], None)
+    if covered:
+        rows, sources = _ai_rows_rolled(engine, catalog, scope, where, params, skip, covered, after)
+    else:
+        pre = "true"
+        if kind == "user" and value:
+            # Their raw names come from a cheap distinct scan, so each branch keeps only
+            # their events before any host parsing; the exact key test in `where` applies.
+            pre = "list_contains($names, lower(coalesce(" + WHO_EXPR + ", {m})))"
+            params["names"] = person_names(engine, scope, ident, value)
+        result = engine.run(
+            ai_sql(catalog_values(catalog.domain_table()), where, pre),
+            scope,
+            params or None,
+            timeout_s=TIMEOUT_S,
+            name="graph.ai",
+        )
+        rows, sources = result.rows, result.sources
     seen_email: dict[str, bool] = {}
     names: dict[str, set[str]] = {}
     named_keys: dict[str, bool] = {}  # person cards that a logged person name produced
@@ -606,7 +715,7 @@ def ai_graph(
         return host
 
     b = _Builder(["People", "AI clients", "Tools and MCP servers", "Destinations"])
-    for person, client, tool, dest, n, sens, mcp, named in result.rows:
+    for person, client, tool, dest, n, sens, mcp, named in rows:
         if dest and str(dest).startswith("svc:"):
             hit = services.get(str(dest)[4:])
             if hit is not None and hit.kind == NON_USAGE:
@@ -675,7 +784,7 @@ def ai_graph(
             f"({user_filter_sql(ident, ident.keys_for(pkey))} OR device_hostname IN"
             f" ({', '.join(quote(r) for r in sorted(raw))}))"
         )
-    return b.build("ai", result.sources)
+    return b.build("ai", sources)
 
 
 def _is_ip(text: str) -> bool:

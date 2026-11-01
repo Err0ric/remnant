@@ -209,7 +209,9 @@ async def graph(
             raise SearchInvalidError("AI flow is for a person, an MCP server, or an AI service")
         catalog: Catalog = request.app.state.ai_catalog
         ident = await _identities(request)
-        g = await run_in_threadpool(ai_graph, engine, catalog, scope, kind, value, ident)
+        g = await run_in_threadpool(
+            ai_graph, engine, catalog, scope, kind, value, ident, request.app.state.ai_rollup
+        )
     await _audit(
         request,
         user,

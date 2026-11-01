@@ -8,9 +8,11 @@ grouped by outcome with a real example line each (not the number-masked pattern)
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from app.core.timing import in_context
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.search.entities import CLASS_NAMES, WHERE, quote, search_sql, user_filter_sql
 from app.search.identity import IdentityMap, key_sql
@@ -63,7 +65,8 @@ SELECT {outcome} AS outcome, coalesce(class_uid, 0) AS class_uid,
 FROM events
 WHERE {where}
 GROUP BY 1, 2, 3, 4
-ORDER BY CASE outcome WHEN 'succeeded' THEN 0 WHEN 'failed' THEN 1 ELSE 2 END, n DESC
+ORDER BY CASE outcome WHEN 'succeeded' THEN 0 WHEN 'failed' THEN 1 ELSE 2 END, n DESC,
+         last DESC, who, target
 LIMIT 20"""
 
 # The example line: one that names the entity when there is one (a real value, not the
@@ -140,34 +143,34 @@ def entity_summary(
     params: dict[str, object]
     if kind == "user":
         keys = ident.keys_for(value)
-        where = f"list_contains($keys, {key_sql('actor_user_name')})"
+        # A key is part of the lower-cased name it came from (D136), so a plain substring
+        # test drops other people's rows before any name is normalized.
+        near = " OR ".join(f"contains(lower(actor_user_name), {quote(k)})" for k in keys)
+        where = f"(({near or 'true'}) AND list_contains($keys, {key_sql('actor_user_name')}))"
         params = {"keys": keys, **ident.params()}
         literal = user_filter_sql(ident, keys)
     else:
         where = WHERE[kind]
         params = {"v": value}
         literal = WHERE[kind].replace("$v", quote(value))
-    totals = engine.run(
-        TOTALS_SQL.format(where=where, addr=ADDR, service=SERVICE),
-        scope,
-        params,
-        timeout_s=TIMEOUT_S,
+    acts_sql = ACTIVITIES_SQL.format(
+        where=where,
+        outcome=OUTCOME,
+        target=TARGET,
+        example=EXAMPLE_NEWEST if kind == "user" else EXAMPLE_NAMED,
     )
+    # The three run together (owner re-time, 2026-11-01: they ran one after another).
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        runs = [
+            pool.submit(in_context(engine.run), sql, scope, params, timeout_s=TIMEOUT_S, name=name)
+            for name, sql in (
+                ("summary.totals", TOTALS_SQL.format(where=where, addr=ADDR, service=SERVICE)),
+                ("summary.activities", acts_sql),
+                ("summary.targets", TARGETS_SQL.format(where=where, target=TARGET)),
+            )
+        ]
+        totals, acts, tgts = (r.result() for r in runs)
     t: list[Any] = list(totals.rows[0]) if totals.rows else [0] * 9 + [[], 0]
-    acts = engine.run(
-        ACTIVITIES_SQL.format(
-            where=where,
-            outcome=OUTCOME,
-            target=TARGET,
-            example=EXAMPLE_NEWEST if kind == "user" else EXAMPLE_NAMED,
-        ),
-        scope,
-        params,
-        timeout_s=TIMEOUT_S,
-    )
-    tgts = engine.run(
-        TARGETS_SQL.format(where=where, target=TARGET), scope, params, timeout_s=TIMEOUT_S
-    )
     activities = []
     for outcome, class_uid, who, target, n, first, last, example in acts.rows:
         cond = [literal]

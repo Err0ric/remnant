@@ -11,6 +11,8 @@ caller's `events` view; no model is called."""
 from __future__ import annotations
 
 import re
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
@@ -19,6 +21,7 @@ from app.ai.consents import CONSENTS_CTE
 from app.ai.sessions import _a
 from app.ai.usage import _use_ctes, fact_range
 from app.core.errors import ParamInvalidError
+from app.core.timing import in_context
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.search import drill
 from app.search.dashboard import FAILED, INTERRUPTED
@@ -139,6 +142,7 @@ def timeline(
         end=end.isoformat(), sql=drill.events(mine),
     )  # fmt: skip
     sources: set[str] = set()
+    lock = threading.Lock()
     outcome = (
         f"CASE WHEN status_id = 1 THEN 'Signed in' WHEN {INTERRUPTED} THEN 'Interrupted'"
         f" WHEN {FAILED} THEN 'Failed' ELSE 'Sign-in' END"
@@ -164,7 +168,8 @@ def timeline(
             intel=False, rollup=bool(covered), skip_days=skip or (), name=f"timeline.{name}",
             after=after,
         )  # fmt: skip
-        sources.update(res.sources)
+        with lock:
+            sources.update(res.sources)
         return res.rows
 
     def add(kind: str, s: Any, e: Any, title: str, detail: str, n: Any, src: str,
@@ -176,10 +181,65 @@ def timeline(
                 drill.events(f"{mine} AND {where}"))
         )  # fmt: skip
 
-    for name, devs in run(
-        f"SELECT DISTINCT actor_user_name, device_hostname FROM events WHERE {mine} LIMIT 200",  # noqa: S608  # escaped literals only
-        "forms",
-    ):
+    # Every query but "maybe" (which needs the devices) starts at once: the page waits for
+    # the slowest, not the sum (owner re-time, 2026-11-01: they ran one after another).
+    key_who = key_sql("who").replace("$id_org", org)
+    skip, covered, after = rollup.plan(scope) if rollup is not None else ([], [], None)
+    consent_mine = f"list_contains({drill.lits(keys)}, {key_sql('who')})".replace("$id_org", org)
+    queries: dict[str, tuple[Any, ...]] = {
+        "forms": (
+            f"SELECT DISTINCT actor_user_name, device_hostname FROM events WHERE {mine} LIMIT 200",  # noqa: S608  # escaped literals only
+            "forms",
+        ),
+        "signins": (
+            f"SELECT {_HOUR}, coalesce(resource_name, message), {outcome}, count(*), min({_TS}),"  # noqa: S608  # escaped literals only
+            f" max({_TS}) FROM events WHERE template_id = 'm365_signin' AND {mine}"
+            " GROUP BY 1, 2, 3 ORDER BY 1 DESC LIMIT 300",
+            "signins",
+        ),
+        "sessions": (
+            f"SELECT {_a('session_id')}, min({_TS}), max({_TS}), any_value(device_hostname),"  # noqa: S608  # escaped literals only
+            " count(*) FILTER (WHERE message = 'claude_hooks.pre_tool_use'),"
+            " count(*) FILTER (WHERE message = 'claude_hooks.post_tool_use_failure')"
+            f" FROM events WHERE template_id = 'claude_hooks' AND {mine}"
+            f" AND {_a('session_id')} IS NOT NULL GROUP BY 1 ORDER BY 2 DESC LIMIT 200",
+            "sessions",
+        ),
+        "ai": (
+            f"WITH {_use_ctes(catalog_pairs, bool(covered))}\n"  # catalog values checked in _values
+            "SELECT service_id, min(first_t) FROM r"
+            f" WHERE list_contains({drill.lits(keys)}, {key_who})"
+            " GROUP BY 1 LIMIT 100",
+            "ai",
+            covered,
+            skip,
+            after,
+        ),
+        "consents": (
+            f"WITH {CONSENTS_CTE}\nSELECT ts, app, status_id FROM consents WHERE {consent_mine}"
+            " ORDER BY ts DESC LIMIT 100",
+            "consents",
+        ),
+        "audit": (
+            f"SELECT {_HOUR}, {_OP}, count(DISTINCT {_K}), min({_TS}), max({_TS}) FROM events"  # noqa: S608  # escaped literals only
+            f" WHERE template_id IN {M365_AUDIT} AND {mine}"
+            " AND message NOT ILIKE 'Consent to application%'"
+            " GROUP BY 1, 2 ORDER BY 1 DESC LIMIT 300",
+            "audit",
+        ),
+        "events": (
+            f"SELECT {_HOUR}, source_id, message, count(*), min({_TS}), max({_TS}),"  # noqa: S608  # escaped literals only
+            " count(*) FILTER (WHERE status_id = 2) FROM events"
+            " WHERE template_id NOT LIKE 'm365_%' AND template_id <> 'claude_hooks'"
+            f" AND {mine} GROUP BY 1, 2, 3 ORDER BY 1 DESC LIMIT 300",
+            "events",
+        ),
+    }
+    pool = ThreadPoolExecutor(max_workers=len(queries))
+    ahead = {n: pool.submit(in_context(run), *q) for n, q in queries.items()}
+    pool.shutdown(wait=False)
+
+    for name, devs in ahead["forms"].result():
         if name and str(name) not in out.forms:
             out.forms.append(str(name))
         if devs and str(devs) not in out.devices:
@@ -200,12 +260,7 @@ def timeline(
                 out.maybe.append(Maybe(str(name), sorted(str(d) for d in devs or [])[:5]))
         out.maybe.sort(key=lambda m: m.name.lower())
 
-    for _hour, app, how, n, s, e in run(
-        f"SELECT {_HOUR}, coalesce(resource_name, message), {outcome}, count(*), min({_TS}),"  # noqa: S608  # escaped literals only
-        f" max({_TS}) FROM events WHERE template_id = 'm365_signin' AND {mine}"
-        " GROUP BY 1, 2, 3 ORDER BY 1 DESC LIMIT 300",
-        "signins",
-    ):
+    for _hour, app, how, n, s, e in ahead["signins"].result():
         app_s = str(app or "an app")
         cond = (
             f"template_id = 'm365_signin' AND coalesce(resource_name, message) = {drill.lit(app_s)}"
@@ -213,62 +268,29 @@ def timeline(
         add("signin", s, e, f"{how} to {app_s}", "Microsoft 365", n, "m365_signin", cond,
             "warn" if how == "Failed" else "neutral")  # fmt: skip
 
-    for sid, s, e, dev, calls, failed in run(
-        f"SELECT {_a('session_id')}, min({_TS}), max({_TS}), any_value(device_hostname),"  # noqa: S608  # escaped literals only
-        " count(*) FILTER (WHERE message = 'claude_hooks.pre_tool_use'),"
-        " count(*) FILTER (WHERE message = 'claude_hooks.post_tool_use_failure')"
-        f" FROM events WHERE template_id = 'claude_hooks' AND {mine}"
-        f" AND {_a('session_id')} IS NOT NULL GROUP BY 1 ORDER BY 2 DESC LIMIT 200",
-        "sessions",
-    ):
+    for sid, s, e, dev, calls, failed in ahead["sessions"].result():
         detail = f"{int(calls or 0)} tool calls" + (f", {int(failed)} failed" if failed else "")
         cond = f"template_id = 'claude_hooks' AND {_a('session_id')} = {drill.lit(str(sid))}"
         add("session", s, e, f"Claude session on {dev or 'a device'}", detail, calls,
             "claude_hooks", cond, "warn" if failed else "neutral")  # fmt: skip
 
-    key_who = key_sql("who").replace("$id_org", org)
-    skip, covered, after = rollup.plan(scope) if rollup is not None else ([], [], None)
-    for svc, s in run(
-        f"WITH {_use_ctes(catalog_pairs, bool(covered))}\n"  # catalog values checked in _values
-        f"SELECT service_id, min(first_t) FROM r WHERE list_contains({drill.lits(keys)}, {key_who})"
-        " GROUP BY 1 LIMIT 100",
-        "ai",
-        covered,
-        skip,
-        after,
-    ):
+    for svc, s in ahead["ai"].result():
         add("ai_first", s, s, f"First used {svc} in this window", "AI service", 1, "network",
             "true")  # fmt: skip
         out.rows[-1].sql = ""  # the use rows need the AI usage query; opened from AI usage
 
-    consent_mine = f"list_contains({drill.lits(keys)}, {key_sql('who')})".replace("$id_org", org)
-    for ts, app, status in run(
-        f"WITH {CONSENTS_CTE}\nSELECT ts, app, status_id FROM consents WHERE {consent_mine}"
-        " ORDER BY ts DESC LIMIT 100",
-        "consents",
-    ):
+    for ts, app, status in ahead["consents"].result():
         blocked = status == 2
         what = "Consent blocked" if blocked else "Granted consent"
         cond = f"template_id IN {M365_AUDIT} AND message ILIKE 'Consent to application%'"
         add("consent", ts, ts, f"{what}: {app or 'an app with no name'}", "Microsoft 365", 1,
             "m365", cond, "warn" if blocked else "neutral")  # fmt: skip
 
-    for _hour, op, n, s, e in run(
-        f"SELECT {_HOUR}, {_OP}, count(DISTINCT {_K}), min({_TS}), max({_TS}) FROM events"  # noqa: S608  # escaped literals only
-        f" WHERE template_id IN {M365_AUDIT} AND {mine}"
-        " AND message NOT ILIKE 'Consent to application%' GROUP BY 1, 2 ORDER BY 1 DESC LIMIT 300",
-        "audit",
-    ):
+    for _hour, op, n, s, e in ahead["audit"].result():
         add("audit", s, e, str(op), "Microsoft 365 audit", n, "m365",
             f"template_id IN {M365_AUDIT} AND {_OP} = {drill.lit(str(op))}")  # fmt: skip
 
-    for _hour, src, msg, n, s, e, bad in run(
-        f"SELECT {_HOUR}, source_id, message, count(*), min({_TS}), max({_TS}),"  # noqa: S608  # escaped literals only
-        " count(*) FILTER (WHERE status_id = 2) FROM events"
-        " WHERE template_id NOT LIKE 'm365_%' AND template_id <> 'claude_hooks'"
-        f" AND {mine} GROUP BY 1, 2, 3 ORDER BY 1 DESC LIMIT 300",
-        "events",
-    ):
+    for _hour, src, msg, n, s, e, bad in ahead["events"].result():
         add("events", s, e, str(msg or "Event"), str(src), n, str(src),
             f"source_id = {drill.lit(str(src))} AND message = {drill.lit(str(msg or ''))}",
             "warn" if bad else "neutral")  # fmt: skip

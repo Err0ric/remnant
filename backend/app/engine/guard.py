@@ -5,7 +5,9 @@ allowed_directories, locked configuration) is layer 2, so a guard gap alone
 cannot read files or other sources.
 """
 
+import functools
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 import sqlglot
@@ -50,6 +52,24 @@ class GuardedQuery:
 
 
 def guard(
+    sql: str,
+    allowed_tables: Iterable[str],
+    default_limit: int = DEFAULT_LIMIT,
+    max_limit: int = MAX_LIMIT,
+) -> GuardedQuery:
+    """Cached by query text, tables and limits (the answer depends on nothing else, and a
+    refusal raises again each time): page queries repeat on every load (owner, 2026-11-01)."""
+    return _cached(sql, frozenset(allowed_tables), default_limit, max_limit)
+
+
+@functools.lru_cache(maxsize=512)
+def _cached(
+    sql: str, allowed_tables: frozenset[str], default_limit: int, max_limit: int
+) -> GuardedQuery:
+    return _guard(sql, allowed_tables, default_limit, max_limit)
+
+
+def _guard(
     sql: str,
     allowed_tables: frozenset[str],
     default_limit: int = DEFAULT_LIMIT,

@@ -11,11 +11,20 @@ returns None and the full scope is used.
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Mapping
 from typing import Any
 
 import sqlglot
 from sqlglot import exp
+
+
+@functools.lru_cache(maxsize=512)
+def _parse(sql: str) -> Any:
+    """Parsed once per distinct query text: pages send the same queries on every load, and
+    parsing a long one took most of their Python time (owner, 2026-11-01). The trees are
+    only read here."""
+    return sqlglot.parse_one(sql, read="duckdb")
 
 
 def _value(node: exp.Expression, params: Mapping[str, Any]) -> str | None:
@@ -49,7 +58,7 @@ def _pinned(sql: str, params: Mapping[str, Any] | None, column: str) -> set[str]
     literal or bound string values, ANDed at the top level); an OR, a function on
     `source_id`, or anything else means None."""
     try:
-        tree = sqlglot.parse_one(sql, read="duckdb")
+        tree = _parse(sql)
     except sqlglot.errors.ParseError:
         return None
     if not isinstance(tree, exp.Select):
@@ -107,7 +116,7 @@ def pinned_templates_each(sql: str, params: Mapping[str, Any] | None = None) -> 
     table of its own SELECT (no join) and pin `template_id` there; the union of those
     pins is every template the query can see. Anything else: None."""
     try:
-        tree = sqlglot.parse_one(sql, read="duckdb")
+        tree = _parse(sql)
     except sqlglot.errors.ParseError:
         return None
     if any(c.alias_or_name.lower() == "events" for c in tree.find_all(exp.CTE)):

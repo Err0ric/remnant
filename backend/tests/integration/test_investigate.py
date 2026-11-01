@@ -322,7 +322,9 @@ def test_entity_summary_counts_outcomes_targets_and_keeps_real_lines(lab: dict[s
     assert s["first_seen"] and s["last_seen"] and s["first_seen"] <= s["last_seen"]
     failed = [a for a in s["activities"] if a["outcome"] == "failed"]
     assert failed and failed[0]["kind"] == "Authentication"
-    assert top in failed[0]["example"] and "#.#.#.#" not in failed[0]["example"]  # real values
+    # Real values, not the number-masked pattern (groups tied on count may come in any order).
+    named = next(a for a in failed if top in a["example"])
+    assert "#.#.#.#" not in named["example"]
     ran = lab["admin"].post("/api/query", json={"sql": failed[0]["search_sql"]}, headers=lab["h"])
     assert ran.status_code == 200 and ran.json()["row_count"] == failed[0]["events"]
     assert any(t["kind"] in ("host", "user") for t in s["targets"])

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Faster person pages (2026-11-01)
+
+- **Person AI flow graph**: reads closed days from the daily AI rollup like AI usage does (2.3 s to 0.9 s on a synthetic 30-day lake).
+- **Person summary and Timeline**: their queries run together instead of one after another, and repeat loads skip re-checking the same SQL (about 0.4 s of server time on the first load of a page, under 50 ms after).
+- **Person summary activities** tied on count are listed in a stable order.
+- What changes for existing installs: nothing to do.
+
 ### Faster pages on real data (2026-11-01)
 
 - **Attacks and access**: about 15 times faster on a busy 30-day window (13.8 s to 0.9 s on a synthetic lake shaped like a small ISP). It now counts every outside address; it used to stop at 5,000.
