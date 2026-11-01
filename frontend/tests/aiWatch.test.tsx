@@ -194,7 +194,7 @@ describe("A dashboard section that fails to load (F63)", () => {
     const watch = await screen.findByRole("region", { name: "AI Watch" });
     const alert = await within(watch).findByRole("alert");
     expect(alert).toHaveTextContent(
-      "AI Watch did not load: the query needed more memory than this server allows.",
+      "AI Watch did not load: the query ran out of memory on this server; try a shorter time range.",
     );
     expect(alert).toHaveTextContent("Request a1b2c3d4e5f6");
     // The server is not "unreachable": a limit with a code is an answer.

@@ -50,7 +50,7 @@ def test_engine_reports_out_of_memory_as_a_failed_query() -> None:
     sql = (
         "SELECT length(string_agg(repeat('x', 1000000), '')) FROM (SELECT unnest(range(3000)) AS i)"
     )
-    with pytest.raises(QueryFailedError, match="more memory than this server allows"):
+    with pytest.raises(QueryFailedError, match=r"Out of memory: .* Try a shorter time range"):
         engine.run(sql, QueryScope(None))
 
 

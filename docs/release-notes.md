@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Query memory follows the budget (2026-11-01)
+
+- **Search and export get more memory when it is free**: alone, a search or export can use about 40% of the memory budget (1.6 GB on a 4 GB budget) instead of 20%. Page sections keep their share, and the total never goes past the budget.
+- Raising `server.memory_limit_mb` grows both.
+- **Disk overflow is capped**: queries that pass their memory write to `data/tmp/duckdb`, at most `server.query_spill_limit_mb` (default 10 GB) for all of them together. The folder is emptied at start, only when it resolves to exactly `data/tmp/duckdb` (a link elsewhere stops the server with a plain message and nothing deleted), and the journal logs the files and MB removed.
+- **Out of memory says so**: the error tells you the query ran out of memory and to try a shorter time range.
+- The journal has a `query.memory` line when a search falls back to the page share, writes to disk, or fails for memory, with peak memory and MB written.
+- What changes for existing installs: nothing to do. Make sure the data volume has 10 GB free for overflow, or set `server.query_spill_limit_mb` lower. The startup log now prints the memory per page section and per search.
+
 ### Faster pages, round 3 (2026-10-31)
 
 - **AI usage, AI Watch, the AI inventory, and the person timeline** read today so far from the AI rollup, built every 5 minutes, and only the last few minutes from events.

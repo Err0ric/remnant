@@ -648,8 +648,17 @@ class ScheduleService:
                     f"SELECT count(*) FROM ({sql}) AS counted",  # noqa: S608  # saved, guarded SQL
                     scope,
                     values,
+                    name="schedule.count",
+                    large=True,
                 )
-                result = self._engine.run(sql, scope, values, row_cap=self._config.sample_rows)
+                result = self._engine.run(
+                    sql,
+                    scope,
+                    values,
+                    row_cap=self._config.sample_rows,
+                    name="schedule.run",
+                    large=True,
+                )
                 count = int(total.rows[0][0]) if total.rows else 0
                 columns, elapsed, read = (
                     result.columns,

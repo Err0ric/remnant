@@ -29,6 +29,7 @@ def _app(
     shutil.rmtree(dest, ignore_errors=True)
     shutil.copytree(lake, dest)
     if memory_mb is not None:
+        app.state.engine._ledger = None  # a fixed limit instead of the budget's shares
         app.state.engine._memory_mb = memory_mb
     if not spill:
         # A file where the spill folder should be: any query that needs to spill fails.
@@ -109,8 +110,11 @@ def test_too_little_memory_is_a_server_limit_with_its_own_code(tmp_path: Path) -
         res = c.get("/api/ai/usage", params={"start": start})
     assert res.status_code == 503
     assert res.json()["code"] == "query_memory"
-    assert res.json()["detail"].startswith("The query needs more memory")
-    warn = [e for e in logs if e["event"] == "query.memory"]
+    assert res.json()["detail"].startswith("Out of memory")
+    engine_line = [e for e in logs if e["event"] == "query.memory" and "outcome" in e]
+    assert engine_line and engine_line[0]["outcome"] == "failed"
+    assert engine_line[0]["limit_mb"] == 16 and engine_line[0]["reason"] == "memory"
+    warn = [e for e in logs if e["event"] == "query.memory" and "request_id" in e]
     assert warn and warn[0]["log_level"] == "warning"
     assert warn[0]["request_id"] == res.headers["X-Request-ID"]
     assert warn[0]["query"].startswith("ai_use.")

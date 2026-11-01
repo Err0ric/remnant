@@ -7,7 +7,9 @@ configuration locked. The guard runs before any of this.
 """
 
 import glob
+import json
 import os
+import shutil
 import threading
 import time
 from collections.abc import Collection, Iterator, Mapping
@@ -22,6 +24,7 @@ from uuid import UUID
 import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
+import structlog
 
 from app.core.errors import (
     QueryBusyError,
@@ -32,6 +35,7 @@ from app.core.errors import (
 from app.core.schema import COLUMN_NAMES, COLUMNS_BY_NAME, duckdb_create_table_sql
 from app.engine.guard import DEFAULT_LIMIT, MAX_LIMIT, guard
 from app.engine.lookups import Lookups, register
+from app.engine.memory import Grant, MemoryLedger
 from app.engine.narrow import pinned_sources, pinned_templates
 
 ALLOWED_TABLES = frozenset({"events"})
@@ -79,15 +83,61 @@ INTEL_COLUMNS = (
 )
 
 
+log = structlog.get_logger()
+
+
+class UnsafeSpillDirError(RuntimeError):
+    """The overflow folder resolves outside the data folder; nothing is deleted."""
+
+
+def _size(path: Path) -> tuple[int, int]:
+    """Files and bytes under `path`, not following links."""
+    if path.is_symlink() or not path.is_dir():
+        return 1, path.lstat().st_size
+    files = size = 0
+    for root, dirs, names in os.walk(path, followlinks=False):
+        for name in names + [d for d in dirs if (Path(root) / d).is_symlink()]:
+            files += 1
+            size += (Path(root) / name).lstat().st_size
+    return files, size
+
+
 def spill_dir(data_dir: Path) -> Path:
     """The folder queries spill to, under the data folder (always writable), emptied at
-    start: spill files from a stopped server are never read again (F46)."""
+    start: spill files from a stopped server are never read again (F46).
+
+    Its real path must be exactly <data>/tmp/duckdb with links resolved, or the server
+    refuses to start and deletes nothing (a symlink or a bad value could point
+    it elsewhere). Only the folder's contents are removed, links without following them,
+    and the count and size are logged."""
+    base = Path(os.path.realpath(data_dir))
     path = data_dir / "tmp" / "duckdb"
     path.mkdir(parents=True, exist_ok=True, mode=0o700)
-    for leftover in path.iterdir():
-        if leftover.is_file():
+    real = Path(os.path.realpath(path))
+    # Exactly <data>/tmp/duckdb once links are resolved: a link to a folder elsewhere, or
+    # to the data folder or tmp above it, is refused.
+    if real != base / "tmp" / "duckdb":
+        log.error("spill.refused", path=str(path), resolves_to=str(real))
+        raise UnsafeSpillDirError(
+            f"The query overflow folder {path} resolves to {real}, not {base / 'tmp' / 'duckdb'}."
+            f" Nothing was deleted. Remove the link or fix paths.data_dir"
+        )
+    files = size = 0
+    for leftover in real.iterdir():
+        n, b = _size(leftover)
+        if leftover.is_dir() and not leftover.is_symlink():
+            shutil.rmtree(leftover, ignore_errors=True)
+        else:
             leftover.unlink(missing_ok=True)
-    return path
+        files, size = files + n, size + b
+    if files:
+        log.info("spill.cleared", path=str(real), files=files, mb=round(size / (1 << 20), 1))
+    return real
+
+
+# Profiling that reports a query's peak memory and disk overflow (DuckDB 1.1 and later).
+_PEAKS = '{"SYSTEM_PEAK_BUFFER_MEMORY": "true", "SYSTEM_PEAK_TEMP_DIR_SIZE": "true"}'
+MB = 1 << 20
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,6 +173,8 @@ class QueryEngine:
         temp_dir: Path | None = None,
         rollup_dir: Path | None = None,
         m365_rollup_dir: Path | None = None,
+        memory_budget_mb: int | None = None,
+        spill_limit_mb: int | None = None,
     ) -> None:
         self._lake = lake_dir
         self._rollup = rollup_dir
@@ -141,6 +193,16 @@ class QueryEngine:
         self._intel = intel_file
         # Per query: DuckDB spills or fails past this, instead of growing without bound.
         self._memory_mb = memory_mb
+        # With a budget, limits come from the ledger instead: page sections get a share,
+        # searches and exports what is free (D58, D80 updated 2026-11-01).
+        self._ledger = (
+            MemoryLedger(memory_budget_mb, max_concurrent or 4) if memory_budget_mb else None
+        )
+        if self._ledger is not None:
+            self._memory_mb = self._ledger.share
+        self._budget_mb = memory_budget_mb
+        # Disk overflow for all queries together; each instance gets its part by memory.
+        self._spill_mb = spill_limit_mb
         self._threads = threads
         # At most this many DuckDB connections at once, each with `threads` threads, so a
         # burst of page loads cannot multiply threads past a container's pids limit (D79).
@@ -170,6 +232,7 @@ class QueryEngine:
         after: tuple[Collection[str], datetime] | None = None,
         upto: datetime | None = None,
         background: bool = False,
+        large: bool = False,
     ) -> QueryResult:
         """Run guarded SQL. `params` are bound by the driver ($name), never formatted in.
         `row_cap` lowers both the implicit and the maximum LIMIT (Ask previews use 5), and
@@ -179,7 +242,9 @@ class QueryEngine:
         sources, `events` keeps only rows observed after the cutoff (today's earlier rows are
         in a fact rollup's partial day, D135); `upto`: only rows observed by then (building
         that partial day). `background` (rollup builds): one DuckDB thread, half a memory
-        share, and its own single slot, so a build never takes a page query's slot."""
+        share, and its own single slot, so a build never takes a page query's slot. `large`
+        (Search, export, saved and scheduled searches): the free query memory, leaving two
+        shares for page sections; one share when others hold it."""
         limit_s = min(self._timeout_s, timeout_s) if timeout_s else self._timeout_s
         default = min(self._default_limit, row_cap) if row_cap else self._default_limit
         cap = min(self._max_limit, row_cap) if row_cap else self._max_limit
@@ -195,11 +260,31 @@ class QueryEngine:
         templates = pinned_templates(guarded.sql, params)
         if templates is not None:  # and only sources whose files can hold those templates
             scope = replace(scope, sources=self._holding(scope, templates, skip_days))
+        started = time.monotonic()
         with self._background_slot(limit_s) if background else self._slot(limit_s):
-            return self._execute(
-                guarded, scope, params, intel, limit_s, cap, rollup, frozenset(skip_days), name,
-                after, upto, background,
-            )  # fmt: skip
+            grant = self._grant(background, large, limit_s - (time.monotonic() - started))
+            try:
+                return self._execute(
+                    guarded, scope, params, intel, limit_s, cap, rollup, frozenset(skip_days),
+                    name, after, upto, background, grant,
+                )  # fmt: skip
+            finally:
+                if grant is not None and self._ledger is not None and not background:
+                    self._ledger.give(grant)
+
+    def _grant(self, background: bool, large: bool, wait_s: float) -> Grant | None:
+        if self._ledger is None:
+            return None
+        if background:  # half a share, from the share kept for the server
+            return Grant(max(128, self._ledger.share // 2), False, False)
+        return self._ledger.take(large, max(0.0, wait_s))
+
+    def _spill_for(self, mb: int) -> int | None:
+        """This instance's part of the disk overflow limit, by its part of the budget."""
+        if not self._spill_mb:
+            return None
+        whole = self._budget_mb or mb
+        return max(1, self._spill_mb * mb // max(whole, mb))
 
     def _execute(
         self,
@@ -215,10 +300,14 @@ class QueryEngine:
         after: tuple[Collection[str], datetime] | None = None,
         upto: datetime | None = None,
         background: bool = False,
+        grant: Grant | None = None,
     ) -> QueryResult:
+        limit_mb = grant.mb if grant is not None else self._memory_mb
+        spill_mb = self._spill_for(limit_mb) if limit_mb else None
+        kind = "background" if background else "large" if grant and grant.large else "page"
         con = self._connect(
             scope, intel=intel, rollup=rollup, skip=skip, after=after, upto=upto,
-            background=background,
+            background=background, memory_mb=limit_mb, spill_mb=spill_mb,
         )  # fmt: skip
         timer = threading.Timer(limit_s, con.interrupt)
         started = time.perf_counter()
@@ -231,15 +320,30 @@ class QueryEngine:
         except duckdb.InterruptException as exc:
             raise QueryTimeoutError(f"Query exceeded {limit_s:g}s and was stopped") from exc
         except (duckdb.OutOfMemoryException, MemoryError) as exc:
+            disk = "max_temp_directory_size" in str(exc)
+            log.warning(
+                "query.memory", query=name, kind=kind, outcome="failed",
+                reason="disk" if disk else "memory", limit_mb=limit_mb, spill_limit_mb=spill_mb,
+                fell_back=bool(grant and grant.fell_back),
+            )  # fmt: skip
+            if disk:
+                raise QueryMemoryError(
+                    f"Out of disk overflow space: this query filled the {spill_mb} MB it may "
+                    "write to disk. Try a shorter time range or fewer sources",
+                    query=name,
+                ) from exc
             raise QueryMemoryError(
-                "The query needs more memory than this server allows. Narrow the time range "
-                "or the sources, or aggregate before returning rows",
+                "Out of memory: this query needed more than the "
+                f"{limit_mb or 'available'} MB it can use on this server. Try a shorter time "
+                "range or fewer sources, or count and group instead of returning every row",
                 query=name,
             ) from exc
         except duckdb.Error as exc:
             raise QueryFailedError(self._scrub(str(exc).splitlines()[0])[:300]) from exc
         finally:
             timer.cancel()
+            if not background:
+                self._report(con, name, kind, limit_mb, spill_mb, grant)
             con.close()
 
         truncated = False
@@ -260,6 +364,27 @@ class QueryEngine:
             executed_sql=shown_sql,
             sources=[d.name.removeprefix("source=") for d in self._source_dirs(scope)],
         )
+
+    def _report(
+        self, con: duckdb.DuckDBPyConnection, name: str, kind: str, limit_mb: int | None,
+        spill_mb: int | None, grant: Grant | None,
+    ) -> None:  # fmt: skip
+        """Log a query that fell back to one share or wrote overflow to disk, with its
+        peak memory, so the journal shows whether searches need more (owner, 2026-11-01)."""
+        try:
+            info = json.loads(con.get_profiling_information(format="json"))
+        except (duckdb.Error, ValueError, TypeError):
+            info = {}
+        peak = int(info.get("system_peak_buffer_memory") or 0) // MB
+        disk_b = int(info.get("system_peak_temp_dir_size") or 0)
+        disk = -(-disk_b // MB)  # rounded up: any overflow shows as at least 1 MB
+        fell_back = bool(grant and grant.fell_back)
+        if disk_b or fell_back:
+            log.info(
+                "query.memory", query=name, kind=kind, outcome="spilled" if disk else "ok",
+                limit_mb=limit_mb, peak_mb=peak, disk_mb=disk, spill_limit_mb=spill_mb,
+                fell_back=fell_back,
+            )  # fmt: skip
 
     @contextmanager
     def _slot(self, wait_s: float) -> Iterator[None]:
@@ -534,6 +659,8 @@ class QueryEngine:
         after: tuple[Collection[str], datetime] | None = None,
         upto: datetime | None = None,
         background: bool = False,
+        memory_mb: int | None = None,
+        spill_mb: int | None = None,
     ) -> duckdb.DuckDBPyConnection:
         dirs = self._source_dirs(scope)
         # Threads and memory at creation: connecting with the defaults first starts one
@@ -544,13 +671,20 @@ class QueryEngine:
             config["threads"] = 1
         elif self._threads:
             config["threads"] = int(self._threads)
-        if self._memory_mb:
-            share = max(128, self._memory_mb // 2) if background else self._memory_mb
-            config["memory_limit"] = f"{int(share)}MB"
+        mem = memory_mb or self._memory_mb
+        if mem:
+            if memory_mb is None and background:
+                mem = max(128, mem // 2)
+            config["memory_limit"] = f"{int(mem)}MB"
         if self._temp_dir is not None:
             config["temp_directory"] = str(self._temp_dir)
         con = duckdb.connect(":memory:", config=config)
         con.execute("SET TimeZone = 'UTC'")
+        if spill_mb:  # SET, not config: DuckDB 1.5 ignores this one at connect (tested)
+            con.execute(f"SET max_temp_directory_size = '{int(spill_mb)}MB'")
+        if not background:
+            con.execute("SET enable_profiling = 'no_output'")
+            con.execute(f"SET custom_profiling_settings = '{_PEAKS}'")
         files = self._lake_globs(dirs, scope, skip)
         if files:
             globs = ", ".join(_sql_str(f) for f in files)

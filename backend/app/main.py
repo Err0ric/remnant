@@ -123,8 +123,15 @@ from app.core.net import parse_trusted
 from app.core.threads import cap_allocator_arenas, query_threads, run_low
 from app.detect.runner import RuleRunner
 from app.detect.store import RuleStore
-from app.engine.duckdb import AUTH_ROLLUP_COLUMNS, QueryEngine, QueryScope, spill_dir
+from app.engine.duckdb import (
+    AUTH_ROLLUP_COLUMNS,
+    QueryEngine,
+    QueryScope,
+    UnsafeSpillDirError,
+    spill_dir,
+)
 from app.engine.lookups import Lookups
+from app.engine.memory import MemoryLedger
 from app.enrich import networks
 from app.enrich.feeds import FeedStore
 from app.enrich.geoip import GeoIP
@@ -456,17 +463,23 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     budget = server_budget_mb(config.server.memory_limit_mb)
     qt = query_threads(config.server.query_threads, config.server.max_concurrent_queries)
     app.state.feeds = FeedStore(meta, config.paths.data_dir)
+    try:
+        spill = spill_dir(config.paths.data_dir)
+    except UnsafeSpillDirError as exc:  # one plain line, nothing deleted (F50 style)
+        print(exc, file=sys.stderr, flush=True)
+        raise SystemExit(78) from exc
     app.state.engine = QueryEngine(
         lake_dir,
         rollup_dir=config.paths.data_dir / "rollup" / "ai",
         m365_rollup_dir=config.paths.data_dir / "rollup" / "m365",
         intel_file=app.state.feeds.intel_file,
-        # A share of the budget per query, so every allowed query fits with one share left
-        # for ingest and the server itself (D80).
-        memory_mb=max(256, budget // (qt.at_once + 1)) if budget else None,
+        # Query memory from the budget: one share per page section, more for searches and
+        # exports when free, one share always left for the server (D58, D80).
+        memory_budget_mb=budget or None,
+        spill_limit_mb=config.server.query_spill_limit_mb or None,
         threads=qt.per_query,
         max_concurrent=qt.at_once,
-        temp_dir=spill_dir(config.paths.data_dir),
+        temp_dir=spill,
     )
     app.state.gate = LLMGate(
         meta,
@@ -803,6 +816,13 @@ def run() -> None:
     if budget is not None:
         note = budget_note(config.server.memory_limit_mb)
         print(f"Memory budget: {budget} MB ({note})")
+        plan = MemoryLedger(budget, qt.at_once)
+        spill = config.server.query_spill_limit_mb
+        print(
+            f"Query memory: {plan.share} MB per page section, up to {plan.large_max} MB for a"
+            f" search or export; disk overflow up to"
+            f" {f'{spill} MB' if spill else 'DuckDB default'} (data/tmp/duckdb)"
+        )
     arenas = cap_allocator_arenas()  # fewer reserved arenas, whatever enforces memory (D79)
     if budget is not None and config.server.address_space_cap and sys.platform.startswith("linux"):
         # Opt-in (D80): thread stacks get room on top so a burst can still start threads.

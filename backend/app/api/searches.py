@@ -135,6 +135,8 @@ async def run_search(
             compile_sql(search.sql),
             QueryScope(sources=sources, start=start, end=end),
             values,
+            name="search.run",
+            large=True,
         )
     except AppError as exc:
         detail |= {

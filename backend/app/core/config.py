@@ -67,6 +67,9 @@ class ServerConfig(_Strict):
     query_threads: int = Field(default=0, ge=0, le=64)
     # Queries running at once; more wait for a slot, then get "busy". 0: 4 (D79).
     max_concurrent_queries: int = Field(default=0, ge=0, le=64)
+    # Disk all queries together may write when they pass their memory, in MB, under
+    # data/tmp/duckdb (emptied at start). 0: no limit beyond DuckDB's own (D58, D80).
+    query_spill_limit_mb: int = Field(default=10_240, ge=0, le=10_485_760)
     # Reverse proxies whose X-Forwarded-For is believed (ADR-0027): IPs and CIDRs. Empty:
     # the header is ignored. For an HA pair, list the node addresses, not only the VIP.
     trusted_proxies: list[str] = Field(default_factory=list, max_length=64)

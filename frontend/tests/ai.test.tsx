@@ -168,7 +168,7 @@ describe("A range too big for the memory share (F46)", () => {
             new Response(
               JSON.stringify({
                 detail:
-                  "The query needs more memory than this server allows. Narrow the time range or the sources, or aggregate before returning rows",
+                  "Out of memory: this query needed more than the 819 MB it can use on this server. Try a shorter time range or fewer sources, or count and group instead of returning every row",
                 code: "query_memory",
               }),
               { status: 503, headers: { "Content-Type": "application/json" } },
@@ -184,7 +184,7 @@ describe("A range too big for the memory share (F46)", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<App initialTheme="dark" queryClient={client} />);
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("The query needs more memory than this server allows.");
+    expect(alert).toHaveTextContent("Out of memory: this query needed more than the 819 MB");
     expect(alert).toHaveTextContent("Showing the last 24 hours instead.");
     const table = await screen.findByRole("region", { name: "AI services seen in network logs" });
     expect(within(table).getByText("ChatGPT")).toBeInTheDocument();

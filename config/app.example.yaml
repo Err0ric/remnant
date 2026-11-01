@@ -7,6 +7,7 @@ server:
   # address_space_cap: false  # opt-in RLIMIT_AS at the budget; enforce memory with systemd or Docker instead
   # query_threads: 0          # DuckDB threads per query; 0 = usable CPUs, at most 4
   # max_concurrent_queries: 0 # queries at once, others wait then get "busy"; 0 = 4
+  # query_spill_limit_mb: 10240 # disk all queries may overflow to under data/tmp/duckdb; 0 = DuckDB's default
 
 auth:
   # Set one of these to bind beyond localhost. Prefer env vars over YAML for secrets.

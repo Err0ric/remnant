@@ -119,7 +119,9 @@ async def _run_audited(
     }
     sql, values = _placeholders(body.sql, body.params, body.start, body.end)
     try:
-        result = await run_in_threadpool(engine.run, sql, scope, values or None)
+        result = await run_in_threadpool(
+            lambda: engine.run(sql, scope, values or None, name=action, large=True)
+        )
     except AppError as exc:
         detail["error"] = type(exc).__name__
         await run_in_threadpool(

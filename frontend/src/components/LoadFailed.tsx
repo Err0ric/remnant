@@ -14,7 +14,7 @@ export function LoadFailed({ what, error, onRetry, retrying }: LoadFailedProps) 
   const api = error instanceof ApiError ? error : null;
   const reason =
     api?.code === "query_memory"
-      ? "the query needed more memory than this server allows"
+      ? "the query ran out of memory on this server; try a shorter time range"
       : api?.code === "query_timeout"
         ? "the query took too long"
         : (api?.message ?? "the server could not be reached");
