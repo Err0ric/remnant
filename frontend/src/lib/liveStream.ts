@@ -27,6 +27,8 @@ export interface LiveOptions {
   /** Resume: start after this cursor (Pause ends the stream on the server, row 12). */
   since?: string;
   after?: string[];
+  /** A new stream starts this many minutes back (the table fills while sources catch up). */
+  fillMinutes?: number;
   signal: AbortSignal;
   onEvent: (e: LiveEvent) => void;
 }
@@ -55,6 +57,7 @@ export async function followLive(o: LiveOptions): Promise<void> {
   const q = new URLSearchParams({ q: o.sql, client: "browser" });
   for (const s of o.sources ?? []) q.append("sources", s);
   if (o.since) q.set("since", o.since);
+  else if (o.fillMinutes) q.set("fill_minutes", String(o.fillMinutes));
   for (const id of o.after ?? []) q.append("after", id);
   const res = await fetch(`/api/search/live?${q.toString()}`, {
     credentials: "same-origin",

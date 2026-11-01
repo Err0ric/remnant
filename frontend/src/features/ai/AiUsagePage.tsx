@@ -1,9 +1,9 @@
 import { EntityLink, EntityList } from "@/components/EntityLink";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState, type ReactNode } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 import { PeoplePending } from "@/components/PeoplePending";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { Command, PageHeader } from "@/components/shell/PageHeader";
+import { PageHeader } from "@/components/shell/PageHeader";
 import {
   ApiError,
   api,
@@ -51,8 +51,16 @@ const LEVEL_LABEL: Record<DataLevel, string> = {
   confidential: "Confidential",
 };
 
+/** In the viewer's time zone (owner, 2026-10-31). */
 function when(iso: string | null): string {
-  return iso ? iso.slice(0, 16).replace("T", " ") : "·";
+  return iso
+    ? new Date(iso).toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      })
+    : "·";
 }
 
 const TH = "px-3 py-2 text-left font-semibold";
@@ -70,6 +78,8 @@ interface AiUsagePageProps {
 export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsagePageProps) {
   const client = useQueryClient();
   const [range, setRange] = useState<TimeRangeId>("7d");
+  // The service whose review and allowed data are open under its row (list-detail).
+  const [reviewing, setReviewing] = useState<string | null>(null);
   const usage = useQuery({
     queryKey: ["ai-usage", range],
     queryFn: () => api.aiUsage(rangeStart(range)),
@@ -133,13 +143,6 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
       <PageHeader
         crumbs={["Home", "AI", "AI usage"]}
         title={area === "agents" ? "Agents" : "AI usage"}
-        commands={
-          <Command
-            label={usage.isFetching ? "Refreshing…" : "Refresh"}
-            onClick={() => void usage.refetch()}
-            disabled={usage.isFetching}
-          />
-        }
         meta={
           data
             ? `${data.services.length} services · ${data.mcp.length} MCP servers · ${data.people.length} Claude Code ${data.people.length === 1 ? "user" : "users"}`
@@ -148,20 +151,23 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
       />
       <div className="flex flex-col gap-3 px-5 py-3">
         <div className="flex flex-wrap items-center gap-3">
-          <label className="flex items-center gap-2 text-sm">
-            <span className="text-text-secondary">Time range</span>
-            <select
-              value={range}
-              onChange={(e) => setRange(e.target.value as TimeRangeId)}
-              className="h-8 rounded border border-border-strong bg-surface px-2 text-sm"
-            >
-              {TIME_RANGES.filter((r) => r.id !== "15m").map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          {/* One time control per page: Agents > Overview has its own window chips. */}
+          {area === "agents" && tab === "overview" ? null : (
+            <label className="flex items-center gap-2 text-sm">
+              <span className="text-text-secondary">Time range</span>
+              <select
+                value={range}
+                onChange={(e) => setRange(e.target.value as TimeRangeId)}
+                className="h-8 rounded border border-border-strong bg-surface px-2 text-sm"
+              >
+                {TIME_RANGES.filter((r) => r.id !== "15m").map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           {notApproved ? (
             <span className="rounded-badge bg-sev-critical-bg px-2 py-0.5 text-sm text-sev-critical-text">
               {notApproved} not approved in use
@@ -229,69 +235,105 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
                     <th className={`${TH} text-right`}>People</th>
                     <th className={`${TH} text-right`}>Machines</th>
                     <th className={`${TH} text-right`}>Events</th>
-                    <th className={TH}>Last seen (UTC)</th>
+                    <th className={TH}>Last seen</th>
                     <th className={TH}>Who (people, or machines)</th>
+                    {isAdmin ? (
+                      <th className={TH}>
+                        <span className="sr-only">Actions</span>
+                      </th>
+                    ) : null}
                   </tr>
                 </thead>
                 <tbody>
                   {(data?.services ?? []).map((u) => (
-                    <tr key={u.service.id} className="border-b border-border last:border-0">
-                      <td className={TD}>
-                        <div className="flex items-center gap-2 font-semibold">
-                          <EntityLink kind="service" value={u.service.id} label={u.service.name} />
-                          {newServices.has(u.service.id) ? <NewBadge /> : null}
-                        </div>
-                        <div className="text-text-muted">
-                          {u.service.vendor} · {KIND[u.service.kind] ?? u.service.kind}
-                        </div>
-                      </td>
-                      <td className={TD}>
-                        {isAdmin ? (
-                          <StatusPicker
-                            label={u.service.name}
-                            value={u.service.status}
-                            onChange={(status) => setService.mutate({ id: u.service.id, status })}
-                          />
-                        ) : (
+                    <Fragment key={u.service.id}>
+                      <tr className="border-b border-border last:border-0">
+                        <td className={TD}>
+                          <div className="flex items-center gap-2 font-semibold">
+                            <EntityLink
+                              kind="service"
+                              value={u.service.id}
+                              label={u.service.name}
+                            />
+                            {newServices.has(u.service.id) ? <NewBadge /> : null}
+                          </div>
+                          <div className="text-text-muted">
+                            {u.service.vendor} · {KIND[u.service.kind] ?? u.service.kind}
+                          </div>
+                        </td>
+                        <td className={TD}>
                           <StatusBadge status={u.service.status} />
-                        )}
-                      </td>
-                      <td className={TD}>
-                        {isAdmin ? (
-                          <select
-                            aria-label={`Allowed data for ${u.service.name}`}
-                            value={u.service.data_level ?? ""}
-                            onChange={(e) =>
-                              setLevel.mutate({
-                                id: u.service.id,
-                                level: (e.target.value || null) as DataLevel | null,
-                              })
-                            }
-                            className="h-8 rounded border border-border-strong bg-inset px-2 text-sm"
-                          >
-                            <option value="">Not set</option>
-                            {LEVELS.map((l) => (
-                              <option key={l} value={l}>
-                                {LEVEL_LABEL[l]}
-                              </option>
-                            ))}
-                          </select>
-                        ) : (
+                        </td>
+                        <td className={TD}>
                           <span className="text-text-secondary">
                             {u.service.data_level ? LEVEL_LABEL[u.service.data_level] : "Not set"}
                           </span>
-                        )}
-                      </td>
-                      <td className={`${TD} text-right font-mono tabular-nums`}>{u.people}</td>
-                      <td className={`${TD} text-right font-mono tabular-nums`}>{u.machines}</td>
-                      <td className={`${TD} text-right font-mono tabular-nums`}>
-                        {u.events.toLocaleString()}
-                      </td>
-                      <td className={`${TD} whitespace-nowrap font-mono`}>{when(u.last_seen)}</td>
-                      <td className={`${TD} font-mono text-text-secondary`}>
-                        <EntityList people={u.top_people} machines={u.top_machines} />
-                      </td>
-                    </tr>
+                        </td>
+                        <td className={`${TD} text-right font-mono tabular-nums`}>{u.people}</td>
+                        <td className={`${TD} text-right font-mono tabular-nums`}>{u.machines}</td>
+                        <td className={`${TD} text-right font-mono tabular-nums`}>
+                          {u.events.toLocaleString()}
+                        </td>
+                        <td className={`${TD} whitespace-nowrap font-mono`}>{when(u.last_seen)}</td>
+                        <td className={`${TD} font-mono text-text-secondary`}>
+                          <EntityList people={u.top_people} machines={u.top_machines} />
+                        </td>
+                        {isAdmin ? (
+                          <td className={`${TD} text-right`}>
+                            <button
+                              type="button"
+                              aria-label={`Review ${u.service.name}`}
+                              aria-expanded={reviewing === u.service.id}
+                              onClick={() =>
+                                setReviewing(reviewing === u.service.id ? null : u.service.id)
+                              }
+                              className="text-accent-text hover:underline"
+                            >
+                              Review
+                            </button>
+                          </td>
+                        ) : null}
+                      </tr>
+                      {isAdmin && reviewing === u.service.id ? (
+                        <tr className="border-b border-border bg-inset">
+                          <td colSpan={9} className="px-3 py-2">
+                            <div className="flex flex-wrap items-center gap-4">
+                              <label className="flex items-center gap-2">
+                                <span className="text-text-secondary">Review</span>
+                                <StatusPicker
+                                  label={u.service.name}
+                                  value={u.service.status}
+                                  onChange={(status) =>
+                                    setService.mutate({ id: u.service.id, status })
+                                  }
+                                />
+                              </label>
+                              <label className="flex items-center gap-2">
+                                <span className="text-text-secondary">Allowed data</span>
+                                <select
+                                  aria-label={`Allowed data for ${u.service.name}`}
+                                  value={u.service.data_level ?? ""}
+                                  onChange={(e) =>
+                                    setLevel.mutate({
+                                      id: u.service.id,
+                                      level: (e.target.value || null) as DataLevel | null,
+                                    })
+                                  }
+                                  className="h-8 rounded border border-border-strong bg-inset px-2 text-sm"
+                                >
+                                  <option value="">Not set</option>
+                                  {LEVELS.map((l) => (
+                                    <option key={l} value={l}>
+                                      {LEVEL_LABEL[l]}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : null}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>
@@ -327,7 +369,7 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
                     <th className={`${TH} text-right`}>Installed on</th>
                     <th className={TH}>Clients</th>
                     <th className={TH}>Seen in</th>
-                    <th className={TH}>Last seen (UTC)</th>
+                    <th className={TH}>Last seen</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -497,7 +539,7 @@ function GoneList({ items, before }: { items: AiGone[]; before: string }) {
             </span>
             <StatusBadge status={g.status} />
             <span className="ml-auto whitespace-nowrap font-mono text-text-secondary">
-              Last seen {when(g.last_seen)} UTC
+              Last seen {when(g.last_seen)}
             </span>
           </li>
         ))}
@@ -533,7 +575,7 @@ function NotUsageList({ items }: { items: AiServiceUse[] }) {
             <th className={TH}>Hosts</th>
             <th className={`${TH} text-right`}>Machines</th>
             <th className={`${TH} text-right`}>Events</th>
-            <th className={TH}>Last seen (UTC)</th>
+            <th className={TH}>Last seen</th>
           </tr>
         </thead>
         <tbody>

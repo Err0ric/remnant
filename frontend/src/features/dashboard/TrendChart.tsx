@@ -22,6 +22,12 @@ interface TrendChartProps {
   axisLabel: (i: number) => string;
   /** Points after this index have no data yet: hatched, no line drawn. */
   lastWithData?: number;
+  /** Points before this index are before the data starts: hatched, no line drawn, so a
+   * source that began mid-window is not drawn as zeros (owner, 2026-10-31). */
+  firstWithData?: number;
+  /** The last point is still filling (today, this hour): its segment is dashed and its
+   * label says so ("so far"). */
+  partial?: string;
   /** What the chart counts, for screen readers ("failed sign-ins per hour"). */
   summary: string;
   legend?: ReactNode;
@@ -30,6 +36,16 @@ interface TrendChartProps {
   onOpen?: (i: number) => void;
   /** Extra lines for a point's tooltip ("Top user: erin@example.com (12)"). */
   details?: (i: number) => { label: string; value: string }[];
+}
+
+/** The first point whose bucket holds `since` (when data starts), or undefined when the
+ * data covers every point. `points` are bucket starts, oldest first. */
+export function startIndex(points: string[], since: string | null | undefined): number | undefined {
+  if (!since || !points.length) return undefined;
+  const t = new Date(since).getTime();
+  if (t <= new Date(points[0] ?? "").getTime()) return undefined;
+  const i = points.findIndex((_, k) => new Date(points[k + 1] ?? "9999").getTime() > t);
+  return i > 0 ? i : undefined;
 }
 
 const W = 1000; // viewBox width; the plot stretches to its box, strokes do not scale
@@ -110,6 +126,8 @@ export function TrendChart({
   pointLabel,
   axisLabel,
   lastWithData,
+  firstWithData,
+  partial,
   summary,
   legend,
   height = 140,
@@ -118,6 +136,9 @@ export function TrendChart({
 }: TrendChartProps) {
   const n = Math.max(0, ...series.map((s) => s.values.length));
   const last = Math.min(n - 1, lastWithData ?? n - 1);
+  const begin = Math.max(0, Math.min(last, firstWithData ?? 0));
+  const open = Boolean(partial) && last === n - 1 && last > begin;
+  const label = (i: number) => `${pointLabel(i)}${open && i === n - 1 ? ` (${partial})` : ""}`;
   const [at, setAt] = useState<number | null>(null);
   const box = useRef<HTMLDivElement>(null);
   const tipId = useId();
@@ -125,7 +146,7 @@ export function TrendChart({
 
   // Layers as drawn: cumulative when stacked. A stack's tangents are the sums of its
   // layers' tangents, so bands never cross between points.
-  const own = series.map((s) => s.values.slice(0, last + 1));
+  const own = series.map((s) => s.values.slice(begin, last + 1));
   const ownM = own.map(tangents);
   const layers = own.map((vals, k) =>
     stacked ? vals.map((_, i) => own.slice(0, k + 1).reduce((a, l) => a + (l[i] ?? 0), 0)) : vals,
@@ -137,7 +158,8 @@ export function TrendChart({
   const top = niceTop(Math.max(2, ...layers.flatMap((l) => l), ...(prev.length ? prev : [0])));
   const x = (i: number) => (n <= 1 ? W / 2 : (i / (n - 1)) * W);
   const y = (v: number) => h - (Math.max(0, v) / top) * h;
-  const xs = Array.from({ length: last + 1 }, (_, i) => x(i));
+  const xs = Array.from({ length: last - begin + 1 }, (_, i) => x(begin + i));
+  const has = (i: number) => i >= begin && i <= last;
   const pct = (i: number) => (n <= 1 ? 50 : (i / (n - 1)) * 100);
 
   const pick = (clientX: number) => {
@@ -156,7 +178,7 @@ export function TrendChart({
     else if (e.key === "Home") go(0);
     else if (e.key === "End") go(n - 1);
     else if (e.key === "Escape") setAt(null);
-    else if (e.key === "Enter" && onOpen && at !== null && at <= last) {
+    else if (e.key === "Enter" && onOpen && at !== null && has(at)) {
       e.preventDefault();
       onOpen(at);
     }
@@ -165,8 +187,15 @@ export function TrendChart({
   const rows =
     at === null
       ? []
-      : at > last
-        ? [{ key: "none", label: "No data yet", value: null as number | null, color: "" }]
+      : !has(at)
+        ? [
+            {
+              key: "none",
+              label: at < begin ? "Before the data starts" : "No data yet",
+              value: null as number | null,
+              color: "",
+            },
+          ]
         : [
             ...[...series].reverse().map((s) => ({
               key: s.key,
@@ -175,12 +204,12 @@ export function TrendChart({
               color: s.color,
             })),
           ];
-  const total = at !== null && at <= last ? series.reduce((a, s) => a + (s.values[at] ?? 0), 0) : 0;
+  const total = at !== null && has(at) ? series.reduce((a, s) => a + (s.values[at] ?? 0), 0) : 0;
   const tipText =
     at === null
       ? ""
-      : `${pointLabel(at)}: ${rows.map((r) => (r.value === null ? r.label : `${r.label} ${r.value.toLocaleString()}`)).join(", ")}${
-          stacked && at <= last ? `, total ${total.toLocaleString()}` : ""
+      : `${label(at)}: ${rows.map((r) => (r.value === null ? r.label : `${r.label} ${r.value.toLocaleString()}`)).join(", ")}${
+          stacked && has(at) ? `, total ${total.toLocaleString()}` : ""
         }${previous && prev[at] !== undefined ? `, ${previous.label} ${prev[at].toLocaleString()}` : ""}${
           details
             ? details(at)
@@ -221,7 +250,7 @@ export function TrendChart({
               0,
               Math.min(n - 1, Math.round(((e.clientX - r.left) / r.width) * (n - 1))),
             );
-            if (i <= last) onOpen(i);
+            if (has(i)) onOpen(i);
           }}
           aria-describedby={at !== null ? tipId : undefined}
           onPointerMove={(e) => pick(e.clientX)}
@@ -238,6 +267,17 @@ export function TrendChart({
             aria-hidden="true"
             className="absolute inset-x-0 top-1/2 border-t border-dashed border-border"
           />
+          {begin > 0 ? (
+            <div
+              aria-hidden="true"
+              className="absolute inset-y-0 left-0"
+              style={{
+                width: `${pct(begin)}%`,
+                backgroundImage:
+                  "repeating-linear-gradient(135deg, var(--border) 0 1px, transparent 1px 6px)",
+              }}
+            />
+          ) : null}
           {last < n - 1 ? (
             <div
               aria-hidden="true"
@@ -278,6 +318,12 @@ export function TrendChart({
                   const below = stacked && k > 0 ? (layers[k - 1] as number[]) : null;
                   const belowM = stacked && k > 0 ? (layerM[k - 1] as number[]) : null;
                   const upper = `M${xs[0]},${y(l[0] ?? 0)} ${segments(xs, l, m, y)}`;
+                  // A still-filling last point: the line up to the one before is solid,
+                  // the last segment dashed.
+                  const k1 = xs.length - 1;
+                  const solid = open
+                    ? `M${xs[0]},${y(l[0] ?? 0)} ${segments(xs.slice(0, k1), l.slice(0, k1), m.slice(0, k1), y)}`
+                    : upper;
                   const area = below
                     ? `${upper} L${xs[xs.length - 1]},${y(below[below.length - 1] ?? 0)} ${segments(xs, below, belowM as number[], y, true)} Z`
                     : `${upper} L${xs[xs.length - 1]},${h} L${xs[0]},${h} Z`;
@@ -289,12 +335,22 @@ export function TrendChart({
                         fillOpacity={stacked ? 0.32 : 0.16}
                       />
                       <path
-                        d={upper}
+                        d={solid}
                         fill="none"
                         stroke={`var(--${s.color})`}
                         strokeWidth={1.5}
                         vectorEffect="non-scaling-stroke"
                       />
+                      {open ? (
+                        <path
+                          d={`M${xs[k1 - 1]},${y(l[k1 - 1] ?? 0)} L${xs[k1]},${y(l[k1] ?? 0)}`}
+                          fill="none"
+                          stroke={`var(--${s.color})`}
+                          strokeWidth={1.5}
+                          strokeDasharray="3 3"
+                          vectorEffect="non-scaling-stroke"
+                        />
+                      ) : null}
                     </g>
                   );
                 })
@@ -307,7 +363,7 @@ export function TrendChart({
                 className="absolute inset-y-0 border-l border-border-strong"
                 style={{ left: `${pct(at)}%` }}
               />
-              {at <= last
+              {has(at)
                 ? layers.map((l, k) => (
                     <span
                       key={series[k]?.key ?? k}
@@ -315,7 +371,7 @@ export function TrendChart({
                       className="absolute size-2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-surface"
                       style={{
                         left: `${pct(at)}%`,
-                        top: `${(y(l[at] ?? 0) / h) * 100}%`,
+                        top: `${(y(l[at - begin] ?? 0) / h) * 100}%`,
                         background: `var(--${series[k]?.color ?? "text"})`,
                       }}
                     />
@@ -332,7 +388,7 @@ export function TrendChart({
               >
                 <span className="sr-only">{tipText}</span>
                 <div aria-hidden="true">
-                  <div className="mb-0.5 whitespace-nowrap font-semibold">{pointLabel(at)}</div>
+                  <div className="mb-0.5 whitespace-nowrap font-semibold">{label(at)}</div>
                   {rows.map((r) => (
                     <div key={r.key} className="flex items-center gap-2 whitespace-nowrap">
                       {r.color ? (
@@ -357,7 +413,7 @@ export function TrendChart({
                         </div>
                       ))
                     : null}
-                  {stacked && at <= last ? (
+                  {stacked && has(at) ? (
                     <div className="flex gap-2 whitespace-nowrap border-t border-border pt-0.5">
                       <span className="text-text-secondary">Total</span>
                       <span className="ml-auto font-mono tabular-nums">
@@ -365,7 +421,7 @@ export function TrendChart({
                       </span>
                     </div>
                   ) : null}
-                  {onOpen && at <= last ? (
+                  {onOpen && has(at) ? (
                     <div className="mt-0.5 whitespace-nowrap text-xs text-accent-text">
                       Open{" "}
                       {stacked ? total.toLocaleString() : (rows[0]?.value ?? 0).toLocaleString()}{" "}

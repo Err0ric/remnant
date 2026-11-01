@@ -63,3 +63,57 @@ describe("Microsoft 365 area (ADR-0038 section 5)", () => {
     expect(tip).toHaveTextContent("Top app Office 365 Exchange Online (6)");
   });
 });
+
+describe("Mail rules (D132)", () => {
+  it("groups one person's burst into one line, risky bursts first", async () => {
+    const { bursts, burstLine } = await import("@/features/m365/MailRules");
+    const columns = ["time", "person", "rule", "class", "risky", "severity", "burst", "event_id"];
+    const organizing = Array.from({ length: 60 }, (_, i) => [
+      `2026-10-${i < 30 ? 29 : 30}T19:${String(i % 30).padStart(2, "0")}:00+00:00`,
+      "dana@example.com",
+      `From co${i}`,
+      "organizing",
+      false,
+      "low",
+      "dana@example.com|0",
+      `e${i}`,
+    ]);
+    const junk = [0, 1].map((i) => [
+      "2026-10-30T20:0" + i + ":00+00:00",
+      "dana@example.com",
+      `j${i}`,
+      "hiding",
+      true,
+      "medium",
+      "dana@example.com|0",
+      `j${i}`,
+    ]);
+    const other = [
+      [
+        "2026-10-31T09:00:00+00:00",
+        "sam@example.com",
+        "x",
+        "organizing",
+        false,
+        "low",
+        "sam@example.com|0",
+        "s1",
+      ],
+    ];
+    const got = bursts({
+      columns,
+      rows: [...junk, ...organizing, ...other],
+      row_count: 63,
+      truncated: false,
+      elapsed_ms: 0,
+      executed_sql: "",
+      sources: ["m365"],
+    });
+    expect(got.map((b) => b.person)).toEqual(["dana@example.com", "sam@example.com"]);
+    expect(got[0]!.risky).toBe(2);
+    expect(burstLine(got[0]!)).toMatch(
+      /^dana@example\.com created 62 rules Oct (29|30) to Oct (30|31): 60 organizing, 2 hiding$/,
+    );
+    expect(burstLine(got[1]!)).toMatch(/^sam@example\.com created 1 rule Oct 31: 1 organizing$/);
+  });
+});

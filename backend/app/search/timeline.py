@@ -10,9 +10,10 @@ caller's `events` view; no model is called."""
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Protocol
 
 from app.ai.consents import CONSENTS_CTE
 from app.ai.sessions import _a
@@ -61,6 +62,38 @@ class Timeline:
     sql: str = ""
     signins_sql: str = ""  # the person's Microsoft 365 sign-ins, for the Sign-ins tab
     sources: list[str] = field(default_factory=list)
+    # Other names on this person's devices that look like the same person ("robin" and
+    # "robin.okafor@example.com"); an administrator can make one an alias (ADR-0018).
+    maybe: list[Maybe] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class Maybe:
+    name: str
+    devices: list[str]
+
+
+def _local(key: str) -> str:
+    return key.partition("@")[0]
+
+
+def related(a: str, b: str) -> bool:
+    """Two person keys that read as one person: a short name and its longer form
+    ("robin" and "robin.okafor"), initial and surname ("rokafor"), or the dots dropped."""
+    x, y = _local(a), _local(b)
+    if not x or not y or x == y:
+        return False
+    for long, short in ((x, y), (y, x)):
+        parts = [p for p in re.split(r"[._-]", long) if p]
+        if len(parts) < 2 or len(short) < 3:
+            continue
+        if short in (parts[0], parts[0][0] + parts[-1], "".join(parts)):
+            return True
+    return False
+
+
+class Covers(Protocol):
+    def covered(self, scope: QueryScope) -> list[str]: ...
 
 
 def _iso(v: Any) -> str:
@@ -83,7 +116,10 @@ def timeline(
     person: str,
     start: datetime,
     end: datetime,
+    rollup: Covers | None = None,
 ) -> Timeline:
+    """With `rollup` (the AI rollup), first use of AI services reads closed days from it,
+    never days of raw DNS (F46, F63): the step that ran out of memory on a busy install."""
     if not person.strip():
         raise ParamInvalidError("Name a person")
     keys = ident.keys_for(person)
@@ -105,8 +141,11 @@ def timeline(
         " src_endpoint_ip, device_hostname, event_id",
     )
 
-    def run(sql: str, name: str) -> list[list[Any]]:
-        res = engine.run(sql, scope, timeout_s=TIMEOUT_S, intel=False, name=f"timeline.{name}")
+    def run(sql: str, name: str, covered: list[str] | None = None) -> list[list[Any]]:
+        res = engine.run(
+            sql, scope, {"covered": covered} if covered else None, timeout_s=TIMEOUT_S,
+            intel=False, rollup=bool(covered), skip_days=covered or (), name=f"timeline.{name}",
+        )  # fmt: skip
         sources.update(res.sources)
         return res.rows
 
@@ -129,6 +168,19 @@ def timeline(
             out.devices.append(str(devs))
     out.forms.sort()
     out.devices.sort()
+
+    if out.devices:
+        me = ident.key(person)
+        for name, devs in run(
+            "SELECT actor_user_name, list(DISTINCT device_hostname) FROM events"  # noqa: S608  # escaped literals only
+            f" WHERE list_contains({drill.lits(out.devices[:50])}, device_hostname)"
+            f" AND nullif(trim(actor_user_name), '') IS NOT NULL AND NOT {mine}"
+            " GROUP BY 1 LIMIT 500",
+            "maybe",
+        ):
+            if related(me, ident.key(str(name))):
+                out.maybe.append(Maybe(str(name), sorted(str(d) for d in devs or [])[:5]))
+        out.maybe.sort(key=lambda m: m.name.lower())
 
     for _hour, app, how, n, s, e in run(
         f"SELECT {_HOUR}, coalesce(resource_name, message), {outcome}, count(*), min({_TS}),"  # noqa: S608  # escaped literals only
@@ -157,11 +209,13 @@ def timeline(
             "claude_hooks", cond, "warn" if failed else "neutral")  # fmt: skip
 
     key_who = key_sql("who").replace("$id_org", org)
+    covered = rollup.covered(scope) if rollup is not None else []
     for svc, s in run(
-        f"WITH {_use_ctes(catalog_pairs, False)}\n"  # catalog values checked in _values
+        f"WITH {_use_ctes(catalog_pairs, bool(covered))}\n"  # catalog values checked in _values
         f"SELECT service_id, min(first_t) FROM r WHERE list_contains({drill.lits(keys)}, {key_who})"
         " GROUP BY 1 LIMIT 100",
         "ai",
+        covered,
     ):
         add("ai_first", s, s, f"First used {svc} in this window", "AI service", 1, "network",
             "true")  # fmt: skip

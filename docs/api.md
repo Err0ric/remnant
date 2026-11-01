@@ -105,7 +105,7 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 
 | Method | Path | What it does | Query | JSON body (`?` optional) |
 |---|---|---|---|---|
-| `GET` | `/api/dashboard/sections` | The Dashboard's default sections for the caller, against the window before. A section is null when the caller has no source for it. | `?window` (optional): `24h` &#124; `7d` &#124; `30d` |  |
+| `GET` | `/api/dashboard/sections` | The Dashboard's default sections for the caller, against the window before. A section is null when the caller has no source for it, or when `part` asks for another one (the page loads each section on its own, so a slow one holds up only itself). Days are the viewer's (`tz`, an IANA name; UTC otherwise). Numbers are kept for 60 s per caller's sources, window, and part (`app.api.cache`). | `?window` (optional): `24h` &#124; `7d` &#124; `30d`<br>`?part` (optional): `identity` &#124; `attacks` &#124; `detections`<br>`?tz` (optional): string |  |
 | `GET` | `/api/dashboards` | Dashboards the viewer sees, their own first. A user with none yet gets an empty "My dashboard" the first time they create a panel, not on reading. |  |  |
 | `POST` | `/api/dashboards` | Create Dashboard |  | `name`: string<br>`shared`?: boolean |
 | `PATCH` | `/api/dashboards/{dashboard_id}` | Update Dashboard |  | `name`?: string<br>`shared`?: boolean |
@@ -217,7 +217,7 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 
 | Method | Path | What it does | Query | JSON body (`?` optional) |
 |---|---|---|---|---|
-| `GET` | `/api/m365/overview` | KPIs, the counts row, the outcome per hour or day, the tops, and each tab's list as a Search query template (`{from}` and `{to}`). `has_source` is false when the caller reads no Microsoft 365 source. | `?window` (optional): `24h` &#124; `7d` &#124; `30d` |  |
+| `GET` | `/api/m365/overview` | KPIs, the counts row, the outcome per hour or day, the tops, and each tab's list as a Search query template (`{from}` and `{to}`). `has_source` is false when the caller reads no Microsoft 365 source. | `?window` (optional): `24h` &#124; `7d` &#124; `30d`<br>`?tz` (optional): string |  |
 
 ### Otlp
 
@@ -298,7 +298,7 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | `POST` | `/api/library/{pack_id}/{query_id}/copy` | Save as my own (row 4): a private saved search the user owns. Audited search.create with the library entry. |  |  |
 | `POST` | `/api/library/{pack_id}/{query_id}/replace` | Replace my copy (row 7): the user's copy takes the pack's current SQL and version. Audited search.update; the user's schedules of it take the change as an edit does. |  |  |
 | `GET` | `/api/people/{person}/timeline` | One row per action by this person across the sources the caller may read, newest first, with the forms of the name that matched. Audited `search.timeline`. | `?days` (optional): integer |  |
-| `GET` | `/api/search/live` | Follow new rows of `q` (row queries only). With `since` (Resume), first sends what arrived after it, up to 1,000 rows, newest kept. Audited `search.live_start` and `search.live_stop`. | `?q`: string<br>`?client` (optional): `browser` &#124; `cli` &#124; `tui`<br>`?sources` (optional): list of string<br>`?since` (optional): date-time<br>`?after` (optional): list of string |  |
+| `GET` | `/api/search/live` | Follow new rows of `q` (row queries only). With `since` (Resume), first sends what arrived after it, up to 1,000 rows, newest kept; without it, `fill_minutes` starts that many minutes back so the table is not empty while slow sources catch up. Audited `search.live_start` and `search.live_stop`. | `?q`: string<br>`?client` (optional): `browser` &#124; `cli` &#124; `tui`<br>`?sources` (optional): list of string<br>`?since` (optional): date-time<br>`?after` (optional): list of string<br>`?fill_minutes` (optional): integer |  |
 | `GET` | `/api/search/live/streams` | The caller's open live streams, browser, CLI, and TUI together (row 5). |  |  |
 | `DELETE` | `/api/search/live/streams/{stream_id}` | Stop one of the caller's streams; it ends at its next poll. |  |  |
 | `GET` | `/api/settings/live` | Get Limit |  |  |

@@ -156,3 +156,23 @@ def test_resume_sends_what_arrived_while_paused_up_to_1000(lab: dict[str, Any]) 
     with lab["ana"].stream("GET", "/api/search/live", params={"q": SQL}) as res:
         got = _read(res)
     assert got[-1][1]["reason"] == "too_many"
+
+
+def test_starting_with_the_last_minutes_filled_in(lab: dict[str, Any]) -> None:
+    """Owner 2026-10-31: sources minutes behind leave a new Live table empty; starting with
+    the last 5 minutes filled shows what already arrived, and the audit says so."""
+    engine = lab["app"].state.engine
+    rows = []
+    for i in range(3):
+        r = _row("m365_signin", "successful sign-in", "lin_auth")
+        r["time_observed"] = r["time"] = datetime.now(UTC) - timedelta(minutes=2, seconds=i)
+        rows.append(r)
+    LakeWriter(engine._lake).write(rows)
+    params = {"q": SQL, "fill_minutes": 5}
+    with lab["ana"].stream("GET", "/api/search/live", params=params) as res:
+        got = _read(res)
+    assert len([r for k, d in got if k == "rows" for r in d["rows"]]) == 3
+    entry = audit(lab, "search.live_start")[-1]
+    assert (entry["resumed"], entry["filled_minutes"]) == (False, 5)
+    with lab["ana"].stream("GET", "/api/search/live", params={"q": SQL}) as res:
+        assert not [r for k, d in _read(res) if k == "rows" for r in d["rows"]]

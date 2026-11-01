@@ -1,7 +1,7 @@
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { SeverityBadge } from "@/components/SeverityBadge";
-import type { GeoInfo, QueryResult } from "@/lib/api";
+import type { Cell, GeoInfo, QueryResult } from "@/lib/api";
 import { EntityLink } from "@/components/EntityLink";
 import { kindForColumn, type EntityKind } from "@/lib/entity";
 import { cn } from "@/lib/cn";
@@ -35,6 +35,8 @@ interface ResultsTableProps {
   geo?: Record<string, GeoInfo>;
   /** Event ids that just arrived (Live, ADR-0036): a short tint, once. */
   fresh?: Set<string>;
+  /** Told when a row opens or closes (Live holds new rows while one is open). */
+  onOpenChange?: (open: boolean) => void;
 }
 
 export function ResultsTable({
@@ -46,12 +48,21 @@ export function ResultsTable({
   onToggleSelect,
   geo,
   fresh,
+  onOpenChange,
 }: ResultsTableProps) {
   const geoOf = (v: unknown) => (geo && typeof v === "string" ? geo[v] : undefined);
   const intelOf = (v: unknown) =>
     result.intel && typeof v === "string" ? result.intel[v] : undefined;
   const idIndex = result.columns.indexOf("event_id");
-  const [open, setOpen] = useState<number | null>(null);
+  // The open row, by event id when the result has one, so rows added above it (Live)
+  // neither move the detail to another row nor close it.
+  const [open, setOpenKey] = useState<string | null>(null);
+  const setOpen = (key: string | null) => {
+    setOpenKey(key);
+    onOpenChange?.(key !== null);
+  };
+  const keyOf = (row: Cell[], index: number) =>
+    idIndex >= 0 && row[idIndex] != null ? `id:${String(row[idIndex])}` : `at:${index}`;
   const [page, setPage] = useState(0);
   const [sort, setSort] = useState<{ index: number; dir: SortDir } | null>(null);
   // The table is as wide as its widest value and scrolls sideways; an open row's detail
@@ -158,21 +169,22 @@ export function ResultsTable({
           </div>
           {rows.map((row, idx) => {
             const index = page * PAGE + idx;
-            const isOpen = open === index;
+            const key = keyOf(row, index);
+            const isOpen = open === key;
             return (
-              <Fragment key={index}>
+              <Fragment key={key}>
                 {/* A row, not a button, so values inside can be links (product pass step 2). */}
                 <div
                   role="row"
                   tabIndex={0}
                   aria-level={1}
                   aria-expanded={isOpen}
-                  onClick={() => setOpen(isOpen ? null : index)}
+                  onClick={() => setOpen(isOpen ? null : key)}
                   onKeyDown={(e) => {
                     if (e.target !== e.currentTarget) return;
                     if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault();
-                      setOpen(isOpen ? null : index);
+                      setOpen(isOpen ? null : key);
                     }
                   }}
                   className={cn(

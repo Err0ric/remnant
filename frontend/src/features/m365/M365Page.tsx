@@ -7,8 +7,9 @@ import { navigate, useTab } from "@/lib/route";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { LoadFailed } from "@/components/LoadFailed";
 import { ResultsTable } from "@/features/search/ResultsTable";
+import { MailRules } from "./MailRules";
 import { DrillScope, DRILL, Kpi, SetCountries, Top, useDrill } from "@/features/dashboard/Sections";
-import { TrendChart, TrendLegend } from "@/features/dashboard/TrendChart";
+import { startIndex, TrendChart, TrendLegend } from "@/features/dashboard/TrendChart";
 import { compareLine } from "@/features/dashboard/History";
 import { WINDOWS, previousPhrase } from "@/features/dashboard/pageWindow";
 
@@ -23,9 +24,8 @@ function readWindow(): PageWindow {
   }
 }
 
-const hourFmt = (d: Date) => d.toLocaleTimeString("en-US", { hour: "numeric", timeZone: "UTC" });
-const dayFmt = (d: Date) =>
-  d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+const hourFmt = (d: Date) => d.toLocaleTimeString("en-US", { hour: "numeric" });
+const dayFmt = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
 /** Microsoft 365 (ADR-0038 section 5): Overview, then Sign-ins, Mail, Apps, and Admin as
  * event lists. One time window for the area; every number opens its rows (ADR-0039). */
@@ -118,7 +118,10 @@ export function M365Page() {
             {tab === "sign-ins" ? (
               <EventList title="Sign-ins" sql={m.lists.sign_ins} m={m} />
             ) : tab === "mail" ? (
-              <EventList title="Mail rules, forwarding, and DLP" sql={m.lists.mail} m={m} />
+              <>
+                <MailRules m={m} />
+                <EventList title="DLP matches" sql={m.lists.dlp} m={m} />
+              </>
             ) : tab === "apps" ? (
               <>
                 <EventList title="App consents" sql={m.lists.consents} m={m} />
@@ -212,6 +215,17 @@ function Overview({ m }: { m: M365Overview }) {
                 >
                   {c.kpi.value.toLocaleString()}
                 </button>
+                {c.kpi.extra != null ? (
+                  <button
+                    type="button"
+                    data-drill=""
+                    onClick={drill(c.kpi.extra_drill, "Organizing mail rules")}
+                    title="Rules that file mail into named folders: not counted as risky"
+                    className={cn(DRILL, "text-text-muted")}
+                  >
+                    ({c.kpi.extra.toLocaleString()} organizing)
+                  </button>
+                ) : null}
               </li>
             );
           })}
@@ -299,7 +313,8 @@ function Outcome({ m }: { m: M365Overview }) {
   const total = Math.max(1, sum(parts.map((p) => p.n)));
   const hourly = m.window !== "30d";
   const at = (i: number) => new Date(o.points[i] ?? "");
-  const name = (i: number) => (hourly ? `${dayFmt(at(i))}, ${hourFmt(at(i))} UTC` : dayFmt(at(i)));
+  const name = (i: number) => (hourly ? `${dayFmt(at(i))}, ${hourFmt(at(i))}` : dayFmt(at(i)));
+  const begin = startIndex(o.points, m.history.since);
   return (
     <Box label="Sign-in outcomes">
       <div className="grid gap-4 p-3 lg:grid-cols-[2fr_3fr]">
@@ -342,6 +357,9 @@ function Outcome({ m }: { m: M365Overview }) {
         </div>
         <TrendChart
           title={`Interrupted and failed per ${hourly ? "hour" : "day"}`}
+          note={begin !== undefined ? `no data before ${dayFmt(at(begin))}` : undefined}
+          firstWithData={begin}
+          partial="so far"
           stacked
           series={[
             { key: "i", label: "Interrupted", values: o.interrupted, color: "text-muted" },

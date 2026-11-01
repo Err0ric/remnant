@@ -19,6 +19,7 @@ import { cn } from "@/lib/cn";
 import { OfflineBanner } from "@/components/shell/OfflineBanner";
 import { SettingsNav } from "@/components/shell/SettingsNav";
 import { applyTheme, type Theme } from "@/lib/theme";
+import { ApiError } from "@/lib/api";
 
 // Pages load on first visit, so the first screen does not carry every page (install
 // finding: one 961 kB chunk). Search, Schedules, and Overview stay in the main bundle;
@@ -90,15 +91,29 @@ const HealthPage = lazy(() =>
   import("@/features/health/HealthPage").then((m) => ({ default: m.HealthPage })),
 );
 
+/** One fetch per endpoint per page load (owner, 2026-10-31): data stays fresh for 30 s, so
+ * a second component mounting a moment later reuses it instead of asking again, and a
+ * request the server answered (an error included: a busy server says so) is not sent a
+ * second time; only a network failure is retried once. Mutations still refresh what they
+ * change, and polling cards keep their own intervals. */
+export function newQueryClient(): QueryClient {
+  return new QueryClient({
+    defaultOptions: {
+      queries: {
+        staleTime: 30_000,
+        retry: (count, error) => count < 1 && !(error instanceof ApiError),
+      },
+    },
+  });
+}
+
 interface AppProps {
   initialTheme: Theme;
   queryClient?: QueryClient;
 }
 
 export function App({ initialTheme, queryClient }: AppProps) {
-  const [client] = useState(
-    () => queryClient ?? new QueryClient({ defaultOptions: { queries: { retry: 1 } } }),
-  );
+  const [client] = useState(() => queryClient ?? newQueryClient());
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const page = usePage();
   const tab = useTab();

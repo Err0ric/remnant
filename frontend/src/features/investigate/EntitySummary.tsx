@@ -128,7 +128,26 @@ export function EntitySummary({
         ? [
             <Kpi key="a" label="Sign-ins" value={n(s.sign_ins)} />,
             <Kpi key="f" label="Failed" value={n(s.failed)} />,
-            <Kpi key="ad" label="From addresses" value={n(s.addresses)} />,
+            <Kpi
+              key="ad"
+              label="From addresses"
+              value={
+                <span
+                  title={
+                    s.service_addresses
+                      ? `${n(s.service_addresses)} Microsoft 365 service addresses on server-side records are not counted`
+                      : undefined
+                  }
+                >
+                  {n(s.addresses)}
+                  {s.service_addresses ? (
+                    <span className="ml-1.5 text-sm font-normal text-text-muted">
+                      + {n(s.service_addresses)} Microsoft 365
+                    </span>
+                  ) : null}
+                </span>
+              }
+            />,
             <Kpi key="h" label="Hosts" value={n(s.hosts)} />,
           ]
         : [

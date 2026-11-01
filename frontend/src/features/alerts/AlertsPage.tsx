@@ -122,11 +122,14 @@ export function AlertsPage({ canClose, isAdmin }: AlertsPageProps) {
               </p>
             ) : null}
             {data && data.items.length === 0 ? (
-              <p className="rounded-card border border-border bg-surface px-3 py-6 text-center text-sm text-text-secondary">
-                {tab === "open"
-                  ? "Nothing needs a decision. New flagged runs, rule matches, and gaps on sources with Alert if quiet on land here."
-                  : "Nothing closed yet."}
-              </p>
+              <>
+                <p className="rounded-card border border-border bg-surface px-3 py-6 text-center text-sm text-text-secondary">
+                  {tab === "open"
+                    ? "Nothing needs a decision. New flagged runs, rule matches, and gaps on sources with Alert if quiet on land here."
+                    : "Nothing closed yet."}
+                </p>
+                {tab === "open" && !reviewing ? <RecentlyClosed {...rowProps} /> : null}
+              </>
             ) : (
               <ul className="rounded-card border border-border bg-surface">
                 {data?.items.map((i) => (
@@ -145,6 +148,32 @@ export function AlertsPage({ canClose, isAdmin }: AlertsPageProps) {
         )}
       </div>
     </div>
+  );
+}
+
+/** Under an empty queue: the last few decisions, so the page shows what normal looks
+ * like (owner, 2026-10-31). */
+function RecentlyClosed(props: Omit<AlertRowProps, "item" | "expanded" | "onToggle">) {
+  const closed = useQuery({ queryKey: ["alerts", "closed"], queryFn: () => api.alerts("closed") });
+  const [openId, setOpenId] = useState<string | null>(null);
+  const items = (closed.data?.items ?? []).slice(0, 5);
+  if (!items.length) return null;
+  return (
+    <section aria-label="Recently closed" className="mt-4">
+      <h2 className="mb-1.5 text-sm font-semibold text-text-secondary">Recently closed</h2>
+      <ul className="rounded-card border border-border bg-surface">
+        {items.map((i) => (
+          <li key={i.item_id} className="border-b border-border last:border-0">
+            <AlertRow
+              item={i}
+              expanded={openId === i.item_id}
+              onToggle={() => setOpenId(openId === i.item_id ? null : i.item_id)}
+              {...props}
+            />
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

@@ -1,3 +1,6 @@
+// Dates on screen are in the viewer's time zone; tests read them as a viewer in UTC.
+process.env.TZ = "UTC";
+
 import "@testing-library/jest-dom/vitest";
 import { cleanup, configure } from "@testing-library/react";
 import { afterEach, vi } from "vitest";

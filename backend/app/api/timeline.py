@@ -30,6 +30,11 @@ class TimelineRowOut(BaseModel):
     item_id: str | None = None
 
 
+class MaybeOut(BaseModel):
+    name: str
+    devices: list[str]
+
+
 class PersonTimelineOut(BaseModel):
     person: str
     forms: list[str]
@@ -40,6 +45,7 @@ class PersonTimelineOut(BaseModel):
     more: bool
     sql: str
     signins_sql: str
+    maybe: list[MaybeOut] = []
 
 
 @router.get("/people/{person}/timeline")
@@ -57,6 +63,7 @@ async def person_timeline(
     out = await run_in_threadpool(
         timeline, request.app.state.engine, allowed, ident,
         request.app.state.ai_catalog.domain_table(), person[:256], start, end,
+        request.app.state.ai_rollup,
     )  # fmt: skip
     out.rows = await run_in_threadpool(
         _with_alerts, request, user, out.rows, person[:256], start, end
@@ -72,6 +79,7 @@ async def person_timeline(
         rows=[TimelineRowOut(**{f: getattr(r, f) for f in TimelineRowOut.model_fields})
               for r in out.rows],
         more=out.more, sql=out.sql, signins_sql=out.signins_sql,
+        maybe=[MaybeOut(name=m.name, devices=m.devices) for m in out.maybe],
     )  # fmt: skip
 
 

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent, type ReactNode } from "react";
-import { Command, PageHeader } from "@/components/shell/PageHeader";
+import { PageHeader } from "@/components/shell/PageHeader";
 import { FormError } from "@/features/auth/FormError";
 import { since, stamp } from "@/features/overview/time";
 import { ApiError, api, type Source, type WatchedDevice } from "@/lib/api";
@@ -339,17 +339,6 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
             ];
           }),
         )}
-        commands={
-          <Command
-            label={checks.isFetching || sources.isFetching ? "Refreshing…" : "Refresh"}
-            onClick={() => {
-              void sources.refetch();
-              void checks.refetch();
-              void schedules.refetch();
-              if (isAdmin) void targets.refetch();
-            }}
-          />
-        }
         meta={o ? `Updated ${since(o.generated_at, now)}` : "Checked every minute"}
       />
       <div className="flex flex-col gap-3 px-5 py-3">

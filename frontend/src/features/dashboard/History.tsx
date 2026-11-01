@@ -1,5 +1,5 @@
 const day = (iso: string) =>
-  new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+  new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
 /** Shown on a card instead of the change pill while the period before is only partly
  * covered by the sources behind it (owner 2026-10-30), like the Events tile (F60). */

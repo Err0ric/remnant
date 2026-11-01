@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 
 from app.ai.catalog import Service
 from app.engine.duckdb import QueryEngine, QueryScope
+from app.search.identity import IdentityMap
 
 TIMEOUT_S = 5
 PER_KIND = 5
@@ -68,6 +69,7 @@ class Hit:
     label: str  # what the list shows
     events: int | None
     last_seen: str | None
+    aliases: list[str] = field(default_factory=list)  # other forms of the same person
 
 
 @dataclass(slots=True)
@@ -94,8 +96,16 @@ def _services(services: list[Service], q: str) -> list[Hit]:
     return [Hit("service", s.id, s.name, None, None) for s in found[:PER_KIND]]
 
 
-def lookup(engine: QueryEngine, scope: QueryScope, q: str, services: list[Service]) -> Lookup:
-    """Up to five of each kind matching `q`, from the events the caller can read."""
+def lookup(
+    engine: QueryEngine,
+    scope: QueryScope,
+    q: str,
+    services: list[Service],
+    ident: IdentityMap | None = None,
+) -> Lookup:
+    """Up to five of each kind matching `q`, from the events the caller can read. With
+    `ident`, the forms of one person (short name, DOMAIN\\user, organization email, and
+    the aliases an administrator set: ADR-0018) are one row, its other forms listed."""
     text = q.strip()
     res = engine.run(
         LOOKUP_SQL,
@@ -114,4 +124,30 @@ def lookup(engine: QueryEngine, scope: QueryScope, q: str, services: list[Servic
         )
         for kind, value, n, last in res.rows
     ]
+    if ident is not None:
+        hits = merge_people(hits, ident)
     return Lookup(hits=hits + _services(services, text), read=res.sources)
+
+
+def merge_people(hits: list[Hit], ident: IdentityMap) -> list[Hit]:
+    """User hits with the same person key as one: the busiest form leads (its value opens
+    the person page, which resolves every form), the others are its aliases."""
+    out: list[Hit] = []
+    by_key: dict[str, Hit] = {}
+    for h in hits:
+        if h.kind != "user":
+            out.append(h)
+            continue
+        k = ident.key(h.value)
+        seen = by_key.get(k)
+        if seen is None:
+            by_key[k] = h
+            out.append(h)
+            continue
+        seen.aliases.append(h.value)
+        seen.events = (seen.events or 0) + (h.events or 0)
+        if h.last_seen and (seen.last_seen is None or h.last_seen > seen.last_seen):
+            seen.last_seen = h.last_seen
+    for h in by_key.values():
+        h.aliases = sorted(set(h.aliases) - {h.value}, key=str.lower)
+    return out

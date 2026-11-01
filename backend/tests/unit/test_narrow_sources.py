@@ -111,3 +111,32 @@ def test_reported_sources_are_exactly_what_the_view_reads(tmp_path: Path, sql: s
     pinned = pinned_sources(sql)
     expected = engine.sources_in(QueryScope(None if pinned is None else sorted(pinned)))
     assert res.sources == expected
+
+
+def test_a_template_filter_reads_only_sources_holding_it(tmp_path: Path) -> None:
+    """Owner 2026-10-31: a Microsoft 365 query said "4 sources"; a source whose files hold
+    none of the pinned templates is not read (Parquet statistics), with the same rows."""
+    from app.engine.narrow import pinned_templates
+
+    engine = _lake(tmp_path)
+    rows = []
+    for sid, tpl in (("m365", "m365_signin"), ("fw2", "paloalto_traffic")):
+        norm = Normalizer(SourceSpec(source_id=sid, format="json"), clock=lambda: NOW)
+        row = norm.normalize(DecodedLine('{"time": "2026-10-09T11:00:00Z"}', False, False))
+        assert row is not None
+        row["template_id"] = tpl
+        rows.append(row)
+    LakeWriter(tmp_path / "lake").write(rows)
+    assert pinned_templates("SELECT * FROM events WHERE template_id = 'x' AND a = 1") == {"x"}
+    assert pinned_templates("SELECT * FROM events WHERE template_id = 'x' OR a = 1") is None
+    res = engine.run(
+        "SELECT count(*) FROM events WHERE template_id = 'm365_signin'", QueryScope(None)
+    )
+    assert res.rows == [[1]] and res.sources == ["m365"]
+    both = engine.run(
+        "SELECT count(*) FROM events WHERE template_id IN ('m365_signin', 'paloalto_traffic')",
+        QueryScope(None),
+    )
+    assert both.rows == [[2]] and both.sources == ["fw2", "m365"]
+    none = engine.run("SELECT count(*) FROM events WHERE template_id = 'nothing'", QueryScope(None))
+    assert none.rows == [[0]] and none.sources == []

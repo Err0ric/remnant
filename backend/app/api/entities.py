@@ -104,6 +104,7 @@ class SummaryOut(BaseModel):
     users: int
     hosts: int
     addresses: int
+    service_addresses: int = 0
     first_seen: str | None
     last_seen: str | None
     sources: list[str]
@@ -120,6 +121,7 @@ class LookupHit(BaseModel):
     events: int | None
     last_seen: str | None
     geo: GeoBrief | None = None
+    aliases: list[str] = []  # other forms of the same person (ADR-0018)
 
 
 class LookupOut(BaseModel):
@@ -275,7 +277,8 @@ async def entity_lookup(
     engine: QueryEngine = request.app.state.engine
     catalog: Catalog = request.app.state.ai_catalog
     services = await run_in_threadpool(catalog.services)
-    found = await run_in_threadpool(lookup, engine, scope, q, services)
+    ident = await run_in_threadpool(request.app.state.identities.load)
+    found = await run_in_threadpool(lookup, engine, scope, q, services, ident)
     geoip: GeoIP = request.app.state.geoip
     ips = [h.value for h in found.hits if h.kind == "ip"]
     geo = await run_in_threadpool(geoip.enrich, ips) if ips else {}
@@ -295,6 +298,7 @@ async def entity_lookup(
                 label=h.label,
                 events=h.events,
                 last_seen=h.last_seen,
+                aliases=h.aliases,
                 geo=GeoBrief(
                     country=info.country,
                     country_name=info.country_name,

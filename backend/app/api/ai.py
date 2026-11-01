@@ -4,6 +4,7 @@ Usage numbers come from the caller's own events view and reading them is audited
 (`ai.view`). Review status, MCP rules, and the AI watch are admin changes, audited.
 """
 
+import asyncio
 from dataclasses import fields
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
@@ -152,11 +153,16 @@ async def ai_usage(
     period of the same length before it. Audited ai.view."""
     usage: Usage = request.app.state.ai_usage
     scope = await _scope(request, user, start, end)
-    found, sources = await run_in_threadpool(usage.all_services, scope)
+    ident = await run_in_threadpool(request.app.state.identities.load)
+    # The independent reads at once: a page load waits for the slowest, not the sum.
+    (found, sources), mcp, people, (pending, of) = await asyncio.gather(
+        run_in_threadpool(usage.all_services, scope),
+        run_in_threadpool(usage.mcp, scope, ident),
+        run_in_threadpool(usage.people, scope, ident),
+        run_in_threadpool(usage.people_pending, scope),
+    )
     services = [u for u in found if u.service.kind != NON_USAGE]
     other = [u for u in found if u.service.kind == NON_USAGE]
-    ident = await run_in_threadpool(request.app.state.identities.load)
-    mcp = await run_in_threadpool(usage.mcp, scope, ident)
     changes, compared_from = None, None
     if start is not None:
         stop = end or datetime.now(UTC)
@@ -169,8 +175,6 @@ async def ai_usage(
             compared_from = earlier.isoformat()
         else:  # nothing at all before: every row would be "New" (QA F10), so no comparison
             changes = None
-    people = await run_in_threadpool(usage.people, scope, ident)
-    pending, of = await run_in_threadpool(usage.people_pending, scope)
     await run_in_threadpool(
         _audit(request).audit.write,
         "ai.view",

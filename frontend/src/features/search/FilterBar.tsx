@@ -5,6 +5,9 @@ import { TIME_RANGES, type TimeRangeId } from "@/lib/search";
 
 interface FilterBarProps {
   range: TimeRangeId;
+  /** A page's own window (a drill-through), shown as the selected range until a preset
+   * is chosen. */
+  custom?: { from: string; to: string } | null;
   onRange: (range: TimeRangeId) => void;
   sources: string[];
   onSources: (sources: string[]) => void;
@@ -13,7 +16,15 @@ interface FilterBarProps {
 const SOURCES_SQL =
   "SELECT source_id, count(*) AS events FROM events GROUP BY source_id ORDER BY source_id";
 
-export function FilterBar({ range, onRange, sources, onSources }: FilterBarProps) {
+const fmt = (iso: string) =>
+  new Date(iso).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+
+export function FilterBar({ range, custom, onRange, sources, onSources }: FilterBarProps) {
   const available = useQuery({
     queryKey: ["sources"],
     queryFn: () => api.query({ sql: SOURCES_SQL }),
@@ -29,10 +40,15 @@ export function FilterBar({ range, onRange, sources, onSources }: FilterBarProps
         Time range:
         <select
           aria-label="Time range"
-          value={range}
+          value={custom ? "custom" : range}
           onChange={(e) => onRange(e.target.value as TimeRangeId)}
           className="cursor-pointer rounded-chip border-0 bg-transparent pr-1 text-sm font-semibold text-accent-text focus:outline-none"
         >
+          {custom ? (
+            <option value="custom" className="bg-surface text-text">
+              {fmt(custom.from)} to {fmt(custom.to)}
+            </option>
+          ) : null}
           {TIME_RANGES.map((r) => (
             <option key={r.id} value={r.id} className="bg-surface text-text">
               {r.label}

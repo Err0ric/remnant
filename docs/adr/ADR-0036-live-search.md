@@ -60,6 +60,12 @@ Events reach the lake within a few seconds of arrival: the file watcher polls ev
 - The stream's `end` and `notice` messages go to stderr; `tail -f` exits 0 at the time limit.
 - The old polling follow (`TailCursor.poll`) is removed; `--interval` stays as an ignored, hidden option so old scripts parse.
 
+## As built (part 4: owner feedback, 2026-10-31)
+
+- Opening a row, or scrolling the table down, holds new rows in an "N new events. Show" bar above the table, so nothing moves under the reader; Show adds them at the top. The stream keeps running (this is not Pause). The open row is tracked by event id, so rows added above it never close it or open another.
+- Sources that pull (Loki, connectors) deliver in batches. The count line and the waiting line say so from what the stream saw: "Sources are about 3 min behind; new events arrive about every 30 s" (the middle of the sources' ages, and the middle gap between the last few batches).
+- "Start with the last 5 min" beside the switch (remembered per browser) starts the stream 5 minutes back (`fill_minutes`, at most 60), so the table is not empty while slow sources catch up. Audited as `filled_minutes` on `search.live_start`.
+
 ## Consequences
 
 - Watching something happen no longer means pressing Run repeatedly, and the CLI, TUI, and browser follow the same way.

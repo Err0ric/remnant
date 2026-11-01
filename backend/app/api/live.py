@@ -7,7 +7,7 @@ import asyncio
 import json
 import time
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Query, Request, Response, status
@@ -72,10 +72,12 @@ async def live(
     sources: Annotated[list[str] | None, Query(max_length=200)] = None,
     since: datetime | None = None,
     after: Annotated[list[str] | None, Query(max_length=1000)] = None,
+    fill_minutes: Annotated[int, Query(ge=0, le=60)] = 0,
 ) -> StreamingResponse:
     """Follow new rows of `q` (row queries only). With `since` (Resume), first sends what
-    arrived after it, up to 1,000 rows, newest kept. Audited `search.live_start` and
-    `search.live_stop`."""
+    arrived after it, up to 1,000 rows, newest kept; without it, `fill_minutes` starts that
+    many minutes back so the table is not empty while slow sources catch up. Audited
+    `search.live_start` and `search.live_stop`."""
     sql = lv.live_sql(q)  # refuses non-row queries before anything starts
     newest_sql = lv.live_sql(q, newest=True)
     meta = request.app.state.meta
@@ -86,8 +88,9 @@ async def live(
     now = datetime.now(UTC)
     stream = reg.open(user.user_id, client, now)
     resumed = since is not None
+    start = now - timedelta(minutes=fill_minutes)
     cursor = lv.Cursor(
-        (since if since.tzinfo else since.replace(tzinfo=UTC)).astimezone(UTC) if since else now,
+        (since if since.tzinfo else since.replace(tzinfo=UTC)).astimezone(UTC) if since else start,
         set(after or []),
     )
     kinds = {s.source_id: s.kind or "file" for s in request.app.state.sources.list()}
@@ -97,7 +100,7 @@ async def live(
     await run_in_threadpool(
         _audit, request, "search.live_start", user,
         {"stream_id": stream.stream_id, "sql_sha256": lv.sql_hash(q), "sql": q[:4000],
-         "client": client, "resumed": resumed,
+         "client": client, "resumed": resumed, "filled_minutes": 0 if resumed else fill_minutes,
          "sources_in_scope": "all" if scope is None else scope},
     )  # fmt: skip
 

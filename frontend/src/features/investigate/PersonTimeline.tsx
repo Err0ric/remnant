@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { LoadFailed } from "@/components/LoadFailed";
 import { EntityLink } from "@/components/EntityLink";
@@ -6,6 +6,7 @@ import { api, type TimelineRow } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { openDrill } from "@/lib/drill";
 import { navigate } from "@/lib/route";
+import { useViewer } from "@/lib/viewer";
 
 const KIND: Record<string, string> = {
   signin: "Sign-in",
@@ -84,6 +85,7 @@ export function PersonTimeline({ person }: { person: string }) {
           </button>
         ) : null}
       </div>
+      {d?.maybe?.length ? <MaybeSame person={d.person} maybe={d.maybe} /> : null}
       {d && (d.forms.length || d.devices.length) ? (
         <p className="border-b border-border px-3 py-2 text-sm text-text-secondary">
           {d.forms.length ? (
@@ -175,5 +177,48 @@ export function PersonTimeline({ person }: { person: string }) {
         </p>
       ) : null}
     </section>
+  );
+}
+
+/** Names on this person's devices that look like the same person ("robin" beside
+ * "robin.okafor@example.com"). Administrators make one an alias (ADR-0018); others see
+ * the hint only. */
+function MaybeSame({
+  person,
+  maybe,
+}: {
+  person: string;
+  maybe: { name: string; devices: string[] }[];
+}) {
+  const { isAdmin } = useViewer();
+  const client = useQueryClient();
+  const merge = useMutation({
+    mutationFn: (alias: string) => api.setIdentityAlias(alias, person),
+    onSuccess: () => void client.invalidateQueries(),
+  });
+  return (
+    <p className="border-b border-border px-3 py-2 text-sm text-text-secondary">
+      Possibly the same person:{" "}
+      {maybe.map((m, i) => (
+        <span key={m.name}>
+          {i ? "; " : ""}
+          <span className="font-mono text-text">{m.name}</span> (on {m.devices.join(", ")})
+          {isAdmin ? (
+            <>
+              {" "}
+              <button
+                type="button"
+                disabled={merge.isPending}
+                onClick={() => merge.mutate(m.name)}
+                className="text-accent-text hover:underline"
+              >
+                Make {m.name} an alias
+              </button>
+            </>
+          ) : null}
+        </span>
+      ))}
+      .{!isAdmin ? " An administrator can make a name an alias on Settings > Identities." : ""}
+    </p>
   );
 }

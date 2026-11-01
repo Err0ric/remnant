@@ -147,6 +147,15 @@ export interface Meta {
   environment_label?: string | null;
 }
 
+/** The viewer's IANA time zone, so day charts are the viewer's days (owner, 2026-10-31). */
+export function viewerZone(): string {
+  try {
+    return encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
+  } catch {
+    return "UTC";
+  }
+}
+
 export interface Health {
   status: string;
 }
@@ -168,6 +177,7 @@ export interface FacetRequest {
   params?: Record<string, string | number | boolean | null>;
   columns?: string[];
   start?: string;
+  end?: string;
   sources?: string[];
 }
 
@@ -410,7 +420,7 @@ export interface M365Overview {
   reasons: SectionRow[];
   outside_top: SectionRow[];
   apps: SectionRow[];
-  lists: Record<"sign_ins" | "mail" | "consents" | "registrations" | "admin", string>;
+  lists: Record<"sign_ins" | "mail" | "dlp" | "consents" | "registrations" | "admin", string>;
 }
 
 export interface DashboardSections {
@@ -618,6 +628,8 @@ export interface LookupHit {
   kind: "ip" | "user" | "host" | "service";
   value: string;
   label: string;
+  /** Other forms of the same person, merged into this row (ADR-0018). */
+  aliases?: string[];
   events: number | null;
   last_seen: string | null;
   geo?: {
@@ -653,6 +665,8 @@ export interface EntitySummary {
   users: number;
   hosts: number;
   addresses: number;
+  /** Microsoft 365's own addresses on server-side records, not counted above. */
+  service_addresses?: number;
   first_seen: string | null;
   last_seen: string | null;
   sources: string[];
@@ -1240,6 +1254,8 @@ export interface PersonTimelineData {
   more: boolean;
   sql: string;
   signins_sql: string;
+  /** Other names on this person's devices that look like the same person (ADR-0018). */
+  maybe?: { name: string; devices: string[] }[];
 }
 
 export interface EventAround {
@@ -2304,9 +2320,11 @@ export const api = {
     request<EnrichmentStatus>("/api/enrichment/settings", put({ auto_update })),
   places: () => request<Places>("/api/enrichment/places"),
   m365Overview: (window: PageWindow) =>
-    request<M365Overview>(`/api/m365/overview?window=${window}`),
-  dashboardSections: (window: PageWindow) =>
-    request<DashboardSections>(`/api/dashboard/sections?window=${window}`),
+    request<M365Overview>(`/api/m365/overview?window=${window}&tz=${viewerZone()}`),
+  dashboardSections: (window: PageWindow, part?: "identity" | "attacks" | "detections") =>
+    request<DashboardSections>(
+      `/api/dashboard/sections?window=${window}${part ? `&part=${part}` : ""}&tz=${viewerZone()}`,
+    ),
   setPlaces: (body: { approved_countries: string[]; internal_networks: string[] }) =>
     request<Places>("/api/enrichment/places", put(body)),
   setFeed: (id: string, body: { enabled?: boolean; key?: string }) =>

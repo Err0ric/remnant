@@ -25,12 +25,29 @@ SELECT count(*),
        count(*) FILTER (WHERE class_uid = 3002 AND status_id = 2),
        count(DISTINCT nullif(trim(actor_user_name), '')),
        count(DISTINCT coalesce(nullif(dst_endpoint_hostname, ''), nullif(device_hostname, ''))),
-       count(DISTINCT coalesce(nullif(src_endpoint_ip, ''), nullif(dst_endpoint_ip, ''))),
+       count(DISTINCT {addr}) FILTER (WHERE NOT {service}),
        min(coalesce(time, time_observed)),
        max(coalesce(time, time_observed)),
-       list(DISTINCT source_id)
+       list(DISTINCT source_id),
+       count(DISTINCT {addr}) FILTER (WHERE {service})
 FROM events
 WHERE {where}"""
+
+ADDR = "coalesce(nullif(src_endpoint_ip, ''), nullif(dst_endpoint_ip, ''))"
+# Microsoft 365's own addresses (Exchange Online, SharePoint, the Graph back end) appear on
+# server-side records such as mail access by Exchange; they are not where the person was
+# (owner, 2026-10-31: "177 seen addresses" in 7 days). Microsoft's AS 8075 when the ASN
+# file is installed, else its published Microsoft 365 ranges.
+MS_PREFIXES = (
+    "2603:10", "2a01:111:", "40.92.", "40.93.", "40.94.", "40.95.", "40.107.", "52.96.",
+    "52.97.", "52.98.", "52.99.", "52.100.", "52.101.", "52.102.", "52.103.", "104.47.",
+    "13.107.",
+)  # fmt: skip
+SERVICE = (
+    f"(coalesce(ip_asn({ADDR}) = 8075, false) OR "
+    + " OR ".join(f"starts_with(lower({ADDR}), '{p}')" for p in MS_PREFIXES)
+    + ")"
+)
 
 # One row per outcome, kind of activity, user, and target, with a real line as the example.
 OUTCOME = (
@@ -97,7 +114,7 @@ class Summary:
     failed: int
     users: int
     hosts: int
-    addresses: int
+    addresses: int  # where the person or host was: client addresses
     first_seen: str | None
     last_seen: str | None
     sources: list[str]
@@ -105,6 +122,7 @@ class Summary:
     targets: list[Target] = field(default_factory=list)
     search_sql: str = ""
     read: list[str] = field(default_factory=list)
+    service_addresses: int = 0  # Microsoft 365's own, on server-side records
 
 
 def _iso(v: Any) -> str | None:
@@ -129,8 +147,13 @@ def entity_summary(
         where = WHERE[kind]
         params = {"v": value}
         literal = WHERE[kind].replace("$v", quote(value))
-    totals = engine.run(TOTALS_SQL.format(where=where), scope, params, timeout_s=TIMEOUT_S)
-    t: list[Any] = list(totals.rows[0]) if totals.rows else [0] * 9 + [[]]
+    totals = engine.run(
+        TOTALS_SQL.format(where=where, addr=ADDR, service=SERVICE),
+        scope,
+        params,
+        timeout_s=TIMEOUT_S,
+    )
+    t: list[Any] = list(totals.rows[0]) if totals.rows else [0] * 9 + [[], 0]
     acts = engine.run(
         ACTIVITIES_SQL.format(
             where=where,
@@ -191,6 +214,7 @@ def entity_summary(
         first_seen=_iso(t[7]),
         last_seen=_iso(t[8]),
         sources=sorted(str(s) for s in (t[9] or [])),
+        service_addresses=int(t[10] or 0),
         activities=activities,
         targets=targets,
         search_sql=search_sql(literal),

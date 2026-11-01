@@ -31,24 +31,11 @@ describe("Entity picker (F56)", () => {
     expect(kindOf("  ")).toBeNull();
   });
 
-  it("starts on IP address, follows the input, keeps a picked type, and remembers it", async () => {
-    window.localStorage.removeItem("investigate.kind");
+  it("has no picker of its own: the top bar search opens people and devices", async () => {
     await openInvestigate();
-    const type = screen.getByRole("combobox", { name: "Entity type" });
-    const box = screen.getByRole("textbox", { name: "Entity" });
-    expect(type).toHaveValue("ip");
-    expect(box).toHaveAttribute("placeholder", "203.0.113.9");
-    await userEvent.type(box, "alice@example.com");
-    expect(type).toHaveValue("user");
-    expect(box).toHaveAttribute("placeholder", "alice@example.com");
-    await userEvent.clear(box);
-    await userEvent.type(box, "ws-0042");
-    expect(type).toHaveValue("host");
-    await userEvent.selectOptions(type, "user"); // an override sticks while typing
-    await userEvent.type(box, "x");
-    expect(type).toHaveValue("user");
-    await userEvent.click(screen.getByRole("button", { name: "Investigate" }));
-    expect(window.localStorage.getItem("investigate.kind")).toBe("user");
+    expect(screen.queryByRole("textbox", { name: "Entity" })).toBeNull();
+    expect(screen.queryByRole("radio", { name: "AI flow" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Refresh" })).toBeNull();
   });
 });
 
@@ -60,7 +47,6 @@ describe("Entity pages from a link (product pass step 2)", () => {
       expect(String(call?.[0])).toContain("kind=ip");
       expect(String(call?.[0])).toContain("value=203.0.113.9");
     });
-    expect(screen.getByRole("textbox", { name: "Entity" })).toHaveValue("203.0.113.9");
     // The page leads with the answer, then numbers, then what it did with real values.
     const summary = await screen.findByRole("region", { name: "Summary" });
     expect(
@@ -83,7 +69,7 @@ describe("Entity pages from a link (product pass step 2)", () => {
 
   it("opens an AI service in the AI flow", async () => {
     const spy = await openInvestigate("/investigate/people#service=chatgpt");
-    expect(screen.getByRole("radio", { name: "AI flow" })).toHaveAttribute("aria-checked", "true");
+    expect(await screen.findByRole("group", { name: /People, AI clients/ })).toBeVisible();
     await vi.waitFor(() => {
       const call = spy.mock.calls.find(([u]) => String(u).includes("mode=ai"));
       expect(String(call?.[0])).toContain("value=chatgpt");
@@ -112,9 +98,7 @@ describe("Investigations (ADR-0016)", () => {
   });
 
   it("highlights a card's path and hands its events to Search", async () => {
-    await openInvestigate();
-    await userEvent.type(screen.getByLabelText("Entity"), "root");
-    await userEvent.click(screen.getByRole("button", { name: "Investigate" }));
+    await openInvestigate("/investigate/people#user=root");
     const card = await screen.findByRole("button", { name: /Activities: Failed password/ });
     await userEvent.click(card);
     expect(card).toHaveAttribute("aria-pressed", "true");
@@ -130,8 +114,7 @@ describe("Investigations (ADR-0016)", () => {
   });
 
   it("shows the AI flow with Not approved badges and follows a person", async () => {
-    const spy = await openInvestigate();
-    await userEvent.click(screen.getByRole("radio", { name: "AI flow" }));
+    const spy = await openInvestigate("/investigate/people#service=chatgpt");
     const lanes = await screen.findByRole("group", { name: /People, AI clients/ });
     const tool = within(lanes).getByRole("button", { name: /paste-share.*Not approved/ });
     expect(tool).toBeInTheDocument();
@@ -144,9 +127,9 @@ describe("Investigations (ADR-0016)", () => {
   });
 
   it("renders attacker-controlled labels as text", async () => {
-    await openInvestigate();
-    await userEvent.type(screen.getByLabelText("Entity"), "<img src=x onerror=alert(1)>");
-    await userEvent.click(screen.getByRole("button", { name: "Investigate" }));
+    await openInvestigate(
+      `/investigate/people#user=${encodeURIComponent("<img src=x onerror=alert(1)>")}`,
+    );
     const lanes = await screen.findByRole("group", { name: /Investigation lanes/ });
     expect(lanes.querySelector("img")).toBeNull();
     expect(within(lanes).getAllByText(/<img src=x/).length).toBeGreaterThan(0);

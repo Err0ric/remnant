@@ -47,7 +47,12 @@ function hitItem(h: LookupHit): PaletteItem {
     key: `entity:${h.kind}:${h.value}`,
     section: SECTIONS[h.kind],
     label: h.label,
-    hint: h.kind === "service" ? "AI service" : [where, count(h.events)].filter(Boolean).join(", "),
+    hint:
+      h.kind === "service"
+        ? "AI service"
+        : [where, h.aliases?.length ? `also ${h.aliases.join(", ")}` : "", count(h.events)]
+            .filter(Boolean)
+            .join(", "),
     found: true,
     mono: h.kind === "ip" || h.kind === "host",
     run: () => openEntity({ kind: h.kind, value: h.value }),

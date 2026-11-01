@@ -133,3 +133,86 @@ SELECT *, 'x', false, 'ok', 'local_only', 'system', 1, 1 FROM ({sql})""")  # tes
             total += con.execute("SELECT count(*) FROM e").fetchone()[0]  # type: ignore[index]  # one row
             con.execute(f"COPY e TO '{out}/part-0000.parquet' (FORMAT parquet, COMPRESSION zstd)")
     return total
+
+
+# Conditional Access results as Graph writes them in each sign-in: most of a real record's
+# length, which every read of `raw` has to parse.
+_POLICIES = ",".join(
+    f'{{"id":"0a1b2c3d-0000-4000-8000-0000000{n:05d}","displayName":"Lab policy {n}",'
+    '"enforcedGrantControls":["Mfa"],"enforcedSessionControls":[],"result":"notApplied"}'
+    for n in range(12)
+)
+
+
+def write_m365(
+    lake: Path,
+    signins_per_day: int,
+    activity_per_day: int,
+    days: int,
+    end: datetime,
+    source: str = "m365",
+) -> int:
+    """Microsoft 365 in one source, as the owner's install has it (ADR-0041): Graph
+    sign-ins with full-size records (about 3 KB each: errorCode and failureReason are read
+    from `raw`), Management Activity operations, and a few directory changes and consents
+    a day. Synthetic: RFC 5737 addresses, example.com people. Returns the rows written."""
+    con = duckdb.connect()
+    con.execute("SET TimeZone = 'UTC'")
+    con.execute(duckdb_create_table_sql("e"))
+    ops = "['FileDownloaded','FileAccessed','CopilotInteraction','DLPRuleMatch','New-InboxRule','AnonymousLinkCreated','MailItemsAccessed','FileModified']"
+    total = 0
+    for back in range(days - 1, -1, -1):
+        date = (end - timedelta(days=back)).strftime("%Y-%m-%d")
+        out = lake / f"source={source}" / f"day={date}"
+        out.mkdir(parents=True, exist_ok=True)
+        con.execute("DELETE FROM e")
+        at = f"TIMESTAMPTZ '{date} 00:00:00+00' + to_microseconds((i * 86400000000 // {{n}})::BIGINT)"
+        code = "CASE i % 20 WHEN 0 THEN 50126 WHEN 1 THEN 50074 WHEN 2 THEN 50140 WHEN 3 THEN 50053 ELSE 0 END"
+        con.execute(f"""
+INSERT INTO e (event_id, source_id, template_id, template_version, time, time_observed,
+  class_uid, status_id, severity_id, actor_user_name, resource_name, message,
+  src_endpoint_ip, status_detail, raw, raw_bytes_invalid, parse_status, classification,
+  owner_id)
+SELECT '{date}-s' || i, '{source}', 'm365_signin', '1.1.0', {at.format(n=signins_per_day)},
+  {at.format(n=signins_per_day)}, 3002,
+  CASE WHEN {code} = 0 THEN 1 ELSE 2 END, CASE WHEN i % 97 = 0 THEN 3 ELSE 1 END,
+  'user' || (i % 300) || '@example.com', ['Outlook','Teams','SharePoint','OneDrive'][i % 4 + 1],
+  ['Outlook','Teams','SharePoint','OneDrive'][i % 4 + 1],
+  -- each person signs in from their office address, and one in 7 also from home
+  CASE WHEN i % 7 = 0 THEN '198.51.100.' ELSE '203.0.113.' END || (i % 300 % 250),
+  NULL,
+  '{{"id":"' || md5(i::VARCHAR || '{date}') || '","createdDateTime":"{date}T00:00:00Z",'
+    || '"userPrincipalName":"user' || (i % 300) || '@example.com","appDisplayName":"Outlook",'
+    || '"ipAddress":"203.0.113.' || (i % 300 % 250) || '","status":{{"errorCode":' || {code}
+    || ',"failureReason":"' || CASE WHEN {code} = 0 THEN 'Other.' ELSE 'Lab reason ' || {code} END
+    || '"}},"deviceDetail":{{"deviceId":"' || md5(i::VARCHAR) || '","operatingSystem":"Windows10"}},'
+    || '"appliedConditionalAccessPolicies":[{_POLICIES}]}}',
+  false, 'ok', 'local_only', 'system'
+FROM range({signins_per_day}) t(i)""")  # test data
+        con.execute(f"""
+INSERT INTO e (event_id, source_id, template_id, template_version, time, time_observed,
+  class_uid, status_id, actor_user_name, message, src_endpoint_ip, metadata_correlation_uid,
+  raw, raw_bytes_invalid, parse_status, classification, owner_id)
+SELECT '{date}-a' || i, '{source}', 'm365_management_activity', '1.0.0',
+  {at.format(n=activity_per_day)}, {at.format(n=activity_per_day)}, 6001, 1,
+  'user' || (i % 300) || '@example.com', {ops}[i % 8 + 1], '203.0.113.' || (i % 250),
+  md5(i::VARCHAR || '{date}a'),
+  '{{"Id":"' || md5(i::VARCHAR || '{date}a') || '","Operation":"' || {ops}[i % 8 + 1]
+    || '","Workload":"SharePoint","UserId":"user' || (i % 300) || '@example.com"}}',
+  false, 'ok', 'local_only', 'system'
+FROM range({activity_per_day}) t(i)""")  # test data
+        # A role grant and a consent a day, from both feeds (one correlation id each).
+        con.execute(f"""
+INSERT INTO e (event_id, source_id, template_id, template_version, time, time_observed,
+  class_uid, status_id, actor_user_name, message, metadata_correlation_uid, raw,
+  raw_bytes_invalid, parse_status, classification, owner_id)
+SELECT '{date}-c' || i || f, '{source}',
+  CASE WHEN f = 0 THEN 'm365_directory_audit' ELSE 'm365_management_activity' END, '1.0.0',
+  TIMESTAMPTZ '{date} 09:00:00+00' + INTERVAL (i) MINUTE + INTERVAL (f) SECOND,
+  TIMESTAMPTZ '{date} 09:00:00+00' + INTERVAL (i) MINUTE + INTERVAL (f) SECOND, 3001, 1,
+  'admin@example.com', CASE WHEN i = 0 THEN 'Add member to role' ELSE 'Consent to application' END,
+  '{date}-corr-' || i, '{{}}', false, 'ok', 'local_only', 'system'
+FROM range(2) a(i), range(2) b(f)""")  # test data
+        total += con.execute("SELECT count(*) FROM e").fetchone()[0]  # type: ignore[index]  # one row
+        con.execute(f"COPY e TO '{out}/part-0000.parquet' (FORMAT parquet, COMPRESSION zstd)")
+    return total

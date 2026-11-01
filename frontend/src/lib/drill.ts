@@ -25,12 +25,22 @@ const when = (s: string) =>
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
-    timeZone: "UTC",
   });
 
 /** The query with the bounds filled in, as Search will show it. */
 export function drillSql(d: Pick<Drill, "sql" | "from" | "to">): string {
   return d.sql.replaceAll("{from}", iso(d.from)).replaceAll("{to}", iso(d.to));
+}
+
+/** The query for Search: the window's bounds become {{start}} and {{end}}, filled from
+ * Search's time range, so changing the range works and a saved copy does not freeze on
+ * the Dashboard's dates (owner, 2026-10-31). */
+export function placeholderSql(sql: string): string {
+  return sql
+    .replaceAll("TIMESTAMPTZ '{from}'", "{{start}}")
+    .replaceAll("TIMESTAMPTZ '{to}'", "{{end}}")
+    .replaceAll("{from}", iso(new Date(0).toISOString()))
+    .replaceAll("{to}", iso(new Date().toISOString()));
 }
 
 /** The smallest Search range that covers `from`, so the query reads only those days. */
@@ -47,9 +57,10 @@ export function openDrill(d: Drill): void {
     // Storage blocked: Back still returns to the Dashboard, at the top.
   }
   seedSearch({
-    sql: drillSql(d),
+    sql: placeholderSql(d.sql),
     range: coveringRange(d.from),
-    origin: `From ${d.origin}, ${when(d.from)} to ${when(d.to)} UTC`,
+    window: { from: d.from, to: d.to },
+    origin: `From ${d.origin}, ${when(d.from)} to ${when(d.to)}`,
   });
   navigate("search");
 }

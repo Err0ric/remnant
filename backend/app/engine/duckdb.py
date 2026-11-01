@@ -20,6 +20,7 @@ from typing import Any
 from uuid import UUID
 
 import duckdb
+import pyarrow as pa
 import pyarrow.parquet as pq
 
 from app.core.errors import (
@@ -31,7 +32,7 @@ from app.core.errors import (
 from app.core.schema import COLUMN_NAMES, COLUMNS_BY_NAME, duckdb_create_table_sql
 from app.engine.guard import DEFAULT_LIMIT, MAX_LIMIT, guard
 from app.engine.lookups import Lookups, register
-from app.engine.narrow import pinned_sources
+from app.engine.narrow import pinned_sources, pinned_templates
 
 ALLOWED_TABLES = frozenset({"events"})
 LAKE_FILES = "day=*/part-*.parquet"  # under each source=<id> folder
@@ -41,8 +42,8 @@ DAY_FILES = "part-*.parquet"  # under each day=<date> folder
 INTEL_TABLES = ALLOWED_TABLES | {"threat_intel"}
 # The daily AI rollup (ADR-0035 Part 1): server-built queries only. Users, saved searches,
 # Ask, and MCP never see this table; `run(..., rollup=True)` is not reachable from them.
-ROLLUP_TABLES = ALLOWED_TABLES | {"ai_rollup", "ai_ident"}
-ROLLUP_FILES = "day=*/part-*.parquet"  # under rollup/ai/source=<id>
+ROLLUP_TABLES = ALLOWED_TABLES | {"ai_rollup", "ai_ident", "m365_rollup"}
+ROLLUP_FILES = "day=*/part-*.parquet"  # under rollup/ai/source=<id> and rollup/m365/source=<id>
 # Who or which machine had an address, per closed day (`app.search.addresses.IDENT_RAW`,
 # reduced): the address lookup reads closed days from here, never from events.
 IDENT_FILE = "ident.parquet"
@@ -54,6 +55,12 @@ ROLLUP_COLUMNS = (
     "source_id VARCHAR, classification VARCHAR, service_id VARCHAR, who0 VARCHAR,"
     " shost VARCHAR, ip VARCHAR, dev VARCHAR, t TIMESTAMPTZ, n BIGINT,"
     " first_t TIMESTAMPTZ, last_t TIMESTAMPTZ"
+)
+# The daily Microsoft 365 rollup (ADR-0041): the Overview's facts per closed day.
+M365_ROLLUP_COLUMNS = (
+    "kind VARCHAR, source_id VARCHAR, t TIMESTAMPTZ, outcome VARCHAR, risky BOOLEAN,"
+    " who VARCHAR, app VARCHAR, ip VARCHAR, reason VARCHAR, code INTEGER, op VARCHAR,"
+    " k VARCHAR, sub VARCHAR, status INTEGER, n BIGINT, last_t TIMESTAMPTZ, day VARCHAR"
 )
 INTEL_COLUMNS = (
     "indicator VARCHAR, type VARCHAR, feed VARCHAR, threat VARCHAR,"
@@ -104,10 +111,14 @@ class QueryEngine:
         max_concurrent: int = 0,
         temp_dir: Path | None = None,
         rollup_dir: Path | None = None,
+        m365_rollup_dir: Path | None = None,
     ) -> None:
         self._lake = lake_dir
         self._rollup = rollup_dir
+        self._m365_rollup = m365_rollup_dir
         self._columns_cache: dict[tuple[str, int], frozenset[str]] = {}
+        # Per lake file: its version and template_id ranges per row group (None: unknown).
+        self._tpl_cache: dict[Path, tuple[int, list[tuple[str, str]] | None]] = {}
         # Where a query spills when it needs more than its memory share (F46). DuckDB's
         # default is ".tmp" in the working directory, which a read-only container or a
         # sandboxed service cannot write: the query then fails instead of spilling.
@@ -158,6 +169,9 @@ class QueryEngine:
         if pinned is not None:  # read only the sources the query can use; never widen
             keep = pinned if scope.sources is None else pinned & set(scope.sources)
             scope = replace(scope, sources=sorted(keep))
+        templates = pinned_templates(guarded.sql, params)
+        if templates is not None:  # and only sources whose files can hold those templates
+            scope = replace(scope, sources=self._holding(scope, templates, skip_days))
         with self._slot(limit_s):
             return self._execute(
                 guarded, scope, params, intel, limit_s, cap, rollup, frozenset(skip_days), name
@@ -274,12 +288,66 @@ class QueryEngine:
         # so a file dropped in another folder cannot add events (security review, D64).
         return [d for d in dirs if any(d.glob(LAKE_FILES))]
 
-    def rollup_dirs(self, scope: QueryScope) -> list[Path]:
+    def _holding(self, scope: QueryScope, templates: set[str], skip: Collection[str]) -> list[str]:
+        """Sources in scope with a file in range whose template_id statistics allow one of
+        `templates`. Read from Parquet footers, cached per file version; a file without
+        statistics counts as holding them."""
+        out = []
+        for d in self._source_dirs(scope):
+            for pattern in self._lake_globs([d], scope, frozenset(skip)):
+                if any(self._may_hold(Path(f), templates) for f in glob.glob(pattern)):
+                    out.append(d.name.removeprefix("source="))
+                    break
+        return out
+
+    def _may_hold(self, path: Path, templates: set[str]) -> bool:
+        try:
+            stamp = path.stat().st_mtime_ns
+        except OSError:
+            return False
+        hit = self._tpl_cache.get(path)
+        if hit is None or hit[0] != stamp:
+            ranges: list[tuple[str, str]] | None = None
+            try:
+                meta = pq.read_metadata(path)
+                col = meta.schema.names.index("template_id")
+                stats = [
+                    meta.row_group(i).column(col).statistics for i in range(meta.num_row_groups)
+                ]
+                if all(st is not None and st.has_min_max for st in stats):
+                    ranges = [(str(st.min), str(st.max)) for st in stats if st is not None]
+            except (OSError, ValueError, pa.ArrowException):
+                ranges = None
+            if len(self._tpl_cache) > 50_000:
+                self._tpl_cache.clear()
+            self._tpl_cache[path] = hit = (stamp, ranges)
+        if hit[1] is None:
+            return True
+        return any(lo <= t <= hi for lo, hi in hit[1] for t in templates)
+
+    def first_days(self, scope: QueryScope) -> dict[str, str]:
+        """Each source in scope -> its earliest day folder with files, inside the range."""
+        first = scope.start.astimezone(UTC).date().isoformat() if scope.start else ""
+        last = scope.end.astimezone(UTC).date().isoformat() if scope.end else "9999-12-31"
+        out: dict[str, str] = {}
+        for d in self._source_dirs(scope):
+            days = sorted(
+                x.name.removeprefix("day=")
+                for x in d.glob("day=*")
+                if first <= x.name.removeprefix("day=") <= last and any(x.glob(DAY_FILES))
+            )
+            if days:
+                out[d.name.removeprefix("source=")] = days[0]
+        return out
+
+    def rollup_dirs(self, scope: QueryScope, m365: bool = False) -> list[Path]:
         """Rollup folders of the sources in scope: the same scope as `events`, so the rollup
-        never shows a source the caller may not read (ADR-0035 row 4)."""
-        if self._rollup is None or not self._rollup.is_dir():
+        never shows a source the caller may not read (ADR-0035 row 4). `m365`: the
+        Microsoft 365 rollup's (ADR-0041) instead of the AI rollup's."""
+        root = self._m365_rollup if m365 else self._rollup
+        if root is None or not root.is_dir():
             return []
-        dirs = sorted(d for d in self._rollup.glob("source=*") if d.is_dir())
+        dirs = sorted(d for d in root.glob("source=*") if d.is_dir())
         if scope.sources is not None:
             wanted = set(scope.sources)
             dirs = [d for d in dirs if d.name.removeprefix("source=") in wanted]
@@ -403,6 +471,16 @@ class QueryEngine:
                 )
             else:
                 con.execute(f"CREATE TABLE ai_ident ({IDENT_COLUMNS})")
+            mdirs = self.rollup_dirs(scope, m365=True)
+            if mdirs:
+                globs = ", ".join(_sql_str(str(d / ROLLUP_FILES)) for d in mdirs)
+                con.execute(
+                    "CREATE VIEW m365_rollup AS SELECT * FROM"  # noqa: S608  # escaped server paths only
+                    f" read_parquet([{globs}], hive_partitioning = false)"
+                )
+                readable += [d.resolve() for d in mdirs]
+            else:
+                con.execute(f"CREATE TABLE m365_rollup ({M365_ROLLUP_COLUMNS})")
         if intel:
             if self._intel is not None and self._intel.is_file():
                 con.execute(

@@ -16,7 +16,7 @@ import { EntityLink } from "@/components/EntityLink";
 import { LoadFailed } from "@/components/LoadFailed";
 import { useViewer } from "@/lib/viewer";
 import { previousPhrase } from "./pageWindow";
-import { TrendChart, TrendLegend } from "./TrendChart";
+import { startIndex, TrendChart, TrendLegend } from "./TrendChart";
 import { compareLine, NoHistory } from "./History";
 
 /** The section around a card: its comparison state and what drill-throughs need. */
@@ -65,8 +65,8 @@ export const DRILL =
 function bucketLabel(iso: string, w: PageWindow): string {
   const d = new Date(iso);
   return w === "24h"
-    ? d.toLocaleTimeString("en-US", { hour: "numeric", timeZone: "UTC" })
-    : d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+    ? d.toLocaleTimeString("en-US", { hour: "numeric" })
+    : d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 /** The change as a neutral pill beside the number: more is not good or bad by itself.
@@ -270,9 +270,8 @@ function Section({
   );
 }
 
-const hourFmt = (d: Date) => d.toLocaleTimeString("en-US", { hour: "numeric", timeZone: "UTC" });
-const dayFmt = (d: Date) =>
-  d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+const hourFmt = (d: Date) => d.toLocaleTimeString("en-US", { hour: "numeric" });
+const dayFmt = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
 /** Failed sign-ins over the window: one amber line (failures are routine, not severity;
  * owner edit 2), hourly through 7 days, with the window before dashed. */
@@ -285,12 +284,16 @@ function FailedTrend({ s }: { s: DashboardSections }) {
   const at = (i: number) => new Date(t.points[i] ?? "");
   const rate = id.sign_ins ? ((id.failed.value / id.sign_ins) * 100).toFixed(1) : "0";
   const before = previousPhrase(s.window).replace(/^the p/, "P");
-  const pointName = (i: number) =>
-    hourly ? `${dayFmt(at(i))}, ${hourFmt(at(i))} UTC` : dayFmt(at(i));
+  const pointName = (i: number) => (hourly ? `${dayFmt(at(i))}, ${hourFmt(at(i))}` : dayFmt(at(i)));
+  const begin = startIndex(t.points, id.history.since);
   return (
     <TrendChart
       title={`Failed sign-ins per ${hourly ? "hour" : "day"}`}
-      note={`${id.failed.value.toLocaleString()} of ${id.sign_ins.toLocaleString()} sign-ins failed (${rate}%)`}
+      note={`${id.failed.value.toLocaleString()} of ${id.sign_ins.toLocaleString()} sign-ins failed (${rate}%)${
+        begin !== undefined ? `; no data before ${dayFmt(at(begin))}` : ""
+      }`}
+      firstWithData={begin}
+      partial="so far"
       series={[{ key: "failed", label: "Failed sign-ins", values: t.counts, color: "warn" }]}
       onOpen={(i) =>
         drill(id.failed.drill, `Failed sign-ins, ${pointName(i)}`, {
@@ -299,7 +302,7 @@ function FailedTrend({ s }: { s: DashboardSections }) {
         })?.()
       }
       previous={id.history.compared ? { label: before, values: t.before } : undefined}
-      pointLabel={(i) => (hourly ? `${dayFmt(at(i))}, ${hourFmt(at(i))} UTC` : dayFmt(at(i)))}
+      pointLabel={(i) => (hourly ? `${dayFmt(at(i))}, ${hourFmt(at(i))}` : dayFmt(at(i)))}
       axisLabel={(i) => (s.window === "24h" ? hourFmt(at(i)) : dayFmt(at(i)))}
       summary={`Failed sign-ins per ${hourly ? "hour" : "day"}: ${id.failed.value.toLocaleString()} in this window${
         id.history.compared
@@ -496,10 +499,19 @@ function Identity({ s }: { s: DashboardSections }) {
     />,
     <Kpi
       key="i"
-      label="Inbox rules and forwarding"
+      label="Risky mail rules"
       kpi={id.inbox_rules}
-      noun="changes"
-      context="Microsoft 365 mail rules plus forwarding changes"
+      noun="rules"
+      context="Hiding, deleting, or forwarding outside the domain"
+      extra={
+        id.inbox_rules.extra != null
+          ? {
+              text: `${id.inbox_rules.extra.toLocaleString()} organizing`,
+              label: "Organizing mail rules",
+              noun: "rules",
+            }
+          : undefined
+      }
     />,
     <Kpi
       key="c"
@@ -762,21 +774,36 @@ function Detections({ s }: { s: DashboardSections }) {
   );
 }
 
-/** Identity, Attacks and access, and Detections (ADR-0038 edit 10), each shown only when
- * the viewer has its source. */
-export function Sections({ window }: { window: PageWindow }) {
+type Part = "identity" | "attacks" | "detections";
+const PART_NAME: Record<Part, string> = {
+  identity: "Identity",
+  attacks: "Attacks and access",
+  detections: "Detections",
+};
+
+/** One section, loaded on its own so a slow one holds up only itself. */
+function Part({ window, part }: { window: PageWindow; part: Part }) {
   const q = useQuery({
-    queryKey: ["dashboard-sections", window],
-    queryFn: () => api.dashboardSections(window),
+    queryKey: ["dashboard-sections", window, part],
+    queryFn: () => api.dashboardSections(window, part),
     refetchInterval: 300_000,
   });
   if (q.isLoading)
-    return <div aria-busy="true" className="h-48 animate-pulse rounded-card bg-surface" />;
+    return (
+      <div
+        aria-busy="true"
+        aria-label={`Loading ${PART_NAME[part]}`}
+        className="h-48 animate-pulse rounded-card bg-surface"
+      />
+    );
   if (q.isError && !q.data)
     return (
-      <section aria-label="Sections" className="rounded-card border border-border bg-surface">
+      <section
+        aria-label={PART_NAME[part]}
+        className="rounded-card border border-border bg-surface"
+      >
         <LoadFailed
-          what="the Dashboard sections"
+          what={PART_NAME[part]}
           error={q.error}
           onRetry={() => void q.refetch()}
           retrying={q.isFetching}
@@ -785,11 +812,19 @@ export function Sections({ window }: { window: PageWindow }) {
     );
   const s = q.data;
   if (!s) return null;
+  if (part === "identity") return <Identity s={s} />;
+  if (part === "attacks") return <Attacks s={s} />;
+  return <Detections s={s} />;
+}
+
+/** Identity, Attacks and access, and Detections (ADR-0038 edit 10), each shown only when
+ * the viewer has its source, each loading on its own. */
+export function Sections({ window }: { window: PageWindow }) {
   return (
     <>
-      <Identity s={s} />
-      <Attacks s={s} />
-      <Detections s={s} />
+      <Part window={window} part="identity" />
+      <Part window={window} part="attacks" />
+      <Part window={window} part="detections" />
     </>
   );
 }

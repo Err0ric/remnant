@@ -96,6 +96,8 @@ export function Command({ label, onClick, primary, disabled, title }: CommandPro
       onClick={onClick}
       disabled={disabled}
       title={title}
+      // The name is the label; the title is only the hover hint (owner, 2026-10-31).
+      aria-label={label}
       className={`h-8 rounded px-3 hover:bg-surface-head disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent ${
         primary ? "font-semibold text-accent-text" : "text-text"
       }`}

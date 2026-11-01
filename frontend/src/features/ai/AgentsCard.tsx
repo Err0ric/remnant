@@ -8,7 +8,12 @@ const STATE: Record<string, { label: string; tint: string }> = {
 };
 
 function when(iso: string): string {
-  return iso.slice(0, 16).replace("T", " ");
+  return new Date(iso).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 /** AI agents and what changed in the last 24 hours against the 30 days before
@@ -53,7 +58,7 @@ export function AgentsCard() {
                 <th className="px-3 py-2 font-semibold">Agent</th>
                 <th className="px-3 py-2 font-semibold">Owner</th>
                 <th className="px-3 py-2 text-right font-semibold">Events (24 h)</th>
-                <th className="px-3 py-2 font-semibold">Last seen (UTC)</th>
+                <th className="px-3 py-2 font-semibold">Last seen</th>
                 <th className="px-3 py-2 font-semibold">What changed</th>
               </tr>
             </thead>

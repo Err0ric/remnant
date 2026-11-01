@@ -18,6 +18,18 @@ from typing import Any
 
 FILL_S = 60  # a sign-in this close before the consent names the app
 
+# One consent (D122): the shared correlation id, else the person and the minute, with the
+# operation. The Microsoft 365 rollup keeps the same key per closed day (ADR-0041).
+OP = "lower(rtrim(trim(message), '.'))"
+KEY = """coalesce(metadata_correlation_uid,
+                  coalesce(lower(actor_user_name), '') || '|'
+                    || strftime(coalesce(time, time_observed), '%Y-%m-%d %H:%M'))"""
+WHERE = """template_id IN ('m365_directory_audit', 'm365_management_activity')
+    AND message ILIKE 'Consent to application%'"""
+# A copy that says granted wins over one with no result; applied again over the rollup's
+# per-day values, it gives the same answer.
+STATUS = "coalesce(min(status_id) FILTER (WHERE status_id = 1), max(status_id))"
+
 # The consent rows, one per operation, with the app filled. Fixed text; times are
 # parameters. Ends in a SELECT from `consents` so callers can count or list.
 CONSENTS_CTE = f"""
@@ -25,18 +37,14 @@ raw AS (
   SELECT coalesce(time, time_observed) AS ts, nullif(actor_user_name, '') AS who,
          status_id, nullif(nullif(resource_name, ''), 'Unknown') AS app, resource_uid,
          privileges, status_detail, event_id,
-         lower(rtrim(trim(message), '.')) AS op,
-         coalesce(metadata_correlation_uid,
-                  coalesce(lower(actor_user_name), '') || '|'
-                    || strftime(coalesce(time, time_observed), '%Y-%m-%d %H:%M')) AS k
+         {OP} AS op,
+         {KEY} AS k
   FROM events
-  WHERE template_id IN ('m365_directory_audit', 'm365_management_activity')
-    AND message ILIKE 'Consent to application%'
+  WHERE {WHERE}
 ),
 one AS (
   SELECT min(ts) AS ts, any_value(who) AS who,
-         -- a copy that says granted wins over one with no result
-         coalesce(min(status_id) FILTER (WHERE status_id = 1), max(status_id)) AS status_id,
+         {STATUS} AS status_id,
          max(app) AS app, max(resource_uid) AS app_id, max(privileges) AS privileges,
          max(status_detail) AS reason, min(event_id) AS event_id,
          list(event_id ORDER BY event_id) AS event_ids

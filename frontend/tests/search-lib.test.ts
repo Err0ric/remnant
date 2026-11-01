@@ -34,3 +34,14 @@ describe("sortRows", () => {
     expect(rows[0]).toEqual(["b", 10]); // the input is not changed
   });
 });
+
+describe("drill-through SQL for Search (owner, 2026-10-31)", () => {
+  it("reads the window through {{start}} and {{end}}, not fixed dates", async () => {
+    const { placeholderSql } = await import("@/lib/drill");
+    const sql =
+      "SELECT * FROM events WHERE x = 1\n  AND t >= TIMESTAMPTZ '{from}' AND t < TIMESTAMPTZ '{to}'";
+    expect(placeholderSql(sql)).toBe(
+      "SELECT * FROM events WHERE x = 1\n  AND t >= {{start}} AND t < {{end}}",
+    );
+  });
+});

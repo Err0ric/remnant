@@ -496,6 +496,7 @@ export function Chart({ chart: all, days = 30, dataUntil = null, onOpenDay }: Ch
         color: COLOR[st],
       }))}
       lastWithData={lastWithData}
+      partial={stopped ? undefined : "so far"}
       onOpen={onOpenDay ? (i) => chart[i] && onOpenDay(chart[i].day) : undefined}
       pointLabel={(i) => dayLabel(chart[i]?.day ?? "")}
       axisLabel={(i) => dayLabel(chart[i]?.day ?? "")}

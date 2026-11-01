@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -207,7 +208,14 @@ def summary(
     window_from = min(prev_from, today - timedelta(days=CHART_DAYS - 1))
     start = datetime.combine(window_from, datetime.min.time(), UTC)
     services = {s.id: s for s in catalog.services()}
-    rows, read = usage.daily(QueryScope(allowed, start, now))
+    # The signal cards read other sources: run them beside the daily use, not after it.
+    pool = ThreadPoolExecutor(max_workers=1)
+    signals_job = pool.submit(_signal_cards, engine, allowed, kinds, cur_from, prev_from, now)
+    try:
+        rows, read = usage.daily(QueryScope(allowed, start, now))
+        signals, read_signals = signals_job.result()
+    finally:
+        pool.shutdown(wait=False)
 
     def is_use(sid: str) -> bool:
         s = services.get(sid)
@@ -287,7 +295,6 @@ def summary(
         ),
         _agents_card(items, readable, cur_from, prev_from, kinds, allowed),
     ]
-    signals, read_signals = _signal_cards(engine, allowed, kinds, cur_from, prev_from, now)
     cards.extend(signals)
 
     chart_days = [

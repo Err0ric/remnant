@@ -28,7 +28,19 @@ def _value(node: exp.Expression, params: Mapping[str, Any]) -> str | None:
 
 
 def pinned_sources(sql: str, params: Mapping[str, Any] | None = None) -> set[str] | None:
-    """The set of source ids the query can only read from, or None when unknown.
+    """The source ids the query can only read from, or None when unknown."""
+    return _pinned(sql, params, "source_id")
+
+
+def pinned_templates(sql: str, params: Mapping[str, Any] | None = None) -> set[str] | None:
+    """The template ids the query can only match, or None when unknown: the engine leaves
+    out sources whose files hold none of them, so a Microsoft 365 query is said to read
+    Microsoft 365 sources only (owner, 2026-10-31)."""
+    return _pinned(sql, params, "template_id")
+
+
+def _pinned(sql: str, params: Mapping[str, Any] | None, column: str) -> set[str] | None:
+    """The set of values of `column` the query can only read, or None when unknown.
 
     Structural checks, not argument names (sqlglot renames keys between versions): any
     CTE, subquery, set operation, join, or second read of `events` means None. Every
@@ -61,11 +73,11 @@ def pinned_sources(sql: str, params: Mapping[str, Any] | None = None) -> set[str
             col, other = cond.this, cond.expression
             if not isinstance(col, exp.Column):
                 col, other = other, col
-            if isinstance(col, exp.Column) and _is_source(col, names):
+            if isinstance(col, exp.Column) and _is_col(col, names, column):
                 values = [_value(other, params or {})]
                 used.add(id(col))
         elif isinstance(cond, exp.In) and isinstance(cond.this, exp.Column):
-            if _is_source(cond.this, names) and not cond.args.get("query"):
+            if _is_col(cond.this, names, column) and not cond.args.get("query"):
                 values = [_value(v, params or {}) for v in cond.expressions]
                 used.add(id(cond.this))
         if values is None:
@@ -74,13 +86,13 @@ def pinned_sources(sql: str, params: Mapping[str, Any] | None = None) -> set[str
             return None  # a source filter we cannot read: do not guess
         found = {v for v in values if v is not None}
         pinned = found if pinned is None else pinned & found
-    # Any other mention of source_id in the WHERE (inside an OR, a function, a CASE):
+    # Any other mention of the column in the WHERE (inside an OR, a function, a CASE):
     # the pins above may not be the whole story, so do not narrow.
     for col in where.find_all(exp.Column):
-        if _is_source(col, names) and id(col) not in used:
+        if _is_col(col, names, column) and id(col) not in used:
             return None
     return pinned
 
 
-def _is_source(col: exp.Column, table_names: set[str]) -> bool:
-    return col.name.lower() == "source_id" and (not col.table or col.table.lower() in table_names)
+def _is_col(col: exp.Column, table_names: set[str], column: str) -> bool:
+    return col.name.lower() == column and (not col.table or col.table.lower() in table_names)

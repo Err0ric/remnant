@@ -44,7 +44,10 @@ describe("AI usage (ADR-0015)", () => {
     expect(await screen.findByText("1 not approved in use")).toBeVisible();
     const table = screen.getByRole("region", { name: "AI services seen in network logs" });
     const row = within(table).getByText("ChatGPT").closest("tr") as HTMLElement;
-    const picker = within(row).getByLabelText("Review status of ChatGPT");
+    expect(within(row).getByText("Not approved")).toBeVisible();
+    // Review opens under the row (list-detail), not inline in the table.
+    await userEvent.click(within(row).getByRole("button", { name: "Review ChatGPT" }));
+    const picker = within(table).getByLabelText("Review status of ChatGPT");
     expect(picker).toHaveValue("not_approved");
     await userEvent.selectOptions(picker, "approved");
     const put = spy.mock.calls.find(
@@ -65,7 +68,7 @@ describe("AI usage (ADR-0015)", () => {
     expect(within(claude).queryByText("New")).toBeNull();
     const gone = screen.getByRole("region", { name: "No longer seen" });
     expect(within(gone).getByText("Copilot")).toBeVisible();
-    expect(within(gone).getByText("Last seen 2026-10-01 09:00 UTC")).toBeVisible();
+    expect(within(gone).getByText("Last seen Oct 1, 9:00 AM")).toBeVisible();
   });
 
   it("shows vendor ad tags apart and never as a service in use", async () => {
@@ -81,8 +84,9 @@ describe("AI usage (ADR-0015)", () => {
     const spy = await openAi();
     const table = await screen.findByRole("region", { name: "AI services seen in network logs" });
     const row = within(table).getByText("ChatGPT").closest("tr") as HTMLElement;
+    await userEvent.click(within(row).getByRole("button", { name: "Review ChatGPT" }));
     await userEvent.selectOptions(
-      within(row).getByLabelText("Allowed data for ChatGPT"),
+      within(table).getByLabelText("Allowed data for ChatGPT"),
       "internal",
     );
     const put = spy.mock.calls.find(

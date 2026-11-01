@@ -249,7 +249,7 @@ describe("Dashboard sections (ADR-0038 edit 10)", () => {
     trend.focus();
     await userEvent.keyboard("{Home}{ArrowRight}{ArrowRight}{ArrowRight}");
     expect(within(identity).getByRole("tooltip")).toHaveTextContent(
-      "Oct 27, 12 AM UTC: Failed sign-ins 4, Previous 7 days 2",
+      "Oct 27, 12 AM: Failed sign-ins 4, Previous 7 days 2",
     );
     const attacks = screen.getByRole("region", { name: "Attacks and access" });
     expect(within(attacks).getByText(/office addresses count as external/)).toBeVisible();
@@ -274,7 +274,9 @@ describe("Dashboard sections (ADR-0038 edit 10)", () => {
     await userEvent.click(within(win).getByRole("button", { name: "24 hours" }));
     await vi.waitFor(() =>
       expect(
-        spy.mock.calls.some(([u]) => String(u).endsWith("/api/dashboard/sections?window=24h")),
+        spy.mock.calls.some(([u]) =>
+          String(u).includes("/api/dashboard/sections?window=24h&part=identity"),
+        ),
       ).toBe(true),
     );
     expect(window.localStorage.getItem("dashboard.window")).toBe("24h");

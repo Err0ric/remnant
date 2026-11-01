@@ -405,6 +405,79 @@ describe("Live search (ADR-0036)", () => {
     expect(screen.queryByRole("region", { name: "Live results" })).toBeNull();
   });
 
+  it("says how far behind sources are and how often batches come", async () => {
+    const { cadenceLine } = await import("@/features/search/LivePanel");
+    const lag = [
+      { source: "loki", newest: null, age_s: 190, pull_every_s: null },
+      { source: "fw", newest: null, age_s: 170, pull_every_s: null },
+      { source: "old", newest: null, age_s: null, pull_every_s: null },
+    ];
+    expect(cadenceLine(lag, [0, 30_000, 61_000, 90_000])).toBe(
+      "Sources are about 3 min behind; new events arrive about every 30 s.",
+    );
+    expect(cadenceLine(lag, [0])).toBe("Sources are about 3 min behind.");
+    expect(
+      cadenceLine([{ source: "fw", newest: null, age_s: 2, pull_every_s: null }], [0, 2000, 4000]),
+    ).toBe(null);
+  });
+
+  it("keeps the open row open and in place when rows arrive above it", async () => {
+    const { ResultsTable } = await import("@/features/search/ResultsTable");
+    const base = {
+      columns: ["message", "event_id"],
+      row_count: 2,
+      truncated: false,
+      elapsed_ms: 0,
+      executed_sql: "",
+      sources: ["fw"],
+    };
+    const first = [
+      ["older", "e1"],
+      ["oldest", "e0"],
+    ];
+    const opened = vi.fn();
+    const { QueryClientProvider } = await import("@tanstack/react-query");
+    const client = new QueryClient();
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        <ResultsTable result={{ ...base, rows: first }} view="parsed" onOpenChange={opened} />
+      </QueryClientProvider>,
+    );
+    await userEvent.click(screen.getByText("older"));
+    expect(opened).toHaveBeenLastCalledWith(true);
+    rerender(
+      <QueryClientProvider client={client}>
+        <ResultsTable
+          result={{ ...base, rows: [["newest", "e2"], ...first] }}
+          view="parsed"
+          onOpenChange={opened}
+        />
+      </QueryClientProvider>,
+    );
+    const open = screen
+      .getAllByRole("row")
+      .filter((r) => r.getAttribute("aria-expanded") === "true");
+    expect(open).toHaveLength(1);
+    expect(open[0]).toHaveTextContent("older");
+  });
+
+  it("starts with the last 5 minutes when asked, and remembers the choice", async () => {
+    const spy = vi.spyOn(globalThis, "fetch");
+    await renderApp();
+    await screen.findByText("Failed password for invalid user oracle");
+    await setSql("SELECT time, source_id, message, event_id FROM events");
+    await userEvent.click(screen.getByRole("checkbox", { name: "Start with the last 5 min" }));
+    await userEvent.click(screen.getByRole("switch", { name: "Live" }));
+    await screen.findByRole("region", { name: "Live results" });
+    expect(
+      spy.mock.calls.some(
+        ([u]) => String(u).includes("/api/search/live?") && String(u).includes("fill_minutes=5"),
+      ),
+    ).toBe(true);
+    expect(localStorage.getItem("app.live.fill")).toBe("1");
+    localStorage.removeItem("app.live.fill");
+  });
+
   it("says why a group query cannot go live, and lists open streams when refused", async () => {
     await renderApp();
     await screen.findByText("Failed password for invalid user oracle");

@@ -106,33 +106,109 @@ def test_failure_reasons_read_the_record_when_the_column_is_empty(tmp_path: Path
     assert any(a.endswith("(3)") for a in m.outcome.top_app)
 
 
+def _op(name: str, i: int, when: str = "2026-10-28T09:30:00", **params: str) -> dict[str, Any]:
+    return _row(
+        "m365_management_activity", "SharePoint file download", "m365_mgmt",
+        Operation=name, Id=f"6b2f3a10-0000-4000-8000-{i:012d}", CreationTime=when,
+        Workload="Exchange", UserId="dana@example.com",
+        Parameters=[{"Name": k, "Value": v} for k, v in params.items()],
+    )  # fmt: skip
+
+
 def test_mail_rules_are_one_definition_on_both_pages(tmp_path: Path) -> None:
-    """Owner 2026-10-31: the Dashboard's "Inbox rules and forwarding" is Microsoft 365's
-    "Mail rules" plus "Forwarding", and two rules made in the same minute count twice."""
-    from app.search.dashboard import CHANGES_SQL
+    """Owner 2026-10-31 (D132): the Dashboard's card and Microsoft 365's count are the same
+    risky rules, organizing ones counted apart, and two rules in one minute count twice."""
+    from app.search.dashboard import _identity, _Run
 
     engine = make_lab(tmp_path)["app"].state.engine
-
-    def op(name: str, i: int, **more: Any) -> dict[str, Any]:
-        return _row(
-            "m365_management_activity", "SharePoint file download", "m365_mgmt",
-            Operation=name, Id=f"6b2f3a10-0000-4000-8000-0000000000{i:02d}",
-            CreationTime="2026-10-28T09:30:00", Workload="Exchange", **more,
-        )  # fmt: skip
-
     _write(
         engine,
         [
-            op("New-InboxRule", 1),
-            op("New-InboxRule", 2),  # same person, same minute: a second rule
-            op("Set-Mailbox", 3, Parameters=[{"Name": "ForwardingSmtpAddress", "Value": "x"}]),
+            _op("New-InboxRule", 1, Name="a", MoveToFolder="Junk Email"),
+            _op("New-InboxRule", 2, Name="b", MoveToFolder="Junk Email"),  # same minute
+            _op("New-InboxRule", 3, Name="c", MoveToFolder="Projects"),
+            _op("Set-Mailbox", 4, ForwardingSmtpAddress="smtp:out@elsewhere.example"),
         ],
     )
     m = overview(engine, None, SOURCES, Places(("US",), (), False, None), "30d", NOW)
-    counts = {c.key: c.kpi.value for c in m.counts}
-    assert (counts["mail_rules"], counts["forwarding"]) == (2, 1)
-    got = engine.run(
-        CHANGES_SQL, QueryScope(None), {"start": datetime(2026, 10, 1, tzinfo=UTC)}
-    ).rows
-    inbox = {k: now for k, now, _ in got}["inbox"]
-    assert inbox == counts["mail_rules"] + counts["forwarding"]
+    mail = next(c.kpi for c in m.counts if c.key == "mail_rules")
+    assert (mail.value, mail.extra) == (3, 1)
+    run = _Run(engine, QueryScope(None, datetime(2026, 9, 1, tzinfo=UTC), NOW), {"start": m.start})
+    ident = _identity(
+        run, ["m365_mgmt"], Places((), (), False, None), lambda ips: {}, "30d", NOW, {}
+    )
+    assert (ident.inbox_rules.value, ident.inbox_rules.extra) == (mail.value, mail.extra)
+
+
+def test_a_burst_of_organizing_rules_is_not_risky(tmp_path: Path) -> None:
+    """Owner 2026-10-31: 62 rules filing coworkers' mail into department folders over two
+    evenings, plus 2 junk rules, read as 2 risky rules and 60 organizing, in one burst."""
+    from app.search.mail_rules import list_sql
+
+    engine = make_lab(tmp_path)["app"].state.engine
+    rows = [
+        _op(
+            "New-InboxRule",
+            i,
+            f"2026-10-{27 + i // 31}T19:{i % 31:02d}:00",
+            Name=f"From co{i}",
+            From=f"co{i}@example.com",
+            MoveToFolder=f":\\Dept {i % 4}",
+            StopProcessingRules="True",
+        )
+        for i in range(60)
+    ]
+    rows += [
+        _op("New-InboxRule", 60, "2026-10-28T20:00:00", Name="j1", MoveToFolder="Junk Email"),
+        _op(
+            "New-InboxRule",
+            61,
+            "2026-10-28T20:01:00",
+            Name="Invoices",
+            SubjectContainsWords="invoice;wire transfer",
+            MoveToFolder="RSS Feeds",
+            MarkAsRead="True",
+        ),
+        _op("New-InboxRule", 62, "2026-10-28T20:02:00", Name="fw", ForwardTo="boss@example.com"),
+        _op("New-InboxRule", 63, "2026-10-28T20:03:00", Name="del", DeleteMessage="True"),
+    ]
+    _write(engine, rows)
+    sql = (
+        list_sql()
+        .replace("{from}", "2026-10-01 00:00:00+00")
+        .replace("{to}", "2026-11-01 00:00:00+00")
+    )
+    res = engine.run(sql, QueryScope(None))
+    got = [dict(zip(res.columns, r, strict=True)) for r in res.rows]
+    mine = [g for g in got if g["person"] == "dana@example.com"]
+    by = {g["rule"]: g for g in mine}
+    assert sum(g["class"] == "organizing" for g in mine) == 60
+    assert by["j1"]["class"] == "hiding" and by["j1"]["severity"] == "medium"
+    assert by["Invoices"]["severity"] == "high"  # money words: BEC hiding
+    assert by["Invoices"]["action"] == "mark read, move to RSS Feeds"
+    assert by["fw"]["class"] == "forwarding" and not by["fw"]["risky"]  # internal
+    assert by["del"]["class"] == "deleting" and by["del"]["risky"]
+    assert by["From co3"]["folder"] == "Dept 3" and by["From co3"]["stop_processing"]
+    assert by["From co3"]["from_address"] == "co3@example.com"
+    assert len({g["burst"] for g in mine}) == 1  # two evenings, one burst
+    assert [g["risky"] for g in mine[:3]] == [True, True, True]  # risky first
+
+
+def test_days_follow_the_viewers_time_zone(tmp_path: Path) -> None:
+    """Owner 2026-10-31: a chart showed Nov 1 at 7 PM on Oct 31 in Pacific time. Days are
+    the viewer's: a sign-in at 03:00 UTC on Oct 28 is Oct 27 in Los Angeles."""
+    engine = make_lab(tmp_path)["app"].state.engine
+    _write(engine, [_signin(50126, "2026-10-28T03:00:00Z")])
+    la = overview(engine, None, SOURCES, Places((), (), False, None), "30d", NOW,
+                  tz="America/Los_Angeles")  # fmt: skip
+    assert la.outcome is not None
+    assert all(p.hour == 7 for p in la.outcome.points)  # PDT midnights in UTC
+    day = {
+        p.date().isoformat(): f for p, f in zip(la.outcome.points, la.outcome.failed, strict=True)
+    }
+    assert day["2026-10-27"] == 1 and day["2026-10-28"] == 0
+    utc = overview(engine, None, SOURCES, Places((), (), False, None), "30d", NOW)
+    assert utc.outcome is not None and all(p.hour == 0 for p in utc.outcome.points)
+    # Not a zone: UTC, never an error.
+    bad = overview(engine, None, SOURCES, Places((), (), False, None), "30d", NOW, tz="Mars/Base")
+    assert bad.outcome is not None and bad.outcome.points == utc.outcome.points

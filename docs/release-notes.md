@@ -2,6 +2,57 @@
 
 ## Unreleased
 
+### People and pages (owner walkthrough, 2026-10-31)
+
+- **One person, one row**: the top bar search merges the forms of a name that are the same person (short name, `DOMAIN\user`, organization email, and aliases set on Settings > Identities) and lists the others ("also robin, CORP\robin").
+- **Possibly the same person**: a person's timeline lists other names seen on their devices that read as the same person ("robin" beside "robin.okafor@..."). Administrators can make one an alias with one click; nothing is merged without that.
+- **Addresses**: a person's "From addresses" counts where they were. Microsoft 365's own addresses on server-side records (Exchange Online and the rest, AS 8075 or Microsoft's published ranges) are shown apart ("12 + 165 Microsoft 365") instead of inflating the count.
+- **One way to do each thing**: the per-page Refresh buttons on AI usage, Agents, Health, and People & devices are gone (the top bar's Refresh covers the page). Agents > Overview has one time control. People & devices no longer has its own search box or the Entity / AI flow switch: open a person, address, host, or AI service from the top bar search, or a service's AI flow from its page.
+- **AI usage > Services**: review status and allowed data show as text in the table; administrators change them under the row with **Review**. Times are in your time zone.
+- What changes for existing installs: nothing to do.
+
+### Charts, sources read, and polish (owner walkthrough, 2026-10-31)
+
+- Dashboard and Microsoft 365 charts count **your** days: the browser sends its time zone and a day runs from your midnight. Hours and dates on those pages are in your time zone (no more "Nov 1" on the evening of Oct 31 in Pacific time).
+- A chart no longer draws zeros before its source existed: those points are hatched and the note says "no data before Oct 21".
+- Today (or this hour) is still filling, so its point is drawn dashed and labeled "so far" instead of reading as a sharp drop.
+- Search's results header names only the sources a query can read: a query with `template_id = 'm365_signin'` reports the Microsoft 365 source, not every source you have (read from file statistics, so nothing extra is scanned).
+- **Alerts**: with nothing to decide, the page shows the last five closed alerts under the empty queue.
+- The Search page's **Library** button is announced as "Library" (its hint stays on hover).
+- What changes for existing installs: nothing to do. Day totals on the Dashboard and Microsoft 365 pages follow your time zone, so they can differ from UTC days by a few hours' events.
+
+### Faster pages (owner walkthrough, 2026-10-31)
+
+- **Dashboard**: Identity now reads the Microsoft 365 rollup instead of parsing every failed sign-in, and each section loads on its own, so a slow one no longer holds up the page. On a test lake sized like a busy office (390,000 DNS, 100,000 auth, and 26,000 Microsoft 365 events a day, 2 vCPU) the 30-day sections went from 14 s to about 1 s.
+- Dashboard sections and Microsoft 365 > Overview are kept for 60 seconds per window: a reload in that minute is instant. Each view is still audited (`cached: true`).
+- AI usage and AI Watch run their independent reads together.
+- **Person timeline**: first use of AI services reads closed days from the AI rollup, not days of raw DNS, which is what ran out of memory for a busy person at 7 days.
+- The browser no longer asks twice: an answer is reused for 30 seconds across the page's cards, and a request the server answered (including "busy") is not sent again automatically.
+- **Open in Search** from any page now writes the window as `{{start}}` and `{{end}}` and opens Search on the page's exact window (shown as the selected time range, for example "Oct 3, 12:00 AM to Nov 1, 3:12 PM"). Picking another range reruns the same query over it, and a saved copy no longer freezes on the page's dates. The "From ..." line shows times in your time zone.
+- What changes for existing installs: nothing to do. Numbers on the Dashboard and Microsoft 365 pages can be up to a minute old; reload after a minute for the latest.
+
+### Inbox rules read for what they do (D132)
+
+- Microsoft 365 > Mail lists each inbox rule's settings as columns: rule name, from, sent to, subject words, action and folder, stop processing.
+- Each rule has a class: **organizing** (files mail into a named folder), **hiding** (Junk Email, RSS Feeds, Archive, Conversation History, Deleted Items, or mark read and move), **deleting**, **forwarding** (internal or external), or other. Only hiding, deleting, and external forwarding are risky. A risky rule that watches for invoice, payment, wire, password, MFA, bank, or payroll words, or for mail from finance, IT, security, or leadership addresses, is high severity (business email compromise hides replies this way).
+- One person's rules with no gap over 24 hours are one row ("dana@example.com created 62 rules Oct 29 to 30: 60 organizing, 2 hiding"), risky ones first, with the list underneath.
+- The Dashboard card is now **Risky mail rules**, with organizing rules as a separate count; Microsoft 365's count row shows the same numbers. DLP matches have their own list on the Mail tab.
+- What changes for existing installs: nothing to do. The Dashboard's mail rule count drops to the risky ones; the organizing count beside it opens the rest.
+
+### Live fixes (owner feedback, 2026-10-31)
+
+- Opening a row in Live, or scrolling down, no longer lets new rows push it away or open a different row: new events wait in an "N new events. Show" bar until you click it.
+- Live says how events actually arrive: "Sources are about 3 min behind; new events arrive about every 30 s" when sources deliver in batches.
+- **Start with the last 5 min** beside the Live switch fills the table with what arrived in the last 5 minutes, so it is not empty while slow sources catch up. The choice is remembered in this browser.
+- What changes for existing installs: nothing to do.
+
+### Microsoft 365 Overview from a daily rollup (ADR-0041)
+
+- Microsoft 365 > Overview now reads closed days from a small daily rollup per source and only today (and any partial day) from events. On a test tenant with 60,000 sign-ins a day the 30-day Overview went from 34 s to under 2 s on 2 vCPU, with the same numbers. 24 hours and 7 days use it too.
+- Changes and consents reported by both Graph and the Management API are still counted once, also when the two feeds are separate sources and when the copies fall either side of midnight.
+- The spike tooltip breaks a tie by name, so it no longer changes between loads.
+- What changes for existing installs: nothing to do. The rollup builds after the next lake compaction, up to 60 days per run (a few minutes on a busy tenant); until a day is built it is read from events as before. It lives in `data/rollup/m365` and can be deleted at any time; it is rebuilt.
+
 ### Rail, Dashboard, and Microsoft 365 fixes (owner feedback, 2026-10-31)
 
 - **Rail**: groups are now Monitor, Investigate, AI, Connected apps (Microsoft 365; future connectors go here), and System. Connected apps and System start folded the first time; every group remembers open or closed in this browser. Hovering a folded group shows its pages in a menu. Each area's sub-pages fold too (the arrow at the end of its row); Alerts starts folded, since its row shows the open count, and opens its pages on hover. Rows are a little tighter, so the rail fits a 1920x1080 screen without scrolling in its default state.

@@ -43,6 +43,8 @@ import { SaveSearchForm } from "./SaveSearchForm";
 import { SearchTabs, type SearchArea } from "./SearchTabs";
 import { SimplePanel } from "./SimplePanel";
 
+const FILL_KEY = "app.live.fill"; // Live starts with the last 5 minutes (per browser)
+
 // CodeMirror is most of the bundle; it loads as its own chunk after the page shows.
 const SqlEditor = lazy(() => import("./SqlEditor").then((m) => ({ default: m.SqlEditor })));
 
@@ -112,6 +114,9 @@ export function SearchPage({
   const [range, setRange] = useState<TimeRangeId>(
     seed?.range ?? urlState?.range ?? (sqlSeed ? "all" : "24h"),
   );
+  // A page's own window from a drill-through; choosing a preset range drops it.
+  const [custom, setCustom] = useState<{ from: string; to: string } | null>(seed?.window ?? null);
+  const bounds = custom ? { start: custom.from, end: custom.to } : { start: rangeStart(range) };
   const [sources, setSources] = useState<string[]>(seed?.sources ?? []);
   const [lastRun, setLastRun] = useState<Date | null>(null);
   const [saving, setSaving] = useState(false);
@@ -146,7 +151,7 @@ export function SearchPage({
       const body: QueryRequest = {
         sql: req.sql,
         params: req.params,
-        start: rangeStart(range),
+        ...bounds,
         sources: sources.length ? sources : undefined,
       };
       lastRequest.current = body;
@@ -157,7 +162,7 @@ export function SearchPage({
       remember(vars);
       const body = lastRequest.current;
       if (!body) return;
-      const scope = { start: body.start, sources: body.sources };
+      const scope = { start: body.start, end: body.end, sources: body.sources };
       setFacetRequest(
         vars.text !== undefined
           ? { text: vars.text, ...scope }
@@ -192,12 +197,12 @@ export function SearchPage({
   // the raw line). One count per column, through the same guarded query path.
   const filtered = (compiled?.columns ?? []).filter((c) => /^[a-z_]{1,64}$/.test(c));
   const coverage = useQuery({
-    queryKey: ["field-coverage", filtered, range, sources, lastRun?.getTime()],
+    queryKey: ["field-coverage", filtered, range, custom, sources, lastRun?.getTime()],
     enabled: tab === "simple" && filtered.length > 0 && run.isSuccess,
     queryFn: () =>
       api.query({
         sql: `SELECT ${filtered.map((c) => `count("${c}") AS "${c}"`).join(", ")} FROM events`,
-        start: rangeStart(range),
+        ...bounds,
         sources: sources.length ? sources : undefined,
       }),
     staleTime: 60_000,
@@ -228,6 +233,13 @@ export function SearchPage({
   // Live (ADR-0036): the SQL it follows; null is off. A shared link never starts it.
   const [liveSql, setLiveSql] = useState<string | null>(null);
   const [liveKey, setLiveKey] = useState(0);
+  const [liveFill, setLiveFill] = useState(() => {
+    try {
+      return localStorage.getItem(FILL_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
   const [libraryQuery, setLibraryQuery] = useState<LibraryPick | null>(null);
   const loadLibrary = (q: LibraryPick) => {
     setLibraryOpen(false);
@@ -525,7 +537,16 @@ export function SearchPage({
             </button>
           </p>
         ) : null}
-        <FilterBar range={range} onRange={setRange} sources={sources} onSources={setSources} />
+        <FilterBar
+          range={range}
+          custom={custom}
+          onRange={(r) => {
+            setCustom(null);
+            setRange(r);
+          }}
+          sources={sources}
+          onSources={setSources}
+        />
         <SearchTabs active={area} onSelect={(a) => setTab(a === "sql" ? "sql" : searchMode)} />
         {/* Panels stay mounted so a question and its turns survive a look at another tab. */}
         <div hidden={area !== "search"}>
@@ -653,6 +674,21 @@ export function SearchPage({
                 />
                 Live
               </label>
+              <label className="flex items-center gap-1.5 text-text-secondary">
+                <input
+                  type="checkbox"
+                  checked={liveFill}
+                  onChange={(e) => {
+                    setLiveFill(e.target.checked);
+                    try {
+                      localStorage.setItem(FILL_KEY, e.target.checked ? "1" : "0");
+                    } catch {
+                      // storage blocked: the choice lasts for this page only
+                    }
+                  }}
+                />
+                Start with the last 5 min
+              </label>
               <span>Ctrl+Enter to run · Ctrl+Space for columns</span>
               <span>Read-only · SELECT only · guarded by the server</span>
             </div>
@@ -759,6 +795,7 @@ export function SearchPage({
             key={liveKey}
             sql={liveSql}
             sources={sources}
+            fillMinutes={liveFill ? 5 : 0}
             onClose={() => setLiveSql(null)}
           />
         ) : null}

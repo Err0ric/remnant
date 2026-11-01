@@ -12,6 +12,9 @@ export interface SearchSeed {
   sources?: string[];
   /** Time range to open with (Investigations passes its own); all time otherwise. */
   range?: TimeRangeId;
+  /** A page's own window (a drill-through): Search opens on exactly it, and the query
+   * reads it through {{start}} and {{end}}, so another range or a saved copy still works. */
+  window?: { from: string; to: string };
   /** A saved search to open for editing (Saved searches > Edit, F37). */
   savedId?: string;
   /** Where the query came from, shown above it ("From Dashboard > Identity > ..."). */

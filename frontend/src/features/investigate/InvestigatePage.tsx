@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useState, type FormEvent } from "react";
-import { Command, PageHeader } from "@/components/shell/PageHeader";
+import { useState } from "react";
+import { PageHeader } from "@/components/shell/PageHeader";
 import { ApiError, api, type EntityRisk, type GraphCard, type GraphKind } from "@/lib/api";
 import { navigate, useSection } from "@/lib/route";
 import { entitySection, parseEntity } from "@/lib/entity";
@@ -12,7 +12,7 @@ import { EntitySummary } from "./EntitySummary";
 import { PersonTimeline } from "./PersonTimeline";
 import { PersonAlerts, PersonSessions, PersonSignIns } from "./PersonLists";
 import { RiskTable } from "./RiskTable";
-import { kindOf, PLACEHOLDER, rememberedKind, rememberKind, type EntityKind } from "./entityKind";
+import { kindOf, type EntityKind } from "./entityKind";
 
 type Mode = "entity" | "ai";
 interface Focus {
@@ -46,23 +46,8 @@ export function InvestigatePage() {
   const aiFocus: Focus | null =
     linked?.kind === "service" ? { kind: "service", value: linked.value } : aiChoice;
   const [selected, setSelected] = useState<GraphCard | null>(null);
-  const [kind, setKind] = useState<EntityKind>(
-    (linked && linked.kind !== "service" ? linked.kind : null) ?? rememberedKind(),
-  );
-  // The type follows what is typed (F56) until the user picks one from the list.
-  const [picked, setPicked] = useState(false);
-  const [text, setText] = useState(linked && linked.kind !== "service" ? linked.value : "");
   const [riskTab, setRiskTab] = useState<EntityKind>("user");
   const [personTab, setPersonTab] = useState<PersonTab>("summary");
-  // A pivot link from another page while this one is open: the box follows the address.
-  const linkedKey = linked && linked.kind !== "service" ? `${linked.kind}=${linked.value}` : "";
-  useEffect(() => {
-    if (!linked || linked.kind === "service") return;
-    setKind(linked.kind);
-    setText(linked.value);
-    // Only when the linked entity changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [linkedKey]);
   const start = rangeStart(range);
   const rangeLabel = TIME_RANGES.find((r) => r.id === range)?.label ?? "this range";
   const rangeWords = /^last /i.test(rangeLabel) ? `the ${rangeLabel.toLowerCase()}` : rangeLabel;
@@ -84,17 +69,9 @@ export function InvestigatePage() {
     setSelected(null);
     setMode("entity");
     setPersonTab("summary");
-    setKind(next.kind as EntityKind);
-    setText(next.value);
     navigate("investigate", entitySection({ kind: next.kind as EntityKind, value: next.value }));
   };
   const pick = (row: EntityRisk) => investigate({ kind: row.kind, value: row.value });
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
-    if (!text.trim()) return;
-    rememberKind(kind);
-    investigate({ kind, value: text.trim() });
-  };
   const openSearch = (sql: string) => {
     seedSearch({ sql, range });
     navigate("search");
@@ -147,50 +124,6 @@ export function InvestigatePage() {
     </button>
   ));
 
-  const picker = (
-    <form
-      onSubmit={submit}
-      aria-label="Investigate an entity"
-      className="flex flex-wrap items-center gap-2"
-    >
-      <select
-        aria-label="Entity type"
-        value={kind}
-        onChange={(e) => {
-          setKind(e.target.value as EntityKind);
-          setPicked(true);
-        }}
-        className="h-9 rounded border border-border-strong bg-inset px-2 text-sm"
-      >
-        {(Object.keys(KIND_LABEL) as EntityKind[]).map((k) => (
-          <option key={k} value={k}>
-            {KIND_LABEL[k]}
-          </option>
-        ))}
-      </select>
-      <input
-        aria-label="Entity"
-        value={text}
-        onChange={(e) => {
-          const value = e.target.value;
-          setText(value);
-          const guess = kindOf(value);
-          if (!value.trim()) setPicked(false);
-          else if (!picked && guess) setKind(guess);
-        }}
-        placeholder={PLACEHOLDER[kind]}
-        className="h-9 min-w-0 flex-[1_1_16rem] rounded border border-border-strong bg-inset px-3 font-mono text-sm"
-      />
-      <button
-        type="submit"
-        disabled={!text.trim()}
-        className="h-9 rounded bg-accent px-4 text-sm font-semibold text-white hover:brightness-110 disabled:opacity-50"
-      >
-        Investigate
-      </button>
-    </form>
-  );
-
   const canvas = graph.error ? (
     <p role="alert" className="p-4 text-sm text-danger">
       {graph.error instanceof ApiError ? graph.error.message : "Could not load the graph"}
@@ -226,16 +159,6 @@ export function InvestigatePage() {
       <PageHeader
         crumbs={["Home", "Investigate", "Investigations"]}
         title="Investigations"
-        commands={
-          <Command
-            label={risk.isFetching || graph.isFetching ? "Refreshing…" : "Refresh"}
-            onClick={() => {
-              void risk.refetch();
-              if (mode === "ai" || entity) void graph.refetch();
-            }}
-            disabled={risk.isFetching || graph.isFetching}
-          />
-        }
         meta={
           risk.data
             ? `${risk.data.matches_considered.toLocaleString()} rule matches considered`
@@ -243,34 +166,7 @@ export function InvestigatePage() {
         }
       />
       <div className="flex flex-col gap-4 px-5 py-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div
-            role="radiogroup"
-            aria-label="View"
-            className="flex rounded border border-border-strong"
-          >
-            {(["entity", "ai"] as Mode[]).map((m) => (
-              <button
-                key={m}
-                type="button"
-                role="radio"
-                aria-checked={mode === m}
-                onClick={() => {
-                  setSelected(null);
-                  setMode(m);
-                  if (linked && (m === "entity") !== (linked.kind !== "service"))
-                    navigate("investigate");
-                }}
-                className={`h-8 px-3 text-sm ${
-                  mode === m
-                    ? "bg-accent-subtle font-semibold text-accent-text"
-                    : "hover:bg-surface-head"
-                }`}
-              >
-                {m === "entity" ? "Entity" : "AI flow"}
-              </button>
-            ))}
-          </div>
+        <div className="flex flex-wrap items-center justify-end gap-3">
           <label className="flex items-center gap-2 text-sm">
             <span className="text-text-secondary">Time range</span>
             <select
@@ -289,19 +185,6 @@ export function InvestigatePage() {
 
         {landing ? (
           <>
-            <section
-              aria-label="Start an investigation"
-              className="mx-auto flex w-full max-w-3xl flex-col gap-3 rounded-card border border-border bg-surface p-5"
-            >
-              <div>
-                <h2 className="text-base font-semibold">Investigate activity</h2>
-                <p className="text-text-secondary">
-                  Pick a user, IP address, or host to see its sources, activities, and targets.
-                </p>
-              </div>
-              {picker}
-            </section>
-
             <section
               aria-label="Most active entities"
               className="mx-auto w-full max-w-5xl rounded-card border border-border bg-surface"
@@ -327,8 +210,8 @@ export function InvestigatePage() {
                 <div className="flex flex-col gap-2 p-4 text-sm text-text-secondary">
                   <p>No detection rule has matched in this range, so nothing is ranked yet.</p>
                   <p>
-                    Enable rules and run them, or schedule them. You can still investigate any user,
-                    IP address, or host above.
+                    Enable rules and run them, or schedule them. You can still open any user, IP
+                    address, or host from the search in the top bar.
                   </p>
                   <button
                     type="button"
@@ -361,7 +244,6 @@ export function InvestigatePage() {
                   type="button"
                   onClick={() => {
                     setSelected(null);
-                    setText("");
                     navigate("investigate");
                   }}
                   className="text-sm text-accent-text hover:underline"
@@ -374,7 +256,6 @@ export function InvestigatePage() {
                   </span>
                   <span className="break-all font-mono text-lg">{entity.value}</span>
                 </div>
-                <div className="ml-auto w-full max-w-xl">{picker}</div>
               </div>
             ) : null}
             {mode === "ai" && aiFocus ? (

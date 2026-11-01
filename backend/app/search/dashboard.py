@@ -11,11 +11,13 @@ GeoIP (ADR-0023); "external" and "outside approved countries" use the install's 
 from __future__ import annotations
 
 import ipaddress
+import threading
 from collections import Counter, defaultdict
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any, Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.ai import consents
 from app.core.errors import RuleRejectedError
@@ -42,29 +44,13 @@ _TS = "coalesce(time, time_observed)"
 # Entra error codes that interrupt a sign-in rather than refuse it (MFA, register a method,
 # stay signed in, an external challenge, seamless SSO): not failures (owner edit 2).
 INTERRUPT_CODES = (50072, 50074, 50076, 50079, 50097, 50125, 50140, 50158, 81010, 81012, 81014)
-_CODE = "TRY_CAST(json_extract_string(raw, '$.status.errorCode') AS INTEGER)"
+_CODE = "TRY_CAST(TRY(json_extract_string(raw, '$.status.errorCode')) AS INTEGER)"
 INTERRUPTED = f"status_id = 2 AND list_contains({list(INTERRUPT_CODES)}, {_CODE})"
 FAILED = f"status_id = 2 AND NOT coalesce(list_contains({list(INTERRUPT_CODES)}, {_CODE}), false)"
-_BUCKET = f"date_trunc($unit, timezone('UTC', {_TS}))"
+_BUCKET = f"timezone($tz, date_trunc($unit, timezone($tz, {_TS})))"
 _WHO = "nullif(trim(actor_user_name), '')"
 _HOST = "coalesce(nullif(device_hostname, ''), nullif(dst_endpoint_hostname, ''))"
 
-SIGNIN_TOTALS_SQL = f"""
-SELECT count(*) FILTER (WHERE {_TS} >= $start),
-       count(*) FILTER (WHERE {_TS} >= $start AND {FAILED}),
-       count(*) FILTER (WHERE {_TS} < $start AND {FAILED})
-FROM events WHERE template_id = 'm365_signin'"""  # noqa: S608  # fixed SQL text
-
-# Failed sign-ins per trend point, this window and the one before (the chart's dashed line).
-SIGNIN_FAILED_TREND_SQL = f"""
-SELECT date_trunc($trend_unit, timezone('UTC', {_TS})) AS b, count(*) FROM events
-WHERE template_id = 'm365_signin' AND {FAILED}
-GROUP BY 1"""  # noqa: S608  # fixed SQL text
-
-TOP_FAILING_SQL = f"""
-SELECT {_WHO} AS who, count(*) AS n, max({_TS}) AS last FROM events
-WHERE template_id = 'm365_signin' AND {FAILED} AND {_TS} >= $start AND {_WHO} IS NOT NULL
-GROUP BY 1 ORDER BY n DESC, who LIMIT {TOP}"""  # noqa: S608  # fixed SQL text
 
 # Per address: successful and failed sign-ins now, successful before. Countries are looked
 # up in Python, busiest addresses first.
@@ -110,23 +96,6 @@ _CHANGE_KEY = f"""CASE WHEN {_EXCHANGE} THEN event_id ELSE
   END"""
 _M365_AUDIT = "template_id IN ('m365_directory_audit', 'm365_management_activity')"
 
-# Risky Microsoft 365 changes, one row per operation (Graph and the Management Activity
-# API report some of the same ones; the correlation id, else person and minute, joins them).
-CHANGES_SQL = f"""
-WITH r0 AS (
-  SELECT {_TS} AS ts, lower(rtrim(trim(message), '.')) AS op, raw, event_id,
-         metadata_correlation_uid, actor_user_name
-  FROM events
-  WHERE template_id IN ('m365_directory_audit', 'm365_management_activity')
-),
-r AS (SELECT ts, op, raw, {_CHANGE_KEY} AS k FROM r0),
-c AS (
-  SELECT ts, k, op, {_CHANGE_KIND} AS kind
-  FROM r
-),
-one AS (SELECT kind, min(ts) AS ts FROM c WHERE kind IS NOT NULL GROUP BY kind, k, op)
-SELECT kind, count(*) FILTER (WHERE ts >= $start), count(*) FILTER (WHERE ts < $start)
-FROM one GROUP BY kind"""  # noqa: S608  # fixed SQL text
 
 # Authentication failures outside Microsoft 365 (SSH, Windows, VPN, and the rest), per
 # address; "external" is decided in Python from the internal networks.
@@ -262,27 +231,41 @@ class Sections:
     read: list[str] = field(default_factory=list)
 
 
-def bounds(window: Window, now: datetime) -> tuple[datetime, datetime, list[datetime]]:
-    """Window start, the start of the window before, and the bucket starts (UTC hours for
-    24 hours, UTC days otherwise; the last bucket holds now)."""
+def bounds(
+    window: Window, now: datetime, tz: str = "UTC"
+) -> tuple[datetime, datetime, list[datetime]]:
+    """Window start, the start of the window before, and the bucket starts (hours for 24
+    hours, the viewer's days otherwise, in UTC; the last bucket holds now)."""
     if window == "24h":
-        top = now.replace(minute=0, second=0, microsecond=0)
+        top = now.astimezone(UTC).replace(minute=0, second=0, microsecond=0)
         buckets = [top - timedelta(hours=23 - i) for i in range(24)]
         start = buckets[0]
         return start, start - timedelta(hours=24), buckets
     days = 7 if window == "7d" else 30
-    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    buckets = [today - timedelta(days=days - 1 - i) for i in range(days)]
+    local = now.astimezone(zone(tz))
+    today = local.replace(hour=0, minute=0, second=0, microsecond=0)
+    # Wall-clock days in the viewer's zone (ZoneInfo gives each its own offset, so a day
+    # across a clock change is 23 or 25 hours).
+    buckets = [(today - timedelta(days=days - 1 - i)).astimezone(UTC) for i in range(days)]
     start = buckets[0]
-    return start, start - timedelta(days=days), buckets
+    before = (today - timedelta(days=2 * days - 1)).astimezone(UTC)
+    return start, before, buckets
 
 
-def trend_points(window: Window, now: datetime) -> tuple[str, list[datetime]]:
+def zone(tz: str) -> ZoneInfo:
+    """The viewer's IANA time zone; UTC when it is not one."""
+    try:
+        return ZoneInfo(tz)
+    except (ZoneInfoNotFoundError, ValueError):
+        return ZoneInfo("UTC")
+
+
+def trend_points(window: Window, now: datetime, tz: str = "UTC") -> tuple[str, list[datetime]]:
     """The trend's unit and point starts: from the window start to the point holding now."""
-    start, _, buckets = bounds(window, now)
+    start, _, buckets = bounds(window, now, tz)
     if window != "7d":
         return ("hour" if window == "24h" else "day"), buckets
-    top = now.replace(minute=0, second=0, microsecond=0)
+    top = now.astimezone(UTC).replace(minute=0, second=0, microsecond=0)
     hours = int((top - start) / timedelta(hours=1)) + 1
     return "hour", [start + timedelta(hours=i) for i in range(hours)]
 
@@ -355,18 +338,45 @@ def _iso(v: Any) -> str | None:
 class _Run:
     """Runs fixed SQL on one scope and remembers the sources read."""
 
-    def __init__(self, engine: QueryEngine, scope: QueryScope, params: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        engine: QueryEngine,
+        scope: QueryScope,
+        params: dict[str, Any],
+        skip_days: list[str] | None = None,
+    ) -> None:
         self.engine, self.scope, self.params = engine, scope, params
+        # Days read from the Microsoft 365 rollup (ADR-0041), left out of `events`.
+        self.skip = skip_days or []
         self.read: set[str] = set()
+        self._lock = threading.Lock()  # runs may come from several threads
+
+    def events(self, sql: str, sources: list[str]) -> list[list[Any]]:
+        """Run on events for every day in scope, rollup days included."""
+        return self._go(sql, sources, [], {})
 
     def __call__(self, sql: str, sources: list[str], **extra: Any) -> list[list[Any]]:
+        return self._go(sql, sources, self.skip, extra)
+
+    def _go(
+        self, sql: str, sources: list[str], skip: list[str], extra: dict[str, Any]
+    ) -> list[list[Any]]:
         if not sources:
             return []
         scope = QueryScope(sources=sources, start=self.scope.start, end=self.scope.end)
         # DuckDB takes exactly the parameters a statement names.
         params = {k: v for k, v in {**self.params, **extra}.items() if f"${k}" in sql}
-        res = self.engine.run(sql, scope, params, timeout_s=TIMEOUT_S, name="dashboard")
-        self.read |= set(res.sources)
+        res = self.engine.run(
+            sql,
+            scope,
+            params,
+            timeout_s=TIMEOUT_S,
+            rollup=bool(skip),
+            skip_days=skip,
+            name="dashboard",
+        )
+        with self._lock:
+            self.read |= set(res.sources)
         return res.rows
 
 
@@ -430,21 +440,38 @@ def _identity(
     window: Window,
     now: datetime,
     first: dict[str, datetime],
+    rollup: Any = None,
+    tz: str = "UTC",
 ) -> Identity:
-    total, failed, failed_before = (run(SIGNIN_TOTALS_SQL, m365) or [[0, 0, 0]])[0]
-    unit, points = trend_points(window, now)
-    start, before, _ = bounds(window, now)
-    trend = _trend(run(SIGNIN_FAILED_TREND_SQL, m365, trend_unit=unit), points, start - before)
+    """From the Microsoft 365 facts (ADR-0041): closed days from the rollup when it has
+    them, the rest from events, with the same definitions as Microsoft 365 > Overview."""
+    from app.search import m365 as facts  # m365 builds on this module
+
+    unit, points = trend_points(window, now, tz)
+    start, before, _ = bounds(window, now, tz)
+    covered = rollup.covered(QueryScope(m365, before, now)) if rollup is not None else []
+    params = {**run.params, "tz": zone(tz).key, "covered": covered}
+    frun = _Run(run.engine, run.scope, params, covered)
+    names = ["signins", "failed_trend", "top_failing", "changes", "consents", "mail"]
+    if places.approved_countries:
+        names.append("ok_by_ip")
+    got = facts.run_facts(frun, m365, names, bool(covered), unit=unit)
+    with run._lock:
+        run.read |= frun.read
+    total, _, failed, failed_before, _, _ = (got["signins"] or [[0] * 6])[0]
+    trend = _trend(got["failed_trend"], points, start - before)
     top = [
-        Row(str(who), int(n), kind="user", last=_iso(last))
-        for who, n, last in run(TOP_FAILING_SQL, m365)
+        Row(str(who), int(n), kind="user", last=_iso(last)) for who, n, last in got["top_failing"]
     ]
     outside = None
     if places.approved_countries:
-        ips = run(SIGNIN_BY_IP_SQL, m365, templates=["m365_signin"])
-        outside, _ = _outside(ips, geo, set(places.approved_countries))
-    changes = {str(k): (int(a), int(b)) for k, a, b in run(CHANGES_SQL, m365)}
-    granted, granted_before, blocked = (run(consents.COUNTS_SQL, m365) or [[0, 0, 0]])[0][:3]
+        outside, _ = _outside(got["ok_by_ip"], geo, set(places.approved_countries))
+    changes = {str(k): (int(a), int(b)) for k, a, b in got["changes"]}
+    granted, granted_before, blocked = (got["consents"] or [[0, 0, 0]])[0][:3]
+    # Risky inbox rules, organizing ones apart (D132).
+    from app.search.mail_rules import list_sql as mail_rules_list
+
+    risky, risky_before, organizing = (got["mail"] or [[0, 0, 0]])[0]
     if outside is not None:
         outside.drill = drill.events(
             outside_where(["m365_signin"], places.approved_countries), drill.ADDRESS_COLUMNS
@@ -460,7 +487,13 @@ def _identity(
             drill=drill.events(FAILED_SIGNIN, drill.ADDRESS_COLUMNS),
         ),
         outside=outside,
-        inbox_rules=change("inbox"),
+        inbox_rules=Kpi(
+            int(risky),
+            int(risky_before),
+            int(organizing),
+            drill=mail_rules_list("risky"),
+            extra_drill=mail_rules_list("class = 'organizing'"),
+        ),
         consents=Kpi(
             int(granted),
             int(granted_before),
@@ -712,6 +745,30 @@ def _detections(
     )
 
 
+PARTS = ("identity", "attacks", "detections")
+
+
+def first_events(run: _Run, sources: list[str]) -> dict[str, datetime]:
+    """Each source's first event in scope, reading only its earliest day folder in scope
+    (the lake files events by their day), not every day."""
+    days = run.engine.first_days(QueryScope(sources, run.scope.start, run.scope.end))
+    by_day: dict[str, list[str]] = defaultdict(list)
+    for sid, day in days.items():
+        by_day[day].append(sid)
+    out: dict[str, datetime] = {}
+    for day, sids in by_day.items():
+        begins = datetime.combine(date.fromisoformat(day), time(0), UTC)
+        lo = max(begins, run.scope.start) if run.scope.start else begins
+        hi = min(begins + timedelta(days=1), run.scope.end) if run.scope.end else None
+        res = run.engine.run(
+            FIRST_EVENT_SQL, QueryScope(sids, lo, hi), timeout_s=TIMEOUT_S, name="dashboard"
+        )
+        with run._lock:
+            run.read |= set(res.sources)
+        out |= {str(sid): t for sid, at in res.rows if (t := _utc(at)) is not None}
+    return out
+
+
 def sections(
     engine: QueryEngine,
     meta: MetaDB,
@@ -721,10 +778,14 @@ def sections(
     geo: Lookup,
     window: Window,
     now: datetime,
+    m365_rollup: Any = None,
+    parts: Collection[str] = PARTS,
+    tz: str = "UTC",
 ) -> Sections:
-    """The three sections for the caller. `sources` is the install's (id, kind, template);
-    only those the caller may read are used."""
-    start, before, buckets = bounds(window, now)
+    """The sections for the caller (`parts`: any of identity, attacks, detections; each
+    loads on its own). `sources` is the install's (id, kind, template); only those the
+    caller may read are used."""
+    start, before, buckets = bounds(window, now, tz)
     mine = [s for s in sources if allowed is None or s[0] in set(allowed)]
     m365 = [sid for sid, kind, tpl in mine if kind == "m365" or (tpl or "").startswith("m365_")]
     vpn = [sid for sid, _, tpl in mine if tpl in VPN_TEMPLATES]
@@ -733,7 +794,7 @@ def sections(
     run = _Run(
         engine,
         QueryScope(sources=None, start=before, end=now),
-        {"start": start, "unit": unit},
+        {"start": start, "unit": unit, "tz": zone(tz).key},
     )
     out = Sections(
         window=window,
@@ -744,16 +805,14 @@ def sections(
         approved_set=bool(places.approved_countries),
         has_public=places.has_public,
     )
-    first = {
-        str(sid): t
-        for sid, at in run(FIRST_EVENT_SQL, [s[0] for s in mine])
-        if (t := _utc(at)) is not None
-    }
-    if m365:
-        out.identity = _identity(run, m365, places, geo, window, now, first)
-    out.attacks = _attacks(run, other, vpn, places, geo, buckets, first, start, before)
-    out.detections = _detections(
-        run, meta, allowed, [s[0] for s in mine], start, before, buckets, window, first
-    )
+    first = first_events(run, [s[0] for s in mine])
+    if m365 and "identity" in parts:
+        out.identity = _identity(run, m365, places, geo, window, now, first, m365_rollup, tz)
+    if "attacks" in parts:
+        out.attacks = _attacks(run, other, vpn, places, geo, buckets, first, start, before)
+    if "detections" in parts:
+        out.detections = _detections(
+            run, meta, allowed, [s[0] for s in mine], start, before, buckets, window, first
+        )
     out.read = sorted(run.read)
     return out
