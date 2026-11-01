@@ -26,6 +26,23 @@ export interface Change {
   provisioning: boolean;
   service: string;
   rank: number;
+  /** "Roles and apps", "Credentials", "Policies", "Users", "Groups", or "Other". */
+  area: string;
+  /** The target is a deleted user (Entra prefixes the object id to the name). */
+  targetDeleted: boolean;
+}
+
+/** The page's groups, most important first (owner, 2026-11-01). */
+export const AREA_ORDER = ["Roles and apps", "Credentials", "Policies", "Users", "Groups", "Other"];
+
+/** Changes under their area, areas in order, newest first inside each. */
+export function byArea(rows: Change[]): [string, Change[]][] {
+  const groups = new Map<string, Change[]>();
+  for (const c of rows) groups.set(c.area, [...(groups.get(c.area) ?? []), c]);
+  const rank = (a: string) => (AREA_ORDER.includes(a) ? AREA_ORDER.indexOf(a) : AREA_ORDER.length);
+  return [...groups.entries()]
+    .sort((a, b) => rank(a[0]) - rank(b[0]))
+    .map(([area, list]) => [area, [...list].sort((x, y) => y.time.localeCompare(x.time))]);
 }
 
 export interface CycleGroup {
@@ -58,6 +75,8 @@ export function changes(result: QueryResult): Change[] {
     provisioning: r[at("provisioning")] === true,
     service: text(r[at("service")]) || text(r[at("actor")]),
     rank: Number(r[at("rank")] ?? 0),
+    area: text(r[at("area")]) || "Other",
+    targetDeleted: r[at("target_deleted")] === true,
   }));
 }
 
@@ -139,7 +158,14 @@ function ChangeRow({ c, m, timeZone }: RowProps) {
           {c.operation}
           {c.rank === 0 ? <span className="ml-1.5 text-xs text-text-muted">routine</span> : null}
         </td>
-        <td className="min-w-0 px-2 py-1.5 font-mono">{c.target ?? "·"}</td>
+        <td className="min-w-0 px-2 py-1.5">
+          <span className="font-mono">{c.target ?? "·"}</span>
+          {c.targetDeleted ? (
+            <span className="ml-1.5 rounded-badge bg-sev-medium-bg px-1.5 py-px text-xs text-sev-medium-text">
+              deleted
+            </span>
+          ) : null}
+        </td>
         <td className="px-2 py-1.5">
           <span className={c.status === "Failure" ? "text-danger" : "text-text-secondary"}>
             {c.status}
@@ -278,7 +304,14 @@ export function AdminChanges({ m, timeZone }: { m: M365Overview; timeZone?: stri
       ) : (
         <>
           {shown.length ? (
-            <ChangeTable rows={shown} m={m} label={TITLE} timeZone={timeZone} />
+            byArea(shown).map(([area, rows]) => (
+              <section key={area} aria-label={area}>
+                <h3 className="border-b border-border bg-surface-head px-3 py-1 text-sm font-semibold text-text-secondary">
+                  {area}
+                </h3>
+                <ChangeTable rows={rows} m={m} label={`${TITLE}: ${area}`} timeZone={timeZone} />
+              </section>
+            ))
           ) : (
             <p className="p-3 text-sm text-text-secondary">
               {real.length

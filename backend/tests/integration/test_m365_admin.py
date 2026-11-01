@@ -76,6 +76,25 @@ def _records() -> list[dict[str, Any]]:
                               "modifiedProperties": [{"displayName": "MobilePhone"}]}],
         )
     )  # fmt: skip
+    # A deleted user, as Entra renames them, and a container in the change details.
+    out.append(
+        _dir(
+            NOW - timedelta(hours=6), "Delete user",
+            initiatedBy={"user": {"userPrincipalName": "admin@example.com"}},
+            targetResources=[{"userPrincipalName": "0123456789abcdef0123456789abcdefkim.lee@example.com",
+                              "type": "User",
+                              "modifiedProperties": [{"displayName": "Included Updated Properties"},
+                                                     {"displayName": "AccountEnabled"}]}],
+        )
+    )  # fmt: skip
+    # A credential removed by an app the window never names.
+    out.append(
+        _dir(
+            NOW - timedelta(hours=7), "Remove service principal credentials",
+            initiatedBy={"app": {"servicePrincipalId": "33333333-3333-4333-8333-333333333333"}},
+            targetResources=[{"displayName": "Example Reporting App", "type": "ServicePrincipal"}],
+        )
+    )  # fmt: skip
     return out
 
 
@@ -95,19 +114,22 @@ def test_cycles_are_provisioning_and_changes_are_apart(tmp_path: Path) -> None:
     assert {r["service"] for r in cycles} == {"Example Directory Sync", "Example SCIM Connector"}
     assert [r["status"] for r in cycles].count("Failure") == 1
     assert {r["operation"] for r in changes} == {
-        "add member to role", "update service principal", "update user",
+        "add member to role", "update service principal", "update user", "delete user",
+        "remove service principal credentials",
     }  # fmt: skip
-    assert len(changes) == 4
+    assert len(changes) == 6
 
 
 def test_an_app_is_named_and_its_change_says_what_changed(tmp_path: Path) -> None:
     rows = _rows(tmp_path)
-    hr = next(r for r in rows if r["actor_kind"] == "app" and not r["provisioning"])
+    hr = next(r for r in rows if r["app_id"] == HR_SP and not r["provisioning"])
     assert hr["actor"] == "Example HR Connector" and hr["app_id"] == HR_SP
     assert hr["operation"] == "update user" and hr["target"] == "pat@example.com"
     assert hr["changed"] == "Department, JobTitle" and hr["status"] == "Success"
     assert hr["events"] == 1 and len(hr["event_ids"]) == 1
-    person = next(r for r in rows if r["actor"] == "admin@example.com" and r["changed"])
+    person = next(
+        r for r in rows if r["operation"] == "update user" and r["actor_kind"] == "person"
+    )
     assert person["changed"] == "MobilePhone" and person["actor_kind"] == "person"
 
 
@@ -116,6 +138,10 @@ def test_real_admin_changes_rank_above_routine(tmp_path: Path) -> None:
     assert changes[0]["operation"] == "add member to role" and changes[0]["rank"] > 0
     routine = sorted(r["operation"] for r in changes if r["rank"] == 0)
     assert routine == ["update service principal", "update user", "update user"]
+    areas = {r["operation"]: r["area"] for r in changes}
+    assert areas["add member to role"] == "Roles and apps"
+    assert areas["remove service principal credentials"] == "Credentials"
+    assert areas["delete user"] == areas["update user"] == "Users"
 
 
 def test_the_events_open_in_search(tmp_path: Path) -> None:
@@ -123,3 +149,13 @@ def test_the_events_open_in_search(tmp_path: Path) -> None:
     ids = rows[0]["event_ids"]
     sql = drill.events(f"list_contains({drill.lits([str(i) for i in ids])}, event_id)")
     assert "event_id" in sql
+
+
+def test_deleted_users_unnamed_apps_and_containers_read_plainly(tmp_path: Path) -> None:
+    rows = _rows(tmp_path)
+    gone = next(r for r in rows if r["operation"] == "delete user")
+    assert gone["target"] == "kim.lee@example.com" and gone["target_deleted"] is True
+    assert gone["changed"] == "AccountEnabled"  # not "Included Updated Properties"
+    cred = next(r for r in rows if r["operation"] == "remove service principal credentials")
+    assert cred["actor"] == "33333333-3333-4333-8333-333333333333"
+    assert cred["actor_kind"] == "app"

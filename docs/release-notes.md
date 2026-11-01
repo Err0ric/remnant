@@ -20,6 +20,14 @@
 - It re-baselines only after a successful update with a clean (or accepted) check. A run with nothing to update reports the check and does not re-baseline.
 - What changes for existing installs: `--aide` runs take longer (a full check before the update). The first time, if AIDE reports changes from before this version, review them and re-run with `--aide-accept`.
 
+### Microsoft 365 > Admin: grouped and cleaner (2026-11-01)
+
+- Changes sit under Roles and apps, Credentials, Policies, Users, and Groups, most important first, newest first within each.
+- A deleted user shows by name (without the id Entra adds) and is marked deleted.
+- "Included Updated Properties" no longer appears in Changed.
+- An app with no name in the window shows its id instead of "(unknown)".
+- What changes for existing installs: nothing to do.
+
 ### Left rail: click to open (2026-11-01)
 
 - Group headers (System, Connected apps) and folded pages open and close in place when you click them, and stay as you left them. Hovering them no longer pops up a separate menu.

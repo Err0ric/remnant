@@ -19,66 +19,82 @@ const COLUMNS = [
   "provisioning",
   "service",
   "rank",
+  "area",
+  "target_deleted",
 ];
 const SP = "22222222-2222-4222-8222-222222222222";
 
+/** A row of the Admin query, with defaults for what a case does not set. */
+function row(v: Record<string, unknown>): unknown[] {
+  const base: Record<string, unknown> = {
+    actor_kind: "person",
+    app_id: null,
+    target: null,
+    status: "Success",
+    events: 1,
+    changed: "",
+    provisioning: false,
+    rank: 0,
+    area: "Other",
+    target_deleted: false,
+  };
+  const all = { ...base, ...v };
+  if (!("event_ids" in all)) all.event_ids = [`e-${String(all.time)}`];
+  if (!("service" in all)) all.service = all.actor;
+  return COLUMNS.map((c) => all[c] ?? null);
+}
+
 function cycle(time: string, status = "Success", service = "Example Directory Sync") {
-  return [
+  return row({
     time,
-    service,
-    "app",
-    null,
-    "execution",
-    null,
+    actor: service,
+    actor_kind: "app",
+    operation: "execution",
     status,
-    1,
-    [`e-${time}`],
-    "",
-    true,
+    provisioning: true,
     service,
-    0,
-  ];
+  });
 }
 
 const RESULT: QueryResult = {
   columns: COLUMNS,
   rows: [
-    [
-      "2026-10-30T09:00:00+00:00",
-      "admin@example.com",
-      "person",
-      null,
-      "add member to role",
-      "Helpdesk Administrator",
-      "Success",
-      2,
-      ["e-1", "e-2"],
-      "",
-      false,
-      "admin@example.com",
-      5,
-    ],
-    [
-      "2026-10-30T07:00:00+00:00",
-      "Example HR Connector",
-      "app",
-      SP,
-      "update user",
-      "pat@example.com",
-      "Success",
-      1,
-      ["e-3"],
-      "Department, JobTitle",
-      false,
-      "Example HR Connector",
-      0,
-    ],
+    row({
+      time: "2026-10-30T09:00:00+00:00",
+      actor: "admin@example.com",
+      operation: "add member to role",
+      target: "Helpdesk Administrator",
+      events: 2,
+      event_ids: ["e-1", "e-2"],
+      rank: 5,
+      area: "Roles and apps",
+    }),
+    row({
+      time: "2026-10-27T09:00:00+00:00",
+      actor: "admin@example.com",
+      operation: "delete user",
+      target: "kim.lee@example.com",
+      changed: "AccountEnabled",
+      rank: 3,
+      area: "Users",
+      target_deleted: true,
+    }),
+    row({
+      time: "2026-10-30T07:00:00+00:00",
+      actor: "Example HR Connector",
+      actor_kind: "app",
+      app_id: SP,
+      operation: "update user",
+      target: "pat@example.com",
+      changed: "Department, JobTitle",
+      area: "Users",
+    }),
     cycle("2026-10-30T08:00:00+00:00"),
     cycle("2026-10-30T08:10:00+00:00"),
     cycle("2026-10-30T08:20:00+00:00", "Failure"),
     cycle("2026-10-29T08:00:00+00:00"),
   ],
-  row_count: 6,
+  row_count: 7,
   truncated: false,
   elapsed_ms: 3,
   executed_sql: "",
@@ -111,7 +127,16 @@ describe("Microsoft 365 > Admin (owner, 2026-11-01)", () => {
         <AdminChanges m={M} timeZone="UTC" />
       </QueryClientProvider>,
     );
-    const table = await screen.findByRole("table", { name: "Admin changes" });
+    const table = await screen.findByRole("table", { name: "Admin changes: Roles and apps" });
+    // Areas in order of importance, whatever the dates (owner, 2026-11-01).
+    expect(screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual([
+      "Roles and apps",
+      "Users",
+      "Provisioning",
+    ]);
+    const users = screen.getByRole("table", { name: "Admin changes: Users" });
+    expect(within(users).getByText("kim.lee@example.com")).toBeVisible();
+    expect(within(users).getByText("deleted")).toBeVisible();
     expect(within(table).getByText("add member to role")).toBeVisible();
     expect(within(table).queryByText("Example HR Connector")).toBeNull();
     expect(within(table).getByText("Success")).toBeVisible();
@@ -120,7 +145,7 @@ describe("Microsoft 365 > Admin (owner, 2026-11-01)", () => {
       "Open 2 events in Search",
     );
     await userEvent.click(screen.getByRole("checkbox", { name: "Hide routine" }));
-    const all = screen.getByRole("table", { name: "Admin changes" });
+    const all = screen.getByRole("table", { name: "Admin changes: Users" });
     const hr = within(all).getByText("Example HR Connector").closest("tr")!;
     expect(within(hr).getByText("App")).toBeVisible();
     expect(within(hr).getByText("Department, JobTitle")).toBeVisible();

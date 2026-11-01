@@ -42,6 +42,28 @@ RANKS: tuple[tuple[int, str], ...] = (
     (2, "op LIKE 'delete%' OR op LIKE 'remove%'"),
 )  # fmt: skip
 SP = r"^ServicePrincipal_([0-9A-Fa-f-]{36})$"
+# Entra renames a deleted user to "<object id without dashes><original UPN>".
+DELETED_UPN = r"^[0-9a-f]{32}(.+@.+)$"
+# Containers in the change details, not properties (owner, 2026-11-01).
+NOT_PROPERTIES = ("Included Updated Properties",)
+# What a change is about. Matched in this order (an app's secret is a credential, not an
+# app change); the page shows the groups in `AREA_ORDER`.
+AREAS: tuple[tuple[str, str], ...] = (
+    ("Credentials", "op LIKE '%credential%' OR op LIKE '%certificates and secrets%'"
+                    " OR op LIKE '%password%' OR op LIKE '%authentication method%'"),
+    ("Roles and apps", "op LIKE '%role%' OR op LIKE '%application%'"
+                       " OR op LIKE '%service principal%'"
+                       " OR op LIKE '%owner%' OR op LIKE '%consent%' OR op LIKE '%oauth%'"),
+    ("Policies", "op LIKE '%policy%' OR op LIKE '%setting%'"),
+    ("Users", "op LIKE '%user%' OR op LIKE '%account%'"),
+    ("Groups", "op LIKE '%group%'"),
+)  # fmt: skip
+AREA_ORDER = ("Roles and apps", "Credentials", "Policies", "Users", "Groups", "Other")
+
+
+def _area() -> str:
+    cases = " ".join(f"WHEN {cond} THEN '{name}'" for name, cond in AREAS)
+    return f"CASE {cases} ELSE 'Other' END"
 
 
 def _rank() -> str:
@@ -96,7 +118,8 @@ ADMIN_SQL = (
     "         any_value(nullif(app_id, '')) AS app_id, any_value(service) AS service,\n"
     "         any_value(target) AS target, max(status_id) AS status_id,\n"
     "         list(event_id) AS event_ids,\n"
-    "         list_sort(list_distinct(flatten(list(coalesce(changed, []))))) AS changed\n"
+    "         list_filter(list_sort(list_distinct(flatten(list(coalesce(changed, []))))),\n"
+    f"           c -> NOT list_contains({list(NOT_PROPERTIES)}, c)) AS changed\n"
     "  FROM r\n"
     "  WHERE op NOT IN ('userloggedin', 'userloginfailed')\n"
     "    AND op NOT LIKE 'consent to application%'\n"
@@ -107,10 +130,15 @@ ADMIN_SQL = (
     "  SELECT g.*, names.name AS app_name FROM g LEFT JOIN names ON names.id = g.app_id\n"
     ")\n"
     "SELECT time,\n"
+    # An app with no name in the window shows its id rather than nothing (owner).
     "       CASE WHEN regexp_matches(coalesce(who, ''), '" + SP + "')\n"
-    "            THEN coalesce(app_name, who) ELSE coalesce(who, app_name) END AS actor,\n"
+    "            THEN coalesce(app_name, regexp_extract(who, '" + SP + "', 1))\n"
+    "            ELSE coalesce(who, app_name, app_id) END AS actor,\n"
     "       CASE WHEN by_app THEN 'app' ELSE 'person' END AS actor_kind, app_id,\n"
-    "       op AS operation, target,\n"
+    "       op AS operation,\n"
+    "       coalesce(nullif(regexp_extract(lower(target), '" + DELETED_UPN + "', 1), ''), target)\n"
+    "         AS target,\n"
+    "       regexp_matches(lower(coalesce(target, '')), '" + DELETED_UPN + "') AS target_deleted,\n"
     "       CASE WHEN status_id = 2 THEN 'Failure' ELSE 'Success' END AS status,\n"
     "       len(event_ids) AS events, event_ids,\n"
     "       array_to_string(changed, ', ') AS changed,\n"
@@ -118,7 +146,8 @@ ADMIN_SQL = (
     "       coalesce(app_name, CASE WHEN regexp_matches(coalesce(who, ''), '"
     + SP
     + "') THEN NULL ELSE who END, service, who) AS service,\n"
-    f"       {_rank()} AS rank\n"
+    f"       {_rank()} AS rank,\n"
+    f"       {_area()} AS area\n"
     "FROM n\n"
     "ORDER BY rank DESC, time DESC"
 )
