@@ -159,6 +159,7 @@ from app.meta.audit import AuditReader
 from app.meta.db import MetaDB
 from app.meta.secrets import SecretBox
 from app.ops.integrity import IntegrityService
+from app.search import m365 as m365_facts
 from app.search.dashboards import DashboardStore
 from app.search.handoff import HandoffService
 from app.search.health import HealthService
@@ -481,7 +482,10 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         threads=qt.per_query,
         max_concurrent=qt.at_once,
         temp_dir=spill,
+        page_mb=config.server.page_query_mb,
     )
+    if config.server.section_parallel:
+        m365_facts.PARALLEL = config.server.section_parallel
     app.state.engine.trace = config.server.trace_queries
     app.state.gate = LLMGate(
         meta,
@@ -821,10 +825,10 @@ def run() -> None:
     if budget is not None:
         note = budget_note(config.server.memory_limit_mb)
         print(f"Memory budget: {budget} MB ({note})")
-        plan = MemoryLedger(budget, qt.at_once)
+        plan = MemoryLedger(budget, qt.at_once, config.server.page_query_mb)
         spill = config.server.query_spill_limit_mb
         print(
-            f"Query memory: {plan.share} MB per page section, up to {plan.large_max} MB for a"
+            f"Query memory: {plan.page} MB per page section, up to {plan.large_max} MB for a"
             f" search or export; disk overflow up to"
             f" {f'{spill} MB' if spill else 'DuckDB default'} (data/tmp/duckdb)"
         )

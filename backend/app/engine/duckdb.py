@@ -223,6 +223,7 @@ class QueryEngine:
         intel_file: Path | None = None,
         max_concurrent: int = 0,
         temp_dir: Path | None = None,
+        page_mb: int = 0,
         rollup_dir: Path | None = None,
         m365_rollup_dir: Path | None = None,
         memory_budget_mb: int | None = None,
@@ -248,10 +249,12 @@ class QueryEngine:
         # With a budget, limits come from the ledger instead: page sections get a share,
         # searches and exports what is free (D58, D80 updated 2026-11-01).
         self._ledger = (
-            MemoryLedger(memory_budget_mb, max_concurrent or 4) if memory_budget_mb else None
+            MemoryLedger(memory_budget_mb, max_concurrent or 4, page_mb)
+            if memory_budget_mb
+            else None
         )
         if self._ledger is not None:
-            self._memory_mb = self._ledger.share
+            self._memory_mb = self._ledger.page
         self._budget_mb = memory_budget_mb
         # Disk overflow for all queries together; each instance gets its part by memory.
         self._spill_mb = spill_limit_mb
@@ -787,34 +790,41 @@ class QueryEngine:
             con.execute("SET enable_profiling = 'no_output'")
             con.execute(f"SET custom_profiling_settings = '{_TRACE if self.trace else _PEAKS}'")
         files = self._lake_globs(dirs, scope, skip)
-        if files:
+        # Today's folder of a source whose earlier rows are in a partial rollup build is read
+        # with a plain `time_observed` filter DuckDB pushes into the scan, so file statistics
+        # skip everything up to the cutoff (owner re-time, 2026-11-01: 84,658 rows read to
+        # keep a few minutes). The writer files a row by the UTC day of its time, so every
+        # row in that folder is on the cutoff's day.
+        cut_files: list[str] = []
+        if after is not None and after[0]:
+            files, cut_files = _split_today(files, after)
+        if files or cut_files:
             globs = ", ".join(_sql_str(f) for f in files)
             # Every schema column exists in `events`, typed, even when no file in scope has
             # it yet: a column added later (additive migrations, CLAUDE.md rule 9) reads as
             # NULL in files written before it.
-            missing = self._missing_columns(files)
+            missing = self._missing_columns(files + cut_files)
             extra = "".join(
                 f", CAST(NULL AS {COLUMNS_BY_NAME[c].duckdb_type}) AS {c}" for c in missing
             )
-            base = (
-                f"(SELECT *{extra} FROM "  # noqa: S608  # schema names and escaped server paths only
-                f"read_parquet([{globs}], hive_partitioning = false, union_by_name = true))"
-            )
+            parts = []
+            if files:
+                parts.append(
+                    f"SELECT *{extra} FROM "  # noqa: S608  # schema names and escaped server paths only
+                    f"read_parquet([{globs}], hive_partitioning = false, union_by_name = true)"
+                )
+            if cut_files and after is not None:
+                listed = ", ".join(_sql_str(f) for f in cut_files)
+                parts.append(
+                    f"SELECT *{extra} FROM "  # noqa: S608  # schema names, escaped server paths, datetime literal
+                    f"read_parquet([{listed}], hive_partitioning = false, union_by_name = true)"
+                    f" WHERE time_observed > {_ts(after[1])}"
+                )
+            base = "(" + " UNION ALL BY NAME ".join(parts) + ")"
         else:
             con.execute(duckdb_create_table_sql("_empty_events"))
             base = "_empty_events"
         where = _time_filter(scope)
-        if after is not None and after[0]:
-            listed = ", ".join(_sql_str(x) for x in sorted(after[0]))
-            # Only the cutoff's own day (its folder) is in the partial build.
-            day0 = after[1].astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
-            cut = (
-                f"(NOT (list_contains([{listed}], source_id)"
-                f" AND coalesce(time, time_observed) >= {_ts(day0)}"
-                f" AND coalesce(time, time_observed) < {_ts(day0 + timedelta(days=1))})"
-                f" OR time_observed > {_ts(after[1])})"
-            )
-            where = f"{where} AND {cut}" if where else f" WHERE {cut}"
         if upto is not None:
             cut = f"time_observed <= {_ts(upto)}"
             where = f"{where} AND {cut}" if where else f" WHERE {cut}"
@@ -907,6 +917,33 @@ def _time_filter(scope: QueryScope) -> str:
     if scope.end is not None:
         clauses.append(f"coalesce(time, time_observed) <= {_ts(scope.end)}")
     return (" WHERE " + " AND ".join(clauses)) if clauses else ""
+
+
+def _split_today(
+    files: list[str], after: tuple[Collection[str], datetime]
+) -> tuple[list[str], list[str]]:
+    """(the other patterns, the cutoff day's folder of each source in `after`). A whole
+    source's pattern is opened into its day folders so that day can be read apart."""
+    sources = set(after[0])
+    day0 = after[1].astimezone(UTC).date().isoformat()
+    rest: list[str] = []
+    cut: list[str] = []
+    for f in files:
+        path = Path(f)
+        if f.endswith(LAKE_FILES) and path.parent.parent.name.removeprefix("source=") in sources:
+            src = path.parent.parent
+            for day_dir in sorted(src.glob("day=*")):
+                if not any(day_dir.glob(DAY_FILES)):
+                    continue
+                (cut if day_dir.name == f"day={day0}" else rest).append(str(day_dir / DAY_FILES))
+            continue
+        day_dir = path.parent
+        source = day_dir.parent.name.removeprefix("source=")
+        if source in sources and day_dir.name == f"day={day0}":
+            cut.append(f)
+        else:
+            rest.append(f)
+    return rest, cut
 
 
 def _ts(value: datetime) -> str:

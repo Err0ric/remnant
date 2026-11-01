@@ -1046,6 +1046,10 @@ class MetaDB:
             con = sqlite3.connect(self._path, timeout=5)
             con.row_factory = sqlite3.Row
             con.execute("PRAGMA foreign_keys = ON")
+            # With the write-ahead log, NORMAL syncs at checkpoints, not on every commit:
+            # the database cannot be corrupted, and only a power loss or OS crash (not a
+            # server crash) can drop the last commits (D145).
+            con.execute("PRAGMA synchronous = NORMAL")
             # REPLACE then fires DELETE triggers too (append-only tables stay append-only).
             con.execute("PRAGMA recursive_triggers = ON")
             try:
@@ -1085,6 +1089,12 @@ class MetaDB:
                         con.execute(statement)
                 con.execute("INSERT INTO schema_migrations (version) VALUES (?)", (version,))
             con.execute("COMMIT")
+            # Write-ahead log (stored in the file, so set once): readers never wait for a
+            # writer, and a commit appends to the log instead of syncing a rollback journal
+            # and the database (owner re-time, 2026-11-01: a cached page's audit row took
+            # 73 to 660 ms on networked storage). Backups use SQLite's online backup, which
+            # includes the log (D145).
+            con.execute("PRAGMA journal_mode = WAL")
         except BaseException:
             if con.in_transaction:
                 con.execute("ROLLBACK")

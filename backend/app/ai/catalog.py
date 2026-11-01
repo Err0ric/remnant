@@ -7,13 +7,17 @@ an exact name or a `prefix*`. Every change is audited by the caller.
 
 from __future__ import annotations
 
+import functools
 import json
 import re
+import threading
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import cache
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -101,11 +105,52 @@ def shipped() -> tuple[ServiceDef, ...]:
     return items
 
 
+def _changes[F: Callable[..., Any]](fn: F) -> F:
+    """A catalog write: kept answers are dropped before it (no reader starts from them)
+    and after it (none read in between survives)."""
+
+    @functools.wraps(fn)
+    def run(self: Catalog, *args: Any, **kwargs: Any) -> Any:
+        self._changed()
+        try:
+            return fn(self, *args, **kwargs)
+        finally:
+            self._changed()
+
+    return run  # type: ignore[return-value]  # same signature as fn
+
+
 class Catalog:
+    # The catalog is read many times per page (AI Watch: 22 database opens), and changes
+    # only through this class, so answers are kept until a change here or a few seconds
+    # pass (owner re-time, 2026-11-01: 1.37 s of Python on AI Watch, mostly these reads
+    # on networked storage). The seconds cover a change made by another process.
+    KEEP_S = 10.0
+
     def __init__(self, meta: MetaDB) -> None:
         self._meta = meta
+        self._kept: dict[str, tuple[float, Any]] = {}
+        self._lock = threading.Lock()
+
+    def _cached(self, name: str, read: Callable[[], Any]) -> Any:
+        now = time.monotonic()
+        with self._lock:
+            hit = self._kept.get(name)
+            if hit is not None and now - hit[0] < self.KEEP_S:
+                return hit[1]
+        value = read()
+        with self._lock:
+            self._kept[name] = (now, value)
+        return value
+
+    def _changed(self) -> None:
+        with self._lock:
+            self._kept.clear()
 
     def services(self) -> list[Service]:
+        return list(self._cached("services", self._services))
+
+    def _services(self) -> tuple[Service, ...]:
         with self._meta.connect() as con:
             status = {r["service_id"]: r for r in con.execute("SELECT * FROM ai_service_status")}
             levels = {
@@ -143,12 +188,20 @@ class Catalog:
                     levels.get(d.id),
                 )
             )
-        return out
+        return tuple(out)
 
     def domain_table(self) -> list[tuple[str, str]]:
         """(service id, domain) pairs for matching; every domain passed DOMAIN."""
-        return [(s.id, d) for s in self.services() for d in s.domains]
+        return list(
+            self._cached(
+                "domains",
+                lambda: tuple(
+                    (s.id, d) for s in self._cached("services", self._services) for d in s.domains
+                ),
+            )
+        )
 
+    @_changes
     def set_status(self, service_id: str, status: Status, note: str, actor: str) -> Status:
         """Returns the previous status."""
         known = {s.id: s for s in self.services()}
@@ -168,6 +221,7 @@ class Catalog:
                 )
         return before
 
+    @_changes
     def set_data_level(self, service_id: str, level: DataLevel | None, actor: str) -> str | None:
         """Returns the previous level."""
         known = {s.id: s for s in self.services()}
@@ -187,6 +241,7 @@ class Catalog:
                 )
         return before
 
+    @_changes
     def add_custom(self, d: ServiceDef, actor: str) -> None:
         if d.id in {s.id for s in self.services()}:
             raise ParamInvalidError("A service with this id already exists")
@@ -197,6 +252,7 @@ class Catalog:
                 (d.id, d.name, d.vendor, d.kind, json.dumps(list(d.domains)), _now(), actor),
             )
 
+    @_changes
     def delete_custom(self, service_id: str) -> None:
         with self._meta.connect() as con:
             n = con.execute(
@@ -210,13 +266,17 @@ class Catalog:
     # --- MCP rules -----------------------------------------------------------------------
 
     def mcp_rules(self) -> list[McpRule]:
+        return list(self._cached("mcp", self._mcp_rules))
+
+    def _mcp_rules(self) -> tuple[McpRule, ...]:
         with self._meta.connect() as con:
             rows = con.execute("SELECT * FROM ai_mcp_rules ORDER BY pattern").fetchall()
-        return [
+        return tuple(
             McpRule(r["pattern"], r["status"], r["note"], r["updated_at"], r["updated_by"])
             for r in rows
-        ]
+        )
 
+    @_changes
     def set_mcp_rule(
         self,
         pattern: str,

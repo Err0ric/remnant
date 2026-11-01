@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from app.core.errors import QueryBusyError
 
 MIN_SHARE_MB = 256
+MIN_PAGE_MB = 64
 PAGE_ROOM = 2  # shares a large query leaves free for page sections
 
 
@@ -29,8 +30,11 @@ class Grant:
 
 
 class MemoryLedger:
-    def __init__(self, budget_mb: int, at_once: int) -> None:
+    def __init__(self, budget_mb: int, at_once: int, page_mb: int = 0) -> None:
         self.share = max(MIN_SHARE_MB, budget_mb // (max(1, at_once) + 1))
+        # What a page section reserves (and its DuckDB memory_limit): one share, or a
+        # smaller configured amount past which it spills (D145, proposed).
+        self.page = min(self.share, max(MIN_PAGE_MB, page_mb)) if page_mb else self.share
         # What queries may hold together: the budget less one share for the server.
         self.capacity = max(self.share, budget_mb - self.share)
         self.large_max = max(self.share, self.capacity - PAGE_ROOM * self.share)
@@ -44,7 +48,8 @@ class MemoryLedger:
     def take(self, large: bool, wait_s: float) -> Grant:
         deadline = time.monotonic() + wait_s
         with self._cond:
-            while self.capacity - self._used < self.share:
+            need = self.share if large else self.page
+            while self.capacity - self._used < need:
                 left = deadline - time.monotonic()
                 if left <= 0:
                     raise QueryBusyError(
@@ -52,7 +57,7 @@ class MemoryLedger:
                     )
                 self._cond.wait(left)
             free = self.capacity - self._used
-            mb = self.share
+            mb = need
             if large:
                 mb = max(self.share, min(self.large_max, free - PAGE_ROOM * self.share))
             self._used += mb

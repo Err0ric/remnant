@@ -145,3 +145,18 @@ def test_an_empty_overflow_folder_still_logs_the_check(tmp_path: Path) -> None:
         spill_dir(tmp_path)
     cleared = [e for e in logs if e["event"] == "spill.cleared"]
     assert cleared and cleared[0]["files"] == 0 and cleared[0]["mb"] == 0.0
+
+
+def test_a_smaller_page_reservation_fits_more_sections() -> None:
+    """D145 (proposed): page sections reserve `page_query_mb`, not a whole share, so more
+    fit in the same budget; searches still take what is free."""
+    whole = MemoryLedger(4096, 4)
+    small = MemoryLedger(4096, 4, page_mb=256)
+    assert whole.page == whole.share == 819 and small.page == 256
+    held = [small.take(False, 0) for _ in range(12)]
+    assert all(g.mb == 256 for g in held) and small.used == 12 * 256
+    for g in held:
+        small.give(g)
+    alone = small.take(True, 0)
+    assert alone.mb == small.large_max  # a search alone is unchanged
+    assert MemoryLedger(4096, 4, page_mb=10_000).page == 819  # never more than a share

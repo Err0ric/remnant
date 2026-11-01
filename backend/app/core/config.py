@@ -70,6 +70,13 @@ class ServerConfig(_Strict):
     # Disk all queries together may write when they pass their memory, in MB, under
     # data/tmp/duckdb (emptied at start). 0: no limit beyond DuckDB's own (D58, D80).
     query_spill_limit_mb: int = Field(default=10_240, ge=0, le=10_485_760)
+    # Memory a page-section query reserves and may use before it spills, in MB. 0: one
+    # share of the budget (D58/D80). Smaller lets more sections fit at once; slots (above)
+    # still cap how many run (owner re-time, 2026-11-01, option a; proposed, D145).
+    page_query_mb: int = Field(default=0, ge=0, le=1_048_576)
+    # Microsoft 365 fact queries one page section runs at once. 0: 4. 1: one after
+    # another on one slot (option c; proposed, D145).
+    section_parallel: int = Field(default=0, ge=0, le=16)
     # Log each page query's sources, files, rollup days, timings, and slowest operators
     # as `query.trace` (plans and counts, never values). For timing a real install.
     trace_queries: bool = False

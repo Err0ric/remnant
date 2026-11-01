@@ -48,7 +48,9 @@ def snapshot(data: Path) -> dict[str, str]:
     files = {}
     for p in sorted(data.rglob("*")):
         rel = p.relative_to(data).as_posix()
-        if p.is_file() and not rel.endswith((".tmp", ".lock")) and rel != "meta.sqlite":
+        # The database is compared by its rows; its write-ahead log files are SQLite's own.
+        db = rel in ("meta.sqlite", "meta.sqlite-wal", "meta.sqlite-shm")
+        if p.is_file() and not rel.endswith((".tmp", ".lock")) and not db:
             files[rel] = hashlib.sha256(p.read_bytes()).hexdigest()
     return files
 
