@@ -190,6 +190,7 @@ class FactRollup:
             row_cap=MAX_ROWS,
             timeout_s=120,
             intel=False,
+            background=True,
             name=f"{self.TABLE}.build",
             upto=upto,
         )

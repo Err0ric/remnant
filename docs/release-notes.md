@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Faster pages, round 3 (2026-10-31)
+
+- **AI usage, AI Watch, the AI inventory, and the person timeline** read today so far from the AI rollup, built every 5 minutes, and only the last few minutes from events.
+- **Background builds stay out of the way**: rollup builds run at lower priority with one thread and their own slot, so a page request never waits behind them.
+- The person timeline skips rows that cannot be the person before matching names. AI first use still finds people through DHCP, devices, and sign-ins.
+- When a data file has no statistics, the start of a source's data is found by a scan instead of being left blank.
+- What changes for existing installs: nothing to do. Today's AI facts are kept in `data/rollup/ai/today` (safe to delete; rebuilt within 5 minutes).
+
 ### Faster pages, round 2 (owner timings on 4 vCPU, 2026-10-31)
 
 - **Attacks and access** reads a daily rollup of failed sign-ins and VPN logins, like Identity: on the test lake it went from about 2 s to 0.3 s alone.

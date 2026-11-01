@@ -93,7 +93,9 @@ def related(a: str, b: str) -> bool:
 
 
 class Covers(Protocol):
-    def covered(self, scope: QueryScope) -> list[str]: ...
+    def plan(
+        self, scope: QueryScope
+    ) -> tuple[list[str], list[str], tuple[list[str], datetime] | None]: ...
 
 
 def _iso(v: Any) -> str:
@@ -102,10 +104,16 @@ def _iso(v: Any) -> str:
 
 
 def _mine(ident: IdentityMap, keys: list[str]) -> str:
-    """The person condition with literals only, for Search (it has no parameters)."""
+    """The person condition with literals only, for Search (it has no parameters).
+
+    A key is always part of the lower-cased name it came from, so a plain substring test
+    skips rows that cannot match before the name is normalized (D136). Only the person's
+    own rows use this; AI first use still reaches people through DHCP, devices, and
+    sign-ins (ADR-0029), which this condition never filters."""
     org = "[" + ", ".join(drill.lit(d) for d in (ident.domains or [""])) + "]"
+    near = " OR ".join(f"contains(lower(actor_user_name), {drill.lit(k)})" for k in keys)
     cond = f"list_contains({drill.lits(keys)}, {key_sql('actor_user_name')})"
-    return cond.replace("$id_org", org)
+    return f"(({near or 'true'}) AND {cond.replace('$id_org', org)})"
 
 
 def timeline(
@@ -141,10 +149,17 @@ def timeline(
         " src_endpoint_ip, device_hostname, event_id",
     )
 
-    def run(sql: str, name: str, covered: list[str] | None = None) -> list[list[Any]]:
+    def run(
+        sql: str,
+        name: str,
+        covered: list[str] | None = None,
+        skip: list[str] | None = None,
+        after: tuple[list[str], datetime] | None = None,
+    ) -> list[list[Any]]:
         res = engine.run(
             sql, scope, {"covered": covered} if covered else None, timeout_s=TIMEOUT_S,
-            intel=False, rollup=bool(covered), skip_days=covered or (), name=f"timeline.{name}",
+            intel=False, rollup=bool(covered), skip_days=skip or (), name=f"timeline.{name}",
+            after=after,
         )  # fmt: skip
         sources.update(res.sources)
         return res.rows
@@ -209,13 +224,15 @@ def timeline(
             "claude_hooks", cond, "warn" if failed else "neutral")  # fmt: skip
 
     key_who = key_sql("who").replace("$id_org", org)
-    covered = rollup.covered(scope) if rollup is not None else []
+    skip, covered, after = rollup.plan(scope) if rollup is not None else ([], [], None)
     for svc, s in run(
         f"WITH {_use_ctes(catalog_pairs, bool(covered))}\n"  # catalog values checked in _values
         f"SELECT service_id, min(first_t) FROM r WHERE list_contains({drill.lits(keys)}, {key_who})"
         " GROUP BY 1 LIMIT 100",
         "ai",
         covered,
+        skip,
+        after,
     ):
         add("ai_first", s, s, f"First used {svc} in this window", "AI service", 1, "network",
             "true")  # fmt: skip

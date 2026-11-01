@@ -92,3 +92,14 @@ def test_slots_are_released_after_a_failed_query(tmp_path: Path) -> None:
 def test_operator_arena_setting_is_left_alone(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MALLOC_ARENA_MAX", "2")
     assert cap_allocator_arenas() == "2 (MALLOC_ARENA_MAX)"
+
+
+def test_run_low_lowers_only_its_own_thread() -> None:
+    import os
+
+    from app.core.threads import BACKGROUND_NICE, run_low
+
+    before = os.nice(0)
+    inside = run_low(lambda: os.nice(0))
+    assert inside == min(19, before + BACKGROUND_NICE)
+    assert os.nice(0) == before

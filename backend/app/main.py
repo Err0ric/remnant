@@ -120,7 +120,7 @@ from app.core.errors import (
 from app.core.logging import configure_logging
 from app.core.memory import budget_note, server_budget_mb
 from app.core.net import parse_trusted
-from app.core.threads import cap_allocator_arenas, query_threads
+from app.core.threads import cap_allocator_arenas, query_threads, run_low
 from app.detect.runner import RuleRunner
 from app.detect.store import RuleStore
 from app.engine.duckdb import AUTH_ROLLUP_COLUMNS, QueryEngine, QueryScope, spill_dir
@@ -691,8 +691,9 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         integrity=app.state.integrity,
         integrity_interval_s=config.maintenance.integrity_interval_s,
     )
-    app.state.maintenance.after_compaction = lambda: _rollups(app)
-    app.state.maintenance.each_tick = lambda: _each_tick(app)
+    # Rollup builds run at lower CPU priority on their own thread (owner, 2026-10-31).
+    app.state.maintenance.after_compaction = lambda: run_low(lambda: _rollups(app))
+    app.state.maintenance.each_tick = lambda: run_low(lambda: _each_tick(app))
     app.state.integrity_service = IntegrityService(
         meta,
         app.state.integrity,
@@ -880,10 +881,12 @@ def _m365_ids(app: FastAPI) -> list[str]:
 
 
 def _each_tick(app: FastAPI) -> None:
-    """Short work every maintenance tick: the AI rollup's re-check, and today's facts so
-    far for the Dashboard and Microsoft 365 (at most every 5 minutes each, D135)."""
+    """Short work every maintenance tick: the AI rollup's re-check, and today so far for
+    AI pages, the Dashboard, and Microsoft 365 (at most every 5 minutes each, D135, D136),
+    on a lower-priority thread."""
     jobs = (
         ("rollup.recheck", app.state.ai_rollup.recheck),
+        ("ai_rollup.today", app.state.ai_rollup.refresh_today),
         ("m365_rollup.today", app.state.m365_rollup.refresh_today),
         ("auth_rollup.today", app.state.auth_rollup.refresh_today),
     )

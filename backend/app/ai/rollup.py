@@ -34,12 +34,15 @@ import structlog
 from app.ai.agents import ITEMS_SQL
 from app.ai.catalog import Catalog
 from app.ai.usage import MCP_SQL, first_services_sql, rollup_build_sql
-from app.engine.duckdb import IDENT_FILE, QueryEngine, QueryScope
+from app.engine.duckdb import IDENT_FILE, TODAY_DIR, QueryEngine, QueryScope
 from app.search.addresses import IDENT_RAW
 
 log = structlog.get_logger(__name__)
 
 MANIFEST = "_built.json"
+TODAY_MARK = "_today.json"  # the current today-so-far build
+TODAY_EVERY_S = 300.0
+TODAY_MARGIN_S = 60
 PART = "part-0.parquet"
 MAX_ROWS = 200_000  # a closed day with more grouped rows than this is read live instead
 SCHEMA = pa.schema(
@@ -230,6 +233,7 @@ class AiRollup:
             row_cap=MAX_ROWS,
             timeout_s=120,
             intel=False,
+            background=True,
             name="ai_rollup.build",
         )
         if result.truncated:
@@ -237,12 +241,21 @@ class AiRollup:
             (out / PART).unlink(missing_ok=True)
             svc = self._engine.run(
                 first_services_sql(self._catalog.domain_table()), scope, timeout_s=120,
-                intel=False, name="ai_rollup.first",
+                intel=False, background=True, name="ai_rollup.first",
             ).rows  # fmt: skip
             first = self._first_other(scope) | {f"service:{s}": _iso(t) for s, t in svc}
             self._manifest(out, key, inputs, skipped=True, first=first)
             return False
-        cols = list(zip(*result.rows, strict=True)) if result.rows else [()] * len(SCHEMA)
+        table = self._table(result.rows)
+        tmp = out / f".{PART}.tmp"
+        pq.write_table(table, tmp)
+        os.replace(tmp, out / PART)
+        self._manifest(out, key, inputs, first=self._first_other(scope) | _first_services(table))
+        return True
+
+    @staticmethod
+    def _table(rows: list[list[Any]]) -> pa.Table:
+        cols = list(zip(*rows, strict=True)) if rows else [()] * len(SCHEMA)
         arrays = []
         for kind, values in zip([f.type for f in SCHEMA], cols, strict=True):
             if pa.types.is_timestamp(kind):
@@ -251,18 +264,22 @@ class AiRollup:
                 arrays.append(pa.array([int(v or 0) for v in values], type=kind))
             else:
                 arrays.append(pa.array([None if v is None else str(v) for v in values], type=kind))
-        table = pa.Table.from_arrays(arrays, schema=SCHEMA)
-        tmp = out / f".{PART}.tmp"
-        pq.write_table(table, tmp)
-        os.replace(tmp, out / PART)
-        self._manifest(out, key, inputs, first=self._first_other(scope) | _first_services(table))
-        return True
+        return pa.Table.from_arrays(arrays, schema=SCHEMA)
 
-    def _write_ident(self, out: Path, scope: QueryScope, day: str) -> int:
-        """The day's identity observations (IDENT_SQL), with the day they belong to."""
+    def _write_ident(
+        self,
+        out: Path,
+        scope: QueryScope,
+        day: str,
+        upto: datetime | None = None,
+        name: str = IDENT_FILE,
+    ) -> int:
+        """The day's identity observations (IDENT_SQL), with the day they belong to (a
+        today-so-far build: its label, and only rows observed by `upto`)."""
         rows = self._engine.run(
-            IDENT_SQL, scope, timeout_s=120, intel=False, name="ai_rollup.ident"
-        ).rows
+            IDENT_SQL, scope, timeout_s=120, intel=False, background=True,
+            name="ai_rollup.ident", upto=upto,
+        ).rows  # fmt: skip
         cols = list(zip(*rows, strict=True)) if rows else [()] * 9
         arrays = [
             pa.array(list(cols[0]), pa.string()),
@@ -273,9 +290,9 @@ class AiRollup:
             *(pa.array(list(cols[i]), pa.string()) for i in (7, 8)),
             pa.array([day] * len(rows), pa.string()),
         ]
-        tmp = out / f".{IDENT_FILE}.tmp"
+        tmp = out / f".{name}.tmp"
         pq.write_table(pa.Table.from_arrays(arrays, schema=IDENT_SCHEMA), tmp)
-        os.replace(tmp, out / IDENT_FILE)
+        os.replace(tmp, out / name)
         return len(rows)
 
     def _manifest(
@@ -357,11 +374,12 @@ class AiRollup:
         usage reports; a day of other events matches none of their templates)."""
         out: dict[str, str] = {}
         for row in self._engine.run(
-            MCP_SQL, scope, timeout_s=120, intel=False, name="ai_rollup.first"
+            MCP_SQL, scope, timeout_s=120, intel=False, background=True, name="ai_rollup.first"
         ).rows:
             out[f"mcp:{row[0]}"] = _iso(row[6])
         for row in self._engine.run(
-            ITEMS_SQL, scope, {"recent": scope.end or self._clock()}, timeout_s=120, intel=False,
+            ITEMS_SQL, scope, {"recent": scope.end or self._clock()}, timeout_s=120,
+            intel=False, background=True,
             name="ai_rollup.first",
         ).rows:  # fmt: skip
             out[f"agent:{row[1]}"] = _iso(row[5])
@@ -417,6 +435,110 @@ class AiRollup:
         parsed = {str(k): t for k, v in raw.items() if (t := _ts(v)) is not None}
         self._first_cache[path] = (stamp, parsed)
         return parsed
+
+    # --- today so far (D136; owner 2026-10-31: today's DNS dominated AI pages) ---------
+
+    def refresh_today(self, max_age_s: float = TODAY_EVERY_S) -> int:
+        """Today's use rows and identities up to a cutoff a minute back, for every source
+        with events today, at most every `max_age_s`; rows observed later are read live.
+        Each build has its own files and label, so a query reads exactly the build it
+        planned with; the build before stays until the next one, then goes."""
+        now = self._clock().astimezone(UTC)
+        day = now.date().isoformat()
+        root = self._dir / TODAY_DIR
+        mark = self._today_mark()
+        key = self.catalog_key()
+        built_at = mark.get("built_at")
+        if (
+            mark.get("day") == day
+            and mark.get("catalog") == key
+            and built_at
+            and (now - datetime.fromisoformat(built_at)).total_seconds() < max_age_s
+        ):
+            return 0
+        cutoff = now - timedelta(seconds=TODAY_MARGIN_S)
+        stamp = str(int(cutoff.timestamp() * 1000))
+        label = f"{day}@{stamp}"
+        start = datetime.combine(date.fromisoformat(day), time(0), UTC)
+        done = []
+        for src in sorted(self._lake.glob("source=*")) if self._lake.is_dir() else []:
+            source = src.name.removeprefix("source=")
+            if not any((src / f"day={day}").glob("part-*.parquet")):
+                continue
+            # The whole day's folder (a row stamped ahead of the clock included); rows
+            # observed after the cutoff are read live.
+            scope = QueryScope(
+                [source], start, start + timedelta(days=1) - timedelta(microseconds=1)
+            )
+            out = root / f"source={source}"
+            out.mkdir(parents=True, exist_ok=True)
+            result = self._engine.run(
+                rollup_build_sql(self._catalog.domain_table()), scope, row_cap=MAX_ROWS,
+                timeout_s=120, intel=False, background=True, name="ai_rollup.today",
+                upto=cutoff,
+            )  # fmt: skip
+            if result.truncated:
+                continue  # too many rows: today is read live for this source
+            self._write_ident(out, scope, label, upto=cutoff, name=f"ident-{stamp}.parquet")
+            table = self._table(result.rows)
+            table = table.append_column("label", pa.array([label] * table.num_rows, pa.string()))
+            tmp = out / f".part-{stamp}.tmp"
+            pq.write_table(table, tmp)
+            os.replace(tmp, out / f"part-{stamp}.parquet")
+            done.append(source)
+        root.mkdir(parents=True, exist_ok=True)
+        body = {
+            "day": day, "cutoff": cutoff.isoformat(), "label": label, "stamp": stamp,
+            "catalog": key, "sources": done, "built_at": now.isoformat(),
+        }  # fmt: skip
+        tmp = root / f".{TODAY_MARK}.tmp"
+        tmp.write_text(json.dumps(body))
+        os.replace(tmp, root / TODAY_MARK)
+        # Keep this build and the one before (a query may still be reading it).
+        keep = {stamp, str(mark.get("stamp", ""))}
+        for f in root.glob("source=*/*.parquet"):
+            if f.stem.split("-", 1)[-1] not in keep:
+                f.unlink(missing_ok=True)
+        if done:
+            log.info("ai_rollup.today", sources=len(done), cutoff=cutoff.isoformat())
+        return len(done)
+
+    def _today_mark(self) -> dict[str, Any]:
+        try:
+            body = json.loads((self._dir / TODAY_DIR / TODAY_MARK).read_text())
+        except (OSError, ValueError):
+            return {}
+        return body if isinstance(body, dict) else {}
+
+    def today(self, scope: QueryScope) -> tuple[list[str], list[str], datetime] | None:
+        """(keys "source|day@stamp", sources, cutoff) for today's build of the sources in
+        scope, or None. Their rows observed by the cutoff come from the build."""
+        mark = self._today_mark()
+        now = self._clock().astimezone(UTC)
+        if mark.get("day") != now.date().isoformat() or mark.get("catalog") != self.catalog_key():
+            return None
+        cutoff = datetime.fromisoformat(str(mark["cutoff"]))
+        if scope.end is not None and scope.end < cutoff:
+            return None
+        if scope.start is not None and scope.start >= cutoff:
+            return None
+        sources = [
+            s for s in mark.get("sources", []) if scope.sources is None or s in scope.sources
+        ]
+        if not sources:
+            return None
+        label = str(mark["label"])
+        return [f"{s}|{label}" for s in sources], sources, cutoff
+
+    def plan(
+        self, scope: QueryScope
+    ) -> tuple[list[str], list[str], tuple[list[str], datetime] | None]:
+        """(closed days to leave out of `events`, every key the rollup answers for, and the
+        sources and cutoff after which today's rows come from events)."""
+        covered = self.covered(scope)
+        part = self.today(scope)
+        keys = covered + (part[0] if part else [])
+        return covered, keys, ((part[1], part[2]) if part else None)
 
     # --- reading ------------------------------------------------------------------------
 

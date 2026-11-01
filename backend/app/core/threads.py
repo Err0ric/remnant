@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import math
 import os
+import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -99,3 +101,31 @@ def cap_allocator_arenas(arenas: int = 4) -> str:
     except (OSError, AttributeError):
         return "glibc default"
     return str(arenas)
+
+
+BACKGROUND_NICE = 10  # rollup builds yield the CPU to page requests
+
+
+def run_low[T](fn: Callable[[], T]) -> T:
+    """Run `fn` on a fresh thread at lower CPU priority and wait for it. DuckDB's worker
+    threads start from that thread, so they inherit the priority; the shared worker pool
+    is never lowered (a lowered thread cannot raise itself back without privileges)."""
+    out: list[T] = []
+    err: list[BaseException] = []
+
+    def work() -> None:
+        try:
+            os.setpriority(os.PRIO_PROCESS, threading.get_native_id(), BACKGROUND_NICE)
+        except (AttributeError, OSError):
+            pass  # not Linux, or not allowed: run at normal priority
+        try:
+            out.append(fn())
+        except BaseException as exc:  # handed back to the caller's thread
+            err.append(exc)
+
+    t = threading.Thread(target=work, name="rollup-build", daemon=True)
+    t.start()
+    t.join()
+    if err:
+        raise err[0]
+    return out[0]

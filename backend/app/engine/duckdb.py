@@ -42,7 +42,14 @@ DAY_FILES = "part-*.parquet"  # under each day=<date> folder
 INTEL_TABLES = ALLOWED_TABLES | {"threat_intel"}
 # The daily AI rollup (ADR-0035 Part 1): server-built queries only. Users, saved searches,
 # Ask, and MCP never see this table; `run(..., rollup=True)` is not reachable from them.
-ROLLUP_TABLES = ALLOWED_TABLES | {"ai_rollup", "ai_ident", "m365_rollup", "auth_rollup"}
+ROLLUP_TABLES = ALLOWED_TABLES | {
+    "ai_rollup", "ai_ident", "ai_today", "m365_rollup", "auth_rollup"
+}  # fmt: skip
+# The AI rollup's today so far (D136): rollup/ai/today/source=<id>/part-<n>.parquet and
+# ident-<n>.parquet, one pair per build, each row labeled with its build.
+TODAY_DIR = "today"
+TODAY_FILES = "part-*.parquet"
+TODAY_IDENT_FILES = "ident-*.parquet"
 ROLLUP_FILES = "day=*/part-*.parquet"  # under rollup/ai/source=<id> and rollup/m365/source=<id>
 # Who or which machine had an address, per closed day (`app.search.addresses.IDENT_RAW`,
 # reduced): the address lookup reads closed days from here, never from events.
@@ -139,6 +146,7 @@ class QueryEngine:
         # burst of page loads cannot multiply threads past a container's pids limit (D79).
         # Others wait for a slot, up to the query timeout. 0: no limit.
         self._slots = threading.BoundedSemaphore(max_concurrent) if max_concurrent else None
+        self._bg = threading.BoundedSemaphore(1)  # rollup builds, apart from page queries
         self._default_limit = default_limit
         self._max_limit = max_limit
         self._timeout_s = timeout_s
@@ -161,6 +169,7 @@ class QueryEngine:
         name: str = "query",
         after: tuple[Collection[str], datetime] | None = None,
         upto: datetime | None = None,
+        background: bool = False,
     ) -> QueryResult:
         """Run guarded SQL. `params` are bound by the driver ($name), never formatted in.
         `row_cap` lowers both the implicit and the maximum LIMIT (Ask previews use 5), and
@@ -169,7 +178,8 @@ class QueryEngine:
         what a memory error reports, for the log. `after` (sources, cutoff): of those
         sources, `events` keeps only rows observed after the cutoff (today's earlier rows are
         in a fact rollup's partial day, D135); `upto`: only rows observed by then (building
-        that partial day)."""
+        that partial day). `background` (rollup builds): one DuckDB thread, half a memory
+        share, and its own single slot, so a build never takes a page query's slot."""
         limit_s = min(self._timeout_s, timeout_s) if timeout_s else self._timeout_s
         default = min(self._default_limit, row_cap) if row_cap else self._default_limit
         cap = min(self._max_limit, row_cap) if row_cap else self._max_limit
@@ -185,10 +195,10 @@ class QueryEngine:
         templates = pinned_templates(guarded.sql, params)
         if templates is not None:  # and only sources whose files can hold those templates
             scope = replace(scope, sources=self._holding(scope, templates, skip_days))
-        with self._slot(limit_s):
+        with self._background_slot(limit_s) if background else self._slot(limit_s):
             return self._execute(
                 guarded, scope, params, intel, limit_s, cap, rollup, frozenset(skip_days), name,
-                after, upto,
+                after, upto, background,
             )  # fmt: skip
 
     def _execute(
@@ -204,8 +214,12 @@ class QueryEngine:
         name: str = "query",
         after: tuple[Collection[str], datetime] | None = None,
         upto: datetime | None = None,
+        background: bool = False,
     ) -> QueryResult:
-        con = self._connect(scope, intel=intel, rollup=rollup, skip=skip, after=after, upto=upto)
+        con = self._connect(
+            scope, intel=intel, rollup=rollup, skip=skip, after=after, upto=upto,
+            background=background,
+        )  # fmt: skip
         timer = threading.Timer(limit_s, con.interrupt)
         started = time.perf_counter()
         try:
@@ -260,6 +274,16 @@ class QueryEngine:
             yield
         finally:
             self._slots.release()
+
+    @contextmanager
+    def _background_slot(self, wait_s: float) -> Iterator[None]:
+        """One rollup build at a time, apart from the page queries' slots."""
+        if not self._bg.acquire(timeout=wait_s):
+            raise QueryBusyError("A rollup build is already running")
+        try:
+            yield
+        finally:
+            self._bg.release()
 
     def _scrub(self, message: str) -> str:
         """Server paths stay out of error text shown to analysts and models."""
@@ -349,14 +373,37 @@ class QueryEngine:
         out: dict[str, datetime] = {}
         for source, day in self.first_days(scope).items():
             folder = self._lake / f"source={source}" / f"day={day}"
-            lows = [t for f in sorted(folder.glob(DAY_FILES)) if (t := self._time_min(f))]
-            if not lows:
-                continue
-            first = min(lows)
+            lows = [self._time_min(f) for f in sorted(folder.glob(DAY_FILES))]
+            if lows and all(t is not None for t in lows):
+                first = min(t for t in lows if t is not None)
+            else:
+                # A file without min and max statistics: read that one day of that source
+                # (owner, 2026-10-31), never report no start.
+                found = self._first_by_scan(source, day, scope)
+                if found is None:
+                    continue
+                first = found
             if scope.start is not None:
                 first = max(first, scope.start.astimezone(UTC))
             out[source] = first
         return out
+
+    def _first_by_scan(self, source: str, day: str, scope: QueryScope) -> datetime | None:
+        begins = datetime.combine(date.fromisoformat(day), datetime.min.time(), UTC)
+        lo = max(begins, scope.start.astimezone(UTC)) if scope.start else begins
+        hi = begins + timedelta(days=1)
+        if scope.end is not None:
+            hi = min(hi, scope.end.astimezone(UTC))
+        res = self.run(
+            "SELECT min(coalesce(time, time_observed)) FROM events",
+            QueryScope([source], lo, hi),
+            name="first_event",
+        )
+        v = res.rows[0][0] if res.rows else None
+        if v is None:
+            return None
+        t = v if isinstance(v, datetime) else datetime.fromisoformat(str(v))
+        return t if t.tzinfo else t.replace(tzinfo=UTC)
 
     def _time_min(self, path: Path) -> datetime | None:
         try:
@@ -400,6 +447,19 @@ class QueryEngine:
             if days:
                 out[d.name.removeprefix("source=")] = days[0]
         return out
+
+    def _today_dirs(self, scope: QueryScope) -> list[Path]:
+        """The AI rollup's today-so-far folders of the sources in scope (rule 13)."""
+        if self._rollup is None:
+            return []
+        root = self._rollup / TODAY_DIR
+        if not root.is_dir():
+            return []
+        dirs = sorted(d for d in root.glob("source=*") if d.is_dir())
+        if scope.sources is not None:
+            wanted = set(scope.sources)
+            dirs = [d for d in dirs if d.name.removeprefix("source=") in wanted]
+        return dirs
 
     def add_rollup(self, table: str, folder: Path, columns: str) -> None:
         """A fact rollup readable as `table` by server-built queries (rollup=True)."""
@@ -473,16 +533,20 @@ class QueryEngine:
         skip: frozenset[str] = frozenset(),
         after: tuple[Collection[str], datetime] | None = None,
         upto: datetime | None = None,
+        background: bool = False,
     ) -> duckdb.DuckDBPyConnection:
         dirs = self._source_dirs(scope)
         # Threads and memory at creation: connecting with the defaults first starts one
         # thread per core the host reports (inside a container, the host's cores), then
         # SET threads starts more (D79).
         config: dict[str, str | bool | int | float | list[str]] = {}
-        if self._threads:
+        if background:
+            config["threads"] = 1
+        elif self._threads:
             config["threads"] = int(self._threads)
         if self._memory_mb:
-            config["memory_limit"] = f"{int(self._memory_mb)}MB"
+            share = max(128, self._memory_mb // 2) if background else self._memory_mb
+            config["memory_limit"] = f"{int(share)}MB"
         if self._temp_dir is not None:
             config["temp_directory"] = str(self._temp_dir)
         con = duckdb.connect(":memory:", config=config)
@@ -511,7 +575,8 @@ class QueryEngine:
             day0 = after[1].astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
             cut = (
                 f"(NOT (list_contains([{listed}], source_id)"
-                f" AND coalesce(time, time_observed) >= {_ts(day0)})"
+                f" AND coalesce(time, time_observed) >= {_ts(day0)}"
+                f" AND coalesce(time, time_observed) < {_ts(day0 + timedelta(days=1))})"
                 f" OR time_observed > {_ts(after[1])})"
             )
             where = f"{where} AND {cut}" if where else f" WHERE {cut}"
@@ -550,6 +615,19 @@ class QueryEngine:
                 for f in sorted(d.glob(f"day=*/{IDENT_FILE}"))
                 if lo <= f.parent.name.removeprefix("day=") <= hi
             ]
+            # Today so far (D136): use rows and identities per build, labeled by cutoff.
+            tdirs = self._today_dirs(scope)
+            idents += [str(f) for d in tdirs for f in sorted(d.glob(TODAY_IDENT_FILES))]
+            today = [str(f) for d in tdirs for f in sorted(d.glob(TODAY_FILES))]
+            if today:
+                listed = ", ".join(_sql_str(f) for f in today)
+                con.execute(
+                    "CREATE VIEW ai_today AS SELECT * FROM"  # noqa: S608  # escaped server paths only
+                    f" read_parquet([{listed}], hive_partitioning = false, union_by_name = true)"
+                )
+                readable += [d.resolve() for d in tdirs]
+            else:
+                con.execute(f"CREATE TABLE ai_today ({ROLLUP_COLUMNS}, label VARCHAR)")
             if idents:
                 listed = ", ".join(_sql_str(f) for f in idents)
                 con.execute(

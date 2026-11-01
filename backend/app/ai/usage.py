@@ -197,7 +197,10 @@ def _use_ctes(pairs: list[tuple[str, str]], rollup: bool) -> str:
         """
   UNION ALL
   SELECT service_id, source_id, who0, shost, ip, dev, t, n, first_t, last_t FROM ai_rollup
-  WHERE list_contains($covered, source_id || '|' || strftime(t, '%Y-%m-%d'))"""
+  WHERE list_contains($covered, source_id || '|' || strftime(t, '%Y-%m-%d'))
+  UNION ALL
+  SELECT service_id, source_id, who0, shost, ip, dev, t, n, first_t, last_t FROM ai_today
+  WHERE list_contains($covered, source_id || '|' || label)"""
         if rollup
         else ""
     )
@@ -416,21 +419,25 @@ class Usage:
         everything after the start, events stamped ahead of the clock included."""
         upto = scope.end or datetime.now(UTC)
         covered: list[str] = []
-        if (
-            self._rollup is not None
-            and scope.start is not None
-            and upto - scope.start >= timedelta(days=2)
-        ):
-            covered = self._rollup.covered(replace(scope, end=upto))
-        if covered:
+        keys: list[str] = []
+        after = None
+        if self._rollup is not None and scope.start is not None:
+            if upto - scope.start >= timedelta(days=2):
+                covered = self._rollup.covered(replace(scope, end=upto))
+            # Today so far, for any range that reaches today (D136).
+            part = self._rollup.today(replace(scope, end=upto))
+            keys = covered + (part[0] if part else [])
+            after = (part[1], part[2]) if part else None
+        if keys:
             return self._engine.run(
                 build(self._catalog.domain_table(), rollup=True),
                 scope,
-                {"covered": covered, **(params or {})},
+                {"covered": keys, **(params or {})},
                 timeout_s=TIMEOUT_S,
                 rollup=True,
                 skip_days=covered,
                 name=name,
+                after=after,
             )
         return self._engine.run(
             build(self._catalog.domain_table()), scope, params or None, timeout_s=TIMEOUT_S,
