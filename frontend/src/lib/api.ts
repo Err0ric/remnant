@@ -812,6 +812,23 @@ export interface HealthChecks {
   agents: AgentHealth[];
   /** Damaged lake files moved to data/quarantine (SPEC D51). */
   quarantined_files?: number;
+  /** Page rollups: counts and times only. */
+  rollups?: RollupHealth[];
+}
+
+export interface RollupHealth {
+  name: string;
+  label: string;
+  days_built: number;
+  /** null: not checked since the server started. */
+  pending: number | null;
+  last_run: string | null;
+  last_built: string | null;
+  /** The last 5-minute today-so-far build. */
+  today_built: string | null;
+  today_cutoff: string | null;
+  state: "healthy" | "attention" | "unhealthy" | "unknown";
+  reason: string | null;
 }
 
 export interface WatchedDeviceInput {

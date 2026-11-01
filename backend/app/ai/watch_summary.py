@@ -23,6 +23,7 @@ from app.ai.agents import agents
 from app.ai.catalog import NON_USAGE, Catalog, Service
 from app.ai.usage import Usage
 from app.alerts.items import AlertItem
+from app.core.timing import in_context
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.search.dashboard import zone
 
@@ -219,7 +220,13 @@ def summary(
     # The signal cards read other sources: run them beside the daily use, not after it.
     pool = ThreadPoolExecutor(max_workers=1)
     signals_job = pool.submit(
-        _signal_cards, engine, allowed, kinds, midnight(cur_from), midnight(prev_from), now
+        in_context(_signal_cards),
+        engine,
+        allowed,
+        kinds,
+        midnight(cur_from),
+        midnight(prev_from),
+        now,
     )
     try:
         rows, read = usage.daily(QueryScope(allowed, start, now), where.key)

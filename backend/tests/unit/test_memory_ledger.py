@@ -137,3 +137,11 @@ def test_a_linked_data_folder_still_works(tmp_path: Path) -> None:
     real.mkdir()
     (tmp_path / "data").symlink_to(real, target_is_directory=True)
     assert spill_dir(tmp_path / "data") == real / "tmp" / "duckdb"
+
+
+def test_an_empty_overflow_folder_still_logs_the_check(tmp_path: Path) -> None:
+    spill_dir(tmp_path)
+    with capture_logs() as logs:
+        spill_dir(tmp_path)
+    cleared = [e for e in logs if e["event"] == "spill.cleared"]
+    assert cleared and cleared[0]["files"] == 0 and cleared[0]["mb"] == 0.0

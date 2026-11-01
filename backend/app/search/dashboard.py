@@ -48,7 +48,6 @@ INTERRUPT_CODES = (50072, 50074, 50076, 50079, 50097, 50125, 50140, 50158, 81010
 _CODE = "TRY_CAST(TRY(json_extract_string(raw, '$.status.errorCode')) AS INTEGER)"
 INTERRUPTED = f"status_id = 2 AND list_contains({list(INTERRUPT_CODES)}, {_CODE})"
 FAILED = f"status_id = 2 AND NOT coalesce(list_contains({list(INTERRUPT_CODES)}, {_CODE}), false)"
-_BUCKET = f"timezone($tz, date_trunc($unit, timezone($tz, {_TS})))"
 _WHO = "nullif(trim(actor_user_name), '')"
 _HOST = "coalesce(nullif(device_hostname, ''), nullif(dst_endpoint_hostname, ''))"
 
@@ -254,16 +253,27 @@ def trend_points(window: Window, now: datetime, tz: str = "UTC") -> tuple[str, l
     return "hour", [start + timedelta(hours=i) for i in range(hours)]
 
 
-def _trend(rows: list[list[Any]], points: list[datetime], span: timedelta) -> Trend:
-    """Counts per point now and per the same point one window earlier."""
+def _trend(
+    rows: list[list[Any]], points: list[datetime], span: timedelta, tz: str = "UTC"
+) -> Trend:
+    """Counts per point now and per the same point one window earlier. Day points match
+    by the viewer's date, `len(points)` days back: a window across a clock change is an
+    hour longer or shorter than the one before, so adding `span` would miss the day."""
     at = {p: i for i, p in enumerate(points)}
     now, before = [0] * len(points), [0] * len(points)
+    daily = len(points) > 1 and points[1] - points[0] >= timedelta(hours=23)
+    z = zone(tz)
+    by_day = {p.astimezone(z).date(): i for i, p in enumerate(points)} if daily else {}
     for b, n in rows:
         t = _utc(b)
         if t is None:
             continue
         if t in at:
             now[at[t]] += int(n)
+        elif daily:
+            i = by_day.get(t.astimezone(z).date() + timedelta(days=len(points)))
+            if i is not None:
+                before[i] += int(n)
         elif t + span in at:
             before[at[t + span]] += int(n)
     return Trend(points, now, before)
@@ -451,7 +461,7 @@ def _identity(
     with run._lock:
         run.read |= frun.read
     total, _, failed, failed_before, _, _ = (got["signins"] or [[0] * 6])[0]
-    trend = _trend(got["failed_trend"], points, start - before)
+    trend = _trend(got["failed_trend"], points, start - before, tz)
     top = [
         Row(str(who), int(n), kind="user", last=_iso(last)) for who, n, last in got["top_failing"]
     ]

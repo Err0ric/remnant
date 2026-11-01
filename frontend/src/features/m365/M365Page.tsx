@@ -7,6 +7,7 @@ import { navigate, useTab } from "@/lib/route";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { LoadFailed } from "@/components/LoadFailed";
 import { ResultsTable } from "@/features/search/ResultsTable";
+import { AdminChanges } from "./AdminChanges";
 import { MailRules } from "./MailRules";
 import { DrillScope, DRILL, Kpi, SetCountries, Top, useDrill } from "@/features/dashboard/Sections";
 import { startIndex, TrendChart, TrendLegend } from "@/features/dashboard/TrendChart";
@@ -128,7 +129,7 @@ export function M365Page() {
                 <EventList title="App registrations" sql={m.lists.registrations} m={m} />
               </>
             ) : tab === "admin" ? (
-              <EventList title="Admin changes" sql={m.lists.admin} m={m} />
+              <AdminChanges m={m} />
             ) : (
               <Overview m={m} />
             )}

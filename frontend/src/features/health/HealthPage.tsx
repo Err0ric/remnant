@@ -12,7 +12,7 @@ import { StatusLine } from "./StatusLine";
 import { SystemStrip, type SourceTally } from "./SystemStrip";
 
 type Level = "unhealthy" | "attention" | "paused" | "healthy";
-type TabId = "sources" | "enrichment" | "agents" | "devices" | "alerts";
+type TabId = "sources" | "enrichment" | "agents" | "devices" | "alerts" | "rollups";
 
 interface Row {
   key: string;
@@ -49,6 +49,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "agents", label: "Endpoint agents" },
   { id: "devices", label: "Watched devices" },
   { id: "alerts", label: "Delivery" },
+  { id: "rollups", label: "Page rollups" },
 ];
 const TAB_IDS = TABS.map((t) => t.id);
 const SILENCE = [
@@ -294,6 +295,24 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
         page: "schedules",
       })),
     ],
+    // The daily and today-so-far page rollups: whether they are keeping up (owner,
+    // 2026-11-01). The time shown is the last today-so-far build, every 5 minutes.
+    rollups: (checks.data?.rollups ?? []).map((ru): Row => ({
+      key: `rollup:${ru.name}`,
+      name: ru.label,
+      sub: ru.name,
+      detail: [
+        `${ru.days_built.toLocaleString()} days built`,
+        ru.pending === null ? "still to build: not checked yet" : `${ru.pending} still to build`,
+        ru.last_built ? `last day built ${since(ru.last_built, now)}` : "no day built yet",
+        ru.today_cutoff ? `today up to ${stamp(ru.today_cutoff)} UTC` : "",
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      last: ru.today_built,
+      level: ru.state === "unknown" ? "attention" : (ru.state as Level),
+      reason: ru.reason,
+    })),
   };
   const o = overview.data;
   const gapsOf = new Map((o?.volume ?? []).map((v) => [v.source_id, v.gaps.length]));
@@ -452,7 +471,11 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
                   <tr className="border-b border-border bg-surface-head text-left text-text-secondary">
                     <th className="px-3 py-2 font-semibold">Name</th>
                     <th className="hidden px-3 py-2 font-semibold md:table-cell">
-                      {tab === "enrichment" ? "Last updated" : "Last seen"}
+                      {tab === "enrichment"
+                        ? "Last updated"
+                        : tab === "rollups"
+                          ? "Today built"
+                          : "Last seen"}
                     </th>
                     {tab === "devices" ? (
                       <th className="hidden px-3 py-2 font-semibold md:table-cell">
@@ -568,6 +591,7 @@ function RANK(r: Row): number {
 }
 
 const EMPTY: Record<TabId, ReactNode> = {
+  rollups: "No rollups reported yet.",
   sources:
     "No sources yet. Add files, a syslog listener, Loki, or Microsoft 365 under Settings, Sources and connectors.",
   enrichment:

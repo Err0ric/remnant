@@ -16,6 +16,7 @@ import structlog
 
 from app.core import jsonsafe
 from app.core.ids import new_event_id
+from app.core.localtime import NOTES
 from app.core.schema import COLUMN_NAMES, COLUMNS_BY_NAME, ColumnType
 from app.ingest.envelope import Envelope, EnvelopeParser, SyslogEnvelopeConfig
 from app.ingest.payload.base import PayloadParser, PayloadResult
@@ -157,7 +158,8 @@ class TemplateNormalizer:
         if result.ok:
             errors.extend(self._transforms.apply(fields))
             consumed = self._map(fields, env, row, errors)
-            status = "partial" if (result.partial or errors) else "ok"
+            # Clock-change notes find events; they are not parse faults (D140).
+            status = "partial" if (result.partial or set(errors) - NOTES) else "ok"
         else:
             errors.append(f"payload:{result.error}"[:80])
             if env is not None:

@@ -44,7 +44,7 @@ def test_automatic_and_configured_values() -> None:
     assert query_threads(0, 0, cpus=32).per_query == 4
     set_ = query_threads(1, 2, cpus=32)
     assert (set_.per_query, set_.at_once) == (1, 2)
-    assert set_.peak == WORKER_POOL + 2
+    assert set_.peak == WORKER_POOL + 2 + 1 and set_.busy == 2
     assert set_.headroom_mb > 0
 
 

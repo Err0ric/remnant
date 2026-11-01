@@ -1069,6 +1069,32 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
             reason: "Last reported 2 d ago",
           },
         ],
+        rollups: [
+          {
+            name: "auth_rollup",
+            label: "Attacks and access",
+            days_built: 33,
+            pending: 0,
+            last_run: "2026-10-10T08:00:00+00:00",
+            last_built: "2026-10-10T08:00:00+00:00",
+            today_built: "2026-10-10T08:55:00+00:00",
+            today_cutoff: "2026-10-10T08:54:00+00:00",
+            state: "healthy",
+            reason: null,
+          },
+          {
+            name: "m365_rollup",
+            label: "Microsoft 365",
+            days_built: 11,
+            pending: 4,
+            last_run: "2026-10-10T08:00:00+00:00",
+            last_built: "2026-10-10T08:00:00+00:00",
+            today_built: "2026-10-10T08:55:00+00:00",
+            today_cutoff: "2026-10-10T08:54:00+00:00",
+            state: "attention",
+            reason: "4 closed days still to build",
+          },
+        ],
       });
     if (url.endsWith("/api/health-checks/devices") && method === "POST") {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;

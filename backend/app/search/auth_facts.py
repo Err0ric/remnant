@@ -9,6 +9,8 @@ networks, and countries from the local GeoIP files, at read time.
 
 from __future__ import annotations
 
+from app.search.buckets import bucket_sql
+
 TS = "coalesce(time, time_observed)"
 HOST = "coalesce(nullif(device_hostname, ''), nullif(dst_endpoint_hostname, ''))"
 VPN_TEMPLATES = ("paloalto_globalprotect", "openvpn_server")
@@ -51,9 +53,9 @@ SELECT ip, coalesce(sum(n) FILTER (WHERE t >= $start), 0) AS now,
        coalesce(sum(n) FILTER (WHERE t < $start), 0) AS before
 FROM f GROUP BY 1 ORDER BY now + before DESC LIMIT {MAX_IPS}"""  # noqa: S608  # fixed SQL text
 _BY_HOST = """
-SELECT host, timezone($tz, date_trunc($unit, timezone($tz, t))) AS b, sum(n) FROM f
+SELECT host, {BUCKET} AS b, sum(n) FROM f
 WHERE t >= $start AND list_contains($ips, ip)
-GROUP BY 1, 2"""
+GROUP BY 1, 2""".replace("{BUCKET}", bucket_sql())
 _SOURCES = """
 SELECT DISTINCT source_id FROM f WHERE t >= $start AND list_contains($ips, ip)"""
 

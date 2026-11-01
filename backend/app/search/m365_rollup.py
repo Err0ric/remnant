@@ -115,6 +115,17 @@ class FactRollup:
         # What a built day was built with: a changed definition rebuilds every day.
         self.version = hashlib.sha256((self.BUILD_SQL + str(self.SCHEMA)).encode()).hexdigest()[:16]
 
+    @property
+    def folder(self) -> Path:
+        return self._dir
+
+    def today_mark(self) -> dict[str, Any]:
+        try:
+            body = json.loads((self._dir / TODAY).read_text())
+        except (OSError, ValueError):
+            return {}
+        return body if isinstance(body, dict) else {}
+
     # --- freshness ----------------------------------------------------------------------
 
     def _inputs(self, lake_day: Path) -> list[list[Any]]:

@@ -9,11 +9,13 @@ error. `pick` copies the field named by this field's value (Inbound -> the remot
 
 import re
 from collections.abc import Callable
+from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta, tzinfo
 from typing import Any
 
 import regex
 
+from app.core.localtime import localize
 from app.ingest.payload.regexpayload import MATCH_TIMEOUT_S
 from app.templates.validator import Transform
 
@@ -52,6 +54,16 @@ class TransformRunner:
     def apply(self, fields: dict[str, Any]) -> list[str]:
         """Transform `fields` in place; return error codes for values that did not convert."""
         errors: list[str] = []
+        notes: list[str] = []
+        token = _NOTES.set(notes)
+        try:
+            self._apply(fields, errors)
+        finally:
+            _NOTES.reset(token)
+        errors.extend(dict.fromkeys(notes))  # clock-change notes (D140), once each
+        return errors
+
+    def _apply(self, fields: dict[str, Any], errors: list[str]) -> None:
         for t, compiled in self._steps:
             value = get_path(fields, t.field)
             if value is MISSING or value is None:
@@ -104,7 +116,6 @@ class TransformRunner:
             fields[target] = result
             if not ok:
                 errors.append(f"transform_{t.op}:{t.field}"[:80])
-        return errors
 
 
 def _find(value: Any, a: dict[str, Any]) -> Any:
@@ -197,6 +208,19 @@ _BSD = re.compile(
     r"([A-Z][a-z]{2})\s+(\d{1,2})(?:\s+(\d{4}))?\s+(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?"
     r"(?:\s+([A-Z]{2,5}))?"
 )
+# Clock-change notes of the record being transformed (set by Transforms.apply).
+_NOTES: ContextVar[list[str] | None] = ContextVar("time_notes", default=None)
+
+
+def _local(naive: datetime, tz: tzinfo, now: datetime) -> datetime:
+    """A zone-less time in the source zone, noting a repeated or skipped hour (D140)."""
+    out, note = localize(naive, tz, now)
+    notes = _NOTES.get()
+    if note is not None and notes is not None:
+        notes.append(note)
+    return out
+
+
 _MONTHS = {m: i for i, m in enumerate("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split(), 1)}
 _UTC_NAMES = frozenset({"UTC", "GMT", "Z", "UT"})
 
@@ -213,10 +237,10 @@ def _bsd(text: str, tz: tzinfo, clock: Callable[[], datetime]) -> datetime:
     micro = int((frac or "0")[:6].ljust(6, "0"))
     now = clock()
     y = int(year) if year else now.year
-    parsed = datetime(y, _MONTHS[mon], int(day), int(hh), int(mi), int(ss), micro, zone_tz)
-    if not year and parsed > now + timedelta(days=7):
-        parsed = parsed.replace(year=y - 1)
-    return parsed.astimezone(UTC)
+    naive = datetime(y, _MONTHS[mon], int(day), int(hh), int(mi), int(ss), micro)
+    if not year and naive.replace(tzinfo=zone_tz) > now + timedelta(days=7):
+        naive = naive.replace(year=y - 1)
+    return _local(naive, zone_tz, now)
 
 
 def _timestamp(
@@ -247,5 +271,5 @@ def _timestamp(
     else:
         parsed = datetime.strptime(text, fmt)
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=tz)
+        return _local(parsed, tz, clock())
     return parsed.astimezone(UTC)

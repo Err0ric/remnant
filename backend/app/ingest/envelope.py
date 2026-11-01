@@ -14,6 +14,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.core.localtime import localize
+
 Rfc = Literal["5424", "3164", "none", "labels"]  # labels: built from Loki stream labels
 
 _MONTHS = {
@@ -107,6 +109,8 @@ class EnvelopeParser:
         self._cfg = config or SyslogEnvelopeConfig()
         self._tz = ZoneInfo(self._cfg.timezone)
         self._clock = clock
+        # The source's previous event in UTC: orders a repeated local hour in a backfill.
+        self._last: datetime | None = None
 
     def parse(self, line: str, hint: Envelope | None = None) -> Envelope:
         """Parse one decoded line. Never raises on bad input; problems go in `errors`.
@@ -240,7 +244,7 @@ class EnvelopeParser:
         zone = m.group(8)
         try:
             if zone is None:
-                local = datetime(y, mo, d, h, mi, s, micro, tzinfo=self._tz)
+                return self._localize(datetime(y, mo, d, h, mi, s, micro), errors)
             elif zone == "Z":
                 local = datetime(y, mo, d, h, mi, s, micro, tzinfo=UTC)
             else:
@@ -259,17 +263,25 @@ class EnvelopeParser:
         year = int(m.group(3)) if m.group(3) else now_local.year
         micro = int((m.group(7) or "0").ljust(6, "0"))
         try:
-            ts = datetime(year, month, day, h, mi, s, micro, tzinfo=self._tz)
+            naive = datetime(year, month, day, h, mi, s, micro)
             if (
                 m.group(3) is None
                 and self._cfg.assume_year == "rollover_safe"
-                and ts > now_local + timedelta(days=_ROLLOVER_FUTURE_DAYS)
+                and naive > now_local.replace(tzinfo=None) + timedelta(days=_ROLLOVER_FUTURE_DAYS)
             ):
-                ts = ts.replace(year=year - 1)
+                naive = naive.replace(year=year - 1)
         except ValueError:
             errors.append("invalid_timestamp")
             return None
-        return ts.astimezone(UTC)
+        return self._localize(naive, errors)
+
+    def _localize(self, naive: datetime, errors: list[str]) -> datetime:
+        """A wall-clock time in the source's zone, in UTC (`app.core.localtime`)."""
+        out, note = localize(naive, self._tz, self._clock(), self._last)
+        if note is not None:
+            errors.append(note)
+        self._last = out
+        return out
 
 
 # -- helpers ---------------------------------------------------------------------------

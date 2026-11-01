@@ -4,6 +4,7 @@ import { LoadFailed } from "@/components/LoadFailed";
 import { EntityLink } from "@/components/EntityLink";
 import { api, type TimelineRow } from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { localClock, localDate } from "@/lib/localTime";
 import { openDrill } from "@/lib/drill";
 import { navigate } from "@/lib/route";
 import { useViewer } from "@/lib/viewer";
@@ -24,7 +25,6 @@ function day(iso: string): string {
     weekday: "short",
     month: "short",
     day: "numeric",
-    timeZone: "UTC",
   });
 }
 
@@ -39,7 +39,8 @@ export function PersonTimeline({ person }: { person: string }) {
   const d = q.data;
   const groups = new Map<string, TimelineRow[]>();
   for (const r of d?.rows ?? []) {
-    const k = r.start.slice(0, 10);
+    // The viewer's days and clock (D133), the zone added in an hour that repeats.
+    const k = localDate(new Date(r.start));
     groups.set(k, [...(groups.get(k) ?? []), r]);
   }
   const open = (r: TimelineRow) =>
@@ -125,7 +126,7 @@ export function PersonTimeline({ person }: { person: string }) {
           {[...groups.entries()].map(([k, rows]) => (
             <li key={k}>
               <h3 className="border-b border-border bg-surface-head px-3 py-1 text-sm font-semibold">
-                {day(`${k}T00:00:00Z`)}
+                {day(rows[0]!.start)}
               </h3>
               <ul className="flex flex-col">
                 {rows.map((r, i) => {
@@ -134,10 +135,10 @@ export function PersonTimeline({ person }: { person: string }) {
                     <li
                       key={`${r.kind}:${r.start}:${i}`}
                       data-row={r.kind}
-                      className="grid grid-cols-[4.5rem_8rem_minmax(0,1fr)_auto] items-baseline gap-x-3 border-b border-border px-3 py-1 text-sm last:border-0"
+                      className="grid grid-cols-[6rem_8rem_minmax(0,1fr)_auto] items-baseline gap-x-3 border-b border-border px-3 py-1 text-sm last:border-0"
                     >
                       <time dateTime={r.start} className="font-mono tabular-nums text-text-muted">
-                        {r.start.slice(11, 16)}
+                        {localClock(new Date(r.start))}
                       </time>
                       <span className="text-text-secondary">{KIND[r.kind] ?? r.kind}</span>
                       <span className={cn("min-w-0 truncate", r.tone === "warn" && "text-warn")}>

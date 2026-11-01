@@ -4,6 +4,7 @@ everyone signed in, in their own scope; changing watched devices is for administ
 Router only."""
 
 from dataclasses import asdict
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
@@ -14,6 +15,7 @@ from app.auth.service import AuthService
 from app.engine.views import permitted_sources
 from app.ingest.durable import quarantined_count
 from app.search.health import HealthService
+from app.search.rollup_status import status as rollup_status
 
 router = APIRouter(tags=["health"])
 
@@ -45,9 +47,24 @@ class AgentOut(BaseModel):
     gaps: list[str] = []
 
 
+class RollupOut(BaseModel):
+    name: str
+    label: str
+    days_built: int
+    pending: int | None  # null: not checked since the server started
+    last_run: str | None
+    last_built: str | None
+    today_built: str | None
+    today_cutoff: str | None
+    state: str
+    reason: str | None
+
+
 class HealthOut(BaseModel):
     devices: list[DeviceOut]
     agents: list[AgentOut]
+    # Daily and today-so-far page rollups: counts and times only, no source names.
+    rollups: list[RollupOut] = []
     # Damaged lake files moved out of the way (SPEC D51); kept for an administrator.
     quarantined_files: int = 0
 
@@ -99,7 +116,17 @@ async def health_checks(request: Request, user: CurrentUser) -> HealthOut:
         ],
         agents=[AgentOut(**asdict(a)) for a in agents],
         quarantined_files=await run_in_threadpool(quarantined_count, request.app.state.lake_dir),
+        rollups=await run_in_threadpool(_rollups, request),
     )
+
+
+def _rollups(request: Request) -> list[RollupOut]:
+    state = request.app.state
+    now = datetime.now(UTC)
+    return [
+        RollupOut(**asdict(rollup_status(name, getattr(state, name), state.rollup_runs, now)))
+        for name in ("auth_rollup", "m365_rollup", "ai_rollup")
+    ]
 
 
 @router.post("/health-checks/devices", status_code=201)

@@ -14,6 +14,8 @@ from typing import Any
 from starlette.requests import Request
 from starlette.responses import Response
 
+from app.core import timing
+
 TTL_S = 60.0
 MAX_ENTRIES = 256
 
@@ -29,7 +31,9 @@ class PageCache:
             hit = self._items.get(key)
             if hit is None or monotonic() - hit[0] >= self._ttl:
                 self._items.pop(key, None)
+                timing.cache("miss")
                 return None
+            timing.cache("hit")
             return hit[1]
 
     def put(self, key: Hashable, value: Any) -> None:
@@ -63,6 +67,28 @@ def clear_on_change(
         response = await call_next(request)
         if request.method in WRITES and response.status_code < 400:
             cache.clear()
+        return response
+
+    return middleware
+
+
+def server_timing() -> Callable[
+    [Request, Callable[[Request], Awaitable[Response]]], Awaitable[Response]
+]:
+    """Middleware: a Server-Timing header on API responses that read the cache or ran
+    queries (owner, 2026-11-01): cache hit or miss, waiting for a slot and memory, DuckDB,
+    the rest, and the total. Timings only, nothing about the data."""
+
+    async def middleware(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        if not request.url.path.startswith("/api/"):
+            return await call_next(request)
+        t = timing.start()
+        response = await call_next(request)
+        header = t.header()
+        if header is not None:
+            response.headers["Server-Timing"] = header
         return response
 
     return middleware

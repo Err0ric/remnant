@@ -239,7 +239,31 @@ Docker installs: Docker publishes ports through its own rules, which can bypass 
 
 ### File integrity monitoring
 
-AIDE, Wazuh syscheck, and similar tools: exclude the data folder (`/var/lib/remnant`, or the `app-data` volume), which changes constantly. Keep watching `/opt/remnant` and `/etc/remnant`, and re-baseline after each update (`update-systemd.sh --aide` does it for AIDE). The data folder has the app's own integrity checks ([integrity.md](integrity.md)).
+AIDE, Wazuh syscheck, and similar tools: skip the parts of the data folder that change constantly, and `node_modules`, which every update rewrites. Keep watching the rest of `/opt/remnant`, `/etc/remnant`, the unit file, and the data folder's `tls/`. The data folder has the app's own integrity checks ([integrity.md](integrity.md)).
+
+With AIDE installed (`/etc/aide/aide.conf.d` present), every run of `update-systemd.sh` writes these rules to `/etc/aide/aide.conf.d/90_aide_remnant` and says so when it writes or replaces the file. The data folder comes from `APP__PATHS__DATA_DIR` in `/etc/remnant/remnant.env`, so a moved data folder gets matching rules. The name has no dot, so Debian and Ubuntu read it. To see them: `sh /opt/remnant/scripts/update-systemd.sh --print-aide-rules`.
+
+```
+!/var/lib/remnant/lake(/|$)
+!/var/lib/remnant/rollup(/|$)
+!/var/lib/remnant/tmp(/|$)
+!/var/lib/remnant/enrichment(/|$)
+!/var/lib/remnant/meta\.sqlite
+!/opt/remnant/frontend/node_modules(/|$)
+```
+
+| Path | Rule | Why |
+|---|---|---|
+| `lake/`, `rollup/`, `meta.sqlite` (and its `-wal`) | Skipped | Written all day; covered by the app's own hash chain and audit chain |
+| `tmp/` | Skipped | Query overflow, emptied at start |
+| `enrichment/` | Skipped | GeoIP and threat intel files that update on their own |
+| `frontend/node_modules` | Skipped | About 16,000 files, rebuilt from the lockfile by every update; most of the AIDE database |
+| `tls/` | Watched | The server's key and certificate |
+| `backend/.venv`, `.python`, `backend/app`, `frontend/dist` | Watched | The code and runtime the service runs |
+| `.git` | Watched | The update script runs git as root, so a changed hook would run on the next update |
+| `/etc/remnant`, `/etc/systemd/system/remnant.service` | Watched | Settings and the unit |
+
+Then re-baseline: `update-systemd.sh --aide` runs `aideinit -y -f` after the update. Replace any hand-made rule for Remnant (a bare `!/var/lib/remnant` also hides `tls/`). Other tools (Wazuh syscheck, Tripwire): skip the same paths in their own syntax.
 
 ## After install
 

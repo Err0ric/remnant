@@ -503,6 +503,13 @@ class AiRollup:
             log.info("ai_rollup.today", sources=len(done), cutoff=cutoff.isoformat())
         return len(done)
 
+    @property
+    def folder(self) -> Path:
+        return self._dir
+
+    def today_mark(self) -> dict[str, Any]:
+        return self._today_mark()
+
     def _today_mark(self) -> dict[str, Any]:
         try:
             body = json.loads((self._dir / TODAY_DIR / TODAY_MARK).read_text())

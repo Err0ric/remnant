@@ -73,7 +73,7 @@ export const PAGE_TABS: Partial<Record<PageId, readonly string[]>> = {
   ai: ["services", "people", "inventory", "settings"],
   m365: ["overview", "sign-ins", "mail", "apps", "admin"],
   agents: ["overview", "sessions", "tools", "mcp", "accounts"],
-  health: ["sources", "enrichment", "agents", "devices", "alerts"],
+  health: ["sources", "enrichment", "agents", "devices", "alerts", "rollups"],
   alerts: ["open", "closed", "muted"],
   audit: ["activity", "ai", "integrity"],
 };

@@ -63,7 +63,14 @@ class QueryThreads:
         """Threads queries can add at the worst moment: the framework's worker pool (each
         waiting query holds one), plus per running query its extra DuckDB workers and one
         timeout timer."""
-        return WORKER_POOL + self.at_once * self.per_query
+        return WORKER_POOL + self.busy + 1  # + the rollup build's one DuckDB thread
+
+    @property
+    def busy(self) -> int:
+        """DuckDB worker threads that can be running at once for page queries: the CPU
+        load. The worker pool in `peak` is mostly requests waiting on a slot or on I/O,
+        which count against a pids or address-space limit but not against the cores."""
+        return self.at_once * self.per_query
 
     @property
     def headroom_mb(self) -> int:

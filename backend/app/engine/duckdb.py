@@ -26,6 +26,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import structlog
 
+from app.core import timing
 from app.core.errors import (
     QueryBusyError,
     QueryFailedError,
@@ -130,8 +131,8 @@ def spill_dir(data_dir: Path) -> Path:
         else:
             leftover.unlink(missing_ok=True)
         files, size = files + n, size + b
-    if files:
-        log.info("spill.cleared", path=str(real), files=files, mb=round(size / (1 << 20), 1))
+    # Every start, 0 files included, so the journal shows the check ran (owner, 2026-11-01).
+    log.info("spill.cleared", path=str(real), files=files, mb=round(size / (1 << 20), 1))
     return real
 
 
@@ -263,6 +264,7 @@ class QueryEngine:
         started = time.monotonic()
         with self._background_slot(limit_s) if background else self._slot(limit_s):
             grant = self._grant(background, large, limit_s - (time.monotonic() - started))
+            waited = time.monotonic() - started
             try:
                 return self._execute(
                     guarded, scope, params, intel, limit_s, cap, rollup, frozenset(skip_days),
@@ -271,6 +273,9 @@ class QueryEngine:
             finally:
                 if grant is not None and self._ledger is not None and not background:
                     self._ledger.give(grant)
+                t = timing.current()
+                if t is not None and not background:
+                    t.query(waited, time.monotonic() - started - waited)
 
     def _grant(self, background: bool, large: bool, wait_s: float) -> Grant | None:
         if self._ledger is None:

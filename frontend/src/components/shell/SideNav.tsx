@@ -210,14 +210,18 @@ export function SideNav({ active, activeTab, isAdmin, canAudit, open = false }: 
     keep();
     closing.current = window.setTimeout(() => setFly(null), 150);
   };
-  const showGroup = (id: string, el: HTMLElement) => {
+  // `force`: the icon rail (768 to 1100px) shows an area's sub-pages on hover even when
+  // the area is not folded. The flyout is fixed and starts at the rail's right edge, so
+  // the rail's scrolling never clips it and it never covers the rail (owner, 2026-11-01).
+  const showGroup = (id: string, el: HTMLElement, force = false) => {
     keep();
-    if (!collapsed.includes(id)) return;
-    if (id.startsWith("area:") && !(window.matchMedia?.("(min-width: 1100px)").matches ?? true))
-      return; // the icon rail has its own menu per area
+    if (!force && !collapsed.includes(id)) return;
     const r = el.getBoundingClientRect();
-    setFly({ id, top: r.top, left: r.right });
+    const rail = el.closest("nav")?.getBoundingClientRect();
+    setFly({ id, top: r.top, left: rail ? rail.right : r.right });
   };
+  const iconRail = () =>
+    window.matchMedia?.("(min-width: 768px) and (max-width: 1099.98px)").matches ?? false;
 
   const toggle = (id: string) => {
     setFly(null);
@@ -312,8 +316,15 @@ export function SideNav({ active, activeTab, isAdmin, canAudit, open = false }: 
                   <li
                     key={row.key}
                     className="group relative"
-                    onMouseEnter={(e) => areaShut && showGroup(areaKey, e.currentTarget)}
-                    onMouseLeave={areaShut ? leave : undefined}
+                    onMouseEnter={(e) => {
+                      if (areaShut) showGroup(areaKey, e.currentTarget);
+                      else if (row.subs.length && iconRail())
+                        showGroup(areaKey, e.currentTarget, true);
+                    }}
+                    onFocus={(e) => {
+                      if (row.subs.length && iconRail()) showGroup(areaKey, e.currentTarget, true);
+                    }}
+                    onMouseLeave={row.subs.length ? leave : undefined}
                   >
                     <a
                       href={pathFor(row.to.page, row.to.tab)}
@@ -364,16 +375,6 @@ export function SideNav({ active, activeTab, isAdmin, canAudit, open = false }: 
                           `${row.label} pages`,
                         )
                       : null}
-                    {/* Icon-only rail: hovering or focusing a page shows its sub-pages. The
-                        transparent left padding bridges the gap so the menu stays open. */}
-                    {row.subs.length ? (
-                      <div className="absolute left-full top-0 z-40 hidden pl-2 md:group-focus-within:block md:group-hover:block min-[1100px]:!hidden">
-                        <div className="min-w-48 rounded-card border border-border bg-surface p-1.5 shadow-lg">
-                          <div className="px-2.5 py-1 text-sm font-semibold">{row.label}</div>
-                          {subList(row, "", `${row.label} pages menu`)}
-                        </div>
-                      </div>
-                    ) : null}
                   </li>
                 );
               })}
@@ -418,7 +419,7 @@ export function SideNav({ active, activeTab, isAdmin, canAudit, open = false }: 
         onMouseLeave={leave}
         onClick={() => setFly(null)}
         style={{ top: fly.top, left: fly.left }}
-        className="fixed z-50 hidden pl-2 min-[1100px]:block"
+        className="fixed z-50 hidden pl-2 md:block"
       >
         <div
           aria-label={`${group.label} pages`}

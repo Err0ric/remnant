@@ -62,12 +62,15 @@ def box(tmp_path: Path) -> dict[str, Path]:
             "calls": tmp_path / "calls"}  # fmt: skip
 
 
-def _run(box: dict[str, Path]) -> subprocess.CompletedProcess[str]:
+def _run(box: dict[str, Path], **extra: str) -> subprocess.CompletedProcess[str]:
     env = {
         "PATH": f"{box['bin']}:{os.environ['PATH']}",
         "INSTALL_DIR": str(box["install"]),
         "CALLS": str(box["calls"]),
         "HOME": str(box["install"].parent),
+        "ENV_FILE": str(box["install"].parent / "no-env-file"),
+        "AIDE_CONF_D": str(box["install"].parent / "no-aide"),
+        **extra,
     }
     return subprocess.run(["sh", str(SCRIPT)], capture_output=True, text=True, env=env)
 
@@ -128,3 +131,48 @@ def test_local_commits_are_refused_before_the_service_stops(box: dict[str, Path]
     res = _run(box)
     assert res.returncode != 0 and "not an ancestor" in res.stderr
     assert _calls(box) == ""
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="needs root to give the checkout away")
+def test_dubious_ownership_is_explained_and_nothing_changes(box: dict[str, Path]) -> None:
+    """Under sudo, git refuses a checkout owned by another user unless it is in
+    safe.directory; the script names that and stops before the service."""
+    _commit(box["work"], "two")
+    _git(box["work"], "push", "-q", "origin", "main")
+    for path in [box["install"], *box["install"].rglob("*")]:
+        os.lchown(path, 65534, 65534)
+    res = _run(box)
+    assert res.returncode != 0
+    assert "dubious ownership" in res.stderr and "safe.directory" in res.stderr
+    assert "Nothing was changed" in res.stderr and "Updated" not in res.stdout
+    assert _calls(box) == ""
+
+
+def test_aide_rules_are_written_once_and_replaced_when_they_change(
+    box: dict[str, Path],
+) -> None:
+    conf_d = box["install"].parent / "aide.conf.d"
+    conf_d.mkdir()
+    (box["bin"] / "aide").write_text("#!/bin/sh\nexit 0\n")
+    (box["bin"] / "aide").chmod(0o755)
+    rules = conf_d / "90_aide_remnant"
+    res = _run(box, AIDE_CONF_D=str(conf_d))
+    assert res.returncode == 0, res.stderr
+    assert f"AIDE rules written: {rules}" in res.stdout
+    assert "!/var/lib/remnant/lake(/|$)" in rules.read_text()
+    assert oct(rules.stat().st_mode & 0o777) == "0o644"
+    again = _run(box, AIDE_CONF_D=str(conf_d))
+    assert "AIDE rules" not in again.stdout  # unchanged: nothing to say
+    rules.write_text("!/var/lib/remnant\n")  # the old hand-made rule, which hid tls/ too
+    env = box["install"].parent / "remnant.env"
+    env.write_text("APP__PATHS__DATA_DIR=/srv/remnant\n")
+    third = _run(box, AIDE_CONF_D=str(conf_d), ENV_FILE=str(env))
+    assert f"AIDE rules replaced: {rules} (data folder /srv/remnant)" in third.stdout
+    assert "!/srv/remnant/lake(/|$)" in rules.read_text()
+    assert sorted(p.name for p in conf_d.iterdir()) == ["90_aide_remnant"]
+
+
+def test_no_aide_rules_without_aide(box: dict[str, Path]) -> None:
+    res = _run(box)
+    assert res.returncode == 0 and "AIDE rules" not in res.stdout
+    assert not (box["install"].parent / "no-aide").exists()

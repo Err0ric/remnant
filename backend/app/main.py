@@ -39,7 +39,7 @@ from app.api.around import router as around_router
 from app.api.ask import router as ask_router
 from app.api.audit import router as audit_router
 from app.api.auth import router as auth_router
-from app.api.cache import PageCache, clear_on_change
+from app.api.cache import PageCache, clear_on_change, server_timing
 from app.api.dashboard_sections import router as dashboard_sections_router
 from app.api.dashboards import router as dashboards_router
 from app.api.enrichment import router as enrichment_router
@@ -120,7 +120,7 @@ from app.core.errors import (
 from app.core.logging import configure_logging
 from app.core.memory import budget_note, server_budget_mb
 from app.core.net import parse_trusted
-from app.core.threads import cap_allocator_arenas, query_threads, run_low
+from app.core.threads import WORKER_POOL, cap_allocator_arenas, query_threads, run_low
 from app.detect.runner import RuleRunner
 from app.detect.store import RuleStore
 from app.engine.duckdb import (
@@ -169,6 +169,7 @@ from app.search.m365 import source_ids as m365_source_ids
 from app.search.m365_rollup import AuthRollup, M365Rollup
 from app.search.overview import OverviewService
 from app.search.refusals import RefusalWatch
+from app.search.rollup_status import RunLog
 from app.search.saved import SavedSearchStore
 from app.search.schedules import ScheduleService
 from app.templates.changes import record as record_template_versions
@@ -592,7 +593,9 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         clock=lambda: app.state.auth.clock(),
     )
     app.state.page_cache = PageCache()
+    app.state.rollup_runs = RunLog()  # what the rollup jobs did, for Health
     app.middleware("http")(clear_on_change(app.state.page_cache))
+    app.middleware("http")(server_timing())  # outermost of the two: whole request
     app.state.m365_rollup = M365Rollup(
         app.state.engine,
         lake_dir,
@@ -830,8 +833,9 @@ def run() -> None:
         resource.setrlimit(resource.RLIMIT_AS, (cap << 20, cap << 20))
         print(f"Address-space cap: {cap} MB (budget plus {qt.headroom_mb} MB for threads)")
     print(
-        f"Queries: {qt.per_query} threads each, {qt.at_once} at once"
-        f" (up to about {qt.peak} threads for queries at peak); malloc arenas: {arenas}"
+        f"Queries: {qt.per_query} DuckDB threads each, {qt.at_once} at once, so at most"
+        f" {qt.busy} running, plus 1 for a rollup build; thread limit needs {qt.peak}"
+        f" (with the {WORKER_POOL}-thread request pool, mostly waiting); malloc arenas: {arenas}"
     )
     proxies = config.server.trusted_proxies
     print(
@@ -885,11 +889,15 @@ def _rollups(app: FastAPI) -> None:
         ("m365_rollup", app.state.m365_rollup),
         ("auth_rollup", app.state.auth_rollup),
     )
+    runs: RunLog = app.state.rollup_runs
     for name, job in jobs:
         try:
-            job.run()
+            report = job.run()
         except Exception:
             log.exception(f"{name}.failed")
+            runs.ran(name, error=True)
+        else:
+            runs.ran(name, pending=report.pending)
     # A rebuilt day can change what a kept page showed (the first-seen index).
     app.state.page_cache.clear()
 
@@ -910,8 +918,12 @@ def _each_tick(app: FastAPI) -> None:
         ("m365_rollup.today", app.state.m365_rollup.refresh_today),
         ("auth_rollup.today", app.state.auth_rollup.refresh_today),
     )
+    runs: RunLog = app.state.rollup_runs
     for name, job in jobs:
         try:
             job()
         except Exception:
             log.exception(f"{name}.failed")
+            runs.ran(name, error=True)
+        else:
+            runs.ran(name)

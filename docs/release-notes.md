@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+### Microsoft 365 > Admin shows the changes that matter (2026-11-01)
+
+- **Provisioning apart**: directory sync and provisioning cycles group into one row per service per day ("Example Directory Sync: 144 cycles, all succeeded"), expandable; a failed cycle gets its own row. Admin changes lists people and apps only.
+- **Apps by name**: a change written as `ServicePrincipal_<id>` shows the app's name, with an App badge, when the directory audits in the window name it. The id is in the expanded row.
+- **Readable columns**: Success or Failure, an event count that opens Search, and the properties changed. Times are in your time zone.
+- **Real changes first**: role, policy, credential, and user create, delete, or disable changes rank above routine updates, which are hidden until you untick Hide routine.
+- The rail's flyouts open beside the rail instead of over it, and the narrow icon rail's sub-page menus are no longer cut off.
+- What changes for existing installs: nothing to do.
+
+### Clock changes (2026-11-01)
+
+- **Repeated hour**: when clocks fall back, a local timestamp without a zone (RFC 3164 syslog) in the repeated hour is placed by when it arrived, or for a file read later by the event before it, and flagged `ambiguous_local_time` in `parse_errors` so you can find it.
+- **Skipped hour**: a timestamp in the hour that does not exist when clocks spring forward is read as if the clock had not moved yet and flagged `nonexistent_local_time`.
+- The same applies to times inside the message that carry no zone (a firewall's generated time). The flags never mark a parse partial.
+- **Charts**: hourly charts in your time zone show the repeated hour as two points instead of one doubled point and one empty one. The comparison with the window before matches days by date across a clock change.
+- **Tables and the person Timeline** add the zone to a time in the repeated hour ("1:15 AM PDT", "1:15 AM PST"). The Timeline now groups by your day and shows your clock, like the rest of the app, instead of UTC.
+- What changes for existing installs: nothing to do. Events already stored keep their time; search `parse_errors LIKE '%local_time%'` to find new flagged ones.
+
+### Health shows the page rollups; timings in every page response (2026-11-01)
+
+- **Health > Page rollups**: for Attacks and access, Microsoft 365, and AI usage, the days built, closed days still to build, when the last day was built, and when today so far was last built (every 5 minutes). A failed build shows unhealthy; today so far older than 15 minutes needs attention.
+- **Server-Timing**: page and query responses say whether they came from the 60-second cache, and how long they waited for a query slot, spent in DuckDB, and spent in the server otherwise. Your browser's network panel shows it under Timing.
+- What changes for existing installs: nothing to do. Until the first rollup run after a restart, days still to build reads "not checked yet".
+### Operations (2026-11-01)
+
+- **AIDE rules**: with AIDE installed, every update writes `/etc/aide/aide.conf.d/90_aide_remnant`, skipping the data folder's `lake/`, `rollup/`, `tmp/`, `enrichment/`, and `meta.sqlite`, and `frontend/node_modules`. `tls/`, the Python environment, the code, the built UI, and `.git` stay watched. It prints a line when it writes or replaces the file. Re-baselining no longer hashes the lake and 16,000 package files.
+- The update script explains git's "dubious ownership" refusal (a checkout owned by another user) and changes nothing.
+- The startup line now separates DuckDB threads that can run at once (8 on 4 cores) from the thread limit the server needs (adds the request pool, mostly idle).
+- `spill.cleared` is logged on every start, also when nothing was removed.
+- What changes for existing installs: on systemd installs with AIDE, the next update writes `90_aide_remnant`; it replaces a file at that path, so remove any other hand-made Remnant rule file, then update with `--aide` to re-baseline.
+
 ### Update script reports what it did (2026-11-01)
 
 - `update-systemd.sh` fetches `main` from `origin` itself, before stopping the service. If the fetch fails it says so and exits with an error; it no longer reports success at the old commit.

@@ -9,8 +9,9 @@ Items noted during a slice that belong to a later slice. Move into the slice pla
 | AI catalog freshness, part two: optional catalog updates. The service catalog published as a signed file in the public repo; the server checks for a newer version on a schedule like the ADR-0023 intel feeds (off until turned on, pull only, nothing sent, every change shown and audited). Release checklist adds a review of new AI services | 9 | Owner, 2026-10-21 |
 | Renew the generated self-signed certificate on its own before it expires (825 days), with a Health warning 30 days ahead | 9 | Install feedback, 2026-10-21 |
 | Cancel during an in-flight model answer (ADR-0028 follow-up): Cancel frees a request's place while it waits, but once the request is sent, the call runs synchronously in a worker thread with a 180 s read timeout, so the connection stays open and Ollama keeps generating until it finishes, holding the only slot. Fix: stream responses (`stream: true`) and stop reading and close the connection when the cancel flag is set, which makes Ollama stop; or close the client from the watcher thread. Needs streaming in both adapters | 9 | Owner review, 2026-10-21 |
-| Rollup status on Health: pending days and last build time per rollup (AI, Microsoft 365, auth), and the last today-so-far build | 9 | Owner, 2026-10-31 |
 | A page not found view with the navigation for unknown routes (they open Health today) | 9 | Owner, 2026-10-31 |
+| Proposed, pending review (D141): name apps on Microsoft 365 > Admin through Graph `servicePrincipals` when the directory audits do not name them. Needs `Application.Read.All`, a change to ADR-0002's permission list; cache names; no call at page time | 9 | Owner, 2026-11-01 |
+| Proposed, pending review (D141): show consents on Microsoft 365 > Admin as well as Apps (D122 keeps them on Apps) | 9 | Owner, 2026-11-01 |
 | Pin Docker base images by digest | 6 | Slice 1 skeleton |
 | Self-hosted Lucide subset or tree-shake audit | 6 | Slice 1 skeleton |
 | Read-only MCP server (SPEC 3.8, ADR-0003) | 7 | Roadmap, 2026-10-10 |

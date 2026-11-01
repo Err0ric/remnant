@@ -15,9 +15,12 @@ from datetime import datetime
 from typing import Any, Protocol
 
 from app.ai import consents
+from app.core.timing import in_context
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.enrich.networks import Places
 from app.search import drill, mail_rules
+from app.search.admin_changes import ADMIN_SQL
+from app.search.buckets import bucket_sql
 from app.search.dashboard import (
     _CHANGE_KEY,
     _CHANGE_KIND,
@@ -287,18 +290,18 @@ FROM f"""
 _SPIKE = """
 SELECT b, first(x ORDER BY n DESC, x) AS top, max(n) AS n
 FROM (
-  SELECT timezone($tz, date_trunc($unit, timezone($tz, t))) AS b, {x} AS x, sum(n) AS n
+  SELECT {BUCKET} AS b, {x} AS x, sum(n) AS n
   FROM f WHERE outcome IN ('failed', 'interrupted') AND t >= $start
   GROUP BY 1, 2
 )
-GROUP BY 1"""
+GROUP BY 1""".replace("{BUCKET}", bucket_sql())
 _OUTCOME = """
-SELECT timezone($tz, date_trunc($unit, timezone($tz, t))) AS b,
+SELECT {BUCKET} AS b,
        coalesce(sum(n) FILTER (WHERE outcome = 'ok'), 0),
        coalesce(sum(n) FILTER (WHERE outcome = 'interrupted'), 0),
        coalesce(sum(n) FILTER (WHERE outcome = 'failed'), 0)
 FROM f WHERE t >= $start
-GROUP BY 1"""
+GROUP BY 1""".replace("{BUCKET}", bucket_sql())
 _REASONS = f"""
 SELECT reason, code, sum(n) AS n
 FROM f WHERE outcome = 'failed' AND t >= $start
@@ -342,9 +345,9 @@ SELECT count(*) FILTER (WHERE risky AND t >= $start),
 FROM f"""
 # The Dashboard's Identity card (both windows) and its top failing people.
 _FAILED_TREND = """
-SELECT timezone($tz, date_trunc($unit, timezone($tz, t))) AS b, sum(n)
+SELECT {BUCKET} AS b, sum(n)
 FROM f WHERE outcome = 'failed'
-GROUP BY 1"""
+GROUP BY 1""".replace("{BUCKET}", bucket_sql())
 # Successful sign-ins per address, now and before: the Dashboard's outside-countries count.
 _OK_BY_IP = f"""
 SELECT ip, coalesce(sum(n) FILTER (WHERE t >= $start), 0),
@@ -390,7 +393,7 @@ def run_facts(
     """Several fact queries at once (each reads today's events, so they overlap instead of
     queueing; the engine's slots still bound how many run together)."""
     with ThreadPoolExecutor(max_workers=PARALLEL) as pool:
-        rows = pool.map(lambda n: run(query(n, rollup), sources, **extra), names)
+        rows = pool.map(in_context(lambda n: run(query(n, rollup), sources, **extra)), names)
         return dict(zip(names, rows, strict=True))
 
 
@@ -405,29 +408,6 @@ ACTIVITY_COLUMNS = (
     "time, actor_user_name, message AS operation, status_id, src_endpoint_ip, event_id"
 )
 
-# Admin: directory changes, one row per operation (D122), sign-ins and consents left out.
-ADMIN_LIST = (
-    "WITH r AS (\n"  # noqa: S608  # fixed SQL text
-    f"  SELECT {TS} AS ts, {_OP} AS op, actor_user_name AS who, resource_name AS target,"
-    " status_id, event_id,\n"
-    "         coalesce(metadata_correlation_uid,\n"
-    "                  coalesce(lower(actor_user_name), '') || '|'\n"
-    f"                    || strftime({TS}, '%Y-%m-%d %H:%M')) AS k\n"
-    "  FROM events\n"
-    "  WHERE template_id = 'm365_directory_audit'\n"
-    "     OR (template_id = 'm365_management_activity'\n"
-    "         AND json_extract_string(raw, '$.Workload') = 'AzureActiveDirectory')\n"
-    ")\n"
-    "SELECT min(ts) AS time, any_value(who) AS person, op AS operation,"
-    " any_value(target) AS target, max(status_id) AS status_id,"
-    " list(event_id) AS event_ids\n"
-    "FROM r\n"
-    "WHERE op NOT IN ('userloggedin', 'userloginfailed')\n"
-    "  AND op NOT LIKE 'consent to application%'\n"
-    "GROUP BY k, op\n"
-    "HAVING min(ts) >= TIMESTAMPTZ '{from}' AND min(ts) < TIMESTAMPTZ '{to}'\n"
-    "ORDER BY time DESC"
-)
 REGISTRATIONS = (
     "template_id IN ('m365_directory_audit', 'm365_management_activity')\n"
     f"  AND ({_OP} IN ('add application', 'update application', 'add service principal')"
@@ -490,7 +470,7 @@ def lists(approved: tuple[str, ...]) -> dict[str, str]:
         "dlp": drill.events(f"{_ACTIVITY} AND {_OP} = 'dlprulematch'", ACTIVITY_COLUMNS),
         "consents": consents_list(),
         "registrations": drill.events(REGISTRATIONS, ACTIVITY_COLUMNS),
-        "admin": ADMIN_LIST,
+        "admin": ADMIN_SQL,
     }
 
 

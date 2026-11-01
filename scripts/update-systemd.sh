@@ -4,6 +4,10 @@
 #   sudo sh /opt/remnant/scripts/update-systemd.sh            # update and restart
 #   sudo sh /opt/remnant/scripts/update-systemd.sh --aide     # also re-baseline AIDE
 #   sudo sh /opt/remnant/scripts/update-systemd.sh --no-pull  # code already in place
+#   sh /opt/remnant/scripts/update-systemd.sh --print-aide-rules  # show the AIDE rules
+#
+# With AIDE installed, every run writes this install's AIDE rules to
+# /etc/aide/aide.conf.d/90_aide_remnant, replacing that file, and says so when it changes.
 #
 # Fetches origin's main first (a failed fetch stops here, before anything changes, and an
 # install already at origin/main says so and exits), then stops the service, fast-forwards
@@ -13,33 +17,91 @@
 # with umask 077 left root-only files and the service failed with "Permission denied").
 #
 # Settings (environment): INSTALL_DIR (default /opt/remnant), SERVICE (default remnant),
-# REMOTE (default origin), BRANCH (default main).
+# REMOTE (default origin), BRANCH (default main), ENV_FILE (default
+# /etc/remnant/remnant.env, read for APP__PATHS__DATA_DIR), AIDE_CONF_D (default
+# /etc/aide/aide.conf.d).
 set -eu
 
 INSTALL_DIR=${INSTALL_DIR:-/opt/remnant}
 SERVICE=${SERVICE:-remnant}
 REMOTE=${REMOTE:-origin}
 BRANCH=${BRANCH:-main}
+ENV_FILE=${ENV_FILE:-/etc/remnant/remnant.env}
+AIDE_CONF_D=${AIDE_CONF_D:-/etc/aide/aide.conf.d}
 AIDE=0
 PULL=1
+PRINT_RULES=0
 for arg in "$@"; do
   case $arg in
     --aide) AIDE=1 ;;
     --no-pull) PULL=0 ;;
-    -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --print-aide-rules) PRINT_RULES=1 ;;
+    -h|--help) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $arg (see --help)" >&2; exit 2 ;;
   esac
 done
+
+# The data folder from the service's settings (the last APP__PATHS__DATA_DIR line).
+DATA_DIR=/var/lib/remnant
+if [ -r "$ENV_FILE" ]; then
+  found=$(sed -n 's/^[[:space:]]*APP__PATHS__DATA_DIR=[[:space:]]*//p' "$ENV_FILE" | tail -n 1 | tr -d "\"'")
+  if [ -n "$found" ]; then DATA_DIR=${found%/}; fi
+fi
+
+# AIDE rules (docs/install/team-vm.md, File integrity): skip data that changes on its own
+# and node_modules. Everything else stays under the distribution's rules, including tls/,
+# .venv, .python, backend/app, frontend/dist, and .git (this script runs git as root, so a
+# changed hook would run on the next update).
+re_escape() { printf '%s' "$1" | sed 's/[][\.^$*+?(){}|]/\\&/g'; }
+aide_rules() {
+  d=$(re_escape "$DATA_DIR")
+  i=$(re_escape "$INSTALL_DIR")
+  echo "# Written by $INSTALL_DIR/scripts/update-systemd.sh; replaced on every update."
+  echo "# Data that changes constantly and has its own checks (docs/install/integrity.md)."
+  for sub in lake rollup tmp enrichment; do
+    printf '!%s/%s(/|$)\n' "$d" "$sub"
+  done
+  printf '!%s/meta\\.sqlite\n' "$d"
+  echo "# JavaScript packages, rebuilt from the lockfile by every update."
+  printf '!%s/frontend/node_modules(/|$)\n' "$i"
+}
+if [ "$PRINT_RULES" -eq 1 ]; then
+  aide_rules
+  exit 0
+fi
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "Run as root (sudo sh $0)." >&2
   exit 1
 fi
 [ -d "$INSTALL_DIR/.git" ] || { echo "$INSTALL_DIR is not a git checkout." >&2; exit 1; }
+# git refuses a checkout owned by another user ("dubious ownership") unless it is listed
+# in safe.directory; say so plainly instead of failing on the first git command.
+if ! err=$(git -C "$INSTALL_DIR" rev-parse --git-dir 2>&1 >/dev/null); then
+  echo "git cannot read $INSTALL_DIR: $err" >&2
+  case $err in
+    *"dubious ownership"*)
+      echo "It is owned by $(stat -c %U "$INSTALL_DIR"). Either: chown -R root:root $INSTALL_DIR, or: git config --global --add safe.directory $INSTALL_DIR" >&2 ;;
+  esac
+  echo "Nothing was changed." >&2
+  exit 1
+fi
 
 umask 022
 step() { printf '\n== %s\n' "$1"; }
 git_() { git -C "$INSTALL_DIR" "$@"; }
+
+# Only with AIDE installed; one file at this exact path, overwritten, never a second one.
+if [ -d "$AIDE_CONF_D" ] && { command -v aide >/dev/null 2>&1 || command -v aideinit >/dev/null 2>&1; }; then
+  rules="$AIDE_CONF_D/90_aide_remnant"
+  new=$(aide_rules)
+  if [ ! -f "$rules" ] || [ "$(cat "$rules")" != "$new" ]; then
+    verb=written; [ -f "$rules" ] && verb=replaced
+    printf '%s\n' "$new" > "$rules"
+    chmod 0644 "$rules"
+    echo "AIDE rules $verb: $rules (data folder $DATA_DIR)"
+  fi
+fi
 
 stopped=0
 restart_on_error() {

@@ -60,6 +60,20 @@ describe("Health (ADR-0019)", () => {
     expect(within(unhealthy).getByText("1")).toBeVisible();
   });
 
+  it("shows each page rollup with days still to build and the last today build", async () => {
+    await renderAt("/health");
+    await userEvent.click(
+      within(await screen.findByRole("navigation", { name: "Health tabs" })).getByRole("link", {
+        name: /Page rollups/,
+      }),
+    );
+    const table = await screen.findByRole("table", { name: "Page rollups" });
+    expect(within(table).getByText("Attacks and access")).toBeVisible();
+    expect(within(table).getByText(/33 days built · 0 still to build/)).toBeVisible();
+    expect(within(table).getAllByText(/today up to 2026-10-10 08:54 UTC/)).toHaveLength(2);
+    expect(within(table).getByText("4 closed days still to build")).toBeVisible();
+  });
+
   it("lets administrators watch a device", async () => {
     const spy = await renderAt("/health");
     await userEvent.click(
