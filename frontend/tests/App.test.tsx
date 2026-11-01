@@ -83,24 +83,46 @@ describe("App shell", () => {
     expect(screen.queryByText(/grimoire|seance|séance|ossuary/i)).not.toBeInTheDocument();
   });
 
+  it("opens a page's sub-pages on hover only in the icon rail (owner, 2026-11-01)", async () => {
+    const icon = "(min-width: 768px) and (max-width: 1099.98px)";
+    vi.stubGlobal("matchMedia", (q: string) => ({
+      matches: q === icon,
+      media: q,
+      onchange: null,
+      addListener: () => undefined,
+      removeListener: () => undefined,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      dispatchEvent: () => false,
+    }));
+    try {
+      await renderApp();
+      const nav = screen.getByRole("navigation", { name: "Primary" });
+      await userEvent.hover(within(nav).getByRole("link", { name: /^Alerts/ }));
+      const menu = await screen.findByRole("list", { name: "Alerts pages, Alerts menu" });
+      expect(within(menu).getByRole("link", { name: "Rules" })).toHaveAttribute(
+        "href",
+        "/alerts/rules",
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("lists every page's sub-pages and folds groups, remembered (ADR-0038 edit 10)", async () => {
     window.localStorage.removeItem("app.rail.collapsed");
     window.localStorage.removeItem("app.rail.defaults");
     await renderApp();
     const nav = screen.getByRole("navigation", { name: "Primary" });
     // Every page with sub-pages lists them, not only the open one; Alerts starts folded
-    // (its row shows the open count) and opens its pages on hover.
+    // (its row shows the open count). In the labelled rail nothing opens on hover.
     const fold = within(nav).getByRole("button", { name: "Alerts sub-pages" });
     expect(fold).toHaveAttribute("aria-expanded", "false");
     expect(within(nav).getByRole("list", { name: "Alerts pages" })).not.toHaveClass(
       "min-[1100px]:block",
     );
     await userEvent.hover(within(nav).getByRole("link", { name: /^Alerts/ }));
-    const flyout = await screen.findByRole("list", { name: "Alerts pages, Alerts menu" });
-    expect(within(flyout).getByRole("link", { name: "Rules" })).toHaveAttribute(
-      "href",
-      "/alerts/rules",
-    );
+    expect(screen.queryByRole("list", { name: "Alerts pages, Alerts menu" })).toBeNull();
     await userEvent.click(fold);
     expect(fold).toHaveAttribute("aria-expanded", "true");
     expect(within(nav).getByRole("list", { name: "Alerts pages" })).toHaveClass(
@@ -114,14 +136,12 @@ describe("App shell", () => {
     const system = within(nav).getByRole("button", { name: "System group" });
     expect(connected).toHaveAttribute("aria-expanded", "false");
     expect(system).toHaveAttribute("aria-expanded", "false");
-    // A folded group shows its pages on hover.
+    // Owner, 2026-11-01: a folded group header opens inline on click only; hovering it
+    // shows no flyout (one behavior per control).
     await userEvent.hover(connected);
-    const menu = await screen.findByRole("list", {
-      name: "Microsoft 365 pages, Connected apps menu",
-    });
-    expect(menu).toHaveTextContent("OverviewSign-insMailAppsAdmin");
-    await userEvent.click(within(menu).getByRole("link", { name: "Sign-ins" }));
-    expect(window.location.pathname).toBe("/m365/sign-ins");
+    await userEvent.hover(system);
+    expect(screen.queryByRole("list", { name: /menu$/ })).toBeNull();
+    expect(connected).toHaveAttribute("aria-expanded", "false");
     await userEvent.click(system);
     expect(system).toHaveAttribute("aria-expanded", "true");
     expect(JSON.parse(window.localStorage.getItem("app.rail.collapsed") ?? "[]")).toEqual([

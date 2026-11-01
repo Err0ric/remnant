@@ -18,7 +18,8 @@ pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
 STUBS = {
     "id": "echo 0",
     "systemctl": 'echo "systemctl $*" >> "$CALLS"; exit 0',
-    "journalctl": 'echo "listening on https://127.0.0.1:8080"',
+    "journalctl": '[ -n "${NOT_UP:-}" ] || echo "listening on https://127.0.0.1:8080"',
+    "aideinit": 'echo "aideinit $*" >> "$CALLS"',
     "pnpm": 'echo "pnpm $*" >> "$CALLS"',
     "uv": 'echo "uv $*" >> "$CALLS"',
     "sleep": "exit 0",
@@ -70,6 +71,9 @@ def _run(box: dict[str, Path], **extra: str) -> subprocess.CompletedProcess[str]
         "HOME": str(box["install"].parent),
         "ENV_FILE": str(box["install"].parent / "no-env-file"),
         "AIDE_CONF_D": str(box["install"].parent / "no-aide"),
+        "STATE_FILE": str(box["install"].parent / "installed_commit"),
+        # CI does not run as root: the record is owned by whoever runs the tests there.
+        "STATE_OWNER": f"{os.getuid()}:{os.getgid()}",
         **extra,
     }
     return subprocess.run(["sh", str(SCRIPT)], capture_output=True, text=True, env=env)
@@ -89,8 +93,19 @@ def test_new_commits_are_installed_and_reported(box: dict[str, Path]) -> None:
     assert "systemctl stop remnant" in _calls(box) and "systemctl start remnant" in _calls(box)
 
 
+def _installed(box: dict[str, Path]) -> Path:
+    return box["install"].parent / "installed_commit"
+
+
+def _record(box: dict[str, Path], sha: str) -> None:
+    """An installed commit as the script writes it (owner and mode it trusts)."""
+    _installed(box).write_text(sha + "\n")
+    _installed(box).chmod(0o644)
+
+
 def test_already_up_to_date_says_so_and_touches_nothing(box: dict[str, Path]) -> None:
     head = _git(box["install"], "rev-parse", "--short", "HEAD")
+    _record(box, _git(box["install"], "rev-parse", "HEAD"))
     res = _run(box)
     assert res.returncode == 0, res.stderr
     assert f"already up to date at {head}" in res.stdout
@@ -176,3 +191,124 @@ def test_no_aide_rules_without_aide(box: dict[str, Path]) -> None:
     res = _run(box)
     assert res.returncode == 0 and "AIDE rules" not in res.stdout
     assert not (box["install"].parent / "no-aide").exists()
+
+
+def test_a_checkout_at_origin_main_but_never_installed_is_built(box: dict[str, Path]) -> None:
+    """Owner, 2026-11-01: fetched and merged by hand, then the script said "already up to
+    date" and the service kept running the old build. Up to date means installed."""
+    head = _git(box["install"], "rev-parse", "HEAD")
+    res = _run(box)  # no record of an installed build
+    assert res.returncode == 0, res.stderr
+    assert "already up to date" not in res.stdout
+    assert "installed build is unknown: building it" in res.stdout
+    assert "systemctl stop remnant" in _calls(box) and "pnpm build" in _calls(box)
+    assert "systemctl start remnant" in _calls(box)
+    assert _installed(box).read_text().strip() == head
+    assert f"Updated remnant to {head[:7]}." in res.stdout
+    second = _run(box)
+    assert "already up to date" in second.stdout  # now it is
+
+
+def test_a_checkout_moved_ahead_of_the_installed_build_is_built(box: dict[str, Path]) -> None:
+    old = _git(box["install"], "rev-parse", "HEAD")
+    _record(box, old)
+    new = _commit(box["work"], "two")
+    _git(box["work"], "push", "-q", "origin", "main")
+    _git(box["install"], "pull", "-q", "--ff-only", "origin", "main")  # by hand
+    res = _run(box)
+    assert res.returncode == 0, res.stderr
+    assert f"installed build is {old[:7]}: building it" in res.stdout
+    assert "pnpm build" in _calls(box)
+    assert _installed(box).read_text().strip().startswith(new)
+
+
+def test_a_failed_start_leaves_the_installed_commit_alone(box: dict[str, Path]) -> None:
+    old = _git(box["install"], "rev-parse", "HEAD")
+    _record(box, old)
+    _commit(box["work"], "two")
+    _git(box["work"], "push", "-q", "origin", "main")
+    res = _run(box, NOT_UP="1")
+    assert res.returncode != 0 and "is not up" in res.stderr
+    assert _installed(box).read_text().strip() == old  # the next run builds again
+
+
+def test_aide_rebaselines_even_when_up_to_date(box: dict[str, Path]) -> None:
+    _record(box, _git(box["install"], "rev-parse", "HEAD"))
+    res = subprocess.run(
+        ["sh", str(SCRIPT), "--aide"],
+        capture_output=True, text=True,
+        env={
+            "PATH": f"{box['bin']}:{os.environ['PATH']}", "INSTALL_DIR": str(box["install"]),
+            "CALLS": str(box["calls"]), "HOME": str(box["install"].parent),
+            "ENV_FILE": str(box["install"].parent / "no-env-file"),
+            "AIDE_CONF_D": str(box["install"].parent / "no-aide"),
+            "STATE_FILE": str(_installed(box)),
+            "STATE_OWNER": f"{os.getuid()}:{os.getgid()}",
+        },
+    )  # fmt: skip
+    assert res.returncode == 0, res.stderr
+    assert "already up to date" in res.stdout
+    assert "aideinit -y -f" in _calls(box) and "systemctl" not in _calls(box)
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="checks root ownership")
+def test_the_installed_commit_is_root_owned_and_read_only_to_others(
+    box: dict[str, Path],
+) -> None:
+    res = _run(box)
+    assert res.returncode == 0, res.stderr
+    st = _installed(box).stat()
+    assert (st.st_uid, st.st_gid, oct(st.st_mode & 0o777)) == (0, 0, "0o644")
+    assert not list(_installed(box).parent.glob("installed_commit.*"))  # no temp left
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="needs root to give the file away")
+def test_an_installed_commit_the_service_could_write_is_ignored(box: dict[str, Path]) -> None:
+    """A compromised service must not be able to fake "already up to date"."""
+    head = _git(box["install"], "rev-parse", "HEAD")
+    state = _installed(box)
+    for owner, mode in ((65534, 0o644), (0, 0o666)):
+        state.write_text(head + "\n")
+        os.chown(state, owner, owner)
+        os.chmod(state, mode)
+        res = _run(box)
+        assert res.returncode == 0, res.stderr
+        assert "Ignoring" in res.stderr and "already up to date" not in res.stdout
+        assert "pnpm build" in _calls(box)
+        box["calls"].unlink()
+    state.unlink()
+    state.symlink_to(box["install"].parent / "elsewhere")
+    (box["install"].parent / "elsewhere").write_text(head + "\n")
+    res = _run(box)
+    assert "Ignoring" in res.stderr and "already up to date" not in res.stdout
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="needs root to give the record away")
+def test_state_owner_comes_only_from_the_root_process(box: dict[str, Path]) -> None:
+    """STATE_OWNER is read from the environment of the root process running the script
+    and nowhere else: not the service's env file, its app config, or the data folder,
+    all of which the service or its settings can carry. A record owned by the service
+    user stays untrusted whatever those say (owner, 2026-11-01)."""
+    nobody = "65534:65534"
+    data = box["install"].parent / "data"
+    data.mkdir()
+    pwned = box["install"].parent / "pwned"
+    env = box["install"].parent / "remnant.env"
+    env.write_text(
+        f"APP__PATHS__DATA_DIR={data}\nSTATE_OWNER={nobody}\nAPP__SERVER__STATE_OWNER={nobody}\n"
+        f"STATE_OWNER={nobody}; touch {pwned}\n"
+    )
+    (box["install"] / "config").mkdir()
+    (box["install"] / "config" / "app.yaml").write_text(f"server:\n  state_owner: '{nobody}'\n")
+    (data / "STATE_OWNER").write_text(nobody)
+    record = data / "installed_commit"  # where the script looks: the data folder
+    record.write_text(_git(box["install"], "rev-parse", "HEAD") + "\n")
+    os.chown(record, 65534, 65534)
+    record.chmod(0o644)
+    res = _run(box, ENV_FILE=str(env), STATE_FILE="", STATE_OWNER="")  # none from root
+    assert res.returncode == 0, res.stderr
+    assert "Ignoring" in res.stderr and "already up to date" not in res.stdout
+    assert "pnpm build" in _calls(box)  # built instead of trusting the forged record
+    assert not pwned.exists()  # the env file is read for one setting, never run
+    st = record.stat()
+    assert (st.st_uid, st.st_gid, oct(st.st_mode & 0o777)) == (0, 0, "0o644")

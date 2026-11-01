@@ -176,9 +176,9 @@ function rowsOf(
 
 /** The main rail (ADR-0038 edit 10, owner 2026-10-31): five collapsible groups, every page
  * with its sub-pages listed under it, the current one highlighted. Connected apps and
- * System start folded; each group's open or closed state is remembered in this browser. A
- * folded group shows its pages in a flyout on hover or focus. Between 768 and 1100px the
- * rail shows icons, and a page's sub-pages open on hover or focus. */
+ * System start folded; each group's open or closed state is remembered in this browser.
+ * Headers open and close inline on click. Between 768 and 1100px the rail shows icons, and
+ * a page's sub-pages open in a menu beside it on hover or focus. */
 export function SideNav({ active, activeTab, isAdmin, canAudit, open = false }: SideNavProps) {
   const [collapsed, setCollapsed] = useState(readCollapsed);
   const settings = visibleSettings(isAdmin, canAudit);
@@ -210,12 +210,14 @@ export function SideNav({ active, activeTab, isAdmin, canAudit, open = false }: 
     keep();
     closing.current = window.setTimeout(() => setFly(null), 150);
   };
-  // `force`: the icon rail (768 to 1100px) shows an area's sub-pages on hover even when
-  // the area is not folded. The flyout is fixed and starts at the rail's right edge, so
-  // the rail's scrolling never clips it and it never covers the rail (owner, 2026-11-01).
-  const showGroup = (id: string, el: HTMLElement, force = false) => {
+  // Only the icon rail (768 to 1100px) has hover menus: it has no room to open a page's
+  // sub-pages inline. In the labelled rail, headers open and close inline on click only
+  // (owner, 2026-11-01: a hover flyout and a click dropdown on one header was two
+  // behaviors for one control). The menu is fixed and starts at the rail's right edge, so
+  // the rail's scrolling never clips it.
+  const showGroup = (id: string, el: HTMLElement) => {
     keep();
-    if (!force && !collapsed.includes(id)) return;
+    if (!iconRail()) return;
     const r = el.getBoundingClientRect();
     const rail = el.closest("nav")?.getBoundingClientRect();
     setFly({ id, top: r.top, left: rail ? rail.right : r.right });
@@ -283,13 +285,6 @@ export function SideNav({ active, activeTab, isAdmin, canAudit, open = false }: 
             {/* Group headers show with labels: on phones and from 1100px. */}
             <button
               type="button"
-              onMouseEnter={(e) => showGroup(group.id, e.currentTarget)}
-              onMouseLeave={leave}
-              onFocus={(e) => showGroup(group.id, e.currentTarget)}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") setFly(null);
-              }}
-              aria-haspopup={shut ? "true" : undefined}
               onClick={() => toggle(group.id)}
               aria-expanded={!shut}
               aria-label={`${group.label} group`}
@@ -316,13 +311,10 @@ export function SideNav({ active, activeTab, isAdmin, canAudit, open = false }: 
                   <li
                     key={row.key}
                     className="group relative"
-                    onMouseEnter={(e) => {
-                      if (areaShut) showGroup(areaKey, e.currentTarget);
-                      else if (row.subs.length && iconRail())
-                        showGroup(areaKey, e.currentTarget, true);
-                    }}
-                    onFocus={(e) => {
-                      if (row.subs.length && iconRail()) showGroup(areaKey, e.currentTarget, true);
+                    onMouseEnter={(e) => row.subs.length && showGroup(areaKey, e.currentTarget)}
+                    onFocus={(e) => row.subs.length && showGroup(areaKey, e.currentTarget)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") setFly(null);
                     }}
                     onMouseLeave={row.subs.length ? leave : undefined}
                   >

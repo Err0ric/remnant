@@ -189,7 +189,7 @@ Open the link and create the administrator, as above.
 
 ### Updating
 
-Run the update script as root. It fetches `main` from `origin` and stops there if the fetch fails or the install is already up to date (it says which). Otherwise it stops the service, moves to `origin/main` and checks HEAD matches it, rebuilds the web UI, syncs the Python packages, makes `/opt/remnant` readable by the service user, starts the service, and prints the startup lines. Database migrations run on start.
+Run the update script as root; never fetch or merge by hand first. It fetches `main` from `origin` and stops there if the fetch fails, or if the build the service last ran is already `origin/main` (it says which). It keeps that commit in `/var/lib/remnant/installed_commit`, written by root (root:root, 0644) only after the service came up, and ignored if anything else could have written it, so a checkout moved by hand, or an update that failed partway, is built on the next run even with nothing new to fetch. Otherwise it stops the service, moves to `origin/main` and checks HEAD matches it, rebuilds the web UI, syncs the Python packages, makes `/opt/remnant` readable by the service user, starts the service, and prints the startup lines. Database migrations run on start.
 
 ```bash
 sudo sh /opt/remnant/scripts/update-systemd.sh
@@ -208,6 +208,8 @@ cd ../backend && UV_PYTHON_INSTALL_DIR=/opt/remnant/.python uv sync --frozen --n
 chmod -R a+rX /opt/remnant
 systemctl start remnant
 journalctl -u remnant -n 20 -o cat          # look for "listening on"
+git -C /opt/remnant rev-parse HEAD > /var/lib/remnant/installed_commit   # once it is up
+chown root:root /var/lib/remnant/installed_commit && chmod 0644 /var/lib/remnant/installed_commit
 ```
 
 | What you see | Cause | Fix |

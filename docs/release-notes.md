@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Left rail: click to open (2026-11-01)
+
+- Group headers (System, Connected apps) and folded pages open and close in place when you click them, and stay as you left them. Hovering them no longer pops up a separate menu.
+- The narrow icon rail (768 to 1100 px wide) still shows a page's sub-pages beside it on hover, since it has no room to open them in place.
+- What changes for existing installs: nothing to do.
+
+### Update script: "up to date" means installed (2026-11-01)
+
+- The update script now compares `origin/main` with the build the service last ran, kept in `/var/lib/remnant/installed_commit` after a successful restart, not with the checkout. A checkout moved by hand, or an update that failed partway, is built and restarted on the next run even when there is nothing new to fetch.
+- `--aide` re-baselines AIDE even when the install is already up to date.
+- The record is root-owned (0644). One the service user could have written, or a link, is ignored and the update builds, so a compromised service cannot hold back updates.
+- Sessions survive a restart (they are kept in the database). A browser signed in more than 12 hours earlier (`auth.session_hours`) is signed out at that time, restart or not.
+- What changes for existing installs: nothing to do. The first run after this update builds once, since no installed commit is recorded yet. Don't fetch or merge by hand before running it.
+
 ### Microsoft 365 > Admin shows the changes that matter (2026-11-01)
 
 - **Provisioning apart**: directory sync and provisioning cycles group into one row per service per day ("Example Directory Sync: 144 cycles, all succeeded"), expandable; a failed cycle gets its own row. Admin changes lists people and apps only.
