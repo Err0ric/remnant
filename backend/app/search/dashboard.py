@@ -77,25 +77,49 @@ WHERE list_contains($templates, template_id) AND activity_id IS DISTINCT FROM 2
   AND nullif(src_endpoint_ip, '') IS NOT NULL
 GROUP BY 1 ORDER BY ok_now + ok_before DESC LIMIT {MAX_IPS}"""  # noqa: S608  # fixed SQL text
 
-_CHANGE_KIND = """CASE
-    WHEN op IN ('new-inboxrule', 'set-inboxrule', 'updateinboxrules') THEN 'inbox'
-    WHEN op = 'set-mailbox' AND raw ILIKE '%Forwarding%' THEN 'inbox'
+# Mail rules and forwarding, one definition for the Dashboard and Microsoft 365 > Overview
+# (owner, 2026-10-31): on `op`, the operation name in lower case without a trailing
+# period. Exchange reports them only through the Management Activity API, so each record
+# is one change and is counted as one (the person-and-minute key would merge two rules
+# made in the same minute).
+MAIL_RULE_OPS = "('new-inboxrule', 'set-inboxrule', 'updateinboxrules')"
+
+
+def mail_rules(op: str = "op") -> str:
+    return f"{op} IN {MAIL_RULE_OPS}"
+
+
+def forwarding(op: str = "op") -> str:
+    return f"{op} = 'set-mailbox' AND raw ILIKE '%Forwarding%'"
+
+
+MAIL_RULES = mail_rules()
+FORWARDING = forwarding()
+_EXCHANGE = f"({MAIL_RULES} OR {FORWARDING})"
+
+_CHANGE_KIND = f"""CASE
+    WHEN {MAIL_RULES} THEN 'inbox'
+    WHEN {FORWARDING} THEN 'inbox'
     WHEN op IN ('add member to role', 'add eligible member to role') THEN 'role'
     WHEN op LIKE '%conditional access policy' THEN 'ca'
+  END"""
+# The key one change is counted by: D122's, except Exchange records (one each).
+_CHANGE_KEY = f"""CASE WHEN {_EXCHANGE} THEN event_id ELSE
+    coalesce(metadata_correlation_uid,
+             coalesce(lower(actor_user_name), '') || '|' || strftime(ts, '%Y-%m-%d %H:%M'))
   END"""
 _M365_AUDIT = "template_id IN ('m365_directory_audit', 'm365_management_activity')"
 
 # Risky Microsoft 365 changes, one row per operation (Graph and the Management Activity
 # API report some of the same ones; the correlation id, else person and minute, joins them).
 CHANGES_SQL = f"""
-WITH r AS (
-  SELECT {_TS} AS ts, lower(rtrim(trim(message), '.')) AS op, raw,
-         coalesce(metadata_correlation_uid,
-                  coalesce(lower(actor_user_name), '') || '|' || strftime({_TS}, '%Y-%m-%d %H:%M'))
-           AS k
+WITH r0 AS (
+  SELECT {_TS} AS ts, lower(rtrim(trim(message), '.')) AS op, raw, event_id,
+         metadata_correlation_uid, actor_user_name
   FROM events
   WHERE template_id IN ('m365_directory_audit', 'm365_management_activity')
 ),
+r AS (SELECT ts, op, raw, {_CHANGE_KEY} AS k FROM r0),
 c AS (
   SELECT ts, k, op, {_CHANGE_KIND} AS kind
   FROM r
@@ -383,14 +407,12 @@ def changes_drill(kind: str) -> str:
     """One row per change, as CHANGES_SQL counts them, with the events behind each."""
     # Fixed SQL text; the kind is a quoted literal and the page fills the bounds.
     return (
-        "WITH r AS (\n"  # noqa: S608
+        "WITH r0 AS (\n"  # noqa: S608
         f"  SELECT {_TS} AS ts, lower(rtrim(trim(message), '.')) AS op, raw,\n"
-        "         actor_user_name AS who, event_id,\n"
-        "         coalesce(metadata_correlation_uid,\n"
-        "                  coalesce(lower(actor_user_name), '') || '|'\n"
-        f"                    || strftime({_TS}, '%Y-%m-%d %H:%M'))\n"
-        "           AS k\n"
+        "         actor_user_name, event_id, metadata_correlation_uid\n"
         f"  FROM events\n  WHERE {_M365_AUDIT}\n),\n"
+        f"r AS (SELECT ts, op, raw, actor_user_name AS who, event_id, {_CHANGE_KEY} AS k"
+        " FROM r0),\n"
         f"c AS (SELECT *, {_CHANGE_KIND} AS kind FROM r)\n"
         "SELECT min(ts) AS time, any_value(who) AS person, op AS operation,"
         " list(event_id) AS event_ids\n"

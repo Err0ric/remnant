@@ -398,7 +398,7 @@ function Multiples({ title, series, buckets, window, mono, empty }: MultiplesPro
                         <div
                           key={buckets[i] ?? i}
                           title={`${bucketLabel(buckets[i] ?? "", window)}: ${n}`}
-                          className={cn("min-w-0 max-w-5 flex-1", n ? "bg-accent" : "bg-border")}
+                          className={cn("min-w-0 flex-1", n ? "bg-accent" : "bg-border")}
                           style={{
                             height: n ? `${Math.max(12, (n / Math.max(1, peak)) * 100)}%` : "1px",
                           }}
@@ -494,7 +494,13 @@ function Identity({ s }: { s: DashboardSections }) {
       context={id.outside ? "Successful sign-ins, by GeoIP of the address" : undefined}
       empty={<SetCountries />}
     />,
-    <Kpi key="i" label="Inbox rules and forwarding" kpi={id.inbox_rules} noun="changes" />,
+    <Kpi
+      key="i"
+      label="Inbox rules and forwarding"
+      kpi={id.inbox_rules}
+      noun="changes"
+      context="Microsoft 365 mail rules plus forwarding changes"
+    />,
     <Kpi
       key="c"
       label="App consents"

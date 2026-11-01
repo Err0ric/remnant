@@ -31,6 +31,8 @@ from app.search.dashboard import (
     _utc,
     bounds,
     changes_drill,
+    forwarding,
+    mail_rules,
     outside_where,
     trend_points,
 )
@@ -45,12 +47,9 @@ _ACTIVITY = "template_id = 'm365_management_activity'"
 # The counts row: Exchange, DLP, SharePoint, and Copilot operations come only from the
 # Management Activity API, so each record is one operation.
 COUNTS: list[tuple[str, str, str]] = [
-    (
-        "mail_rules",
-        "Mail rules",
-        f"{_OP} IN ('new-inboxrule', 'set-inboxrule', 'updateinboxrules')",
-    ),
-    ("forwarding", "Forwarding", f"{_OP} = 'set-mailbox' AND raw ILIKE '%Forwarding%'"),
+    # One definition with the Dashboard's "Inbox rules and forwarding" (the two added).
+    ("mail_rules", "Mail rules", mail_rules(_OP)),
+    ("forwarding", "Forwarding", forwarding(_OP)),
     ("dlp", "DLP matches", f"{_OP} = 'dlprulematch'"),
     ("downloads", "File downloads", f"{_OP} IN ('filedownloaded', 'filesyncdownloadedfull')"),
     (
@@ -70,6 +69,20 @@ SELECT count(*) FILTER (WHERE {TS} >= $start),
        count(*) FILTER (WHERE {TS} < $start AND severity_id >= 3)
 FROM events WHERE {SIGNIN}"""  # noqa: S608  # fixed SQL text
 
+# The person and the app with the most failed or interrupted sign-ins in each bucket.
+SPIKE_SQL = f"""
+WITH f AS (
+  SELECT date_trunc($unit, timezone('UTC', {TS})) AS b,
+         coalesce(nullif(lower(actor_user_name), ''), '(no user)') AS who,
+         coalesce(nullif(resource_name, ''), nullif(message, ''), 'Unknown app') AS app
+  FROM events WHERE {SIGNIN} AND status_id = 2 AND {TS} >= $start
+)
+SELECT b, 'user' AS kind, arg_max(who, n) AS top, max(n) AS n
+FROM (SELECT b, who, count(*) AS n FROM f GROUP BY 1, 2) GROUP BY 1
+UNION ALL
+SELECT b, 'app', arg_max(app, n), max(n)
+FROM (SELECT b, app, count(*) AS n FROM f GROUP BY 1, 2) GROUP BY 1"""  # noqa: S608  # fixed SQL text
+
 OUTCOME_SQL = f"""
 SELECT date_trunc($unit, timezone('UTC', {TS})) AS b,
        count(*) FILTER (WHERE status_id = 1),
@@ -78,10 +91,38 @@ SELECT date_trunc($unit, timezone('UTC', {TS})) AS b,
 FROM events WHERE {SIGNIN} AND {TS} >= $start
 GROUP BY 1"""  # noqa: S608  # fixed SQL text
 
+# Why a sign-in failed: the mapped reason, else Entra's own text in the record (events
+# stored before m365_signin 1.1.0 have no status_detail), and the error code beside it
+# (owner, 2026-10-31). "No reason given" only when the record has neither.
+REASON = (
+    "coalesce(nullif(status_detail, ''),"
+    " nullif(json_extract_string(raw, '$.status.failureReason'), ''))"
+)
+CODE = "TRY_CAST(json_extract_string(raw, '$.status.errorCode') AS INTEGER)"
+NO_REASON = "No reason given"
+
 REASONS_SQL = f"""
-SELECT coalesce(nullif(status_detail, ''), 'No reason given') AS reason, count(*) AS n
+SELECT {REASON} AS reason, {CODE} AS code, count(*) AS n
 FROM events WHERE {SIGNIN} AND {FAILED} AND {TS} >= $start
-GROUP BY 1 ORDER BY n DESC, reason LIMIT {TOP}"""  # noqa: S608  # fixed SQL text
+GROUP BY 1, 2 ORDER BY n DESC, reason NULLS LAST, code LIMIT {TOP}"""  # noqa: S608  # fixed SQL text
+
+
+def reason_label(reason: str | None, code: int | None) -> str:
+    """ "Invalid username or password. (50126)", "Error 50126", or "No reason given"."""
+    text = (reason or "").strip()
+    if text and code is not None:
+        return f"{text} ({code})"
+    if text:
+        return text
+    return f"Error {code}" if code is not None else NO_REASON
+
+
+def reason_where(reason: str | None, code: int | None) -> str:
+    """The Search condition for one reason row: the same reason and code."""
+    r = f"{REASON} = {drill.lit(reason)}" if reason else f"{REASON} IS NULL"
+    c = f"{CODE} = {int(code)}" if code is not None else f"{CODE} IS NULL"
+    return f"{r} AND {c}"
+
 
 APPS_SQL = f"""
 SELECT coalesce(nullif(resource_name, ''), nullif(message, ''), 'Unknown app') AS app,
@@ -165,6 +206,10 @@ class Outcome:
     drill_succeeded: str
     drill_interrupted: str
     drill_failed: str
+    # Per point, who and which app had the most failed or interrupted sign-ins, with the
+    # count ("erin@example.com (12)"), so a repeating spike reads from the tooltip.
+    top_user: list[str] = field(default_factory=list)
+    top_app: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -301,6 +346,11 @@ def overview(
         t = _utc(b)
         if t is not None and t in at:
             ok[at[t]], inter[at[t]], fail[at[t]] = int(s), int(i_), int(f)
+    top_user, top_app = [""] * len(points), [""] * len(points)
+    for b, kind, top, n in run(SPIKE_SQL, m365):
+        t = _utc(b)
+        if t is not None and t in at:
+            (top_user if kind == "user" else top_app)[at[t]] = f"{top} ({int(n)})"
     out.outcome = Outcome(
         points,
         ok,
@@ -309,20 +359,20 @@ def overview(
         drill.events(f"{SIGNIN} AND status_id = 1", SIGNIN_COLUMNS),
         drill.events(f"{SIGNIN} AND {INTERRUPTED}", SIGNIN_COLUMNS),
         drill.events(f"{SIGNIN} AND {FAILED}", SIGNIN_COLUMNS),
+        top_user,
+        top_app,
     )
     out.reasons = [
         Row(
-            str(r),
+            reason_label(r, code),
             int(n),
             kind="reason",
+            detail="" if code is None else str(code),
             drill=drill.events(
-                f"{SIGNIN} AND {FAILED}\n"
-                "  AND coalesce(nullif(status_detail, ''), 'No reason given')"
-                f" = {drill.lit(str(r))}",
-                SIGNIN_COLUMNS,
+                f"{SIGNIN} AND {FAILED}\n  AND {reason_where(r, code)}", SIGNIN_COLUMNS
             ),
         )
-        for r, n in run(REASONS_SQL, m365)
+        for r, code, n in run(REASONS_SQL, m365)
     ]
     out.apps = [
         Row(

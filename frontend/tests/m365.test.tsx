@@ -21,11 +21,11 @@ async function renderAt(path: string) {
 afterEach(() => vi.restoreAllMocks());
 
 describe("Microsoft 365 area (ADR-0038 section 5)", () => {
-  it("sits under Monitor and shows the Overview with every number openable", async () => {
+  it("sits under Connected apps and shows the Overview with every number openable", async () => {
     await renderAt("/m365");
     const overview = await screen.findByRole("region", { name: "Overview" });
-    const monitor = screen.getByRole("region", { name: "Monitor" });
-    expect(within(monitor).getAllByText("Microsoft 365")[0]).toBeVisible();
+    const apps = screen.getByRole("region", { name: "Connected apps" });
+    expect(within(apps).getAllByText("Microsoft 365")[0]).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Microsoft 365 tabs" })).toBeVisible();
     for (const card of document.querySelectorAll<HTMLElement>("[data-kpi]")) {
       if (/not set|Set approved countries/i.test(card.textContent ?? "")) continue;
@@ -50,5 +50,16 @@ describe("Microsoft 365 area (ADR-0038 section 5)", () => {
         .map(([, i]) => JSON.parse(String(i?.body)) as { sql: string; start?: string });
       expect(bodies.some((b) => b.sql.includes("2026-10-24T00:00:00+00:00") && b.start)).toBe(true);
     });
+  });
+
+  it("names the top user and app of each spike in the tooltip (owner 2026-10-31)", async () => {
+    await renderAt("/m365");
+    const outcomes = await screen.findByRole("region", { name: "Sign-in outcomes" });
+    const chart = within(outcomes).getByRole("img", { name: /^Interrupted and failed/ });
+    chart.focus();
+    await userEvent.keyboard("{Home}{ArrowRight}{ArrowRight}{ArrowRight}");
+    const tip = within(outcomes).getByRole("tooltip");
+    expect(tip).toHaveTextContent("Top user svc-backup@example.com (6)");
+    expect(tip).toHaveTextContent("Top app Office 365 Exchange Online (6)");
   });
 });

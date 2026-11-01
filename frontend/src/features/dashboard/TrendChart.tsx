@@ -28,6 +28,8 @@ interface TrendChartProps {
   height?: number;
   /** Opens a point's rows (ADR-0039): click, or Enter on the focused point. */
   onOpen?: (i: number) => void;
+  /** Extra lines for a point's tooltip ("Top user: erin@example.com (12)"). */
+  details?: (i: number) => { label: string; value: string }[];
 }
 
 const W = 1000; // viewBox width; the plot stretches to its box, strokes do not scale
@@ -112,6 +114,7 @@ export function TrendChart({
   legend,
   height = 140,
   onOpen,
+  details,
 }: TrendChartProps) {
   const n = Math.max(0, ...series.map((s) => s.values.length));
   const last = Math.min(n - 1, lastWithData ?? n - 1);
@@ -178,7 +181,13 @@ export function TrendChart({
       ? ""
       : `${pointLabel(at)}: ${rows.map((r) => (r.value === null ? r.label : `${r.label} ${r.value.toLocaleString()}`)).join(", ")}${
           stacked && at <= last ? `, total ${total.toLocaleString()}` : ""
-        }${previous && prev[at] !== undefined ? `, ${previous.label} ${prev[at].toLocaleString()}` : ""}`;
+        }${previous && prev[at] !== undefined ? `, ${previous.label} ${prev[at].toLocaleString()}` : ""}${
+          details
+            ? details(at)
+                .map((d) => `, ${d.label} ${d.value}`)
+                .join("")
+            : ""
+        }`;
   const mid = Math.floor((n - 1) / 2);
 
   return (
@@ -340,6 +349,14 @@ export function TrendChart({
                       ) : null}
                     </div>
                   ))}
+                  {details
+                    ? details(at).map((d) => (
+                        <div key={d.label} className="flex gap-2 whitespace-nowrap">
+                          <span className="text-text-secondary">{d.label}</span>
+                          <span className="ml-auto pl-3 font-mono">{d.value}</span>
+                        </div>
+                      ))
+                    : null}
                   {stacked && at <= last ? (
                     <div className="flex gap-2 whitespace-nowrap border-t border-border pt-0.5">
                       <span className="text-text-secondary">Total</span>

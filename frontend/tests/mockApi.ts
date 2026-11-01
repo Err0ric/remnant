@@ -1603,6 +1603,8 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
           drill_succeeded: q,
           drill_interrupted: q,
           drill_failed: q,
+          top_user: ["", "", "", "svc-backup@example.com (6)", "", "", ""],
+          top_app: ["", "", "", "Office 365 Exchange Online (6)", "", "", ""],
         },
         reasons: [
           {

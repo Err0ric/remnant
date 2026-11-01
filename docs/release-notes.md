@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Rail, Dashboard, and Microsoft 365 fixes (owner feedback, 2026-10-31)
+
+- **Rail**: groups are now Monitor, Investigate, AI, Connected apps (Microsoft 365; future connectors go here), and System. Connected apps and System start folded the first time; every group remembers open or closed in this browser. Hovering a folded group shows its pages in a menu. Each area's sub-pages fold too (the arrow at the end of its row); Alerts starts folded, since its row shows the open count, and opens its pages on hover. Rows are a little tighter, so the rail fits a 1920x1080 screen without scrolling in its default state.
+- **Dashboard, Failures by host**: the per-day bars span the row again (the 20 px bar limit no longer applies to these rows).
+- **Microsoft 365, Failure reasons**: a failed sign-in stored without a reason column (events from before `m365_signin` 1.1.0) now takes Entra's own text from the record, and the error code shows beside it ("Invalid username or password. (50126)", or "Error 50053" when only the code is known). "No reason given" means the record has neither. Each row still opens exactly those sign-ins.
+- **Mail rules**: one definition for both pages. The Dashboard's "Inbox rules and forwarding" is Microsoft 365's Mail rules plus Forwarding, and says so. Each Exchange record is one change, so two rules made by one person in the same minute now count as two on the Dashboard (they were counted once, which is why it showed fewer).
+- **Interrupted and failed chart**: the tooltip names the person and the app with the most failed or interrupted sign-ins at that hour or day, so a repeating spike (a stale password on a scheduled job) reads without clicking.
+- What changes for existing installs: nothing to do. The Dashboard's inbox rule count may go up to match Microsoft 365 > Overview.
+
 ### CLI and TUI follow on the live stream (ADR-0036 part 3)
 
 - `remnant tail -f` and the TUI tail pane now read the server's live stream instead of polling. They share Live's limits and audit: each counts toward your 2 live searches, stops at the live time limit with a message, and writes one start and one stop audit row instead of one per poll.

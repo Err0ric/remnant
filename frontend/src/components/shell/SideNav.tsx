@@ -1,4 +1,4 @@
-import { useState, type MouseEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from "react";
 import {
   Activity,
   Bell,
@@ -39,13 +39,36 @@ interface SideNavProps {
 }
 
 const COLLAPSED_KEY = "app.rail.collapsed";
+// Groups whose folded-by-default state was already applied in this browser, so a group
+// that starts folded (Connected apps, System) does so once, and the viewer's own choice
+// holds from then on.
+const DEFAULTS_KEY = "app.rail.defaults";
+
+function strings(raw: string | null): string[] {
+  const v: unknown = JSON.parse(raw ?? "[]");
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+}
+
+/** Areas whose sub-pages start folded (owner, 2026-10-31): Alerts shows its open count on
+ * its own row, so its pages can stay out of the way. Stored as "area:<id>". */
+const FOLDED_AREAS = ["alerts"];
 
 function readCollapsed(): string[] {
+  const folded = [
+    ...RAIL_GROUPS.filter((g) => g.collapsedByDefault).map((g) => g.id),
+    ...FOLDED_AREAS.map((a) => `area:${a}`),
+  ];
   try {
-    const v: unknown = JSON.parse(window.localStorage.getItem(COLLAPSED_KEY) ?? "[]");
-    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+    const collapsed = strings(window.localStorage.getItem(COLLAPSED_KEY));
+    const applied = strings(window.localStorage.getItem(DEFAULTS_KEY));
+    const fresh = folded.filter((id) => !applied.includes(id));
+    if (!fresh.length) return collapsed;
+    const next = [...new Set([...collapsed, ...fresh])];
+    window.localStorage.setItem(DEFAULTS_KEY, JSON.stringify([...applied, ...fresh]));
+    window.localStorage.setItem(COLLAPSED_KEY, JSON.stringify(next));
+    return next;
   } catch {
-    return [];
+    return folded;
   }
 }
 
@@ -65,10 +88,10 @@ function go(page: PageId | undefined, tab?: string) {
   };
 }
 
-/** A page row: 34px, 15px semibold; the current page on the accent tint. */
+/** A page row: 32px, 15px; the current page on the accent tint. */
 function pageClass(current: boolean): string {
   return cn(
-    "flex min-h-[34px] items-center gap-2.5 rounded px-2.5 text-md no-underline",
+    "flex min-h-[32px] items-center gap-2.5 rounded px-2.5 text-md no-underline",
     current
       ? "bg-accent-subtle text-accent-text"
       : "text-text-secondary hover:bg-surface-head hover:text-text",
@@ -151,10 +174,11 @@ function rowsOf(
   });
 }
 
-/** The main rail (ADR-0038 edit 10): four collapsible groups, every page with its
- * sub-pages listed under it, the current one highlighted. Each group's open or closed state
- * is remembered in this browser. Between 768 and 1100px the rail shows icons, and a page's
- * sub-pages open on hover or focus. */
+/** The main rail (ADR-0038 edit 10, owner 2026-10-31): five collapsible groups, every page
+ * with its sub-pages listed under it, the current one highlighted. Connected apps and
+ * System start folded; each group's open or closed state is remembered in this browser. A
+ * folded group shows its pages in a flyout on hover or focus. Between 768 and 1100px the
+ * rail shows icons, and a page's sub-pages open on hover or focus. */
 export function SideNav({ active, activeTab, isAdmin, canAudit, open = false }: SideNavProps) {
   const [collapsed, setCollapsed] = useState(readCollapsed);
   const settings = visibleSettings(isAdmin, canAudit);
@@ -164,7 +188,39 @@ export function SideNav({ active, activeTab, isAdmin, canAudit, open = false }: 
   const inSettings = SETTINGS_IDS.has(active);
   const place = areaOf(active as PageId, activeTab);
 
+  // A folded group's pages, in one flyout beside its header. Fixed, so the rail's own
+  // scrolling never clips it.
+  const [fly, setFly] = useState<{ id: string; top: number; left: number } | null>(null);
+  const closing = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(closing.current), []);
+  const keep = () => window.clearTimeout(closing.current);
+  // Keep the flyout on screen: a group near the bottom opens upwards as far as needed.
+  const flyBox = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = flyBox.current;
+    if (!fly || !el) return;
+    const room = window.innerHeight - 8;
+    const h = el.getBoundingClientRect().height;
+    if (fly.top + h > room) {
+      const top = Math.max(8, room - h);
+      if (top !== fly.top) setFly({ ...fly, top });
+    }
+  }, [fly]);
+  const leave = () => {
+    keep();
+    closing.current = window.setTimeout(() => setFly(null), 150);
+  };
+  const showGroup = (id: string, el: HTMLElement) => {
+    keep();
+    if (!collapsed.includes(id)) return;
+    if (id.startsWith("area:") && !(window.matchMedia?.("(min-width: 1100px)").matches ?? true))
+      return; // the icon rail has its own menu per area
+    const r = el.getBoundingClientRect();
+    setFly({ id, top: r.top, left: r.right });
+  };
+
   const toggle = (id: string) => {
+    setFly(null);
     const next = collapsed.includes(id) ? collapsed.filter((x) => x !== id) : [...collapsed, id];
     setCollapsed(next);
     writeCollapsed(next);
@@ -181,7 +237,7 @@ export function SideNav({ active, activeTab, isAdmin, canAudit, open = false }: 
               onClick={go(t.page, t.tab)}
               aria-current={current ? "page" : undefined}
               className={cn(
-                "flex min-h-[30px] items-center whitespace-nowrap rounded px-2.5 text-base no-underline",
+                "flex min-h-[26px] items-center whitespace-nowrap rounded px-2.5 text-base no-underline",
                 current
                   ? "bg-accent-subtle font-semibold text-accent-text"
                   : "text-text-secondary hover:bg-surface-head hover:text-text",
@@ -223,6 +279,13 @@ export function SideNav({ active, activeTab, isAdmin, canAudit, open = false }: 
             {/* Group headers show with labels: on phones and from 1100px. */}
             <button
               type="button"
+              onMouseEnter={(e) => showGroup(group.id, e.currentTarget)}
+              onMouseLeave={leave}
+              onFocus={(e) => showGroup(group.id, e.currentTarget)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setFly(null);
+              }}
+              aria-haspopup={shut ? "true" : undefined}
               onClick={() => toggle(group.id)}
               aria-expanded={!shut}
               aria-label={`${group.label} group`}
@@ -243,31 +306,61 @@ export function SideNav({ active, activeTab, isAdmin, canAudit, open = false }: 
             <ul id={listId} className={cn("mt-0.5", shut && "hidden md:block min-[1100px]:hidden")}>
               {rows.map((row) => {
                 const Icon = row.icon;
+                const areaKey = `area:${row.key}`;
+                const areaShut = row.subs.length > 0 && collapsed.includes(areaKey);
                 return (
-                  <li key={row.key} className="group relative">
+                  <li
+                    key={row.key}
+                    className="group relative"
+                    onMouseEnter={(e) => areaShut && showGroup(areaKey, e.currentTarget)}
+                    onMouseLeave={areaShut ? leave : undefined}
+                  >
                     <a
                       href={pathFor(row.to.page, row.to.tab)}
                       onClick={go(row.to.page, row.to.tab)}
                       aria-current={row.current ? (row.subs.length ? "true" : "page") : undefined}
                       title={row.label}
-                      className={
+                      className={cn(
+                        row.subs.length && "min-[1100px]:pr-8",
                         row.subs.length && row.current
                           ? // The sub-page carries the highlight; the icon rail shows it here.
                             cn(
                               pageClass(false),
                               "text-text md:bg-accent-subtle md:text-accent-text min-[1100px]:bg-transparent min-[1100px]:text-text",
                             )
-                          : pageClass(row.current)
-                      }
+                          : pageClass(row.current),
+                      )}
                     >
                       <Icon size={18} aria-hidden className="shrink-0" />
                       <span className="md:sr-only min-[1100px]:not-sr-only">{row.label}</span>
                       {row.alerts ? <OpenAlerts /> : null}
                     </a>
+                    {row.subs.length ? (
+                      // Fold an area's sub-pages (labelled rail only); remembered like groups.
+                      <button
+                        type="button"
+                        onClick={() => toggle(areaKey)}
+                        aria-expanded={!areaShut}
+                        aria-label={`${row.label} sub-pages`}
+                        className="absolute right-1 top-1.5 hidden size-5 items-center justify-center rounded text-text-muted hover:text-text min-[1100px]:flex"
+                      >
+                        <ChevronDown
+                          size={14}
+                          aria-hidden
+                          className={cn(
+                            "transition-transform motion-reduce:transition-none",
+                            areaShut && "-rotate-90",
+                          )}
+                        />
+                      </button>
+                    ) : null}
                     {row.subs.length
                       ? subList(
                           row,
-                          "mb-1 ml-[19px] mt-0.5 border-l border-border pl-2 md:hidden min-[1100px]:block",
+                          cn(
+                            "mb-1 ml-[19px] mt-0.5 border-l border-border pl-2 md:hidden",
+                            !areaShut && "min-[1100px]:block",
+                          ),
                           `${row.label} pages`,
                         )
                       : null}
@@ -302,6 +395,71 @@ export function SideNav({ active, activeTab, isAdmin, canAudit, open = false }: 
           </section>
         );
       })}
+      {fly ? groupFlyout() : null}
     </nav>
   );
+
+  function groupFlyout() {
+    if (!fly) return null;
+    const area = fly.id.startsWith("area:") ? AREAS.find((a) => `area:${a.id}` === fly.id) : null;
+    const group = area
+      ? { id: fly.id, label: area.label, areas: [area.id], settings: false, flatten: false }
+      : RAIL_GROUPS.find((g) => g.id === fly.id);
+    if (!group) return null;
+    const areas = group.areas
+      .map((id) => AREAS.find((a) => a.id === id))
+      .filter((a): a is Area => Boolean(a));
+    const rows = rowsOf(areas, Boolean(group.flatten), isAdmin, place);
+    return (
+      <div
+        ref={flyBox}
+        role="presentation"
+        onMouseEnter={keep}
+        onMouseLeave={leave}
+        onClick={() => setFly(null)}
+        style={{ top: fly.top, left: fly.left }}
+        className="fixed z-50 hidden pl-2 min-[1100px]:block"
+      >
+        <div
+          aria-label={`${group.label} pages`}
+          className="min-w-48 rounded-card border border-border bg-surface p-1.5 shadow-lg"
+        >
+          {area ? null : (
+            <div className="px-2.5 py-1 text-sm font-semibold text-text-muted">{group.label}</div>
+          )}
+          <ul>
+            {rows.map((row) => (
+              <li key={row.key}>
+                <a
+                  href={pathFor(row.to.page, row.to.tab)}
+                  onClick={go(row.to.page, row.to.tab)}
+                  className={pageClass(row.current && !row.subs.length)}
+                >
+                  {row.label}
+                </a>
+                {row.subs.length
+                  ? subList(
+                      row,
+                      "ml-2.5 border-l border-border pl-2",
+                      `${row.label} pages, ${group.label} menu`,
+                    )
+                  : null}
+              </li>
+            ))}
+            {group.settings && firstSetting ? (
+              <li>
+                <a
+                  href={pathFor(firstSetting)}
+                  onClick={go(firstSetting)}
+                  className={pageClass(inSettings)}
+                >
+                  Settings
+                </a>
+              </li>
+            ) : null}
+          </ul>
+        </div>
+      </div>
+    );
+  }
 }

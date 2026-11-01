@@ -403,6 +403,9 @@ export interface M365Overview {
     drill_succeeded: string;
     drill_interrupted: string;
     drill_failed: string;
+    /** Per point, the person and app with the most failed or interrupted sign-ins. */
+    top_user?: string[];
+    top_app?: string[];
   } | null;
   reasons: SectionRow[];
   outside_top: SectionRow[];

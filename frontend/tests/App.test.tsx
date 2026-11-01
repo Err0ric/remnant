@@ -50,16 +50,16 @@ describe("App shell", () => {
   it("uses plain, grouped navigation labels", async () => {
     await renderApp();
     const nav = screen.getByRole("navigation", { name: "Primary" });
-    // Four groups (ADR-0038 edit 10); Investigate lists its pages as rows.
+    // Five groups (owner 2026-10-31); Investigate lists its pages as rows.
     const groups = within(nav)
       .getAllByRole("region")
       .map((g) => g.getAttribute("aria-label"));
-    expect(groups).toEqual(["Monitor", "Investigate", "AI", "System"]);
+    expect(groups).toEqual(["Monitor", "Investigate", "AI", "Connected apps", "System"]);
     const rows = (name: string) =>
       Array.from(within(within(nav).getByRole("region", { name })).getAllByRole("listitem"))
         .filter((li) => li.parentElement?.id === `rail-${name.toLowerCase()}`)
         .map((li) => li.querySelector("a")?.textContent);
-    expect(rows("Monitor")).toEqual(["Dashboard", "Alerts", "Microsoft 365"]);
+    expect(rows("Monitor")).toEqual(["Dashboard", "Alerts"]);
     expect(rows("Investigate")).toEqual(["Search", "People & devices", "Saved searches"]);
     expect(rows("AI")).toEqual(["AI usage", "Agents"]);
     expect(rows("System")).toEqual(["Health", "Settings"]);
@@ -85,22 +85,56 @@ describe("App shell", () => {
 
   it("lists every page's sub-pages and folds groups, remembered (ADR-0038 edit 10)", async () => {
     window.localStorage.removeItem("app.rail.collapsed");
+    window.localStorage.removeItem("app.rail.defaults");
     await renderApp();
     const nav = screen.getByRole("navigation", { name: "Primary" });
-    // Every page with sub-pages lists them, not only the open one.
-    const health = within(nav).getByRole("list", { name: "Health pages" });
-    expect(within(health).getByRole("link", { name: "Endpoint agents" })).toBeInTheDocument();
-    const alerts = within(nav).getByRole("list", { name: "Alerts pages" });
-    expect(within(alerts).getByRole("link", { name: "Rules" })).toHaveAttribute(
+    // Every page with sub-pages lists them, not only the open one; Alerts starts folded
+    // (its row shows the open count) and opens its pages on hover.
+    const fold = within(nav).getByRole("button", { name: "Alerts sub-pages" });
+    expect(fold).toHaveAttribute("aria-expanded", "false");
+    expect(within(nav).getByRole("list", { name: "Alerts pages" })).not.toHaveClass(
+      "min-[1100px]:block",
+    );
+    await userEvent.hover(within(nav).getByRole("link", { name: /^Alerts/ }));
+    const flyout = await screen.findByRole("list", { name: "Alerts pages, Alerts menu" });
+    expect(within(flyout).getByRole("link", { name: "Rules" })).toHaveAttribute(
       "href",
       "/alerts/rules",
     );
-    const fold = within(nav).getByRole("button", { name: "System group" });
-    expect(fold).toHaveAttribute("aria-expanded", "true");
     await userEvent.click(fold);
-    expect(fold).toHaveAttribute("aria-expanded", "false");
-    expect(window.localStorage.getItem("app.rail.collapsed")).toBe('["system"]');
+    expect(fold).toHaveAttribute("aria-expanded", "true");
+    expect(within(nav).getByRole("list", { name: "Alerts pages" })).toHaveClass(
+      "min-[1100px]:block",
+    );
+    expect(within(nav).getByRole("list", { name: "Agents pages" })).toHaveTextContent(
+      "OverviewSessionsToolsMCP serversAccounts",
+    );
+    // Connected apps and System start folded, once; then the viewer's choice holds.
+    const connected = within(nav).getByRole("button", { name: "Connected apps group" });
+    const system = within(nav).getByRole("button", { name: "System group" });
+    expect(connected).toHaveAttribute("aria-expanded", "false");
+    expect(system).toHaveAttribute("aria-expanded", "false");
+    // A folded group shows its pages on hover.
+    await userEvent.hover(connected);
+    const menu = await screen.findByRole("list", {
+      name: "Microsoft 365 pages, Connected apps menu",
+    });
+    expect(menu).toHaveTextContent("OverviewSign-insMailAppsAdmin");
+    await userEvent.click(within(menu).getByRole("link", { name: "Sign-ins" }));
+    expect(window.location.pathname).toBe("/m365/sign-ins");
+    await userEvent.click(system);
+    expect(system).toHaveAttribute("aria-expanded", "true");
+    expect(JSON.parse(window.localStorage.getItem("app.rail.collapsed") ?? "[]")).toEqual([
+      "connected",
+    ]);
+    // Reloading keeps it: the default is applied once.
+    expect(JSON.parse(window.localStorage.getItem("app.rail.defaults") ?? "[]")).toEqual([
+      "connected",
+      "system",
+      "area:alerts",
+    ]);
     window.localStorage.removeItem("app.rail.collapsed");
+    window.localStorage.removeItem("app.rail.defaults");
   });
 
   it("shows the install name only when an admin set one", async () => {

@@ -153,9 +153,10 @@ export const AREAS: Area[] = [
   },
 ];
 
-/** Groups of the rail (ADR-0038 edit 10). Each lists areas by id; Settings is the last
- * row of System and keeps its own sub-nav on its pages. Microsoft 365 joins Monitor with
- * its area (part 3). */
+/** Groups of the rail (ADR-0038 edit 10, reordered by the owner 2026-10-31): Monitor,
+ * Investigate, AI, Connected apps (one area per connected service: Microsoft 365 now, Okta,
+ * Google Workspace, and CloudTrail later), and System. Each lists areas by id; Settings is
+ * the last row of System and keeps its own sub-nav. */
 export interface RailGroup {
   id: string;
   label: string;
@@ -163,13 +164,16 @@ export interface RailGroup {
   /** The group is one area: its tabs are the rows (Investigate). */
   flatten?: boolean;
   settings?: boolean;
+  /** Folded until the viewer opens it (remembered per browser like the others). */
+  collapsedByDefault?: boolean;
 }
 
 export const RAIL_GROUPS: RailGroup[] = [
-  { id: "monitor", label: "Monitor", areas: ["dashboard", "alerts", "m365"] },
+  { id: "monitor", label: "Monitor", areas: ["dashboard", "alerts"] },
   { id: "investigate", label: "Investigate", areas: ["investigate"], flatten: true },
   { id: "ai", label: "AI", areas: ["ai", "agents"] },
-  { id: "system", label: "System", areas: ["health"], settings: true },
+  { id: "connected", label: "Connected apps", areas: ["m365"], collapsedByDefault: true },
+  { id: "system", label: "System", areas: ["health"], settings: true, collapsedByDefault: true },
 ];
 
 /** The group an area sits in. */

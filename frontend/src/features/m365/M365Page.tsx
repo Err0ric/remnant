@@ -348,6 +348,12 @@ function Outcome({ m }: { m: M365Overview }) {
             { key: "f", label: "Failed", values: o.failed, color: "warn" },
           ]}
           pointLabel={name}
+          details={(i) =>
+            [
+              { label: "Top user", value: o.top_user?.[i] ?? "" },
+              { label: "Top app", value: o.top_app?.[i] ?? "" },
+            ].filter((d) => d.value)
+          }
           axisLabel={(i) => (m.window === "24h" ? hourFmt(at(i)) : dayFmt(at(i)))}
           summary={`Interrupted and failed sign-ins per ${hourly ? "hour" : "day"}: ${sum(
             o.interrupted,
