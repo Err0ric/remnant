@@ -26,6 +26,7 @@ from app.ai.watch_summary import source_classes
 from app.ai.watch_summary import summary as watch_summary
 from app.alerts.items import AlertItem, AlertItems
 from app.api.access import AdminUser, CurrentUser, client_ip, require_role
+from app.api.cache import PageCache, scope_key
 from app.api.dashboard_sections import HistoryOut, KpiOut
 from app.auth.service import AuthService
 from app.auth.users import User
@@ -152,7 +153,21 @@ async def ai_usage(
     may read; with a start, also what is new and what is no longer seen against the
     period of the same length before it. Audited ai.view."""
     usage: Usage = request.app.state.ai_usage
+    # Down to the minute, so a reload within a minute is the same question: kept 60 s,
+    # cleared by any change in the app (owner, 2026-10-31).
+    start = start.replace(second=0, microsecond=0) if start else None
+    end = end.replace(second=0, microsecond=0) if end else None
     scope = await _scope(request, user, start, end)
+    cache: PageCache = request.app.state.page_cache
+    key = ("ai_usage", scope_key(scope.sources), start, end)
+    hit = cache.get(key)
+    if hit is not None:
+        out, read = hit
+        await run_in_threadpool(
+            _audit(request).audit.write, "ai.view", "success", user.user_id, client_ip(request),
+            {"sources_in_scope": read, "cached": True},
+        )  # fmt: skip
+        return out  # type: ignore[no-any-return]  # a UsageOut this route stored
     ident = await run_in_threadpool(request.app.state.identities.load)
     # The independent reads at once: a page load waits for the slowest, not the sum.
     (found, sources), mcp, people, (pending, of) = await asyncio.gather(
@@ -183,7 +198,7 @@ async def ai_usage(
         client_ip(request),
         {"sources_in_scope": sources},
     )
-    return UsageOut(
+    result = UsageOut(
         services=[_use_out(u) for u in services],
         non_usage=[_use_out(u) for u in other],
         mcp=[McpUseOut(**_slots(m)) for m in mcp],
@@ -196,6 +211,8 @@ async def ai_usage(
         people_pending_days=pending,
         people_days=of,
     )
+    cache.put(key, (result, sources))
+    return result
 
 
 def _use_out(u: ServiceUse) -> ServiceUseOut:
@@ -281,13 +298,28 @@ class WatchSummaryOut(BaseModel):
 
 @router.get("/ai/watch/summary")
 async def ai_watch_summary(
-    request: Request, user: CurrentUser, days: Annotated[int, Query(ge=1, le=30)] = 7
+    request: Request,
+    user: CurrentUser,
+    days: Annotated[int, Query(ge=1, le=30)] = 7,
+    tz: Annotated[str, Query(max_length=64)] = "UTC",
 ) -> WatchSummaryOut:
     """AI Watch (ADR-0035 rows 10, 12, 13): five cards against the period before, AI use
     over 30 days by review status, and the top services, all on the caller's view.
     Audited ai.view."""
     meta: MetaDB = request.app.state.meta
     allowed = await run_in_threadpool(permitted_sources, meta, user)
+    # Kept 60 s per viewer, window, and zone; any change made in the app (a review, a
+    # closed alert) clears it, so a decision shows at once (owner, 2026-10-31).
+    cache: PageCache = request.app.state.page_cache
+    key = ("ai_watch", user.user_id, scope_key(allowed), days, tz)
+    hit = cache.get(key)
+    if hit is not None:
+        out, read = hit
+        await run_in_threadpool(
+            _audit(request).audit.write, "ai.view", "success", user.user_id, client_ip(request),
+            {"sources_in_scope": read, "view": "watch", "cached": True},
+        )  # fmt: skip
+        return out  # type: ignore[no-any-return]  # a WatchSummaryOut this route stored
     items_store: AlertItems = request.app.state.alert_items
     ai_items = [
         i
@@ -312,6 +344,7 @@ async def ai_watch_summary(
         kinds,
         request.app.state.ai_watch.now(),
         days,
+        tz,
     )
     now = request.app.state.ai_watch.now()
     pending, of = await run_in_threadpool(
@@ -326,7 +359,7 @@ async def ai_watch_summary(
         client_ip(request),
         {"sources_in_scope": s.sources, "view": "watch"},
     )
-    return WatchSummaryOut(
+    result = WatchSummaryOut(
         days=s.days,
         start=s.start,
         end=s.end,
@@ -342,6 +375,8 @@ async def ai_watch_summary(
         people_pending_days=pending,
         people_days=of,
     )
+    cache.put(key, (result, s.sources))
+    return result
 
 
 @router.get("/ai/catalog")

@@ -36,7 +36,8 @@ def pinned_templates(sql: str, params: Mapping[str, Any] | None = None) -> set[s
     """The template ids the query can only match, or None when unknown: the engine leaves
     out sources whose files hold none of them, so a Microsoft 365 query is said to read
     Microsoft 365 sources only (owner, 2026-10-31)."""
-    return _pinned(sql, params, "template_id")
+    found = _pinned(sql, params, "template_id")
+    return found if found is not None else pinned_templates_each(sql, params)
 
 
 def _pinned(sql: str, params: Mapping[str, Any] | None, column: str) -> set[str] | None:
@@ -61,7 +62,13 @@ def _pinned(sql: str, params: Mapping[str, Any] | None, column: str) -> set[str]
     if len(events) != 1 or len(list(tree.find_all(exp.Table))) != 1:
         return None
     names = {"events", events[0].alias_or_name.lower()}
-    where = tree.args.get("where")
+    return _where_pins(tree.args.get("where"), names, column, params)
+
+
+def _where_pins(
+    where: exp.Expression | None, names: set[str], column: str, params: Mapping[str, Any] | None
+) -> set[str] | None:
+    """The values a WHERE provably limits `column` to, or None."""
     if where is None:
         return None
     conjuncts = list(where.this.flatten()) if isinstance(where.this, exp.And) else [where.this]
@@ -83,7 +90,7 @@ def _pinned(sql: str, params: Mapping[str, Any] | None, column: str) -> set[str]
         if values is None:
             continue
         if any(v is None for v in values):
-            return None  # a source filter we cannot read: do not guess
+            return None  # a filter we cannot read: do not guess
         found = {v for v in values if v is not None}
         pinned = found if pinned is None else pinned & found
     # Any other mention of the column in the WHERE (inside an OR, a function, a CASE):
@@ -92,6 +99,36 @@ def _pinned(sql: str, params: Mapping[str, Any] | None, column: str) -> set[str]
         if _is_col(col, names, column) and id(col) not in used:
             return None
     return pinned
+
+
+def pinned_templates_each(sql: str, params: Mapping[str, Any] | None = None) -> set[str] | None:
+    """Templates for queries with CTEs, subqueries, and set operations (owner, 2026-10-31:
+    "4 sources" on a Microsoft 365 CTE query): every read of `events` must be the only
+    table of its own SELECT (no join) and pin `template_id` there; the union of those
+    pins is every template the query can see. Anything else: None."""
+    try:
+        tree = sqlglot.parse_one(sql, read="duckdb")
+    except sqlglot.errors.ParseError:
+        return None
+    if any(c.alias_or_name.lower() == "events" for c in tree.find_all(exp.CTE)):
+        return None  # a CTE named events would hide the table
+    reads = [t for t in tree.find_all(exp.Table) if t.name.lower() == "events"]
+    if not reads:
+        return None
+    out: set[str] = set()
+    for table in reads:
+        sel = table.find_ancestor(exp.Select)
+        if sel is None or sel.args.get("joins"):
+            return None
+        source = sel.args.get("from_") or sel.args.get("from")
+        if source is None or source.this is not table:
+            return None
+        names = {"events", table.alias_or_name.lower()}
+        pins = _where_pins(sel.args.get("where"), names, "template_id", params)
+        if pins is None:
+            return None
+        out |= pins
+    return out
 
 
 def _is_col(col: exp.Column, table_names: set[str], column: str) -> bool:

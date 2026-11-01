@@ -7,9 +7,12 @@ is still audited."""
 from __future__ import annotations
 
 import threading
-from collections.abc import Hashable
+from collections.abc import Awaitable, Callable, Hashable
 from time import monotonic
 from typing import Any
+
+from starlette.requests import Request
+from starlette.responses import Response
 
 TTL_S = 60.0
 MAX_ENTRIES = 256
@@ -43,3 +46,23 @@ class PageCache:
 
 def scope_key(allowed: list[str] | None) -> tuple[str, ...] | None:
     return None if allowed is None else tuple(sorted(allowed))
+
+
+WRITES = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+def clear_on_change(
+    cache: PageCache,
+) -> Callable[[Request, Callable[[Request], Awaitable[Response]]], Awaitable[Response]]:
+    """Middleware: a successful change anywhere (a review, a closed alert, a setting)
+    empties the cache, so the next page shows it; reads keep their 60 s."""
+
+    async def middleware(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        response = await call_next(request)
+        if request.method in WRITES and response.status_code < 400:
+            cache.clear()
+        return response
+
+    return middleware

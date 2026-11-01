@@ -34,8 +34,13 @@ def test_cgroup_v1_quota(tmp_path: Path) -> None:
 
 
 def test_automatic_and_configured_values() -> None:
+    # Automatic: queries at once up to the cores (2 to 4), threads so all of them use
+    # about twice the cores, not four times (owner, 2026-10-31).
     auto = query_threads(0, 0, cpus=2)
-    assert (auto.per_query, auto.at_once) == (2, 4)
+    assert (auto.per_query, auto.at_once) == (2, 2)
+    four = query_threads(0, 0, cpus=4)
+    assert (four.per_query, four.at_once) == (2, 4)
+    assert query_threads(0, 0, cpus=1).per_query == 1
     assert query_threads(0, 0, cpus=32).per_query == 4
     set_ = query_threads(1, 2, cpus=32)
     assert (set_.per_query, set_.at_once) == (1, 2)

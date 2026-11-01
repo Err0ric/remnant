@@ -160,6 +160,7 @@ def test_new_in_24_hours_knows_use_older_than_the_window(lab: dict[str, Any]) ->
     before = {n["id"] for n in a.get("/api/ai/watch/summary").json()["new"]}
     assert "gemini" in before  # not seen in the window, and no index yet
     lab["rollup"].run()
+    app.state.page_cache.clear()  # the summary is kept 60 s (D135); the index is new
     summary = a.get("/api/ai/watch/summary").json()
     assert "gemini" not in {n["id"] for n in summary["new"]}
     # Top services show when a service was first seen at all, not the start of the window.

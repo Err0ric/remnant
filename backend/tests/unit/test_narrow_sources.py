@@ -140,3 +140,36 @@ def test_a_template_filter_reads_only_sources_holding_it(tmp_path: Path) -> None
     assert both.rows == [[2]] and both.sources == ["fw2", "m365"]
     none = engine.run("SELECT count(*) FROM events WHERE template_id = 'nothing'", QueryScope(None))
     assert none.rows == [[0]] and none.sources == []
+
+
+@pytest.mark.parametrize(
+    ("sql", "expected"),
+    [
+        (
+            "WITH r AS (SELECT * FROM events WHERE template_id IN ('a','b')) SELECT * FROM r",
+            {"a", "b"},
+        ),
+        (
+            "SELECT * FROM events WHERE template_id = 'a'"
+            " UNION ALL SELECT * FROM events WHERE template_id = 'b'",
+            {"a", "b"},
+        ),
+        # Not provable: every source.
+        ("SELECT * FROM events WHERE template_id = 'a' UNION ALL SELECT * FROM events", None),
+        (
+            "WITH r AS (SELECT * FROM events e JOIN events f ON e.raw = f.raw"
+            " WHERE e.template_id = 'a') SELECT * FROM r",
+            None,
+        ),
+        ("WITH r AS (SELECT * FROM events WHERE template_id = 'a' OR 1=1) SELECT * FROM r", None),
+        (
+            "WITH events AS (SELECT 1 AS template_id) SELECT * FROM events WHERE template_id = 'a'",
+            None,
+        ),
+    ],
+)
+def test_templates_pinned_through_ctes_and_unions(sql: str, expected: set[str] | None) -> None:
+    """Owner 2026-10-31: a CTE over Microsoft 365 records said "4 sources"."""
+    from app.engine.narrow import pinned_templates
+
+    assert pinned_templates(sql) == expected

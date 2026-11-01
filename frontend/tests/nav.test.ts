@@ -21,3 +21,13 @@ describe("Areas (ADR-0038)", () => {
     expect(areaOf("agents", "mcp")?.tab.label).toBe("MCP servers");
   });
 });
+
+describe("/ai/watch (owner, 2026-10-31)", () => {
+  it("opens AI usage > Settings, where AI Watch is set up", async () => {
+    const { canonical, pageFromPath } = await import("@/lib/route");
+    expect(pageFromPath("/ai/watch")).toBe("ai");
+    window.history.replaceState(null, "", "/ai/watch");
+    expect(canonical()).toBe("/ai/settings");
+    window.history.replaceState(null, "", "/");
+  });
+});

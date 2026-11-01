@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Faster pages, round 2 (owner timings on 4 vCPU, 2026-10-31)
+
+- **Attacks and access** reads a daily rollup of failed sign-ins and VPN logins, like Identity: on the test lake it went from about 2 s to 0.3 s alone.
+- **Today so far**: every 5 minutes the server keeps today's Dashboard and Microsoft 365 facts up to a minute ago; pages read only the last few minutes from events. Microsoft 365 > 24 hours is no longer slower than 30 days.
+- **Queries share the cores**: by default as many queries run at once as there are cores (2 to 4), each with fewer threads, so the three Dashboard sections loading together no longer slow each other down. `server.query_threads` and `server.max_concurrent_queries` still override.
+- **AI Watch** (Dashboard) and **AI usage** are kept for 60 seconds like the Dashboard sections. Any change you make in the app, such as a review, a closed alert, or a setting, clears every kept page, so it shows at once.
+- AI Watch counts days in your time zone.
+- `/ai/watch` opens AI usage > Settings, where AI Watch is set up (it used to fall through to Health).
+- Search names only the sources a query can read also when the query uses `WITH` or `UNION` and every part filters `template_id`.
+- What changes for existing installs: nothing to do. The new auth rollup builds after the next lake compaction (`data/rollup/auth`, safe to delete). On a 4-core server, queries now default to 4 at once with 2 threads each (was 4 with 4).
+
 ### People and pages (owner walkthrough, 2026-10-31)
 
 - **One person, one row**: the top bar search merges the forms of a name that are the same person (short name, `DOMAIN\user`, organization email, and aliases set on Settings > Identities) and lists the others ("also robin, CORP\robin").

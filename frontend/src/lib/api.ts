@@ -2456,7 +2456,8 @@ export const api = {
   setAiMcpRule: (pattern: string, status: "approved" | "not_approved" | null) =>
     request<AiMcpRule[]>("/api/ai/mcp-rules", put({ pattern, status })),
   aiWatch: () => request<AiWatch>("/api/ai/watch"),
-  aiWatchSummary: (days: number) => request<AiWatchSummary>(`/api/ai/watch/summary?days=${days}`),
+  aiWatchSummary: (days: number) =>
+    request<AiWatchSummary>(`/api/ai/watch/summary?days=${days}&tz=${viewerZone()}`),
   setAiWatch: (
     body: Pick<AiWatch, "enabled" | "include_unreviewed" | "sensitive" | "target_ids">,
   ) => request<AiWatch>("/api/ai/watch", put(body)),

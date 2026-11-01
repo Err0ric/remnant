@@ -108,6 +108,9 @@ function parse(pathname: string, hash: string): Place {
     return { page: exact, tab: legacyHashTab(exact) };
   }
   if (LEGACY[path]) return { page: LEGACY[path], tab: "" };
+  // AI Watch's settings (which services and signals it watches) are on AI usage >
+  // Settings; `/ai/watch` was never a page but reads like one (owner, 2026-10-31).
+  if (path === "/ai/watch") return { page: "ai", tab: "settings" };
   for (const id of Object.keys(PAGE_TABS) as PageId[]) {
     const base = PATHS[id];
     if (path.startsWith(`${base}/`)) {

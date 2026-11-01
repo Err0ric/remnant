@@ -35,6 +35,7 @@ from app.search.dashboard import (
     _utc,
     bounds,
     changes_drill,
+    fact_run,
     outside_where,
     trend_points,
     zone,
@@ -181,6 +182,18 @@ FACTS: dict[str, str] = {
         last_t="max(ts)",
     )
     + _SIGNIN_FROM,
+    # Counts only, per hour, outcome, and risk: the totals, outcome chart, and trend, which
+    # would otherwise read every person and address.
+    "signin_n": "SELECT "
+    + _cols(
+        kind="'signin_n'",
+        source_id="source_id",
+        t="date_trunc('hour', ts)",
+        outcome=_OUTCOME_EXPR,
+        risky="coalesce(severity_id >= 3, false)",
+        n="count(*)",
+    )
+    + _SIGNIN_FROM,
     "signin_app": "SELECT "
     + _cols(
         kind="'signin_app'",
@@ -234,7 +247,8 @@ FACTS: dict[str, str] = {
     + _MAILRULE_FROM,
     "first": "SELECT "
     + _cols(kind="'first'", source_id="source_id", t=f"min({TS})", n="count(*)")
-    + "\nFROM events GROUP BY source_id",
+    # Per hour, so a range that starts mid-day keeps exactly the hours in it.
+    + f"\nFROM events GROUP BY source_id, date_trunc('hour', {TS})",
 }
 # A closed day's rollup: every kind at once.
 BUILD_SQL = "\nUNION ALL\n".join(f"({sql.strip()})" for sql in FACTS.values())
@@ -250,6 +264,7 @@ def facts(kind: str, rollup: bool) -> str:
     return (
         f"({live})\nUNION ALL\nSELECT {FACT_COLUMNS} FROM m365_rollup\n"
         f"WHERE kind = '{kind}' AND list_contains($covered, source_id || '|' || day)"
+        " AND t >= $fact_lo AND t <= $fact_hi"
     )
 
 
@@ -344,10 +359,10 @@ GROUP BY 1 ORDER BY n DESC, who LIMIT {TOP}"""  # noqa: S608  # fixed SQL text
 # Overview query -> (fact kind, body).
 QUERIES: dict[str, tuple[str, str]] = {
     "first": ("first", _FIRST),
-    "signins": ("signin", _SIGNIN_TOTALS),
+    "signins": ("signin_n", _SIGNIN_TOTALS),
     "spike_user": ("signin", _SPIKE.format(x="coalesce(nullif(lower(who), ''), '(no user)')")),
     "spike_app": ("signin_app", _SPIKE.format(x="app")),
-    "outcome": ("signin", _OUTCOME),
+    "outcome": ("signin_n", _OUTCOME),
     "reasons": ("signin_app", _REASONS),
     "apps": ("signin_app", _APPS),
     "outside": ("signin", _OUTSIDE),
@@ -355,7 +370,7 @@ QUERIES: dict[str, tuple[str, str]] = {
     "changes": ("change", _CHANGES),
     "consents": ("consent", _CONSENTS),
     "mail": ("mailrule", _MAIL),
-    "failed_trend": ("signin", _FAILED_TREND),
+    "failed_trend": ("signin_n", _FAILED_TREND),
     "top_failing": ("signin", _TOP_FAILING),
     "ok_by_ip": ("signin", _OK_BY_IP),
 }
@@ -495,6 +510,8 @@ def consents_list() -> str:
 class Covers(Protocol):
     def covered(self, scope: QueryScope) -> list[str]: ...
 
+    def today(self, scope: QueryScope) -> tuple[list[str], list[str], datetime] | None: ...
+
 
 def source_ids(sources: list[tuple[str, str, str | None]]) -> list[str]:
     """Microsoft 365 sources: a connector, or a source whose template is one of its."""
@@ -528,21 +545,12 @@ def overview(
     if not m365:
         return out
     unit, points = trend_points(window, now, tz)
-    scope = QueryScope(sources=m365, start=before, end=now)
-    covered = rollup.covered(scope) if rollup is not None else []
-    r = bool(covered)
-    run = _Run(
+    base = _Run(
         engine,
         QueryScope(sources=None, start=before, end=now),
-        {
-            "start": start,
-            "unit": unit,
-            "tz": zone(tz).key,
-            "approved": list(approved),
-            "covered": covered,
-        },
-        skip_days=covered,
+        {"start": start, "unit": unit, "tz": zone(tz).key, "approved": list(approved)},
     )
+    run, r = fact_run(base, m365, rollup)
     got = run_facts(run, m365, [n for n in OVERVIEW if n != "outside" or approved], r)
     first = {str(s): t for s, at in got["first"] if (t := _utc(at)) is not None}
     out.history = _history(first, m365, start, before)

@@ -42,7 +42,7 @@ DAY_FILES = "part-*.parquet"  # under each day=<date> folder
 INTEL_TABLES = ALLOWED_TABLES | {"threat_intel"}
 # The daily AI rollup (ADR-0035 Part 1): server-built queries only. Users, saved searches,
 # Ask, and MCP never see this table; `run(..., rollup=True)` is not reachable from them.
-ROLLUP_TABLES = ALLOWED_TABLES | {"ai_rollup", "ai_ident", "m365_rollup"}
+ROLLUP_TABLES = ALLOWED_TABLES | {"ai_rollup", "ai_ident", "m365_rollup", "auth_rollup"}
 ROLLUP_FILES = "day=*/part-*.parquet"  # under rollup/ai/source=<id> and rollup/m365/source=<id>
 # Who or which machine had an address, per closed day (`app.search.addresses.IDENT_RAW`,
 # reduced): the address lookup reads closed days from here, never from events.
@@ -61,6 +61,10 @@ M365_ROLLUP_COLUMNS = (
     "kind VARCHAR, source_id VARCHAR, t TIMESTAMPTZ, outcome VARCHAR, risky BOOLEAN,"
     " who VARCHAR, app VARCHAR, ip VARCHAR, reason VARCHAR, code INTEGER, op VARCHAR,"
     " k VARCHAR, sub VARCHAR, status INTEGER, n BIGINT, last_t TIMESTAMPTZ, day VARCHAR"
+)
+AUTH_ROLLUP_COLUMNS = (
+    "kind VARCHAR, source_id VARCHAR, t TIMESTAMPTZ, ip VARCHAR, host VARCHAR, n BIGINT,"
+    " day VARCHAR"
 )
 INTEL_COLUMNS = (
     "indicator VARCHAR, type VARCHAR, feed VARCHAR, threat VARCHAR,"
@@ -115,10 +119,14 @@ class QueryEngine:
     ) -> None:
         self._lake = lake_dir
         self._rollup = rollup_dir
-        self._m365_rollup = m365_rollup_dir
+        # Fact rollups by table (ADR-0041): folder and columns, server-built queries only.
+        self._facts: dict[str, tuple[Path | None, str]] = {
+            "m365_rollup": (m365_rollup_dir, M365_ROLLUP_COLUMNS)
+        }
         self._columns_cache: dict[tuple[str, int], frozenset[str]] = {}
         # Per lake file: its version and template_id ranges per row group (None: unknown).
         self._tpl_cache: dict[Path, tuple[int, list[tuple[str, str]] | None]] = {}
+        self._time_cache: dict[Path, tuple[int, datetime | None]] = {}
         # Where a query spills when it needs more than its memory share (F46). DuckDB's
         # default is ".tmp" in the working directory, which a read-only container or a
         # sandboxed service cannot write: the query then fails instead of spilling.
@@ -151,12 +159,17 @@ class QueryEngine:
         rollup: bool = False,
         skip_days: Collection[str] = (),
         name: str = "query",
+        after: tuple[Collection[str], datetime] | None = None,
+        upto: datetime | None = None,
     ) -> QueryResult:
         """Run guarded SQL. `params` are bound by the driver ($name), never formatted in.
         `row_cap` lowers both the implicit and the maximum LIMIT (Ask previews use 5), and
         `timeout_s` can only shorten the configured timeout. `skip_days` ("source|day")
         leaves those day folders out of `events` (the AI rollup has them, F63); `name` is
-        what a memory error reports, for the log."""
+        what a memory error reports, for the log. `after` (sources, cutoff): of those
+        sources, `events` keeps only rows observed after the cutoff (today's earlier rows are
+        in a fact rollup's partial day, D135); `upto`: only rows observed by then (building
+        that partial day)."""
         limit_s = min(self._timeout_s, timeout_s) if timeout_s else self._timeout_s
         default = min(self._default_limit, row_cap) if row_cap else self._default_limit
         cap = min(self._max_limit, row_cap) if row_cap else self._max_limit
@@ -174,8 +187,9 @@ class QueryEngine:
             scope = replace(scope, sources=self._holding(scope, templates, skip_days))
         with self._slot(limit_s):
             return self._execute(
-                guarded, scope, params, intel, limit_s, cap, rollup, frozenset(skip_days), name
-            )
+                guarded, scope, params, intel, limit_s, cap, rollup, frozenset(skip_days), name,
+                after, upto,
+            )  # fmt: skip
 
     def _execute(
         self,
@@ -188,8 +202,10 @@ class QueryEngine:
         rollup: bool = False,
         skip: frozenset[str] = frozenset(),
         name: str = "query",
+        after: tuple[Collection[str], datetime] | None = None,
+        upto: datetime | None = None,
     ) -> QueryResult:
-        con = self._connect(scope, intel=intel, rollup=rollup, skip=skip)
+        con = self._connect(scope, intel=intel, rollup=rollup, skip=skip, after=after, upto=upto)
         timer = threading.Timer(limit_s, con.interrupt)
         started = time.perf_counter()
         try:
@@ -325,6 +341,51 @@ class QueryEngine:
             return True
         return any(lo <= t <= hi for lo, hi in hit[1] for t in templates)
 
+    def first_times(self, scope: QueryScope) -> dict[str, datetime]:
+        """Each source in scope -> when its data starts, from the Parquet statistics of its
+        earliest day folder in range (no rows read), never before the scope's start. The
+        lower of `time` and `time_observed` per row group, so it is never later than the
+        first event."""
+        out: dict[str, datetime] = {}
+        for source, day in self.first_days(scope).items():
+            folder = self._lake / f"source={source}" / f"day={day}"
+            lows = [t for f in sorted(folder.glob(DAY_FILES)) if (t := self._time_min(f))]
+            if not lows:
+                continue
+            first = min(lows)
+            if scope.start is not None:
+                first = max(first, scope.start.astimezone(UTC))
+            out[source] = first
+        return out
+
+    def _time_min(self, path: Path) -> datetime | None:
+        try:
+            stamp = path.stat().st_mtime_ns
+        except OSError:
+            return None
+        hit = self._time_cache.get(path)
+        if hit is not None and hit[0] == stamp:
+            return hit[1]
+        low: datetime | None = None
+        try:
+            meta = pq.read_metadata(path)
+            names = meta.schema.names
+            for col in ("time", "time_observed"):
+                if col not in names:
+                    continue
+                i = names.index(col)
+                for g in range(meta.num_row_groups):
+                    st = meta.row_group(g).column(i).statistics
+                    if st is not None and st.has_min_max and isinstance(st.min, datetime):
+                        v = st.min if st.min.tzinfo else st.min.replace(tzinfo=UTC)
+                        low = v if low is None or v < low else low
+        except (OSError, ValueError, pa.ArrowException):
+            low = None
+        if len(self._time_cache) > 50_000:
+            self._time_cache.clear()
+        self._time_cache[path] = (stamp, low)
+        return low
+
     def first_days(self, scope: QueryScope) -> dict[str, str]:
         """Each source in scope -> its earliest day folder with files, inside the range."""
         first = scope.start.astimezone(UTC).date().isoformat() if scope.start else ""
@@ -340,11 +401,21 @@ class QueryEngine:
                 out[d.name.removeprefix("source=")] = days[0]
         return out
 
-    def rollup_dirs(self, scope: QueryScope, m365: bool = False) -> list[Path]:
+    def add_rollup(self, table: str, folder: Path, columns: str) -> None:
+        """A fact rollup readable as `table` by server-built queries (rollup=True)."""
+        if table not in ROLLUP_TABLES:
+            raise ValueError(f"not a rollup table: {table}")
+        self._facts[table] = (folder, columns)
+
+    def rollup_dirs(
+        self, scope: QueryScope, m365: bool = False, table: str | None = None
+    ) -> list[Path]:
         """Rollup folders of the sources in scope: the same scope as `events`, so the rollup
-        never shows a source the caller may not read (ADR-0035 row 4). `m365`: the
-        Microsoft 365 rollup's (ADR-0041) instead of the AI rollup's."""
-        root = self._m365_rollup if m365 else self._rollup
+        never shows a source the caller may not read (ADR-0035 row 4). `table`: a fact
+        rollup's (`m365`: the Microsoft 365 one) instead of the AI rollup's."""
+        if m365:
+            table = "m365_rollup"
+        root = self._facts.get(table, (None, ""))[0] if table else self._rollup
         if root is None or not root.is_dir():
             return []
         dirs = sorted(d for d in root.glob("source=*") if d.is_dir())
@@ -400,6 +471,8 @@ class QueryEngine:
         intel: bool = False,
         rollup: bool = False,
         skip: frozenset[str] = frozenset(),
+        after: tuple[Collection[str], datetime] | None = None,
+        upto: datetime | None = None,
     ) -> duckdb.DuckDBPyConnection:
         dirs = self._source_dirs(scope)
         # Threads and memory at creation: connecting with the defaults first starts one
@@ -431,7 +504,21 @@ class QueryEngine:
         else:
             con.execute(duckdb_create_table_sql("_empty_events"))
             base = "_empty_events"
-        con.execute(f"CREATE VIEW events AS SELECT * FROM {base}{_time_filter(scope)}")  # noqa: S608  # built from escaped server paths and datetime literals only
+        where = _time_filter(scope)
+        if after is not None and after[0]:
+            listed = ", ".join(_sql_str(x) for x in sorted(after[0]))
+            # Only the cutoff's own day (its folder) is in the partial build.
+            day0 = after[1].astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+            cut = (
+                f"(NOT (list_contains([{listed}], source_id)"
+                f" AND coalesce(time, time_observed) >= {_ts(day0)})"
+                f" OR time_observed > {_ts(after[1])})"
+            )
+            where = f"{where} AND {cut}" if where else f" WHERE {cut}"
+        if upto is not None:
+            cut = f"time_observed <= {_ts(upto)}"
+            where = f"{where} AND {cut}" if where else f" WHERE {cut}"
+        con.execute(f"CREATE VIEW events AS SELECT * FROM {base}{where}")  # noqa: S608  # built from escaped server paths and datetime literals only
         readable = [d.resolve() for d in dirs]
         if rollup:
             rdirs = self.rollup_dirs(scope)
@@ -471,16 +558,17 @@ class QueryEngine:
                 )
             else:
                 con.execute(f"CREATE TABLE ai_ident ({IDENT_COLUMNS})")
-            mdirs = self.rollup_dirs(scope, m365=True)
-            if mdirs:
-                globs = ", ".join(_sql_str(str(d / ROLLUP_FILES)) for d in mdirs)
-                con.execute(
-                    "CREATE VIEW m365_rollup AS SELECT * FROM"  # noqa: S608  # escaped server paths only
-                    f" read_parquet([{globs}], hive_partitioning = false)"
-                )
-                readable += [d.resolve() for d in mdirs]
-            else:
-                con.execute(f"CREATE TABLE m365_rollup ({M365_ROLLUP_COLUMNS})")
+            for table, (_folder, columns) in self._facts.items():
+                mdirs = self.rollup_dirs(scope, table=table)
+                if mdirs:
+                    globs = ", ".join(_sql_str(str(d / ROLLUP_FILES)) for d in mdirs)
+                    con.execute(
+                        f"CREATE VIEW {table} AS SELECT * FROM"  # noqa: S608  # fixed table names, escaped server paths
+                        f" read_parquet([{globs}], hive_partitioning = false)"
+                    )
+                    readable += [d.resolve() for d in mdirs]
+                else:
+                    con.execute(f"CREATE TABLE {table} ({columns})")
         if intel:
             if self._intel is not None and self._intel.is_file():
                 con.execute(

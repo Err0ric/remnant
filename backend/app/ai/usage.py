@@ -278,7 +278,7 @@ def daily_sql(pairs: list[tuple[str, str]], rollup: bool = False) -> str:
     count never adds people and devices together (owner, 2026-10-22)."""
     return f"""
 WITH {_use_ctes(pairs, rollup)}
-SELECT service_id, who, machine, CAST(t AS DATE) AS day,
+SELECT service_id, who, machine, CAST(timezone($tz, t) AS DATE) AS day,
        sum(n)::BIGINT AS events, max(last_t) AS last_seen, min(first_t) AS first_seen
 FROM r
 GROUP BY 1, 2, 3, 4
@@ -403,7 +403,13 @@ class Usage:
                 )
         return out, result.sources
 
-    def _run_use(self, build: Any, scope: QueryScope, name: str = "ai_use") -> Any:
+    def _run_use(
+        self,
+        build: Any,
+        scope: QueryScope,
+        name: str = "ai_use",
+        params: dict[str, Any] | None = None,
+    ) -> Any:
         """Run a use query, reading closed days from the rollup for ranges of 2 days or
         more when it has them (ADR-0035 row 8). A range with a start and no end (the AI
         usage page sends only a start) uses the rollup's closed days too, and still reads
@@ -420,15 +426,16 @@ class Usage:
             return self._engine.run(
                 build(self._catalog.domain_table(), rollup=True),
                 scope,
-                {"covered": covered},
+                {"covered": covered, **(params or {})},
                 timeout_s=TIMEOUT_S,
                 rollup=True,
                 skip_days=covered,
                 name=name,
             )
         return self._engine.run(
-            build(self._catalog.domain_table()), scope, timeout_s=TIMEOUT_S, name=name
-        )
+            build(self._catalog.domain_table()), scope, params or None, timeout_s=TIMEOUT_S,
+            name=name,
+        )  # fmt: skip
 
     def people_pending(self, scope: QueryScope) -> tuple[int, int]:
         """(days still being re-checked for who had an address, days read from the rollup)
@@ -454,10 +461,10 @@ class Usage:
         """(server name, sources, people, devices without a person, devices with one)."""
         return list(self._engine.run(REVIEW_MCP_SQL, scope, timeout_s=TIMEOUT_S).rows)
 
-    def daily(self, scope: QueryScope) -> tuple[list[list[Any]], list[str]]:
+    def daily(self, scope: QueryScope, tz: str = "UTC") -> tuple[list[list[Any]], list[str]]:
         """(service id, person, machine, day, events, last seen, first seen) rows, and the
-        sources read."""
-        result = self._run_use(daily_sql, scope, "ai_use.daily")
+        sources read. Days are the viewer's (`tz`)."""
+        result = self._run_use(daily_sql, scope, "ai_use.daily", {"tz": tz})
         return result.rows, result.sources
 
     def changes(

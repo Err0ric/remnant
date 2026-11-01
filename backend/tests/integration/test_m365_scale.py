@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from app.engine.duckdb import M365_ROLLUP_COLUMNS
 from app.enrich.networks import Places
 from app.search.m365 import overview, to_dict
 from app.search.m365_rollup import M365Rollup
@@ -34,7 +35,7 @@ def _run(tmp_path: Path, signins: int, activity: int) -> tuple[float, float]:
     now = datetime.now(UTC)
     write_m365(engine._lake, signins, activity, days=61, end=now)
     root = tmp_path / "rollup-m365"
-    engine._m365_rollup = root
+    engine.add_rollup("m365_rollup", root, M365_ROLLUP_COLUMNS)
     rollup = M365Rollup(engine, engine._lake, root, lambda: ["m365"], max_days_per_run=100)
     live_s, live = _timed(engine, now, None)
     report = rollup.run()

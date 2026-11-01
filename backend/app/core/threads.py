@@ -73,10 +73,13 @@ class QueryThreads:
 def query_threads(threads: int, max_queries: int, cpus: int | None = None) -> QueryThreads:
     """Configured values, or automatic ones (0) from the usable CPUs."""
     cpus = usable_cpus() if cpus is None else cpus
-    return QueryThreads(
-        per_query=threads or min(AUTO_MAX_THREADS, cpus),
-        at_once=max_queries or AUTO_MAX_QUERIES,
-    )
+    # Automatic: as many queries at once as there are cores (at most 4), and threads per
+    # query so all of them together use about twice the cores. A page sends several
+    # queries at once; more threads than that only make them wait on each other (owner,
+    # 2026-10-31: three Dashboard sections in parallel were each slower on 4 vCPU).
+    at_once = max_queries or max(2, min(AUTO_MAX_QUERIES, cpus))
+    per_query = threads or max(1, min(AUTO_MAX_THREADS, cpus // at_once * 2))
+    return QueryThreads(per_query=per_query, at_once=at_once)
 
 
 def cap_allocator_arenas(arenas: int = 4) -> str:

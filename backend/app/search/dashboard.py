@@ -11,11 +11,12 @@ GeoIP (ADR-0023); "external" and "outside approved countries" use the install's 
 from __future__ import annotations
 
 import ipaddress
+import re
 import threading
 from collections import Counter, defaultdict
 from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -52,17 +53,6 @@ _WHO = "nullif(trim(actor_user_name), '')"
 _HOST = "coalesce(nullif(device_hostname, ''), nullif(dst_endpoint_hostname, ''))"
 
 
-# Per address: successful and failed sign-ins now, successful before. Countries are looked
-# up in Python, busiest addresses first.
-SIGNIN_BY_IP_SQL = f"""
-SELECT src_endpoint_ip AS ip,
-       count(*) FILTER (WHERE {_TS} >= $start AND status_id = 1) AS ok_now,
-       count(*) FILTER (WHERE {_TS} < $start AND status_id = 1) AS ok_before
-FROM events
-WHERE list_contains($templates, template_id) AND activity_id IS DISTINCT FROM 2
-  AND nullif(src_endpoint_ip, '') IS NOT NULL
-GROUP BY 1 ORDER BY ok_now + ok_before DESC LIMIT {MAX_IPS}"""  # noqa: S608  # fixed SQL text
-
 # Mail rules and forwarding, one definition for the Dashboard and Microsoft 365 > Overview
 # (owner, 2026-10-31): on `op`, the operation name in lower case without a trailing
 # period. Exchange reports them only through the Management Activity API, so each record
@@ -97,32 +87,11 @@ _CHANGE_KEY = f"""CASE WHEN {_EXCHANGE} THEN event_id ELSE
 _M365_AUDIT = "template_id IN ('m365_directory_audit', 'm365_management_activity')"
 
 
-# Authentication failures outside Microsoft 365 (SSH, Windows, VPN, and the rest), per
-# address; "external" is decided in Python from the internal networks.
-AUTH_FAIL_BY_IP_SQL = f"""
-SELECT src_endpoint_ip AS ip,
-       count(*) FILTER (WHERE {_TS} >= $start) AS now,
-       count(*) FILTER (WHERE {_TS} < $start) AS before
-FROM events
-WHERE class_uid = 3002 AND status_id = 2 AND template_id NOT LIKE 'm365_%'
-  AND nullif(src_endpoint_ip, '') IS NOT NULL
-GROUP BY 1 ORDER BY now + before DESC LIMIT {MAX_IPS}"""  # noqa: S608  # fixed SQL text
-
-AUTH_FAIL_BY_HOST_SQL = f"""
-SELECT coalesce({_HOST}, '(no host)') AS host, {_BUCKET} AS b, count(*) FROM events
-WHERE class_uid = 3002 AND status_id = 2 AND template_id NOT LIKE 'm365_%'
-  AND {_TS} >= $start AND list_contains($ips, src_endpoint_ip)
-GROUP BY 1, 2"""  # noqa: S608  # fixed SQL text
-
 # The first event of each source back to the start of the window before: a source that
 # started inside it cannot be compared with it.
 FIRST_EVENT_SQL = f"""
 SELECT source_id, min({_TS}) FROM events GROUP BY 1"""  # noqa: S608  # fixed SQL text
 
-AUTH_FAIL_SOURCES_SQL = f"""
-SELECT DISTINCT source_id FROM events
-WHERE class_uid = 3002 AND status_id = 2 AND template_id NOT LIKE 'm365_%'
-  AND {_TS} >= $start AND list_contains($ips, src_endpoint_ip)"""  # noqa: S608  # fixed SQL text
 
 INVOLVED_SQL = f"""
 SELECT event_id, {_WHO} AS who, {_HOST} AS host FROM events
@@ -252,6 +221,21 @@ def bounds(
     return start, before, buckets
 
 
+def fact_run(run: _Run, sources: list[str], rollup: Any) -> tuple[_Run, bool]:
+    """A run over a fact rollup's days for `sources`: closed days wholly in range, and
+    today's rows observed by its cutoff (D135); the rest from events. The flag says
+    whether any rollup day is read."""
+    scope = QueryScope(sources, run.scope.start, run.scope.end)
+    covered = rollup.covered(scope) if rollup is not None else []
+    part = rollup.today(scope) if rollup is not None else None
+    keys = covered + (part[0] if part else [])
+    lo = run.scope.start or datetime(1970, 1, 1, tzinfo=UTC)
+    hi = run.scope.end or datetime.now(UTC)
+    params = {**run.params, "covered": keys, "fact_lo": lo, "fact_hi": hi}
+    after = (part[1], part[2]) if part else None
+    return _Run(run.engine, run.scope, params, covered, after), bool(keys)
+
+
 def zone(tz: str) -> ZoneInfo:
     """The viewer's IANA time zone; UTC when it is not one."""
     try:
@@ -344,36 +328,45 @@ class _Run:
         scope: QueryScope,
         params: dict[str, Any],
         skip_days: list[str] | None = None,
+        after: tuple[list[str], datetime] | None = None,
     ) -> None:
         self.engine, self.scope, self.params = engine, scope, params
-        # Days read from the Microsoft 365 rollup (ADR-0041), left out of `events`.
+        # Days read from a fact rollup (ADR-0041), left out of `events`; and sources whose
+        # rows observed by a cutoff today come from the rollup too (D135).
         self.skip = skip_days or []
+        self.after = after
         self.read: set[str] = set()
         self._lock = threading.Lock()  # runs may come from several threads
 
     def events(self, sql: str, sources: list[str]) -> list[list[Any]]:
         """Run on events for every day in scope, rollup days included."""
-        return self._go(sql, sources, [], {})
+        return self._go(sql, sources, [], {}, fresh=True)
 
     def __call__(self, sql: str, sources: list[str], **extra: Any) -> list[list[Any]]:
         return self._go(sql, sources, self.skip, extra)
 
     def _go(
-        self, sql: str, sources: list[str], skip: list[str], extra: dict[str, Any]
+        self,
+        sql: str,
+        sources: list[str],
+        skip: list[str],
+        extra: dict[str, Any],
+        fresh: bool = False,
     ) -> list[list[Any]]:
         if not sources:
             return []
         scope = QueryScope(sources=sources, start=self.scope.start, end=self.scope.end)
         # DuckDB takes exactly the parameters a statement names.
-        params = {k: v for k, v in {**self.params, **extra}.items() if f"${k}" in sql}
+        params = {k: v for k, v in {**self.params, **extra}.items() if re.search(rf"\${k}\b", sql)}
         res = self.engine.run(
             sql,
             scope,
             params,
             timeout_s=TIMEOUT_S,
-            rollup=bool(skip),
+            rollup=bool(skip) or (self.after is not None and not fresh),
             skip_days=skip,
             name="dashboard",
+            after=None if fresh else self.after,
         )
         with self._lock:
             self.read |= set(res.sources)
@@ -449,13 +442,12 @@ def _identity(
 
     unit, points = trend_points(window, now, tz)
     start, before, _ = bounds(window, now, tz)
-    covered = rollup.covered(QueryScope(m365, before, now)) if rollup is not None else []
-    params = {**run.params, "tz": zone(tz).key, "covered": covered}
-    frun = _Run(run.engine, run.scope, params, covered)
+    frun, use = fact_run(run, m365, rollup)
+    frun.params["tz"] = zone(tz).key
     names = ["signins", "failed_trend", "top_failing", "changes", "consents", "mail"]
     if places.approved_countries:
         names.append("ok_by_ip")
-    got = facts.run_facts(frun, m365, names, bool(covered), unit=unit)
+    got = facts.run_facts(frun, m365, names, use, unit=unit)
     with run._lock:
         run.read |= frun.read
     total, _, failed, failed_before, _, _ = (got["signins"] or [[0] * 6])[0]
@@ -520,9 +512,38 @@ def _attacks(
     first: dict[str, datetime],
     start: datetime,
     before: datetime,
+    rollup: Any = None,
 ) -> Attacks | None:
+    """From the auth facts (D135): closed days from the auth rollup when it has them,
+    the rest from events."""
+    from app.search import auth_facts
+
+    frun, r = fact_run(run, auth + vpn, rollup)
+
+    def fact(name: str, sources: list[str], **extra: Any) -> list[list[Any]]:
+        return frun(auth_facts.query(name, r), sources, **extra)
+
     nets: list[Network] = places.networks()
-    rows = [r for r in run(AUTH_FAIL_BY_IP_SQL, auth) if not is_internal(str(r[0]), nets)]
+    try:
+        return _attacks_on(fact, auth, vpn, places, geo, buckets, first, start, before, nets)
+    finally:
+        with run._lock:
+            run.read |= frun.read
+
+
+def _attacks_on(
+    fact: Callable[..., list[list[Any]]],
+    auth: list[str],
+    vpn: list[str],
+    places: Places,
+    geo: Lookup,
+    buckets: list[datetime],
+    first: dict[str, datetime],
+    start: datetime,
+    before: datetime,
+    nets: list[Network],
+) -> Attacks | None:
+    rows = [r for r in fact("fail_by_ip", auth) if not is_internal(str(r[0]), nets)]
     if not rows:
         return None
     now_ips = [str(r[0]) for r in rows if int(r[1])]
@@ -536,7 +557,7 @@ def _attacks(
         countries = Kpi(len(c_now), len(c_before)) if have_geo else None
     hosts: dict[str, list[int]] = defaultdict(lambda: [0] * len(buckets))
     at = {b: i for i, b in enumerate(buckets)}
-    for host, b, n in run(AUTH_FAIL_BY_HOST_SQL, auth, ips=now_ips):
+    for host, b, n in fact("fail_by_host", auth, ips=now_ips):
         t = _utc(b)
         if t is not None and t in at:
             hosts[str(host)][at[t]] += int(n)
@@ -555,10 +576,10 @@ def _attacks(
         g[0] += 1
         g[1] += int(now)
     top = sorted(groups.items(), key=lambda kv: (-kv[1][1], kv[0]))[:TOP]
-    counted = {str(r[0]) for r in run(AUTH_FAIL_SOURCES_SQL, auth, ips=now_ips)}
+    counted = {str(r[0]) for r in fact("fail_sources", auth, ips=now_ips)}
     vpn_outside = None
     if vpn and places.approved_countries:
-        logins = run(SIGNIN_BY_IP_SQL, vpn, templates=list(VPN_TEMPLATES))
+        logins = fact("vpn_by_ip", vpn)
         vpn_outside, _ = _outside(logins, geo, set(places.approved_countries))
     if countries is not None:
         countries.drill = drill.grouped(EXTERNAL_FAILURE, "ip_country(src_endpoint_ip)", "country")
@@ -749,24 +770,13 @@ PARTS = ("identity", "attacks", "detections")
 
 
 def first_events(run: _Run, sources: list[str]) -> dict[str, datetime]:
-    """Each source's first event in scope, reading only its earliest day folder in scope
-    (the lake files events by their day), not every day."""
-    days = run.engine.first_days(QueryScope(sources, run.scope.start, run.scope.end))
-    by_day: dict[str, list[str]] = defaultdict(list)
-    for sid, day in days.items():
-        by_day[day].append(sid)
-    out: dict[str, datetime] = {}
-    for day, sids in by_day.items():
-        begins = datetime.combine(date.fromisoformat(day), time(0), UTC)
-        lo = max(begins, run.scope.start) if run.scope.start else begins
-        hi = min(begins + timedelta(days=1), run.scope.end) if run.scope.end else None
-        res = run.engine.run(
-            FIRST_EVENT_SQL, QueryScope(sids, lo, hi), timeout_s=TIMEOUT_S, name="dashboard"
-        )
-        with run._lock:
-            run.read |= set(res.sources)
-        out |= {str(sid): t for sid, at in res.rows if (t := _utc(at)) is not None}
-    return out
+    """When each source's data starts in scope, from file statistics (no rows read):
+    only "did it start inside the window before" depends on it."""
+    scope = QueryScope(sources, run.scope.start, run.scope.end)
+    found = run.engine.first_times(scope)
+    with run._lock:
+        run.read |= set(found)
+    return found
 
 
 def sections(
@@ -781,6 +791,7 @@ def sections(
     m365_rollup: Any = None,
     parts: Collection[str] = PARTS,
     tz: str = "UTC",
+    auth_rollup: Any = None,
 ) -> Sections:
     """The sections for the caller (`parts`: any of identity, attacks, detections; each
     loads on its own). `sources` is the install's (id, kind, template); only those the
@@ -809,7 +820,9 @@ def sections(
     if m365 and "identity" in parts:
         out.identity = _identity(run, m365, places, geo, window, now, first, m365_rollup, tz)
     if "attacks" in parts:
-        out.attacks = _attacks(run, other, vpn, places, geo, buckets, first, start, before)
+        out.attacks = _attacks(
+            run, other, vpn, places, geo, buckets, first, start, before, auth_rollup
+        )
     if "detections" in parts:
         out.detections = _detections(
             run, meta, allowed, [s[0] for s in mine], start, before, buckets, window, first

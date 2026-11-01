@@ -24,6 +24,7 @@ from app.ai.catalog import NON_USAGE, Catalog, Service
 from app.ai.usage import Usage
 from app.alerts.items import AlertItem
 from app.engine.duckdb import QueryEngine, QueryScope
+from app.search.dashboard import zone
 
 CHART_DAYS = 30
 TOP = 10
@@ -197,22 +198,31 @@ def summary(
     kinds: dict[str, list[str]],
     now: datetime,
     days: int,
+    tz: str = "UTC",
 ) -> Summary:
     """`allowed` is the viewer's sources (None: all); `items` the AI Watch items they may
     see (readable or not); `kinds` the install's sources by class (`source_classes`),
     to tell "needs a source" from "restricted"."""
     now = now.astimezone(UTC)
-    today = now.date()
-    cur_from = today - timedelta(days=days - 1)  # whole UTC days, today included
+    where = zone(tz)
+    today = now.astimezone(where).date()
+
+    def midnight(d: date) -> datetime:
+        """The start of the viewer's day `d`, in UTC (owner, 2026-10-31)."""
+        return datetime.combine(d, datetime.min.time(), where).astimezone(UTC)
+
+    cur_from = today - timedelta(days=days - 1)  # whole days in the viewer's zone, today too
     prev_from = cur_from - timedelta(days=days)
     window_from = min(prev_from, today - timedelta(days=CHART_DAYS - 1))
-    start = datetime.combine(window_from, datetime.min.time(), UTC)
+    start = midnight(window_from)
     services = {s.id: s for s in catalog.services()}
     # The signal cards read other sources: run them beside the daily use, not after it.
     pool = ThreadPoolExecutor(max_workers=1)
-    signals_job = pool.submit(_signal_cards, engine, allowed, kinds, cur_from, prev_from, now)
+    signals_job = pool.submit(
+        _signal_cards, engine, allowed, kinds, midnight(cur_from), midnight(prev_from), now
+    )
     try:
-        rows, read = usage.daily(QueryScope(allowed, start, now))
+        rows, read = usage.daily(QueryScope(allowed, start, now), where.key)
         signals, read_signals = signals_job.result()
     finally:
         pool.shutdown(wait=False)
@@ -330,15 +340,15 @@ def summary(
         )
         for sid, u in ranked[:TOP]
     ]
-    prev_start = datetime.combine(prev_from, datetime.min.time(), UTC)
-    cur_start = datetime.combine(cur_from, datetime.min.time(), UTC)
+    prev_start = midnight(prev_from)
+    cur_start = midnight(cur_from)
     oldest = min(first_in_rows.values(), default=None)
     compared = oldest is None or (cur_start - max(prev_start, oldest)) >= 0.9 * (
         cur_start - prev_start
     )
     return Summary(
         days,
-        datetime.combine(cur_from, datetime.min.time(), UTC).isoformat(),
+        cur_start.isoformat(),
         now.isoformat(),
         cards,
         chart_days,
@@ -478,15 +488,13 @@ def _signal_cards(
     engine: QueryEngine,
     allowed: list[str] | None,
     kinds: dict[str, list[str]],
-    cur_from: date,
-    prev_from: date,
+    start: datetime,
+    before: datetime,
     now: datetime,
 ) -> tuple[list[Card], list[str]]:
     m365, have_m365 = _readable_kind(kinds, allowed, {"m365"})
     tel, have_tel = _readable_kind(kinds, allowed, {"telemetry"})
     consent_label, sens_label = "App consent grants", "Sensitive data to AI"
-    start = datetime.combine(cur_from, datetime.min.time(), UTC)
-    before = datetime.combine(prev_from, datetime.min.time(), UTC)
     sources: set[str] = set()
     if not have_m365:
         consent = Card("consent", consent_label, None, None, needs="a Microsoft 365 source")

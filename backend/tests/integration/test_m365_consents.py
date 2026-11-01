@@ -3,7 +3,7 @@ consents are counted apart from granted ones; and an app Entra calls "Unknown" i
 from the person's sign-in just before."""
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -100,7 +100,6 @@ def test_the_card_rows_open_in_search_one_per_consent(tmp_path: Path) -> None:
 
 
 def test_the_consent_card_counts_granted_and_shows_blocked_apart(tmp_path: Path) -> None:
-    from datetime import date
 
     from app.ai.watch_summary import _signal_cards
 
@@ -108,7 +107,7 @@ def test_the_consent_card_counts_granted_and_shows_blocked_apart(tmp_path: Path)
     _write(engine, [])
     kinds = {"m365": ["m365_graph", "m365_mgmt"], "telemetry": []}
     now = datetime(2026, 10, 29, 12, tzinfo=UTC)
-    cards, sources = _signal_cards(engine, None, kinds, date(2026, 10, 28), date(2026, 10, 27), now)
+    cards, sources = _signal_cards(engine, None, kinds, START, START - timedelta(days=1), now)
     consent = cards[0]
     assert (consent.value, consent.previous, consent.blocked) == (1, 0, 1)
     assert consent.context.startswith("Latest: Lab Notes App")
@@ -116,7 +115,7 @@ def test_the_consent_card_counts_granted_and_shows_blocked_apart(tmp_path: Path)
     assert consent.rows_sql and consent.blocked_sql and "status_id = 2" in consent.blocked_sql
     assert sources == ["m365_graph", "m365_mgmt"]
     # A viewer who may not read the M365 sources sees it restricted, with no SQL.
-    cards, _ = _signal_cards(engine, ["other"], kinds, date(2026, 10, 28), date(2026, 10, 27), now)
+    cards, _ = _signal_cards(engine, ["other"], kinds, START, START - timedelta(days=1), now)
     assert cards[0].restricted and cards[0].rows_sql is None
 
 

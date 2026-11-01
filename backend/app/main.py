@@ -39,7 +39,7 @@ from app.api.around import router as around_router
 from app.api.ask import router as ask_router
 from app.api.audit import router as audit_router
 from app.api.auth import router as auth_router
-from app.api.cache import PageCache
+from app.api.cache import PageCache, clear_on_change
 from app.api.dashboard_sections import router as dashboard_sections_router
 from app.api.dashboards import router as dashboards_router
 from app.api.enrichment import router as enrichment_router
@@ -123,7 +123,7 @@ from app.core.net import parse_trusted
 from app.core.threads import cap_allocator_arenas, query_threads
 from app.detect.runner import RuleRunner
 from app.detect.store import RuleStore
-from app.engine.duckdb import QueryEngine, QueryScope, spill_dir
+from app.engine.duckdb import AUTH_ROLLUP_COLUMNS, QueryEngine, QueryScope, spill_dir
 from app.engine.lookups import Lookups
 from app.enrich import networks
 from app.enrich.feeds import FeedStore
@@ -159,7 +159,7 @@ from app.search.identity import IdentityStore
 from app.search.library import LIBRARY_DIR, Library, load_dir
 from app.search.live import LiveRegistry
 from app.search.m365 import source_ids as m365_source_ids
-from app.search.m365_rollup import M365Rollup
+from app.search.m365_rollup import AuthRollup, M365Rollup
 from app.search.overview import OverviewService
 from app.search.refusals import RefusalWatch
 from app.search.saved import SavedSearchStore
@@ -579,14 +579,25 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         clock=lambda: app.state.auth.clock(),
     )
     app.state.page_cache = PageCache()
+    app.middleware("http")(clear_on_change(app.state.page_cache))
     app.state.m365_rollup = M365Rollup(
         app.state.engine,
         lake_dir,
         config.paths.data_dir / "rollup" / "m365",
-        sources=lambda: m365_source_ids(
-            [(s.source_id, s.kind or "file", s.template_id) for s in app.state.sources.list()]
-        ),
+        sources=lambda: _m365_ids(app),
         clock=lambda: app.state.auth.clock(),
+    )
+    app.state.auth_rollup = AuthRollup(
+        app.state.engine,
+        lake_dir,
+        config.paths.data_dir / "rollup" / "auth",
+        sources=lambda: [
+            s.source_id for s in app.state.sources.list() if s.source_id not in set(_m365_ids(app))
+        ],
+        clock=lambda: app.state.auth.clock(),
+    )
+    app.state.engine.add_rollup(
+        "auth_rollup", config.paths.data_dir / "rollup" / "auth", AUTH_ROLLUP_COLUMNS
     )
     app.state.ai_usage = Usage(app.state.engine, app.state.ai_catalog, app.state.ai_rollup)
     app.state.ai_watch = AiWatch(
@@ -681,7 +692,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         integrity_interval_s=config.maintenance.integrity_interval_s,
     )
     app.state.maintenance.after_compaction = lambda: _rollups(app)
-    app.state.maintenance.each_tick = app.state.ai_rollup.recheck
+    app.state.maintenance.each_tick = lambda: _each_tick(app)
     app.state.integrity_service = IntegrityService(
         meta,
         app.state.integrity,
@@ -848,8 +859,36 @@ if __name__ == "__main__":
 
 def _rollups(app: FastAPI) -> None:
     """The daily rollups after each compaction; one failing never stops the other."""
-    for name, job in (("ai_rollup", app.state.ai_rollup), ("m365_rollup", app.state.m365_rollup)):
+    jobs = (
+        ("ai_rollup", app.state.ai_rollup),
+        ("m365_rollup", app.state.m365_rollup),
+        ("auth_rollup", app.state.auth_rollup),
+    )
+    for name, job in jobs:
         try:
             job.run()
+        except Exception:
+            log.exception(f"{name}.failed")
+    # A rebuilt day can change what a kept page showed (the first-seen index).
+    app.state.page_cache.clear()
+
+
+def _m365_ids(app: FastAPI) -> list[str]:
+    return m365_source_ids(
+        [(s.source_id, s.kind or "file", s.template_id) for s in app.state.sources.list()]
+    )
+
+
+def _each_tick(app: FastAPI) -> None:
+    """Short work every maintenance tick: the AI rollup's re-check, and today's facts so
+    far for the Dashboard and Microsoft 365 (at most every 5 minutes each, D135)."""
+    jobs = (
+        ("rollup.recheck", app.state.ai_rollup.recheck),
+        ("m365_rollup.today", app.state.m365_rollup.refresh_today),
+        ("auth_rollup.today", app.state.auth_rollup.refresh_today),
+    )
+    for name, job in jobs:
+        try:
+            job()
         except Exception:
             log.exception(f"{name}.failed")

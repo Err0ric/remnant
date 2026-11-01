@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from app.engine.duckdb import QueryScope
+from app.engine.duckdb import M365_ROLLUP_COLUMNS, QueryScope
 from app.enrich.networks import Places
 from app.ingest.writer import LakeWriter
 from app.search.m365 import overview, to_dict
@@ -104,7 +104,7 @@ def _consent_across_midnight() -> list[dict[str, Any]]:
 def _lab(tmp_path: Path) -> tuple[Any, M365Rollup]:
     engine = make_lab(tmp_path)["app"].state.engine
     root = tmp_path / "rollup-m365"
-    engine._m365_rollup = root
+    engine.add_rollup("m365_rollup", root, M365_ROLLUP_COLUMNS)
     rollup = M365Rollup(
         engine,
         engine._lake,

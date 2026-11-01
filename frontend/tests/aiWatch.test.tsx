@@ -133,7 +133,7 @@ describe("AI Watch on the Dashboard (ADR-0035 Part 2)", () => {
     await userEvent.click(within(win).getByRole("button", { name: "30 days" }));
     await vi.waitFor(() =>
       expect(
-        spy.mock.calls.some(([u]) => String(u).endsWith("/api/ai/watch/summary?days=30")),
+        spy.mock.calls.some(([u]) => String(u).includes("/api/ai/watch/summary?days=30")),
       ).toBe(true),
     );
   });

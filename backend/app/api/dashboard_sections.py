@@ -160,6 +160,7 @@ async def dashboard_sections(
         request.app.state.m365_rollup,
         PARTS if part is None else (part,),
         tz,
+        request.app.state.auth_rollup,
     )
     auth: AuthService = request.app.state.auth
     await run_in_threadpool(
