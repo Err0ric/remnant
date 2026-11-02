@@ -8,6 +8,7 @@ id stubbed on PATH; the stubs record what they were asked to do."""
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -364,6 +365,44 @@ def test_changes_outside_the_install_stop_the_update(box: dict[str, Path]) -> No
     assert "not made by this update" in res.stderr and "--aide-accept" in res.stderr
     assert "systemctl" not in _calls(box) and "aideinit" not in _calls(box)
     assert _git(box["install"], "rev-parse", "HEAD") == head
+
+
+def test_important_paths_come_first_and_busy_folders_are_counted(box: dict[str, Path]) -> None:
+    """Owner, 2026-11-01: /run noise came first and the list stopped at 25, so an
+    important path could be hidden. /etc, /usr, /opt, and /var/lib first, then counts."""
+    _new_commit(box)
+    noise = [f"/run/user/1000/f{i}" for i in range(640)] + ["/tmp/a", "/var/log/syslog"]
+    paths = [*noise, "/etc/sudoers.d/extra", "/var/lib/remnant/.key"]
+    res = _run_aide(box, "--aide", **_aide(box, 4, paths))
+    assert res.returncode == 1
+    out = res.stdout.split("Changed outside")[1]
+    assert "644 paths" in out
+    listed = out.splitlines()[1:3]
+    assert listed == ["  /etc/sudoers.d/extra", "  /var/lib/remnant/.key"]  # first
+    assert "... and 619 more. By folder:" in out
+    by = out[out.index("By folder:") :]
+    assert "/run: 640 entries" in by and "/tmp: 1 entry" in by and "/var/log: 1 entry" in by
+    assert by.index("/run:") < by.index("/tmp:")  # busiest first
+
+
+def test_files_already_readable_are_not_touched(box: dict[str, Path]) -> None:
+    """Owner, 2026-11-01: chmod on every file changed every ctime, so AIDE flagged them
+    all. Only files missing a+rX are changed."""
+    _new_commit(box)
+    keep = box["install"] / "backend" / "kept.txt"
+    keep.parent.mkdir(exist_ok=True)
+    keep.write_text("x")
+    keep.chmod(0o644)
+    shut = box["install"] / "backend" / "shut.txt"
+    shut.parent.mkdir(exist_ok=True)
+    shut.write_text("x")
+    shut.chmod(0o600)
+    time.sleep(1.1)
+    before = keep.stat().st_ctime_ns
+    res = _run(box)
+    assert res.returncode == 0, res.stderr
+    assert keep.stat().st_ctime_ns == before
+    assert shut.stat().st_mode & 0o777 == 0o644
 
 
 def test_changes_only_in_the_install_and_its_record_proceed(box: dict[str, Path]) -> None:

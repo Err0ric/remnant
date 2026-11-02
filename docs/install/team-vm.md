@@ -274,6 +274,21 @@ Then update with `--aide`. Before changing anything, it runs `aide --check` agai
 | AIDE cannot check (no baseline yet, a config error) | Stops; fix AIDE, or re-run with `--aide-accept` to create the baseline |
 | Nothing to update | Reports the check, and does not re-baseline: no update explains any change. `--aide-accept` re-baselines after you have reviewed |
 
+The changed paths are listed with those under `/etc`, `/usr`, `/opt`, and `/var/lib` first, then the rest, up to 25; past that, a count per top folder follows (for example `/run: 640 entries`), so a busy folder cannot push an important path out of view.
+
+Folders the operating system rewrites all the time make every check noisy. The update script does not change AIDE rules outside its own file; if your distribution's rules watch them, add your own file, for example `/etc/aide/aide.conf.d/85_local_volatile`:
+
+```
+!/run(/|$)
+!/tmp(/|$)
+!/var/tmp(/|$)
+!/var/log/aide(/|$)
+```
+
+Adding it is a change under `/etc/aide`, so the next `--aide` run stops once; review it and re-run with `--aide-accept`.
+
+The update only changes the permissions of files that need them to be readable by the service, so files whose permissions were already right are not reported as changed. The app likewise leaves the data folder's `.key` alone unless its permissions were loosened.
+
 A baseline is only ever taken after a check you have seen, never silently. Replace any hand-made rule for Remnant (a bare `!/var/lib/remnant` also hides `tls/`). Other tools (Wazuh syscheck, Tripwire): skip the same paths in their own syntax.
 
 ## After install

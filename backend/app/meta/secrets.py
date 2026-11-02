@@ -5,6 +5,7 @@ to YAML, logs, audit detail, API responses, or prompts.
 """
 
 import os
+import stat
 from pathlib import Path
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -24,7 +25,10 @@ class SecretBox:
                 fd = os.open(self._path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                 with os.fdopen(fd, "wb") as fh:
                     fh.write(Fernet.generate_key())
-            os.chmod(self._path, 0o600)  # tighten if someone loosened it
+            # Tighten if someone loosened it; only then, since chmod changes the file's
+            # ctime and file integrity monitoring would report the key on every start.
+            if stat.S_IMODE(self._path.stat().st_mode) != 0o600:
+                os.chmod(self._path, 0o600)
             self._fernet = Fernet(self._path.read_bytes().strip())
         return self._fernet
 

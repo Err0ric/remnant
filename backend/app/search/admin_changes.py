@@ -46,6 +46,10 @@ SP = r"^ServicePrincipal_([0-9A-Fa-f-]{36})$"
 DELETED_UPN = r"^[0-9a-f]{32}(.+@.+)$"
 # Containers in the change details, not properties (owner, 2026-11-01).
 NOT_PROPERTIES = ("Included Updated Properties",)
+# The directory sync service (Microsoft Entra Connect, its cloud sync, and the sync
+# account) and the properties only it sets on an object it brought from AD.
+SYNC_ACTOR = r"syncfabric|^sync_|on-premises directory synchronization|entra connect|ad connect"
+SYNC_PROPERTIES = ("DirSyncEnabled", "OnPremisesObjectIdentifier")
 # What a change is about. Matched in this order (an app's secret is a credential, not an
 # app change); the page shows the groups in `AREA_ORDER`.
 AREAS: tuple[tuple[str, str], ...] = (
@@ -99,7 +103,8 @@ ADMIN_SQL = (
     "           AS changed,\n"
     "         coalesce(metadata_correlation_uid,\n"
     "                  coalesce(lower(actor_user_name), '') || '|'\n"
-    f"                    || strftime({TS}, '%Y-%m-%d %H:%M')) AS k\n"
+    f"                    || strftime({TS}, '%Y-%m-%d %H:%M')) AS k,\n"
+    "         'graph' AS feed\n"
     f"  FROM events WHERE {DIR}\n"
     "  UNION ALL\n"
     f"  SELECT {TS}, {OP}, actor_user_name, event_id, status_id,\n"
@@ -110,21 +115,45 @@ ADMIN_SQL = (
     "         json_extract_string(raw, '$.ModifiedProperties[*].Name'),\n"
     "         coalesce(metadata_correlation_uid,\n"
     "                  coalesce(lower(actor_user_name), '') || '|'\n"
-    f"                    || strftime({TS}, '%Y-%m-%d %H:%M'))\n"
+    f"                    || strftime({TS}, '%Y-%m-%d %H:%M')),\n"
+    "         'mgmt'\n"
     f"  FROM events WHERE {MGMT}\n"
     "),\n"
-    "g AS (\n"
+    "g1 AS (\n"
     "  SELECT min(ts) AS time, op, any_value(who) AS who, bool_and(by_app) AS by_app,\n"
     "         any_value(nullif(app_id, '')) AS app_id, any_value(service) AS service,\n"
     "         any_value(target) AS target, max(status_id) AS status_id,\n"
     "         list(event_id) AS event_ids,\n"
     "         list_filter(list_sort(list_distinct(flatten(list(coalesce(changed, []))))),\n"
-    f"           c -> NOT list_contains({list(NOT_PROPERTIES)}, c)) AS changed\n"
+    f"           c -> NOT list_contains({list(NOT_PROPERTIES)}, c)) AS changed,\n"
+    "         CASE WHEN count(DISTINCT feed) > 1 THEN 'both' ELSE any_value(feed) END AS feed\n"
     "  FROM r\n"
     "  WHERE op NOT IN ('userloggedin', 'userloginfailed')\n"
     "    AND op NOT LIKE 'consent to application%'\n"
     "  GROUP BY k, op\n"
     "  HAVING min(ts) >= TIMESTAMPTZ '{from}' AND min(ts) < TIMESTAMPTZ '{to}'\n"
+    "),\n"
+    # D122 across feeds (owner, 2026-11-01): when Graph and the Management API give one
+    # change different keys (no shared correlation id, a different actor name), the copies
+    # still agree on the operation, the target, and the second. The n-th copy from one feed
+    # pairs with the n-th from the other, so two real changes in one second stay two rows.
+    "m AS (\n"
+    "  SELECT *, CASE WHEN feed = 'both' THEN event_ids[1] ELSE op || '|'\n"
+    "              || lower(coalesce(target, '')) || '|'\n"
+    "              || strftime(time, '%Y-%m-%d %H:%M:%S') END AS k2,\n"
+    "         row_number() OVER (PARTITION BY feed, op, lower(coalesce(target, '')),\n"
+    "           date_trunc('second', time) ORDER BY time, event_ids[1]) AS nth\n"
+    "  FROM g1\n"
+    "),\n"
+    "g AS (\n"
+    "  SELECT min(time) AS time, op, coalesce(any_value(who) FILTER (WHERE feed <> 'mgmt'),\n"
+    "           any_value(who)) AS who, bool_and(by_app) AS by_app,\n"
+    "         any_value(app_id) AS app_id, any_value(service) AS service,\n"
+    "         coalesce(any_value(target) FILTER (WHERE feed <> 'mgmt'), any_value(target))\n"
+    "           AS target, max(status_id) AS status_id, flatten(list(event_ids)) AS event_ids,\n"
+    "         list_sort(list_distinct(flatten(list(changed)))) AS changed\n"
+    "  FROM m\n"
+    "  GROUP BY k2, op, nth\n"
     "),\n"
     "n AS (\n"
     "  SELECT g.*, names.name AS app_name FROM g LEFT JOIN names ON names.id = g.app_id\n"
@@ -147,7 +176,12 @@ ADMIN_SQL = (
     + SP
     + "') THEN NULL ELSE who END, service, who) AS service,\n"
     f"       {_rank()} AS rank,\n"
-    f"       {_area()} AS area\n"
+    f"       {_area()} AS area,\n"
+    # Created or changed on-premises and synced up: the directory sync service is the
+    # actor and the sync properties are among those changed (owner, 2026-11-01).
+    "       regexp_matches(lower(coalesce(who, '') || ' ' || coalesce(app_name, '')),\n"
+    f"                      '{SYNC_ACTOR}')\n"
+    f"         AND list_has_any(changed, {list(SYNC_PROPERTIES)}) AS synced\n"
     "FROM n\n"
     "ORDER BY rank DESC, time DESC"
 )

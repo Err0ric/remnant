@@ -21,6 +21,7 @@ const COLUMNS = [
   "rank",
   "area",
   "target_deleted",
+  "synced",
 ];
 const SP = "22222222-2222-4222-8222-222222222222";
 
@@ -37,6 +38,7 @@ function row(v: Record<string, unknown>): unknown[] {
     rank: 0,
     area: "Other",
     target_deleted: false,
+    synced: false,
   };
   const all = { ...base, ...v };
   if (!("event_ids" in all)) all.event_ids = [`e-${String(all.time)}`];
@@ -80,6 +82,19 @@ const RESULT: QueryResult = {
       target_deleted: true,
     }),
     row({
+      time: "2026-10-30T06:00:00+00:00",
+      actor: "Microsoft.Azure.SyncFabric",
+      actor_kind: "app",
+      operation: "add user",
+      target: "new.hire@example.com",
+      changed: "DirSyncEnabled, DisplayName, OnPremisesObjectIdentifier",
+      events: 2,
+      event_ids: ["g-1", "m-1"],
+      rank: 2,
+      area: "Users",
+      synced: true,
+    }),
+    row({
       time: "2026-10-30T07:00:00+00:00",
       actor: "Example HR Connector",
       actor_kind: "app",
@@ -94,7 +109,7 @@ const RESULT: QueryResult = {
     cycle("2026-10-30T08:20:00+00:00", "Failure"),
     cycle("2026-10-29T08:00:00+00:00"),
   ],
-  row_count: 7,
+  row_count: 8,
   truncated: false,
   elapsed_ms: 3,
   executed_sql: "",
@@ -137,6 +152,10 @@ describe("Microsoft 365 > Admin (owner, 2026-11-01)", () => {
     const users = screen.getByRole("table", { name: "Admin changes: Users" });
     expect(within(users).getByText("kim.lee@example.com")).toBeVisible();
     expect(within(users).getByText("deleted")).toBeVisible();
+    // One change from both feeds is one row, marked as made on-premises.
+    const hire = within(users).getByText("new.hire@example.com").closest("tr")!;
+    expect(within(hire).getByText("Synced from AD")).toBeVisible();
+    expect(within(hire).getByRole("button", { name: "2" })).toBeVisible();
     expect(within(table).getByText("add member to role")).toBeVisible();
     expect(within(table).queryByText("Example HR Connector")).toBeNull();
     expect(within(table).getByText("Success")).toBeVisible();

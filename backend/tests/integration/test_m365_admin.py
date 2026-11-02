@@ -159,3 +159,49 @@ def test_deleted_users_unnamed_apps_and_containers_read_plainly(tmp_path: Path) 
     cred = next(r for r in rows if r["operation"] == "remove service principal credentials")
     assert cred["actor"] == "33333333-3333-4333-8333-333333333333"
     assert cred["actor_kind"] == "app"
+
+
+def test_one_change_from_both_feeds_is_one_row_marked_synced_from_ad(tmp_path: Path) -> None:
+    """Owner, 2026-11-01: an "add user" by the directory sync service showed twice, once
+    from Graph and once from the Management API, with no shared correlation id. Same
+    operation, target, and second: one row with both events. Two real changes in one
+    second from one feed stay two rows."""
+    engine = make_lab(tmp_path)["app"].state.engine
+    at = NOW - timedelta(hours=4)
+    props = [{"displayName": "DirSyncEnabled"}, {"displayName": "OnPremisesObjectIdentifier"},
+             {"displayName": "DisplayName"}]  # fmt: skip
+    graph = _dir(
+        at, "Add user", correlationId="aaaaaaaa-0000-4000-8000-000000000001",
+        initiatedBy={"app": {"displayName": "Microsoft.Azure.SyncFabric",
+                             "servicePrincipalId": SYNC_SP}},
+        targetResources=[{"userPrincipalName": "new.hire@example.com", "type": "User",
+                          "modifiedProperties": props}],
+    )  # fmt: skip
+    mgmt = _row(
+        "m365_management_activity", "failed Entra logon", "m365_mgmt",
+        CreationTime=_iso(at)[:-1], Operation="Add user.", ResultStatus="Success",
+        UserId=f"ServicePrincipal_{SYNC_SP}", ObjectId="new.hire@example.com",
+        Id="6b2f3a10-0000-4000-8000-0000000000bb",
+        ModifiedProperties=[{"Name": "DirSyncEnabled"}, {"Name": "OnPremisesObjectIdentifier"},
+                            {"Name": "DisplayName"}],
+    )  # fmt: skip
+    twice = [
+        _dir(at, "Update user", correlationId=f"bbbbbbbb-0000-4000-8000-00000000000{i}",
+             initiatedBy={"user": {"userPrincipalName": "admin@example.com"}},
+             targetResources=[{"userPrincipalName": "sam@example.com", "type": "User",
+                               "modifiedProperties": [{"displayName": "MobilePhone"}]}])
+        for i in (1, 2)
+    ]  # fmt: skip
+    LakeWriter(engine._lake).write([graph, mgmt, *twice])
+    start = NOW - timedelta(days=1)
+    sql = ADMIN_SQL.replace("{from}", start.isoformat()).replace("{to}", NOW.isoformat())
+    res = engine.run(sql, QueryScope(None, start, NOW), row_cap=10_000)
+    rows = [dict(zip(res.columns, r, strict=True)) for r in res.rows]
+    added = [r for r in rows if r["operation"] == "add user"]
+    assert len(added) == 1
+    (one,) = added
+    assert one["events"] == 2 and one["target"] == "new.hire@example.com"
+    assert one["synced"] is True
+    assert one["changed"] == "DirSyncEnabled, DisplayName, OnPremisesObjectIdentifier"
+    assert len([r for r in rows if r["operation"] == "update user"]) == 2
+    assert not any(r["synced"] for r in rows if r["operation"] == "update user")

@@ -17,7 +17,19 @@
 
 - The UI loads only the Latin character set of its fonts, loads the SQL editor when you first open the SQL tab, and lets your browser keep built files for a year (a new version still shows at once).
 - Log text in other scripts (Cyrillic, Greek, and so on) shows in your browser's fallback font.
+
+### Microsoft 365 > Admin: no duplicate rows, "Synced from AD" (2026-11-01)
+
+- A change reported by both Microsoft Graph and the Management API now shows once, with both events counted, even when the two copies do not share a correlation id.
+- Users and changes created by the directory sync service with the on-premises sync properties are marked **Synced from AD**: the real change happened in on-premises Active Directory.
 - What changes for existing installs: nothing to do.
+
+### Quieter AIDE checks (2026-11-01)
+
+- `update-systemd.sh --aide` lists changed paths under /etc, /usr, /opt, and /var/lib first, then the rest, then a count per folder, so noise in /run cannot hide them.
+- The update only changes permissions that need changing, and the server no longer touches `.key` on every start, so neither shows up as changed in AIDE.
+- The install guide shows an optional rules file for /run, /tmp, /var/tmp, and /var/log/aide.
+- What changes for existing installs: nothing to do. The next `--aide` run may still list `.key` and install files once (changed by the previous update); after that they stay quiet.
 
 ### Faster filters on compacted days (2026-11-01)
 

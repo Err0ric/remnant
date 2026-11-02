@@ -114,6 +114,29 @@ git_() { git -C "$INSTALL_DIR" "$@"; }
 # baseline). Sets AIDE_STATE: clean, ours (changes only in the install, the rules file this
 # script writes, or the installed-commit record), outside, or error. Nothing else under
 # /etc/aide is exempt: a new rules file could hide later tampering (owner, 2026-11-01).
+# The changed paths that matter most first (system configuration, programs, the install
+# area, service data: /etc, /usr, /opt, /var/lib), then the rest, up to LIST_MAX, then a
+# count per top folder, so a busy folder such as /run cannot push an important path out
+# of the list (owner, 2026-11-01).
+LIST_MAX=25
+show_outside() {
+  all=$1
+  n=$(printf '%s\n' "$all" | wc -l)
+  echo "Changed outside $INSTALL_DIR: $n paths."
+  important=$(printf '%s\n' "$all" | grep -E '^/(etc|usr|opt|var/lib)(/|$)' || true)
+  rest=$(printf '%s\n' "$all" | grep -vE '^/(etc|usr|opt|var/lib)(/|$)' || true)
+  printf '%s\n%s\n' "$important" "$rest" | grep . | head -n "$LIST_MAX" | sed 's/^/  /'
+  if [ "$n" -gt "$LIST_MAX" ]; then
+    echo "  ... and $((n - LIST_MAX)) more. By folder:"
+    printf '%s\n' "$all" \
+      | awk -F/ '{ top = "/" $2; if ($2 == "var" && NF > 2) top = top "/" $3; n[top]++ }
+                 END { for (t in n) printf "%d %s\n", n[t], t }' \
+      | sort -k1,1nr -k2 \
+      | awk '{ printf "  %s: %d %s\n", $2, $1, ($1 == 1 ? "entry" : "entries") }'
+    echo "  (aide --check lists them all)"
+  fi
+}
+
 aide_check() {
   step "Checking files against the AIDE baseline"
   report=$(mktemp)
@@ -141,10 +164,7 @@ aide_check() {
   rm -f "$report"
   if [ -n "$outside" ]; then
     AIDE_STATE=outside
-    echo "Changed outside $INSTALL_DIR:"
-    printf '%s\n' "$outside" | head -n 25 | sed 's/^/  /'
-    n=$(printf '%s\n' "$outside" | wc -l)
-    if [ "$n" -gt 25 ]; then echo "  ... and $((n - 25)) more (aide --check for all)"; fi
+    show_outside "$outside"
   else
     AIDE_STATE=ours
   fi
@@ -197,12 +217,19 @@ if [ -d "$AIDE_CONF_D" ] && { command -v aide >/dev/null 2>&1 || command -v aide
   fi
 fi
 
+# a+rX, but only on what lacks it: chmod changes a file's ctime even when the mode is
+# already right, and AIDE then reports every file (owner, 2026-11-01).
+make_readable() {
+  find "$1" \( \( -type d ! -perm -0555 \) -o \( -type f ! -perm -0444 \) \
+    -o \( -type f -perm /0111 ! -perm -0111 \) \) -exec chmod a+rX {} +
+}
+
 stopped=0
 restart_on_error() {
   status=$?
   if [ "$status" -ne 0 ] && [ "$stopped" -eq 1 ]; then
     echo "Update failed (exit $status). Starting the service on whatever is installed." >&2
-    chmod -R a+rX "$INSTALL_DIR" || true
+    make_readable "$INSTALL_DIR" || true
     systemctl start "$SERVICE" || true
   fi
 }
@@ -286,7 +313,7 @@ cd "$INSTALL_DIR/backend"
 UV_PYTHON_INSTALL_DIR="$INSTALL_DIR/.python" uv sync --frozen --no-dev
 
 step "Making the install readable by the service user"
-chmod -R a+rX "$INSTALL_DIR"
+make_readable "$INSTALL_DIR"
 
 step "Starting $SERVICE (migrations run on start)"
 started=$(date '+%Y-%m-%d %H:%M:%S')

@@ -30,6 +30,8 @@ export interface Change {
   area: string;
   /** The target is a deleted user (Entra prefixes the object id to the name). */
   targetDeleted: boolean;
+  /** Made by the directory sync service with the sync properties: created on-premises. */
+  synced: boolean;
 }
 
 /** The page's groups, most important first (owner, 2026-11-01). */
@@ -77,6 +79,7 @@ export function changes(result: QueryResult): Change[] {
     rank: Number(r[at("rank")] ?? 0),
     area: text(r[at("area")]) || "Other",
     targetDeleted: r[at("target_deleted")] === true,
+    synced: r[at("synced")] === true,
   }));
 }
 
@@ -163,6 +166,14 @@ function ChangeRow({ c, m, timeZone }: RowProps) {
           {c.targetDeleted ? (
             <span className="ml-1.5 rounded-badge bg-sev-medium-bg px-1.5 py-px text-xs text-sev-medium-text">
               deleted
+            </span>
+          ) : null}
+          {c.synced ? (
+            <span
+              title="The directory sync service made this change: the real change happened in on-premises Active Directory"
+              className="ml-1.5 rounded-badge bg-sev-info-bg px-1.5 py-px text-xs text-sev-info-text"
+            >
+              Synced from AD
             </span>
           ) : null}
         </td>
