@@ -166,7 +166,7 @@ def timeline(
             if covered else None,
             timeout_s=TIMEOUT_S,
             intel=False, rollup=bool(covered), skip_days=skip or (), name=f"timeline.{name}",
-            after=after,
+            after=after, page=True,
         )  # fmt: skip
         with lock:
             sources.update(res.sources)

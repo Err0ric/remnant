@@ -346,6 +346,7 @@ class HealthService:
             scope,
             {"sources": otlp or [""], "since": now - timedelta(hours=24)},
             timeout_s=TIMEOUT_S,
+            page=True,
         )
         out = []
         for source_id, machine, last, n24, hooks, dropped in result.rows:
@@ -400,13 +401,13 @@ class HealthService:
         by = {(a.source_id, a.machine): a for a in rows}
         since = {"since": now - timedelta(hours=24)}
         for src, machine, queued, late in self._engine.run(
-            HOOKS_SQL, scope, since, timeout_s=TIMEOUT_S
+            HOOKS_SQL, scope, since, timeout_s=TIMEOUT_S, page=True
         ).rows:
             a = by.get((str(src), str(machine)))
             if a is not None:
                 a.queued, a.late_24h = int(queued or 0), int(late or 0)
         for src, machine, missing, before, after in self._engine.run(
-            GAP_SQL, scope, timeout_s=TIMEOUT_S
+            GAP_SQL, scope, timeout_s=TIMEOUT_S, page=True
         ).rows:
             a = by.get((str(src), str(machine)))
             if a is None:
@@ -425,7 +426,9 @@ class HealthService:
 
     def _rows(self, devices: list[DeviceWatch], scope: QueryScope) -> list[list[Any]]:
         keys = sorted({d.match for d in devices})
-        return self._engine.run(DEVICE_SQL, scope, {"keys": keys}, timeout_s=TIMEOUT_S).rows
+        return self._engine.run(
+            DEVICE_SQL, scope, {"keys": keys}, timeout_s=TIMEOUT_S, page=True
+        ).rows
 
     # --- background check -------------------------------------------------------------------
 

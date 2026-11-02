@@ -148,7 +148,9 @@ def inventory(
             Item("mcp", m.name, m.name, m.status, m.people, m.machines, m.first_seen,
                  m.last_seen, sorted(m.sources))
         )  # fmt: skip
-    hooks = engine.run(HOOK_MCP_SQL, scope, timeout_s=TIMEOUT_S, intel=False, name="inventory.mcp")
+    hooks = engine.run(
+        HOOK_MCP_SQL, scope, timeout_s=TIMEOUT_S, intel=False, name="inventory.mcp", page=True
+    )
     mcp = {i.key: i for i in out if i.type == "mcp"}
     rules = catalog.mcp_rules()
     for name, people, devices, first, last in hooks.rows:
@@ -174,7 +176,9 @@ def inventory(
             Item("agent", a.agent, a.label, None, len(a.owners), 1 if a.machine else 0,
                  a.first_seen, a.last_seen, [a.kind])
         )  # fmt: skip
-    apps = engine.run(APPS_SQL, scope, timeout_s=TIMEOUT_S, intel=False, name="inventory.apps")
+    apps = engine.run(
+        APPS_SQL, scope, timeout_s=TIMEOUT_S, intel=False, name="inventory.apps", page=True
+    )
     for name, people, first, last in apps.rows:
         out.append(
             Item("m365_app", str(name), str(name), None, int(people or 0), None, _iso(first),

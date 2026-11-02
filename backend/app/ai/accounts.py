@@ -129,7 +129,11 @@ def accounts(
     if not telemetry:
         return out
     res = engine.run(
-        ACCOUNTS_SQL, QueryScope(telemetry, start, now), timeout_s=TIMEOUT_S, name="accounts"
+        ACCOUNTS_SQL,
+        QueryScope(telemetry, start, now),
+        timeout_s=TIMEOUT_S,
+        name="accounts",
+        page=True,
     )
     signins: dict[str, datetime] = {}
     sources = set(res.sources)
@@ -139,6 +143,7 @@ def accounts(
             QueryScope(m365, start - WINDOW, now),
             timeout_s=TIMEOUT_S,
             name="accounts.signins",
+            page=True,
         )
         sources |= set(found.sources)
         signins = {str(w): t for w, at in found.rows if w and (t := _ts(at)) is not None}

@@ -377,6 +377,7 @@ class _Run:
             skip_days=skip,
             name="dashboard",
             after=None if fresh else self.after,
+            page=True,
         )
         with self._lock:
             self.read |= set(res.sources)

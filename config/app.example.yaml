@@ -11,6 +11,7 @@ server:
   # trace_queries: false        # log a query.trace line per page query (sources, files, slowest steps)
   # page_query_mb: 0            # memory a page-section query reserves before it spills; 0 = one share
   # section_parallel: 0         # Microsoft 365 fact queries a section runs at once; 0 = 4, 1 = one at a time
+  # query_pool: false           # reuse one DuckDB instance per slot for page sections (footers cached); see D146
 
 auth:
   # Set one of these to bind beyond localhost. Prefer env vars over YAML for secrets.

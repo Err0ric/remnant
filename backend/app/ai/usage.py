@@ -410,7 +410,7 @@ class Usage:
         )
 
     def _rows(self, sql: str, scope: QueryScope) -> list[list[Any]]:
-        return self._engine.run(sql, scope, timeout_s=TIMEOUT_S).rows
+        return self._engine.run(sql, scope, timeout_s=TIMEOUT_S, page=True).rows
 
     def services(self, scope: QueryScope) -> tuple[list[ServiceUse], list[str]]:
         """Use per service, plus the sources read. Non-usage hosts are left out."""
@@ -481,10 +481,11 @@ class Usage:
                 skip_days=covered,
                 name=name,
                 after=after,
+                page=True,
             )
         return self._engine.run(
             build(self._catalog.domain_table()), scope, params or None, timeout_s=TIMEOUT_S,
-            name=name,
+            name=name, page=True,
         )  # fmt: skip
 
     def people_pending(self, scope: QueryScope) -> tuple[int, int]:
@@ -509,7 +510,7 @@ class Usage:
 
     def review_mcp(self, scope: QueryScope) -> list[list[Any]]:
         """(server name, sources, people, devices without a person, devices with one)."""
-        return list(self._engine.run(REVIEW_MCP_SQL, scope, timeout_s=TIMEOUT_S).rows)
+        return list(self._engine.run(REVIEW_MCP_SQL, scope, timeout_s=TIMEOUT_S, page=True).rows)
 
     def daily(self, scope: QueryScope, tz: str = "UTC") -> tuple[list[list[Any]], list[str]]:
         """(service id, person, machine, day, events, last seen, first seen) rows, and the

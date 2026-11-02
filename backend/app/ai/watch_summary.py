@@ -510,7 +510,7 @@ def _signal_cards(
     else:
         res = engine.run(
             consents.COUNTS_SQL, QueryScope(m365, before, now), {"start": start},
-            timeout_s=TIMEOUT_S,
+            timeout_s=TIMEOUT_S, page=True,
         )  # fmt: skip
         sources.update(res.sources)
         granted, prev, blocked, latest, latest_blocked = (
@@ -535,7 +535,11 @@ def _signal_cards(
         sens = Card("sensitive", sens_label, None, None, restricted=True)
     else:
         res = engine.run(
-            SIGNALS_SQL, QueryScope(tel, before, now), {"start": start}, timeout_s=TIMEOUT_S
+            SIGNALS_SQL,
+            QueryScope(tel, before, now),
+            {"start": start},
+            timeout_s=TIMEOUT_S,
+            page=True,
         )
         sources.update(res.sources)
         s_cur, s_prev, s_who = res.rows[0] if res.rows else (0, 0, None)

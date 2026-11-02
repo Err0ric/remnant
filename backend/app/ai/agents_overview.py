@@ -124,10 +124,12 @@ def overview(
         return out
     scope = QueryScope(telemetry, before, now)
     params = {"start": start}
-    firsts = engine.run(FIRST_EVENT_SQL, scope, timeout_s=TIMEOUT_S, name="agents.first")
+    firsts = engine.run(FIRST_EVENT_SQL, scope, timeout_s=TIMEOUT_S, name="agents.first", page=True)
     first = {str(s): t for s, at in firsts.rows if (t := _utc(at)) is not None}
     out.history = _history(first, telemetry, start, before)
-    head = engine.run(OVERVIEW_SQL, scope, params, timeout_s=TIMEOUT_S, name="agents.overview")
+    head = engine.run(
+        OVERVIEW_SQL, scope, params, timeout_s=TIMEOUT_S, name="agents.overview", page=True
+    )
     s, s_b, p, p_b, c, c_b, f, f_b, late = (head.rows or [[0] * 9])[0]
     out.sessions = Kpi(int(s), int(s_b), drill=drill.grouped(HOOKS, _a("session_id"), "session_id"))
     out.people = Kpi(
@@ -146,7 +148,9 @@ def overview(
             "device",
         ),
     )
-    tools = engine.run(TOOLS_SQL, scope, params, timeout_s=TIMEOUT_S, name="agents.tools")
+    tools = engine.run(
+        TOOLS_SQL, scope, params, timeout_s=TIMEOUT_S, name="agents.tools", page=True
+    )
     rules = catalog.mcp_rules()
     for tool, mcp, people, devices, calls, failed, first, last in tools.rows:
         name = str(tool)
@@ -169,7 +173,9 @@ def overview(
             "mcp_server",
         ),
     )
-    missing = engine.run(MISSING_SQL, scope, params, timeout_s=TIMEOUT_S, name="agents.missing")
+    missing = engine.run(
+        MISSING_SQL, scope, params, timeout_s=TIMEOUT_S, name="agents.missing", page=True
+    )
     out.missing_devices = sorted(str(r[0]) for r in missing.rows)[:50]
     out.sources = sorted(set(head.sources) | set(tools.sources))
     return out

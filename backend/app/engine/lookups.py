@@ -30,7 +30,9 @@ class Lookups:
 FUNCTIONS = ("ip_country", "ip_asn", "ip_org", "is_internal")
 
 
-def register(con: duckdb.DuckDBPyConnection, lookups: Lookups) -> None:
+def register(con: duckdb.DuckDBPyConnection, lookups: Lookups) -> Callable[[], None]:
+    """Returns `reset`, for an instance kept across queries: each query then starts with
+    empty caches and the Internal networks list in force at its start."""
     geo_cache: dict[str, tuple[str | None, int | None, str | None] | None] = {}
     internal_cache: dict[str, bool] = {}
     test: list[Callable[[str], bool]] = []
@@ -86,3 +88,10 @@ def register(con: duckdb.DuckDBPyConnection, lookups: Lookups) -> None:
             null_handling=FunctionNullHandling.SPECIAL,
             side_effects=False,
         )
+
+    def reset() -> None:
+        geo_cache.clear()
+        internal_cache.clear()
+        test.clear()
+
+    return reset

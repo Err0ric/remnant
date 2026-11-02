@@ -215,7 +215,9 @@ class OverviewService:
         self, allowed: list[str] | None, start: datetime, end: datetime, hours: list[datetime]
     ) -> tuple[list[SourceVolume], list[str], "UsualDay"]:
         early = start - timedelta(days=BASELINE_DAYS)
-        result = self._engine.run(VOLUME_SQL, QueryScope(sources=allowed, start=early, end=end))
+        result = self._engine.run(
+            VOLUME_SQL, QueryScope(sources=allowed, start=early, end=end), page=True
+        )
         index = {h: i for i, h in enumerate(hours)}
         series: dict[str, list[int]] = {}
         before: dict[str, dict[datetime, int]] = {}  # earlier hours, for the baseline
@@ -242,12 +244,12 @@ class OverviewService:
         # limits which day folders are read.
         scope = QueryScope(sources=allowed, start=now - timedelta(days=2), end=now)
         since = (now - timedelta(minutes=RATE_MINUTES)).isoformat()
-        result = self._engine.run(RATE_SQL, scope, {"since": since})
+        result = self._engine.run(RATE_SQL, scope, {"since": since}, page=True)
         return {str(r[0]): round(int(r[1]) / RATE_MINUTES, 1) for r in result.rows}
 
     def _last_seen(self, allowed: list[str] | None, now: datetime) -> dict[str, str]:
         scope = QueryScope(sources=allowed, start=now - timedelta(days=LAST_SEEN_DAYS), end=now)
-        result = self._engine.run(LAST_SEEN_SQL, scope)
+        result = self._engine.run(LAST_SEEN_SQL, scope, page=True)
         return {str(r[0]): _utc(r[1]).isoformat() for r in result.rows if r[1] is not None}
 
     def _detections(

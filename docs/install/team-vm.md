@@ -290,3 +290,15 @@ A baseline is only ever taken after a check you have seen, never silently. Repla
 | Recommended: an alert when a source stops sending | [quiet-sources.md](quiet-sources.md) |
 
 Back up the data folder with `app-admin backup`, which works while the server runs: see [backup.md](backup.md). It holds the event lake, settings, users, the audit log, and `.key`, which encrypts stored passwords and tokens: without it those secrets cannot be read back.
+
+### Power loss and the settings database
+
+The settings database (`meta.sqlite`: settings, users, schedules, and the audit log) uses SQLite's write-ahead log with `synchronous = NORMAL` (D145). A commit is written to `meta.sqlite-wal` without waiting for the disk, which keeps page loads fast on networked storage (Ceph, NFS, iSCSI).
+
+| Event | What can be lost |
+|---|---|
+| The server process crashes or is killed | Nothing: every finished change is in the log |
+| Power loss, a host or VM crash, or a kernel panic | The last changes made before it, typically the last second or two: settings edits, schedule results, and audit rows |
+| Either | The database is never left damaged, and the audit chain stays verifiable (Health > Integrity) |
+
+If losing the last audit rows on power loss is not acceptable, run the VM on storage with power-loss protection (a battery-backed or capacitor-backed write cache), or on a UPS that shuts the VM down cleanly. Keep `meta.sqlite`, `meta.sqlite-wal`, and `meta.sqlite-shm` together; use `app-admin backup` rather than copying the files.

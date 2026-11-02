@@ -2,13 +2,19 @@
 
 ## Unreleased
 
+### Reused query instances, opt-in (2026-11-01)
+
+- **New setting `server.query_pool`** (off by default): Dashboard and other page sections reuse a kept DuckDB instance per slot and remember Parquet file details between queries. About 20% faster Dashboard loads on a test machine with local disk; more expected on networked storage.
+- Only the app's own page sections use it. Search, saved and scheduled searches, exports, and every Ask query always get a fresh instance limited to the caller's sources. A kept instance may open any of the app's data folders; each user still sees only their own sources (D146).
+- What changes for existing installs: nothing unless you set `APP__SERVER__QUERY_POOL=true`.
+
 ### Faster today reads, audit writes, and AI Watch (2026-11-01)
 
 - **Today's rows**: pages that take earlier rows from a rollup read only today's newest rows; files written before the cutoff are skipped instead of read and filtered.
 - **Settings database**: now uses SQLite's write-ahead log, so recording an audit row no longer waits for the disk. Cached pages answer much faster on networked storage.
 - **AI Watch and AI pages**: the AI service catalog and MCP rules are read once every few seconds instead of on every query.
 - **New settings to try** (both off by default): `server.page_query_mb` and `server.section_parallel`. `scripts/bench_pages.py` times the Dashboard on a running install so you can compare.
-- What changes for existing installs: nothing to do. The first start converts `meta.sqlite` to the write-ahead log; `meta.sqlite-wal` and `meta.sqlite-shm` appear beside it (AIDE already skips them). After a power loss the last few seconds of settings or audit changes can be missing.
+- What changes for existing installs: nothing to do. The first start converts `meta.sqlite` to the write-ahead log (see the install guide's "Power loss and the settings database"); `meta.sqlite-wal` and `meta.sqlite-shm` appear beside it (AIDE already skips them). After a power loss the last few seconds of settings or audit changes can be missing.
 
 ### Faster person pages (2026-11-01)
 

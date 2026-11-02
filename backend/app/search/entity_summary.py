@@ -162,7 +162,15 @@ def entity_summary(
     # The three run together (owner re-time, 2026-11-01: they ran one after another).
     with ThreadPoolExecutor(max_workers=3) as pool:
         runs = [
-            pool.submit(in_context(engine.run), sql, scope, params, timeout_s=TIMEOUT_S, name=name)
+            pool.submit(
+                in_context(engine.run),
+                sql,
+                scope,
+                params,
+                timeout_s=TIMEOUT_S,
+                name=name,
+                page=True,
+            )
             for name, sql in (
                 ("summary.totals", TOTALS_SQL.format(where=where, addr=ADDR, service=SERVICE)),
                 ("summary.activities", acts_sql),

@@ -77,6 +77,10 @@ class ServerConfig(_Strict):
     # Microsoft 365 fact queries one page section runs at once. 0: 4. 1: one after
     # another on one slot (option c; proposed, D145).
     section_parallel: int = Field(default=0, ge=0, le=16)
+    # Keep one DuckDB instance per slot for page sections, reused across queries with
+    # Parquet footers cached. Its readable folders are the data folders, not the caller's
+    # sources (`events` still is). Off: a new instance per query (D146, proposed).
+    query_pool: bool = False
     # Log each page query's sources, files, rollup days, timings, and slowest operators
     # as `query.trace` (plans and counts, never values). For timing a real install.
     trace_queries: bool = False

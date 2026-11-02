@@ -118,7 +118,7 @@ def sessions(
     engine: QueryEngine, allowed: list[str] | None, now: datetime, days: int
 ) -> list[Session]:
     scope = QueryScope(allowed, now - timedelta(days=days), now)
-    rows = engine.run(SESSIONS_SQL, scope, timeout_s=TIMEOUT_S).rows
+    rows = engine.run(SESSIONS_SQL, scope, timeout_s=TIMEOUT_S, page=True).rows
     return [
         Session(
             str(sid),
@@ -145,7 +145,9 @@ def timeline(
     if not session_id or len(session_id) > 200:
         raise ParamInvalidError("Give a session id")
     scope = QueryScope(allowed, now - timedelta(days=days), now)
-    rows = engine.run(STEPS_SQL, scope, {"session": session_id}, timeout_s=TIMEOUT_S).rows
+    rows = engine.run(
+        STEPS_SQL, scope, {"session": session_id}, timeout_s=TIMEOUT_S, page=True
+    ).rows
     if not rows:
         raise NotFoundError("No such session in the sources you can read")
     steps = [

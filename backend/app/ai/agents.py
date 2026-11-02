@@ -139,10 +139,10 @@ def agents(engine: QueryEngine, allowed: list[str] | None, now: datetime) -> lis
     recent = now - RECENT
     scope = QueryScope(allowed, now - timedelta(days=BASELINE_DAYS), now)
     params = {"recent": recent}
-    rows = engine.run(ITEMS_SQL, scope, params, timeout_s=TIMEOUT_S).rows
+    rows = engine.run(ITEMS_SQL, scope, params, timeout_s=TIMEOUT_S, page=True).rows
     hourly = {
         str(a): (int(u) if u is not None else None, int(p) if p is not None else None)
-        for a, u, p in engine.run(HOURLY_SQL, scope, params, timeout_s=TIMEOUT_S).rows
+        for a, u, p in engine.run(HOURLY_SQL, scope, params, timeout_s=TIMEOUT_S, page=True).rows
     }
     out = []
     for kind, agent, label, owners, machine, first, last, n24, all_items, old_items in rows:

@@ -222,6 +222,7 @@ def entity_risk(
                 "rules": [m.rule for m in matches],
             },
             timeout_s=TIMEOUT_S,
+            page=True,
         )
         read = result.sources
         for kind, value, crit, high, med, low, events, rules in result.rows:
@@ -430,6 +431,7 @@ def entity_graph(
         scope,
         params,
         timeout_s=TIMEOUT_S,
+        page=True,
     )
     literal = (
         user_filter_sql(ident, params["keys"])  # type: ignore[arg-type]  # set just above for users
@@ -558,7 +560,7 @@ def person_names(
     """Every logged name (lower case) that counts as this person, plus the person value
     itself for events that only carry a machine name or address."""
     keys = set(ident.keys_for(person))
-    rows = engine.run(NAMES_SQL, scope, timeout_s=TIMEOUT_S).rows
+    rows = engine.run(NAMES_SQL, scope, timeout_s=TIMEOUT_S, page=True).rows
     found = {str(n) for (n,) in rows if ident.key(str(n)) in keys}
     return sorted(found | keys | {person.strip().lower()})
 
@@ -638,6 +640,7 @@ def _ai_rows_rolled(
             params or None,
             timeout_s=TIMEOUT_S,
             name="graph.ai_tools",
+            page=True,
         )
         web = engine.run(
             ai_web_sql(catalog.domain_table(), where, True),
@@ -648,6 +651,7 @@ def _ai_rows_rolled(
             skip_days=skip,
             after=after,
             name="graph.ai_web",
+            page=True,
         )
         found = tools.result()
     rows = sorted([*found.rows, *web.rows], key=lambda r: -int(r[4]))[:3000]
@@ -696,6 +700,7 @@ def ai_graph(
             params or None,
             timeout_s=TIMEOUT_S,
             name="graph.ai",
+            page=True,
         )
         rows, sources = result.rows, result.sources
     seen_email: dict[str, bool] = {}

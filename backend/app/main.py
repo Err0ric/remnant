@@ -371,6 +371,7 @@ def _lifespan(config: AppConfig) -> Callable[[FastAPI], AbstractAsyncContextMana
                 with suppress(asyncio.CancelledError):
                     await task
             await app.state.listeners.close()
+            app.state.engine.close_kept()
 
     return lifespan
 
@@ -487,6 +488,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     if config.server.section_parallel:
         m365_facts.PARALLEL = config.server.section_parallel
     app.state.engine.trace = config.server.trace_queries
+    app.state.engine.pool = config.server.query_pool
     app.state.gate = LLMGate(
         meta,
         app.state.providers,

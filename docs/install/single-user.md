@@ -41,3 +41,5 @@ Open the link (it is single-use and expires in 30 minutes) and compare the certi
 - **Sources > Add source** for each log file or folder (the Automatic parser handles mixed syslog)
 - **AI providers** to add a local model for Ask, such as Ollama (`docker compose --profile ollama up -d` starts one); for reasoning models set **Thinking** to **Off**
 - [homelab-test.md](homelab-test.md) walks through every screen with made-up logs
+
+The settings database uses a write-ahead log: a power loss or OS crash can drop the last second or two of changes, never damage the database. Details: [team-vm.md, Power loss and the settings database](team-vm.md#power-loss-and-the-settings-database).

@@ -13,7 +13,7 @@ import re
 import shutil
 import threading
 import time
-from collections.abc import Collection, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
@@ -271,6 +271,12 @@ class QueryEngine:
         self._lookups: Lookups | None = None
         # Log every page query's plan, sources, files, and timings (`server.trace_queries`).
         self.trace = False
+        # Page-section queries reuse one kept DuckDB instance per slot, with Parquet footers
+        # cached between queries (`server.query_pool`, D146, proposed). Off: a new instance
+        # per query, readable folders limited to the caller's sources.
+        self.pool = False
+        self._idle: list[tuple[tuple[Any, ...], duckdb.DuckDBPyConnection, Callable[[], None]]] = []
+        self._pool_lock = threading.Lock()
 
     def set_lookups(self, lookups: Lookups) -> None:
         """The local lookups behind ip_country, ip_asn, ip_org, and is_internal (ADR-0039)."""
@@ -291,6 +297,7 @@ class QueryEngine:
         upto: datetime | None = None,
         background: bool = False,
         large: bool = False,
+        page: bool = False,
     ) -> QueryResult:
         """Run guarded SQL. `params` are bound by the driver ($name), never formatted in.
         `row_cap` lowers both the implicit and the maximum LIMIT (Ask previews use 5), and
@@ -302,7 +309,9 @@ class QueryEngine:
         that partial day). `background` (rollup builds): one DuckDB thread, half a memory
         share, and its own single slot, so a build never takes a page query's slot. `large`
         (Search, export, saved and scheduled searches): the free query memory, leaving two
-        shares for page sections; one share when others hold it."""
+        shares for page sections; one share when others hold it. `page`: the app's own
+        fixed page-section SQL, which may use a kept instance when `server.query_pool` is
+        on; never set for user, saved, scheduled, exported, or model-written SQL (D146)."""
         limit_s = min(self._timeout_s, timeout_s) if timeout_s else self._timeout_s
         default = min(self._default_limit, row_cap) if row_cap else self._default_limit
         cap = min(self._max_limit, row_cap) if row_cap else self._max_limit
@@ -326,7 +335,7 @@ class QueryEngine:
             try:
                 return self._execute(
                     guarded, scope, params, intel, limit_s, cap, rollup, frozenset(skip_days),
-                    name, after, upto, background, grant, waited,
+                    name, after, upto, background, grant, waited, page and not large,
                 )  # fmt: skip
             finally:
                 if grant is not None and self._ledger is not None and not background:
@@ -373,22 +382,38 @@ class QueryEngine:
         background: bool = False,
         grant: Grant | None = None,
         waited: float = 0.0,
+        page: bool = False,
     ) -> QueryResult:
         limit_mb = grant.mb if grant is not None else self._memory_mb
         spill_mb = self._spill_for(limit_mb) if limit_mb else None
         kind = "background" if background else "large" if grant and grant.large else "page"
-        con = self._connect(
-            scope, intel=intel, rollup=rollup, skip=skip, after=after, upto=upto,
-            background=background, memory_mb=limit_mb, spill_mb=spill_mb,
-        )  # fmt: skip
+        # Only the app's own page-section SQL may use a kept instance (D146, owner
+        # 2026-11-01): Search, saved and scheduled searches, exports, Ask and every other
+        # model-written query keep a new instance limited to the caller's source folders
+        # (ATLAS AML.T0051.001, AML.T0057).
+        pooled = self.pool and page and not background and not (grant is not None and grant.large)
+        kept: tuple[tuple[Any, ...], duckdb.DuckDBPyConnection, Callable[[], None]] | None = None
+        if pooled:
+            kept = self._take_kept()
+            con = kept[1]
+            kept[2]()  # lookups: fresh caches and the Internal list in force now
+            _drop_temp(con)
+            self._define(con, scope, intel, rollup, skip, after, upto, temp=True)
+        else:
+            con = self._connect(
+                scope, intel=intel, rollup=rollup, skip=skip, after=after, upto=upto,
+                background=background, memory_mb=limit_mb, spill_mb=spill_mb,
+            )  # fmt: skip
         timer = threading.Timer(limit_s, con.interrupt)
         started = time.perf_counter()
+        healthy = False
         try:
             # Inside the try: if no thread can start, the connection is still closed.
             timer.start()
             cursor = con.execute(guarded.sql, dict(params)) if params else con.execute(guarded.sql)
             rows = cursor.fetchall()
             columns = [d[0] for d in cursor.description or []]
+            healthy = True
         except duckdb.InterruptException as exc:
             raise QueryTimeoutError(f"Query exceeded {limit_s:g}s and was stopped") from exc
         except (duckdb.OutOfMemoryException, MemoryError) as exc:
@@ -411,6 +436,7 @@ class QueryEngine:
                 query=name,
             ) from exc
         except duckdb.Error as exc:
+            healthy = True  # an ordinary SQL error leaves the instance as it was
             raise QueryFailedError(self._scrub(str(exc).splitlines()[0])[:300]) from exc
         finally:
             timer.cancel()
@@ -418,7 +444,12 @@ class QueryEngine:
                 self._report(con, name, kind, limit_mb, spill_mb, grant)
                 if self.trace:
                     self._trace(con, name, kind, scope, skip, after, started, waited, grant)
-            con.close()
+            if kept is not None:
+                # A kept instance goes back only after a clean run: one stopped for time or
+                # memory, or that failed, is closed (a fresh one replaces it).
+                self._give_kept(kept, healthy)
+            else:
+                con.close()
 
         truncated = False
         if guarded.applied_limit is not None and len(rows) >= guarded.applied_limit:
@@ -766,7 +797,72 @@ class QueryEngine:
         memory_mb: int | None = None,
         spill_mb: int | None = None,
     ) -> duckdb.DuckDBPyConnection:
-        dirs = self._source_dirs(scope)
+        con = self._open(background, memory_mb, spill_mb)
+        readable = self._define(con, scope, intel, rollup, skip, after, upto, temp=False)
+        if self._lookups is not None:
+            register(con, self._lookups)
+        self._lock(con, readable)
+        return con
+
+    def _kept_key(self) -> tuple[Any, ...]:
+        """What a kept instance was built with; one built otherwise is not reused."""
+        return (
+            self.trace, str(self._lake), str(self._rollup), id(self._lookups), self._memory_mb,
+            self._threads, str(self._intel), tuple(str(f) for f, _ in self._facts.values()),
+        )  # fmt: skip
+
+    def _roots(self) -> list[Path]:
+        """Folders a kept instance may read: the whole lake, the rollups, and the intel
+        file's folder. The `events` view still reads only the caller's sources."""
+        out = [self._lake.resolve()]
+        if self._rollup is not None:
+            out.append(self._rollup.resolve())
+        out += [f.resolve() for f, _ in self._facts.values() if f is not None]
+        if self._intel is not None:
+            out.append(self._intel.parent.resolve())
+        return out
+
+    def _take_kept(
+        self,
+    ) -> tuple[tuple[Any, ...], duckdb.DuckDBPyConnection, Callable[[], None]]:
+        key = self._kept_key()
+        with self._pool_lock:
+            while self._idle:
+                found = self._idle.pop()
+                if found[0] == key:
+                    return found
+                found[1].close()
+        mb = self._memory_mb
+        con = self._open(False, mb, self._spill_for(mb) if mb else None)
+        # Footers and row group statistics are read once per file, not once per query.
+        con.execute("SET parquet_metadata_cache = true")
+        fresh: Callable[[], None] = (
+            register(con, self._lookups) if self._lookups is not None else (lambda: None)
+        )
+        self._lock(con, self._roots())
+        return key, con, fresh
+
+    def _give_kept(
+        self,
+        kept: tuple[tuple[Any, ...], duckdb.DuckDBPyConnection, Callable[[], None]],
+        reuse: bool,
+    ) -> None:
+        with self._pool_lock:
+            if reuse and kept[0] == self._kept_key() and len(self._idle) < max(1, self._at_once):
+                self._idle.append(kept)
+                return
+        kept[1].close()
+
+    def close_kept(self) -> None:
+        """Close every kept instance (shutdown, or settings changed)."""
+        with self._pool_lock:
+            idle, self._idle = self._idle, []
+        for _k, con, _r in idle:
+            con.close()
+
+    def _open(
+        self, background: bool, memory_mb: int | None, spill_mb: int | None
+    ) -> duckdb.DuckDBPyConnection:
         # Threads and memory at creation: connecting with the defaults first starts one
         # thread per core the host reports (inside a container, the host's cores), then
         # SET threads starts more (D79).
@@ -789,6 +885,34 @@ class QueryEngine:
         if not background:
             con.execute("SET enable_profiling = 'no_output'")
             con.execute(f"SET custom_profiling_settings = '{_TRACE if self.trace else _PEAKS}'")
+        return con
+
+    def _lock(self, con: duckdb.DuckDBPyConnection, readable: list[Path]) -> None:
+        allowed = ", ".join(_sql_str(str(d)) for d in readable)
+        con.execute(f"SET allowed_directories = [{allowed}]")
+        con.execute("SET enable_external_access = false")
+        con.execute("SET lock_configuration = true")
+
+    def _define(
+        self,
+        con: duckdb.DuckDBPyConnection,
+        scope: QueryScope,
+        intel: bool,
+        rollup: bool,
+        skip: frozenset[str],
+        after: tuple[Collection[str], datetime] | None,
+        upto: datetime | None,
+        temp: bool,
+    ) -> list[Path]:
+        """The query's views: `events` from the scope's files, and the rollup and intel
+        tables. `temp` (a kept instance): connection-local objects, dropped before the next
+        query defines its own. Returns the folders they read."""
+        dirs = self._source_dirs(scope)
+        view = "CREATE TEMP VIEW" if temp else "CREATE VIEW"
+
+        def table(sql: str) -> str:
+            return sql.replace("CREATE TABLE", "CREATE TEMP TABLE", 1) if temp else sql
+
         files = self._lake_globs(dirs, scope, skip)
         # Today's folder of a source whose earlier rows are in a partial rollup build is read
         # with a plain `time_observed` filter DuckDB pushes into the scan, so file statistics
@@ -822,13 +946,13 @@ class QueryEngine:
                 )
             base = "(" + " UNION ALL BY NAME ".join(parts) + ")"
         else:
-            con.execute(duckdb_create_table_sql("_empty_events"))
+            con.execute(table(duckdb_create_table_sql("_empty_events")))
             base = "_empty_events"
         where = _time_filter(scope)
         if upto is not None:
             cut = f"time_observed <= {_ts(upto)}"
             where = f"{where} AND {cut}" if where else f" WHERE {cut}"
-        con.execute(f"CREATE VIEW events AS SELECT * FROM {base}{where}")  # noqa: S608  # built from escaped server paths and datetime literals only
+        con.execute(f"{view} events AS SELECT * FROM {base}{where}")  # noqa: S608  # built from escaped server paths and datetime literals only
         readable = [d.resolve() for d in dirs]
         if rollup:
             rdirs = self.rollup_dirs(scope)
@@ -841,12 +965,12 @@ class QueryEngine:
                     hours.append(f"t <= {_ts(scope.end)}")
                 where = (" WHERE " + " AND ".join(hours)) if hours else ""
                 con.execute(
-                    "CREATE VIEW ai_rollup AS SELECT * FROM"  # noqa: S608  # escaped server paths and datetime literals only
+                    f"{view} ai_rollup AS SELECT * FROM"  # noqa: S608  # escaped server paths and datetime literals only
                     f" read_parquet([{globs}], hive_partitioning = false){where}"
                 )
                 readable += [d.resolve() for d in rdirs]
             else:
-                con.execute(f"CREATE TABLE ai_rollup ({ROLLUP_COLUMNS})")
+                con.execute(table(f"CREATE TABLE ai_rollup ({ROLLUP_COLUMNS})"))
             # Days in the range, and the one before (a span may start the day before).
             lo = (
                 (scope.start - timedelta(days=1)).astimezone(UTC).date().isoformat()
@@ -867,47 +991,51 @@ class QueryEngine:
             if today:
                 listed = ", ".join(_sql_str(f) for f in today)
                 con.execute(
-                    "CREATE VIEW ai_today AS SELECT * FROM"  # noqa: S608  # escaped server paths only
+                    f"{view} ai_today AS SELECT * FROM"  # noqa: S608  # escaped server paths only
                     f" read_parquet([{listed}], hive_partitioning = false, union_by_name = true)"
                 )
                 readable += [d.resolve() for d in tdirs]
             else:
-                con.execute(f"CREATE TABLE ai_today ({ROLLUP_COLUMNS}, label VARCHAR)")
+                con.execute(table(f"CREATE TABLE ai_today ({ROLLUP_COLUMNS}, label VARCHAR)"))
             if idents:
                 listed = ", ".join(_sql_str(f) for f in idents)
                 con.execute(
-                    "CREATE VIEW ai_ident AS SELECT * FROM"  # noqa: S608  # escaped server paths only
+                    f"{view} ai_ident AS SELECT * FROM"  # noqa: S608  # escaped server paths only
                     f" read_parquet([{listed}], hive_partitioning = false)"
                 )
             else:
-                con.execute(f"CREATE TABLE ai_ident ({IDENT_COLUMNS})")
-            for table, (_folder, columns) in self._facts.items():
-                mdirs = self.rollup_dirs(scope, table=table)
+                con.execute(table(f"CREATE TABLE ai_ident ({IDENT_COLUMNS})"))
+            for name, (_folder, columns) in self._facts.items():
+                mdirs = self.rollup_dirs(scope, table=name)
                 if mdirs:
                     globs = ", ".join(_sql_str(str(d / ROLLUP_FILES)) for d in mdirs)
                     con.execute(
-                        f"CREATE VIEW {table} AS SELECT * FROM"  # noqa: S608  # fixed table names, escaped server paths
+                        f"{view} {name} AS SELECT * FROM"  # noqa: S608  # fixed table names, escaped server paths
                         f" read_parquet([{globs}], hive_partitioning = false)"
                     )
                     readable += [d.resolve() for d in mdirs]
                 else:
-                    con.execute(f"CREATE TABLE {table} ({columns})")
+                    con.execute(table(f"CREATE TABLE {name} ({columns})"))
         if intel:
             if self._intel is not None and self._intel.is_file():
                 con.execute(
-                    "CREATE VIEW threat_intel AS SELECT indicator, type, feed, threat,"  # noqa: S608  # escaped server path only
+                    f"{view} threat_intel AS SELECT indicator, type, feed, threat,"  # noqa: S608  # escaped server path only
                     f" first_seen, last_seen FROM read_parquet({_sql_str(str(self._intel))})"
                 )
                 readable.append(self._intel.parent.resolve())
             else:
-                con.execute(f"CREATE TABLE threat_intel ({INTEL_COLUMNS})")
-        if self._lookups is not None:
-            register(con, self._lookups)
-        allowed = ", ".join(_sql_str(str(d)) for d in readable)
-        con.execute(f"SET allowed_directories = [{allowed}]")
-        con.execute("SET enable_external_access = false")
-        con.execute("SET lock_configuration = true")
-        return con
+                con.execute(table(f"CREATE TABLE threat_intel ({INTEL_COLUMNS})"))
+        return readable
+
+
+def _drop_temp(con: duckdb.DuckDBPyConnection) -> None:
+    """Remove the last query's views and tables from a kept instance."""
+    for (name,) in con.execute(
+        "SELECT view_name FROM duckdb_views() WHERE temporary AND NOT internal"
+    ).fetchall():
+        con.execute(f'DROP VIEW IF EXISTS temp."{name}"')
+    for (name,) in con.execute("SELECT table_name FROM duckdb_tables() WHERE temporary").fetchall():
+        con.execute(f'DROP TABLE IF EXISTS temp."{name}"')
 
 
 def _time_filter(scope: QueryScope) -> str:
