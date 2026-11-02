@@ -257,7 +257,7 @@ A slice is done when every box below is checked, demoed end to end from a fresh 
 
 ### Slice 7 (v0.2): connectors
 - [x] `Connector` protocol, scheduler in the ingest worker, checkpoints, de-duplication, backoff, health on the Sources page
-- [x] Microsoft 365 connector per ADR-0002: Management Activity API content types and Graph sign-ins, directory audits, alerts; setup guide with exact permissions; templates mapping to OCSF (tested against fake endpoints; live tenant pending)
+- [x] Microsoft 365 connector per ADR-0002: Management Activity API content types and Graph sign-ins, directory audits, alerts; setup guide with exact permissions; templates mapping to OCSF (tested against fake endpoints; running against a live tenant on the test install since late October 2026)
 - [x] Native syslog listener (UDP, TCP with octet counting, TLS) per ADR-0021 (tested with real sockets in the suite and a live server; first device on the homelab pending)
 - [x] Read-only MCP server per ADR-0003: `get_schema` and `run_query` only, per-user tokens, `local_only` results withheld unless the endpoint is marked local, every call audited, off by default (tested in the suite and against the official MCP Python client; Claude Desktop and Claude Code against the homelab pending)
 - [x] AI usage visibility per ADR-0015: OTLP/HTTP JSON receiver with per-source tokens (content dropped by default); Claude Code telemetry template; AI service catalog and shadow-AI view; MCP inventory (telemetry and endpoint script) with allowlist; AI usage page; AI watch alerts; Anthropic usage, cost, Claude Code, analytics, and compliance activity connectors (connectors tested against a fake API; live key and the PowerShell script pending)

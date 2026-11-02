@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Docs: Microsoft 365 connector on a live tenant (2026-11-02)
+
+- The v0.3.0 notes, CLAUDE.md, and the backlog now say the Microsoft 365 connector runs against a live tenant (on a test install since late October 2026); only the Anthropic connectors are still tested against fakes alone.
+- What changes for existing installs: nothing.
+
 ## v0.3.0 (2026-11-02)
 
 ### What works today
@@ -9,12 +14,12 @@
 - **AI usage.** AI services seen in DNS, firewall, and proxy logs, matched by domain against a built-in catalog you can extend; review each as Approved or Not approved; New and No longer seen against the period before.
 - **Agents and MCP servers.** Claude Code telemetry (OTLP) and the hooks plugin: sessions step by step, tools, MCP servers (installed and used), people, cost, and what changed; MCP inventory from an endpoint script.
 - **AI Watch.** One alert per first sighting of unapproved or unreviewed AI, sensitive data in prompts, agent changes, and app consents; a Dashboard panel with counts against the week before.
-- **Microsoft 365.** Audit logs, Entra sign-ins, directory audits, and alerts: sign-ins outside approved countries, risky mail rules, app consents, admin changes with directory sync grouped. Tested against fake endpoints; not yet run against a live tenant.
+- **Microsoft 365.** Audit logs, Entra sign-ins, directory audits, and alerts: sign-ins outside approved countries, risky mail rules, app consents, admin changes with directory sync grouped. Tested against fake endpoints and running against a live tenant on a test install since late October 2026.
 - **The log platform.** Files and folders, syslog over UDP, TCP, and TLS, JSON, CSV, EVTX, and Grafana Loki; 39 starter parsers mapped to OCSF; a Parquet lake queried with DuckDB through a read-only SQL guard; Simple search, SQL, and Ask; Sigma rules and scheduled searches with email, Teams, Slack, and webhook alerts; Health for every source, connector, agent, and alert target.
 - **Models.** Ollama, LM Studio, llama.cpp, vLLM, any OpenAI-compatible API, or Anthropic, through one gate: sources marked Local only never go to a cloud model, every call is audited, and every Explain claim cites event ids that are checked.
 - **Evidence.** Append-only audit log; stored logs, the audit log, and AI call records hash-chained, checked daily, and sealed.
 - **Team ready.** Accounts, roles, per-source access, HTTPS by default off loopback, optional single sign-on, online backups.
-- **Not yet:** Okta, Google Workspace, and AWS CloudTrail connectors, and an object-storage tier (in `docs/BACKLOG.md`). The Anthropic adapter and connectors are tested against fake servers only.
+- **Not yet:** Okta, Google Workspace, and AWS CloudTrail connectors, and an object-storage tier (in `docs/BACKLOG.md`). The Anthropic adapter and the Anthropic connectors are tested against fake servers only.
 
 ### Demo install and new screenshots (2026-11-02)
 
