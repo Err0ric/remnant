@@ -121,6 +121,7 @@ Runtime data lives outside the repo at `./data/` (gitignored) or the compose vol
 - Never commit `data/`, `.env`, or `*.key`
 - CI minutes are limited: docs-only PRs run no CI, superseded runs are cancelled, scale tests run only from the `scale` workflow, and `release-checks` runs by hand before a release and whenever an install guide's install or update commands change (not for wording)
 - Every PR description lists which Definition of Done items it satisfies
+- Two repositories: branches and PRs go to the private dev repository only. The public repository is written only by the publish step, after the leak scan and the name check pass, and only by pushing to its URL explicitly. In a working checkout, every remote that points at the public repository has its push URL set to `DISABLED` (`git remote set-url --push <name> DISABLED`), so a stray `git push` to it fails
 - PRs are squash-merged on GitHub, so the commits on `main` are made and signed by GitHub (committer `noreply@github.com`). That is expected: never rewrite or force-push `main` to change their author or committer. Keep a remote for the repo PRs merge into fetched, so tools that look for unpushed commits see them as pushed
 
 ## 5. Security rules

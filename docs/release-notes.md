@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Counts from rollup-only ranges (2026-11-01)
+
+- **Some counts may rise after this update.** Before #339, a Microsoft 365 source with no events in the range except on days already rolled up (no new events today, or a custom range that ends before today) was left out of Microsoft 365 > Overview and the Dashboard's Identity section, so those numbers were too low. They now match a read from events. Attacks and access was checked the same way and was not affected.
+- New regression tests compare each page read from the rollups with the same page read from events when no live files are in range.
+- What changes for existing installs: nothing to do.
+
 ### MCP servers from the hooks plugin, and refresh limits (2026-11-01)
 
 - **MCP servers seen only by the Claude Code hooks plugin** now show in AI usage's MCP list, AI Watch's review, and the first-seen alerts, unreviewed until someone reviews them. A server both telemetry and the hooks plugin report is one row, its calls counted once.
