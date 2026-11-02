@@ -48,22 +48,31 @@ Under it is a small, local-first log platform: syslog, files, Windows, and Micro
 
 ## Screenshots
 
+All screenshots come from the demo install below: two weeks of made-up logs for a fictional company (Example Corp at example.com), with a password-spraying attack on Microsoft 365 and SSH, a mailbox rule forwarding invoices outside, a blocked app consent, and an AI service nobody has reviewed.
+
 | | |
 |---|---|
-| ![Agents: Claude Code and MCP setups per person and machine, with what changed](docs/images/ai-agents.png) | ![MCP servers: installed and used, with review status](docs/images/ai-mcp.png) |
-| **Agents.** Claude Code per person, MCP setups per machine, and API keys, each compared with its own last 30 days: new tools, new MCP servers, unusual busy hours | **MCP servers.** Installed (endpoint inventory) and used (telemetry), who uses them, and New ones marked; approve or flag each |
-| ![Claude usage per person: cost, tokens, sessions, sensitive-data signals](docs/images/ai-claude.png) | ![Investigations AI flow: people to clients to MCP servers and AI services](docs/images/investigations.png) |
-| **Claude usage.** Cost, tokens, sessions, tool calls, errors, and sensitive-data signals per person | **AI flow.** People to clients to MCP servers and AI services in lanes, with not approved paths marked |
-| ![Overview: event volume heatmap with unusual hours outlined](docs/images/overview.png) | ![Health: every source, connector, agent, and alert target](docs/images/health.png) |
-| **Overview.** Events per source and hour, with hours outlined when they are far busier than the week before | **Health.** Every source, connector, agent, and alert target, plus watched devices that alert when they go quiet |
-| ![Simple search for failed SSH passwords](docs/images/search.png) | ![Dashboard of scheduled searches and rules with flags](docs/images/dashboard.png) |
-| **Search.** Type `sshd "failed password"`, or SQL, or ask in plain English with a local model; the SQL is always shown before it runs | **Dashboard.** Scheduled searches and Sigma rules with thresholds and alerts |
-| ![Integrity: verified chain heads and seal](docs/images/integrity.png) | ![MCP server settings for AI assistants](docs/images/mcp-server.png) |
-| **Integrity.** Stored logs, the audit log, and AI call records hash-chained and checked daily, with signed seals | **MCP server.** Claude Code, Claude Desktop, and other assistants query the logs read-only, as the person who connects them |
-| ![Command palette](docs/images/command-palette.png) | ![Light theme](docs/images/overview-light.png) |
-| **Ctrl+K** goes to any page, saved search, or source | A complete light theme as well as dark |
+| ![Dashboard: AI Watch, top AI services, and Microsoft 365 identity signals](docs/images/dashboard.png) | ![Ask: a plain-English question, the SQL written for it, and an explanation citing event ids](docs/images/ask.png) |
+| **Dashboard.** AI Watch, AI use by review status, and Microsoft 365 signals, each against the week before | **Ask.** A question in plain English, the SQL shown before it runs, and an explanation whose every claim cites events that were sent (here a scripted stand-in, labeled as one, answers instead of a model) |
+| ![Search for failed SSH passwords from one range](docs/images/search.png) | ![Microsoft 365 Admin: role, policy, credential, and user changes first; sync cycles grouped](docs/images/m365-admin.png) |
+| **Search.** `sshd "failed password" src_ip:203.0.113.*` with field counts beside the results | **Microsoft 365 > Admin.** Role, policy, credential, and user changes first, routine updates hidden, directory sync grouped per day |
+| ![AI usage: AI services seen in network logs, with review status](docs/images/ai-usage.png) | ![Agents: Claude Code per person and a session step by step](docs/images/agents.png) |
+| **AI usage.** Services from DNS, firewall, and proxy logs, matched against the catalog, with who uses them | **Agents.** Claude Code per person and machine, and one session step by step, including a not approved MCP server |
+| ![Health: every source flowing, with per-hour lines](docs/images/health.png) | ![Command palette searching for a person](docs/images/command-palette.png) |
+| **Health.** Every source, connector, agent, and alert target, with gaps shaded | **Ctrl+K** goes to any page, person, saved search, or source |
+| ![Dashboard in the light theme](docs/images/dashboard-light.png) | |
+| A complete light theme as well as dark | |
 
-Screenshots use made-up logs from `scripts/loggen.py` and `scripts/demo_lab.py`.
+## Try the demo
+
+On a machine with [uv](https://docs.astral.sh/uv/) and Node.js (no Docker needed):
+
+```bash
+cd frontend && pnpm install && pnpm build && cd ..
+make demo
+```
+
+Then open http://127.0.0.1:8090. `make demo` writes synthetic logs to `data/demo/`, starts a throwaway server on loopback (no accounts), and loads them with a synthetic GeoIP file. Everything in it is made up: example.com people, documentation-range addresses, invented hosts. The demo loads two weeks at once, so Claude Code hook records show as delivered late. `scripts/screenshots/capture.py` takes the screenshots above from it.
 
 ## Where it sits
 

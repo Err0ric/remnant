@@ -284,6 +284,13 @@ class NetworkConfig(_Strict):
         return self
 
 
+class EnrichmentConfig(_Strict):
+    # Treat documentation addresses (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24,
+    # 2001:db8::/32) as public so a GeoIP file can place them. For the demo install only
+    # (D157); a real network never uses these ranges.
+    place_documentation_ranges: bool = False
+
+
 class AppConfig(_Strict):
     server: ServerConfig = Field(default_factory=ServerConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
@@ -294,6 +301,7 @@ class AppConfig(_Strict):
     schedules: SchedulesConfig = Field(default_factory=SchedulesConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     network: NetworkConfig = Field(default_factory=NetworkConfig)
+    enrichment: EnrichmentConfig = Field(default_factory=EnrichmentConfig)
 
 
 def _env_overrides(environ: Mapping[str, str]) -> dict[str, Any]:

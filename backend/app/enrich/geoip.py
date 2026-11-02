@@ -26,7 +26,25 @@ CACHE_MAX = 200_000  # addresses kept between pages; emptied past this or on a n
 _LOOKS_LIKE_IP = re.compile(r"^[0-9a-fA-F:.]{3,45}$")
 
 
+# Documentation ranges (RFC 5737, RFC 3849). Off by default they are not public, so they
+# have no country; the demo install (`make demo`) places them with its own synthetic GeoIP
+# file so its findings show countries without naming any real network (D157).
+DOC_NETS = tuple(
+    ipaddress.ip_network(n)
+    for n in ("192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24", "2001:db8::/32")
+)
+_place_doc = False
+
+
+def place_documentation_ranges(on: bool) -> None:
+    """Set once at startup from `enrichment.place_documentation_ranges`."""
+    global _place_doc
+    _place_doc = on
+
+
 def is_public(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    if _place_doc and any(addr in n for n in DOC_NETS if n.version == addr.version):
+        return True
     return addr.is_global and not addr.is_multicast
 
 

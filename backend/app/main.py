@@ -136,7 +136,7 @@ from app.engine.lookups import Lookups
 from app.engine.memory import MemoryLedger
 from app.enrich import networks
 from app.enrich.feeds import FeedStore
-from app.enrich.geoip import GeoIP
+from app.enrich.geoip import GeoIP, place_documentation_ranges
 from app.enrich.intel import ThreatIntel
 from app.enrich.updater import FeedUpdater
 from app.ingest.integrity import IntegrityLedger
@@ -162,6 +162,7 @@ from app.meta.db import MetaDB
 from app.meta.secrets import SecretBox
 from app.ops.integrity import IntegrityService
 from app.search import m365 as m365_facts
+from app.search.dashboard import unplaced
 from app.search.dashboards import DashboardStore
 from app.search.handoff import HandoffService
 from app.search.health import HealthService
@@ -697,6 +698,8 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     )
     app.state.integrity = IntegrityLedger(meta, lake_dir)
     app.state.otlp_tokens = OtlpTokens(meta, SecretBox(config.paths.data_dir))
+    place_documentation_ranges(config.enrichment.place_documentation_ranges)
+    unplaced.cache_clear()
     app.state.geoip = GeoIP(app.state.feeds)
     geoip_ = app.state.geoip
 

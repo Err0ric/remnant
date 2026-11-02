@@ -173,11 +173,11 @@ export function ExplainPanel({ eventIds, subject, onClose }: ExplainPanelProps) 
                     <span
                       key={id}
                       className={`rounded-badge px-1.5 py-px font-mono text-xs ${answer.events_sent.includes(id) ? "bg-sev-info-bg text-text-secondary" : "bg-sev-critical-bg text-sev-critical-text"}`}
-                      title={
-                        answer.events_sent.includes(id) ? "Sent" : "Not one of the events sent"
-                      }
+                      title={`${id}: ${answer.events_sent.includes(id) ? "sent" : "not one of the events sent"}`}
                     >
-                      {id.slice(0, 8)}
+                      {/* The tail: event ids are UUIDv7, whose first characters are the
+                          ingest time and match across a batch (D157). */}
+                      {id.replace(/-/g, "").slice(-8)}
                     </span>
                   ))}
                 </div>

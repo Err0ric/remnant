@@ -6,7 +6,16 @@ Requirements: Python 3.12 with [uv](https://docs.astral.sh/uv/), Node 22 with pn
 make dev-backend    # API on http://127.0.0.1:8080
 make dev-frontend   # UI on http://127.0.0.1:5173 (proxies /api)
 make ci             # architecture checks, lint, types, tests, build
+make demo           # synthetic demo install on http://127.0.0.1:8090 (build the frontend first)
 ```
+
+## Demo and screenshots
+
+`make demo` (`scripts/demo/run.sh`) replaces `data/demo/` with two weeks of synthetic logs from `scripts/demo/generate.py`, starts a server on loopback with no accounts, and loads it with `scripts/demo/load.py`: one file source per log type, an OTLP source with Claude Code hook and telemetry records, a synthetic GeoIP file, and some AI services and MCP servers reviewed. `DEMO_DETACH=1` leaves the server running and returns; `DEMO_PORT` changes the port.
+
+The demo turns on `enrichment.place_documentation_ranges` so its GeoIP file can place documentation addresses (D157). Never set it on a real install.
+
+`scripts/screenshots/capture.py` takes the README screenshots from a running demo (Python Playwright with Chromium) and `scripts/screenshots/social.py` builds `docs/images/social-preview.png` (upload it under the repository's Settings > Social preview). Ask and Explain are answered by `scripts/screenshots/stand_in_model.py`, a scripted stand-in that is not an LLM, added as a provider named "Scripted demo model (not an LLM)".
 
 ## Command line
 

@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+## v0.3.0 (2026-11-02)
+
+### What works today
+
+- **AI usage.** AI services seen in DNS, firewall, and proxy logs, matched by domain against a built-in catalog you can extend; review each as Approved or Not approved; New and No longer seen against the period before.
+- **Agents and MCP servers.** Claude Code telemetry (OTLP) and the hooks plugin: sessions step by step, tools, MCP servers (installed and used), people, cost, and what changed; MCP inventory from an endpoint script.
+- **AI Watch.** One alert per first sighting of unapproved or unreviewed AI, sensitive data in prompts, agent changes, and app consents; a Dashboard panel with counts against the week before.
+- **Microsoft 365.** Audit logs, Entra sign-ins, directory audits, and alerts: sign-ins outside approved countries, risky mail rules, app consents, admin changes with directory sync grouped. Tested against fake endpoints; not yet run against a live tenant.
+- **The log platform.** Files and folders, syslog over UDP, TCP, and TLS, JSON, CSV, EVTX, and Grafana Loki; 39 starter parsers mapped to OCSF; a Parquet lake queried with DuckDB through a read-only SQL guard; Simple search, SQL, and Ask; Sigma rules and scheduled searches with email, Teams, Slack, and webhook alerts; Health for every source, connector, agent, and alert target.
+- **Models.** Ollama, LM Studio, llama.cpp, vLLM, any OpenAI-compatible API, or Anthropic, through one gate: sources marked Local only never go to a cloud model, every call is audited, and every Explain claim cites event ids that are checked.
+- **Evidence.** Append-only audit log; stored logs, the audit log, and AI call records hash-chained, checked daily, and sealed.
+- **Team ready.** Accounts, roles, per-source access, HTTPS by default off loopback, optional single sign-on, online backups.
+- **Not yet:** Okta, Google Workspace, and AWS CloudTrail connectors, and an object-storage tier (in `docs/BACKLOG.md`). The Anthropic adapter and connectors are tested against fake servers only.
+
+### Demo install and new screenshots (2026-11-02)
+
+- **`make demo`** starts a throwaway server on http://127.0.0.1:8090 with two weeks of synthetic logs for a fictional company: Microsoft 365 sign-ins and audit, Palo Alto traffic, Linux SSH, DNS, and Claude Code hook and telemetry records. Findings to look for: password spraying from one range ending in a successful sign-in, a mail rule forwarding invoices outside and hiding them, a blocked app consent, an unreviewed AI service, and a not approved MCP server.
+- **New README screenshots** taken from the demo by `scripts/screenshots/capture.py`, and a social preview image (`docs/images/social-preview.png`).
+- **Explain** shows the last 8 characters of each cited event id (the first ones are the same across a batch), with the full id on hover.
+- What changes for existing installs: nothing. The new setting `enrichment.place_documentation_ranges` is off by default and is for the demo only.
+
 ### Titles easier to spot (2026-11-01)
 
 - **Section titles** (AI Watch, Identity, Attacks and access, and the same level on Microsoft 365, AI usage, Agents, Health, and settings pages) sit on a soft slate pill, slightly larger and bolder.

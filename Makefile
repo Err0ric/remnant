@@ -1,4 +1,4 @@
-.PHONY: ci backend-ci frontend-ci arch dev-backend dev-frontend
+.PHONY: ci backend-ci frontend-ci arch dev-backend dev-frontend demo
 
 ci: arch backend-ci frontend-ci
 
@@ -16,3 +16,7 @@ dev-backend:
 
 dev-frontend:
 	cd frontend && pnpm dev
+
+# Synthetic demo install on http://127.0.0.1:8090 (scripts/demo/run.sh)
+demo:
+	bash scripts/demo/run.sh
