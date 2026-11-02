@@ -317,14 +317,6 @@ async def ai_watch_summary(
     cache: PageCache = app.state.page_cache
     key = ("ai_watch", user.user_id, scope_key(allowed), days, tz)
     default = days == 7
-    hit = cache.peek(key, STALE_MAX_S) if default else cache.get(key)
-    if hit is not None:
-        body, read = hit[0] if default else hit
-        await run_in_threadpool(
-            _audit(request).audit.write, "ai.view", "success", user.user_id, client_ip(request),
-            {"sources_in_scope": read, "view": "watch", "cached": True},
-        )  # fmt: skip
-        return Response(body, media_type="application/json")
 
     def compute(viewer: User, scope: list[str] | None) -> tuple[bytes, list[str]]:
         items_store: AlertItems = app.state.alert_items
@@ -362,6 +354,17 @@ async def ai_watch_summary(
             updated_at=datetime.now(UTC),
         )
         return result.model_dump_json().encode(), list(s.sources)
+
+    hit = cache.peek(key, STALE_MAX_S) if default else cache.get(key)
+    if hit is not None:
+        body, read = hit[0] if default else hit
+        await run_in_threadpool(
+            _audit(request).audit.write, "ai.view", "success", user.user_id, client_ip(request),
+            {"sources_in_scope": read, "view": "watch", "cached": True},
+        )  # fmt: skip
+        if default:  # seen now: refreshed while viewed, again after a lapse (D147)
+            app.state.refresher.watch(key, user.user_id, scope_key(allowed), compute)
+        return Response(body, media_type="application/json")
 
     body, read = await run_in_threadpool(compute, user, allowed)
     await run_in_threadpool(

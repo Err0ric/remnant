@@ -169,6 +169,7 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | `POST` | `/api/health-checks/devices` | Watch a device by IP address or host name; `silence_s` 300 to 86400. Audited as device_watch.change. |  | `name`: string<br>`match`: string<br>`silence_s`: integer<br>`target_ids`?: list of string |
 | `PUT` | `/api/health-checks/devices/{device_id}` | Change a watched device. Audited as device_watch.change. |  | `name`: string<br>`match`: string<br>`silence_s`: integer<br>`target_ids`?: list of string |
 | `DELETE` | `/api/health-checks/devices/{device_id}` | Stop watching a device. Audited as device_watch.change. |  |  |
+| `GET` | `/api/health-checks/refreshes` | Background refreshes of the default views (D147) per hour over the last 24 hours, and how many views are kept fresh now. A view stops refreshing 10 minutes after its last load. Administrators. |  |  |
 | `GET` | `/api/health-checks/speed` | Page speed per route over the last 24 hours (since the server started, if later), from the Server-Timing of each request: requests, p50 and p95 total, DuckDB p50, slot wait p95, and page cache hits. Routes only, never values or callers. Administrators. |  |  |
 
 ### Identities

@@ -304,40 +304,103 @@ GROUP BY 1
 LIMIT 500"""  # noqa: S608  # fixed SQL text; domains checked against DOMAIN in _values
 
 
-MCP_SQL = f"""
-WITH t AS (
+# MCP servers seen by Claude Code telemetry, the MCP inventory, and the hooks plugin
+# (D151, owner 2026-11-01). Presence (first and last seen, people, machines) joins the
+# three by server name. Calls come from one source per session: telemetry when it saw the
+# session, otherwise the hook records, so a session both report is never counted twice. A
+# hook record sent twice (offline queue) is one record (`_ONE_COPY` in ai/sessions.py).
+_HOOK_ONE_COPY = """hooks AS (
+  SELECT * FROM events
+  WHERE template_id = 'claude_hooks'
+    AND json_extract_string(unmapped, '$.attr.mcp_server_name') IS NOT NULL
+  QUALIFY json_extract_string(unmapped, '$.attr.seq') IS NULL OR row_number() OVER (
+    PARTITION BY json_extract_string(unmapped, '$.attr.install_id'),
+                 json_extract_string(unmapped, '$.attr.seq')
+    ORDER BY time_observed, event_id) = 1
+)"""
+_MCP_ROWS = f"""{_HOOK_ONE_COPY},
+t AS (
   SELECT {MCP_EXPR} AS name, {WHO_EXPR} AS who, device_hostname AS machine,
          coalesce(time, time_observed) AS ts, 'telemetry' AS src,
          CASE WHEN message = 'claude_code.tool_result' THEN 1 ELSE 0 END AS call,
-         CAST(NULL AS VARCHAR) AS client
+         CAST(NULL AS VARCHAR) AS client, source_id, classification,
+         json_extract_string(unmapped, '$.attr.session_id') AS session
   FROM events
   WHERE template_id = 'claude_code_otel' AND {MCP_EXPR} IS NOT NULL
   UNION ALL
   SELECT message, {WHO_EXPR}, device_hostname, coalesce(time, time_observed), 'inventory', 0,
          coalesce(json_extract_string(unmapped, '$.client'),
-                  json_extract_string(unmapped, '$.attr.client'))
+                  json_extract_string(unmapped, '$.attr.client')), source_id, classification,
+         NULL
   FROM events WHERE template_id = 'mcp_inventory' AND message IS NOT NULL
-)
-SELECT name, sum(call) AS calls, list(DISTINCT who) FILTER (WHERE who IS NOT NULL) AS people,
+  UNION ALL
+  SELECT json_extract_string(unmapped, '$.attr.mcp_server_name'), {WHO_EXPR}, device_hostname,
+         coalesce(time, time_observed), 'hooks',
+         CASE WHEN message = 'claude_hooks.pre_tool_use' THEN 1 ELSE 0 END, NULL, source_id,
+         classification, json_extract_string(unmapped, '$.attr.session_id')
+  FROM hooks
+),
+tele AS (SELECT DISTINCT session FROM t WHERE src = 'telemetry' AND session IS NOT NULL)"""  # noqa: S608  # fixed SQL text
+
+# One closed day's MCP rows, for the rollup's mcp.parquet (D151).
+MCP_DAY_SQL = f"""
+WITH {_MCP_ROWS}
+SELECT name, src, session, who, machine, client, sum(call)::BIGINT, min(ts), max(ts),
+       source_id, any_value(classification)
+FROM t WHERE name IS NOT NULL
+GROUP BY name, src, session, who, machine, client, source_id
+LIMIT 200000"""  # noqa: S608  # fixed SQL text
+
+
+def mcp_sql(rollup: bool) -> str:
+    """MCP servers in use (see MCP_SQL). With `rollup`, closed days listed in
+    `$mcp_days` ("source|day") come from the rollup's MCP rows, and only the rest (today,
+    days not built yet) from events (owner, 2026-11-01: the AI inventory read every hook
+    record)."""
+    if not rollup:
+        return MCP_SQL
+    return f"""
+WITH {_MCP_ROWS},
+u AS (
+  SELECT name, src, session, who, machine, client, call AS calls, ts AS first_t, ts AS last_t
+  FROM t
+  UNION ALL
+  SELECT name, src, session, who, machine, client, calls, first_t, last_t FROM ai_mcp
+  WHERE (source_id || '|' || day) IN (SELECT unnest($mcp_days))
+),
+tele_all AS (SELECT DISTINCT session FROM u WHERE src = 'telemetry' AND session IS NOT NULL)
+SELECT name,
+       coalesce(sum(calls) FILTER (WHERE src <> 'hooks' OR session IS NULL
+                                   OR session NOT IN (SELECT session FROM tele_all)), 0),
+       list(DISTINCT who) FILTER (WHERE who IS NOT NULL) AS people,
+       count(DISTINCT machine) AS machines,
+       count(DISTINCT CASE WHEN src = 'inventory' THEN machine END) AS installs,
+       list(DISTINCT client) FILTER (WHERE client IS NOT NULL) AS clients,
+       min(first_t) AS first_seen, max(last_t) AS last_seen, list(DISTINCT src) AS sources
+FROM u WHERE lower(name) NOT IN {NO_MCP_NAMES}
+GROUP BY 1 ORDER BY 2 DESC, 3 DESC
+LIMIT 500"""  # noqa: S608  # fixed SQL text
+
+
+MCP_SQL = f"""
+WITH {_MCP_ROWS}
+SELECT name,
+       coalesce(sum(call) FILTER (WHERE src <> 'hooks' OR session IS NULL
+                                  OR session NOT IN (SELECT session FROM tele)), 0) AS calls,
+       list(DISTINCT who) FILTER (WHERE who IS NOT NULL) AS people,
        count(DISTINCT machine) AS machines,
        count(DISTINCT CASE WHEN src = 'inventory' THEN machine END) AS installs,
        list(DISTINCT client) FILTER (WHERE client IS NOT NULL) AS clients,
        min(ts) AS first_seen, max(ts) AS last_seen, list(DISTINCT src) AS sources
 FROM t WHERE lower(name) NOT IN {NO_MCP_NAMES}
 GROUP BY 1 ORDER BY 2 DESC, 3 DESC
-LIMIT 500"""  # noqa: S608  # fixed SQL text; domains checked against DOMAIN in _values
+LIMIT 500"""  # noqa: S608  # fixed SQL text
 
 # Per MCP server: the sources it was seen in, its people, and its machines (with and
-# without a person), for the AI watch's review items (ADR-0035 row 11, D116).
+# without a person), for the AI watch's review items (ADR-0035 row 11, D116). Hook-only
+# servers are included, so one added through a hooks-only client is reviewed (D151).
 REVIEW_MCP_SQL = f"""
-WITH t AS (
-  SELECT {MCP_EXPR} AS name, {WHO_EXPR} AS who, device_hostname AS machine, source_id
-  FROM events
-  WHERE template_id = 'claude_code_otel' AND {MCP_EXPR} IS NOT NULL
-  UNION ALL
-  SELECT message, {WHO_EXPR}, device_hostname, source_id
-  FROM events WHERE template_id = 'mcp_inventory' AND message IS NOT NULL
-)
+WITH {_MCP_ROWS}
 SELECT name, list(DISTINCT source_id) AS sources,
        list(DISTINCT who) FILTER (WHERE who IS NOT NULL) AS people,
        list(DISTINCT machine) FILTER (WHERE machine IS NOT NULL AND who IS NULL) AS devices,
@@ -560,13 +623,47 @@ class Usage:
             tuple(ident.domains), tuple(sorted(ident.aliases.items())),
             tuple(sorted(ident.email_people)),
         )  # fmt: skip
-        key = ("usage.mcp", self._catalog_key(), who, *self._scope_key(scope))
+        del who
+        return self.mcp_and_sources(scope, ident)[0]
+
+    def _mcp_rows(self, scope: QueryScope) -> tuple[list[list[Any]], list[str]]:
+        """MCP_SQL's rows: closed days the rollup has MCP rows for come from there, the rest
+        (today, days not built yet) from events (D151)."""
+        days: list[str] = []
+        if self._rollup is not None and scope.start is not None:
+            days = self._rollup.mcp_covered(replace(scope, end=scope.end or datetime.now(UTC)))
+        if not days:
+            res = self._engine.run(MCP_SQL, scope, timeout_s=TIMEOUT_S, name="ai_mcp", page=True)
+        else:
+            res = self._engine.run(
+                mcp_sql(True), scope, {"mcp_days": days}, timeout_s=TIMEOUT_S, rollup=True,
+                skip_days=days, name="ai_mcp", page=True,
+            )  # fmt: skip
+        return list(res.rows), list(res.sources)
+
+    def mcp_sources(self, scope: QueryScope, ident: IdentityMap | None = None) -> list[str]:
+        """The sources the MCP list was read from (for the audit row)."""
+        return self.mcp_and_sources(scope, ident)[1]
+
+    def mcp_and_sources(
+        self, scope: QueryScope, ident: IdentityMap | None = None
+    ) -> tuple[list[McpUse], list[str]]:
+        """`mcp`, and the sources read for it."""
+        who = None if ident is None else (
+            tuple(ident.domains), tuple(sorted(ident.aliases.items())),
+            tuple(sorted(ident.email_people)),
+        )  # fmt: skip
+        key = ("usage.mcp+read", self._catalog_key(), who, *self._scope_key(scope))
+
         return self._memo(key, lambda: self._mcp(scope, ident))  # type: ignore[no-any-return]  # what _mcp returns
 
-    def _mcp(self, scope: QueryScope, ident: IdentityMap | None = None) -> list[McpUse]:
+    def _mcp(
+        self, scope: QueryScope, ident: IdentityMap | None = None
+    ) -> tuple[list[McpUse], list[str]]:
         rules = self._catalog.mcp_rules()
         out = []
-        for row in self._rows(MCP_SQL, scope):
+        rows, read = self._mcp_rows(scope)
+        for row in rows:
             name, calls, people, machines, installs, clients, first, last, sources = row
             out.append(
                 McpUse(
@@ -582,7 +679,7 @@ class Usage:
                     sources=sorted(str(s) for s in (sources or [])),
                 )
             )
-        return out
+        return out, read
 
     def people(self, scope: QueryScope, ident: IdentityMap | None = None) -> list[PersonUse]:
         """Claude usage per person; names that are one person are added up (ADR-0018).

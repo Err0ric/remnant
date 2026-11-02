@@ -121,6 +121,7 @@ Runtime data lives outside the repo at `./data/` (gitignored) or the compose vol
 - Never commit `data/`, `.env`, or `*.key`
 - CI minutes are limited: docs-only PRs run no CI, superseded runs are cancelled, scale tests run only from the `scale` workflow, and `release-checks` runs by hand before a release and whenever an install guide's install or update commands change (not for wording)
 - Every PR description lists which Definition of Done items it satisfies
+- PRs are squash-merged on GitHub, so the commits on `main` are made and signed by GitHub (committer `noreply@github.com`). That is expected: never rewrite or force-push `main` to change their author or committer. Keep a remote for the repo PRs merge into fetched, so tools that look for unpushed commits see them as pushed
 
 ## 5. Security rules
 

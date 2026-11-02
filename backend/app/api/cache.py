@@ -7,6 +7,8 @@ is still audited."""
 from __future__ import annotations
 
 import threading
+import time
+from collections import deque
 from collections.abc import Awaitable, Callable, Hashable
 from dataclasses import dataclass
 from time import monotonic
@@ -104,6 +106,9 @@ class Refresher:
         self._users = users
         self._watched: dict[Hashable, _Watched] = {}
         self._lock = threading.Lock()
+        # When each refresh ran (and whether it failed), for Health > Speed: 24 hours.
+        self._runs: deque[tuple[float, bool]] = deque(maxlen=50_000)
+        self._clock = time.time
 
     def watch(
         self, key: Hashable, user_id: str, scope: tuple[str, ...] | None, compute: Compute
@@ -133,10 +138,30 @@ class Refresher:
                 value = run_low(lambda u=user, a=allowed, c=w.compute: c(u, a))  # type: ignore[misc]  # bound per item
             except Exception as exc:  # one failing view must not stop the others
                 log.warning("page.refresh_failed", view=str(key), error=type(exc).__name__)
+                with self._lock:
+                    self._runs.append((self._clock(), False))
                 continue
             self._cache.put(key, value)
+            with self._lock:
+                self._runs.append((self._clock(), True))
             done += 1
         return done
+
+    def per_hour(self) -> tuple[int, list[tuple[float, int, int]]]:
+        """(views kept fresh now, and for each of the last 24 hours, oldest first: the
+        hour's start as a Unix time, refreshes, failed refreshes)."""
+        now = self._clock()
+        top = now - now % 3600
+        hours = [top - 3600 * i for i in range(23, -1, -1)]
+        counts = {h: [0, 0] for h in hours}
+        with self._lock:
+            watched = sum(1 for w in self._watched.values() if monotonic() - w.seen <= WATCH_S)
+            runs = list(self._runs)
+        for at, ok in runs:
+            h = at - at % 3600
+            if h in counts:
+                counts[h][0 if ok else 1] += 1
+        return watched, [(h, c[0], c[1]) for h, c in ((h, counts[h]) for h in hours)]
 
 
 WRITES = frozenset({"POST", "PUT", "PATCH", "DELETE"})

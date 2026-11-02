@@ -39,14 +39,6 @@ async def m365_overview(
     # settings and sources need not be in the key (owner, 2026-11-01).
     key = ("m365", scope_key(allowed), window, tz)
     default = window == "7d"  # refreshed in the background, served at once (D147)
-    hit = cache.peek(key, STALE_MAX_S) if default else cache.get(key)
-    if hit is not None:
-        body, read = hit[0] if default else hit
-        await run_in_threadpool(
-            app.state.auth.audit.write, "m365.overview", "success", user.user_id,
-            client_ip(request), {"window": window, "cached": True, "sources_in_scope": read},
-        )  # fmt: skip
-        return Response(body, media_type="application/json")
 
     def compute(_viewer: User, scope: list[str] | None) -> tuple[bytes, list[str]]:
         places = networks.load(app.state.meta)
@@ -58,6 +50,17 @@ async def m365_overview(
         data = to_dict(out)
         data["updated_at"] = datetime.now(UTC)  # "updated N s ago" on the page (D147)
         return bytes(JSONResponse(jsonable_encoder(data)).body), list(out.read)
+
+    hit = cache.peek(key, STALE_MAX_S) if default else cache.get(key)
+    if hit is not None:
+        body, read = hit[0] if default else hit
+        await run_in_threadpool(
+            app.state.auth.audit.write, "m365.overview", "success", user.user_id,
+            client_ip(request), {"window": window, "cached": True, "sources_in_scope": read},
+        )  # fmt: skip
+        if default:  # seen now: refreshed while viewed, again after a lapse (D147)
+            app.state.refresher.watch(key, user.user_id, scope_key(allowed), compute)
+        return Response(body, media_type="application/json")
 
     body, read = await run_in_threadpool(compute, user, allowed)
     auth: AuthService = app.state.auth

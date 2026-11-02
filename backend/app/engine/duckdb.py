@@ -49,7 +49,7 @@ INTEL_TABLES = ALLOWED_TABLES | {"threat_intel"}
 # The daily AI rollup (ADR-0035 Part 1): server-built queries only. Users, saved searches,
 # Ask, and MCP never see this table; `run(..., rollup=True)` is not reachable from them.
 ROLLUP_TABLES = ALLOWED_TABLES | {
-    "ai_rollup", "ai_ident", "ai_today", "m365_rollup", "auth_rollup"
+    "ai_rollup", "ai_ident", "ai_today", "ai_mcp", "m365_rollup", "auth_rollup"
 }  # fmt: skip
 # The AI rollup's today so far (D136): rollup/ai/today/source=<id>/part-<n>.parquet and
 # ident-<n>.parquet, one pair per build, each row labeled with its build.
@@ -60,6 +60,15 @@ ROLLUP_FILES = "day=*/part-*.parquet"  # under rollup/ai/source=<id> and rollup/
 # Who or which machine had an address, per closed day (`app.search.addresses.IDENT_RAW`,
 # reduced): the address lookup reads closed days from here, never from events.
 IDENT_FILE = "ident.parquet"
+# MCP servers per closed day (D151): one row per server, source, session, person,
+# machine, and client, with calls and first and last seen, from telemetry, the MCP
+# inventory, and hook records.
+MCP_FILE = "mcp.parquet"
+MCP_COLUMNS = (
+    "name VARCHAR, src VARCHAR, session VARCHAR, who VARCHAR, machine VARCHAR,"
+    " client VARCHAR, calls BIGINT, first_t TIMESTAMPTZ, last_t TIMESTAMPTZ,"
+    " source_id VARCHAR, classification VARCHAR, day VARCHAR"
+)
 IDENT_COLUMNS = (
     "kind VARCHAR, ip VARCHAR, t TIMESTAMPTZ, who VARCHAR, host VARCHAR, mac VARCHAR,"
     " fin BOOLEAN, src VARCHAR, dev VARCHAR, day VARCHAR"
@@ -590,10 +599,17 @@ class QueryEngine:
 
     def _holding(self, scope: QueryScope, templates: set[str], skip: Collection[str]) -> list[str]:
         """Sources in scope with a file in range whose template_id statistics allow one of
-        `templates`. Read from Parquet footers, cached per file version; a file without
-        statistics counts as holding them."""
+        `templates`, and sources with days in `skip` (a rollup answers for those). Read from
+        Parquet footers, cached per file version; a file without statistics counts as
+        holding them."""
         out = []
+        rolled = {k.split("|", 1)[0] for k in skip}
         for d in self._source_dirs(scope):
+            if d.name.removeprefix("source=") in rolled:
+                # Its skipped days are read from a rollup instead: keep the source in scope,
+                # or the rollup's rows for it would be left out too (D151).
+                out.append(d.name.removeprefix("source="))
+                continue
             for pattern in self._lake_globs([d], scope, frozenset(skip)):
                 if any(self._may_hold(Path(f), templates) for f in glob.glob(pattern)):
                     out.append(d.name.removeprefix("source="))
@@ -997,6 +1013,20 @@ class QueryEngine:
                 readable += [d.resolve() for d in tdirs]
             else:
                 con.execute(table(f"CREATE TABLE ai_today ({ROLLUP_COLUMNS}, label VARCHAR)"))
+            mcps = [
+                str(f)
+                for d in rdirs
+                for f in sorted(d.glob(f"day=*/{MCP_FILE}"))
+                if lo <= f.parent.name.removeprefix("day=") <= hi
+            ]
+            if mcps:
+                listed = ", ".join(_sql_str(f) for f in mcps)
+                con.execute(
+                    f"{view} ai_mcp AS SELECT * FROM"  # noqa: S608  # escaped server paths only
+                    f" read_parquet([{listed}], hive_partitioning = false)"
+                )
+            else:
+                con.execute(table(f"CREATE TABLE ai_mcp ({MCP_COLUMNS})"))
             if idents:
                 listed = ", ".join(_sql_str(f) for f in idents)
                 con.execute(

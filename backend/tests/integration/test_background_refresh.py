@@ -68,3 +68,32 @@ def test_refreshes_stop_when_the_viewers_sources_change(lab: dict[str, Any]) -> 
     admin.put(f"/api/groups/{lab['gid']}/sources", json={"source_ids": []}, headers=h)
     assert app.state.refresher.tick() == 0  # never computed with the old scope
     assert not app.state.refresher._watched
+
+
+def test_refreshes_stop_ten_minutes_after_the_last_view_and_restart_on_the_next(
+    lab: dict[str, Any],
+) -> None:
+    """D147 as accepted: no queries run as a viewer who has left; a load, from the cache
+    or not, keeps the view refreshed, and one after a lapse starts it again."""
+    from app.api import cache as page_cache
+
+    ana, app = lab["ana"], lab["app"]
+    refresher = app.state.refresher
+    ana.get(VIEWS[0])
+    (key,) = refresher._watched
+    refresher.tick()
+    ana.get(VIEWS[0])  # served from the refresh: still counts as a view
+    seen = refresher._watched[key].seen
+    refresher._watched[key].seen = seen - page_cache.WATCH_S - 1  # nobody for 10 minutes
+    assert refresher.tick() == 0 and not refresher._watched
+    ana.get(VIEWS[0])  # the next view restarts it
+    assert key in refresher._watched and refresher.tick() == 1
+
+
+def test_health_speed_shows_refreshes_per_hour(lab: dict[str, Any]) -> None:
+    lab["ana"].get(VIEWS[0])
+    lab["app"].state.refresher.tick()
+    body = lab["admin"].get("/api/health-checks/refreshes").json()
+    assert body["views"] == 1 and len(body["hours"]) == 24
+    assert body["hours"][-1]["refreshes"] == 1 and body["hours"][-1]["failed"] == 0
+    assert lab["ana"].get("/api/health-checks/refreshes").status_code == 403

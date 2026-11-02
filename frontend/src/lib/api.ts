@@ -1876,6 +1876,12 @@ export interface RouteSpeed {
   cached: number;
 }
 
+/** Health > Speed: background refreshes of the default views (D147), per hour, oldest first. */
+export interface RefreshHours {
+  views: number;
+  hours: { hour: string; refreshes: number; failed: number }[];
+}
+
 export interface AiWatchSummary {
   days: number;
   /** When the server computed these numbers (7-day view, refreshed in the background). */
@@ -2425,6 +2431,7 @@ export const api = {
   aiUsage: (start?: string) =>
     request<AiUsage>(`/api/ai/usage${start ? `?start=${encodeURIComponent(start)}` : ""}`),
   healthSpeed: () => request<RouteSpeed[]>("/api/health-checks/speed"),
+  healthRefreshes: () => request<RefreshHours>("/api/health-checks/refreshes"),
   aiCatalog: () => request<AiService[]>("/api/ai/catalog"),
   setAiServiceStatus: (id: string, status: AiStatus) =>
     request<AiService>(`/api/ai/services/${encodeURIComponent(id)}/status`, put({ status })),

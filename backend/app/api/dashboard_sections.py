@@ -133,15 +133,6 @@ async def dashboard_sections(
     # empty the cache (`clear_on_change`), so they need not be in the key.
     key = ("sections", scope_key(allowed), window, part, tz)
     default = window == "7d"  # refreshed in the background, served at once (D147)
-    hit = cache.peek(key, STALE_MAX_S) if default else cache.get(key)
-    if hit is not None:
-        body, read = hit[0] if default else hit
-        await run_in_threadpool(
-            app.state.auth.audit.write, "dashboard.sections", "success", user.user_id,
-            client_ip(request),
-            {"window": window, "part": part, "cached": True, "sources_in_scope": read},
-        )  # fmt: skip
-        return Response(body, media_type="application/json")
 
     def compute(_viewer: User, scope: list[str] | None) -> tuple[bytes, list[str]]:
         meta = app.state.meta
@@ -163,6 +154,18 @@ async def dashboard_sections(
         data["updated_at"] = datetime.now(UTC)
         read = data.pop("read", None) or []
         return SectionsOut(**data).model_dump_json().encode(), read
+
+    hit = cache.peek(key, STALE_MAX_S) if default else cache.get(key)
+    if hit is not None:
+        body, read = hit[0] if default else hit
+        await run_in_threadpool(
+            app.state.auth.audit.write, "dashboard.sections", "success", user.user_id,
+            client_ip(request),
+            {"window": window, "part": part, "cached": True, "sources_in_scope": read},
+        )  # fmt: skip
+        if default:  # seen now: refreshed while viewed, again after a lapse (D147)
+            app.state.refresher.watch(key, user.user_id, scope_key(allowed), compute)
+        return Response(body, media_type="application/json")
 
     body, read = await run_in_threadpool(compute, user, allowed)
     auth: AuthService = app.state.auth

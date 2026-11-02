@@ -33,14 +33,33 @@ import structlog
 
 from app.ai.agents import ITEMS_SQL
 from app.ai.catalog import Catalog
-from app.ai.usage import MCP_SQL, first_services_sql, rollup_build_sql
-from app.engine.duckdb import IDENT_FILE, TODAY_DIR, QueryEngine, QueryScope
+from app.ai.usage import MCP_DAY_SQL, MCP_SQL, first_services_sql, rollup_build_sql
+from app.engine.duckdb import IDENT_FILE, MCP_FILE, TODAY_DIR, QueryEngine, QueryScope
 from app.search.addresses import IDENT_RAW
 from app.search.m365_rollup import _start_day
 
 log = structlog.get_logger(__name__)
 
 MANIFEST = "_built.json"
+# The first-seen index's version: 2 adds MCP servers seen only in hook records (D151);
+# days indexed before are indexed again (no rebuild).
+FIRST_VERSION = 2
+MCP_SCHEMA = pa.schema(
+    [
+        ("name", pa.string()),
+        ("src", pa.string()),
+        ("session", pa.string()),
+        ("who", pa.string()),
+        ("machine", pa.string()),
+        ("client", pa.string()),
+        ("calls", pa.int64()),
+        ("first_t", pa.timestamp("us", tz="UTC")),
+        ("last_t", pa.timestamp("us", tz="UTC")),
+        ("source_id", pa.string()),
+        ("classification", pa.string()),
+        ("day", pa.string()),
+    ]
+)
 TODAY_MARK = "_today.json"  # the current today-so-far build
 TODAY_EVERY_S = 300.0
 TODAY_MARGIN_S = 60
@@ -208,7 +227,15 @@ class AiRollup:
         # they stay readable from the rollup meanwhile (F63).
         left = self._max - min(len(stale), self._max)
         done = set(stale)
-        unindexed = [(s, d) for s, d in closed if (s, d) not in done and not self._indexed(s, d)]
+        unindexed = [
+            (s, d)
+            for s, d in closed
+            if (s, d) not in done
+            and (
+                not self._indexed(s, d)
+                or not (self._dir / f"source={s}" / f"day={d}" / MCP_FILE).is_file()
+            )
+        ]
         for source, day in unindexed[:left]:
             self._index_only(source, day)
             report.indexed += 1
@@ -233,6 +260,7 @@ class AiRollup:
         out = self._dir / f"source={source}" / f"day={day}"
         out.mkdir(parents=True, exist_ok=True)
         self._write_ident(out, scope, day)
+        self._write_mcp(out, scope, day)
         result = self._engine.run(
             rollup_build_sql(self._catalog.domain_table()),
             scope,
@@ -271,6 +299,38 @@ class AiRollup:
             else:
                 arrays.append(pa.array([None if v is None else str(v) for v in values], type=kind))
         return pa.Table.from_arrays(arrays, schema=SCHEMA)
+
+    def _write_mcp(self, out: Path, scope: QueryScope, day: str) -> None:
+        """The day's MCP rows (MCP_DAY_SQL), so MCP pages read closed days from here."""
+        rows = self._engine.run(
+            MCP_DAY_SQL, scope, timeout_s=120, intel=False, background=True,
+            name="ai_rollup.mcp",
+        ).rows  # fmt: skip
+        cols = list(zip(*rows, strict=True)) if rows else [()] * 11
+        arrays = [
+            *(pa.array([None if v is None else str(v) for v in cols[i]], pa.string())
+              for i in range(6)),
+            pa.array([int(v or 0) for v in cols[6]], pa.int64()),
+            pa.array([_ts(v) for v in cols[7]], pa.timestamp("us", "UTC")),
+            pa.array([_ts(v) for v in cols[8]], pa.timestamp("us", "UTC")),
+            pa.array([None if v is None else str(v) for v in cols[9]], pa.string()),
+            pa.array([None if v is None else str(v) for v in cols[10]], pa.string()),
+            pa.array([day] * len(rows), pa.string()),
+        ]  # fmt: skip
+        tmp = out / f".{MCP_FILE}.tmp"
+        pq.write_table(pa.Table.from_arrays(arrays, schema=MCP_SCHEMA), tmp)
+        os.replace(tmp, out / MCP_FILE)
+
+    def mcp_covered(self, scope: QueryScope) -> list[str]:
+        """Covered days ("source|day") whose MCP rows are built: MCP pages read those from
+        the rollup and the rest from events."""
+        return [
+            c
+            for c in self.covered(scope)
+            if (
+                self._dir / f"source={c.split('|')[0]}" / f"day={c.split('|')[1]}" / MCP_FILE
+            ).is_file()
+        ]
 
     def _write_ident(
         self,
@@ -312,6 +372,7 @@ class AiRollup:
         tmp = out / f".{MANIFEST}.tmp"
         body: dict[str, Any] = {
             "catalog": key, "inputs": inputs, "skipped": skipped, "first": first or {},
+            "first_v": FIRST_VERSION,
         }  # fmt: skip
         tmp.write_text(json.dumps(body))
         os.replace(tmp, out / MANIFEST)
@@ -397,7 +458,7 @@ class AiRollup:
             m = json.loads((self._dir / f"source={source}" / f"day={day}" / MANIFEST).read_text())
         except (OSError, ValueError):
             return False
-        return "first" in m
+        return "first" in m and int(m.get("first_v", 1)) >= FIRST_VERSION
 
     def _index_only(self, source: str, day: str) -> None:
         out = self._dir / f"source={source}" / f"day={day}"
@@ -405,6 +466,8 @@ class AiRollup:
         start = datetime.combine(date.fromisoformat(day), time(0), UTC)
         scope = QueryScope([source], start, start + timedelta(days=1) - timedelta(microseconds=1))
         first = self._first_other(scope)
+        if not (out / MCP_FILE).is_file():
+            self._write_mcp(out, scope, day)  # built before MCP rows were kept (D151)
         if (out / PART).is_file():
             first |= _first_services(pq.read_table(out / PART))
         self._manifest(out, m.get("catalog", ""), m.get("inputs", []), bool(m.get("skipped")),

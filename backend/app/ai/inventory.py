@@ -19,7 +19,6 @@ from typing import Any, Literal
 from app.ai.agents import agents
 from app.ai.catalog import NON_USAGE, Catalog
 from app.ai.consents import CONSENTS_CTE
-from app.ai.sessions import _ONE_COPY, _a
 from app.ai.usage import Usage
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.meta.db import MetaDB
@@ -47,18 +46,7 @@ GROUP BY 1
 ORDER BY last_seen DESC
 LIMIT 2000"""  # noqa: S608  # fixed SQL text
 
-# MCP servers the hooks plugin saw called; telemetry and the MCP inventory are in
-# Usage.mcp, and a name seen by both is one row.
-HOOK_MCP_SQL = f"""
-WITH {_ONE_COPY}
-SELECT {_a("mcp_server_name")} AS name,
-       count(DISTINCT nullif(actor_user_name, '')) AS people,
-       count(DISTINCT device_hostname) AS devices,
-       min(coalesce(time, time_observed)), max(coalesce(time, time_observed))
-FROM hooks
-WHERE {_a("mcp_server_name")} IS NOT NULL
-GROUP BY 1
-LIMIT 2000"""  # noqa: S608  # fixed SQL text
+HOOKS_LABEL = "Claude Code hooks plugin"
 
 
 @dataclass(slots=True)
@@ -143,31 +131,15 @@ def inventory(
         for u in found
         if u.service.kind != NON_USAGE
     ]  # fmt: skip
-    for m in usage.mcp(scope, ident):
+    # Telemetry, the MCP inventory, and hook records in one list (D151): closed days from
+    # the AI rollup's MCP rows, today from events, one row per server name.
+    mcps, mcp_read = usage.mcp_and_sources(scope, ident)
+    for m in mcps:
+        where = sorted(HOOKS_LABEL if s == "hooks" else s for s in m.sources)
         out.append(
             Item("mcp", m.name, m.name, m.status, m.people, m.machines, m.first_seen,
-                 m.last_seen, sorted(m.sources))
+                 m.last_seen, where)
         )  # fmt: skip
-    hooks = engine.run(
-        HOOK_MCP_SQL, scope, timeout_s=TIMEOUT_S, intel=False, name="inventory.mcp", page=True
-    )
-    mcp = {i.key: i for i in out if i.type == "mcp"}
-    rules = catalog.mcp_rules()
-    for name, people, devices, first, last in hooks.rows:
-        f, la = _iso(first), _iso(last)
-        it = mcp.get(str(name))
-        if it is None:
-            status = catalog.mcp_status(str(name), rules)
-            out.append(Item("mcp", str(name), str(name), status, int(people or 0),
-                            int(devices or 0), f, la, ["Claude Code hooks plugin"]))  # fmt: skip
-            continue
-        it.people, it.devices = (
-            max(it.people, int(people or 0)),
-            max(it.devices or 0, int(devices or 0)),
-        )
-        it.first_seen = min(x for x in (it.first_seen, f) if x) if (it.first_seen or f) else None
-        it.last_seen = max(x for x in (it.last_seen, la) if x) if (it.last_seen or la) else None
-        it.where = sorted(set(it.where) | {"Claude Code hooks plugin"})
     start = now - timedelta(days=days)
     for a in agents(engine, allowed, now):
         if _iso(a.last_seen) and str(_iso(a.last_seen)) < start.isoformat():
@@ -187,7 +159,7 @@ def inventory(
     for it in out:
         it.excluded = excluded.get((it.type, it.key))
     out.sort(key=lambda i: i.last_seen or "", reverse=True)
-    return out, sorted(set(sources) | set(apps.sources) | set(hooks.sources))
+    return out, sorted(set(sources) | set(apps.sources) | set(mcp_read))
 
 
 def export(items: list[Item], fmt: Literal["csv", "json"]) -> str:

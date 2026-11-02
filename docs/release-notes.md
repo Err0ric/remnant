@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### MCP servers from the hooks plugin, and refresh limits (2026-11-01)
+
+- **MCP servers seen only by the Claude Code hooks plugin** now show in AI usage's MCP list, AI Watch's review, and the first-seen alerts, unreviewed until someone reviews them. A server both telemetry and the hooks plugin report is one row, its calls counted once.
+- **AI inventory** reads closed days from the daily AI rollup (2.2 times faster on 450,000 hook records).
+- **Background refresh** of the default views stops 10 minutes after the last load and starts again on the next. Health > Speed shows refreshes per hour.
+- What changes for existing installs: nothing to do. The next rollup runs add MCP rows to days already built and re-index first-seen once; until a day has them it is read from events.
+
 ### Ready for the Claude plugin pilot (2026-11-01)
 
 - Checked that records from the Claude Code hooks plugin feed the daily AI rollup and the 5-minute today build, and timed the AI pages with 30 people's worth of hook records for 30 days (450,000 records): every page under 2 seconds on a 2 vCPU test machine.

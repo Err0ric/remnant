@@ -149,6 +149,32 @@ async def speed(request: Request, _: AdminUser) -> list[SpeedOut]:
     return [SpeedOut(**asdict(r)) for r in request.app.state.speed.stats()]
 
 
+class RefreshHourOut(BaseModel):
+    hour: datetime
+    refreshes: int
+    failed: int
+
+
+class RefreshesOut(BaseModel):
+    views: int  # default views kept fresh now (loaded in the last 10 minutes)
+    hours: list[RefreshHourOut]
+
+
+@router.get("/health-checks/refreshes")
+async def refreshes(request: Request, _: AdminUser) -> RefreshesOut:
+    """Background refreshes of the default views (D147) per hour over the last 24 hours,
+    and how many views are kept fresh now. A view stops refreshing 10 minutes after its
+    last load. Administrators."""
+    views, hours = request.app.state.refresher.per_hour()
+    return RefreshesOut(
+        views=views,
+        hours=[
+            RefreshHourOut(hour=datetime.fromtimestamp(h, UTC), refreshes=n, failed=f)
+            for h, n, f in hours
+        ],
+    )
+
+
 @router.post("/health-checks/devices", status_code=201)
 async def add_device(body: DeviceIn, request: Request, user: AdminUser) -> dict[str, str]:
     """Watch a device by IP address or host name; `silence_s` 300 to 86400. Audited as

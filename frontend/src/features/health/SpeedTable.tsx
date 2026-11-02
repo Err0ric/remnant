@@ -9,6 +9,47 @@ function ms(v: number): string {
 
 /** Health > Speed: p50 and p95 per page route over the last 24 hours, from each request's
  * Server-Timing (owner's batch, item 5). Slowest p95 first. Administrators only. */
+/** Background refreshes of the default views (D147): one count per hour, last 24 hours. */
+function Refreshes() {
+  const q = useQuery({ queryKey: ["health", "refreshes"], queryFn: api.healthRefreshes });
+  const data = q.data;
+  if (!data || !Array.isArray(data.hours)) return null;
+  const total = data.hours.reduce((n, h) => n + h.refreshes, 0);
+  const failed = data.hours.reduce((n, h) => n + h.failed, 0);
+  const top = Math.max(1, ...data.hours.map((h) => h.refreshes + h.failed));
+  return (
+    <div className="border-b border-border px-3 py-2 text-sm">
+      <p className="text-text-secondary">
+        Background refreshes (7-day Dashboard, Microsoft 365 Overview, AI Watch):{" "}
+        <span className="font-mono tabular-nums text-text-primary">{total}</span> in 24 hours
+        {failed ? (
+          <>
+            , <span className="font-mono tabular-nums text-sev-medium-text">{failed}</span> failed
+          </>
+        ) : null}
+        . <span className="font-mono tabular-nums text-text-primary">{data.views}</span>{" "}
+        {data.views === 1 ? "view" : "views"} kept fresh now; a view stops 10 minutes after its last
+        load.
+      </p>
+      <ol aria-label="Refreshes per hour" className="mt-2 flex h-8 items-end gap-px">
+        {data.hours.map((h) => {
+          const n = h.refreshes + h.failed;
+          const label = `${new Date(h.hour).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}: ${h.refreshes} refreshes${h.failed ? `, ${h.failed} failed` : ""}`;
+          return (
+            <li
+              key={h.hour}
+              title={label}
+              aria-label={label}
+              className={`flex-1 ${h.failed ? "bg-sev-medium-text" : "bg-accent"}`}
+              style={{ height: n ? `${Math.max(8, (100 * n) / top)}%` : "1px" }}
+            />
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
 export function SpeedTable() {
   const q = useQuery({ queryKey: ["health", "speed"], queryFn: api.healthSpeed });
   if (q.error) {
@@ -25,6 +66,7 @@ export function SpeedTable() {
         Pages that read data, over the last 24 hours or since the server started. Wait is time
         queued for a query slot; DuckDB is time reading data.
       </p>
+      <Refreshes />
       {q.isLoading ? (
         <p className="px-3 py-2 text-sm text-text-muted">Loading</p>
       ) : rows.length === 0 ? (
