@@ -130,6 +130,19 @@ COLUMNS: Final[tuple[Column, ...]] = (
         ocsf_path="status_detail",
     ),
     Column(
+        "status_code",
+        _S,
+        _G.OCSF,
+        "The source's own result code (an Entra error code such as 50126).",
+        ocsf_path="status_code",
+    ),
+    Column(
+        "is_interactive",
+        _B,
+        _G.OCSF,
+        "True for a sign-in the person made, false for one an app made in the background.",
+    ),
+    Column(
         "privileges",
         _S,
         _G.OCSF,

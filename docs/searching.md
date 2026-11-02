@@ -49,8 +49,12 @@ Since the F66 parser update (directory audit 1.1.0, Management Activity 1.2.0, s
 | The app | `resource_name` (name), `resource_uid` (application id) | Graph target or `AppId` detail; Management API target and extended properties; sign-ins `appDisplayName`, `appId` |
 | What kind of object | `resource_type` | `ServicePrincipal`, `Application` |
 | Why it failed | `status_detail` | `resultReason`, `LogonError`, `status.failureReason` |
+| Entra's error code | `status_code` | sign-ins `status.errorCode` (sign-ins 1.2.0 on) |
+| The person signed in, or an app did in the background | `is_interactive` | sign-ins `isInteractive` (sign-ins 1.2.0 on) |
 | Permissions asked for | `privileges` | The consent's scope list |
 | Consent type, permission resource | `unmapped` (`$.consent_type`, `$.permission_resource`) | No OCSF column for these |
+
+A failed sign-in's class comes from its code: `signin_class(status_code::INTEGER)` gives `failed`, `interrupted`, `expired`, or `other` (D158), with the classes in force on this install. For sign-ins stored before 1.2.0, read the code from the record: `signin_class(TRY_CAST(json_extract_string(raw, '$.status.errorCode') AS INTEGER))`. Only `failed` counts as Failed sign-ins on the Dashboard and Microsoft 365 pages.
 
 There is no `correlation_id` column. Count an operation once with `count(DISTINCT metadata_correlation_uid)`, as `m365_user_consent` does.
 

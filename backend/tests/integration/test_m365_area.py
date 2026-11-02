@@ -89,7 +89,10 @@ def test_failure_reasons_read_the_record_when_the_column_is_empty(tmp_path: Path
     _write(engine, [old, bare, nothing])
     m = overview(engine, None, SOURCES, Places(("US",), (), False, None), "30d", NOW)
     labels = sorted(r.label for r in m.reasons)
-    assert labels == ["Error 50053", "No reason given", "code 50126 (50126)"]
+    # Reasons are real failures only (D158): a record with no readable code is "other",
+    # counted apart.
+    assert labels == ["Error 50053", "code 50126 (50126)"]
+    assert m.outcome is not None and sum(m.outcome.other) == 1
     by = {r.label: r for r in m.reasons}
     for r in m.reasons:  # each row opens its own failures
         sql = (
@@ -102,8 +105,8 @@ def test_failure_reasons_read_the_record_when_the_column_is_empty(tmp_path: Path
     assert by["Error 50053"].detail == "50053"
     # The spike tooltip: who and which app failed most that day.
     assert m.outcome is not None
-    assert "alice@example.com (3)" in m.outcome.top_user
-    assert any(a.endswith("(3)") for a in m.outcome.top_app)
+    assert "alice@example.com (2)" in m.outcome.top_user
+    assert any(a.endswith("(2)") for a in m.outcome.top_app)
 
 
 def _op(name: str, i: int, when: str = "2026-10-28T09:30:00", **params: str) -> dict[str, Any]:

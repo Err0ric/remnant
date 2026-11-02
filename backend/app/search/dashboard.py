@@ -24,6 +24,7 @@ from app.ai import consents
 from app.core.errors import RuleRejectedError
 from app.detect.rules import compile_rule
 from app.engine.duckdb import QueryEngine, QueryScope
+from app.engine.signin_classes import BLOCKED_CODE, CODE_SQL, class_sql
 from app.enrich.geoip import GeoInfo, is_public
 from app.enrich.networks import Network, Places, is_internal, parse_address
 from app.meta.db import MetaDB
@@ -42,12 +43,17 @@ Lookup = Callable[[list[str]], dict[str, GeoInfo]]
 MIN_COVERAGE = 0.9
 
 _TS = "coalesce(time, time_observed)"
-# Entra error codes that interrupt a sign-in rather than refuse it (MFA, register a method,
-# stay signed in, an external challenge, seamless SSO): not failures (owner edit 2).
-INTERRUPT_CODES = (50072, 50074, 50076, 50079, 50097, 50125, 50140, 50158, 81010, 81012, 81014)
-_CODE = "TRY_CAST(TRY(json_extract_string(raw, '$.status.errorCode')) AS INTEGER)"
-INTERRUPTED = f"status_id = 2 AND list_contains({list(INTERRUPT_CODES)}, {_CODE})"
-FAILED = f"status_id = 2 AND NOT coalesce(list_contains({list(INTERRUPT_CODES)}, {_CODE}), false)"
+# A failed Entra sign-in by the class of its error code (D158, owner 2026-11-02): only
+# real failures count as "Failed sign-ins"; interrupted (a step the person then took),
+# expired (background session and token refreshes), and other (a code in no class) are
+# counted apart and never dropped. The classes are the engine's `signin_class` macro, from
+# app/content/m365/signin_codes.yaml and this install's `m365.signin_classes`.
+FAILED = class_sql("failed")
+INTERRUPTED = class_sql("interrupted")
+EXPIRED = class_sql("expired")
+OTHER_FAILURE = class_sql("other")
+NOT_COUNTED = f"status_id = 2 AND signin_class({CODE_SQL}) <> 'failed'"
+BLOCKED = f"status_id = 2 AND {CODE_SQL} = {BLOCKED_CODE}"
 _WHO = "nullif(trim(actor_user_name), '')"
 _HOST = "coalesce(nullif(device_hostname, ''), nullif(dst_endpoint_hostname, ''))"
 
@@ -138,6 +144,7 @@ class Identity:
     failed_trend: Trend
     top_failing: list[Row]
     history: History = field(default_factory=lambda: History(True))
+    failed_other: int = 0  # of failed.extra, codes in no class ("other", D158)
 
 
 @dataclass(slots=True)
@@ -461,7 +468,7 @@ def _identity(
     got = facts.run_facts(frun, m365, names, use, unit=unit)
     with run._lock:
         run.read |= frun.read
-    total, _, failed, failed_before, _, _ = (got["signins"] or [[0] * 6])[0]
+    total, _, failed, failed_before, _, _, apart, _, _, other = (got["signins"] or [[0] * 10])[0]
     trend = _trend(got["failed_trend"], points, start - before, tz)
     top = [
         Row(str(who), int(n), kind="user", last=_iso(last)) for who, n, last in got["top_failing"]
@@ -484,10 +491,16 @@ def _identity(
         return Kpi(*changes.get(kind, (0, 0)), drill=changes_drill(kind))
 
     return Identity(
+        # Real failures only; interrupted, expired, and other are the `extra`, not counted
+        # (D158).
         failed=Kpi(
             int(failed),
             int(failed_before),
+            int(apart) + int(other),
             drill=drill.events(FAILED_SIGNIN, drill.ADDRESS_COLUMNS),
+            extra_drill=drill.events(
+                f"template_id = 'm365_signin' AND {NOT_COUNTED}", drill.ADDRESS_COLUMNS
+            ),
         ),
         outside=outside,
         inbox_rules=Kpi(
@@ -507,6 +520,7 @@ def _identity(
         role_grants=change("role"),
         ca_edits=change("ca"),
         sign_ins=int(total),
+        failed_other=int(other),
         failed_trend=trend,
         top_failing=top,
         history=_history(first, m365, start, before),

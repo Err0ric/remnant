@@ -55,9 +55,14 @@ describe("Dashboard drill-through (ADR-0039)", () => {
     await renderDashboard();
     const identity = screen.getByRole("region", { name: "Identity" });
     const failed = within(identity).getByRole("button", {
-      name: "Failed sign-ins: 12. Open events in Search",
+      name: "Failed sign-ins: 12. Open failed sign-ins in Search",
     });
-    expect(failed).toHaveAttribute("title", "Open 12 events in Search");
+    expect(failed).toHaveAttribute("title", "Open 12 failed sign-ins in Search");
+    // Interrupted, expired, and other are named under it and open on their own (D158).
+    const apart = within(identity).getByRole("button", {
+      name: "+ 37 interrupted or expired, 3 other (not counted)",
+    });
+    expect(apart).toHaveAttribute("title", "Open sign-ins not counted in Search");
     await userEvent.click(failed);
     await waitFor(() => expect(window.location.pathname).toBe("/investigate/search"));
     expect(

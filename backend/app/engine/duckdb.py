@@ -35,6 +35,7 @@ from app.core.errors import (
     QueryTimeoutError,
 )
 from app.core.schema import COLUMN_NAMES, COLUMNS_BY_NAME, duckdb_create_table_sql
+from app.engine import signin_classes
 from app.engine.guard import DEFAULT_LIMIT, MAX_LIMIT, guard
 from app.engine.lookups import Lookups, register
 from app.engine.memory import Grant, MemoryLedger
@@ -825,6 +826,7 @@ class QueryEngine:
         return (
             self.trace, str(self._lake), str(self._rollup), id(self._lookups), self._memory_mb,
             self._threads, str(self._intel), tuple(str(f) for f, _ in self._facts.values()),
+            signin_classes.version(),
         )  # fmt: skip
 
     def _roots(self) -> list[Path]:
@@ -925,6 +927,8 @@ class QueryEngine:
         query defines its own. Returns the folders they read."""
         dirs = self._source_dirs(scope)
         view = "CREATE TEMP VIEW" if temp else "CREATE VIEW"
+        # How a failed Entra sign-in is counted, from the classes in force (D158).
+        con.execute(signin_classes.macro_sql())
 
         def table(sql: str) -> str:
             return sql.replace("CREATE TABLE", "CREATE TEMP TABLE", 1) if temp else sql

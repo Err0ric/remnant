@@ -34,7 +34,7 @@ describe("Microsoft 365 area (ADR-0038 section 5)", () => {
     const outcomes = screen.getByRole("region", { name: "Sign-in outcomes" });
     expect(within(outcomes).getByRole("img", { name: /12 failed/ })).toHaveAttribute("data-drill");
     expect(within(overview).getByTitle("Open 31 events in Search")).toBeVisible();
-    await userEvent.click(within(overview).getByTitle("Open 12 events in Search"));
+    await userEvent.click(within(overview).getByTitle("Open 12 failed sign-ins in Search"));
     await waitFor(() => expect(window.location.pathname).toBe("/investigate/search"));
     expect(
       await screen.findByText(/^From Microsoft 365 > Overview > Failed sign-ins, Oct 24/),
@@ -43,7 +43,7 @@ describe("Microsoft 365 area (ADR-0038 section 5)", () => {
 
   it("lists a tab's events over the page window", async () => {
     const spy = await renderAt("/m365/sign-ins");
-    await screen.findByRole("region", { name: "Sign-ins" });
+    await screen.findByRole("region", { name: "Sign-ins: Real failures" });
     await waitFor(() => {
       const bodies = spy.mock.calls
         .filter(([u, i]) => String(u).endsWith("/api/query") && i?.method === "POST")
@@ -55,12 +55,66 @@ describe("Microsoft 365 area (ADR-0038 section 5)", () => {
   it("names the top user and app of each spike in the tooltip (owner 2026-10-31)", async () => {
     await renderAt("/m365");
     const outcomes = await screen.findByRole("region", { name: "Sign-in outcomes" });
-    const chart = within(outcomes).getByRole("img", { name: /^Interrupted and failed/ });
+    const chart = within(outcomes).getByRole("img", { name: /^Failed sign-ins by class/ });
     chart.focus();
     await userEvent.keyboard("{Home}{ArrowRight}{ArrowRight}{ArrowRight}");
     const tip = within(outcomes).getByRole("tooltip");
     expect(tip).toHaveTextContent("Top user svc-backup@example.com (6)");
     expect(tip).toHaveTextContent("Top app Office 365 Exchange Online (6)");
+  });
+});
+
+describe("Failed sign-ins by class (D158)", () => {
+  it("counts real failures, names the rest, and says how it is counted", async () => {
+    await renderAt("/m365");
+    const overview = await screen.findByRole("region", { name: "Overview" });
+    const card = overview.querySelector<HTMLElement>('[data-kpi="Failed sign-ins"]');
+    expect(card).not.toBeNull();
+    expect(
+      within(card!).getByText("+ 37 interrupted or expired, 3 other (not counted)"),
+    ).toBeVisible();
+    const about = await within(card!).findByRole("img", {
+      name: /50074 counted as failed \(shipped: interrupted\)/,
+    });
+    expect(about.getAttribute("title")).toMatch(/^How this is counted: Counts real failures only/);
+    expect(about.getAttribute("title")).toMatch(
+      /53003 is also shown on its own as Blocked by policy/,
+    );
+    expect(overview.querySelector('[data-kpi="Blocked by policy"]')).not.toBeNull();
+    const outcomes = screen.getByRole("region", { name: "Sign-in outcomes" });
+    for (const label of ["Failed", "Interrupted", "Expired", "Other"]) {
+      expect(outcomes.querySelector(`[data-kpi="${label}"]`), label).not.toBeNull();
+    }
+  });
+
+  it("filters Sign-ins by class and by who signed in, real failures first", async () => {
+    const spy = await renderAt("/m365/sign-ins");
+    const list = await screen.findByRole("region", { name: "Sign-ins: Real failures" });
+    const sent = () =>
+      spy.mock.calls
+        .filter(([u, i]) => String(u).endsWith("/api/query") && i?.method === "POST")
+        .map(([, i]) => (JSON.parse(String(i?.body)) as { sql: string }).sql);
+    await waitFor(() => expect(sent().some((q) => q.includes("'failed/all'"))).toBe(true));
+    await userEvent.click(within(list).getByRole("button", { name: "Expired" }));
+    await userEvent.click(
+      within(screen.getByRole("region", { name: "Sign-ins: Expired" })).getByRole("button", {
+        name: "Non-interactive",
+      }),
+    );
+    await waitFor(() =>
+      expect(sent().some((q) => q.includes("'expired/noninteractive'"))).toBe(true),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "All" }));
+    expect(await screen.findByRole("region", { name: "Sign-ins" })).toBeVisible();
+  });
+});
+
+describe("notCountedText", () => {
+  it("names other apart only when there is some", async () => {
+    const { notCountedText } = await import("@/features/m365/signInCounting");
+    expect(notCountedText(12)).toBe("+ 12 interrupted or expired (not counted)");
+    expect(notCountedText(12, 2)).toBe("+ 10 interrupted or expired, 2 other (not counted)");
+    expect(notCountedText(2, 2)).toBe("+ 2 other (not counted)");
   });
 });
 

@@ -24,7 +24,7 @@ from app.core.errors import ParamInvalidError
 from app.core.timing import in_context
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.search import drill
-from app.search.dashboard import FAILED, INTERRUPTED
+from app.search.dashboard import EXPIRED, FAILED, INTERRUPTED
 from app.search.identity import IdentityMap, key_sql
 
 TIMEOUT_S = 30.0
@@ -145,7 +145,8 @@ def timeline(
     lock = threading.Lock()
     outcome = (
         f"CASE WHEN status_id = 1 THEN 'Signed in' WHEN {INTERRUPTED} THEN 'Interrupted'"
-        f" WHEN {FAILED} THEN 'Failed' ELSE 'Sign-in' END"
+        f" WHEN {EXPIRED} THEN 'Expired' WHEN {FAILED} THEN 'Failed'"
+        " WHEN status_id = 2 THEN 'Other failure' ELSE 'Sign-in' END"
     )
     out.signins_sql = drill.events(
         f"template_id = 'm365_signin' AND {mine}",

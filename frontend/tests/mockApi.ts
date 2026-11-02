@@ -1604,6 +1604,25 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         ],
       });
     }
+    if (url.includes("/api/m365/signin-classes")) {
+      const code = (c: number, cls: string, label: string, shipped: string | null = cls) => ({
+        code: c,
+        cls,
+        label,
+        shipped,
+      });
+      return json({
+        classes: ["failed", "interrupted", "expired", "other"],
+        blocked_code: 53003,
+        codes: [
+          code(50126, "failed", "Invalid username or password"),
+          code(53003, "failed", "Blocked by Conditional Access"),
+          code(50074, "failed", "Strong authentication required", "interrupted"),
+          code(70043, "expired", "Refresh token expired by Conditional Access sign-in frequency"),
+        ],
+        adjusted: [code(50074, "failed", "Strong authentication required", "interrupted")],
+      });
+    }
     if (url.includes("/api/m365/overview")) {
       const q =
         "SELECT * FROM events WHERE time >= TIMESTAMPTZ '{from}' AND time < TIMESTAMPTZ '{to}'";
@@ -1626,7 +1645,9 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         approved_set: false,
         history: { compared: true, since: null },
         sign_ins: k(400, 380),
-        failed: k(12, 8),
+        failed: k(12, 8, 40),
+        failed_other: 3,
+        blocked: k(2, 1),
         outside: null,
         risky: k(2, 0),
         consents: k(3, 2, 1),
@@ -1640,9 +1661,13 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
           succeeded: [50, 60, 55, 58, 57, 59, 49],
           interrupted: [2, 1, 0, 3, 1, 2, 1],
           failed: [1, 2, 0, 4, 3, 1, 1],
+          expired: [5, 6, 4, 6, 5, 5, 6],
+          other: [0, 1, 0, 1, 0, 1, 0],
           drill_succeeded: q,
           drill_interrupted: q,
           drill_failed: q,
+          drill_expired: q,
+          drill_other: q,
           top_user: ["", "", "", "svc-backup@example.com (6)", "", "", ""],
           top_app: ["", "", "", "Office 365 Exchange Online (6)", "", "", ""],
         },
@@ -1661,6 +1686,17 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
           { label: "Microsoft Teams", count: 200, kind: "app", detail: "", last: null, drill: q },
         ],
         lists: { sign_ins: q, mail: q, consents: q, registrations: q, admin: q },
+        sign_in_lists: Object.fromEntries(
+          ["failed", "interrupted", "expired", "other", "all"].map((c) => [
+            c,
+            Object.fromEntries(
+              ["all", "interactive", "noninteractive"].map((m) => [
+                m,
+                `SELECT * FROM events WHERE '${c}/${m}' <> '' AND time >= TIMESTAMPTZ '{from}' AND time < TIMESTAMPTZ '{to}'`,
+              ]),
+            ),
+          ]),
+        ),
       });
     }
     if (url.includes("/api/dashboard/sections")) {
@@ -1690,7 +1726,8 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         has_public: false,
         geoip_date: "2026-10-01T04:00:00Z",
         identity: {
-          failed: k(12, 8),
+          failed: k(12, 8, 40),
+          failed_other: 3,
           outside: null,
           inbox_rules: k(1),
           consents: k(3, 2, 1),

@@ -8,12 +8,14 @@ from typing import Annotated
 from fastapi import APIRouter, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from app.api.access import CurrentUser, client_ip
 from app.api.cache import STALE_MAX_S, PageCache, scope_key
 from app.auth.service import AuthService
 from app.auth.users import User
+from app.engine import signin_classes
 from app.engine.views import permitted_sources
 from app.enrich import networks
 from app.search.dashboard import Window
@@ -76,3 +78,35 @@ async def m365_overview(
     if default:
         app.state.refresher.watch(key, user.user_id, scope_key(allowed), compute)
     return Response(body, media_type="application/json")
+
+
+class SignInCode(BaseModel):
+    code: int
+    cls: str
+    label: str
+    shipped: str | None  # the class in the shipped file; None if added on this install
+
+
+class SignInClassesOut(BaseModel):
+    """How failed Entra sign-ins are counted on this install (D158)."""
+
+    classes: list[str]
+    blocked_code: int
+    codes: list[SignInCode]
+    adjusted: list[SignInCode]  # codes this install moved from their shipped class
+
+
+@router.get("/m365/signin-classes")
+async def m365_signin_classes(user: CurrentUser) -> SignInClassesOut:
+    """The classes in force: the shipped codes with this install's `m365.signin_classes`
+    on top. Codes in no class are "other"."""
+    codes = [
+        SignInCode(code=c.code, cls=c.cls, label=c.label, shipped=c.shipped)
+        for c in signin_classes.ACTIVE.codes()
+    ]
+    return SignInClassesOut(
+        classes=list(signin_classes.CLASSES),
+        blocked_code=signin_classes.BLOCKED_CODE,
+        codes=codes,
+        adjusted=[c for c in codes if c.cls != c.shipped],
+    )

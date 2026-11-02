@@ -284,6 +284,23 @@ class NetworkConfig(_Strict):
         return self
 
 
+class M365Config(_Strict):
+    # Move Entra sign-in error codes between classes on this install (D158), on top of the
+    # shipped app/content/m365/signin_codes.yaml: {"50074": "failed"} counts MFA interrupts
+    # as failures. Classes: failed, interrupted, expired, other.
+    signin_classes: dict[str, Literal["failed", "interrupted", "expired", "other"]] = Field(
+        default_factory=dict, max_length=500
+    )
+
+    @field_validator("signin_classes")
+    @classmethod
+    def _codes(cls, value: dict[str, str]) -> dict[str, str]:
+        for code in value:
+            if not str(code).strip().isdigit():
+                raise ValueError(f"signin_classes: {code!r} is not an Entra error code")
+        return value
+
+
 class EnrichmentConfig(_Strict):
     # Treat documentation addresses (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24,
     # 2001:db8::/32) as public so a GeoIP file can place them. For the demo install only
@@ -302,6 +319,7 @@ class AppConfig(_Strict):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     network: NetworkConfig = Field(default_factory=NetworkConfig)
     enrichment: EnrichmentConfig = Field(default_factory=EnrichmentConfig)
+    m365: M365Config = Field(default_factory=M365Config)
 
 
 def _env_overrides(environ: Mapping[str, str]) -> dict[str, Any]:

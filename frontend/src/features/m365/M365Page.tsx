@@ -1,20 +1,20 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
-import { api, type M365Overview, type PageWindow, type QueryResult } from "@/lib/api";
+import { api, type M365Overview, type PageWindow } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { drillSql, openDrill } from "@/lib/drill";
 import { navigate, useTab } from "@/lib/route";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { LoadFailed } from "@/components/LoadFailed";
-import { ResultsTable } from "@/features/search/ResultsTable";
 import { AdminChanges } from "./AdminChanges";
 import { MailRules } from "./MailRules";
 import { DrillScope, DRILL, Kpi, SetCountries, Top, useDrill } from "@/features/dashboard/Sections";
 import { startIndex, TrendChart, TrendLegend } from "@/features/dashboard/TrendChart";
 import { compareLine } from "@/features/dashboard/History";
 import { WINDOWS, previousPhrase } from "@/features/dashboard/pageWindow";
-import { SectionTitle } from "@/components/SectionTitle";
 import { PanelTitle } from "@/components/PanelTitle";
+import { EventList } from "./EventList";
+import { SignIns } from "./SignIns";
+import { notCountedExtra, useSignInAbout } from "./signInCounting";
 
 const KEY = "m365.window";
 
@@ -119,7 +119,7 @@ export function M365Page() {
             before={previousPhrase(win)}
           >
             {tab === "sign-ins" ? (
-              <EventList title="Sign-ins" sql={m.lists.sign_ins} m={m} />
+              <SignIns m={m} />
             ) : tab === "mail" ? (
               <>
                 <MailRules m={m} />
@@ -160,9 +160,24 @@ function Box({ label, children }: { label: string; children: ReactNode }) {
 
 function Overview({ m }: { m: M365Overview }) {
   const drill = useDrill();
+  const about = useSignInAbout();
   const kpis = [
     <Kpi key="s" label="Sign-ins" kpi={m.sign_ins} />,
-    <Kpi key="f" label="Failed sign-ins" kpi={m.failed} />,
+    <Kpi
+      key="f"
+      label="Failed sign-ins"
+      kpi={m.failed}
+      noun="failed sign-ins"
+      about={about}
+      extra={notCountedExtra(m.failed?.extra, m.failed_other)}
+    />,
+    <Kpi
+      key="b"
+      label="Blocked by policy"
+      kpi={m.blocked ?? null}
+      noun="blocked sign-ins"
+      context="Conditional Access (53003); also in Failed sign-ins"
+    />,
     <Kpi
       key="o"
       label="Sign-ins outside approved countries"
@@ -197,7 +212,7 @@ function Overview({ m }: { m: M365Overview }) {
   return (
     <>
       <Box label="Overview">
-        <div className="grid grid-cols-2 gap-px bg-border lg:grid-cols-3 min-[1400px]:grid-cols-6">
+        <div className="grid grid-cols-2 gap-px bg-border lg:grid-cols-4 min-[1400px]:grid-cols-7 [&>*:last-child]:col-span-2 min-[1400px]:[&>*:last-child]:col-span-1">
           {kpis}
         </div>
         <ul
@@ -301,8 +316,8 @@ function RowLink({ row }: { row: M365Overview["reasons"][number] }) {
   );
 }
 
-/** Succeeded, interrupted, and failed (owner edit 2: failures in warn, interrupts muted,
- * never red): one bar of the window's split, then interrupts and failures over time. */
+/** Succeeded, failed, interrupted, expired, and other (D158; failures in warn, the rest
+ * muted, never red): one bar of the window's split, then each failure class over time. */
 function Outcome({ m }: { m: M365Overview }) {
   const drill = useDrill();
   const o = m.outcome;
@@ -310,8 +325,20 @@ function Outcome({ m }: { m: M365Overview }) {
   const sum = (a: number[]) => a.reduce((x, y) => x + y, 0);
   const parts = [
     { label: "Succeeded", n: sum(o.succeeded), color: "accent", sql: o.drill_succeeded },
-    { label: "Interrupted", n: sum(o.interrupted), color: "text-muted", sql: o.drill_interrupted },
     { label: "Failed", n: sum(o.failed), color: "warn", sql: o.drill_failed },
+    { label: "Interrupted", n: sum(o.interrupted), color: "text-muted", sql: o.drill_interrupted },
+    {
+      label: "Expired",
+      n: sum(o.expired ?? []),
+      color: "border-strong",
+      sql: o.drill_expired ?? o.drill_failed,
+    },
+    {
+      label: "Other",
+      n: sum(o.other ?? []),
+      color: "text-secondary",
+      sql: o.drill_other ?? o.drill_failed,
+    },
   ];
   const total = Math.max(1, sum(parts.map((p) => p.n)));
   const hourly = m.window !== "30d";
@@ -359,12 +386,14 @@ function Outcome({ m }: { m: M365Overview }) {
           </ul>
         </div>
         <TrendChart
-          title={`Interrupted and failed per ${hourly ? "hour" : "day"}`}
+          title={`Failed sign-ins by class per ${hourly ? "hour" : "day"}`}
           note={begin !== undefined ? `no data before ${dayFmt(at(begin))}` : undefined}
           firstWithData={begin}
           partial="so far"
           stacked
           series={[
+            { key: "o", label: "Other", values: o.other ?? [], color: "text-secondary" },
+            { key: "e", label: "Expired", values: o.expired ?? [], color: "border-strong" },
             { key: "i", label: "Interrupted", values: o.interrupted, color: "text-muted" },
             { key: "f", label: "Failed", values: o.failed, color: "warn" },
           ]}
@@ -376,14 +405,18 @@ function Outcome({ m }: { m: M365Overview }) {
             ].filter((d) => d.value)
           }
           axisLabel={(i) => (m.window === "24h" ? hourFmt(at(i)) : dayFmt(at(i)))}
-          summary={`Interrupted and failed sign-ins per ${hourly ? "hour" : "day"}: ${sum(
-            o.interrupted,
-          ).toLocaleString()} interrupted, ${sum(o.failed).toLocaleString()} failed`}
+          summary={`Failed sign-ins by class per ${hourly ? "hour" : "day"}: ${sum(
+            o.failed,
+          ).toLocaleString()} failed, ${sum(o.interrupted).toLocaleString()} interrupted, ${sum(
+            o.expired ?? [],
+          ).toLocaleString()} expired, ${sum(o.other ?? []).toLocaleString()} other`}
           legend={
             <TrendLegend
               items={[
                 { label: "Failed", color: "warn" },
                 { label: "Interrupted", color: "text-muted" },
+                { label: "Expired", color: "border-strong" },
+                { label: "Other", color: "text-secondary" },
               ]}
             />
           }
@@ -395,51 +428,6 @@ function Outcome({ m }: { m: M365Overview }) {
           }
         />
       </div>
-    </Box>
-  );
-}
-
-/** One tab's events over the page window, in the Search table (ADR-0038 section 5). */
-function EventList({ title, sql, m }: { title: string; sql: string; m: M365Overview }) {
-  const filled = drillSql({ sql, from: m.start, to: m.end });
-  const q = useQuery<QueryResult>({
-    queryKey: ["m365-list", filled],
-    queryFn: () => api.query({ sql: filled, start: m.start, end: m.end }),
-  });
-  return (
-    <Box label={title}>
-      <div className="flex items-center gap-3 border-b border-border px-3 py-2">
-        <SectionTitle>{title}</SectionTitle>
-        {q.data ? (
-          <span className="text-sm text-text-muted">
-            {q.data.row_count.toLocaleString()}
-            {q.data.truncated ? "+" : ""} rows
-          </span>
-        ) : null}
-        <button
-          type="button"
-          onClick={() =>
-            openDrill({ sql, from: m.start, to: m.end, origin: `Microsoft 365 > ${title}` })
-          }
-          className="ml-auto text-sm text-accent-text hover:underline"
-        >
-          Open in Search
-        </button>
-      </div>
-      {q.isLoading ? (
-        <div aria-busy="true" className="h-40 animate-pulse bg-surface" />
-      ) : q.isError ? (
-        <LoadFailed
-          what={title}
-          error={q.error}
-          onRetry={() => void q.refetch()}
-          retrying={q.isFetching}
-        />
-      ) : q.data && q.data.row_count === 0 ? (
-        <p className="p-3 text-sm text-text-secondary">Nothing in this window.</p>
-      ) : q.data ? (
-        <ResultsTable result={q.data} view="parsed" compact geo={q.data.geo} />
-      ) : null}
     </Box>
   );
 }

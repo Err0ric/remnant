@@ -68,6 +68,7 @@ function Kpi({
 const OUTCOME: Record<string, string> = {
   succeeded: "Succeeded",
   failed: "Failed",
+  not_counted: "Interrupted or expired",
   other: "Other",
 };
 

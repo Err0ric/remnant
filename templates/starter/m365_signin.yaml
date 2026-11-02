@@ -1,14 +1,15 @@
 schema_version: 1
 id: m365_signin
 name: Microsoft Entra sign-ins (Graph)
-version: 1.1.0
+version: 1.2.0
 author: starter-pack
 description: >-
   Interactive and non-interactive sign-ins from Microsoft Graph auditLogs/signIns, pulled
   by the Microsoft 365 connector (ADR-0002; needs Entra ID P1 or P2). Each line is Graph's
   JSON, unchanged. The app signed in to is the message; status is success when
   status.errorCode is 0. The app is also the resource (its name and application id), with
-  the failure reason and the correlation id (D121, F66). Location, device, client app,
+  the failure reason, Entra's error code, whether the person signed in or an app did
+  in the background, and the correlation id (D121, F66, D158). Location, device, client app,
   conditional access, the resource signed in to, and risk stay in unmapped.
 category: identity
 vendor: microsoft
@@ -43,6 +44,8 @@ mapping:
     resource_uid: { from: appId }
     resource_type: { default: Application }
     status_detail: { from: status.failureReason }
+    status_code: { from: status.errorCode }
+    is_interactive: { from: isInteractive }
     metadata_correlation_uid: { from: correlationId }
   severity:
     from: riskLevelDuringSignIn
@@ -66,11 +69,20 @@ tests:
     expect:
       parse_status: ok
       class_uid: 3002
-      fields: { actor_user_name: carol@example.com, src_endpoint_ip: "2001:db8::17", message: Microsoft Teams, status_id: 2, severity_id: 3 }
+      fields: { actor_user_name: carol@example.com, src_endpoint_ip: "2001:db8::17", message: Microsoft Teams, status_id: 2, severity_id: 3, status_code: "53003", is_interactive: false }
+  - name: background token refresh with an expired session
+    input: '{"id":"9a1c0000-0000-4000-8000-000000000004","createdDateTime":"2026-10-14T17:03:00Z","userPrincipalName":"dave@example.com","appDisplayName":"Microsoft Office","ipAddress":"198.51.100.7","conditionalAccessStatus":"notApplied","isInteractive":false,"riskLevelDuringSignIn":"none","status":{"errorCode":70043,"failureReason":"The refresh token has expired or is invalid due to sign-in frequency checks by conditional access."}}'
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { actor_user_name: dave@example.com, status_id: 2, status_code: "70043", is_interactive: false }
 
 # What this version changes for events already stored (F66): none of the existing columns
 # changes meaning, so no saved search needs updating; earlier events keep the old mapping.
 changes:
   - version: 1.1.0
     note: "New columns: resource_name and resource_uid (the app and its application id), status_detail (the failure reason), and metadata_correlation_uid. Earlier events have these empty."
+    fields: []
+  - version: 1.2.0
+    note: "New columns: status_code (Entra's error code) and is_interactive (the person signed in, or an app did in the background). Earlier events have these empty; the pages read both from the stored record instead (D158)."
     fields: []

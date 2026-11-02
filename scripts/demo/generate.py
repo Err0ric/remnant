@@ -99,11 +99,25 @@ def work_times(
     return sorted(t for t in out if start <= t < end)
 
 
+REASONS = {
+    0: "Other.",
+    50126: "Invalid username or password.",
+    50053: "Account is locked.",
+    50074: "Strong Authentication is required.",
+    50140: "This error occurred due to 'Keep me signed in' interrupt when the user was signing in.",
+    70043: "The refresh token has expired or is invalid due to sign-in frequency checks by conditional access.",
+    50058: "Silent sign-in request was sent but no user is signed in.",
+}
+# Sign-ins an app makes in the background (token refreshes): not interactive.
+BACKGROUND = (70043, 50058)
+# The everyday noise of a tenant: MFA prompts and "stay signed in" interrupts, and expired
+# sessions refreshed in the background, none of them real failures (D158).
+NOISE = [(50074, 0.03), (50140, 0.03), (70043, 0.05), (50058, 0.04), (50126, 0.02)]
+
+
 def signin(rng: random.Random, t: datetime, who: str, ip: str, code: int = 0, app: int | None = None, browser: str = "Edge 130.0") -> dict[str, object]:  # fmt: skip
     app_id, app_name = APPS[rng.randrange(len(APPS)) if app is None else app]
-    reason = {0: "Other.", 50126: "Invalid username or password.", 50053: "Account is locked."}[
-        code
-    ]
+    reason = REASONS[code]
     return {
         "id": str(uuid.UUID(int=rng.getrandbits(128), version=4)),
         "createdDateTime": iso(t),
@@ -116,7 +130,7 @@ def signin(rng: random.Random, t: datetime, who: str, ip: str, code: int = 0, ap
         "clientAppUsed": "Browser",
         "correlationId": str(uuid.UUID(int=rng.getrandbits(128), version=4)),
         "conditionalAccessStatus": "success" if code == 0 else "notApplied",
-        "isInteractive": True,
+        "isInteractive": code not in BACKGROUND,
         "riskDetail": "none",
         "riskLevelAggregated": "none",
         "riskLevelDuringSignIn": "none",
@@ -137,7 +151,12 @@ def m365(rng: random.Random, end: datetime, attack_at: datetime) -> dict[str, li
     for t in work_times(rng, end, 160):
         who = rng.choice(PEOPLE)
         ip = HOME.get(who, rng.choice(OFFICE)) if rng.random() < 0.95 else rng.choice(OFFICE)
-        code = 50126 if rng.random() < 0.03 else 0  # an ordinary typo now and then
+        roll, code = rng.random(), 0
+        for c, share in NOISE:  # MFA prompts, expired sessions, and a typo now and then
+            if roll < share:
+                code = c
+                break
+            roll -= share
         signins.append(signin(rng, t, who, ip, code))
     # Password spraying: every account, a few tries each, from rotating addresses, over
     # two hours; frank's password works on the last round.

@@ -220,6 +220,7 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | Method | Path | What it does | Query | JSON body (`?` optional) |
 |---|---|---|---|---|
 | `GET` | `/api/m365/overview` | KPIs, the counts row, the outcome per hour or day, the tops, and each tab's list as a Search query template (`{from}` and `{to}`). `has_source` is false when the caller reads no Microsoft 365 source. | `?window` (optional): `24h` &#124; `7d` &#124; `30d`<br>`?tz` (optional): string |  |
+| `GET` | `/api/m365/signin-classes` | The classes in force: the shipped codes with this install's `m365.signin_classes` on top. Codes in no class are "other". |  |  |
 
 ### Otlp
 

@@ -125,6 +125,7 @@ from app.core.speed import SpeedLog
 from app.core.threads import WORKER_POOL, cap_allocator_arenas, query_threads, run_low
 from app.detect.runner import RuleRunner
 from app.detect.store import RuleStore
+from app.engine import signin_classes
 from app.engine.duckdb import (
     AUTH_ROLLUP_COLUMNS,
     QueryEngine,
@@ -699,6 +700,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     app.state.integrity = IntegrityLedger(meta, lake_dir)
     app.state.otlp_tokens = OtlpTokens(meta, SecretBox(config.paths.data_dir))
     place_documentation_ranges(config.enrichment.place_documentation_ranges)
+    signin_classes.set_overrides(signin_classes.parse_overrides(config.m365.signin_classes))
     unplaced.cache_clear()
     app.state.geoip = GeoIP(app.state.feeds)
     geoip_ = app.state.geoip

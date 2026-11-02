@@ -2,9 +2,11 @@
 page window, on the caller's own view.
 
 Every count uses the one-operation key (D122) where Graph and the Management Activity API
-report the same operation; every number carries its Search query (ADR-0039). Sign-ins
-split three ways (owner edit 2): succeeded, interrupted (Entra asked for something more,
-such as MFA, and the sign-in may still complete), and failed. No model is called.
+report the same operation; every number carries its Search query (ADR-0039). A failed
+sign-in is classed by its Entra error code (D158): failed (a real failure, the only kind
+counted as "Failed sign-ins"), interrupted (Entra asked for something more, such as MFA,
+and the person went on), expired (a background session or token refresh), or other (a
+code in no class). No model is called.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ from typing import Any, Protocol
 from app.ai import consents
 from app.core.timing import in_context
 from app.engine.duckdb import QueryEngine, QueryScope
+from app.engine.signin_classes import BLOCKED_CODE, CODE_SQL, INTERACTIVE_SQL
 from app.enrich.networks import Places
 from app.search import drill, mail_rules
 from app.search.admin_changes import ADMIN_SQL
@@ -25,10 +28,13 @@ from app.search.dashboard import (
     _CHANGE_KEY,
     _CHANGE_KIND,
     _M365_AUDIT,
+    BLOCKED,
+    EXPIRED,
     FAILED,
-    INTERRUPT_CODES,
     INTERRUPTED,
     MAX_IPS,
+    NOT_COUNTED,
+    OTHER_FAILURE,
     History,
     Kpi,
     Row,
@@ -72,7 +78,7 @@ REASON = (
     "coalesce(nullif(status_detail, ''),"
     " nullif(TRY(json_extract_string(raw, '$.status.failureReason')), ''))"
 )
-CODE = "TRY_CAST(TRY(json_extract_string(raw, '$.status.errorCode')) AS INTEGER)"
+CODE = CODE_SQL
 NO_REASON = "No reason given"
 APP = "coalesce(nullif(resource_name, ''), nullif(message, ''), 'Unknown app')"
 
@@ -126,12 +132,10 @@ def _cols(**given: str) -> str:
     return ", ".join(out)
 
 
-_CODES = list(INTERRUPT_CODES)
-_IS_INTERRUPT = f"list_contains({_CODES}, c)"
-_IS_FAILED = f"status_id = 2 AND NOT coalesce({_IS_INTERRUPT}, false)"
 _ACTIVITY_OP = "CASE " + " ".join(f"WHEN {cond} THEN '{key}'" for key, _, cond in COUNTS) + " END"
 
-# The same split as INTERRUPTED and FAILED, with the code read once per sign-in.
+# Each failed sign-in keeps its error code; its class is read when the facts are (D158),
+# so a rollup day follows the classes in force, not the ones it was built with.
 _SIGNIN_FROM = f"""
 FROM (
   SELECT source_id, {TS} AS ts, status_id, severity_id, actor_user_name, src_endpoint_ip,
@@ -163,12 +167,9 @@ GROUP BY source_id, {consents.KEY}, {consents.OP}"""  # fixed SQL text
 _MAILRULE_FROM = f"""
 FROM (WITH {mail_rules.RULES_CTE.strip()}
 SELECT * FROM classed)"""  # noqa: S608  # fixed SQL text
-_FAIL_ONLY = f"CASE WHEN {_IS_FAILED} THEN {{}} END"
-_OUTCOME_EXPR = (
-    "CASE WHEN status_id = 1 THEN 'ok'"
-    f" WHEN status_id = 2 AND {_IS_INTERRUPT} THEN 'interrupted'"
-    " WHEN status_id = 2 THEN 'failed' END"
-)
+_FAIL_ONLY = "CASE WHEN status_id = 2 THEN {} END"
+# Stored as 'ok' or 'fail'; `facts` turns 'fail' into the code's class.
+_OUTCOME_EXPR = "CASE WHEN status_id = 1 THEN 'ok' WHEN status_id = 2 THEN 'fail' END"
 FACTS: dict[str, str] = {
     # Who and from where, for the totals, the outside-countries card, and the spike's
     # person; the app and the reason are a separate kind so neither multiplies the other.
@@ -181,6 +182,7 @@ FACTS: dict[str, str] = {
         risky="coalesce(severity_id >= 3, false)",
         who="actor_user_name",
         ip="src_endpoint_ip",
+        code="c",
         n="count(*)",
         last_t="max(ts)",
     )
@@ -194,6 +196,7 @@ FACTS: dict[str, str] = {
         t="date_trunc('hour', ts)",
         outcome=_OUTCOME_EXPR,
         risky="coalesce(severity_id >= 3, false)",
+        code="c",
         n="count(*)",
     )
     + _SIGNIN_FROM,
@@ -262,13 +265,20 @@ def facts(kind: str, rollup: bool) -> str:
     rollup's days in `$covered` ("source|YYYY-MM-DD"), which the engine leaves out of
     `events` (`skip_days`)."""
     live = FACTS[kind].strip()
-    if not rollup:
+    if rollup:
+        live = (
+            f"({live})\nUNION ALL\nSELECT {FACT_COLUMNS} FROM m365_rollup\n"
+            f"WHERE kind = '{kind}' AND (source_id || '|' || day) IN (SELECT unnest($covered))"
+            " AND t >= $fact_lo AND t <= $fact_hi"
+        )
+    if not kind.startswith("signin"):
         return live
-    return (
-        f"({live})\nUNION ALL\nSELECT {FACT_COLUMNS} FROM m365_rollup\n"
-        f"WHERE kind = '{kind}' AND (source_id || '|' || day) IN (SELECT unnest($covered))"
-        " AND t >= $fact_lo AND t <= $fact_hi"
+    # A failed sign-in's class, from its code and the classes in force (D158).
+    cols = FACT_COLUMNS.replace(
+        "outcome,",
+        "CASE WHEN outcome = 'fail' THEN signin_class(code) ELSE outcome END AS outcome,",
     )
+    return f"SELECT {cols} FROM (\n{live}\n)"  # noqa: S608  # fixed SQL text
 
 
 def _with(kind: str, body: str, rollup: bool) -> str:
@@ -277,14 +287,18 @@ def _with(kind: str, body: str, rollup: bool) -> str:
     return f"WITH f AS (\n{facts(kind, rollup)}\n){'' if body.startswith(',') else chr(10)}{body}"
 
 
-_SIGNIN_TOTALS = """
+_SIGNIN_TOTALS = f"""
 SELECT coalesce(sum(n) FILTER (WHERE t >= $start), 0),
        coalesce(sum(n) FILTER (WHERE t < $start), 0),
        coalesce(sum(n) FILTER (WHERE t >= $start AND outcome = 'failed'), 0),
        coalesce(sum(n) FILTER (WHERE t < $start AND outcome = 'failed'), 0),
        coalesce(sum(n) FILTER (WHERE t >= $start AND risky), 0),
-       coalesce(sum(n) FILTER (WHERE t < $start AND risky), 0)
-FROM f"""
+       coalesce(sum(n) FILTER (WHERE t < $start AND risky), 0),
+       coalesce(sum(n) FILTER (WHERE t >= $start AND outcome IN ('interrupted', 'expired')), 0),
+       coalesce(sum(n) FILTER (WHERE t >= $start AND code = {BLOCKED_CODE}), 0),
+       coalesce(sum(n) FILTER (WHERE t < $start AND code = {BLOCKED_CODE}), 0),
+       coalesce(sum(n) FILTER (WHERE t >= $start AND outcome = 'other'), 0)
+FROM f"""  # noqa: S608  # a constant code
 # The person, and the app, with the most failed or interrupted sign-ins in each bucket (a
 # tie goes to the first by name, so the tooltip does not change between loads).
 _SPIKE = """
@@ -299,7 +313,9 @@ _OUTCOME = """
 SELECT {BUCKET} AS b,
        coalesce(sum(n) FILTER (WHERE outcome = 'ok'), 0),
        coalesce(sum(n) FILTER (WHERE outcome = 'interrupted'), 0),
-       coalesce(sum(n) FILTER (WHERE outcome = 'failed'), 0)
+       coalesce(sum(n) FILTER (WHERE outcome = 'failed'), 0),
+       coalesce(sum(n) FILTER (WHERE outcome = 'expired'), 0),
+       coalesce(sum(n) FILTER (WHERE outcome = 'other'), 0)
 FROM f WHERE t >= $start
 GROUP BY 1""".replace("{BUCKET}", bucket_sql())
 _REASONS = f"""
@@ -397,10 +413,15 @@ def run_facts(
         return dict(zip(names, rows, strict=True))
 
 
+# The outcome is the class of a failed sign-in's code (D158); the code and whether the
+# person signed in (or an app did, in the background) are shown beside it.
+OUTCOME_SQL = (
+    f"CASE WHEN status_id = 1 THEN 'succeeded' WHEN status_id = 2 THEN signin_class({CODE_SQL}) END"
+)
 SIGNIN_COLUMNS = (
     "time, actor_user_name, coalesce(nullif(resource_name, ''), message) AS app,\n"
-    f"       CASE WHEN status_id = 1 THEN 'succeeded' WHEN {INTERRUPTED} THEN 'interrupted'"
-    " WHEN status_id = 2 THEN 'failed' END AS outcome,\n"
+    f"       {OUTCOME_SQL} AS outcome,\n"
+    f"       {CODE_SQL} AS code, {INTERACTIVE_SQL} AS interactive,\n"
     "       status_detail AS reason, severity_id, src_endpoint_ip,"
     " ip_country(src_endpoint_ip) AS country, device_hostname, event_id"
 )
@@ -428,9 +449,13 @@ class Outcome:
     succeeded: list[int]
     interrupted: list[int]
     failed: list[int]
+    expired: list[int]
+    other: list[int]
     drill_succeeded: str
     drill_interrupted: str
     drill_failed: str
+    drill_expired: str
+    drill_other: str
     # Per point, who and which app had the most failed or interrupted sign-ins, with the
     # count ("erin@example.com (12)"), so a repeating spike reads from the tooltip.
     top_user: list[str] = field(default_factory=list)
@@ -447,7 +472,9 @@ class M365:
     approved_set: bool
     history: History = field(default_factory=lambda: History(True))
     sign_ins: Kpi | None = None
-    failed: Kpi | None = None
+    failed: Kpi | None = None  # real failures; extra: interrupted, expired, and other
+    blocked: Kpi | None = None  # blocked by Conditional Access (53003), also in failed
+    failed_other: int = 0  # of failed.extra, codes in no class ("other")
     outside: Kpi | None = None  # None: approved countries not set
     risky: Kpi | None = None
     consents: Kpi | None = None  # extra: blocked attempts
@@ -458,7 +485,35 @@ class M365:
     outside_top: list[Row] = field(default_factory=list)
     apps: list[Row] = field(default_factory=list)
     lists: dict[str, str] = field(default_factory=dict)
+    # Microsoft 365 > Sign-ins by class (failed, interrupted, expired, other, all) and by
+    # who signed in (all, interactive, noninteractive), as Search query templates (D158).
+    sign_in_lists: dict[str, dict[str, str]] = field(default_factory=dict)
     read: list[str] = field(default_factory=list)
+
+
+SIGNIN_CLASSES = {
+    "failed": FAILED,
+    "interrupted": INTERRUPTED,
+    "expired": EXPIRED,
+    "other": OTHER_FAILURE,
+    "all": None,
+}
+SIGNIN_MODES = {
+    "all": None,
+    "interactive": f"{INTERACTIVE_SQL} IS TRUE",
+    "noninteractive": f"{INTERACTIVE_SQL} IS FALSE",
+}
+
+
+def sign_in_lists() -> dict[str, dict[str, str]]:
+    """Sign-ins of one class and kind, newest first (Microsoft 365 > Sign-ins filters)."""
+    out: dict[str, dict[str, str]] = {}
+    for cls, cond in SIGNIN_CLASSES.items():
+        out[cls] = {}
+        for mode, how in SIGNIN_MODES.items():
+            where = " AND ".join(c for c in (SIGNIN, cond, how) if c)
+            out[cls][mode] = drill.events(where, SIGNIN_COLUMNS)
+    return out
 
 
 def lists(approved: tuple[str, ...]) -> dict[str, str]:
@@ -521,6 +576,7 @@ def overview(
         has_source=bool(m365),
         approved_set=bool(approved),
         lists=lists(approved),
+        sign_in_lists=sign_in_lists(),
     )
     if not m365:
         return out
@@ -535,10 +591,20 @@ def overview(
     first = {str(s): t for s, at in got["first"] if (t := _utc(at)) is not None}
     out.history = _history(first, m365, start, before)
 
-    total, total_b, failed, failed_b, risky, risky_b = (got["signins"] or [[0] * 6])[0]
+    total, total_b, failed, failed_b, risky, risky_b, apart, blocked, blocked_b, other = (
+        got["signins"] or [[0] * 10]
+    )[0]
+    out.failed_other = int(other)
     out.sign_ins = Kpi(int(total), int(total_b), drill=drill.events(SIGNIN, SIGNIN_COLUMNS))
     out.failed = Kpi(
-        int(failed), int(failed_b), drill=drill.events(f"{SIGNIN} AND {FAILED}", SIGNIN_COLUMNS)
+        int(failed),
+        int(failed_b),
+        int(apart) + int(other),
+        drill=drill.events(f"{SIGNIN} AND {FAILED}", SIGNIN_COLUMNS),
+        extra_drill=drill.events(f"{SIGNIN} AND {NOT_COUNTED}", SIGNIN_COLUMNS),
+    )
+    out.blocked = Kpi(
+        int(blocked), int(blocked_b), drill=drill.events(f"{SIGNIN} AND {BLOCKED}", SIGNIN_COLUMNS)
     )
     out.risky = Kpi(int(risky), int(risky_b), drill=drill.events(RISKY, SIGNIN_COLUMNS))
     if approved:
@@ -600,11 +666,12 @@ def overview(
         ),
     )
     at = {p: i for i, p in enumerate(points)}
-    ok, inter, fail = ([0] * len(points) for _ in range(3))
-    for b, s, i_, f in got["outcome"]:
+    ok, inter, fail, expired, other = ([0] * len(points) for _ in range(5))
+    for b, s, i_, f, e, o in got["outcome"]:
         t = _utc(b)
         if t is not None and t in at:
-            ok[at[t]], inter[at[t]], fail[at[t]] = int(s), int(i_), int(f)
+            j = at[t]
+            ok[j], inter[j], fail[j], expired[j], other[j] = int(s), int(i_), int(f), int(e), int(o)
     top_user, top_app = [""] * len(points), [""] * len(points)
     for name, tops in (("spike_user", top_user), ("spike_app", top_app)):
         for b, top, n in got[name]:
@@ -616,9 +683,13 @@ def overview(
         ok,
         inter,
         fail,
+        expired,
+        other,
         drill.events(f"{SIGNIN} AND status_id = 1", SIGNIN_COLUMNS),
         drill.events(f"{SIGNIN} AND {INTERRUPTED}", SIGNIN_COLUMNS),
         drill.events(f"{SIGNIN} AND {FAILED}", SIGNIN_COLUMNS),
+        drill.events(f"{SIGNIN} AND {EXPIRED}", SIGNIN_COLUMNS),
+        drill.events(f"{SIGNIN} AND {OTHER_FAILURE}", SIGNIN_COLUMNS),
         top_user,
         top_app,
     )

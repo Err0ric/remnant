@@ -26,3 +26,11 @@ paths:
 schedules:
   timezone: UTC        # cron times for scheduled searches and rules, e.g. America/Los_Angeles
   lag_seconds: 120     # each run ends this long before its fire time, so late events still count
+
+# How failed Microsoft Entra sign-ins are counted (D158). The shipped classes are in
+# backend/app/content/m365/signin_codes.yaml; move a code here instead of editing that file.
+# Classes: failed (counted as Failed sign-ins), interrupted, expired, other.
+# m365:
+#   signin_classes:
+#     "50074": failed   # count MFA prompts as failures, for MFA-fatigue hunting
+#     "500121": failed

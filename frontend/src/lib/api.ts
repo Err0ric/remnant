@@ -401,7 +401,12 @@ export interface M365Overview {
   approved_set: boolean;
   history: SectionHistory;
   sign_ins: SectionKpi | null;
+  /** Real failures only; `extra` is interrupted, expired, and other, not counted (D158). */
   failed: SectionKpi | null;
+  /** Blocked by Conditional Access (53003), also in `failed`. */
+  blocked?: SectionKpi | null;
+  /** Of `failed.extra`, failures whose code is in no class. */
+  failed_other?: number;
   outside: SectionKpi | null;
   risky: SectionKpi | null;
   consents: SectionKpi | null;
@@ -412,9 +417,13 @@ export interface M365Overview {
     succeeded: number[];
     interrupted: number[];
     failed: number[];
+    expired?: number[];
+    other?: number[];
     drill_succeeded: string;
     drill_interrupted: string;
     drill_failed: string;
+    drill_expired?: string;
+    drill_other?: string;
     /** Per point, the person and app with the most failed or interrupted sign-ins. */
     top_user?: string[];
     top_app?: string[];
@@ -423,6 +432,27 @@ export interface M365Overview {
   outside_top: SectionRow[];
   apps: SectionRow[];
   lists: Record<"sign_ins" | "mail" | "dlp" | "consents" | "registrations" | "admin", string>;
+  /** Microsoft 365 > Sign-ins by class and by who signed in (D158). */
+  sign_in_lists?: Partial<Record<SignInClassFilter, Partial<Record<SignInMode, string>>>>;
+}
+
+export type SignInClassFilter = "failed" | "interrupted" | "expired" | "other" | "all";
+export type SignInMode = "all" | "interactive" | "noninteractive";
+
+export interface SignInCode {
+  code: number;
+  cls: string;
+  label: string;
+  /** The class in the shipped file; null when added on this install. */
+  shipped: string | null;
+}
+
+/** How failed Entra sign-ins are counted on this install (D158). */
+export interface SignInClasses {
+  classes: string[];
+  blocked_code: number;
+  codes: SignInCode[];
+  adjusted: SignInCode[];
 }
 
 export interface DashboardSections {
@@ -449,6 +479,8 @@ export interface DashboardSections {
     failed_trend: { points: string[]; counts: number[]; before: number[] };
     top_failing: SectionRow[];
     history: SectionHistory;
+    /** Of `failed.extra`, failures whose code is in no class (D158). */
+    failed_other?: number;
   } | null;
   attacks: {
     failures: SectionKpi;
@@ -2361,6 +2393,7 @@ export const api = {
   setEnrichmentAuto: (auto_update: boolean) =>
     request<EnrichmentStatus>("/api/enrichment/settings", put({ auto_update })),
   places: () => request<Places>("/api/enrichment/places"),
+  m365SignInClasses: () => request<SignInClasses>("/api/m365/signin-classes"),
   m365Overview: (window: PageWindow) =>
     request<M365Overview>(`/api/m365/overview?window=${window}&tz=${viewerZone()}`),
   dashboardSections: (window: PageWindow, part?: "identity" | "attacks" | "detections") =>

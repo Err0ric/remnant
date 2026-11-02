@@ -20,6 +20,7 @@ import { startIndex, TrendChart, TrendLegend } from "./TrendChart";
 import { compareLine, NoHistory } from "./History";
 import { SectionTitle } from "@/components/SectionTitle";
 import { PanelTitle } from "@/components/PanelTitle";
+import { notCountedExtra, useSignInAbout } from "@/features/m365/signInCounting";
 
 /** The section around a card: its comparison state and what drill-throughs need. */
 /** The window a section counts over: its start, now, and the start of the one before. */
@@ -116,9 +117,11 @@ export interface KpiProps {
   extra?: { text: string; label: string; noun: string };
   /** Shown instead of a number when the count needs a setting or a source. */
   empty?: ReactNode;
+  /** "How this is counted", behind an (i) beside the label. */
+  about?: string;
 }
 
-export function Kpi({ label, kpi, noun = "events", context, extra, empty }: KpiProps) {
+export function Kpi({ label, kpi, noun = "events", context, extra, empty, about }: KpiProps) {
   const { history, before } = useContext(Compare);
   const drill = useDrill();
   const partial = !history.compared && kpi !== null && kpi.before !== null;
@@ -136,9 +139,21 @@ export function Kpi({ label, kpi, noun = "events", context, extra, empty }: KpiP
   ) : null;
   return (
     <div data-kpi={label} className="flex min-w-0 flex-col gap-0.5 bg-surface px-3 py-2.5">
-      <PanelTitle as="span" className="truncate" title={label}>
-        {label}
-      </PanelTitle>
+      <span className="flex min-w-0 items-center gap-1.5">
+        <PanelTitle as="span" className="truncate" title={label}>
+          {label}
+        </PanelTitle>
+        {about ? (
+          <span
+            role="img"
+            aria-label={`How this is counted: ${about}`}
+            title={`How this is counted: ${about}`}
+            className="flex size-3.5 shrink-0 cursor-help items-center justify-center rounded-full border border-text-muted text-[10px] font-semibold leading-none text-text-muted"
+          >
+            i
+          </span>
+        ) : null}
+      </span>
       {kpi ? (
         <span className="flex flex-wrap items-center gap-x-2">
           {open ? (
@@ -488,10 +503,18 @@ export function Top({ title, columns, rows, cells, empty }: TopProps) {
 }
 
 function Identity({ s }: { s: DashboardSections }) {
+  const about = useSignInAbout();
   const id = s.identity;
   if (!id) return null;
   const kpis = [
-    <Kpi key="f" label="Failed sign-ins" kpi={id.failed} />,
+    <Kpi
+      key="f"
+      label="Failed sign-ins"
+      kpi={id.failed}
+      noun="failed sign-ins"
+      about={about}
+      extra={notCountedExtra(id.failed.extra, id.failed_other)}
+    />,
     <Kpi
       key="o"
       label="Sign-ins outside approved countries"

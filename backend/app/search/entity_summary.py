@@ -14,26 +14,29 @@ from typing import Any, Literal
 
 from app.core.timing import in_context
 from app.engine.duckdb import QueryEngine, QueryScope
+from app.engine.signin_classes import REAL_FAILURE_SQL
 from app.search.entities import CLASS_NAMES, WHERE, quote, search_sql, user_filter_sql
 from app.search.identity import IdentityMap, key_sql
 
 TIMEOUT_S = 20
 Kind = Literal["user", "ip", "host"]
 
-TOTALS_SQL = """
+# Failed sign-ins are real failures only: a Microsoft 365 sign-in interrupted, expired, or
+# with an unknown code is "not counted" (D158).
+TOTALS_SQL = f"""
 SELECT count(*),
        count(*) FILTER (WHERE class_uid = 3002),
        count(*) FILTER (WHERE class_uid = 3002 AND status_id = 1),
-       count(*) FILTER (WHERE class_uid = 3002 AND status_id = 2),
+       count(*) FILTER (WHERE class_uid = 3002 AND {REAL_FAILURE_SQL}),
        count(DISTINCT nullif(trim(actor_user_name), '')),
        count(DISTINCT coalesce(nullif(dst_endpoint_hostname, ''), nullif(device_hostname, ''))),
-       count(DISTINCT {addr}) FILTER (WHERE NOT {service}),
+       count(DISTINCT {{addr}}) FILTER (WHERE NOT {{service}}),
        min(coalesce(time, time_observed)),
        max(coalesce(time, time_observed)),
        list(DISTINCT source_id),
-       count(DISTINCT {addr}) FILTER (WHERE {service})
+       count(DISTINCT {{addr}}) FILTER (WHERE {{service}})
 FROM events
-WHERE {where}"""
+WHERE {{where}}"""  # noqa: S608  # fixed SQL text
 
 ADDR = "coalesce(nullif(src_endpoint_ip, ''), nullif(dst_endpoint_ip, ''))"
 # Microsoft 365's own addresses (Exchange Online, SharePoint, the Graph back end) appear on
@@ -54,7 +57,8 @@ SERVICE = (
 # One row per outcome, kind of activity, user, and target, with a real line as the example.
 OUTCOME = (
     "CASE WHEN class_uid = 3002 AND status_id = 1 THEN 'succeeded'"
-    " WHEN class_uid = 3002 AND status_id = 2 THEN 'failed' ELSE 'other' END"
+    f" WHEN class_uid = 3002 AND {REAL_FAILURE_SQL} THEN 'failed'"
+    " WHEN class_uid = 3002 AND status_id = 2 THEN 'not_counted' ELSE 'other' END"
 )
 TARGET = "coalesce(nullif(dst_endpoint_hostname, ''), nullif(device_hostname, ''))"
 ACTIVITIES_SQL = """
@@ -185,7 +189,9 @@ def entity_summary(
         if outcome == "succeeded":
             cond.append("class_uid = 3002 AND status_id = 1")
         elif outcome == "failed":
-            cond.append("class_uid = 3002 AND status_id = 2")
+            cond.append(f"class_uid = 3002 AND {REAL_FAILURE_SQL}")
+        elif outcome == "not_counted":
+            cond.append(f"class_uid = 3002 AND status_id = 2 AND NOT ({REAL_FAILURE_SQL})")
         else:
             cond.append(f"coalesce(class_uid, 0) = {int(class_uid or 0)}")
         if who:
