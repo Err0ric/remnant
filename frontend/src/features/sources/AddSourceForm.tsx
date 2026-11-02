@@ -20,6 +20,7 @@ import {
   type SourceKind,
   type SyslogSettings,
 } from "@/lib/api";
+import { SectionTitle } from "@/components/SectionTitle";
 
 const ID_PATTERN = /^[a-z0-9][a-z0-9_]{0,63}$/;
 
@@ -184,7 +185,7 @@ export function AddSourceForm({ allowedRoots, initial, onDone }: AddSourceFormPr
       aria-label="Add source"
       className="rounded-card border border-border bg-surface p-4"
     >
-      <h2 className="mb-3 text-base font-semibold">Add source</h2>
+      <SectionTitle className="mb-3">Add source</SectionTitle>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <Field
           label="Source ID"

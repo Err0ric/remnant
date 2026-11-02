@@ -3,6 +3,7 @@ import { useState, type FormEvent } from "react";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { FormError } from "@/features/auth/FormError";
 import { ApiError, api } from "@/lib/api";
+import { SectionTitle } from "@/components/SectionTitle";
 
 const INPUT =
   "h-8 min-w-0 rounded border border-border-strong bg-inset px-2 font-mono text-sm text-text";
@@ -81,7 +82,7 @@ export function IdentitiesPage() {
           aria-label="Organization domains"
           className="flex flex-col gap-2 rounded-card border border-border bg-surface p-4"
         >
-          <h2 className="text-base font-semibold">Organization domains</h2>
+          <SectionTitle>Organization domains</SectionTitle>
           <p className="text-text-secondary">
             Addresses in these domains count as the same person as the bare name:{" "}
             <span className="font-mono">alice@example.com</span> is{" "}
@@ -135,7 +136,7 @@ export function IdentitiesPage() {
           aria-label="Suggestions"
           className="flex flex-col gap-3 rounded-card border border-border bg-surface p-4"
         >
-          <h2 className="text-base font-semibold">Suggestions</h2>
+          <SectionTitle>Suggestions</SectionTitle>
           <p className="text-text-secondary">
             Found in your logs. Nothing is applied until you accept it; check the evidence first.
           </p>
@@ -195,7 +196,7 @@ export function IdentitiesPage() {
           aria-label="Aliases"
           className="flex flex-col gap-2 rounded-card border border-border bg-surface p-4"
         >
-          <h2 className="text-base font-semibold">Aliases</h2>
+          <SectionTitle>Aliases</SectionTitle>
           <p className="text-text-secondary">
             For names the rules above cannot connect, such as{" "}
             <span className="font-mono">jsmith</span> and{" "}

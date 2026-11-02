@@ -21,6 +21,7 @@ import { AgentsArea } from "./AgentsOverview";
 import { InventoryCard } from "./InventoryCard";
 import { AiSettings } from "./AiSettings";
 import { StatusBadge, StatusPicker } from "./StatusBadge";
+import { SectionTitle } from "@/components/SectionTitle";
 
 type Tab =
   | "services"
@@ -522,7 +523,7 @@ function GoneList({ items, before }: { items: AiGone[]; before: string }) {
       className="overflow-hidden rounded-card border border-border bg-surface"
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-surface-head px-3 py-2">
-        <h2 className="text-base font-semibold">No longer seen</h2>
+        <SectionTitle>No longer seen</SectionTitle>
         <span className="text-sm text-text-muted">
           Seen in the {before}, not in this range. If an approved one is no longer needed, consider
           removing its approval or access.
@@ -559,7 +560,7 @@ function NotUsageList({ items }: { items: AiServiceUse[] }) {
       className="overflow-hidden rounded-card border border-border bg-surface"
     >
       <summary className="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 bg-surface-head px-3 py-2">
-        <h2 className="text-base font-semibold">Not counted as AI use</h2>
+        <SectionTitle>Not counted as AI use</SectionTitle>
         <span className="font-mono text-sm tabular-nums text-text-secondary">
           {items.length} {items.length === 1 ? "host group" : "host groups"},{" "}
           {events.toLocaleString()} events
@@ -612,7 +613,7 @@ function Card({ title, note, empty, children }: CardProps) {
       className="overflow-hidden rounded-card border border-border bg-surface"
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-surface-head px-3 py-2">
-        <h2 className="text-base font-semibold">{title}</h2>
+        <SectionTitle>{title}</SectionTitle>
         <span className="text-sm text-text-muted">{note}</span>
       </div>
       {empty ? (

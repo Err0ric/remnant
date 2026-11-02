@@ -6,6 +6,7 @@ import { Field } from "@/features/auth/Field";
 import { FormError } from "@/features/auth/FormError";
 import { ApiError, api, type Role } from "@/lib/api";
 import { ROLE_HELP, ROLE_LABEL } from "./roles";
+import { SectionTitle } from "@/components/SectionTitle";
 
 const USERNAME = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$/;
 
@@ -52,7 +53,7 @@ export function InviteForm({ onInvited, onCancel, firstAccount = false }: Invite
       onSubmit={submit}
       className="rounded-card border border-border bg-surface p-4"
     >
-      <h2 className="mb-3 text-base font-semibold">Invite user</h2>
+      <SectionTitle className="mb-3">Invite user</SectionTitle>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <Field
           label="Username"

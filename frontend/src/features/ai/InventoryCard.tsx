@@ -6,6 +6,7 @@ import { api, type InventoryItem, type InventoryType } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { since, stamp } from "@/features/overview/time";
 import { STATUS_LABEL, StatusBadge } from "./StatusBadge";
+import { SectionTitle } from "@/components/SectionTitle";
 
 const TYPE_LABEL: Record<InventoryType, string> = {
   service: "AI services",
@@ -85,7 +86,7 @@ export function InventoryCard({ isAdmin, canExport }: { isAdmin: boolean; canExp
       className="overflow-hidden rounded-card border border-border bg-surface"
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border bg-surface-head px-3 py-2">
-        <h2 className="text-base font-semibold">Inventory</h2>
+        <SectionTitle>Inventory</SectionTitle>
         <span className="text-sm text-text-muted">
           Everything AI seen in the last 30 days, from the sources you can read.
         </span>

@@ -5,6 +5,7 @@ import { FormError } from "@/features/auth/FormError";
 import { ApiError, api } from "@/lib/api";
 import { GroupEditor } from "./GroupEditor";
 import { GroupSuggestions } from "./GroupSuggestions";
+import { SectionTitle } from "@/components/SectionTitle";
 
 /** Source groups: the per-user access boundary (SPEC 3.6). Nothing is granted automatically. */
 export function GroupsSection() {
@@ -39,7 +40,7 @@ export function GroupsSection() {
   return (
     <section className="overflow-hidden rounded-card border border-border bg-surface">
       <div className="flex items-center gap-2 border-b border-border bg-surface-head px-3 py-2">
-        <h2 className="text-base font-semibold">Source groups</h2>
+        <SectionTitle>Source groups</SectionTitle>
         <span className="text-sm text-text-muted">
           Analysts and auditors only see sources in their groups.
         </span>

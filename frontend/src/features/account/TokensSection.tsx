@@ -3,6 +3,7 @@ import { useState, type FormEvent } from "react";
 import { Field } from "@/features/auth/Field";
 import { FormError } from "@/features/auth/FormError";
 import { ApiError, api } from "@/lib/api";
+import { SectionTitle } from "@/components/SectionTitle";
 
 function when(v: string | null): string {
   return v ? `${v.slice(0, 16).replace("T", " ")} UTC` : "Never";
@@ -35,7 +36,7 @@ export function TokensSection() {
   return (
     <section className="overflow-hidden rounded-card border border-border bg-surface">
       <div className="border-b border-border bg-surface-head px-3 py-2">
-        <h2 className="text-base font-semibold">CLI and API tokens</h2>
+        <SectionTitle>CLI and API tokens</SectionTitle>
         <p className="text-sm text-text-muted">
           Each token acts as you, with your source access. Revoke any you no longer use.
         </p>

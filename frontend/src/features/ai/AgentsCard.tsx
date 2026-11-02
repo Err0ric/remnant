@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { ApiError, api } from "@/lib/api";
+import { SectionTitle } from "@/components/SectionTitle";
 
 const STATE: Record<string, { label: string; tint: string }> = {
   changed: { label: "Changed", tint: "bg-sev-high-bg text-sev-high-text" },
@@ -28,7 +29,7 @@ export function AgentsCard() {
       className="overflow-hidden rounded-card border border-border bg-surface"
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-surface-head px-3 py-2">
-        <h2 className="text-base font-semibold">Agents</h2>
+        <SectionTitle>Agents</SectionTitle>
         <span className="text-sm text-text-muted">
           Claude Code per person, MCP setups per machine and client, and API keys. Changes are
           against the 30 days before the last 24 hours.

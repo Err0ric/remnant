@@ -5,6 +5,7 @@ import { CopyBlock } from "@/features/sources/OtlpSetup";
 import { ApiError, api } from "@/lib/api";
 import { PRODUCT_NAME } from "@/lib/branding";
 import { navigate } from "@/lib/route";
+import { SectionTitle } from "@/components/SectionTitle";
 
 /** Settings > MCP server (ADR-0003): let AI assistants run read-only queries. */
 export function McpPage() {
@@ -50,7 +51,7 @@ export function McpPage() {
           aria-label="Access"
           className="flex flex-col gap-3 rounded-card border border-border bg-surface p-4"
         >
-          <h2 className="text-base font-semibold">Access</h2>
+          <SectionTitle>Access</SectionTitle>
           {settings.isError ? (
             <p role="alert" className="text-danger">
               {settings.error instanceof ApiError ? settings.error.message : "Could not load"}
@@ -110,7 +111,7 @@ export function McpPage() {
           aria-label="Connect a client"
           className="flex flex-col gap-3 rounded-card border border-border bg-surface p-4"
         >
-          <h2 className="text-base font-semibold">Connect a client</h2>
+          <SectionTitle>Connect a client</SectionTitle>
           <p className="text-text-secondary">
             Each person creates a token under{" "}
             <a
@@ -140,7 +141,7 @@ export function McpPage() {
           aria-label="What clients can do"
           className="flex flex-col gap-2 rounded-card border border-border bg-surface p-4"
         >
-          <h2 className="text-base font-semibold">What clients can do</h2>
+          <SectionTitle>What clients can do</SectionTitle>
           <ul className="flex list-disc flex-col gap-1 pl-5 text-text-secondary">
             <li>
               Two tools: <span className="font-mono">get_schema</span> and{" "}

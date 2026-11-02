@@ -5,6 +5,7 @@ import { FormError } from "@/features/auth/FormError";
 import { seedDraft } from "@/features/templates/draftSeed";
 import { ApiError, api, type DiscoveryCandidate, type SourceInput } from "@/lib/api";
 import { navigate } from "@/lib/route";
+import { SectionTitle } from "@/components/SectionTitle";
 
 interface DiscoverPanelProps {
   allowedRoots: string[];
@@ -94,7 +95,7 @@ export function DiscoverPanel({ allowedRoots, existingIds, onUse, onClose }: Dis
       aria-label="Discover sources"
       className="rounded-card border border-border bg-surface p-4"
     >
-      <h2 className="mb-1 text-base font-semibold">Discover sources</h2>
+      <SectionTitle className="mb-1">Discover sources</SectionTitle>
       <p className="mb-3 text-sm text-text-muted">
         Reads a sample of each file and suggests a parser. Nothing is added or shared until you add
         a source yourself.

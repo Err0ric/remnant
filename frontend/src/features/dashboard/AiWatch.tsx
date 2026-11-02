@@ -16,6 +16,8 @@ import { When } from "@/components/When";
 import { StatusBadge, STATUS_LABEL } from "@/features/ai/StatusBadge";
 import { TrendChart, TrendLegend } from "./TrendChart";
 import { compareLine, NoHistory } from "./History";
+import { SectionTitle } from "@/components/SectionTitle";
+import { PanelTitle } from "@/components/PanelTitle";
 
 const ORDER: AiStatus[] = ["not_approved", "unreviewed", "approved"];
 
@@ -122,7 +124,7 @@ export function AiWatch({ days = 7 }: { days?: number }) {
   return (
     <section aria-label="AI Watch" className="rounded-card border border-border bg-surface">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-3 py-2">
-        <h2 className="text-base font-semibold">AI Watch</h2>
+        <SectionTitle>AI Watch</SectionTitle>
         <span className="text-sm text-text-muted">
           {compareLine(
             s.compared ?? true,
@@ -235,7 +237,7 @@ const NEW_KIND = { service: "AI service", mcp: "MCP server", agent: "agent" } as
 function NewList({ items }: { items: AiWatchSummary["new"] }) {
   return (
     <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5 border-t border-border px-3 py-1.5 text-sm">
-      <span className="font-semibold">New in 24 hours</span>
+      <PanelTitle as="span">New in 24 hours</PanelTitle>
       {items.length === 0 ? (
         <span className="text-text-muted">nothing first seen</span>
       ) : (
@@ -325,10 +327,10 @@ function Card({ card, days, odd, history, bounds }: CardProps) {
         odd && "last:col-span-2 lg:last:col-span-1",
       )}
     >
-      <span className="flex min-w-0 items-center gap-1.5 text-sm text-text-secondary">
-        <span className="truncate" title={card.label}>
+      <span className="flex min-w-0 items-center gap-1.5">
+        <PanelTitle as="span" className="truncate" title={card.label}>
           {card.label}
-        </span>
+        </PanelTitle>
         <span
           role="img"
           aria-label={`About ${midSentence(card.label)}: ${ABOUT[card.key]}`}
@@ -524,7 +526,7 @@ function Top({ summary }: { summary: AiWatchSummary }) {
   return (
     <div className="min-w-0">
       <div className="mb-2 flex items-baseline gap-2">
-        <h3 className="text-sm font-semibold">Top services</h3>
+        <PanelTitle>Top services</PanelTitle>
         <span className="text-sm text-text-muted">last {summary.days} days</span>
         <button
           type="button"

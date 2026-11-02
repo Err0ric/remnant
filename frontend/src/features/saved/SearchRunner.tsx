@@ -3,6 +3,7 @@ import { useState, type FormEvent } from "react";
 import { ResultsTable } from "@/features/search/ResultsTable";
 import { ApiError, api, type SavedSearch } from "@/lib/api";
 import { TIME_RANGES, rangeStart, type TimeRangeId } from "@/lib/search";
+import { SectionTitle } from "@/components/SectionTitle";
 
 interface SearchRunnerProps {
   search: SavedSearch;
@@ -41,7 +42,7 @@ export function SearchRunner({ search, onClose }: SearchRunnerProps) {
     >
       <form onSubmit={submit} className="flex flex-col gap-3 p-4">
         <div className="flex flex-wrap items-baseline gap-2">
-          <h2 className="text-base font-semibold">{search.name}</h2>
+          <SectionTitle>{search.name}</SectionTitle>
           <span className="font-mono text-sm text-text-muted">{search.id}</span>
           <button type="button" onClick={onClose} className="ml-auto text-sm text-text-secondary">
             Close

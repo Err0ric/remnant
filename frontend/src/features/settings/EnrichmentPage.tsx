@@ -4,6 +4,7 @@ import { PageHeader } from "@/components/shell/PageHeader";
 import { PlacesSettings } from "./PlacesSettings";
 import { since, stamp } from "@/features/overview/time";
 import { ApiError, api, type EnrichmentFeed, type FeedLevel } from "@/lib/api";
+import { SectionTitle } from "@/components/SectionTitle";
 
 const LEVEL: Record<FeedLevel, { label: string; badge: string }> = {
   healthy: { label: "Current", badge: "bg-local-bg text-local-text" },
@@ -308,7 +309,7 @@ export function EnrichmentPage() {
 
         <section aria-label="GeoIP" className="rounded-card border border-border bg-surface">
           <div className="border-b border-border px-4 py-3">
-            <h2 className="text-base font-semibold">GeoIP</h2>
+            <SectionTitle>GeoIP</SectionTitle>
             <p className="mt-0.5 text-text-secondary">
               Country and network after public addresses in search results.
             </p>
@@ -318,7 +319,7 @@ export function EnrichmentPage() {
 
         <section aria-label="Threat intel" className="rounded-card border border-border bg-surface">
           <div className="border-b border-border px-4 py-3">
-            <h2 className="text-base font-semibold">Threat intel</h2>
+            <SectionTitle>Threat intel</SectionTitle>
             <p className="mt-0.5 max-w-prose text-text-secondary">
               Values in search results that appear on a list get a small red marker; search{" "}
               <span className="font-mono text-text">intel:listed</span> for every event that touches

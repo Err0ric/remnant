@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { SectionTitle } from "@/components/SectionTitle";
 
 interface SigningKeyProps {
   name: string;
@@ -14,7 +15,7 @@ export function SigningKey({ name, signingKey, onDone }: SigningKeyProps) {
       aria-label="Signing key"
       className="rounded-card border border-accent bg-accent-subtle p-4 text-sm"
     >
-      <h2 className="text-base font-semibold">Signing key for {name}</h2>
+      <SectionTitle>Signing key for {name}</SectionTitle>
       <p className="mt-1 text-text-secondary">
         Give this to the receiving service so it can check the{" "}
         <span className="font-mono">X-Signature-256</span> header (HMAC-SHA256 of{" "}

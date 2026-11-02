@@ -18,6 +18,8 @@ import { useViewer } from "@/lib/viewer";
 import { previousPhrase } from "./pageWindow";
 import { startIndex, TrendChart, TrendLegend } from "./TrendChart";
 import { compareLine, NoHistory } from "./History";
+import { SectionTitle } from "@/components/SectionTitle";
+import { PanelTitle } from "@/components/PanelTitle";
 
 /** The section around a card: its comparison state and what drill-throughs need. */
 /** The window a section counts over: its start, now, and the start of the one before. */
@@ -134,9 +136,9 @@ export function Kpi({ label, kpi, noun = "events", context, extra, empty }: KpiP
   ) : null;
   return (
     <div data-kpi={label} className="flex min-w-0 flex-col gap-0.5 bg-surface px-3 py-2.5">
-      <span className="truncate text-sm text-text-secondary" title={label}>
+      <PanelTitle as="span" className="truncate" title={label}>
         {label}
-      </span>
+      </PanelTitle>
       {kpi ? (
         <span className="flex flex-wrap items-center gap-x-2">
           {open ? (
@@ -244,7 +246,7 @@ function Section({
     <Compare.Provider value={{ history, before, title, s, area: "Dashboard" }}>
       <section aria-label={title} className="rounded-card border border-border bg-surface">
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 border-b border-border px-3 py-2">
-          <h2 className="text-base font-semibold">{title}</h2>
+          <SectionTitle>{title}</SectionTitle>
           {from ? <span className="text-sm text-text-muted">from {from}</span> : null}
           <span className="ml-auto text-sm text-text-muted">
             {compareLine(history.compared, history.since, before)}
@@ -436,7 +438,7 @@ interface TopProps {
 export function Top({ title, columns, rows, cells, empty }: TopProps) {
   return (
     <div className="min-w-0">
-      <h3 className="mb-2 text-sm font-semibold">{title}</h3>
+      <PanelTitle className="mb-2">{title}</PanelTitle>
       {rows.length === 0 ? (
         <p className="text-sm text-text-secondary">{empty}</p>
       ) : (

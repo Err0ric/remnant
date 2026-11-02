@@ -10,6 +10,7 @@ import { compareLine } from "@/features/dashboard/History";
 import { WINDOWS, previousPhrase } from "@/features/dashboard/pageWindow";
 import { since, stamp } from "@/features/overview/time";
 import { StatusBadge } from "./StatusBadge";
+import { SectionTitle } from "@/components/SectionTitle";
 
 const KEY = "agents.window";
 const DAYS: Record<PageWindow, number> = { "24h": 1, "7d": 7, "30d": 30 };
@@ -164,7 +165,7 @@ function Tools({ d }: { d: AgentsOverview }) {
   return (
     <Box label="Tools">
       <div className="flex flex-wrap items-baseline gap-x-3 border-b border-border bg-surface-head px-3 py-2">
-        <h2 className="text-base font-semibold">Tools</h2>
+        <SectionTitle>Tools</SectionTitle>
         <span className="text-sm text-text-muted">
           Built-in tools and MCP servers Claude Code called. Review MCP servers on the MCP servers
           tab.

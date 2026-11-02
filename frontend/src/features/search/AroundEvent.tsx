@@ -5,6 +5,7 @@ import { api, type Cell } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { openDrill } from "@/lib/drill";
 import { formatCell } from "@/lib/search";
+import { PanelTitle } from "@/components/PanelTitle";
 
 const SHOWN = [
   "time",
@@ -47,7 +48,7 @@ export function AroundEvent({ eventId, at }: { eventId: string; at: string }) {
       className="mb-3 overflow-hidden rounded border border-border bg-surface"
     >
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-border bg-surface-head px-3 py-1.5">
-        <h3 className="text-sm font-semibold">Around this event</h3>
+        <PanelTitle>Around this event</PanelTitle>
         {d ? (
           <span className="text-sm text-text-muted">
             5 minutes either side

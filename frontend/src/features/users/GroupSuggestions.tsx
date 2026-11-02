@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { SuggestionRow } from "./SuggestionRow";
+import { PanelTitle } from "@/components/PanelTitle";
 
 /**
  * Suggested groups from template categories and vendors (SPEC 3.6). An approve-only
@@ -16,7 +17,7 @@ export function GroupSuggestions() {
   if (!open.length) return null;
   return (
     <section aria-label="Suggested groups" className="rounded border border-border p-3">
-      <h3 className="text-sm font-semibold">Suggested groups</h3>
+      <PanelTitle>Suggested groups</PanelTitle>
       <p className="mb-2 text-sm text-text-secondary">
         From the templates your sources use. Applying one creates the group if needed and adds the
         ticked sources; it never adds people, so it grants no access by itself.

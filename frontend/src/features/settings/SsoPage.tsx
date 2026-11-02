@@ -6,6 +6,7 @@ import { navigate } from "@/lib/route";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { LoadFailed } from "@/components/LoadFailed";
 import { since } from "@/features/overview/time";
+import { SectionTitle } from "@/components/SectionTitle";
 
 const STATUS = {
   off: { text: "Off", tone: "text-text-secondary" },
@@ -90,7 +91,7 @@ export function SsoPage() {
               aria-label="Setup in use"
               className="rounded-card border border-border bg-surface p-4"
             >
-              <h2 className="mb-2 text-base font-semibold">Setup in use</h2>
+              <SectionTitle className="mb-2">Setup in use</SectionTitle>
               <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1">
                 <dt className="text-text-secondary">Issuer</dt>
                 <dd className="break-all font-mono">{d.issuer ?? "Not set"}</dd>

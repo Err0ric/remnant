@@ -3,6 +3,7 @@ import { PageHeader } from "@/components/shell/PageHeader";
 import { OptionalSection } from "@/components/forms/OptionalSection";
 import { api } from "@/lib/api";
 import { navigate, type PageId } from "@/lib/route";
+import { SectionTitle } from "@/components/SectionTitle";
 
 interface Step {
   label: string;
@@ -144,7 +145,7 @@ export function SetupPage() {
           className="rounded-card border border-border bg-surface p-4"
         >
           <div className="mb-1 flex items-baseline justify-between gap-3">
-            <h2 className="text-base font-semibold">Core steps</h2>
+            <SectionTitle>Core steps</SectionTitle>
             <span className="text-text-secondary">
               {loading ? "Checking…" : left === 0 ? "All done" : `${left} of ${core.length} left`}
             </span>

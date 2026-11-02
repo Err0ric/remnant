@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { FirstAdminLink } from "./firstAdminLink";
+import { SectionTitle } from "@/components/SectionTitle";
 
 interface FirstAdminLinkPanelProps {
   value: FirstAdminLink;
@@ -22,7 +23,7 @@ export function FirstAdminLinkPanel({ value, onDone }: FirstAdminLinkPanelProps)
       aria-label="Administrator invite link"
       className="mb-4 rounded-card border border-accent bg-accent-subtle p-4"
     >
-      <h2 className="text-base font-semibold">Administrator invite link</h2>
+      <SectionTitle>Administrator invite link</SectionTitle>
       <p className="mt-1 text-sm text-text-secondary">
         The account <span className="font-semibold text-text">{value.username}</span> was created,
         so this install now requires sign-in. Open this link to set its password. It works once,

@@ -1,4 +1,5 @@
 import type { DraftPreview } from "@/lib/api";
+import { PanelTitle } from "@/components/PanelTitle";
 
 interface PreviewPanelProps {
   preview: DraftPreview;
@@ -31,7 +32,7 @@ export function PreviewPanel({ preview }: PreviewPanelProps) {
 
       {preview.tests.length ? (
         <div>
-          <h3 className="mb-1 text-sm font-semibold">Inline tests</h3>
+          <PanelTitle className="mb-1">Inline tests</PanelTitle>
           <ul className="text-sm">
             {preview.tests.map((t) => (
               <li key={t.name}>
@@ -50,7 +51,7 @@ export function PreviewPanel({ preview }: PreviewPanelProps) {
 
       {preview.valid ? (
         <div>
-          <h3 className="mb-1 text-sm font-semibold">Sample</h3>
+          <PanelTitle className="mb-1">Sample</PanelTitle>
           {preview.lines === 0 ? (
             <p className="text-sm text-text-secondary">
               No sample lines. Attach a file or paste lines to see how they parse.

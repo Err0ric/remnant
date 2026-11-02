@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { api } from "@/lib/api";
 import { PRODUCT_NAME } from "@/lib/branding";
+import { SectionTitle } from "@/components/SectionTitle";
 
 interface DataSource {
   name: string;
@@ -49,7 +50,7 @@ export function AboutPage() {
       <PageHeader crumbs={["Home", "Settings", "About and licenses"]} title="About and licenses" />
       <div className="flex max-w-4xl flex-col gap-4 px-5 py-3 text-sm">
         <section aria-label="This server" className="flex flex-col gap-1">
-          <h2 className="text-base font-semibold">{PRODUCT_NAME}</h2>
+          <SectionTitle>{PRODUCT_NAME}</SectionTitle>
           <dl className="grid grid-cols-[10rem_minmax(0,1fr)] gap-x-3 gap-y-1">
             <dt className="text-text-secondary">Version</dt>
             <dd className="font-mono">{meta.data?.version ?? ""}</dd>
@@ -66,7 +67,7 @@ export function AboutPage() {
         <InstallName canEdit={isAdmin} />
         <LiveLimit canEdit={isAdmin} />
         <section aria-label="Data sources and licenses" className="flex flex-col gap-2">
-          <h2 className="text-base font-semibold">Data sources and licenses</h2>
+          <SectionTitle>Data sources and licenses</SectionTitle>
           <div className="overflow-x-auto rounded-card border border-border">
             <table className="w-full">
               <thead>

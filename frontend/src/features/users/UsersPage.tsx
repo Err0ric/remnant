@@ -8,6 +8,7 @@ import { GroupsSection } from "./GroupsSection";
 import { InviteForm } from "./InviteForm";
 import { OneTimeLink } from "./OneTimeLink";
 import { UserRow } from "./UserRow";
+import { SectionTitle } from "@/components/SectionTitle";
 
 interface UsersPageProps {
   me: User | null;
@@ -86,7 +87,7 @@ export function UsersPage({ me }: UsersPageProps) {
         ) : null}
         <section className="overflow-hidden rounded-card border border-border bg-surface">
           <div className="border-b border-border bg-surface-head px-3 py-2">
-            <h2 className="text-base font-semibold">Users</h2>
+            <SectionTitle>Users</SectionTitle>
           </div>
           <div className="overflow-x-auto">
             <table aria-label="Users" className="w-full text-sm">

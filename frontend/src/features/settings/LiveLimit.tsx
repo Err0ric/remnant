@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, api } from "@/lib/api";
+import { SectionTitle } from "@/components/SectionTitle";
 
 /** The live search time limit (ADR-0036 row 5): one setting for every role. */
 export function LiveLimit({ canEdit }: { canEdit: boolean }) {
@@ -23,7 +24,7 @@ export function LiveLimit({ canEdit }: { canEdit: boolean }) {
   };
   return (
     <section aria-label="Live search time limit" className="flex flex-col gap-1">
-      <h2 className="text-base font-semibold">Live search time limit</h2>
+      <SectionTitle>Live search time limit</SectionTitle>
       <p className="text-text-secondary">
         A live search stops after this long and offers Resume, so a forgotten tab does not keep a
         query running. Everyone has the same limit and at most 2 live searches at once.

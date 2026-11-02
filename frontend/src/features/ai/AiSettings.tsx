@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { ApiError, api, type AiWatch } from "@/lib/api";
 import { StatusBadge, StatusPicker } from "./StatusBadge";
+import { SectionTitle } from "@/components/SectionTitle";
 
 const SECTION = "overflow-hidden rounded-card border border-border bg-surface";
 const HEAD = "border-b border-border bg-surface-head px-3 py-2";
@@ -39,7 +40,7 @@ function WatchSettings() {
   return (
     <section aria-label="AI watch" className={SECTION}>
       <div className={HEAD}>
-        <h2 className="text-base font-semibold">AI watch</h2>
+        <SectionTitle>AI watch</SectionTitle>
         <p className="text-sm text-text-muted">
           Alerts the first time an AI service or MCP server that is not approved is seen for a
           person or machine, and when sensitive data is sent to Claude Code. Summaries only.
@@ -158,7 +159,7 @@ function McpRules() {
   return (
     <section aria-label="MCP server rules" className={SECTION}>
       <div className={HEAD}>
-        <h2 className="text-base font-semibold">MCP server rules</h2>
+        <SectionTitle>MCP server rules</SectionTitle>
         <p className="text-sm text-text-muted">
           A server name, or a prefix ending in * (for example github or internal-*). Exact names win
           over prefixes. Servers with no rule are Unreviewed.
@@ -255,7 +256,7 @@ function CatalogList() {
   return (
     <section aria-label="AI service catalog" className={SECTION}>
       <div className={HEAD}>
-        <h2 className="text-base font-semibold">AI service catalog</h2>
+        <SectionTitle>AI service catalog</SectionTitle>
         <p className="text-sm text-text-muted">
           Every service the network view recognizes, by domain. Mark them here before they show up,
           or add your own (an internal model gateway, a vendor not listed).

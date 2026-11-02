@@ -7,6 +7,7 @@ import { navigate } from "@/lib/route";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { LoadFailed } from "@/components/LoadFailed";
 import { since, stamp } from "@/features/overview/time";
+import { SectionTitle } from "@/components/SectionTitle";
 
 function save(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
@@ -176,7 +177,7 @@ export function PluginsPage() {
                   aria-label={v.label}
                   className="flex flex-col gap-2 rounded-card border border-border bg-surface p-4 text-sm"
                 >
-                  <h2 className="text-base font-semibold">{v.label}</h2>
+                  <SectionTitle>{v.label}</SectionTitle>
                   <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-0.5">
                     <dt className="text-text-secondary">Version</dt>
                     <dd className="font-mono">{d.version}</dd>
@@ -224,7 +225,7 @@ export function PluginsPage() {
               aria-label="Check a deployment"
               className="rounded-card border border-border bg-surface p-4 text-sm"
             >
-              <h2 className="mb-1 text-base font-semibold">Check a deployment</h2>
+              <SectionTitle className="mb-1">Check a deployment</SectionTitle>
               <ol className="list-decimal pl-5 text-text-secondary">
                 <li>Run a short Claude Code session on a pilot computer.</li>
                 <li>

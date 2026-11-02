@@ -6,6 +6,7 @@ import { cn } from "@/lib/cn";
 import { drillSql, openDrill } from "@/lib/drill";
 import { LoadFailed } from "@/components/LoadFailed";
 import { ResultsTable } from "@/features/search/ResultsTable";
+import { SectionTitle } from "@/components/SectionTitle";
 
 const TITLE = "Inbox rules and forwarding";
 // Shown inside a burst: who and which burst are its heading already.
@@ -104,7 +105,7 @@ export function MailRules({ m }: { m: M365Overview }) {
   return (
     <section aria-label={TITLE} className="rounded-card border border-border bg-surface">
       <div className="flex items-center gap-3 border-b border-border px-3 py-2">
-        <h2 className="text-base font-semibold">{TITLE}</h2>
+        <SectionTitle>{TITLE}</SectionTitle>
         {q.data ? (
           <span className="text-sm text-text-muted">
             {q.data.row_count.toLocaleString()} {q.data.row_count === 1 ? "rule" : "rules"}

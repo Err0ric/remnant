@@ -6,6 +6,8 @@ import { ApiError, api, type AgentAccount, type AgentSession, type SessionStep }
 import { cn } from "@/lib/cn";
 import { TIER_LABEL, TierBadge } from "./AccountsCard";
 import { since, stamp } from "@/features/overview/time";
+import { SectionTitle } from "@/components/SectionTitle";
+import { PanelTitle } from "@/components/PanelTitle";
 
 const ROLE: Record<string, string> = {
   session: "Session",
@@ -78,7 +80,7 @@ export function SessionsCard() {
       className="overflow-hidden rounded-card border border-border bg-surface"
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-surface-head px-3 py-2">
-        <h2 className="text-base font-semibold">Sessions</h2>
+        <SectionTitle>Sessions</SectionTitle>
         <span className="text-sm text-text-muted">
           Claude Code and Cowork sessions from the hooks plugin, last 7 days. Browser chat is not
           covered.
@@ -163,14 +165,14 @@ function Detail({ id, person, machine, session, steps, account }: DetailProps) {
   const late_ = steps.reduce((m, st) => Math.max(m, st.late_s ?? 0), 0);
   return (
     <div aria-label="Session detail" role="region">
-      <h3 className="text-sm font-semibold">
+      <PanelTitle>
         {person ?? "No user parsed"}
         {machine ? (
           <span className="ml-2 font-mono font-normal">
             <EntityLink kind="host" value={machine} />
           </span>
         ) : null}
-      </h3>
+      </PanelTitle>
       <dl className="mt-1 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-0.5 text-sm">
         <dt className="text-text-secondary">Session</dt>
         <dd className="font-mono">{id}</dd>

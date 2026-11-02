@@ -3,6 +3,7 @@ import { useState } from "react";
 import { ClaudePlugin } from "./ClaudePlugin";
 import { ApiError, api } from "@/lib/api";
 import { PRODUCT_NAME } from "@/lib/branding";
+import { SectionTitle } from "@/components/SectionTitle";
 
 /** The OTLP base address senders use (ADR-0015 row 3). */
 export function otlpEndpoint(): string {
@@ -89,9 +90,9 @@ export function OtlpTokenPanel({ sourceId, token, onDone }: OtlpTokenPanelProps)
       aria-label="Ingest token"
       className="flex flex-col gap-3 rounded-card border border-accent bg-surface p-4"
     >
-      <h2 className="text-base font-semibold">
+      <SectionTitle>
         Ingest token for <span className="font-mono">{sourceId}</span>
-      </h2>
+      </SectionTitle>
       <p className="text-sm text-warn">
         Shown once. It can only send data into this source; replace it from the Sources list if it
         leaks.

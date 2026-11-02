@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, api } from "@/lib/api";
+import { SectionTitle } from "@/components/SectionTitle";
 
 /** The optional install name in the top bar (ADR-0038 nav pass 2). Shown to signed-in
  * people only; admins set it here. */
@@ -22,7 +23,7 @@ export function InstallName({ canEdit }: { canEdit: boolean }) {
   };
   return (
     <section aria-label="Install name" className="flex flex-col gap-1">
-      <h2 className="text-base font-semibold">Install name</h2>
+      <SectionTitle>Install name</SectionTitle>
       <p className="text-text-secondary">
         Shown in the top bar to people who are signed in, never on the sign-in page. Leave it empty
         to show nothing.

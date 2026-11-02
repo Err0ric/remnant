@@ -19,6 +19,11 @@
   --accent-subtle: rgba(76, 141, 246, 0.16);
   --row-selected: rgba(76, 141, 246, 0.1);
   --focus-ring: #7aaefa;
+  /* Title levels (owner, 2026-11-01): a neutral slate pill for section titles and bright
+     small caps for panel titles, kept apart from the link blue so neither looks clickable. */
+  --section-bg: rgba(148, 163, 184, 0.16);
+  --section-text: #f4f6fa;
+  --panel-title: #f4f6fa;
   --ok: #5fc9a0;
   --warn: #f0c46a;
   --danger: #f7899b;
@@ -61,6 +66,9 @@
   --accent-subtle: #e8f0fb;
   --row-selected: #eef4fd;
   --focus-ring: #1f5fbf;
+  --section-bg: #e2e7ee;
+  --section-text: #111722;
+  --panel-title: #111722;
   --ok: #1f7a5a;
   --warn: #8a5300;
   --danger: #b4162f;

@@ -4,6 +4,7 @@ import { Field } from "@/features/auth/Field";
 import { FormError } from "@/features/auth/FormError";
 import { ApiError, api, type ParamDef, type ParamType, type SavedSearch } from "@/lib/api";
 import { slugify, sqlPlaceholders } from "@/lib/search";
+import { SectionTitle } from "@/components/SectionTitle";
 
 interface SaveSearchFormProps {
   sql: string;
@@ -96,9 +97,9 @@ export function SaveSearchForm({
       onSubmit={submit}
       className="rounded-card border border-border bg-surface p-4"
     >
-      <h2 className="mb-3 text-base font-semibold">
+      <SectionTitle className="mb-3">
         {editing && existing ? `Save changes to ${existing.name}` : "Save search"}
-      </h2>
+      </SectionTitle>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <Field
           label="Name"

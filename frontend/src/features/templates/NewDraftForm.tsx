@@ -4,6 +4,7 @@ import { Field } from "@/features/auth/Field";
 import { FormError } from "@/features/auth/FormError";
 import { ApiError, api, type Draft, type DraftSampleInput } from "@/lib/api";
 import type { DraftSeed } from "./draftSeed";
+import { SectionTitle } from "@/components/SectionTitle";
 
 const ID_PATTERN = /^[a-z][a-z0-9_]{1,63}$/;
 
@@ -59,7 +60,7 @@ export function NewDraftForm({
       aria-label="New template draft"
       className="rounded-card border border-border bg-surface p-4"
     >
-      <h2 className="mb-3 text-base font-semibold">New template draft</h2>
+      <SectionTitle className="mb-3">New template draft</SectionTitle>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <Field
           label="Template ID"

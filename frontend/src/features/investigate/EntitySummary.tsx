@@ -1,3 +1,4 @@
+import { PanelTitle } from "@/components/PanelTitle";
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { EntityLink } from "@/components/EntityLink";
@@ -54,7 +55,7 @@ function Kpi({
 }) {
   return (
     <div className="flex min-w-0 flex-col gap-0.5 rounded-card border border-border bg-surface px-3 py-2">
-      <span className="text-sm text-text-secondary">{label}</span>
+      <PanelTitle as="span">{label}</PanelTitle>
       <span
         className={`${small ? "text-base" : "text-lg"} font-semibold tabular-nums [overflow-wrap:anywhere] ${tone ?? ""}`}
       >

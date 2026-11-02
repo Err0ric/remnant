@@ -1,4 +1,5 @@
 import type { Overview } from "@/lib/api";
+import { PanelTitle } from "@/components/PanelTitle";
 import { navigate } from "@/lib/route";
 import { since } from "@/features/overview/time";
 
@@ -39,10 +40,10 @@ export function StatusLine({ overview: o, now }: StatusLineProps) {
       className="grid grid-cols-1 gap-x-6 gap-y-2 rounded-card border border-border bg-surface px-3 py-2 text-sm md:grid-cols-3"
     >
       <div className="min-w-0">
-        <h2 className="font-semibold">
+        <PanelTitle as="h2">
           Detections, 24 hours{" "}
           <span className="font-normal text-text-muted">{o.detections.length}</span>
-        </h2>
+        </PanelTitle>
         {o.detections.length ? (
           <ul>
             {[...grouped.values()].slice(0, 5).map(({ d, runs, total }) => (
@@ -66,9 +67,9 @@ export function StatusLine({ overview: o, now }: StatusLineProps) {
         )}
       </div>
       <div className="min-w-0">
-        <h2 className="font-semibold">
+        <PanelTitle as="h2">
           Paused schedules <span className="font-normal text-text-muted">{o.paused.length}</span>
-        </h2>
+        </PanelTitle>
         {o.paused.length ? (
           <ul>
             {o.paused.map((p) => (
@@ -90,7 +91,7 @@ export function StatusLine({ overview: o, now }: StatusLineProps) {
       </div>
       {o.alerts ? (
         <div className="min-w-0">
-          <h2 className="font-semibold">Alert delivery</h2>
+          <PanelTitle as="h2">Alert delivery</PanelTitle>
           {delivery ? (
             <ul>
               {failing.map((t) => (

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Titles easier to spot (2026-11-01)
+
+- **Section titles** (AI Watch, Identity, Attacks and access, and the same level on Microsoft 365, AI usage, Agents, Health, and settings pages) sit on a soft slate pill, slightly larger and bolder.
+- **Panel titles and KPI labels** (Top services, AI use, Failed sign-ins per hour, Top failing users, each KPI's label) are small upper case with wider letter spacing, brighter than the data.
+- Neither uses the link blue or reacts to the pointer, so they don't read as links. One shared component per level (`SectionTitle`, `PanelTitle`).
+- What changes for existing installs: nothing to do.
+
 ### Counts from rollup-only ranges (2026-11-01)
 
 - **Some counts may rise after this update.** Before #339, a Microsoft 365 source with no events in the range except on days already rolled up (no new events today, or a custom range that ends before today) was left out of Microsoft 365 > Overview and the Dashboard's Identity section, so those numbers were too low. They now match a read from events. Attacks and access was checked the same way and was not affected.

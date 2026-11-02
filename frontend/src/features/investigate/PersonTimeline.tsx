@@ -8,6 +8,7 @@ import { localClock, localDate } from "@/lib/localTime";
 import { openDrill } from "@/lib/drill";
 import { navigate } from "@/lib/route";
 import { useViewer } from "@/lib/viewer";
+import { SectionTitle } from "@/components/SectionTitle";
 
 const KIND: Record<string, string> = {
   signin: "Sign-in",
@@ -55,7 +56,7 @@ export function PersonTimeline({ person }: { person: string }) {
       className="overflow-hidden rounded-card border border-border bg-surface"
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border bg-surface-head px-3 py-2">
-        <h2 className="text-base font-semibold">Timeline</h2>
+        <SectionTitle>Timeline</SectionTitle>
         <div role="group" aria-label="Time window" className="flex rounded border border-border">
           {DAYS.map((n) => (
             <button

@@ -5,6 +5,7 @@ import { ApiError, api, type Draft, type DraftPreview, type TemplateApproval } f
 import { AiDraftBar } from "./AiDraftBar";
 import { PreviewPanel } from "./PreviewPanel";
 import { YamlEditor } from "./YamlEditor";
+import { SectionTitle } from "@/components/SectionTitle";
 
 interface DraftEditorProps {
   draft: Draft;
@@ -69,9 +70,9 @@ export function DraftEditor({ draft, onClosed }: DraftEditorProps) {
   if (approved) {
     return (
       <section aria-label="Approved" className="rounded-card border border-border bg-surface p-4">
-        <h2 className="text-base font-semibold">
+        <SectionTitle>
           Approved <span className="font-mono">{approved.template_id}</span> {approved.version}
-        </h2>
+        </SectionTitle>
         <p className="mt-1 text-sm text-text-secondary">
           Sources can use it now. Approval recorded with SHA-256{" "}
           <span className="font-mono">{approved.sha256.slice(0, 16)}</span>.

@@ -13,6 +13,7 @@ import { PersonTimeline } from "./PersonTimeline";
 import { PersonAlerts, PersonSessions, PersonSignIns } from "./PersonLists";
 import { RiskTable } from "./RiskTable";
 import { kindOf, type EntityKind } from "./entityKind";
+import { SectionTitle } from "@/components/SectionTitle";
 
 type Mode = "entity" | "ai";
 interface Focus {
@@ -191,7 +192,7 @@ export function InvestigatePage() {
             >
               <div className="flex flex-wrap items-end justify-between gap-2 border-b border-border px-4 pt-3">
                 <div className="pb-2">
-                  <h2 className="text-base font-semibold">Most active</h2>
+                  <SectionTitle>Most active</SectionTitle>
                   <p className="text-xs text-text-muted">
                     Ranked by detection rule matches in this range. Select a row to investigate.
                   </p>

@@ -1,3 +1,4 @@
+import { PanelTitle } from "@/components/PanelTitle";
 import { useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 
@@ -221,8 +222,9 @@ export function TrendChart({
 
   return (
     <figure className="min-w-0">
-      <figcaption className="mb-1 text-sm font-semibold">
-        {title} {note ? <span className="font-normal text-text-muted">{note}</span> : null}
+      <figcaption className="mb-1 flex flex-wrap items-baseline gap-x-2">
+        <PanelTitle as="span">{title}</PanelTitle>
+        {note ? <span className="text-sm text-text-muted">{note}</span> : null}
       </figcaption>
       {legend ? <div className="mb-1.5">{legend}</div> : null}
       <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2">

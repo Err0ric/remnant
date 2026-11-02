@@ -13,6 +13,8 @@ import { DrillScope, DRILL, Kpi, SetCountries, Top, useDrill } from "@/features/
 import { startIndex, TrendChart, TrendLegend } from "@/features/dashboard/TrendChart";
 import { compareLine } from "@/features/dashboard/History";
 import { WINDOWS, previousPhrase } from "@/features/dashboard/pageWindow";
+import { SectionTitle } from "@/components/SectionTitle";
+import { PanelTitle } from "@/components/PanelTitle";
 
 const KEY = "m365.window";
 
@@ -257,7 +259,7 @@ function Overview({ m }: { m: M365Overview }) {
               />
             ) : (
               <>
-                <h3 className="mb-2 text-sm font-semibold">Sign-ins outside approved countries</h3>
+                <PanelTitle className="mb-2">Sign-ins outside approved countries</PanelTitle>
                 <p className="text-sm text-text-secondary">
                   <SetCountries /> to see sign-ins from other countries.
                 </p>
@@ -320,7 +322,7 @@ function Outcome({ m }: { m: M365Overview }) {
     <Box label="Sign-in outcomes">
       <div className="grid gap-4 p-3 lg:grid-cols-[2fr_3fr]">
         <div className="min-w-0">
-          <h3 className="mb-2 text-sm font-semibold">Sign-in outcomes</h3>
+          <PanelTitle className="mb-2">Sign-in outcomes</PanelTitle>
           <div className="flex h-5 overflow-hidden rounded-sm bg-border" aria-hidden="true">
             {parts.map((p) =>
               p.n ? (
@@ -407,7 +409,7 @@ function EventList({ title, sql, m }: { title: string; sql: string; m: M365Overv
   return (
     <Box label={title}>
       <div className="flex items-center gap-3 border-b border-border px-3 py-2">
-        <h2 className="text-base font-semibold">{title}</h2>
+        <SectionTitle>{title}</SectionTitle>
         {q.data ? (
           <span className="text-sm text-text-muted">
             {q.data.row_count.toLocaleString()}

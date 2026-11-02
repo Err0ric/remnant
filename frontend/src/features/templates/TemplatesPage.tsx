@@ -5,6 +5,7 @@ import { ApiError, api } from "@/lib/api";
 import { DraftEditor } from "./DraftEditor";
 import { takeDraftSeed } from "./draftSeed";
 import { NewDraftForm } from "./NewDraftForm";
+import { SectionTitle } from "@/components/SectionTitle";
 
 /** Admin page: templates in use, and drafts on their way to approval (ADR-0005). */
 export function TemplatesPage() {
@@ -68,7 +69,7 @@ export function TemplatesPage() {
 
         <section className="overflow-hidden rounded-card border border-border bg-surface">
           <div className="border-b border-border bg-surface-head px-3 py-2">
-            <h2 className="text-base font-semibold">Drafts</h2>
+            <SectionTitle>Drafts</SectionTitle>
           </div>
           {(drafts.data ?? []).length === 0 ? (
             <p className="px-3 py-6 text-center text-sm text-text-secondary">
@@ -120,7 +121,7 @@ export function TemplatesPage() {
 
         <section className="overflow-hidden rounded-card border border-border bg-surface">
           <div className="border-b border-border bg-surface-head px-3 py-2">
-            <h2 className="text-base font-semibold">Available templates</h2>
+            <SectionTitle>Available templates</SectionTitle>
           </div>
           <table className="w-full text-sm">
             <thead>

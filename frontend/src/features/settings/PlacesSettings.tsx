@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, type Places } from "@/lib/api";
+import { SectionTitle } from "@/components/SectionTitle";
 
 /** Words, commas, or new lines: one entry each. */
 function entries(text: string): string[] {
@@ -134,7 +135,7 @@ export function PlacesSettings() {
       className="rounded-card border border-border bg-surface"
     >
       <div className="border-b border-border px-4 py-3">
-        <h2 className="text-base font-semibold">Countries and networks</h2>
+        <SectionTitle>Countries and networks</SectionTitle>
         <p className="mt-0.5 max-w-prose text-text-secondary">
           What the Dashboard counts as outside approved countries and as external. Kept in this
           install&apos;s settings only.

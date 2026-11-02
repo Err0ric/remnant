@@ -46,6 +46,9 @@ Dark is the default. Light is a first-class theme with its own values, not an in
 | `--accent-subtle` | `rgba(76,141,246,0.16)` | `#E8F0FB` | Active nav item, filter chips |
 | `--row-selected` | `rgba(76,141,246,0.10)` | `#EEF4FD` | Expanded or selected row |
 | `--focus-ring` | `#7AAEFA` | `#1F5FBF` | 2px outline, 1px offset |
+| `--section-bg` | `rgba(148,163,184,0.16)` | `#E2E7EE` | Section title pill fill (`SectionTitle`). Neutral slate, never the link blue |
+| `--section-text` | `#F4F6FA` | `#111722` | Section title text, brighter than data |
+| `--panel-title` | `#F4F6FA` | `#111722` | Panel, card, chart, and KPI label titles (`PanelTitle`), higher contrast than data |
 
 ### Severity (reserved for alerts, Sigma levels, and OCSF `severity_id` only)
 
@@ -80,10 +83,10 @@ Shown as a filled badge with a text label, never color alone.
 
 | Name | Size / line | Weight | Use |
 |---|---|---|---|
-| `text-xs` | 12 / 16 | 600 | Nav section labels, badges |
+| `text-xs` | 12 / 16 | 600 | Nav section labels, badges; panel titles in upper case with wider letter spacing (`PanelTitle`) |
 | `text-sm` | 13 / 18 | 400 | Data cells, metadata, breadcrumbs, chips |
 | `text-base` | 14 / 20 | 400 | Default UI text, buttons, inputs, table text |
-| `text-md` | 15 / 22 | 600 | Card titles, expanded-row title |
+| `text-md` | 15 / 22 | 600 (700 in a section title) | Section titles (`SectionTitle`), expanded-row title |
 | `text-lg` | 22 / 28 | 600 | Page title (Search pages) |
 | `text-xl` | 24 / 32 | 700 | Page title (Investigation pages) |
 | `text-kpi` | 28 / 36 | 700 | KPI card values only |
@@ -214,7 +217,9 @@ Admin only (F64, ADR-0013). Read only: status (On in `--ok`, Off, Not working in
 | Command bar button | Text only, no border; primary command in `--accent-text` and 600 weight |
 | Badge | 3px radius, 12px semibold text, tinted background per section 2 |
 | Filter chip | 12px radius pill, `--accent-subtle` background |
-| Card | `--surface`, 1px `--border`, 6px radius, title in `text-md` |
+| Card | `--surface`, 1px `--border`, 6px radius, title as a `SectionTitle` or `PanelTitle` |
+| Section title (`SectionTitle`) | The title of a page section (AI Watch, Identity, Attacks and access, the Microsoft 365, AI usage, Agents, and Health equivalents): `text-md` 700 in `--section-text` on a `--section-bg` pill, 3px radius, no outline. Never clickable-looking: no link blue, no hover state |
+| Panel title (`PanelTitle`) | Titles inside a section (Top services, AI use since, Failed sign-ins per day, Top failing users) and KPI labels: `text-xs` 600, upper case, wider letter spacing, `--panel-title`. Clearly smaller than a section title; no hover state |
 | Table header | `--surface-head`, 13px semibold `--text-secondary`, sortable on click |
 | NULL value | `·` in `--text-muted`, never blank, never "null" |
 | Command palette | `Ctrl+K` / `Cmd+K` and the top bar search; opens under the search at its width (680px), `--surface`, 6px radius. Sections: Recent (empty query), then Addresses, People, Hosts, AI services (found by the server in the viewer's own sources, last 30 days; ADR-0038 edit 10), Navigate, Actions, Saved searches, Sources, and **Search events for "..."** last. An entity opens its page. Addresses and hosts in the data font, with country, network, and event count. Flavor names (Séance, Grimoire, Ossuary) resolve as aliases only |
@@ -276,6 +281,7 @@ The TUI gets its own mockups on the design canvas before it is built.
   --text: #E6E9EF; --text-secondary: #A3ACBA; --text-muted: #838D9C;
   --accent: #2F6FE0; --accent-text: #7AAEFA; --accent-subtle: rgba(76,141,246,0.16);
   --row-selected: rgba(76,141,246,0.10); --focus-ring: #7AAEFA;
+  --section-bg: rgba(148,163,184,0.16); --section-text: #F4F6FA; --panel-title: #F4F6FA;
   --ok: #5FC9A0; --warn: #F0C46A; --danger: #F7899B;
 }
 :root[data-theme="light"] {
@@ -285,6 +291,7 @@ The TUI gets its own mockups on the design canvas before it is built.
   --text: #1D2330; --text-secondary: #4B5263; --text-muted: #646D7E;
   --accent: #1F5FBF; --accent-text: #1F5FBF; --accent-subtle: #E8F0FB;
   --row-selected: #EEF4FD; --focus-ring: #1F5FBF;
+  --section-bg: #E2E7EE; --section-text: #111722; --panel-title: #111722;
   --ok: #1F7A5A; --warn: #8A5300; --danger: #B4162F;
 }
 ```

@@ -22,6 +22,7 @@ import { TimeZoneEditor } from "./TimeZoneEditor";
 import { RetentionEditor } from "./RetentionEditor";
 import { ConnectorSettingsButton } from "./ConnectorSettingsEditor";
 import { since } from "@/features/overview/time";
+import { SectionTitle } from "@/components/SectionTitle";
 
 const COUNTS_SQL =
   "SELECT source_id, count(*) AS events, max(coalesce(time, time_observed)) AS last_event " +
@@ -199,7 +200,7 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
 
         <section className="overflow-hidden rounded-card border border-border bg-surface">
           <div className="flex items-center gap-2 border-b border-border bg-surface-head px-3 py-2">
-            <h2 className="text-base font-semibold">Configured sources</h2>
+            <SectionTitle>Configured sources</SectionTitle>
             <span className="ml-auto text-sm text-text-muted">
               Status refreshes every 5 seconds
             </span>

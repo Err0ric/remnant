@@ -4,6 +4,7 @@ import { OptionalSection } from "@/components/forms/OptionalSection";
 import { Field } from "@/features/auth/Field";
 import { FormError } from "@/features/auth/FormError";
 import { ApiError, api, type ProviderConfig, type ProviderInput } from "@/lib/api";
+import { SectionTitle } from "@/components/SectionTitle";
 
 interface ProviderFormProps {
   /** Edit this provider; omit to add a new one. */
@@ -88,9 +89,9 @@ export function ProviderForm({ existing, models = [], onDone, onCancel }: Provid
       onSubmit={submit}
       className="rounded-card border border-border bg-surface p-4"
     >
-      <h2 className="mb-3 text-base font-semibold">
+      <SectionTitle className="mb-3">
         {existing ? `Edit ${existing.name}` : "Add provider"}
-      </h2>
+      </SectionTitle>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <label className="flex flex-col gap-1 text-sm md:col-span-2">
           <span className="text-text-secondary">API</span>

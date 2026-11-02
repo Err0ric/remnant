@@ -6,6 +6,7 @@ import { cn } from "@/lib/cn";
 import { drillSql, openDrill } from "@/lib/drill";
 import { LoadFailed } from "@/components/LoadFailed";
 import { When } from "@/components/When";
+import { SectionTitle } from "@/components/SectionTitle";
 
 const TITLE = "Admin changes";
 const ORIGIN = `Microsoft 365 > ${TITLE}`;
@@ -276,7 +277,7 @@ export function AdminChanges({ m, timeZone }: { m: M365Overview; timeZone?: stri
   return (
     <section aria-label={TITLE} className="rounded-card border border-border bg-surface">
       <div className="flex flex-wrap items-center gap-3 border-b border-border px-3 py-2">
-        <h2 className="text-base font-semibold">{TITLE}</h2>
+        <SectionTitle>{TITLE}</SectionTitle>
         {q.data ? (
           <span className="text-sm text-text-muted">
             {real.length.toLocaleString()} by people and apps, {routine.toLocaleString()} routine
