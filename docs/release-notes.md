@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Ready for the Claude plugin pilot (2026-11-01)
+
+- Checked that records from the Claude Code hooks plugin feed the daily AI rollup and the 5-minute today build, and timed the AI pages with 30 people's worth of hook records for 30 days (450,000 records): every page under 2 seconds on a 2 vCPU test machine.
+- `scripts/bench_hooks.py` repeats the test on your own hardware with synthetic data.
+
 ### Health > Speed (2026-11-01)
 
 - A new **Speed** tab on Health (administrators) lists every page that reads data with its typical (p50) and slow (p95) load time over the last 24 hours, time in the database, time waiting for a query slot, and how often the page cache answered.
