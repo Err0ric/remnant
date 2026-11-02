@@ -63,6 +63,14 @@ describe("Entity pages from a link (product pass step 2)", () => {
       "/investigate/people#host=ftp-01",
     );
     expect(within(summary).getByRole("heading", { name: /Users tried/ })).toBeVisible();
+    // Sign-ins by outcome, each one click from its rows (D158).
+    const slices = within(summary).getByRole("group", { name: "Sign-ins by outcome" });
+    for (const label of ["Real failures", "Interrupted", "Expired", "Other", "All"])
+      expect(within(slices).getByRole("button", { name: new RegExp(`^${label}`) })).toBeVisible();
+    expect(within(slices).getByRole("button", { name: /^Expired/ })).toHaveAttribute(
+      "title",
+      "Open 0 expired in Search",
+    );
     await userEvent.click(screen.getByRole("button", { name: /All entities/ }));
     expect(window.location.hash).toBe("");
   });

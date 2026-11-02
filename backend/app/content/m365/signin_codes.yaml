@@ -33,6 +33,7 @@ classes:
     50072: Must enroll a second factor
     50097: Device authentication required
     50125: Password reset or registration interrupted
+    50158: External security challenge not yet satisfied
     50199: Security confirmation for a mobile or desktop app
     16000: Choose an account (several signed in)
     16001: Account selection required

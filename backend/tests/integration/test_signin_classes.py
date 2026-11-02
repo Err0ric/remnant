@@ -186,3 +186,29 @@ def test_a_person_page_counts_real_failures_and_names_the_rest(tmp_path: Path) -
     assert s.failed == 1  # 53003; the interrupted, expired, and other ones are not counted
     by = {a.outcome: a.events for a in s.activities}
     assert by["failed"] == 1 and by["not_counted"] == 5
+
+
+def test_person_and_address_pages_list_every_class_in_one_click(tmp_path: Path) -> None:
+    """Owner 2026-11-02: an investigator sees each class of one person's or one address's
+    sign-ins in one click, and All is everything."""
+    from app.search.entity_summary import entity_summary
+
+    engine = make_lab(tmp_path)["app"].state.engine
+    _write(engine, _signins(datetime(2026, 10, 28, 10, tzinfo=UTC)))
+    scope = QueryScope(None, datetime(2026, 10, 1, tzinfo=UTC), NOW)
+    s = entity_summary(engine, scope, "user", "dave@example.com")
+    got = {x.key: x.count for x in s.sign_in_slices}
+    assert got == {"failed": 1, "interrupted": 2, "expired": 2, "other": 1, "all": 7}
+    for x in s.sign_in_slices:  # each opens exactly its rows
+        assert len(engine.run(x.search_sql, scope).rows) == x.count, x.key
+    ip = entity_summary(engine, scope, "ip", "203.0.113.10")  # every test sign-in's address
+    got = {x.key: x.count for x in ip.sign_in_slices}
+    assert got == {"failed": 2, "interrupted": 2, "expired": 2, "other": 1, "all": 8}
+
+
+def test_an_unsatisfied_external_challenge_is_interrupted(tmp_path: Path) -> None:
+    """Owner 2026-11-02: 50158 (external security challenge not yet satisfied) ships as
+    interrupted; 81014 stays other for now."""
+    engine = make_lab(tmp_path)["app"].state.engine
+    got = engine.run("SELECT signin_class(50158), signin_class(81014)", QueryScope(None)).rows
+    assert got == [["interrupted", "other"]]

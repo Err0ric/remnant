@@ -703,6 +703,8 @@ export interface EntitySummary {
   addresses: number;
   /** Microsoft 365's own addresses on server-side records, not counted above. */
   service_addresses?: number;
+  /** Sign-ins by outcome, each opening its rows in Search (D158). */
+  sign_in_slices?: { key: SignInClassFilter; label: string; count: number; search_sql: string }[];
   first_seen: string | null;
   last_seen: string | null;
   sources: string[];

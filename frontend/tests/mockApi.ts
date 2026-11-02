@@ -1853,6 +1853,18 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
           { kind: "user", value: "admin", events: 219 },
         ],
         search_sql: "SELECT * FROM events WHERE src_endpoint_ip = '203.0.113.9' LIMIT 1000",
+        sign_in_slices: [
+          ["failed", "Real failures", 2619],
+          ["interrupted", "Interrupted", 0],
+          ["expired", "Expired", 0],
+          ["other", "Other", 0],
+          ["all", "All", 2619],
+        ].map(([key, label, count]) => ({
+          key,
+          label,
+          count,
+          search_sql: `SELECT * FROM events WHERE '${key}' <> '' AND src_endpoint_ip = '203.0.113.9'`,
+        })),
         geo:
           kind === "ip"
             ? { country: "NL", country_name: "Netherlands", asn: 64500, org: "Example Net" }

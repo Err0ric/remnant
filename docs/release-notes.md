@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Sign-ins by outcome on person, address, and host pages (2026-11-02)
+
+- Person, address, and host pages show the entity's sign-ins by outcome (Real failures, Interrupted, Expired, Other, All) with counts; each opens those sign-ins in Search in one click.
+- 50158 (external security challenge not yet satisfied) now counts as Interrupted instead of Other.
+- What changes for existing installs: nothing to do. Sign-ins with code 50158 move from Other to Interrupted, on stored events too.
+
 ### Failed sign-ins count real failures only (2026-11-02)
 
 - **Failed sign-ins** on the Dashboard, Microsoft 365 > Overview, and person, address, and host pages, and **Top failing users**, now count real failures only: wrong password, locked, MFA denied or failed, expired password, disabled account, user not found, and blocked by Conditional Access. Background token refreshes, expired sessions from sleeping laptops, "stay signed in" prompts, and MFA prompts the person then completed no longer count.

@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { EntityLink } from "@/components/EntityLink";
 import { When } from "@/components/When";
 import { ApiError, api, type EntitySummary as Summary } from "@/lib/api";
+import { useSignInAbout } from "@/features/m365/signInCounting";
 
 interface EntitySummaryProps {
   kind: "user" | "ip" | "host";
@@ -76,6 +77,47 @@ const OUTCOME: Record<string, string> = {
 function tone(kind: string, outcome: string): string {
   if (kind === "ip" && outcome === "succeeded") return "bg-sev-high-bg text-sev-high-text";
   return "bg-surface-head text-text-secondary";
+}
+
+/** This entity's sign-ins by outcome (D158): real failures, interrupted, expired, other,
+ * and all, each one click from its rows in Search. Shown only when there are sign-ins. */
+function SignInSlices({ s, onSearch }: { s: Summary; onSearch: (sql: string) => void }) {
+  const about = useSignInAbout();
+  const slices = s.sign_in_slices ?? [];
+  if (!slices.some((x) => x.key === "all" && x.count > 0)) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-sm">
+      <span className="text-text-secondary">Sign-ins</span>
+      <div
+        role="group"
+        aria-label="Sign-ins by outcome"
+        className="flex flex-wrap rounded border border-border"
+      >
+        {slices.map((x) => (
+          <button
+            key={x.key}
+            type="button"
+            onClick={() => onSearch(x.search_sql)}
+            title={`Open ${x.count.toLocaleString()} ${x.key === "all" ? "sign-ins" : x.label.toLowerCase()} in Search`}
+            className="flex h-7 items-center gap-1.5 border-r border-border px-2.5 last:border-r-0 hover:bg-surface-head"
+          >
+            {x.label}
+            <span className="font-mono tabular-nums text-text-muted">
+              {x.count.toLocaleString()}
+            </span>
+          </button>
+        ))}
+      </div>
+      <span
+        role="img"
+        aria-label={`How this is counted: ${about}`}
+        title={`How this is counted: ${about}`}
+        className="flex size-3.5 shrink-0 cursor-help items-center justify-center rounded-full border border-text-muted text-[10px] font-semibold leading-none text-text-muted"
+      >
+        i
+      </span>
+    </div>
+  );
 }
 
 /** The top of an entity's page (DESIGN 6.2): the finding, KPI cards, activities grouped by
@@ -172,6 +214,7 @@ export function EntitySummary({
           />
         ) : null}
       </div>
+      <SignInSlices s={s} onSearch={onSearch} />
       {s.activities.length ? (
         <div className="overflow-hidden rounded-card border border-border bg-surface">
           <h2 className="border-b border-border px-3 py-2 text-sm font-semibold">

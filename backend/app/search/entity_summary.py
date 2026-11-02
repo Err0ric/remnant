@@ -14,13 +14,24 @@ from typing import Any, Literal
 
 from app.core.timing import in_context
 from app.engine.duckdb import QueryEngine, QueryScope
-from app.engine.signin_classes import REAL_FAILURE_SQL
+from app.engine.signin_classes import REAL_FAILURE_SQL, class_sql
 from app.search.entities import CLASS_NAMES, WHERE, quote, search_sql, user_filter_sql
 from app.search.identity import IdentityMap, key_sql
 
 TIMEOUT_S = 20
 Kind = Literal["user", "ip", "host"]
 
+# Sign-ins by outcome for the page's filter (D158): real failures, then each class of a
+# Microsoft 365 sign-in that is not counted, then every sign-in.
+_M365 = "class_uid = 3002 AND template_id = 'm365_signin' AND "
+SLICES: tuple[tuple[str, str, str], ...] = (
+    ("failed", "Real failures", f"class_uid = 3002 AND {REAL_FAILURE_SQL}"),
+    ("interrupted", "Interrupted", _M365 + class_sql("interrupted")),
+    ("expired", "Expired", _M365 + class_sql("expired")),
+    ("other", "Other", _M365 + class_sql("other")),
+    ("all", "All", "class_uid = 3002"),
+)
+SLICE_COUNTS = ",\n       ".join(f"count(*) FILTER (WHERE {cond})" for _, _, cond in SLICES)
 # Failed sign-ins are real failures only: a Microsoft 365 sign-in interrupted, expired, or
 # with an unknown code is "not counted" (D158).
 TOTALS_SQL = f"""
@@ -34,7 +45,8 @@ SELECT count(*),
        min(coalesce(time, time_observed)),
        max(coalesce(time, time_observed)),
        list(DISTINCT source_id),
-       count(DISTINCT {{addr}}) FILTER (WHERE {{service}})
+       count(DISTINCT {{addr}}) FILTER (WHERE {{service}}),
+       {SLICE_COUNTS}
 FROM events
 WHERE {{where}}"""  # noqa: S608  # fixed SQL text
 
@@ -112,6 +124,14 @@ class Target:
 
 
 @dataclass(slots=True)
+class SignInSlice:
+    key: str  # failed, interrupted, expired, other, all
+    label: str
+    count: int
+    search_sql: str
+
+
+@dataclass(slots=True)
 class Summary:
     kind: Kind
     value: str
@@ -130,6 +150,19 @@ class Summary:
     search_sql: str = ""
     read: list[str] = field(default_factory=list)
     service_addresses: int = 0  # Microsoft 365's own, on server-side records
+    # This entity's sign-ins by outcome, each opening its rows in Search (D158).
+    sign_in_slices: list[SignInSlice] = field(default_factory=list)
+
+
+def drill_sql(where: str) -> str:
+    """A sign-in list for Search: who, the app, the outcome and its code, interactive or not,
+    the reason, and the address, newest first."""
+    from app.search.m365 import SIGNIN_COLUMNS
+
+    return (
+        f"SELECT {SIGNIN_COLUMNS}, source_id\nFROM events\nWHERE {where}\n"
+        "ORDER BY coalesce(time, time_observed) DESC"
+    )
 
 
 def _iso(v: Any) -> str | None:
@@ -182,7 +215,7 @@ def entity_summary(
             )
         ]
         totals, acts, tgts = (r.result() for r in runs)
-    t: list[Any] = list(totals.rows[0]) if totals.rows else [0] * 9 + [[], 0]
+    t: list[Any] = list(totals.rows[0]) if totals.rows else [0] * 9 + [[], 0] + [0] * len(SLICES)
     activities = []
     for outcome, class_uid, who, target, n, first, last, example in acts.rows:
         cond = [literal]
@@ -235,5 +268,14 @@ def entity_summary(
         activities=activities,
         targets=targets,
         search_sql=search_sql(literal),
+        sign_in_slices=[
+            SignInSlice(
+                key,
+                label,
+                int(t[11 + i] or 0),
+                drill_sql(f"{literal} AND {cond}"),
+            )
+            for i, (key, label, cond) in enumerate(SLICES)
+        ],
         read=sorted(set(totals.sources) | set(acts.sources) | set(tgts.sources)),
     )
