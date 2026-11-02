@@ -32,10 +32,10 @@ def _fsync_dir(folder: Path) -> None:
         os.close(fd)
 
 
-def publish(table: pa.Table, final: Path) -> Path:
+def publish(table: pa.Table, final: Path, row_group_size: int | None = None) -> Path:
     """Write `table` to `final` so a crash leaves either the whole file or nothing."""
     tmp = final.parent / f".{final.name}.tmp"
-    pq.write_table(table, tmp, compression="zstd")
+    pq.write_table(table, tmp, compression="zstd", row_group_size=row_group_size)
     with tmp.open("rb") as fh:
         os.fsync(fh.fileno())
     os.replace(tmp, final)

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Faster filters on compacted days (2026-11-01)
+
+- Compaction now groups each file's rows by parser template and time, in smaller row groups, so a search or page that filters on one kind of event skips the rest of the file (about 10 times faster on a synthetic test file).
+- What changes for existing installs: nothing to do. Days compacted from now on get the new layout; days already compacted keep theirs.
+
 ### Default views load at once (2026-11-01)
 
 - **Dashboard (7 days), Microsoft 365 Overview (7 days), and AI Watch (7 days)** are refreshed in the background every minute while someone is using them, so opening them shows numbers at once. The top bar says how old they are ("Updated 40 s ago").

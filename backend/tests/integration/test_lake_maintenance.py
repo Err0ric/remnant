@@ -237,3 +237,44 @@ def test_maintenance_uses_source_retention_and_schedules(tmp_path: Path) -> None
     clock[0] += 86400
     m.tick()
     assert not (lake / "source=gone").exists()
+
+
+def test_compacted_files_group_templates_so_filters_skip_row_groups(tmp_path: Path) -> None:
+    """Owner re-time, 2026-11-01: a filter on one template read every row of the day.
+    Merged files are sorted by template then time, in row groups of ROW_GROUP_ROWS, so
+    DuckDB skips the groups of other templates."""
+    import duckdb
+    import pyarrow.parquet as pq
+
+    from app.ingest.compaction import ROW_GROUP_ROWS
+
+    lake = tmp_path / "lake"
+    writer = LakeWriter(lake)
+    day = TODAY - timedelta(days=1)
+    for i in range(4):  # interleaved: each file holds both templates
+        batch = rows("fw", day, 60_000, start=i * 60_000)
+        for j, r in enumerate(batch):
+            r["template_id"] = "fw_traffic" if j % 20 else "fw_auth"
+        writer.write(batch)
+    Compactor(lake, today=lambda: TODAY).run()
+    (merged,) = parts(lake, "fw", day)
+    meta = pq.ParquetFile(merged).metadata
+    assert meta.num_row_groups == -(-240_000 // ROW_GROUP_ROWS)
+    table = pq.read_table(merged, columns=["template_id", "time"])
+    keys = list(zip(table["template_id"].to_pylist(), table["time"].to_pylist(), strict=True))
+    assert keys == sorted(keys)
+    # Only row groups whose statistics can hold the template are read: one of two here.
+    tid = meta.schema.to_arrow_schema().get_field_index("template_id")
+    holding = [
+        g
+        for g in range(meta.num_row_groups)
+        if (st := meta.row_group(g).column(tid).statistics) is not None
+        and st.min <= "fw_auth" <= st.max
+    ]
+    assert len(holding) == 1
+    n = (
+        duckdb.connect()
+        .execute(f"SELECT count(*) FROM read_parquet('{merged}') WHERE template_id = 'fw_auth'")
+        .fetchone()
+    )
+    assert n == (12_000,)

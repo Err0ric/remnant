@@ -1,7 +1,9 @@
 """Merge small Parquet files within a partition (SPEC 3.3).
 
 Files under `small_bytes` in one source/day partition are merged into files of
-about `target_bytes`, sorted by time. A closed day (before today) merges as soon
+about `target_bytes`, sorted by template then time, in row groups small enough that a
+filter on the template or time skips most of a file (owner re-time, 2026-11-01: 608,196
+rows read to return 9,000 of one template). A closed day (before today) merges as soon
 as it has two small files; the open day waits for `min_files_open_day` so the
 active partition is not rewritten on every pass.
 
@@ -28,6 +30,13 @@ from app.core.ids import uuid7
 from app.core.schema import arrow_schema
 from app.ingest.durable import publish, quarantine, readable
 from app.ingest.integrity import LakeEvents, NoEvents
+
+# Rows of one template sit together, in time order: each row group's min and max
+# template_id and time (Parquet statistics) then let DuckDB skip the groups a filter
+# cannot match. Rows without a time keep their place after the timed ones.
+SORT_KEYS = [("template_id", "ascending"), ("time", "ascending")]
+# DuckDB's own row group size: small enough to skip, large enough to compress well.
+ROW_GROUP_ROWS = 122_880
 
 MANIFEST_SUFFIX = ".compact.json"
 _PARTITION = re.compile(r"day=(\d{4}-\d{2}-\d{2})")
@@ -127,14 +136,14 @@ class Compactor:
     def _merge(self, folder: Path, inputs: list[Path]) -> Path:
         """Write the merged file and its manifest. Inputs are left in place."""
         tables = [self._conform(pq.read_table(p)) for p in inputs]
-        merged = pa.concat_tables(tables).sort_by([("time", "ascending")])
+        merged = pa.concat_tables(tables).sort_by(SORT_KEYS)
         final = folder / f"part-{uuid7().hex}.parquet"
         manifest = folder / f"{final.stem}{MANIFEST_SUFFIX}"
         with manifest.open("w", encoding="utf-8") as fh:
             json.dump({"output": final.name, "inputs": [p.name for p in inputs]}, fh)
             fh.flush()
             os.fsync(fh.fileno())
-        published = publish(merged, final)
+        published = publish(merged, final, row_group_size=ROW_GROUP_ROWS)
         self._events.added([published])
         return published
 
