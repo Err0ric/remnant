@@ -5,6 +5,7 @@ accounts is setup-only and prints a one-time setup link; otherwise sign-in is re
 """
 
 import asyncio
+import re
 import resource
 import socket
 import sys
@@ -388,6 +389,10 @@ def _lifespan(config: AppConfig) -> Callable[[FastAPI], AbstractAsyncContextMana
     return lifespan
 
 
+# Built files under assets/ carry an 8-character content hash, e.g. index-BdM5148w.js.
+HASHED_ASSET = re.compile(r"assets/[\w.-]+-[A-Za-z0-9_-]{8}\.(?:js|css|woff2?|svg|png|webp)")
+
+
 class SpaStaticFiles(StaticFiles):
     """Serve the web UI; unknown paths (like /setup) get index.html so the app can route them.
 
@@ -398,11 +403,16 @@ class SpaStaticFiles(StaticFiles):
         if path in ("", ".", "index.html"):
             return self._index(scope)
         try:
-            return await super().get_response(path, scope)
+            response = await super().get_response(path, scope)
         except StarletteHTTPException as exc:
             if exc.status_code != 404 or path == "api" or path.startswith("api/"):
                 raise
             return self._index(scope)
+        if HASHED_ASSET.fullmatch(path) and response.status_code == 200:
+            # Vite names built files by their content hash: a new build is a new name, so
+            # the browser may keep these for a year without asking again.
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
 
     def _index(self, scope: Scope) -> Response:
         """index.html with this response's CSP style nonce, for runtime-injected editor styles."""

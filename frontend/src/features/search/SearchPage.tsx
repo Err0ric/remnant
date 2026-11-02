@@ -90,6 +90,10 @@ export function SearchPage({
   const [mode, setMode] = useState<"simple" | "ask">(initial === "ask" ? "ask" : "simple");
   const searchMode = mode === "ask" && !canAsk ? "simple" : mode;
   const tab: SearchTab = area === "sql" ? "sql" : searchMode;
+  // The SQL editor (CodeMirror, the largest chunk) loads the first time the SQL tab is
+  // opened, then stays mounted so its text and history survive tab changes.
+  const [sqlSeen, setSqlSeen] = useState(tab === "sql");
+  if (tab === "sql" && !sqlSeen) setSqlSeen(true);
   const setTab = (t: SearchTab) => {
     if (t === "sql") setArea("sql");
     else {
@@ -620,15 +624,17 @@ export function SearchPage({
                 <span className="text-text-muted">Normal: {libraryQuery.normal}</span>
               </div>
             ) : null}
-            <Suspense fallback={<div className="h-40 rounded border border-border bg-inset" />}>
-              <SqlEditor
-                label="SQL query"
-                value={sql}
-                onChange={setSql}
-                onRun={runSql}
-                columns={columnNames}
-              />
-            </Suspense>
+            {sqlSeen ? (
+              <Suspense fallback={<div className="h-40 rounded border border-border bg-inset" />}>
+                <SqlEditor
+                  label="SQL query"
+                  value={sql}
+                  onChange={setSql}
+                  onRun={runSql}
+                  columns={columnNames}
+                />
+              </Suspense>
+            ) : null}
             {sqlPlaceholders(sql).length ? (
               <fieldset className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
                 <legend className="sr-only">Parameters</legend>

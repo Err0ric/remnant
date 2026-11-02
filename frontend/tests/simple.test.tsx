@@ -28,6 +28,14 @@ function posts(spy: ReturnType<typeof mockApi>, suffix: string): Body[] {
 afterEach(() => vi.restoreAllMocks());
 
 describe("Simple search", () => {
+  it("loads the SQL editor only when the SQL tab is opened", async () => {
+    await renderAt("/search");
+    expect(await screen.findByRole("heading", { name: "Investigate", level: 1 })).toBeVisible();
+    expect(screen.queryByLabelText("SQL query")).toBeNull();
+    await userEvent.click(screen.getByRole("tab", { name: "SQL" }));
+    expect(await screen.findByLabelText("SQL query")).toBeInTheDocument();
+  });
+
   it("is the first tab and sends its values as bound parameters", async () => {
     const { spy } = await renderAt("/search");
     expect(await screen.findByRole("heading", { name: "Investigate", level: 1 })).toBeVisible();

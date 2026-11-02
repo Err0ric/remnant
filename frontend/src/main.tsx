@@ -1,8 +1,8 @@
-import "@fontsource/source-sans-3/400.css";
-import "@fontsource/source-sans-3/600.css";
-import "@fontsource/source-sans-3/700.css";
-import "@fontsource/source-code-pro/400.css";
-import "@fontsource/source-code-pro/500.css";
+import "@fontsource/source-sans-3/latin-400.css";
+import "@fontsource/source-sans-3/latin-600.css";
+import "@fontsource/source-sans-3/latin-700.css";
+import "@fontsource/source-code-pro/latin-400.css";
+import "@fontsource/source-code-pro/latin-500.css";
 import "./styles/globals.css";
 
 import { StrictMode } from "react";

@@ -62,6 +62,20 @@ def test_api_responses_are_not_cached(tmp_path: Path) -> None:
     assert client(tmp_path).get("/api/meta").headers["cache-control"] == "no-store"
 
 
+def test_hashed_assets_are_cached_for_a_year_and_the_page_is_not(tmp_path: Path) -> None:
+    c = client(tmp_path)
+    assets = tmp_path / "web" / "assets"
+    assets.mkdir()
+    (assets / "index-BdM5148w.js").write_text("export {};")
+    (assets / "plain.js").write_text("export {};")
+    (tmp_path / "web" / "favicon.svg").write_text("<svg/>")
+    hashed = c.get("/assets/index-BdM5148w.js").headers["cache-control"]
+    assert hashed == "public, max-age=31536000, immutable"
+    assert "immutable" not in c.get("/assets/plain.js").headers.get("cache-control", "")
+    assert "immutable" not in c.get("/favicon.svg").headers.get("cache-control", "")
+    assert c.get("/").headers["cache-control"] == "no-cache"  # a new build shows at once
+
+
 def test_hsts_only_when_serving_https(tmp_path: Path) -> None:
     assert "strict-transport-security" not in client(tmp_path).get("/api/health").headers
     remote = client(tmp_path, "0.0.0.0").get("/api/health")
