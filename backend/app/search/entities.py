@@ -699,7 +699,7 @@ def ai_graph(
             scope,
             params or None,
             timeout_s=TIMEOUT_S,
-            name="graph.ai",
+            name="graph.ai_flow",
             page=True,
         )
         rows, sources = result.rows, result.sources

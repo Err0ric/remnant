@@ -398,7 +398,7 @@ def test_bad_api_sources_are_refused(lab: dict[str, Any]) -> None:
     mixed = m365_body()
     mixed["anthropic"] = {}
     assert add(lab, mixed).status_code == 422
-    bad_tenant = m365_body(tenant_id="contoso.onmicrosoft.com")
+    bad_tenant = m365_body(tenant_id="tenant-example.onmicrosoft.com")
     assert add(lab, bad_tenant).status_code == 422
 
 

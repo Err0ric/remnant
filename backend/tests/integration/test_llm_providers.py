@@ -18,7 +18,7 @@ KEY = "sk-live-very-secret-123"
 
 @pytest.fixture(autouse=True)
 def _dns(monkeypatch: pytest.MonkeyPatch) -> None:
-    table = {"ollama": "172.18.0.3", "api.example-cloud.com": "104.18.33.45"}
+    table = {"ollama": "172.18.0.3", "api.cloud.example": "203.0.113.45"}
 
     def getaddrinfo(host: str, *_: object, **__: object) -> list[tuple[object, ...]]:
         if host not in table:
@@ -76,7 +76,7 @@ def test_add_local_provider_with_key_stored_encrypted(tmp_path: Path) -> None:
 
 def test_cloud_provider_requires_acknowledgment(tmp_path: Path) -> None:
     c, h = admin(tmp_path)
-    body = {"name": "Cloud", "base_url": "https://api.example-cloud.com/v1", "model": "gpt-x"}
+    body = {"name": "Cloud", "base_url": "https://api.cloud.example/v1", "model": "gpt-x"}
     res = c.post("/api/providers", json=body, headers=h)
     assert res.status_code == 409 and res.json()["code"] == "cloud_ack_required"
     ok = c.post("/api/providers", json={**body, "acknowledge_cloud": True}, headers=h)
@@ -85,7 +85,7 @@ def test_cloud_provider_requires_acknowledgment(tmp_path: Path) -> None:
 
 def test_cloud_provider_over_plain_http_is_refused(tmp_path: Path) -> None:
     c, h = admin(tmp_path)
-    body = {"name": "Cloud", "base_url": "http://api.example-cloud.com/v1", "model": "gpt-x"}
+    body = {"name": "Cloud", "base_url": "http://api.cloud.example/v1", "model": "gpt-x"}
     res = c.post("/api/providers", json={**body, "acknowledge_cloud": True}, headers=h)
     assert res.status_code == 400 and res.json()["code"] == "provider_invalid"
     local = c.post(
@@ -128,7 +128,7 @@ def test_switching_url_to_cloud_also_needs_acknowledgment(tmp_path: Path) -> Non
     c, h = admin(tmp_path)
     pid = c.get("/api/providers").json()[0]["provider_id"]
     res = c.patch(
-        f"/api/providers/{pid}", json={"base_url": "https://api.example-cloud.com/v1"}, headers=h
+        f"/api/providers/{pid}", json={"base_url": "https://api.cloud.example/v1"}, headers=h
     )
     assert res.status_code == 409
 
@@ -169,7 +169,7 @@ def test_anthropic_providers_are_always_cloud(tmp_path: Path) -> None:
     body = {
         "name": "Claude",
         "kind": "anthropic",
-        "base_url": "https://api.example-cloud.com/v1",
+        "base_url": "https://api.cloud.example/v1",
         "model": "claude-test",
         "api_key": KEY,
     }
@@ -191,7 +191,7 @@ def test_anthropic_providers_are_always_cloud(tmp_path: Path) -> None:
 
 def test_redaction_is_off_by_default_and_turning_it_on_is_audited(tmp_path: Path) -> None:
     c, h = admin(tmp_path)
-    body = {"name": "Cloud", "base_url": "https://api.example-cloud.com/v1", "model": "m"}
+    body = {"name": "Cloud", "base_url": "https://api.cloud.example/v1", "model": "m"}
     p = c.post("/api/providers", json={**body, "acknowledge_cloud": True}, headers=h).json()
     assert p["redact"] is False
     res = c.patch(f"/api/providers/{p['provider_id']}", json={"redact": True}, headers=h)

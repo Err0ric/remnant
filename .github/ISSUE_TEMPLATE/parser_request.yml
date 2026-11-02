@@ -1,0 +1,35 @@
+name: Parser template request
+description: Ask for a parser for a log source that is not covered yet
+labels: [template]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Sample lines help most. Replace real values first: use example.com, 192.0.2.x / 198.51.100.x / 203.0.113.x addresses, and made-up user and host names.
+  - type: input
+    id: product
+    attributes:
+      label: Product and version
+      placeholder: e.g. Example Firewall OS 10.2
+    validations:
+      required: true
+  - type: input
+    id: transport
+    attributes:
+      label: How the logs arrive
+      placeholder: e.g. syslog over UDP (RFC 3164), JSON file, Windows event forwarding
+    validations:
+      required: true
+  - type: textarea
+    id: samples
+    attributes:
+      label: Sanitized sample lines
+      description: 5 to 20 lines covering the event types you care about.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: fields
+    attributes:
+      label: Fields that matter most
+      description: e.g. source and destination address, user, action, rule name.

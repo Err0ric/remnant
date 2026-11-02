@@ -462,7 +462,11 @@ def _json_template(**mapping: Any) -> Template:
         "payload": {"format": "json"},
         "transforms": [
             {"field": "Channel", "op": "join", "args": {"with": ["EventID"], "into": "key"}},
-            {"field": "Host", "op": "replace", "args": {"pattern": "\\.corp$", "with": ""}},
+            {
+                "field": "Host",
+                "op": "replace",
+                "args": {"pattern": "\\.corp\\.internal$", "with": ""},
+            },
         ],
         "mapping": {
             "class_uid": 0,
@@ -487,7 +491,7 @@ def test_lookup_table_classifies_and_fills_unset_columns() -> None:
     )
     row = t.normalize(
         line(
-            '{"Channel":"Security","EventID":4625,"Host":"dc01.corp",'
+            '{"Channel":"Security","EventID":4625,"Host":"dc01.corp.internal",'
             '"TargetUserName":"-","SubjectUserName":"svc_backup"}'
         )
     )

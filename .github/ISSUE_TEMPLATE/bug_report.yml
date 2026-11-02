@@ -1,0 +1,49 @@
+name: Bug report
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please use synthetic values only. Do not paste real hostnames, addresses, user names, tokens, or log lines from your environment.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you saw instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Add a source pointing at ...
+        2. Open ...
+        3. See ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The commit shown on Settings > About, or `git rev-parse --short HEAD`.
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Install type
+      options:
+        - Docker Compose
+        - systemd service
+        - Single user from source
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Server log lines
+      description: Relevant lines from `docker compose logs app` or `journalctl -u <service>`, with identifying values replaced.
+      render: text

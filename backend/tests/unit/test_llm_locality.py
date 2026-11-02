@@ -41,7 +41,7 @@ def test_locality(url: str, expected: str, monkeypatch: pytest.MonkeyPatch) -> N
             {
                 "localhost": ["127.0.0.1"],
                 "ollama": ["172.18.0.3"],
-                "api.openai.com": ["104.18.33.45"],
+                "api.openai.com": ["203.0.113.45"],
                 "mixed.example": ["10.0.0.9", "8.8.8.8"],
             }
         ),
@@ -91,7 +91,7 @@ def test_a_host_that_does_not_resolve_is_cloud_and_says_why(
 ) -> None:
     from app.llm.locality import resolve_endpoint
 
-    monkeypatch.setattr(socket, "getaddrinfo", fake_resolver({"api.openai.com": ["104.18.33.45"]}))
+    monkeypatch.setattr(socket, "getaddrinfo", fake_resolver({"api.openai.com": ["203.0.113.45"]}))
     missing = resolve_endpoint("http://ollama:11434/v1", [])
     assert missing.locality == "cloud" and missing.host_found is False  # still fails closed
     public = resolve_endpoint("https://api.openai.com/v1", [])

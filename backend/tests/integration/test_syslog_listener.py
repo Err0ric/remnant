@@ -164,7 +164,7 @@ def test_damaged_spool_is_set_aside_without_resyncing_into_message_bodies(
     assert add(lab, "spooled", port=free_port(socket.SOCK_DGRAM)).status_code == 201
     folder = tmp_path / "data" / "spool" / "spooled"
     folder.mkdir(parents=True)
-    forged = b'\n{"n":5,"ip":"6.6.6.6","t":0}\nforge\n'
+    forged = b'\n{"n":5,"ip":"203.0.113.66","t":0}\nforge\n'
     good = spool_record(LINE.encode(), "192.168.1.5", False)
     # A good record, then a header cut short by a crash, then a message that hides a
     # forged record and a negative length in its body.

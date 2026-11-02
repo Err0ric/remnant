@@ -20,11 +20,11 @@ SUBNET = parse_trusted(["192.0.2.0/28", "2001:db8::/64"])
         # Trusted node of the HA pair: the client from the header.
         ("192.0.2.11", ["198.51.100.7"], HA_PAIR, "198.51.100.7"),
         # A client-written entry on the left is not believed: rightmost untrusted wins.
-        ("192.0.2.10", ["6.6.6.6, 198.51.100.7"], HA_PAIR, "198.51.100.7"),
+        ("192.0.2.10", ["203.0.113.66, 198.51.100.7"], HA_PAIR, "198.51.100.7"),
         # Two trusted proxies in a chain resolve to the real client.
         ("192.0.2.10", ["198.51.100.7, 192.0.2.20"], HA_PAIR, "198.51.100.7"),
         # Several header lines are read in order, as one list.
-        ("192.0.2.10", ["6.6.6.6", "198.51.100.7, 192.0.2.11"], HA_PAIR, "198.51.100.7"),
+        ("192.0.2.10", ["203.0.113.66", "198.51.100.7, 192.0.2.11"], HA_PAIR, "198.51.100.7"),
         # Every entry trusted: the leftmost.
         ("192.0.2.10", ["192.0.2.11, 192.0.2.20"], HA_PAIR, "192.0.2.11"),
         # A malformed entry stops the walk: the peer is used.

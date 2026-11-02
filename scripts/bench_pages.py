@@ -5,7 +5,7 @@
 Each round asks with a different time zone, so the 60-second page cache never answers
 and every round runs its queries. Standard library only; uses a CLI API token.
 
-    REMNANT_TOKEN=... python3 scripts/bench_pages.py https://remnant.lan:8443 --insecure
+    REMNANT_TOKEN=... python3 scripts/bench_pages.py https://remnant.home.internal:8443 --insecure
 
 Compare settings by restarting the server with each set in remnant.env, for example
 APP__SERVER__PAGE_QUERY_MB=256, APP__SERVER__MAX_CONCURRENT_QUERIES=8, or
@@ -62,7 +62,7 @@ def round_once(base: str, token: str, tz: str, ctx: ssl.SSLContext | None) -> tu
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("base", help="server URL, for example https://remnant.lan:8443")
+    ap.add_argument("base", help="server URL, for example https://remnant.home.internal:8443")
     ap.add_argument("--rounds", type=int, default=5)
     ap.add_argument("--insecure", action="store_true", help="accept a self-signed certificate")
     ap.add_argument("--json", action="store_true", help="print one JSON line instead")

@@ -116,13 +116,19 @@ def test_models_listing() -> None:
     ("base", "pin", "url", "host", "sni"),
     [
         (
-            "http://models.lan:11434/v1",
+            "http://models.home.internal:11434/v1",
             "10.0.0.5",
             "http://10.0.0.5:11434/v1/models",
-            "models.lan:11434",
+            "models.home.internal:11434",
             None,
         ),
-        ("https://gpu.corp/v1", "fd00::7", "https://[fd00::7]/v1/models", "gpu.corp", "gpu.corp"),
+        (
+            "https://gpu.corp.internal/v1",
+            "fd00::7",
+            "https://[fd00::7]/v1/models",
+            "gpu.corp.internal",
+            "gpu.corp.internal",
+        ),
     ],
 )
 def test_pinned_address_is_used_with_original_host_and_tls_name(
@@ -159,11 +165,11 @@ def test_local_calls_ignore_proxy_settings_cloud_calls_keep_them() -> None:
 
 def test_pinned_host_header_never_carries_credentials() -> None:
     p = OpenAICompatibleProvider(
-        "p", "http://u:pw@llm.lan:8080/v1", "m", None, "local", pin="10.0.0.5"
+        "p", "http://u:pw@llm.home.internal:8080/v1", "m", None, "local", pin="10.0.0.5"
     )
     url, headers, _ = p._http._target("/models")
     assert url == "http://10.0.0.5:8080/v1/models"
-    assert headers == {"Host": "llm.lan:8080"}
+    assert headers == {"Host": "llm.home.internal:8080"}
 
 
 def test_tool_call_turns_round_trip_and_object_arguments_are_json() -> None:

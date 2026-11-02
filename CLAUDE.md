@@ -158,7 +158,12 @@ Runtime data lives outside the repo at `./data/` (gitignored) or the compose vol
 
 ### Fixtures
 
-- Synthetic only. No real customer data, no real public IPs beyond RFC 5737 (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`), no real hostnames or usernames.
+- Synthetic only, everywhere that is published: fixtures, docs, examples, tests, comments, and commit messages. The public repository is for anyone to install in their own environment, so it names no real organization, person, or host. Use only reserved identifiers:
+  - Domains: `example.com`, `example.org`, `example.net` and their subdomains; names under `.example`, `.test`, `.invalid`, and `.internal` (internal hosts, for example `dc01.corp.internal`)
+  - IPv4: `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`; RFC 1918 ranges for "internal" examples. IPv6: `2001:db8::/32`
+  - People: fictional names only, from this list: alice, bob, carol, dave, erin, frank, grace, heidi, ivan, judy, mallory, ana, dana, jordan, j.doe (`alice@example.com`, `j.doe@example.org`)
+- Product names the app integrates with or detects (Palo Alto, Fortinet, Microsoft 365, Claude, and the AI service catalog) are fine. Real organizations, real people, real hostnames, vendors evaluated for a deployment, and comparisons to named commercial products are not.
+- `scripts/publish/allowlist.py` enforces the reserved identifiers before every publish: an email domain, a public IPv4 or IPv6 address, or a domain that is not reserved or listed in `scripts/publish/allowlist.txt` stops the publish. The allowlist holds only what the app genuinely needs (integration and documentation domains, a few generic public resolvers, real vendor ranges a test needs), each with a reason.
 - Each fixture folder has a `README.md` stating the source product, version, and collector used to shape it.
 - Generator scripts in `scripts/fixtures/` are preferred over hand-written files for anything over 50 lines.
 

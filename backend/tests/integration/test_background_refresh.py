@@ -39,8 +39,10 @@ def test_a_refreshed_view_is_served_at_once_with_its_time(lab: dict[str, Any], p
     assert datetime.fromisoformat(again.json()["updated_at"]) > stamp  # the refresh's copy
     # Other windows keep the plain 60 s cache and are never refreshed.
     other = path.replace("7d", "30d").replace("days=7", "days=30")
+    watched = set(app.state.refresher._watched)
     ana.get(other)
-    assert all("30" not in str(k) for k in app.state.refresher._watched)
+    # Compared as a set: a key holds ids, which can contain "30" by chance (CI 2026-11-02).
+    assert set(app.state.refresher._watched) == watched
 
 
 def test_a_change_empties_the_cache_and_the_next_load_computes(lab: dict[str, Any]) -> None:

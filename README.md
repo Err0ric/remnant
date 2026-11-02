@@ -1,14 +1,69 @@
-# remnant
+# Remnant
 
-**See the AI your company actually uses.** Self-hosted AI usage monitoring: find shadow AI, AI agents, and MCP servers in the logs you already have, then approve, alert, and audit.
+**See the AI your company actually uses.** Self-hosted AI usage monitoring on a local-first, LLM-assisted SIEM: find shadow AI, AI agents, and MCP servers in the logs you already have, then approve, alert, and audit.
 
-> Status: early preview (Slices 1 to 8 built; a few connectors deferred). Expect rough edges. "Remnant" is a working codename.
+![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue)
+![Python 3.12](https://img.shields.io/badge/python-3.12-blue)
+![Status: early preview](https://img.shields.io/badge/status-early%20preview-orange)
+![Self-hosted](https://img.shields.io/badge/self--hosted-yes-2ea44f)
 
 Your DNS, firewall, and proxy logs already show which AI services people reach. Claude Code telemetry and a small endpoint inventory show which agents run, which MCP servers they use, and what they cost. Remnant brings those together on your own server, lets you mark each one Approved or Not approved, alerts you when something new or unapproved shows up or sensitive data heads to AI, and keeps a tamper-evident record of all of it.
 
 Under it is a small, local-first log platform: syslog, files, Windows, and Microsoft 365 parsed into OCSF columns, DuckDB search, Sigma detections, and an optional assistant (your own model by default) that never runs anything on its own.
 
 ![AI usage: AI services seen in network logs, with review status](docs/images/ai-usage.png)
+
+> **Status: early preview.** The core platform, AI usage views, Microsoft 365 and Anthropic connectors, enrichment, and integrity checks are built; a few connectors are planned. Expect rough edges. "Remnant" is a working codename.
+
+## Why Remnant
+
+- **Your logs, your server.** Everything is stored and searched locally. Nothing leaves unless you connect a cloud model, and sources marked Local only are blocked from cloud models in code.
+- **Bring your own logs.** 39 starter parsers (firewalls, network gear, Linux, Windows, DNS, Microsoft 365, AI telemetry) mapped to OCSF, plus an Automatic parser and a model-assisted parser draft for anything else.
+- **Bring your own model.** Ollama, LM Studio, llama.cpp, vLLM, any OpenAI-compatible API, or Anthropic. The model writes queries and explains results; a deterministic engine does the work, and every claim cites event ids that are checked.
+
+## What it does
+
+**AI usage**
+
+- **AI services.** Which AI sites and APIs people use, matched by domain from DNS, firewall, and proxy logs against a built-in catalog you can extend; New and No longer seen against the period before.
+- **Agents and MCP servers.** Claude Code telemetry and an endpoint MCP inventory: which agents and clients run, which MCP servers and tools they use, who uses them, and what changed.
+- **Claude usage per person.** Sessions, tokens, cost, tool calls, errors, and sensitive-data signals (keys, card numbers, personal data) in prompts.
+- **Review and alerts.** Mark each service and MCP server Approved or Not approved, set the data each may receive, and get one alert per first sighting of unapproved use, sensitive data, or an agent change.
+- **Evidence.** Every AI call, review, and admin action lands in an append-only audit log; the audit log, AI call records, and stored logs are hash-chained, checked daily, and sealed with optional copies sent off the server.
+
+**The log platform underneath**
+
+- **Bring your own logs.** Syslog over UDP, TCP, or TLS, files and folders (rsyslog, syslog-ng, Vector), JSON lines, CSV, Windows EVTX and forwarded events, or a Grafana Loki you already run. 39 starter parsers (Linux auth, Palo Alto, Fortinet, UniFi, Cisco ASA and IOS, CEF, LEEF, Windows, DNS including PowerDNS, Authelia, TACACS+, Vault, OpenVPN, OpenLDAP) and an Automatic parser for mixed streams.
+- **Connect cloud services.** Microsoft 365 (audit logs, Entra sign-ins, directory audits, alerts) and the Anthropic admin API (usage, cost, Claude Code). Works through an outbound proxy if you need one.
+- **Search three ways** over one engine: Simple search, SQL (read-only, guarded), or Ask in plain English.
+- **Detect** with imported SigmaHQ rules and scheduled searches; alert to email, Teams, Slack, or a signed webhook; send selected events to a ticket system or chat.
+- **Know it is working.** A Health page for every source, connector, agent, and alert target, plus watched devices that alert when they go silent.
+- **Investigate.** Users, addresses, and hosts ranked by rule matches; one person counted once across `alice`, `CORP\alice`, and `alice@example.com`; optional GeoIP and threat intel lookups, all local.
+
+**AI you can trust with logs**
+
+- **Bring your own model.** Ollama, LM Studio, llama.cpp, vLLM, or any OpenAI-compatible API, plus Anthropic. Fresh installs allow local models only. Each source is Local only or Cloud allowed, and Local only data is blocked from cloud models in code.
+- **Treats log content as hostile.** The model never reads the whole dataset, never runs anything on its own, and every claim it makes cites event ids that are checked.
+- **Team ready.** Accounts, roles, per-source access, HTTPS by default, optional single sign-on, online backups.
+
+## Screenshots
+
+| | |
+|---|---|
+| ![Agents: Claude Code and MCP setups per person and machine, with what changed](docs/images/ai-agents.png) | ![MCP servers: installed and used, with review status](docs/images/ai-mcp.png) |
+| **Agents.** Claude Code per person, MCP setups per machine, and API keys, each compared with its own last 30 days: new tools, new MCP servers, unusual busy hours | **MCP servers.** Installed (endpoint inventory) and used (telemetry), who uses them, and New ones marked; approve or flag each |
+| ![Claude usage per person: cost, tokens, sessions, sensitive-data signals](docs/images/ai-claude.png) | ![Investigations AI flow: people to clients to MCP servers and AI services](docs/images/investigations.png) |
+| **Claude usage.** Cost, tokens, sessions, tool calls, errors, and sensitive-data signals per person | **AI flow.** People to clients to MCP servers and AI services in lanes, with not approved paths marked |
+| ![Overview: event volume heatmap with unusual hours outlined](docs/images/overview.png) | ![Health: every source, connector, agent, and alert target](docs/images/health.png) |
+| **Overview.** Events per source and hour, with hours outlined when they are far busier than the week before | **Health.** Every source, connector, agent, and alert target, plus watched devices that alert when they go quiet |
+| ![Simple search for failed SSH passwords](docs/images/search.png) | ![Dashboard of scheduled searches and rules with flags](docs/images/dashboard.png) |
+| **Search.** Type `sshd "failed password"`, or SQL, or ask in plain English with a local model; the SQL is always shown before it runs | **Dashboard.** Scheduled searches and Sigma rules with thresholds and alerts |
+| ![Integrity: verified chain heads and seal](docs/images/integrity.png) | ![MCP server settings for AI assistants](docs/images/mcp-server.png) |
+| **Integrity.** Stored logs, the audit log, and AI call records hash-chained and checked daily, with signed seals | **MCP server.** Claude Code, Claude Desktop, and other assistants query the logs read-only, as the person who connects them |
+| ![Command palette](docs/images/command-palette.png) | ![Light theme](docs/images/overview-light.png) |
+| **Ctrl+K** goes to any page, saved search, or source | A complete light theme as well as dark |
+
+Screenshots use made-up logs from `scripts/loggen.py` and `scripts/demo_lab.py`.
 
 ## Where it sits
 
@@ -61,48 +116,6 @@ flowchart LR
 ```
 
 Browser chat is seen by the sites people reach (who, when, how often), not by what they type. Agent detail comes from telemetry on the machines you set it up on.
-
-| | |
-|---|---|
-| ![Agents: Claude Code and MCP setups per person and machine, with what changed](docs/images/ai-agents.png) | ![MCP servers: installed and used, with review status](docs/images/ai-mcp.png) |
-| **Agents.** Claude Code per person, MCP setups per machine, and API keys, each compared with its own last 30 days: new tools, new MCP servers, unusual busy hours | **MCP servers.** Installed (endpoint inventory) and used (telemetry), who uses them, and New ones marked; approve or flag each |
-| ![Claude usage per person: cost, tokens, sessions, sensitive-data signals](docs/images/ai-claude.png) | ![Investigations AI flow: people to clients to MCP servers and AI services](docs/images/investigations.png) |
-| **Claude usage.** Cost, tokens, sessions, tool calls, errors, and sensitive-data signals per person | **AI flow.** People to clients to MCP servers and AI services in lanes, with not approved paths marked |
-| ![Overview: event volume heatmap with unusual hours outlined](docs/images/overview.png) | ![Health: every source, connector, agent, and alert target](docs/images/health.png) |
-| **Overview.** Events per source and hour, with hours outlined when they are far busier than the week before | **Health.** Every source, connector, agent, and alert target, plus watched devices that alert when they go quiet |
-| ![Simple search for failed SSH passwords](docs/images/search.png) | ![Dashboard of scheduled searches and rules with flags](docs/images/dashboard.png) |
-| **Search.** Type `sshd "failed password"`, or SQL, or ask in plain English with a local model; the SQL is always shown before it runs | **Dashboard.** Scheduled searches and Sigma rules with thresholds and alerts |
-| ![Integrity: verified chain heads and seal](docs/images/integrity.png) | ![MCP server settings for AI assistants](docs/images/mcp-server.png) |
-| **Integrity.** Stored logs, the audit log, and AI call records hash-chained and checked daily, with signed seals | **MCP server.** Claude Code, Claude Desktop, and other assistants query the logs read-only, as the person who connects them |
-| ![Command palette](docs/images/command-palette.png) | ![Light theme](docs/images/overview-light.png) |
-| **Ctrl+K** goes to any page, saved search, or source | A complete light theme as well as dark |
-
-Screenshots use made-up logs from `scripts/loggen.py` and `scripts/demo_lab.py`.
-
-## What it does
-
-**AI usage**
-
-- **AI services.** Which AI sites and APIs people use, matched by domain from DNS, firewall, and proxy logs against a built-in catalog you can extend; New and No longer seen against the period before.
-- **Agents and MCP servers.** Claude Code telemetry and an endpoint MCP inventory: which agents and clients run, which MCP servers and tools they use, who uses them, and what changed.
-- **Claude usage per person.** Sessions, tokens, cost, tool calls, errors, and sensitive-data signals (keys, card numbers, personal data) in prompts.
-- **Review and alerts.** Mark each service and MCP server Approved or Not approved, set the data each may receive, and get one alert per first sighting of unapproved use, sensitive data, or an agent change.
-- **Evidence.** Every AI call, review, and admin action lands in an append-only audit log; the audit log, AI call records, and stored logs are hash-chained, checked daily, and sealed with optional copies sent off the server.
-
-**The log platform underneath**
-
-- **Bring your own logs.** Syslog over UDP, TCP, or TLS, files and folders (rsyslog, syslog-ng, Vector), JSON lines, CSV, Windows EVTX and forwarded events, or a Grafana Loki you already run. 31 starter parsers (Linux auth, Palo Alto, Fortinet, UniFi, Cisco ASA and IOS, CEF, LEEF, Windows, DNS including PowerDNS, Authelia, TACACS+, Vault, OpenVPN, OpenLDAP) and an Automatic parser for mixed streams.
-- **Connect cloud services.** Microsoft 365 (audit logs, Entra sign-ins, directory audits, alerts) and the Anthropic admin API (usage, cost, Claude Code). Works through an outbound proxy if you need one.
-- **Search three ways** over one engine: Simple search, SQL (read-only, guarded), or Ask in plain English.
-- **Detect** with imported SigmaHQ rules and scheduled searches; alert to email, Teams, Slack, or a signed webhook; send selected events to a ticket system or chat.
-- **Know it is working.** A Health page for every source, connector, agent, and alert target, plus watched devices that alert when they go silent.
-- **Investigate.** Users, addresses, and hosts ranked by rule matches; one person counted once across `alice`, `CORP\alice`, and `alice@example.com`; optional GeoIP and threat intel lookups, all local.
-
-**AI you can trust with logs**
-
-- **Bring your own model.** Ollama, LM Studio, llama.cpp, vLLM, or any OpenAI-compatible API, plus Anthropic. Fresh installs allow local models only. Each source is Local only or Cloud allowed, and Local only data is blocked from cloud models in code.
-- **Treats log content as hostile.** The model never reads the whole dataset, never runs anything on its own, and every claim it makes cites event ids that are checked.
-- **Team ready.** Accounts, roles, per-source access, HTTPS by default, optional single sign-on, online backups.
 
 ## Quick start (Docker Compose)
 
@@ -164,7 +177,43 @@ git pull && GIT_COMMIT=$(git rev-parse HEAD) docker compose up -d --build
 
 Database changes apply at start and only ever add to what is there. Take a backup first: `docker compose exec -T app app-admin backup -o - > backup.tar.gz` ([details](docs/install/backup.md)).
 
-### More install options
+## Supported log sources
+
+| Category | Starter parsers |
+|---|---|
+| Firewalls and VPN | Palo Alto (traffic, threat, system, GlobalProtect, User-ID), Fortinet FortiGate, Cisco ASA, OpenVPN |
+| Network gear | Cisco IOS, UniFi, TACACS+ |
+| Linux | sshd, sudo, PAM, systemd, OpenLDAP |
+| Windows | EVTX files, NXLog JSON, Snare, Winlogbeat |
+| DNS | BIND, Unbound, PowerDNS, Windows DNS |
+| Identity and secrets | Microsoft 365 sign-ins, directory audit, management activity and alerts; Authelia; HashiCorp Vault (audit and server); this server's own refused sign-ins and tokens |
+| AI usage | Claude Code telemetry (OpenTelemetry), Claude Code hooks, MCP inventory, Anthropic admin reports |
+| Generic formats | CEF, LEEF, JSON over syslog, JSON lines, CSV with a header row |
+
+Anything else: point a source at it and let the Automatic parser try, or have the assistant draft a template from a sample and approve it yourself. Templates are plain YAML in [templates/starter/](templates/starter/).
+
+## Bring your own model
+
+| Provider | How | Notes |
+|---|---|---|
+| Ollama, LM Studio, llama.cpp, vLLM | OpenAI-compatible API | Local by default; an Ollama profile ships in `docker-compose.yml` |
+| Any OpenAI-compatible service | OpenAI-compatible API | Treated as cloud: only Cloud allowed sources can reach it |
+| Anthropic | Native adapter | Treated as cloud |
+| None | | Ingest, search, Sigma rules, dashboards, and alerts all work with no model at all |
+
+Fresh installs allow local models only. Every model call is written to the audit log with hashes of the prompt and response.
+
+## Security and privacy
+
+- **Log content is treated as hostile.** It is rendered as text only, never run, and passed to the model as data with instructions to ignore any instructions inside it (indirect prompt injection, MITRE ATLAS AML.T0051.001).
+- **The model has no write access.** Ask mode has two read-only tools; every query is shown before it runs and goes through a SQL allowlist on a read-only engine.
+- **Local only means local only.** Sources marked Local only can never be sent to a cloud model (LLM data leakage, ATLAS AML.T0057), with optional redaction for the rest.
+- **Accounts and access.** Sign-in and HTTPS are required off the local machine, with roles, per-source access, and optional single sign-on.
+- **Tamper evidence.** Stored logs, the audit log, and model call records are hash-chained, checked daily, and can be sealed with signed copies sent off the server.
+
+The threat model is in [docs/SPEC.md](docs/SPEC.md) section 7. Report vulnerabilities privately: see [SECURITY.md](SECURITY.md).
+
+## Install guides
 
 | Guide | For |
 |---|---|
@@ -189,7 +238,7 @@ Database changes apply at start and only ever add to what is there. Take a backu
 | [docs/install/health.md](docs/install/health.md) | The Health page: sources, connectors, agents, watched devices, alert targets |
 | [docs/install/tls.md](docs/install/tls.md) | Using your own certificate |
 
-## Docs
+## Documentation
 
 | Doc | What it covers |
 |---|---|
@@ -198,94 +247,19 @@ Database changes apply at start and only ever add to what is there. Take a backu
 | [docs/api.md](docs/api.md) | API reference: every endpoint, tokens, errors, a curl example |
 | [docs/searching.md](docs/searching.md) | Writing searches that keep working when a parser changes |
 | [docs/adr/](docs/adr/) | One file per design decision |
+| [docs/development.md](docs/development.md) | Building from source, tests, the command line, SBOM |
+| [docs/performance.md](docs/performance.md) | Tested ingest rate, lake size, query and page times, local model results |
 | [CLAUDE.md](CLAUDE.md) | Build rules, conventions, tests, definition of done |
 | [SECURITY.md](SECURITY.md) | Reporting a vulnerability |
 
-## Development
+## Roadmap
 
-Requirements: Python 3.12 with [uv](https://docs.astral.sh/uv/), Node 22 with pnpm.
+Planned, in rough order: Okta, Google Workspace, and AWS CloudTrail connectors; an object-storage tier for older data, queried in place; and more starter parsers. See [docs/BACKLOG.md](docs/BACKLOG.md) and the decision log in [docs/SPEC.md](docs/SPEC.md).
 
-```bash
-make dev-backend    # API on http://127.0.0.1:8080
-make dev-frontend   # UI on http://127.0.0.1:5173 (proxies /api)
-make ci             # architecture checks, lint, types, tests, build
-```
+## Contributing
 
-### Command line
-
-```bash
-cd backend
-uv run app-admin ingest /var/log/auth.log --source linux_auth          # syslog is the default
-uv run app-admin ingest events.jsonl --source winlogbeat --format json
-uv run app-server                                                       # API on 127.0.0.1:8080
-
-# in another terminal
-uv run remnant login --server https://siem.corp.example:8080   # once; token goes to the OS keychain
-uv run remnant tail linux_auth -n 20
-uv run remnant tail linux_auth -f --where "message LIKE 'Failed%'"
-uv run remnant query "SELECT device_hostname, count(*) FROM events GROUP BY 1" -o csv
-uv sync --extra tui && uv run remnant tui --source linux_auth   # full-screen: query box, results, live tail
-```
-
-Scripts and other tools can call the same JSON API with a personal token: see [docs/api.md](docs/api.md).
-
-`app-admin ingest` does a one-off load; for continuous tailing add a source on the **Sources** page. The CLI only talks to the server API, with the same SQL guard as the web UI. Output formats: `table`, `json` (one object per line), `csv`, `raw`.
-
-## Tested scale
-
-Measured with `scripts/bench.py` (synthetic syslog through the real ingest path with the Automatic parser, then searches through the real query API), on a 2 vCPU Intel Xeon 2.1 GHz cloud VM with 8 GB RAM:
-
-| Measure | Result |
-|---|---|
-| Ingest | about 9,600 events/s for one source (854,316 events in 89 s) |
-| Storage | 117.7 MB of raw syslog became a 54.1 MB lake (2.2x smaller), raw lines kept |
-| Count, group by host, failed logins by IP | 40 to 45 ms |
-| Text search in `message` (`ILIKE`) | 270 ms |
-| Latest 100 events, all columns | 340 ms |
-
-On a 4 vCPU Proxmox container (AMD Ryzen 9 5950X host, 8 GB RAM), the same run gave about 14,700 events/s; 16 to 19 ms for count, group by host, and failed logins by IP; 96 ms for the text search; and 110 ms for the latest 100 events.
-
-Run it on your own hardware with `cd backend && uv run python ../scripts/bench.py --events 1000000`. A Loki source reads at most 20,000 lines per 30 s poll (about 650 lines/s), well inside the ingest rate.
-
-Investigation pages read many events at once. On a 14 million event lake over 7 days (synthetic network, sign-in, and AI telemetry across 800 people, written straight to Parquet), on a 2 vCPU cloud container:
-
-| Page | Time |
-|---|---|
-| AI usage | 4.9 s |
-| Investigations, AI flow, everyone | 4.4 s |
-| Investigations, AI flow, one person | 4.8 s |
-| Investigations, one user's lanes | 3.0 s |
-| Settings, Identities (suggestions) | 6.4 s |
-
-Each stays under the 20 s query limit; shorter time ranges are proportionally faster.
-
-These page times are the targets for the performance budget (product pass step 4); this table is updated when that work lands.
-
-### Local model
-
-The AI features were tested with Ollama 0.34.1 running `qwen3.5:9b` with Thinking off, on an NVIDIA RTX 3080 (10 GB) passed through to a Proxmox container, on an AMD Ryzen 9 5950X host with 32 GB RAM. Explain and parser drafting use the same model setting and have not been timed. On the Ask suite (100 questions and 10 follow-up conversations, `backend/evals/nl_queries`):
-
-| Prompt | Executable | Exact | Median per question |
-|---|---|---|---|
-| `ask.v4` (the default), two runs | 99% | 87 to 88% | 2.0 s (p90 3.3 to 3.6 s) |
-| `ask.v6` | Not yet measured on this model | | |
-
-Ingest, search, Sigma rules, schedules, and every page's numbers run on the CPU and do not use or need a GPU. Only Ask, Explain, and parser drafting call a model, and a smaller or CPU-only model makes those slower, not the rest. Details, every run, and how to run the suite against your own model: [backend/evals/nl_queries/README.md](backend/evals/nl_queries/README.md).
-
-## Software bill of materials
-
-Every CI run publishes `sbom.cdx.json` (CycloneDX 1.5) as a build artifact: the Python packages and web UI packages that ship in the image, with hashes, plus the container base images. Development tools are left out. To make one locally:
-
-```
-cd backend && uv run python ../scripts/sbom.py --out ../sbom.cdx.json
-```
-
-It is built from `uv.lock`, `pnpm-lock.yaml`, and the `Dockerfile`, so the same commit always gives the same file.
-
-## Security
-
-Report vulnerabilities privately; see [SECURITY.md](SECURITY.md).
+Parser templates, bug reports, and docs fixes are the most useful contributions. See [CONTRIBUTING.md](CONTRIBUTING.md). Building from source and running the tests: [docs/development.md](docs/development.md).
 
 ## License
 
-Apache 2.0
+Apache 2.0. See [LICENSE](LICENSE).

@@ -46,7 +46,7 @@ def test_failed_logins_through_the_proxy_lock_out_only_that_client(tmp_path: Pat
     ok = c.post(
         "/api/auth/login",
         json={"username": "admin", "password": PASSWORD},
-        headers={"X-Forwarded-For": f"6.6.6.6, {B}"},  # the left entry is the client's own
+        headers={"X-Forwarded-For": f"203.0.113.66, {B}"},  # the left entry is the client's own
     )
     assert ok.status_code == 200, ok.text
     ips = login_ips(db)
