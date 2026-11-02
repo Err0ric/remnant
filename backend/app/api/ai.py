@@ -26,7 +26,7 @@ from app.ai.watch_summary import source_classes
 from app.ai.watch_summary import summary as watch_summary
 from app.alerts.items import AlertItem, AlertItems
 from app.api.access import AdminUser, CurrentUser, client_ip, require_role
-from app.api.cache import PageCache, scope_key
+from app.api.cache import STALE_MAX_S, PageCache, scope_key
 from app.api.dashboard_sections import HistoryOut, KpiOut
 from app.auth.service import AuthService
 from app.auth.users import User
@@ -294,89 +294,88 @@ class WatchSummaryOut(BaseModel):
     chart_drill: str | None = None
     people_pending_days: int = 0  # see UsageOut
     people_days: int = 0
+    # When these numbers were computed: the page shows "updated N s ago" (D147).
+    updated_at: datetime | None = None
 
 
-@router.get("/ai/watch/summary")
+@router.get("/ai/watch/summary", response_model=WatchSummaryOut)
 async def ai_watch_summary(
     request: Request,
     user: CurrentUser,
     days: Annotated[int, Query(ge=1, le=30)] = 7,
     tz: Annotated[str, Query(max_length=64)] = "UTC",
-) -> WatchSummaryOut:
+) -> Response:
     """AI Watch (ADR-0035 rows 10, 12, 13): five cards against the period before, AI use
     over 30 days by review status, and the top services, all on the caller's view.
     Audited ai.view."""
-    meta: MetaDB = request.app.state.meta
+    app = request.app
+    meta: MetaDB = app.state.meta
     allowed = await run_in_threadpool(permitted_sources, meta, user)
-    # Kept 60 s per viewer, window, and zone; any change made in the app (a review, a
-    # closed alert) clears it, so a decision shows at once (owner, 2026-10-31).
-    cache: PageCache = request.app.state.page_cache
+    # Kept per viewer, window, and zone; any change made in the app (a review, a closed
+    # alert) clears it, so a decision shows at once (owner, 2026-10-31). The 7-day view is
+    # refreshed in the background and served at once (D147).
+    cache: PageCache = app.state.page_cache
     key = ("ai_watch", user.user_id, scope_key(allowed), days, tz)
-    hit = cache.get(key)
+    default = days == 7
+    hit = cache.peek(key, STALE_MAX_S) if default else cache.get(key)
     if hit is not None:
-        out, read = hit
+        body, read = hit[0] if default else hit
         await run_in_threadpool(
             _audit(request).audit.write, "ai.view", "success", user.user_id, client_ip(request),
             {"sources_in_scope": read, "view": "watch", "cached": True},
         )  # fmt: skip
-        return out  # type: ignore[no-any-return]  # a WatchSummaryOut this route stored
-    items_store: AlertItems = request.app.state.alert_items
-    ai_items = [
-        i
-        for i in await run_in_threadpool(items_store.items, user, "all", 5000)
-        if i.kind == "ai_watch"
-    ]
-    kinds = source_classes(
-        [(s.source_id, s.kind or "file", s.template_id) for s in request.app.state.sources.list()]
-    )
+        return Response(body, media_type="application/json")
 
-    def readable(i: AlertItem) -> bool:
-        return allowed is None or set(i.sources) <= set(allowed)
+    def compute(viewer: User, scope: list[str] | None) -> tuple[bytes, list[str]]:
+        items_store: AlertItems = app.state.alert_items
+        ai_items = [i for i in items_store.items(viewer, "all", 5000) if i.kind == "ai_watch"]
+        kinds = source_classes(
+            [(x.source_id, x.kind or "file", x.template_id) for x in app.state.sources.list()]
+        )
 
-    s = await run_in_threadpool(
-        watch_summary,
-        request.app.state.ai_usage,
-        _catalog(request),
-        request.app.state.engine,
-        allowed,
-        ai_items,
-        readable,
-        kinds,
-        request.app.state.ai_watch.now(),
-        days,
-        tz,
-    )
-    now = request.app.state.ai_watch.now()
-    pending, of = await run_in_threadpool(
-        request.app.state.ai_usage.people_pending,
-        QueryScope(allowed, now - timedelta(days=30), now),
-    )
+        def readable(i: AlertItem) -> bool:
+            return scope is None or set(i.sources) <= set(scope)
+
+        now = app.state.ai_watch.now()
+        s = watch_summary(
+            app.state.ai_usage, app.state.ai_catalog, app.state.engine, scope, ai_items,
+            readable, kinds, now, days, tz,
+        )  # fmt: skip
+        pending, of = app.state.ai_usage.people_pending(
+            QueryScope(scope, now - timedelta(days=30), now)
+        )
+        result = WatchSummaryOut(
+            days=s.days,
+            start=s.start,
+            end=s.end,
+            cards=[CardOut(**_slots(c)) for c in s.cards],
+            chart=[DayOut(**_slots(d)) for d in s.chart],
+            top=[TopServiceOut(**_slots(t)) for t in s.top],
+            sources=s.sources,
+            new=[NewOut(**_slots(n)) for n in s.new],
+            compared=s.compared,
+            since=s.since,
+            before=s.before,
+            chart_drill=s.chart_drill,
+            people_pending_days=pending,
+            people_days=of,
+            updated_at=datetime.now(UTC),
+        )
+        return result.model_dump_json().encode(), list(s.sources)
+
+    body, read = await run_in_threadpool(compute, user, allowed)
     await run_in_threadpool(
         _audit(request).audit.write,
         "ai.view",
         "success",
         user.user_id,
         client_ip(request),
-        {"sources_in_scope": s.sources, "view": "watch"},
+        {"sources_in_scope": read, "view": "watch"},
     )
-    result = WatchSummaryOut(
-        days=s.days,
-        start=s.start,
-        end=s.end,
-        cards=[CardOut(**_slots(c)) for c in s.cards],
-        chart=[DayOut(**_slots(d)) for d in s.chart],
-        top=[TopServiceOut(**_slots(t)) for t in s.top],
-        sources=s.sources,
-        new=[NewOut(**_slots(n)) for n in s.new],
-        compared=s.compared,
-        since=s.since,
-        before=s.before,
-        chart_drill=s.chart_drill,
-        people_pending_days=pending,
-        people_days=of,
-    )
-    cache.put(key, (result, s.sources))
-    return result
+    cache.put(key, (body, read))
+    if default:
+        app.state.refresher.watch(key, user.user_id, scope_key(allowed), compute)
+    return Response(body, media_type="application/json")
 
 
 @router.get("/ai/catalog")

@@ -39,7 +39,7 @@ from app.api.around import router as around_router
 from app.api.ask import router as ask_router
 from app.api.audit import router as audit_router
 from app.api.auth import router as auth_router
-from app.api.cache import PageCache, clear_on_change, server_timing
+from app.api.cache import REFRESH_EVERY_S, PageCache, Refresher, clear_on_change, server_timing
 from app.api.dashboard_sections import router as dashboard_sections_router
 from app.api.dashboards import router as dashboards_router
 from app.api.enrichment import router as enrichment_router
@@ -332,6 +332,17 @@ async def _listener_loop(listeners: SyslogListeners, sources: SourceStore) -> No
         await asyncio.sleep(5)
 
 
+async def _refresh_loop(refresher: Refresher) -> None:
+    """Every minute, recompute the default views opened in the last ten minutes, at low
+    CPU priority (D147). Requests are served from the last refresh meanwhile."""
+    while True:
+        await asyncio.sleep(REFRESH_EVERY_S)
+        try:
+            await asyncio.to_thread(refresher.tick)
+        except Exception as exc:  # the loop must survive one bad pass
+            log.warning("page.refresh_loop_failed", error=type(exc).__name__)
+
+
 def _lifespan(config: AppConfig) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -362,6 +373,7 @@ def _lifespan(config: AppConfig) -> Callable[[FastAPI], AbstractAsyncContextMana
             tasks.append(
                 asyncio.create_task(_listener_loop(app.state.listeners, app.state.sources))
             )
+        tasks.append(asyncio.create_task(_refresh_loop(app.state.refresher)))
         try:
             yield
         finally:
@@ -600,6 +612,8 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         clock=lambda: app.state.auth.clock(),
     )
     app.state.page_cache = PageCache()
+    # Default views refreshed in the background and served at once (D147).
+    app.state.refresher = Refresher(app.state.page_cache, meta, app.state.auth.users)
     app.state.rollup_runs = RunLog()  # what the rollup jobs did, for Health
     app.middleware("http")(clear_on_change(app.state.page_cache))
     app.middleware("http")(server_timing())  # outermost of the two: whole request

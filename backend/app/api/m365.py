@@ -2,6 +2,7 @@
 window (ADR-0038 section 5). Router only; `app.search.m365` reads the caller's own view.
 Audited as `m365.overview` with the sources read."""
 
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Query, Request, Response
@@ -10,8 +11,9 @@ from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from app.api.access import CurrentUser, client_ip
-from app.api.cache import PageCache, scope_key
+from app.api.cache import STALE_MAX_S, PageCache, scope_key
 from app.auth.service import AuthService
+from app.auth.users import User
 from app.engine.views import permitted_sources
 from app.enrich import networks
 from app.search.dashboard import Window
@@ -30,46 +32,44 @@ async def m365_overview(
     """KPIs, the counts row, the outcome per hour or day, the tops, and each tab's list as
     a Search query template (`{from}` and `{to}`). `has_source` is false when the caller
     reads no Microsoft 365 source."""
-    meta = request.app.state.meta
-    allowed = await run_in_threadpool(permitted_sources, meta, user)
-    cache: PageCache = request.app.state.page_cache
+    app = request.app
+    allowed = await run_in_threadpool(permitted_sources, app.state.meta, user)
+    cache: PageCache = app.state.page_cache
     # A hit reads nothing else and sends the stored bytes; changes empty the cache, so
     # settings and sources need not be in the key (owner, 2026-11-01).
     key = ("m365", scope_key(allowed), window, tz)
-    hit = cache.get(key)
+    default = window == "7d"  # refreshed in the background, served at once (D147)
+    hit = cache.peek(key, STALE_MAX_S) if default else cache.get(key)
     if hit is not None:
-        body, read = hit
+        body, read = hit[0] if default else hit
         await run_in_threadpool(
-            request.app.state.auth.audit.write, "m365.overview", "success", user.user_id,
+            app.state.auth.audit.write, "m365.overview", "success", user.user_id,
             client_ip(request), {"window": window, "cached": True, "sources_in_scope": read},
         )  # fmt: skip
         return Response(body, media_type="application/json")
-    places = await run_in_threadpool(networks.load, meta)
-    srcs = [
-        (s.source_id, s.kind or "file", s.template_id)
-        for s in await run_in_threadpool(request.app.state.sources.list)
-    ]
-    now = request.app.state.ai_watch.now()
-    out = await run_in_threadpool(
-        overview,
-        request.app.state.engine,
-        allowed,
-        srcs,
-        places,
-        window,
-        now,
-        request.app.state.m365_rollup,
-        tz,
-    )
-    auth: AuthService = request.app.state.auth
+
+    def compute(_viewer: User, scope: list[str] | None) -> tuple[bytes, list[str]]:
+        places = networks.load(app.state.meta)
+        srcs = [(s.source_id, s.kind or "file", s.template_id) for s in app.state.sources.list()]
+        out = overview(
+            app.state.engine, scope, srcs, places, window, app.state.ai_watch.now(),
+            app.state.m365_rollup, tz,
+        )  # fmt: skip
+        data = to_dict(out)
+        data["updated_at"] = datetime.now(UTC)  # "updated N s ago" on the page (D147)
+        return bytes(JSONResponse(jsonable_encoder(data)).body), list(out.read)
+
+    body, read = await run_in_threadpool(compute, user, allowed)
+    auth: AuthService = app.state.auth
     await run_in_threadpool(
         auth.audit.write,
         "m365.overview",
         "success",
         user.user_id,
         client_ip(request),
-        {"window": window, "sources_in_scope": out.read},
+        {"window": window, "sources_in_scope": read},
     )
-    body = JSONResponse(jsonable_encoder(to_dict(out))).body
-    cache.put(key, (body, out.read))
+    cache.put(key, (body, read))
+    if default:
+        app.state.refresher.watch(key, user.user_id, scope_key(allowed), compute)
     return Response(body, media_type="application/json")

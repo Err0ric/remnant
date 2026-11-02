@@ -392,6 +392,8 @@ export interface SectionHistory {
 /** The Microsoft 365 area (ADR-0038 section 5). Every query has `{from}` and `{to}`. */
 export interface M365Overview {
   window: PageWindow;
+  /** When the server computed these numbers (7-day view, refreshed in the background). */
+  updated_at?: string | null;
   start: string;
   end: string;
   before: string;
@@ -434,6 +436,8 @@ export interface DashboardSections {
   has_public: boolean;
   /** When the GeoIP country file was installed; null without one. */
   geoip_date: string | null;
+  /** When the server computed these numbers (7-day view, refreshed in the background). */
+  updated_at?: string | null;
   identity: {
     failed: SectionKpi;
     outside: SectionKpi | null;
@@ -1861,6 +1865,8 @@ export interface AiWatchDay {
 
 export interface AiWatchSummary {
   days: number;
+  /** When the server computed these numbers (7-day view, refreshed in the background). */
+  updated_at?: string | null;
   /** False while AI use was seen for under 90% of the period before; `since`: first use. */
   compared?: boolean;
   since?: string | null;

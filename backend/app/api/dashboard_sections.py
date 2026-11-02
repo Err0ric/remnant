@@ -2,7 +2,7 @@
 window (ADR-0038 edit 10). Router only; the numbers come from `app.search.dashboard` on the
 caller's own view. Audited as `dashboard.sections` with the sources read."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Query, Request, Response
@@ -10,8 +10,9 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from app.api.access import CurrentUser, client_ip
-from app.api.cache import PageCache, scope_key
+from app.api.cache import STALE_MAX_S, PageCache, scope_key
 from app.auth.service import AuthService
+from app.auth.users import User
 from app.engine.views import permitted_sources
 from app.enrich import networks
 from app.enrich.geoip import GeoInfo, GeoIP
@@ -94,6 +95,8 @@ class DetectionsOut(BaseModel):
 
 class SectionsOut(BaseModel):
     window: Literal["24h", "7d", "30d"]
+    # When these numbers were computed: the page shows "updated N s ago" (D147).
+    updated_at: datetime | None = None
     start: datetime
     end: datetime
     before: datetime
@@ -122,61 +125,56 @@ async def dashboard_sections(
     one (the page loads each section on its own, so a slow one holds up only itself).
     Days are the viewer's (`tz`, an IANA name; UTC otherwise).
     Numbers are kept for 60 s per caller's sources, window, and part (`app.api.cache`)."""
-    meta = request.app.state.meta
-    allowed = await run_in_threadpool(permitted_sources, meta, user)
-    cache: PageCache = request.app.state.page_cache
+    app = request.app
+    allowed = await run_in_threadpool(permitted_sources, app.state.meta, user)
+    cache: PageCache = app.state.page_cache
     # A hit reads nothing else and sends the stored bytes (owner, 2026-11-01: hits took
     # 140 to 180 ms reading settings and re-serializing). Settings and source changes
     # empty the cache (`clear_on_change`), so they need not be in the key.
     key = ("sections", scope_key(allowed), window, part, tz)
-    hit = cache.get(key)
+    default = window == "7d"  # refreshed in the background, served at once (D147)
+    hit = cache.peek(key, STALE_MAX_S) if default else cache.get(key)
     if hit is not None:
-        body, read = hit
+        body, read = hit[0] if default else hit
         await run_in_threadpool(
-            request.app.state.auth.audit.write, "dashboard.sections", "success", user.user_id,
+            app.state.auth.audit.write, "dashboard.sections", "success", user.user_id,
             client_ip(request),
             {"window": window, "part": part, "cached": True, "sources_in_scope": read},
         )  # fmt: skip
         return Response(body, media_type="application/json")
-    places = await run_in_threadpool(networks.load, meta)
-    srcs = [
-        (s.source_id, s.kind or "file", s.template_id)
-        for s in await run_in_threadpool(request.app.state.sources.list)
-    ]
-    geoip: GeoIP = request.app.state.geoip
 
-    def geo(ips: list[str]) -> dict[str, GeoInfo]:
-        # Every address the card counts (at most MAX_IPS), not the page lookup cap.
-        return geoip.enrich(ips, limit=len(ips))
+    def compute(_viewer: User, scope: list[str] | None) -> tuple[bytes, list[str]]:
+        meta = app.state.meta
+        places = networks.load(meta)
+        srcs = [(s.source_id, s.kind or "file", s.template_id) for s in app.state.sources.list()]
+        geoip: GeoIP = app.state.geoip
 
-    now = request.app.state.ai_watch.now()
-    out = await run_in_threadpool(
-        sections,
-        request.app.state.engine,
-        meta,
-        allowed,
-        srcs,
-        places,
-        geo,
-        window,
-        now,
-        request.app.state.m365_rollup,
-        PARTS if part is None else (part,),
-        tz,
-        request.app.state.auth_rollup,
-    )
-    auth: AuthService = request.app.state.auth
+        def geo(ips: list[str]) -> dict[str, GeoInfo]:
+            # Every address the card counts (at most MAX_IPS), not the page lookup cap.
+            return geoip.enrich(ips, limit=len(ips))
+
+        out = sections(
+            app.state.engine, meta, scope, srcs, places, geo, window, app.state.ai_watch.now(),
+            app.state.m365_rollup, PARTS if part is None else (part,), tz,
+            app.state.auth_rollup,
+        )  # fmt: skip
+        data = to_json(out)
+        data["geoip_date"] = app.state.feeds.state("geoip_country").installed_at
+        data["updated_at"] = datetime.now(UTC)
+        read = data.pop("read", None) or []
+        return SectionsOut(**data).model_dump_json().encode(), read
+
+    body, read = await run_in_threadpool(compute, user, allowed)
+    auth: AuthService = app.state.auth
     await run_in_threadpool(
         auth.audit.write,
         "dashboard.sections",
         "success",
         user.user_id,
         client_ip(request),
-        {"window": window, "part": part, "sources_in_scope": out.read},
+        {"window": window, "part": part, "sources_in_scope": read},
     )
-    data = to_json(out)
-    data["geoip_date"] = request.app.state.feeds.state("geoip_country").installed_at
-    read = data.pop("read", None)
-    body = SectionsOut(**data).model_dump_json().encode()
     cache.put(key, (body, read))
+    if default:
+        app.state.refresher.watch(key, user.user_id, scope_key(allowed), compute)
     return Response(body, media_type="application/json")

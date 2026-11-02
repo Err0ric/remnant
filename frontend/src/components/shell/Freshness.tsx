@@ -4,9 +4,10 @@ import { Bell, RefreshCw } from "lucide-react";
 import { api } from "@/lib/api";
 import { navigate } from "@/lib/route";
 
-function ago(ms: number): string {
+export function ago(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000));
-  if (s < 45) return "just now";
+  if (s < 5) return "just now";
+  if (s < 90) return `${s} s ago`;
   const m = Math.round(s / 60);
   if (m < 60) return `${m} min ago`;
   const h = Math.round(m / 60);
@@ -19,16 +20,21 @@ export function Freshness() {
   const fetching = useIsFetching();
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    const t = window.setInterval(() => setNow(Date.now()), 30_000);
+    const t = window.setInterval(() => setNow(Date.now()), 10_000);
     return () => window.clearInterval(t);
   }, []);
-  const latest = Math.max(
-    0,
-    ...client
-      .getQueryCache()
-      .findAll({ type: "active" })
-      .map((q) => q.state.dataUpdatedAt),
-  );
+  const active = client.getQueryCache().findAll({ type: "active" });
+  // Views the server refreshes in the background (Dashboard 7d, Microsoft 365 Overview,
+  // AI Watch: D147) say when their numbers were computed; the oldest of those is shown,
+  // since the page can be no newer than it. Otherwise, when the page last fetched.
+  const computed = active
+    .map((q) => (q.state.data as { updated_at?: string | null } | undefined)?.updated_at)
+    .filter((v): v is string => typeof v === "string")
+    .map((v) => Date.parse(v))
+    .filter((t) => !Number.isNaN(t));
+  const latest = computed.length
+    ? Math.min(...computed)
+    : Math.max(0, ...active.map((q) => q.state.dataUpdatedAt));
   return (
     <>
       {latest ? (

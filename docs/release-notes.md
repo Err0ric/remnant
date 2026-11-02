@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Default views load at once (2026-11-01)
+
+- **Dashboard (7 days), Microsoft 365 Overview (7 days), and AI Watch (7 days)** are refreshed in the background every minute while someone is using them, so opening them shows numbers at once. The top bar says how old they are ("Updated 40 s ago").
+- Any change you make in the app still shows on the next load. Other time windows work as before.
+- What changes for existing installs: nothing to do.
+
 ### Reused query instances, opt-in (2026-11-01)
 
 - **New setting `server.query_pool`** (off by default): Dashboard and other page sections reuse a kept DuckDB instance per slot and remember Parquet file details between queries. About 20% faster Dashboard loads on a test machine with local disk; more expected on networked storage.
