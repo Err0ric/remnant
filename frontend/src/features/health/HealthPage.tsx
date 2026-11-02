@@ -5,6 +5,7 @@ import { FormError } from "@/features/auth/FormError";
 import { since, stamp } from "@/features/overview/time";
 import { ApiError, api, type Source, type WatchedDevice } from "@/lib/api";
 import { navigate, useSection, useSectionTab, type PageId } from "@/lib/route";
+import { SpeedTable } from "./SpeedTable";
 import { EntityLink } from "@/components/EntityLink";
 import { lag } from "./flow";
 import { SourceFlow } from "./SourceFlow";
@@ -12,7 +13,7 @@ import { StatusLine } from "./StatusLine";
 import { SystemStrip, type SourceTally } from "./SystemStrip";
 
 type Level = "unhealthy" | "attention" | "paused" | "healthy";
-type TabId = "sources" | "enrichment" | "agents" | "devices" | "alerts" | "rollups";
+type TabId = "sources" | "enrichment" | "agents" | "devices" | "alerts" | "rollups" | "speed";
 
 interface Row {
   key: string;
@@ -50,6 +51,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "devices", label: "Watched devices" },
   { id: "alerts", label: "Delivery" },
   { id: "rollups", label: "Page rollups" },
+  { id: "speed", label: "Speed" },
 ];
 const TAB_IDS = TABS.map((t) => t.id);
 const SILENCE = [
@@ -313,6 +315,7 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
       level: ru.state === "unknown" ? "attention" : (ru.state as Level),
       reason: ru.reason,
     })),
+    speed: [], // its own table (SpeedTable), not status rows
   };
   const o = overview.data;
   const gapsOf = new Map((o?.volume ?? []).map((v) => [v.source_id, v.gaps.length]));
@@ -341,7 +344,7 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
       <PageHeader
         title="Health"
         tabExtras={Object.fromEntries(
-          TABS.map((t) => {
+          TABS.filter((t) => t.id !== "speed").map((t) => {
             const bad = rows[t.id].filter(
               (r) => r.level === "unhealthy" || r.level === "attention",
             ).length;
@@ -379,204 +382,222 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
         />
         {o ? <StatusLine overview={o} now={now} /> : null}
 
-        <div
-          role="group"
-          aria-label="Show"
-          className="flex flex-wrap items-center gap-1 text-sm text-text-secondary"
-        >
-          <span className="mr-1">Show</span>
-          {[{ id: null, label: "All", color: "" }, ...LEVELS].map((l) => (
-            <button
-              key={l.id ?? "all"}
-              type="button"
-              aria-pressed={filter === l.id}
-              onClick={() => setFilter(l.id as Level | null)}
-              className={`rounded px-2 py-0.5 ${
-                filter === l.id ? "bg-surface-head font-semibold text-text" : "hover:text-text"
-              }`}
+        {tab === "speed" ? (
+          isAdmin ? (
+            <SpeedTable />
+          ) : (
+            <p className="text-sm text-text-secondary">Page speed is for administrators.</p>
+          )
+        ) : (
+          <>
+            <div
+              role="group"
+              aria-label="Show"
+              className="flex flex-wrap items-center gap-1 text-sm text-text-secondary"
             >
-              {l.label}{" "}
-              <span className="font-mono tabular-nums text-text-muted">
-                {loading ? "·" : l.id ? count(l.id as Level) : rows[tab].length}
-              </span>
-            </button>
-          ))}
-        </div>
-
-        <section
-          aria-label={TABS.find((t) => t.id === tab)?.label}
-          className="rounded-card border border-border bg-surface"
-        >
-          {tab === "devices" ? (
-            <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 text-sm">
-              <span className="text-text-secondary">
-                Healthy while it keeps appearing in logs you already collect. {PRODUCT_NOTE}
-              </span>
-              {isAdmin ? (
+              <span className="mr-1">Show</span>
+              {[{ id: null, label: "All", color: "" }, ...LEVELS].map((l) => (
                 <button
+                  key={l.id ?? "all"}
                   type="button"
-                  onClick={() => setAdding(!adding)}
-                  className={`ml-auto h-8 rounded px-3 font-semibold ${
-                    adding
-                      ? "border border-border-strong hover:bg-surface-head"
-                      : "bg-accent text-white hover:brightness-110"
+                  aria-pressed={filter === l.id}
+                  onClick={() => setFilter(l.id as Level | null)}
+                  className={`rounded px-2 py-0.5 ${
+                    filter === l.id ? "bg-surface-head font-semibold text-text" : "hover:text-text"
                   }`}
                 >
-                  {adding ? "Cancel" : "Watch a device"}
+                  {l.label}{" "}
+                  <span className="font-mono tabular-nums text-text-muted">
+                    {loading ? "·" : l.id ? count(l.id as Level) : rows[tab].length}
+                  </span>
                 </button>
+              ))}
+            </div>
+
+            <section
+              aria-label={TABS.find((t) => t.id === tab)?.label}
+              className="rounded-card border border-border bg-surface"
+            >
+              {tab === "devices" ? (
+                <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 text-sm">
+                  <span className="text-text-secondary">
+                    Healthy while it keeps appearing in logs you already collect. {PRODUCT_NOTE}
+                  </span>
+                  {isAdmin ? (
+                    <button
+                      type="button"
+                      onClick={() => setAdding(!adding)}
+                      className={`ml-auto h-8 rounded px-3 font-semibold ${
+                        adding
+                          ? "border border-border-strong hover:bg-surface-head"
+                          : "bg-accent text-white hover:brightness-110"
+                      }`}
+                    >
+                      {adding ? "Cancel" : "Watch a device"}
+                    </button>
+                  ) : null}
+                </div>
               ) : null}
-            </div>
-          ) : null}
-          {tab === "devices" && adding && isAdmin ? (
-            <DeviceForm
-              targets={(targets.data ?? []).map((t) => ({ id: t.target_id, name: t.name }))}
-              onDone={() => setAdding(false)}
-            />
-          ) : null}
-          {tab === "sources" && shown.length > 0 ? (
-            <SourceFlow
-              overview={o}
-              now={now}
-              notice={shown.find((r) => r.key === "lake-quarantine")?.reason ?? null}
-              focused={focused}
-              sources={shown
-                .filter((r) => r.key !== "lake-quarantine")
-                // Problems first: errors, then gaps, then the rest that needs a look.
-                .map((r, i) => ({ r, i, rank: RANK(r) }))
-                .sort((a, b) => a.rank - b.rank || a.i - b.i)
-                .map(({ r }) => r)
-                .map((r) => ({
-                  source_id: r.name,
-                  level: r.level,
-                  word: r.word,
-                  reason: r.reason,
-                  last: r.last,
-                  // Its settings, at the same row (F61): one more click from Health.
-                  onOpen: r.page
-                    ? () =>
-                        r.page === "sources"
-                          ? navigate("sources", `source=${encodeURIComponent(r.name)}`)
-                          : navigate(r.page as PageId)
-                    : undefined,
-                }))}
-            />
-          ) : shown.length === 0 ? (
-            <p className="p-4 text-sm text-text-muted">
-              {loading ? "Loading…" : filter ? "Nothing in this state here." : EMPTY[tab]}
-            </p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm" aria-label={TABS.find((t) => t.id === tab)?.label}>
-                <thead>
-                  <tr className="border-b border-border bg-surface-head text-left text-text-secondary">
-                    <th className="px-3 py-2 font-semibold">Name</th>
-                    <th className="hidden px-3 py-2 font-semibold md:table-cell">
-                      {tab === "enrichment"
-                        ? "Last updated"
-                        : tab === "rollups"
-                          ? "Today built"
-                          : "Last seen"}
-                    </th>
-                    {tab === "devices" ? (
-                      <th className="hidden px-3 py-2 font-semibold md:table-cell">
-                        Last 24 hours
-                      </th>
-                    ) : null}
-                    <th className="hidden px-3 py-2 text-right font-semibold md:table-cell">
-                      State
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {shown.map((r) => (
-                    <tr key={r.key} className="border-b border-border align-top last:border-b-0">
-                      <td className="min-w-0 px-3 py-2">
-                        {r.page ? (
-                          <button
-                            type="button"
-                            onClick={() => navigate(r.page as PageId)}
-                            className="break-all text-left font-mono text-accent-text hover:underline"
-                          >
-                            {r.name}
-                          </button>
-                        ) : tab === "agents" ? (
-                          <EntityLink kind="host" value={r.name} className="font-mono" />
-                        ) : (
-                          <span className={tab === "devices" ? "" : "break-all font-mono"}>
-                            {r.name}
-                          </span>
-                        )}
-                        <div className="mt-0.5 flex items-center gap-2 md:hidden">
-                          <span
-                            className={`rounded-badge px-1.5 py-px text-xs font-semibold ${BADGE[r.level]}`}
-                          >
-                            {LEVELS.find((l) => l.id === r.level)?.label}
-                          </span>
-                          {r.last ? (
-                            <span className="font-mono text-xs text-text-secondary">
-                              {since(r.last, now)}
-                            </span>
-                          ) : null}
-                        </div>
-                        {r.sub ? (
-                          <div className="break-all font-mono text-xs text-text-muted">{r.sub}</div>
+              {tab === "devices" && adding && isAdmin ? (
+                <DeviceForm
+                  targets={(targets.data ?? []).map((t) => ({ id: t.target_id, name: t.name }))}
+                  onDone={() => setAdding(false)}
+                />
+              ) : null}
+              {tab === "sources" && shown.length > 0 ? (
+                <SourceFlow
+                  overview={o}
+                  now={now}
+                  notice={shown.find((r) => r.key === "lake-quarantine")?.reason ?? null}
+                  focused={focused}
+                  sources={shown
+                    .filter((r) => r.key !== "lake-quarantine")
+                    // Problems first: errors, then gaps, then the rest that needs a look.
+                    .map((r, i) => ({ r, i, rank: RANK(r) }))
+                    .sort((a, b) => a.rank - b.rank || a.i - b.i)
+                    .map(({ r }) => r)
+                    .map((r) => ({
+                      source_id: r.name,
+                      level: r.level,
+                      word: r.word,
+                      reason: r.reason,
+                      last: r.last,
+                      // Its settings, at the same row (F61): one more click from Health.
+                      onOpen: r.page
+                        ? () =>
+                            r.page === "sources"
+                              ? navigate("sources", `source=${encodeURIComponent(r.name)}`)
+                              : navigate(r.page as PageId)
+                        : undefined,
+                    }))}
+                />
+              ) : shown.length === 0 ? (
+                <p className="p-4 text-sm text-text-muted">
+                  {loading ? "Loading…" : filter ? "Nothing in this state here." : EMPTY[tab]}
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table
+                    className="w-full text-sm"
+                    aria-label={TABS.find((t) => t.id === tab)?.label}
+                  >
+                    <thead>
+                      <tr className="border-b border-border bg-surface-head text-left text-text-secondary">
+                        <th className="px-3 py-2 font-semibold">Name</th>
+                        <th className="hidden px-3 py-2 font-semibold md:table-cell">
+                          {tab === "enrichment"
+                            ? "Last updated"
+                            : tab === "rollups"
+                              ? "Today built"
+                              : "Last seen"}
+                        </th>
+                        {tab === "devices" ? (
+                          <th className="hidden px-3 py-2 font-semibold md:table-cell">
+                            Last 24 hours
+                          </th>
                         ) : null}
-                        {r.detail ? (
-                          <div className="text-xs text-text-muted">{r.detail}</div>
-                        ) : null}
-                        {r.reason ? (
-                          <div
-                            className={`text-xs ${r.level === "unhealthy" ? "text-danger" : "text-warn"}`}
-                          >
-                            {r.reason}
-                          </div>
-                        ) : null}
-                      </td>
-                      <td className="hidden whitespace-nowrap px-3 py-2 font-mono tabular-nums md:table-cell">
-                        {r.last ? (
-                          <span title={`${stamp(r.last)} UTC`}>{since(r.last, now)}</span>
-                        ) : (
-                          <span className="text-text-muted">·</span>
-                        )}
-                      </td>
-                      {tab === "devices" ? (
-                        <td className="hidden px-3 py-2 md:table-cell">
-                          {r.hourly ? <Spark counts={r.hourly} /> : null}
-                        </td>
-                      ) : null}
-                      <td className="hidden px-3 py-2 text-right md:table-cell">
-                        <span
-                          className={`whitespace-nowrap rounded-badge px-1.5 py-px text-xs font-semibold ${BADGE[r.level]}`}
+                        <th className="hidden px-3 py-2 text-right font-semibold md:table-cell">
+                          State
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {shown.map((r) => (
+                        <tr
+                          key={r.key}
+                          className="border-b border-border align-top last:border-b-0"
                         >
-                          {LEVELS.find((l) => l.id === r.level)?.label}
-                        </span>
-                        {r.device && isAdmin ? (
-                          <button
-                            type="button"
-                            aria-label={`Stop watching ${r.device.name}`}
-                            onClick={() => remove.mutate(r.key)}
-                            className="mt-1 block w-full text-right text-xs text-text-secondary hover:text-danger"
-                          >
-                            Stop watching
-                          </button>
-                        ) : null}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-          <FormError
-            message={
-              remove.error instanceof ApiError
-                ? remove.error.message
-                : remove.error
-                  ? "That did not work"
-                  : null
-            }
-          />
-        </section>
+                          <td className="min-w-0 px-3 py-2">
+                            {r.page ? (
+                              <button
+                                type="button"
+                                onClick={() => navigate(r.page as PageId)}
+                                className="break-all text-left font-mono text-accent-text hover:underline"
+                              >
+                                {r.name}
+                              </button>
+                            ) : tab === "agents" ? (
+                              <EntityLink kind="host" value={r.name} className="font-mono" />
+                            ) : (
+                              <span className={tab === "devices" ? "" : "break-all font-mono"}>
+                                {r.name}
+                              </span>
+                            )}
+                            <div className="mt-0.5 flex items-center gap-2 md:hidden">
+                              <span
+                                className={`rounded-badge px-1.5 py-px text-xs font-semibold ${BADGE[r.level]}`}
+                              >
+                                {LEVELS.find((l) => l.id === r.level)?.label}
+                              </span>
+                              {r.last ? (
+                                <span className="font-mono text-xs text-text-secondary">
+                                  {since(r.last, now)}
+                                </span>
+                              ) : null}
+                            </div>
+                            {r.sub ? (
+                              <div className="break-all font-mono text-xs text-text-muted">
+                                {r.sub}
+                              </div>
+                            ) : null}
+                            {r.detail ? (
+                              <div className="text-xs text-text-muted">{r.detail}</div>
+                            ) : null}
+                            {r.reason ? (
+                              <div
+                                className={`text-xs ${r.level === "unhealthy" ? "text-danger" : "text-warn"}`}
+                              >
+                                {r.reason}
+                              </div>
+                            ) : null}
+                          </td>
+                          <td className="hidden whitespace-nowrap px-3 py-2 font-mono tabular-nums md:table-cell">
+                            {r.last ? (
+                              <span title={`${stamp(r.last)} UTC`}>{since(r.last, now)}</span>
+                            ) : (
+                              <span className="text-text-muted">·</span>
+                            )}
+                          </td>
+                          {tab === "devices" ? (
+                            <td className="hidden px-3 py-2 md:table-cell">
+                              {r.hourly ? <Spark counts={r.hourly} /> : null}
+                            </td>
+                          ) : null}
+                          <td className="hidden px-3 py-2 text-right md:table-cell">
+                            <span
+                              className={`whitespace-nowrap rounded-badge px-1.5 py-px text-xs font-semibold ${BADGE[r.level]}`}
+                            >
+                              {LEVELS.find((l) => l.id === r.level)?.label}
+                            </span>
+                            {r.device && isAdmin ? (
+                              <button
+                                type="button"
+                                aria-label={`Stop watching ${r.device.name}`}
+                                onClick={() => remove.mutate(r.key)}
+                                className="mt-1 block w-full text-right text-xs text-text-secondary hover:text-danger"
+                              >
+                                Stop watching
+                              </button>
+                            ) : null}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <FormError
+                message={
+                  remove.error instanceof ApiError
+                    ? remove.error.message
+                    : remove.error
+                      ? "That did not work"
+                      : null
+                }
+              />
+            </section>
+          </>
+        )}
       </div>
     </div>
   );
@@ -601,6 +622,7 @@ const EMPTY: Record<TabId, ReactNode> = {
   devices:
     "No watched devices. Add a network sensor, collector, or firewall by address or host name to know when it goes silent.",
   alerts: "No alert targets or schedules you can see.",
+  speed: "No page loads recorded yet.",
 };
 
 interface DeviceFormProps {

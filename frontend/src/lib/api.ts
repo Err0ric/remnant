@@ -1863,6 +1863,19 @@ export interface AiWatchDay {
   not_approved: number;
 }
 
+/** Health > Speed: one route's page speed over the last 24 hours (since start, if later). */
+export interface RouteSpeed {
+  route: string;
+  requests: number;
+  p50_ms: number;
+  p95_ms: number;
+  max_ms: number;
+  db_p50_ms: number;
+  wait_p95_ms: number;
+  cache_hits: number;
+  cached: number;
+}
+
 export interface AiWatchSummary {
   days: number;
   /** When the server computed these numbers (7-day view, refreshed in the background). */
@@ -2411,6 +2424,7 @@ export const api = {
   },
   aiUsage: (start?: string) =>
     request<AiUsage>(`/api/ai/usage${start ? `?start=${encodeURIComponent(start)}` : ""}`),
+  healthSpeed: () => request<RouteSpeed[]>("/api/health-checks/speed"),
   aiCatalog: () => request<AiService[]>("/api/ai/catalog"),
   setAiServiceStatus: (id: string, status: AiStatus) =>
     request<AiService>(`/api/ai/services/${encodeURIComponent(id)}/status`, put({ status })),

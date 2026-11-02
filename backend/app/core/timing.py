@@ -39,6 +39,15 @@ class Timing:
             self.runs.append((end - db_s, end))
             self.waits.append((end - db_s - wait_s, end - db_s))
 
+    def summary(self) -> dict[str, Any] | None:
+        """The header's numbers, for the Health > Speed log; None when it has no header."""
+        if not self.queries and self.cache is None:
+            return None
+        total = (time.perf_counter() - self.started) * 1000
+        with self.lock:
+            db, wait = _covered(self.runs), _covered(self.waits)
+        return {"total": total, "db": db, "wait": wait, "cache": self.cache}
+
     def header(self) -> str | None:
         if not self.queries and self.cache is None:
             return None

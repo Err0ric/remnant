@@ -18,6 +18,7 @@ from starlette.responses import Response
 
 from app.auth.users import User, UserStore
 from app.core import timing
+from app.core.speed import SpeedLog
 from app.core.threads import run_low
 from app.engine.views import permitted_sources
 from app.meta.db import MetaDB
@@ -158,9 +159,9 @@ def clear_on_change(
     return middleware
 
 
-def server_timing() -> Callable[
-    [Request, Callable[[Request], Awaitable[Response]]], Awaitable[Response]
-]:
+def server_timing(
+    speed: SpeedLog | None = None,
+) -> Callable[[Request, Callable[[Request], Awaitable[Response]]], Awaitable[Response]]:
     """Middleware: a Server-Timing header on API responses that read the cache or ran
     queries (owner, 2026-11-01): cache hit or miss, waiting for a slot and memory, DuckDB,
     the rest, and the total. Timings only, nothing about the data."""
@@ -175,6 +176,17 @@ def server_timing() -> Callable[
         header = t.header()
         if header is not None:
             response.headers["Server-Timing"] = header
+            # Health > Speed: by route template, never the values in the path.
+            route = request.scope.get("route")
+            summary = t.summary()
+            template = getattr(route, "path", None)
+            if isinstance(template, str) and not template.startswith("/api/"):
+                template = "/api" + template  # routers are mounted under /api
+            if speed is not None and summary is not None and isinstance(template, str):
+                speed.record(
+                    f"{request.method} {template}", summary["total"], summary["db"],
+                    summary["wait"], summary["cache"],
+                )  # fmt: skip
         return response
 
     return middleware

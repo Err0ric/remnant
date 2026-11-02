@@ -1055,6 +1055,20 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
           recent_peak: null,
         },
       ]);
+    if (url.endsWith("/api/health-checks/speed") && method === "GET")
+      return json([
+        {
+          route: "GET /api/m365/overview",
+          requests: 40,
+          p50_ms: 180,
+          p95_ms: 2400,
+          max_ms: 3100,
+          db_p50_ms: 120,
+          wait_p95_ms: 310,
+          cache_hits: 30,
+          cached: 40,
+        },
+      ]);
     if (url.endsWith("/api/health-checks") && method === "GET")
       return json({
         devices: watched,

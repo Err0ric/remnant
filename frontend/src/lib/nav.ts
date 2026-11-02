@@ -150,6 +150,13 @@ export const AREAS: Area[] = [
       { label: "Watched devices", page: "health", tab: "devices" },
       { label: "Delivery", page: "health", tab: "alerts", aliases: ["alert delivery"] },
       { label: "Page rollups", page: "health", tab: "rollups", aliases: ["rollup status"] },
+      {
+        label: "Speed",
+        page: "health",
+        tab: "speed",
+        aliases: ["page speed", "slow pages", "p95"],
+        adminOnly: true,
+      },
     ],
   },
 ];

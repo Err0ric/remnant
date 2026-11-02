@@ -121,6 +121,7 @@ from app.core.errors import (
 from app.core.logging import configure_logging
 from app.core.memory import budget_note, server_budget_mb
 from app.core.net import parse_trusted
+from app.core.speed import SpeedLog
 from app.core.threads import WORKER_POOL, cap_allocator_arenas, query_threads, run_low
 from app.detect.runner import RuleRunner
 from app.detect.store import RuleStore
@@ -626,7 +627,8 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     app.state.refresher = Refresher(app.state.page_cache, meta, app.state.auth.users)
     app.state.rollup_runs = RunLog()  # what the rollup jobs did, for Health
     app.middleware("http")(clear_on_change(app.state.page_cache))
-    app.middleware("http")(server_timing())  # outermost of the two: whole request
+    app.state.speed = SpeedLog()  # Health > Speed (last 24 hours, in memory)
+    app.middleware("http")(server_timing(app.state.speed))  # outermost: whole request
     app.state.m365_rollup = M365Rollup(
         app.state.engine,
         lake_dir,

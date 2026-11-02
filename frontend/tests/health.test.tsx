@@ -74,6 +74,14 @@ describe("Health (ADR-0019)", () => {
     expect(within(table).getByText("4 closed days still to build")).toBeVisible();
   });
 
+  it("shows page speed per route to administrators (Speed tab)", async () => {
+    await renderAt("/health#speed");
+    const table = await screen.findByRole("table", { name: "Page speed by route" });
+    expect(within(table).getByText("GET /api/m365/overview")).toBeVisible();
+    expect(within(table).getByText("2.40 s")).toBeVisible();
+    expect(within(table).getByText("75%")).toBeInTheDocument();
+  });
+
   it("lets administrators watch a device", async () => {
     const spy = await renderAt("/health");
     await userEvent.click(

@@ -129,6 +129,26 @@ def _rollups(request: Request) -> list[RollupOut]:
     ]
 
 
+class SpeedOut(BaseModel):
+    route: str
+    requests: int
+    p50_ms: float
+    p95_ms: float
+    max_ms: float
+    db_p50_ms: float
+    wait_p95_ms: float
+    cache_hits: int
+    cached: int
+
+
+@router.get("/health-checks/speed")
+async def speed(request: Request, _: AdminUser) -> list[SpeedOut]:
+    """Page speed per route over the last 24 hours (since the server started, if later),
+    from the Server-Timing of each request: requests, p50 and p95 total, DuckDB p50, slot
+    wait p95, and page cache hits. Routes only, never values or callers. Administrators."""
+    return [SpeedOut(**asdict(r)) for r in request.app.state.speed.stats()]
+
+
 @router.post("/health-checks/devices", status_code=201)
 async def add_device(body: DeviceIn, request: Request, user: AdminUser) -> dict[str, str]:
     """Watch a device by IP address or host name; `silence_s` 300 to 86400. Audited as

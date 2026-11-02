@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Health > Speed (2026-11-01)
+
+- A new **Speed** tab on Health (administrators) lists every page that reads data with its typical (p50) and slow (p95) load time over the last 24 hours, time in the database, time waiting for a query slot, and how often the page cache answered.
+- Kept in memory only; a restart starts the 24 hours again.
+- What changes for existing installs: nothing to do.
+
 ### Lighter web UI (2026-11-01)
 
 - The UI loads only the Latin character set of its fonts, loads the SQL editor when you first open the SQL tab, and lets your browser keep built files for a year (a new version still shows at once).

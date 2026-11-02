@@ -106,3 +106,16 @@ def test_ai_inventory_reuses_what_ai_usage_just_read(tmp_path: Path) -> None:
     m = TIMING.fullmatch(after.headers["Server-Timing"])
     assert m and int(m.group(3)) < n_alone
     assert after.json()["items"] == alone.json()["items"]
+
+
+def test_health_speed_lists_routes_by_template_for_administrators(tmp_path: Path) -> None:
+    lab = make_lab(tmp_path)
+    admin = lab["admin"]
+    admin.get("/api/ai/usage")
+    admin.get("/api/ai/usage")
+    rows = admin.get("/api/health-checks/speed").json()
+    usage = next(r for r in rows if r["route"] == "GET /api/ai/usage")
+    assert usage["requests"] == 2 and usage["cached"] == 2 and usage["cache_hits"] == 1
+    assert usage["p95_ms"] >= usage["p50_ms"] > 0
+    assert all("{" in r["route"] or "/" in r["route"] for r in rows)
+    assert lab["ana"].get("/api/health-checks/speed").status_code == 403
