@@ -35,7 +35,7 @@ from app.llm.registry import ProviderRecord, ProviderStore
 from app.meta.db import MetaDB
 from app.search.ask_drill import DrillError, drill_sql
 from app.search.ask_flow import Routed, route_question
-from app.search.ask_route import rank
+from app.search.ask_route import Plan, rank
 from app.search.ask_runs import AskRuns, Drill, Ran
 from app.search.ask_summary import check_claims, headline, removed_note, sample
 from app.search.library import Library, LibraryQuery, editor_sql
@@ -244,7 +244,7 @@ async def ask(body: AskRequest, request: Request, user: AskUser) -> AskResponse:
             user.user_id, routed.plan.sql, start, end, body.sources, call_ids, now,
             body.question, origin=c.pack.origin(c.query), params=routed.plan.params,
             provider_id=chosen.provider_id, template=c.query.answer,
-            drill=_drill(c.query, routed.plan.params),
+            drill=_drill(c.query, routed.plan),
         )  # fmt: skip
         detail |= {"call_ids": call_ids, "ask_id": kept.ask_id}
         await run_in_threadpool(
@@ -499,11 +499,20 @@ async def answer(ask_id: str, request: Request, user: AskUser) -> AnswerOut:
     )
 
 
-def _drill(q: LibraryQuery, plan_params: dict[str, str | int | float | bool]) -> Drill | None:
+def _drill(q: LibraryQuery, plan: Plan) -> Drill | None:
+    """What Show events needs, or None when the rows cannot open their events exactly:
+    the query has no keys, or a filter Ask added sits on a column that is an aggregate
+    (it describes the group, so no events match it one by one)."""
     if not q.keys:
         return None
-    values = {p.name: plan_params.get(p.name, p.default) for p in q.params}
-    return Drill(q.sql, list(q.keys), {k: v for k, v in values.items() if v is not None})
+    values = {p.name: plan.params.get(p.name, p.default) for p in q.params}
+    params = {**plan.params, **{k: v for k, v in values.items() if v is not None}}
+    drill = Drill(q.sql, list(q.keys), params, list(plan.conds))
+    try:  # built once here with stand-in values, so a row never offers a broken link
+        drill_sql(drill.sql, drill.keys, dict.fromkeys(drill.keys, "x"), params, drill.filters)
+    except DrillError:
+        return None
+    return drill
 
 
 Value = str | int | float | bool | None
@@ -535,7 +544,9 @@ async def drill(ask_id: str, body: DrillRequest, request: Request, user: AskUser
         if isinstance(v, str) and len(v) > 2_000:
             raise ParamInvalidError("A value is too long")
     try:
-        sql = drill_sql(run.drill.sql, run.drill.keys, body.values, run.drill.params)
+        sql = drill_sql(
+            run.drill.sql, run.drill.keys, body.values, run.drill.params, run.drill.filters
+        )
     except DrillError as exc:
         raise ParamInvalidError(f"Cannot show events for this row: {exc}") from exc
     return DrillOut(sql=sql, start=ran.start, end=ran.end, sources=run.sources)

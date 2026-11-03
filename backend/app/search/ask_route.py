@@ -217,6 +217,9 @@ class Plan:
     sql: str  # library SQL, wrapped with the question's filters
     params: dict[str, str | int | float | bool]
     filters: list[str] = field(default_factory=list)  # "user = dana", for How I got this
+    # The same filters as (output column, condition with `__ask_col__` for the column), so
+    # "Show events" applies them to the events behind a row (D174).
+    conds: list[tuple[str, str]] = field(default_factory=list)
     unused: list[Entity] = field(default_factory=list)  # named, but the query cannot filter
 
 
@@ -262,10 +265,12 @@ def plan(
                 f"(CASE WHEN list_contains({domains}, split_part({key}, '@', 2))"
                 f" THEN split_part({key}, '@', 1) ELSE {key} END)"
             )
-            where.append(f"{key} IN ({', '.join(names)})")
+            cond = f"{key} IN ({', '.join(names)})"
         else:
             values[f"ask_{e.kind}_{i}"] = e.value
-            where.append(f"lower(CAST({_quote(col)} AS VARCHAR)) = lower({{{{ask_{e.kind}_{i}}}}})")
+            cond = f"lower(CAST({_quote(col)} AS VARCHAR)) = lower({{{{ask_{e.kind}_{i}}}}})"
+        where.append(cond)
+        out.conds.append((col, cond.replace(_quote(col), "__ask_col__")))
         shown = (
             e.value
             if e.kind != "user" or len(keys) == 1

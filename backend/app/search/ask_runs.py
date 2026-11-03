@@ -43,6 +43,9 @@ class Drill:
     sql: str
     keys: list[str]
     params: dict[str, str | int | float | bool]
+    # Ask's own filters on the output (a person, an address), carried so a row's count is
+    # the number of events it opens (D174): (output column, condition).
+    filters: list[tuple[str, str]] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)

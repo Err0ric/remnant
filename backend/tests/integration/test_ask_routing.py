@@ -172,3 +172,89 @@ def test_show_events_needs_the_keys_and_a_library_answer(lab: dict[str, Any]) ->
     assert run["drill_keys"] == []
     bad = ana.post(f"/api/ask/{generated['ask_id']}/drill", json={"values": {}})
     assert bad.status_code == 400
+
+
+def _counts_match(lab: dict[str, Any], body: dict[str, Any], count_col: str) -> list[int]:
+    """Each row's count, and check that Show events opens exactly that many events."""
+    ana = lab["ana"]
+    run = ana.post(f"/api/ask/{body['ask_id']}/run").json()
+    cols, counts = run["columns"], []
+    assert run["rows"] and run["drill_keys"]
+    for row in run["rows"]:
+        values = {k: row[cols.index(k)] for k in run["drill_keys"]}
+        sql = ana.post(f"/api/ask/{body['ask_id']}/drill", json={"values": values}).json()["sql"]
+        q = ana.post(
+            "/api/query",
+            json={"sql": sql, "start": "2000-01-01T00:00:00Z", "end": "2100-01-01T00:00:00Z"},
+        )
+        assert q.status_code == 200, q.text
+        n = row[cols.index(count_col)]
+        assert len(q.json()["rows"]) == n, (values, sql)
+        counts.append(n)
+    return counts
+
+
+def test_show_events_keeps_the_person_and_address_filters(lab: dict[str, Any]) -> None:
+    """D174 (owner, 2026-11-02): with a person and an address in the question, each row's
+    count is the number of events Show events opens."""
+    lab["calls"]["route"] = {"kind": "data", "query": "linux_auth/ssh_logins", "params": {}}
+    first = lab["ana"].post(
+        f"/api/ask/{ask(lab, 'SSH logins for alice@example.com')['ask_id']}/run"
+    )
+    client = first.json()["rows"][0][1]
+    body = ask(lab, f"SSH logins for alice@example.com from {client}")
+    assert body["route"]["filters"] == [
+        "user = alice@example.com (also alice)",
+        f"client = {client}",
+    ]
+    assert sum(_counts_match(lab, body, "attempts")) > 0
+
+
+def test_a_filter_on_a_column_that_is_not_a_key_still_narrows_the_events(
+    lab: dict[str, Any],
+) -> None:
+    """The case that breaks trust without D174: the library query groups by person and
+    address but marks only the person as a key, and the question names the address. The
+    row says N; without the address filter its events would be all of that person's."""
+    from app.search.ask_drill import drill_sql
+    from app.search.library import Library, Pack
+
+    sql = (
+        'SELECT actor_user_name AS "user", src_endpoint_ip AS client, count(*) AS attempts'
+        " FROM events WHERE template_id = 'linux_sshd' AND time BETWEEN {{start}} AND {{end}}"
+        " GROUP BY 1, 2 ORDER BY attempts DESC"
+    )
+    pack = Pack.model_validate(
+        {
+            "schema_version": 1, "id": "test_pack", "name": "Test", "version": "1.0.0",
+            "queries": [{
+                "id": "logins_by_user", "name": "Logins by user and client", "sql": sql,
+                "group": "Test", "why": "Test.", "normal": "Test.", "requires": ["linux_sshd"],
+                "keys": ["user"], "ask": ["logins by user and client"],
+            }],
+        }
+    )  # fmt: skip
+    state = lab["app"].state
+    state.library = Library([*state.library.packs, pack])
+    rows = state.engine.run(
+        sql.replace("{{start}}", "TIMESTAMPTZ '2000-01-01'").replace(
+            "{{end}}", "TIMESTAMPTZ '2100-01-01'"
+        ),
+        __import__("app.engine.duckdb", fromlist=["QueryScope"]).QueryScope(None),
+    ).rows
+    by_user: dict[str, int] = {}
+    for u, _c, n in rows:
+        by_user[u] = by_user.get(u, 0) + n
+    user, client, n = next(r for r in rows if r[1] and by_user[r[0]] > r[2])  # 2+ clients
+    lab["calls"]["route"] = {"kind": "data", "query": "test_pack/logins_by_user", "params": {}}
+    body = ask(lab, f"logins by user and client for {user}@example.com from {client}")
+    assert any(f.startswith("client = ") for f in body["route"]["filters"]), body["route"]
+    # Without the filters Ask added, the row would open every one of that person's events.
+    unfiltered = drill_sql(sql, ["user"], {"user": user}, {})
+    q = lab["ana"].post(
+        "/api/query",
+        json={"sql": unfiltered, "start": "2000-01-01T00:00:00Z", "end": "2100-01-01T00:00:00Z"},
+    )
+    assert len(q.json()["rows"]) == by_user[user] > n
+    # With them, each row opens exactly its count.
+    assert _counts_match(lab, body, "attempts") == [n]

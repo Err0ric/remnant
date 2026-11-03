@@ -1,7 +1,7 @@
 schema_version: 1
 id: m365
 name: Microsoft 365
-version: 1.0.0
+version: 1.1.0
 description: Sign-ins, mail rules, app consent, admin changes, Copilot, and data movement in Microsoft
   365.
 queries:
@@ -250,7 +250,8 @@ queries:
            max(privileges) AS permissions,
            max(status_detail) AS reason,
            metadata_correlation_uid,
-           count(*) AS copies
+           count(*) AS copies,
+           min(event_id) AS event_id
     FROM events
     WHERE template_id IN ('m365_directory_audit', 'm365_management_activity')
       AND message IN ('Consent to application', 'Consent to application.')
@@ -326,7 +327,8 @@ queries:
            lower(any_value(message)) AS operation,
            max(nullif(resource_name, '')) AS target,
            CASE WHEN min(status_id) = 1 THEN 'success' WHEN max(status_id) = 2 THEN 'failure' ELSE 'unknown' END AS result,
-           count(*) AS copies
+           count(*) AS copies,
+           min(event_id) AS event_id
     FROM events
     WHERE template_id IN ('m365_directory_audit', 'm365_management_activity')
       AND message IN ('Add member to role', 'Remove member from role', 'Add eligible member to role',

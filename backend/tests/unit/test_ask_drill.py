@@ -43,3 +43,24 @@ def test_keys_must_be_groups_the_query_returns() -> None:
         drill_sql(SQL, ["user"], {"user": "a", "address": "b"}, {"status": 2})
     with pytest.raises(DrillError, match="no value"):
         drill_sql(SQL, ["user"], {"user": "a"}, {})
+
+
+def test_filters_ask_added_apply_to_the_expression_behind_the_column() -> None:
+    """D174: a filter on an output column narrows the events too, so a row opens exactly
+    the events it counts. Its value is a literal."""
+    cond = "lower(CAST(__ask_col__ AS VARCHAR)) = lower({{ask_ip_1}})"
+    out = drill_sql(
+        SQL,
+        ["user"],
+        {"user": "dana"},
+        {"status": 2, "ask_ip_1": "203.0.113.9"},
+        [("address", cond)],
+    )
+    flat = " ".join(out.split()).replace("( ", "(").replace(" )", ")")
+    assert "LOWER(CAST((src_endpoint_ip) AS TEXT)) = LOWER('203.0.113.9')" in flat
+    with pytest.raises(DrillError, match="filter on n is an aggregate"):
+        drill_sql(
+            SQL, ["user"], {"user": "dana"}, {"status": 2, "x": 1}, [("n", "__ask_col__ = {{x}}")]
+        )
+    with pytest.raises(DrillError, match="no value"):
+        drill_sql(SQL, ["user"], {"user": "dana"}, {"status": 2}, [("address", cond)])

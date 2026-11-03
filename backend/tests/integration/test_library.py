@@ -14,7 +14,7 @@ from app.ingest.records import DecodedLine
 from app.ingest.writer import LakeWriter
 from app.main import create_app
 from app.search.ask_drill import drill_sql
-from app.search.ask_summary import TEMPLATE
+from app.search.ask_summary import TEMPLATE, sample
 from app.search.library import LIBRARY_DIR, Pack, load, load_dir
 from app.search.params import bind, compile_sql
 from app.templates.loader import parse_template
@@ -26,6 +26,14 @@ STARTER = ROOT / "templates" / "starter"
 PACKS = [load(p) for p in sorted(LIBRARY_DIR.glob("*/pack.yaml"))]
 START, END = datetime(2000, 1, 1, tzinfo=UTC), datetime(2100, 1, 1, tzinfo=UTC)
 CASES = [pytest.param(p, q.id, id=f"{p.id}/{q.id}") for p in PACKS for q in p.queries]
+
+
+def test_event_level_answers_return_an_event_id() -> None:
+    """Owner, 2026-11-02: user consents and admin changes carry an event id per row, so
+    Ask's summary can cite them; the other aggregates offer Show events or neither."""
+    by_id = {q.id: q for p in PACKS for q in p.queries}
+    for qid in ("m365_user_consent", "m365_admin_changes"):
+        assert "AS event_id" in by_id[qid].sql and not by_id[qid].keys
 
 
 def test_the_first_packs_ship_and_all_load() -> None:
@@ -65,6 +73,15 @@ def test_library_query_runs_on_fixtures(engine: Any, pack: Pack, query_id: str) 
     if q.answer:  # ADR-0042 row 6: the headline names only columns the query returns
         named = {k.removeprefix("first.") for k in TEMPLATE.findall(q.answer)} - {"n"}
         assert named <= set(res.columns), f"answer names {sorted(named - set(res.columns))}"
+    if "event_id" in res.columns and res.rows:  # D171: Ask's summary can cite these rows
+        rows = sample(res.columns, res.rows, res.truncated)
+        assert rows is not None and rows.event_ids
+        listed = ", ".join(f"'{i}'" for i in sorted(rows.event_ids))
+        found = engine.run(
+            f"SELECT count(*) FROM events WHERE CAST(event_id AS VARCHAR) IN ({listed})",  # ids from the result
+            QueryScope(None, START, END),
+        )
+        assert found.rows[0][0] == len(rows.event_ids)
     if q.keys and res.rows:  # D173: the first row's "Show events" finds its events
         first = dict(zip(res.columns, res.rows[0], strict=True))
         sql = drill_sql(q.sql, q.keys, {k: first[k] for k in q.keys}, {
