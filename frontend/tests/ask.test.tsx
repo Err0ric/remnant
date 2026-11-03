@@ -79,10 +79,13 @@ describe("Ask (ADR-0042 slice 1a)", () => {
     await renderAt("/ask");
     await askQuestion("failed logins");
     const block = await screen.findByRole("region", { name: "Question: failed logins" });
-    const text = await within(block).findByText("<b>Failed</b> logins grouped by source IP.");
+    // Slice 1c: model text about the query lives under How I got this, not over the rows.
+    await within(block).findByText(/2 addresses with failures/);
+    await userEvent.click(within(block).getByText("How I got this"));
+    const text = within(block).getByText(/<b>Failed<\/b> logins grouped by source IP\./);
     expect(text.querySelector("b")).toBeNull();
-    expect(within(block).getByText("Failed means status_id = 2")).toBeInTheDocument();
-    expect(within(block).getByText(/About the query, written by Local Ollama/)).toBeVisible();
+    expect(within(block).getByText("Assumed: Failed means status_id = 2")).toBeVisible();
+    expect(within(block).getByText(/about the query, not the rows/)).toBeVisible();
   });
 
   it("stacks follow-ups below, sends earlier turns, and starts over on New question", async () => {
@@ -227,5 +230,36 @@ describe("Ask routing (ADR-0042 slice 1b)", () => {
     expect(posts(spy, "/api/ask")).toHaveLength(0); // no model call at all
     await userEvent.click(open);
     expect(await screen.findByRole("tab", { name: "SQL", selected: true })).toBeVisible();
+  });
+
+  it("shows the code headline, then only statements that cite rows (slice 1c)", async () => {
+    const spy = await renderAt("/ask");
+    await askQuestion("summarize dana's logins");
+    const block = await screen.findByRole("region", { name: "Question: summarize dana's logins" });
+    expect(await within(block).findByText("2 rows. First row: user dana.")).toBeVisible();
+    const summary = await within(block).findByRole("list", { name: "Summary" });
+    const item = within(summary).getByText("dana failed twice from <b>203.0.113.9</b>.");
+    expect(item.querySelector("b")).toBeNull(); // model text is text, never markup
+    expect(within(summary).getByTitle("0190a1b2-0000-7000-8000-00000000000a")).toBeVisible();
+    expect(
+      within(block).getByText("1 statement removed: it cited no events from these rows."),
+    ).toBeVisible();
+    expect(posts(spy, "/api/ask/a1/answer")).toHaveLength(1);
+  });
+
+  it("shows no summary when nothing cites, and never asks without event ids", async () => {
+    const spy = await renderAt("/ask");
+    await askQuestion("summarize uncited");
+    const block = await screen.findByRole("region", { name: "Question: summarize uncited" });
+    expect(
+      await within(block).findByText("No summary: the model's statements did not cite these rows."),
+    ).toBeVisible();
+    expect(within(block).queryByRole("list", { name: "Summary" })).toBeNull();
+    await askQuestion("failed logins");
+    const second = await screen.findByRole("region", { name: "Question: failed logins" });
+    expect(
+      await within(second).findByText("No summary: these rows have no event ids to cite."),
+    ).toBeVisible();
+    expect(spy.mock.calls.filter(([u]) => String(u).endsWith("/a2/answer"))).toHaveLength(0);
   });
 });

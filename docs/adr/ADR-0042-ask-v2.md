@@ -82,6 +82,7 @@ Steps 1 and 2 try deterministic code first and ask the model only for what code 
 ## As built
 
 - Slice 1b (2026-11-02): routing calls are recorded in `llm_calls` under purpose `ask` with prompt `ask_route.v1`, not a new purpose: the purpose column is a closed set on an append-only table, and adding a value means rebuilding it. The prompt reference tells routing apart from SQL writing. People, addresses, and machines named in a question filter the library query's output columns (`user`, `address`, `host`, ...) as bound parameters; an email also matches its bare login and the identity map's aliases, and How I got this lists every name matched. A library query that cannot filter on a named entity is not used and the agent writes the SQL instead. Follow-ups still go to the agent (slice 4). A general-guidance route returns no query; until slice 2 the panel offers "Check your data instead".
+- Slice 1c (2026-11-02): the headline is code (`app/search/ask_summary.py`); the answer call (`app/llm/ask_summary.py`, prompt `ask_answer.v1`) is audited under purpose `ask`, as routing is. Rows for it are kept server-side from the run, never sent back by the client. Statements are removed when they cite no sent row, or any id that was not sent. Output cap 600 tokens (row 15 said 400). **Proposed, pending review:** the evidence query for aggregates (row 8) is not built; a result without `event_id` gets the headline and rows only (D171).
 
 ## Consequences
 

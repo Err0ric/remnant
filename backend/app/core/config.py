@@ -305,6 +305,10 @@ class AskConfig(_Strict):
     # Ask runs its query at once when it passes the guard (ADR-0042, D167); false restores
     # click-to-run. Guard, read-only engine, and the caller's sources apply either way.
     auto_run: bool = True
+    # The answer step's model call (ADR-0042 condition 4): statements about the rows, each
+    # citing event ids. False shows only the code-written headline and the rows, with no
+    # model call after the query; for slow CPU-only models.
+    summarize: bool = True
 
 
 class AgentsConfig(_Strict):

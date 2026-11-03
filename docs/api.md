@@ -83,7 +83,8 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | `GET` | `/api/ask/providers` | Enabled providers an analyst can choose, local first. No URLs or key state. |  |  |
 | `GET` | `/api/ask/providers/{provider_id}/queue` | Provider Queue |  |  |
 | `GET` | `/api/ask/suggest` | Library queries that match the question's words, best first, at most 3, with no model at all (ADR-0042 C4): what Ask offers when no AI provider is set up. Reads only which templates the caller's sources have used. | `?q`: string |  |
-| `POST` | `/api/ask/{ask_id}/run` | Run the SQL an answer produced, as the person who asked, on their current view. Audited as query.run with purpose `ask`, the answer's id, its model call ids, and its origin (`generated`, or the library query `<pack>/<id>@<version>`). |  |  |
+| `POST` | `/api/ask/{ask_id}/answer` | The answer step (ADR-0042 row 8, slice 1c): statements about the rows the run kept, each citing their event ids; never rows from the client. Statements that cite no sent row are removed and counted. Any failure of the model leaves the rows and the headline without a summary. Audited as ask.answer. |  |  |
+| `POST` | `/api/ask/{ask_id}/run` | Run the SQL an answer produced, as the person who asked, on their current view. Audited as query.run with purpose `ask`, the answer's id, its model call ids, and its origin (`generated`, or the library query `<pack>/<id>@<version>`). Returns a headline written by code from the rows. |  |  |
 
 ### Audit
 

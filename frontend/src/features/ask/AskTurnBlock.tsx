@@ -1,19 +1,26 @@
-import { ApiError, type AskResponse, type QueryResult } from "@/lib/api";
+import { ApiError, type AskResponse, type AskRunResult, type AskSummary } from "@/lib/api";
 import { isAborted, isModelBusy } from "@/components/ai/ModelWait";
 import { cn } from "@/lib/cn";
 import { AskResults } from "./AskResults";
 
-export type Phase = "finding" | "running" | "ready" | "done" | "failed" | "cancelled" | "guidance";
+export type Phase =
+  "finding" | "running" | "writing" | "ready" | "done" | "failed" | "cancelled" | "guidance";
 
 export interface Turn {
   id: number;
   question: string;
   phase: Phase;
   answer?: AskResponse;
-  result?: QueryResult;
+  result?: AskRunResult;
   error?: unknown;
   askMs?: number;
   runMs?: number;
+  /** The answer step will run (summaries on, rows with event ids). */
+  willSummarize?: boolean;
+  summary?: AskSummary;
+  /** Why there is no summary (no event ids to cite, or the step failed). */
+  summaryNote?: string;
+  summaryMs?: number;
 }
 
 const CHECK: Record<AskResponse["check"], string> = {
@@ -37,9 +44,9 @@ function seconds(ms: number | undefined): string {
 }
 
 /** The steps Ask performs, in order (ADR-0042 row 16): understanding the question and
- * finding the query are one server call, then the query runs. Writing the answer joins in
- * slice 1c; a step is never shown that does not happen. */
-function Progress({ phase }: { phase: Phase }) {
+ * finding the query are one server call, then the query runs, then (summaries on, rows
+ * with event ids) the answer is written. A step is never shown that does not happen. */
+function Progress({ phase, writing }: { phase: Phase; writing: boolean }) {
   const steps: { label: string; state: "done" | "now" | "todo" }[] = [
     {
       label: "Understanding and finding the right query",
@@ -50,6 +57,8 @@ function Progress({ phase }: { phase: Phase }) {
       state: phase === "running" ? "now" : phase === "finding" ? "todo" : "done",
     },
   ];
+  if (writing || phase === "writing")
+    steps.push({ label: "Writing the answer", state: phase === "writing" ? "now" : "todo" });
   return (
     <ol aria-label="Progress" aria-live="polite" className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
       {steps.map((s) => (
@@ -86,14 +95,14 @@ interface AskTurnBlockProps {
 export function AskTurnBlock({ turn, onRun, onRetry, onCheckData, onEdit }: AskTurnBlockProps) {
   const a = turn.answer;
   const route = a?.route ?? null;
-  const working = turn.phase === "finding" || turn.phase === "running";
+  const working = turn.phase === "finding" || turn.phase === "running" || turn.phase === "writing";
   return (
     <section
       aria-label={`Question: ${turn.question}`}
       className="flex flex-col gap-2.5 border-t border-border pt-3 first:border-t-0 first:pt-0"
     >
       <h3 className="text-base font-semibold [overflow-wrap:anywhere]">{turn.question}</h3>
-      {working ? <Progress phase={turn.phase} /> : null}
+      {working ? <Progress phase={turn.phase} writing={Boolean(turn.willSummarize)} /> : null}
       {turn.phase === "guidance" ? (
         <div role="status" className="flex flex-col gap-1 text-sm">
           <p>
@@ -146,21 +155,6 @@ export function AskTurnBlock({ turn, onRun, onRetry, onCheckData, onEdit }: AskT
           ) : null}
         </div>
       ) : null}
-      {a?.explanation ? (
-        <div className="flex flex-col gap-1 text-sm">
-          <p className="text-text [overflow-wrap:anywhere]">{a.explanation}</p>
-          {a.assumptions.length ? (
-            <ul className="ml-5 list-disc text-text-secondary">
-              {a.assumptions.map((x, i) => (
-                <li key={i}>{x}</li>
-              ))}
-            </ul>
-          ) : null}
-          <p className="text-text-muted">
-            About the query, written by {a.provider.name}. The rows below come from your logs.
-          </p>
-        </div>
-      ) : null}
       {turn.phase === "ready" && a ? (
         <div className="flex flex-wrap items-center gap-3 text-sm">
           <button
@@ -177,6 +171,7 @@ export function AskTurnBlock({ turn, onRun, onRetry, onCheckData, onEdit }: AskT
           </span>
         </div>
       ) : null}
+      {turn.result ? <Answer turn={turn} /> : null}
       {turn.result ? <AskResults result={turn.result} /> : null}
       {a && turn.phase !== "guidance" ? (
         <details className="rounded border border-border bg-surface text-sm">
@@ -198,6 +193,22 @@ export function AskTurnBlock({ turn, onRun, onRetry, onCheckData, onEdit }: AskT
               )}
               {route?.reason ? <span className="block text-text-muted">{route.reason}</span> : null}
             </dd>
+            {a.explanation ? (
+              <>
+                <dt className="text-text-secondary">About the query</dt>
+                <dd className="[overflow-wrap:anywhere]">
+                  {a.explanation}
+                  {a.assumptions.map((x, i) => (
+                    <span key={i} className="block text-text-secondary">
+                      Assumed: {x}
+                    </span>
+                  ))}
+                  <span className="block text-text-muted">
+                    Written by {a.provider.name}, about the query, not the rows.
+                  </span>
+                </dd>
+              </>
+            ) : null}
             {route?.filters.length ? (
               <>
                 <dt className="text-text-secondary">Filters</dt>
@@ -258,6 +269,9 @@ export function AskTurnBlock({ turn, onRun, onRetry, onCheckData, onEdit }: AskT
             <dd className="tabular-nums">
               Finding the query {seconds(turn.askMs)}
               {turn.runMs !== undefined ? `, running ${seconds(turn.runMs)}` : ""}
+              {turn.summaryMs !== undefined
+                ? `, writing the answer ${seconds(turn.summaryMs)}`
+                : ""}
             </dd>
             <dt className="text-text-secondary">Model</dt>
             <dd>
@@ -268,5 +282,50 @@ export function AskTurnBlock({ turn, onRun, onRetry, onCheckData, onEdit }: AskT
         </details>
       ) : null}
     </section>
+  );
+}
+
+/** The tail of an event id: UUIDv7 ids share their first characters across a batch. */
+function shortId(id: string): string {
+  return id.replace(/-/g, "").slice(-8);
+}
+
+/** The answer (ADR-0042 row 8, slice 1c): a headline written by code from the rows, then
+ * only statements that cite rows that were sent (C1). When the model's statements could
+ * not cite, there is no summary and the note says why; the rows stand alone. */
+function Answer({ turn }: { turn: Turn }) {
+  const head = turn.summary?.headline ?? turn.result?.headline;
+  const claims = turn.summary?.claims ?? [];
+  const note = turn.summary?.note ?? turn.summaryNote;
+  return (
+    <div className="flex flex-col gap-1.5 text-sm">
+      {head ? <p className="font-semibold [overflow-wrap:anywhere]">{head}</p> : null}
+      {claims.length ? (
+        <ul aria-label="Summary" className="ml-5 flex list-disc flex-col gap-1">
+          {claims.map((c, i) => (
+            <li key={i} className="[overflow-wrap:anywhere]">
+              <span>{c.text}</span>{" "}
+              <span className="inline-flex flex-wrap gap-1 align-middle">
+                {c.event_ids.map((id) => (
+                  <span
+                    key={id}
+                    title={id}
+                    className="rounded-badge bg-sev-info-bg px-1.5 py-px font-mono text-xs text-text-secondary"
+                  >
+                    {shortId(id)}
+                  </span>
+                ))}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {claims.length && turn.answer ? (
+        <p className="text-text-muted">
+          Summary by {turn.answer.provider.name}; every statement cites rows below.
+        </p>
+      ) : null}
+      {note ? <p className="text-text-muted">{note}</p> : null}
+    </div>
   );
 }

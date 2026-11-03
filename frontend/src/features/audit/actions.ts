@@ -11,6 +11,7 @@ const ACTIONS: Record<string, string> = {
   "alert_target.delete": "Removed an alert target",
   "alert_target.test": "Sent a test alert",
   "alert_target.update": "Changed an alert target",
+  "ask.answer": "Got a summary of Ask rows",
   "ask.request": "Asked a question in Ask",
   "auth.csrf_failed": "Sent a request without a valid form token",
   "auth.login": "Signed in",

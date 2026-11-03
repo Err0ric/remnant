@@ -170,6 +170,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
     },
   ];
   let askBusySeen = false;
+  const askQuestions: Record<string, string> = {};
   let places: Record<string, unknown> | null = null;
   const tokens: Record<string, unknown>[] = [
     {
@@ -2743,8 +2744,56 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         },
       });
     }
+    if (/\/api\/ask\/a\d+\/answer$/.test(url) && method === "POST") {
+      // Slice 1c: "summarize" questions get statements; "uncited" ones get none.
+      const q = askQuestions[url.split("/api/ask/")[1]!.split("/")[0]!] ?? "";
+      return json(
+        q.includes("uncited")
+          ? {
+              headline: "2 rows. First row: user dana.",
+              claims: [],
+              removed: 2,
+              note: "No summary: the model's statements did not cite these rows.",
+              call_id: "s1",
+            }
+          : {
+              headline: "2 rows. First row: user dana.",
+              claims: [
+                {
+                  text: "dana failed twice from <b>203.0.113.9</b>.",
+                  event_ids: ["0190a1b2-0000-7000-8000-00000000000a"],
+                },
+              ],
+              removed: 1,
+              note: "1 statement removed: it cited no events from these rows.",
+              call_id: "s1",
+            },
+      );
+    }
+    if (/\/api\/ask\/a\d+\/run$/.test(url) && method === "POST") {
+      const q = askQuestions[url.split("/api/ask/")[1]!.split("/")[0]!] ?? "";
+      if (q.includes("summarize"))
+        return json({
+          columns: ["event_id", "user"],
+          rows: [
+            ["0190a1b2-0000-7000-8000-00000000000a", "dana"],
+            ["0190a1b2-0000-7000-8000-00000000000b", "dana"],
+          ],
+          row_count: 2,
+          truncated: false,
+          elapsed_ms: 12,
+          executed_sql: "SELECT ...",
+          sources: ["linux_sshd"],
+          headline: "2 rows. First row: user dana.",
+          summarize: true,
+          summary_note: null,
+        });
+    }
     if (/\/api\/ask\/a\d+\/run$/.test(url) && method === "POST")
       return json({
+        headline: "2 addresses with failures; most from 203.0.113.9 (12 failures)",
+        summarize: false,
+        summary_note: "No summary: these rows have no event ids to cite.",
         columns: ["src_endpoint_ip", "failures"],
         rows: [
           ["203.0.113.9", 12],
@@ -2849,7 +2898,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
               time: null,
               reason: "No library query fits this question",
             },
-        ask_id: `a${n}`,
+        ask_id: ((askQuestions[`a${n}`] = body.question), `a${n}`),
         // "click to run" in a question stands for an install with ask.auto_run off.
         auto_run: !body.question.includes("click to run"),
         sql: `SELECT src_endpoint_ip, count(*) AS failures FROM events GROUP BY 1 -- turn ${n}`,

@@ -23,18 +23,20 @@ from app.api.query import QueryRequest, QueryResponse, _geo, _intel, _run_audite
 from app.auth.service import AuthService
 from app.auth.users import User
 from app.core.config import AppConfig
-from app.core.errors import ProviderConfigError, RateLimitedError
+from app.core.errors import AppError, ProviderConfigError, RateLimitedError
 from app.engine.duckdb import QueryScope
 from app.engine.views import permitted_sources, scope_sources
 from app.llm import gate
 from app.llm.agent import AskAgent, AskExample, AskTurn
+from app.llm.ask_summary import summarize
 from app.llm.provider import Locality
 from app.llm.queue import QUEUES
 from app.llm.registry import ProviderRecord, ProviderStore
 from app.meta.db import MetaDB
 from app.search.ask_flow import Routed, route_question
 from app.search.ask_route import rank
-from app.search.ask_runs import AskRuns
+from app.search.ask_runs import AskRuns, Ran
+from app.search.ask_summary import check_claims, headline, removed_note, sample
 from app.search.library import Library, editor_sql
 from app.search.saved import SavedSearchStore
 
@@ -240,6 +242,7 @@ async def ask(body: AskRequest, request: Request, user: AskUser) -> AskResponse:
         kept = runs.keep(
             user.user_id, routed.plan.sql, start, end, body.sources, call_ids, now,
             body.question, origin=c.pack.origin(c.query), params=routed.plan.params,
+            provider_id=chosen.provider_id, template=c.query.answer,
         )  # fmt: skip
         detail |= {"call_ids": call_ids, "ask_id": kept.ask_id}
         await run_in_threadpool(
@@ -254,7 +257,7 @@ async def ask(body: AskRequest, request: Request, user: AskUser) -> AskResponse:
     call_ids += outcome.call_ids
     kept = runs.keep(
         user.user_id, outcome.answer.sql, start, end, body.sources,
-        call_ids, now, body.question,
+        call_ids, now, body.question, provider_id=chosen.provider_id,
     )  # fmt: skip
     detail |= {"call_ids": call_ids, "check": outcome.check, "ask_id": kept.ask_id}
     await run_in_threadpool(
@@ -359,12 +362,24 @@ ASK_ROWS = 1000
 ASK_MAX_DAYS = 90
 
 
+class AskRunResponse(QueryResponse):
+    # Written by code from the rows (ADR-0042 row 8), never model text.
+    headline: str
+    # Call POST /api/ask/{ask_id}/answer next: summaries are on and the rows carry event
+    # ids a statement can cite.
+    summarize: bool
+    # Why there is no summary, when there is none and the reason is not "turned off".
+    summary_note: str | None = None
+
+
 @router.post("/ask/{ask_id}/run")
-async def run_answer(ask_id: str, request: Request, user: AskUser) -> QueryResponse:
+async def run_answer(ask_id: str, request: Request, user: AskUser) -> AskRunResponse:
     """Run the SQL an answer produced, as the person who asked, on their current view.
     Audited as query.run with purpose `ask`, the answer's id, its model call ids, and its
-    origin (`generated`, or the library query `<pack>/<id>@<version>`)."""
+    origin (`generated`, or the library query `<pack>/<id>@<version>`). Returns a headline
+    written by code from the rows."""
     runs: AskRuns = request.app.state.ask_runs
+    config: AppConfig = request.app.state.config
     run = runs.get(ask_id, user.user_id, datetime.now(UTC))
     end = run.end or datetime.now(UTC)
     start = run.start
@@ -384,7 +399,13 @@ async def run_answer(ask_id: str, request: Request, user: AskUser) -> QueryRespo
         "ask_call_ids": run.call_ids,
     }
     result = await _run_audited(body, request, user, "query.run", extra, max_rows=ASK_ROWS)
-    return QueryResponse(
+    head = headline(result.columns, result.rows, result.truncated, run.template)
+    rows = sample(result.columns, result.rows, result.truncated)
+    runs.ran(run.ask_id, Ran(rows, list(result.sources), head))
+    note = None
+    if config.ask.summarize and result.rows and rows is None:
+        note = "No summary: these rows have no event ids to cite."
+    return AskRunResponse(
         columns=result.columns,
         rows=result.rows,
         row_count=len(result.rows),
@@ -394,4 +415,80 @@ async def run_answer(ask_id: str, request: Request, user: AskUser) -> QueryRespo
         sources=result.sources,
         geo=await run_in_threadpool(_geo, request, result.rows),
         intel=await run_in_threadpool(_intel, request, result.rows),
+        headline=head,
+        summarize=config.ask.summarize and rows is not None and bool(run.provider_id),
+        summary_note=note,
+    )
+
+
+class ClaimOut(BaseModel):
+    text: str
+    event_ids: list[str]
+
+
+class AnswerOut(BaseModel):
+    headline: str
+    # Only statements that cite rows that were sent (C1); empty when none could.
+    claims: list[ClaimOut]
+    removed: int  # statements dropped for citing no sent row
+    note: str | None  # why statements were removed, or why there is no summary
+    call_id: str | None
+
+
+@router.post("/ask/{ask_id}/answer")
+async def answer(ask_id: str, request: Request, user: AskUser) -> AnswerOut:
+    """The answer step (ADR-0042 row 8, slice 1c): statements about the rows the run kept,
+    each citing their event ids; never rows from the client. Statements that cite no sent
+    row are removed and counted. Any failure of the model leaves the rows and the headline
+    without a summary. Audited as ask.answer."""
+    runs: AskRuns = request.app.state.ask_runs
+    config: AppConfig = request.app.state.config
+    auth: AuthService = request.app.state.auth
+    run, ran = runs.result(ask_id, user.user_id, datetime.now(UTC))
+    if not config.ask.summarize:
+        raise ProviderConfigError("Summaries are turned off on this server (ask.summarize)")
+    if ran.sample is None or not run.provider_id:
+        return AnswerOut(
+            headline=ran.headline, claims=[], removed=0, call_id=None,
+            note="No summary: these rows have no event ids to cite.",
+        )  # fmt: skip
+    detail: dict[str, object] = {"ask_id": run.ask_id, "provider_id": run.provider_id}
+    try:
+        async with watch_disconnect(request):
+            with _one_at_a_time(user.user_id):
+                got = await run_in_threadpool(
+                    summarize,
+                    request.app.state.gate,
+                    user.user_id,
+                    run.provider_id,
+                    run.question,
+                    ran.sample,
+                    ran.sources,
+                )
+    except AppError as exc:
+        # Accuracy over speed (owner, 2026-11-02): no summary rather than a doubtful one.
+        detail["error"] = type(exc).__name__
+        await run_in_threadpool(
+            auth.audit.write, "ask.answer", "failure", user.user_id, client_ip(request), detail
+        )
+        return AnswerOut(
+            headline=ran.headline, claims=[], removed=0, call_id=None,
+            note=f"No summary: {exc}",
+        )  # fmt: skip
+    checked = check_claims(got.claims, ran.sample.event_ids)
+    detail |= {
+        "call_id": got.call_id,
+        "kept": len(checked.claims),
+        "removed": checked.removed,
+        "citation_check": got.citation_check,
+    }
+    await run_in_threadpool(
+        auth.audit.write, "ask.answer", "success", user.user_id, client_ip(request), detail
+    )
+    return AnswerOut(
+        headline=ran.headline,
+        claims=[ClaimOut(text=t, event_ids=ids) for t, ids in checked.claims],
+        removed=checked.removed,
+        note=removed_note(checked.removed, len(checked.claims)),
+        call_id=got.call_id,
     )

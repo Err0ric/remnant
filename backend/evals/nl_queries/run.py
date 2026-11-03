@@ -31,8 +31,11 @@ from app.core.errors import AppError
 from app.core.logging import configure_logging
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.llm.agent import PROMPT, AskAgent, AskTurn
+from app.llm.ask_summary import summarize
+from app.llm.gate import LLMGate
 from app.main import create_app
 from app.search.ask_flow import route_question
+from app.search.ask_summary import check_claims, sample
 from app.search.params import compile_sql, placeholders
 from evals.nl_queries.compare import Compare, matches
 from evals.nl_queries.fixture import SOURCES, write_lake
@@ -73,6 +76,13 @@ class CaseResult:
     route_kind: str | None = None
     library: str | None = None
     misroute: bool = False
+    # The answer step (ADR-0042 slice 1c), when measured: question to the full answer, and
+    # what the citation check kept and removed. `summary` is "shown", "none" (nothing could
+    # cite), "no_event_ids" (the rows carry none, so no call), or "error".
+    answer_seconds: float | None = None
+    summary: str | None = None
+    claims_kept: int = 0
+    claims_removed: int = 0
 
 
 def load_suite(path: Path = SUITE) -> tuple[list[Case], QueryScope]:
@@ -107,8 +117,40 @@ def build_lab(data_dir: Path, trusted_hosts: list[str] | None = None) -> FastAPI
     return app
 
 
+def answer_step(
+    gate: LLMGate,
+    provider_id: str,
+    question: str,
+    columns: list[str],
+    rows: list[list[Any]],
+    out: CaseResult,
+    started: float,
+) -> None:
+    """Ask's answer step on the rows, as the product runs it (slice 1c): no event ids means
+    no call; otherwise one call, then the citation check."""
+    rows_sent = sample(columns, rows, False)
+    if rows_sent is None:
+        out.summary = "no_event_ids"
+        return
+    try:
+        got = summarize(gate, ACTOR, provider_id, question, rows_sent, list(SOURCES))
+    except AppError as exc:
+        out.summary = "error"
+        out.error = out.error or f"answer: {type(exc).__name__}: {str(exc)[:160]}"
+        return
+    checked = check_claims(got.claims, rows_sent.event_ids)
+    out.answer_seconds = round(time.perf_counter() - started, 2)
+    out.claims_kept, out.claims_removed = len(checked.claims), checked.removed
+    out.summary = "shown" if checked.claims else "none"
+
+
 def run_case(
-    agent: AskAgent, engine: QueryEngine, provider_id: str, scope: QueryScope, case: Case
+    agent: AskAgent,
+    engine: QueryEngine,
+    provider_id: str,
+    scope: QueryScope,
+    case: Case,
+    gate: LLMGate | None = None,
 ) -> CaseResult:
     out = CaseResult(case.id, case.question)
     reference = engine.run(case.sql, scope)
@@ -133,6 +175,8 @@ def run_case(
     out.exact = matches(
         reference.rows, len(reference.columns), got.rows, len(got.columns), case.compare
     )
+    if gate is not None:
+        answer_step(gate, provider_id, case.question, got.columns, got.rows, out, started)
     return out
 
 
@@ -141,12 +185,15 @@ def load_knowhow(path: Path = KNOWHOW) -> list[Case]:
     return [Case(id=q["id"], question=q["question"], sql="") for q in doc["questions"]]
 
 
-def run_routed(app: FastAPI, provider_id: str, scope: QueryScope, case: Case) -> CaseResult:
+def run_routed(
+    app: FastAPI, provider_id: str, scope: QueryScope, case: Case, answer: bool = False
+) -> CaseResult:
     """The question as Ask handles it (ADR-0042 slice 1b): routed first, the library query
     run when one fits, the agent otherwise. Follow-ups go to the agent, as in the product.
     The eval keeps its own fixed window: a time phrase is recorded, not applied."""
+    gate = app.state.gate if answer else None
     if case.history:
-        return run_case(app.state.ask, app.state.engine, provider_id, scope, case)
+        return run_case(app.state.ask, app.state.engine, provider_id, scope, case, gate)
     out = CaseResult(case.id, case.question, expected_kind="knowhow" if not case.sql else "data")
     engine: QueryEngine = app.state.engine
     started = time.perf_counter()
@@ -175,6 +222,11 @@ def run_routed(app: FastAPI, provider_id: str, scope: QueryScope, case: Case) ->
         agent.seconds = round(time.perf_counter() - started, 2)
         if agent.first_rows_seconds is not None:
             agent.first_rows_seconds = round(time.perf_counter() - started, 2)
+            if gate is not None and agent.sql:
+                rerun = engine.run(agent.sql, scope)  # the rows Ask shows, for the answer step
+                answer_step(
+                    gate, provider_id, case.question, rerun.columns, rerun.rows, agent, started
+                )
         return agent
     out.library = routed.candidate.ref
     out.sql = routed.plan.sql
@@ -195,7 +247,13 @@ def run_routed(app: FastAPI, provider_id: str, scope: QueryScope, case: Case) ->
     out.exact = matches(
         reference.rows, len(reference.columns), got.rows, len(got.columns), case.compare
     )
+    if gate is not None:
+        answer_step(gate, provider_id, case.question, got.columns, got.rows, out, started)
     return out
+
+
+def _p(values: list[float], q: float) -> float | None:
+    return round(sorted(values)[int(q * (len(values) - 1))], 2) if values else None
 
 
 def summarise(results: list[CaseResult], label: str) -> dict[str, Any]:
@@ -205,6 +263,7 @@ def summarise(results: list[CaseResult], label: str) -> dict[str, Any]:
     routed = [r for r in results if r.route_kind is not None]
     data = [r for r in results if r.expected_kind == "data"]
     knowhow = [r for r in results if r.expected_kind == "knowhow"]
+    answer = [r.answer_seconds for r in results if r.answer_seconds is not None]
     return {
         "label": label,
         "questions": n,
@@ -226,6 +285,16 @@ def summarise(results: list[CaseResult], label: str) -> dict[str, Any]:
         "p90_first_rows_seconds": round(sorted(first)[int(0.9 * (len(first) - 1))], 2)
         if first
         else None,
+        # The answer step (slice 1c), when measured: question to the full answer.
+        "median_answer_seconds": round(statistics.median(answer), 2) if answer else None,
+        "p90_answer_seconds": _p(answer, 0.9),
+        "summaries_shown": sum(1 for r in results if r.summary == "shown"),
+        "summaries_none": sum(1 for r in results if r.summary == "none"),
+        "summaries_no_event_ids": sum(1 for r in results if r.summary == "no_event_ids"),
+        "summaries_error": sum(1 for r in results if r.summary == "error"),
+        "claims_kept": sum(r.claims_kept for r in results),
+        "claims_removed": sum(r.claims_removed for r in results),
+        "errors": sum(1 for r in results if r.error),
     }
 
 

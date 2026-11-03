@@ -80,12 +80,33 @@ By default the runner asks each question the way Ask does now: routed first (one
 
 The fixture's sources are mostly synthetic templates that no library pack requires, so `library_rate` on this suite is low by design; it measures that routing does not hurt the agent path. `--no-routing` runs the agent alone, as before slice 1b, for comparison.
 
+## Two models side by side (one command)
+
+```
+cd backend
+uv run python -m evals.nl_queries.side_by_side --base-url http://<ollama-host>:11434
+```
+
+Defaults: `--models qwen3.5:4b,qwen3.5:9b`, `--thinking none` (Thinking Off, as Ask is set up), and Ask's answer step measured (slice 1c). It checks first that the server lists every model and stops with the `ollama pull` lines when one is missing. Each model runs the whole suite in turn (data questions, follow-ups, and the know-how set), then one Markdown table prints, a column per model:
+
+| Row | Meaning |
+|---|---|
+| Rows run, Right rows (accuracy) | `executable_rate`, `exact_rate` on the data questions |
+| Data questions sent to guidance, Guidance questions sent to data | Misroutes both ways |
+| Answered from the library | `library_rate` |
+| First rows, median / p90 | What a person waits with `ask.summarize: false` |
+| Full answer, median / p90 | With summaries on: first rows plus the answer step |
+| Summaries shown; No summary: nothing cited; No summary: rows had no event ids | What the citation rule did with each result |
+| Statements kept / removed | Statements that cited sent rows, and those removed |
+
+Full JSON reports go to `--out-dir` (default `./ask-eval`), one per model. `--no-answer` skips the answer step, `--ids` runs a few questions for a quick check, and `--models` takes any list. A full run of two models is about 270 questions; on a CPU-only box expect hours, not minutes.
+
 ### Benchmark plan (owner, 2026-11-02)
 
 | Run | Box | Models | Report |
 |---|---|---|---|
 | CPU only, the likely first work setup | 4 vCPU, 8 GB, no GPU, Ollama on the same box as the app | one 3 to 4B and one 7 to 9B model, Q4 quantized | median and p90 time to first rows, exact rate, misroutes, `--no-routing` for comparison |
-| CPU only, `ask.summarize` on and off | the same box | the same models | time to first rows and to the full answer, once slice 1c lands |
+| CPU only, `ask.summarize` on and off | the same box | the same models | time to first rows and to the full answer: one `side_by_side` run gives both |
 | Modest GPU | homelab RTX 3080 10 GB | the same models | the same fields |
 
 ## Results

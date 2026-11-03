@@ -37,6 +37,7 @@ queries:
   - 'SSH logins by user'
   - 'Which accounts signed in to Linux hosts?'
 - id: ssh_failures_by_source
+  answer: "{n} addresses with failed SSH logins; most from {first.address} ({first.failures} failures)"
   name: SSH failures by source address
   group: Linux / SSH
   tags:
@@ -96,6 +97,7 @@ queries:
   - 'Invalid user SSH logins'
   - 'Who tried SSH with unknown accounts?'
 - id: sudo_denied
+  answer: "{n} user and host pairs refused by sudo; most: {first.user} on {first.host} ({first.refusals} refusals)"
   name: sudo refused
   group: Linux / Privilege
   tags:

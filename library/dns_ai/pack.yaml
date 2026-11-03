@@ -119,6 +119,7 @@ queries:
   - 'What machines are using AI tools?'
   - 'Which computer looked up an AI service?'
 - id: dns_top_domains
+  answer: "{n} names queried; most: {first.name} ({first.queries} queries)"
   name: Most queried names
   group: DNS / Names
   tags:

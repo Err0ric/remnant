@@ -194,3 +194,88 @@ def test_routed_runs_score_rows_and_count_misroutes_both_ways(lab: Any) -> None:
     results = [run_routed(lab, wrong, SCOPE, c) for c in knowhow[:3]]
     assert summarise(results, "x")["knowhow_sent_to_data"] == 3
     assert all(r.misroute for r in results)
+
+
+# --- side by side, with the answer step (owner, 2026-11-02; ADR-0042 slice 1c) -----------
+
+ANSWER_PROMPT = "You summarize the result of a query"
+
+
+def test_side_by_side_prints_one_column_per_model_with_the_answer_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from evals.nl_queries import side_by_side as sbs
+    from evals.nl_queries.run import load_knowhow
+
+    know = {c.question for c in load_knowhow()}
+
+    class Fake:
+        def __init__(self, record: ProviderRecord, endpoint: Endpoint) -> None:
+            self.provider_id, self.locality = record.provider_id, endpoint.locality
+
+        def chat(self, messages: list[ChatMessage], **_: object) -> ProviderResponse:
+            first = messages[0].content
+            if ROUTE_PROMPT in first:
+                q = json.loads(messages[-1].content)["question"]
+                body: dict[str, Any] = {
+                    "kind": "knowhow" if q in know else "data",
+                    "query": None,
+                    "params": {},
+                }
+            elif ANSWER_PROMPT in first:
+                rows = json.loads(messages[-1].content)["data"]["rows"]
+                body = {
+                    "claims": [
+                        {"text": "cited", "event_ids": [rows[0][0]]},
+                        {"text": "uncited", "event_ids": []},
+                    ]
+                }
+            else:
+                question = next(
+                    m.content.removeprefix("Question: ")
+                    for m in reversed(messages)
+                    if m.role == "user" and m.content.startswith("Question: ")
+                )
+                body = {"sql": BY_QUESTION[question], "explanation": "", "assumptions": []}
+            return ProviderResponse(text=json.dumps(body), model="fake")
+
+    real_build = sbs.build_lab
+
+    def lab_with_fake(data_dir: Path, trusted: list[str] | None = None) -> Any:
+        app = real_build(data_dir, trusted)
+        app.state.gate._factory = lambda r, _s, e: Fake(r, e)
+        return app
+
+    monkeypatch.setattr(sbs, "build_lab", lab_with_fake)
+    monkeypatch.setattr(sbs, "missing_models", lambda base, models, key: [])
+    # One question with event ids in its rows, one aggregate, one know-how question.
+    with_ids = next(c for c in CASES if "event_id" in c.sql.lower() and not c.history)
+    aggregate = next(c for c in CASES if "count(" in c.sql.lower() and not c.history)
+    guidance = load_knowhow()[0]
+    ids = ",".join([with_ids.id, aggregate.id, guidance.id])
+    code = sbs.main(
+        ["--base-url", "http://127.0.0.1:11434", "--models", "small:4b,big:9b",
+         "--ids", ids, "--out-dir", str(tmp_path)]
+    )  # fmt: skip
+    assert code == 0
+    out = capsys.readouterr().out
+    assert out.splitlines()[0] == "| | small:4b | big:9b |"
+    assert "| Right rows (accuracy) | 100% | 100% |" in out
+    assert "| Guidance questions sent to data | 0 of 1 | 0 of 1 |" in out
+    assert "| Summaries shown | 1 | 1 |" in out
+    assert "| No summary: rows had no event ids | 1 | 1 |" in out
+    assert "| Statements kept / removed | 1 / 1 | 1 / 1 |" in out
+    report = json.loads((tmp_path / "small-4b.json").read_text())
+    assert report["summary"]["median_answer_seconds"] is not None
+
+
+def test_side_by_side_stops_when_a_model_is_not_pulled(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from evals.nl_queries import side_by_side as sbs
+
+    assert sbs.api_url("http://h:11434/") == "http://h:11434/v1"
+    assert sbs.api_url("http://h:11434/v1") == "http://h:11434/v1"
+    monkeypatch.setattr(sbs, "missing_models", lambda base, models, key: ["qwen3.5:4b"])
+    assert sbs.main(["--base-url", "http://h:11434"]) == 2
+    assert "ollama pull qwen3.5:4b" in capsys.readouterr().err

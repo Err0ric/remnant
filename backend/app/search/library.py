@@ -25,6 +25,7 @@ from app.auth.users import User
 from app.core import safeyaml
 from app.core.errors import ConfigError, ConflictError
 from app.engine.duckdb import QueryEngine, QueryScope
+from app.search.ask_summary import TEMPLATE
 from app.search.params import RESERVED, ParamDef, placeholders
 from app.search.saved import (
     SavedSearch,
@@ -75,6 +76,10 @@ class LibraryQuery(BaseModel):
         Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=160)]
     ] = Field(default_factory=list, max_length=5)
 
+    # The answer headline, written by code from the result (ADR-0042 row 6): `{n}` is the
+    # row count and `{first.<column>}` a value of the first row. Never sent to a model.
+    answer: Annotated[str, StringConstraints(strip_whitespace=True, max_length=160)] | None = None
+
     def spec(self, origin: str) -> SavedSearchIn:
         return SavedSearchIn(
             id=self.id, name=self.name, description=self.description,
@@ -110,6 +115,10 @@ def check(pack: Pack) -> None:
         missing = placeholders(q.sql) - RESERVED - defaults
         if missing:
             raise ConfigError(f"{pack.id}/{q.id}: give a default for {', '.join(sorted(missing))}")
+        if q.answer is not None and re.sub(TEMPLATE, "", q.answer).count("{"):
+            raise ConfigError(
+                f"{pack.id}/{q.id}: answer may name only {{n}} and {{first.<column>}}"
+            )
         if q.flag is not None and not FLAG.match(q.flag):
             raise ConfigError(
                 f"{pack.id}/{q.id}: flag must be 'above N', 'below N', or 'change N%'"

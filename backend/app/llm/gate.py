@@ -192,6 +192,12 @@ class GateResult:
 CITING_PURPOSES = frozenset({"explain", "report"})
 
 
+def _ask_answer(req: "GateRequest") -> bool:
+    """Ask's answer step (ADR-0042 row 8): purpose `ask`, its own prompt, and it cites the
+    rows it was sent like Explain. The SQL-writing and routing calls carry no ids."""
+    return req.purpose == "ask" and req.prompt.startswith("ask_answer.")
+
+
 def citation_check(cited: list[str], citable: frozenset[str]) -> Literal["pass", "fail"]:
     """Pass only when the answer cites at least one event and every cited id was sent."""
     return "pass" if cited and set(cited) <= citable else "fail"
@@ -488,8 +494,12 @@ class LLMGate:
             for m in req.messages:
                 _check_message(m)
             tools = _tools_for(req)
-            if (req.purpose in CITING_PURPOSES) != (req.citable_event_ids is not None):
-                raise ValueError("Explain and report calls, and only they, carry citable ids")
+            if (req.purpose in CITING_PURPOSES or _ask_answer(req)) != (
+                req.citable_event_ids is not None
+            ):
+                raise ValueError(
+                    "Explain, report, and Ask answer calls, and only they, carry citable ids"
+                )
             prompt = load_prompt(req.prompt, self._prompt_dir)
         except (ValueError, OSError) as exc:
             raise _RefusedError("request_invalid", exc) from exc

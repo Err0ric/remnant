@@ -76,6 +76,7 @@ queries:
   - 'Failed logins on the firewall'
   - 'Who signed in to the firewall?'
 - id: pa_denied_by_source
+  answer: "{n} sources with denied traffic; most: {first.source} ({first.denied} denied)"
   name: Denied traffic by source
   group: Palo Alto / Traffic
   tags:

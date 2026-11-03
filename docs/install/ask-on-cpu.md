@@ -37,6 +37,16 @@ Then in the app, **Settings > AI providers > Add provider**: OpenAI-compatible, 
 
 ## 2. Pick the model and split the memory
 
+**Prefer adding RAM over lowering the app budget.** A lower budget makes every page section and search smaller for everyone, all the time; more RAM costs nothing at query time. With 12 or 16 GB, keep the app at the split below and give the model its own room:
+
+| Machine | App (`APP__SERVER__MEMORY_LIMIT_MB`, unit limits) | App query memory | Model and Ollama limit | Left for the system |
+|---|---|---|---|---|
+| 12 GB | `4096`; `MemoryHigh=4500M`, `MemoryMax=5G` | 819 MB per page section, up to 1639 MB per search | `qwen3.5:4b`, `MemoryMax=4500M` | about 2.5 GB |
+| 16 GB | `4096`; `MemoryHigh=4500M`, `MemoryMax=5G` | 819 MB per page section, up to 1639 MB per search | `qwen3.5:4b` with room to spare, or `qwen3.5:9b` (6.6 GB) with `MemoryMax=8G` | about 3 GB with 9B |
+
+Set the budget explicitly even with more RAM: the automatic budget is 75% of the machine (9216 MB on 12 GB), which leaves the model too little. If adding RAM is not possible, use one of the 8 GB splits below.
+
+
 The app sizes query memory from its memory budget (D58, D80). On startup it prints the budget and the split, for example:
 
 ```

@@ -608,7 +608,10 @@ def test_citing_purposes_need_the_sent_ids_and_others_may_not_carry_them(lab: La
         lab.gate.call(request(lab, pid, [], purpose="explain", response_model=Cited))
     with pytest.raises(ValueError, match="citable"):
         lab.gate.call(request(lab, pid, [], citable_event_ids=SENT))
-    assert [r["error"] for r in calls(lab)] == ["request_invalid"] * 2
+    # Ask's answer step cites like Explain (ADR-0042 row 8): it must carry the sent ids.
+    with pytest.raises(ValueError, match="citable"):
+        lab.gate.call(request(lab, pid, [], prompt="ask_answer.v1", response_model=Cited))
+    assert [r["error"] for r in calls(lab)] == ["request_invalid"] * 3
     assert all(f.seen == [] for f in lab.fakes)
 
 

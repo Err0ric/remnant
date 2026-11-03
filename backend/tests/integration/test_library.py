@@ -13,6 +13,7 @@ from app.engine.duckdb import QueryScope
 from app.ingest.records import DecodedLine
 from app.ingest.writer import LakeWriter
 from app.main import create_app
+from app.search.ask_summary import TEMPLATE
 from app.search.library import LIBRARY_DIR, Pack, load, load_dir
 from app.search.params import bind, compile_sql
 from app.templates.loader import parse_template
@@ -60,6 +61,9 @@ def test_library_query_runs_on_fixtures(engine: Any, pack: Pack, query_id: str) 
     q = next(x for x in pack.queries if x.id == query_id)
     values = bind(q.params, {}, START, END, q.sql)
     res = engine.run(compile_sql(q.sql), QueryScope(None, START, END), values)
+    if q.answer:  # ADR-0042 row 6: the headline names only columns the query returns
+        named = {k.removeprefix("first.") for k in TEMPLATE.findall(q.answer)} - {"n"}
+        assert named <= set(res.columns), f"answer names {sorted(named - set(res.columns))}"
     e = q.expect
     if e is None:
         return

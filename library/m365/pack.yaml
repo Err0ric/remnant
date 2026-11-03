@@ -6,6 +6,7 @@ description: Sign-ins, mail rules, app consent, admin changes, Copilot, and data
   365.
 queries:
 - id: m365_failed_signins_by_user
+  answer: "{n} accounts with failed sign-ins; most: {first.user} ({first.failures} failures)"
   name: Failed sign-ins by user
   group: Microsoft 365 / Identity
   tags:
@@ -43,6 +44,7 @@ queries:
   - 'Failed Entra logins by user'
   - 'Who failed to sign in to Office 365?'
 - id: m365_password_spray
+  answer: "{n} addresses failed for several users; most: {first.address} ({first.users} users)"
   name: 'Password spray: one address, many users'
   group: Microsoft 365 / Identity
   tags:
@@ -341,6 +343,7 @@ queries:
   - 'Who was made an admin?'
   - 'Conditional Access policy changes'
 - id: m365_copilot_activity
+  answer: "{n} people used Copilot; most: {first.user} ({first.interactions} interactions)"
   name: Copilot use by person
   group: Microsoft 365 / Copilot
   tags:
@@ -400,6 +403,7 @@ queries:
   - 'External sharing links created'
   - 'Sharing invitations to outsiders'
 - id: m365_dlp_matches
+  answer: "{n} people matched DLP rules; most: {first.user} ({first.matches} matches)"
   name: DLP rule matches by person
   group: Microsoft 365 / Data
   tags:

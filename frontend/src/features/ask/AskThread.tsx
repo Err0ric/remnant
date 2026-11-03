@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
-import { ModelWait } from "@/components/ai/ModelWait";
+import { isAborted, ModelWait } from "@/components/ai/ModelWait";
 import { api, type AskTurn } from "@/lib/api";
 import { setAskProvider, useAskProvider } from "@/lib/askProvider";
 import { navigate } from "@/lib/route";
@@ -61,13 +61,49 @@ export function AskThread({
   const update = (id: number, change: Partial<Turn>) =>
     setTurns((all) => all.map((t) => (t.id === id ? { ...t, ...change } : t)));
 
+  // The answer step (slice 1c): statements that cite the rows. Any failure here leaves
+  // the headline and the rows without a summary; it never fails the turn.
+  const summarize = useMutation({
+    mutationFn: ({ askId }: { id: number; askId: string }) => {
+      abort.current = new AbortController();
+      return api.askAnswer(askId, abort.current.signal);
+    },
+    onSuccess: (summary, { id }) =>
+      update(id, {
+        phase: "done",
+        summary,
+        summaryMs: Date.now() - (summaryStart.current[id] ?? Date.now()),
+      }),
+    onError: (error, { id }) =>
+      update(id, {
+        phase: "done",
+        summaryNote: isAborted(error)
+          ? "No summary: cancelled."
+          : `No summary: ${error instanceof Error ? error.message : "the model did not answer"}`,
+      }),
+  });
+  const summaryStart = useRef<Record<number, number>>({});
+
   const run = useMutation({
     mutationFn: ({ askId }: { id: number; askId: string }) => {
       abort.current = new AbortController();
       return api.runAnswer(askId, abort.current.signal);
     },
     onMutate: ({ id }) => update(id, { phase: "running" }),
-    onSuccess: (result, { id }) => update(id, { phase: "done", result, runMs: result.elapsed_ms }),
+    onSuccess: (result, { id, askId }) => {
+      const writing = result.summarize && result.rows.length > 0;
+      update(id, {
+        phase: writing ? "writing" : "done",
+        result,
+        runMs: result.elapsed_ms,
+        summaryNote: result.summary_note ?? undefined,
+        willSummarize: writing,
+      });
+      if (writing) {
+        summaryStart.current[id] = Date.now();
+        summarize.mutate({ id, askId });
+      }
+    },
     onError: (error, { id }) => update(id, { phase: "failed", error }),
   });
 
@@ -127,7 +163,7 @@ export function AskThread({
     setTurns([...earlier, { id, question: q, phase: "finding" }]);
     ask.mutate({ id, q, history, route });
   };
-  const busy = ask.isPending || run.isPending;
+  const busy = ask.isPending || run.isPending || summarize.isPending;
   // With no AI provider, Ask still offers library queries that match the words (C4).
   const [suggestFor, setSuggestFor] = useState<string | null>(null);
   const suggestions = useQuery({

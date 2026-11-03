@@ -349,6 +349,24 @@ export interface GeoInfo {
   org: string | null;
 }
 
+/** An Ask run (ADR-0042 slice 1c): the rows plus a headline written by code. */
+export interface AskRunResult extends QueryResult {
+  headline: string;
+  /** Ask for the summary next: summaries are on and the rows carry event ids to cite. */
+  summarize: boolean;
+  /** Why there is no summary, when there is none and summaries are on. */
+  summary_note?: string | null;
+}
+
+/** Statements about the rows, each citing their event ids; uncited ones were removed. */
+export interface AskSummary {
+  headline: string;
+  claims: { text: string; event_ids: string[] }[];
+  removed: number;
+  note: string | null;
+  call_id: string | null;
+}
+
 export interface QueryResult {
   columns: string[];
   rows: Cell[][];
@@ -2281,7 +2299,13 @@ export const api = {
   askSuggest: (q: string) =>
     request<AskSuggestion[]>(`/api/ask/suggest?q=${encodeURIComponent(q)}`),
   runAnswer: (askId: string, signal?: AbortSignal) =>
-    request<QueryResult>(`/api/ask/${encodeURIComponent(askId)}/run`, { ...post({}), signal }),
+    request<AskRunResult>(`/api/ask/${encodeURIComponent(askId)}/run`, { ...post({}), signal }),
+  /** The answer step (ADR-0042 slice 1c): statements that cite the rows the run kept. */
+  askAnswer: (askId: string, signal?: AbortSignal) =>
+    request<AskSummary>(`/api/ask/${encodeURIComponent(askId)}/answer`, {
+      ...post({}),
+      signal,
+    }),
   columns: () => request<ColumnInfo[]>("/api/schema/columns"),
   authState: () => request<AuthState>("/api/auth/state"),
   setup: (body: { token: string; username: string; password: string }) =>
