@@ -233,3 +233,43 @@ async def test_provider(provider_id: str, request: Request, _: AdminUser) -> Hea
     record = await run_in_threadpool(store.get, provider_id)
     h = await run_in_threadpool(gate.health, record, store, _trusted(request))
     return HealthOut(ok=h.ok, busy=h.busy, detail=h.detail, models=h.models)
+
+
+class LoadedOut(BaseModel):
+    name: str
+    placement: Literal["gpu", "cpu", "split"]
+    gpu_percent: int  # share of the model in GPU memory
+    size_bytes: int
+    context: int | None
+    until: str | None
+    configured: bool  # the model this provider is set to use
+
+
+class RuntimeOut(BaseModel):
+    # False: a cloud provider, or a server that does not report loaded models (not Ollama).
+    available: bool
+    models: list[LoadedOut]
+
+
+@router.get("/providers/{provider_id}/runtime")
+async def provider_runtime(provider_id: str, request: Request, _: AdminUser) -> RuntimeOut:
+    """Local Ollama providers: the models loaded now, whether each runs on GPU, CPU, or
+    both, and its context length (Ollama's /api/ps). Read-only; sends no prompt."""
+    store = _store(request)
+    record = await run_in_threadpool(store.get, provider_id)
+    got = await run_in_threadpool(gate.loaded_models, record, store, _trusted(request))
+    if got is None:
+        return RuntimeOut(available=False, models=[])
+    want = record.model or ""
+    return RuntimeOut(
+        available=True,
+        models=[
+            LoadedOut(
+                name=m.name, placement=m.placement,
+                gpu_percent=round(100 * m.vram / m.size) if m.size else 0,
+                size_bytes=m.size, context=m.context, until=m.until,
+                configured=bool(want) and m.name in (want, f"{want}:latest"),
+            )
+            for m in got
+        ],
+    )  # fmt: skip

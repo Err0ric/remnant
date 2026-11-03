@@ -6,6 +6,7 @@ const ACTIONS: Record<string, string> = {
   "ai.mcp_change": "Changed an MCP server's review",
   "ai.service_change": "Changed an AI service's review",
   "ai.view": "Viewed AI usage",
+  "ai.watch_check": "Ran the AI Watch check",
   "ai.watch_change": "Changed AI watch settings",
   "alert_target.create": "Added an alert target",
   "alert_target.delete": "Removed an alert target",

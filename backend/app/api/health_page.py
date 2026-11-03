@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from app.api.access import AdminUser, CurrentUser, client_ip
+from app.api.ai import FailingOut, failing_out
 from app.auth.service import AuthService
 from app.core.client_errors import ClientErrors
 from app.engine.views import permitted_sources
@@ -82,6 +83,9 @@ class HealthOut(BaseModel):
     # Pages and panels that failed in browsers, the last 24 hours (owner 2026-11-02); for
     # administrators only.
     client_errors: list[ClientErrorOut] = []
+    # Background checks failing right now (owner 2026-11-03): AI Watch's steps and page
+    # refreshes, when they started failing and why; for administrators only.
+    background_failures: list[FailingOut] = []
 
 
 class DeviceIn(BaseModel):
@@ -133,7 +137,13 @@ async def health_checks(request: Request, user: CurrentUser) -> HealthOut:
         quarantined_files=await run_in_threadpool(quarantined_count, request.app.state.lake_dir),
         rollups=await run_in_threadpool(_rollups, request),
         client_errors=_client_errors(request) if admin else [],
+        background_failures=_failing(request) if admin else [],
     )
+
+
+def _failing(request: Request) -> list[FailingOut]:
+    state = request.app.state
+    return failing_out(state.ai_watch.jobs.failing() + state.refresher.jobs.failing(), admin=True)
 
 
 def _client_errors(request: Request) -> list[ClientErrorOut]:

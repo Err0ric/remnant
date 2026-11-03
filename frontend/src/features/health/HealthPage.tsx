@@ -6,6 +6,7 @@ import { since, stamp } from "@/features/overview/time";
 import { ApiError, api, type ClientErrorRow, type Source, type WatchedDevice } from "@/lib/api";
 import { navigate, useSection, useSectionTab, type PageId } from "@/lib/route";
 import { SpeedTable } from "./SpeedTable";
+import { BackgroundFailures } from "./BackgroundFailures";
 import { EntityLink } from "@/components/EntityLink";
 import { lag } from "./flow";
 import { SourceFlow } from "./SourceFlow";
@@ -381,6 +382,9 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
           onDelivery={() => setTab("alerts")}
         />
         {o ? <StatusLine overview={o} now={now} /> : null}
+        {isAdmin && checks.data?.background_failures?.length ? (
+          <BackgroundFailures rows={checks.data.background_failures} now={now} />
+        ) : null}
         {isAdmin && checks.data?.client_errors?.length ? (
           <BrowserErrors rows={checks.data.client_errors} now={now} />
         ) : null}

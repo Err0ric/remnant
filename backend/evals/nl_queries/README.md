@@ -101,13 +101,9 @@ Defaults: `--models qwen3.5:4b,qwen3.5:9b`, `--thinking none` (Thinking Off, as 
 
 Full JSON reports go to `--out-dir` (default `./ask-eval`), one per model. `--no-answer` skips the answer step, `--ids` runs a few questions for a quick check, and `--models` takes any list. A full run of two models is about 270 questions; on a CPU-only box expect hours, not minutes.
 
-### Benchmark plan (owner, 2026-11-02)
+### Benchmark plan (owner, 2026-11-03)
 
-| Run | Box | Models | Report |
-|---|---|---|---|
-| CPU only, the likely first work setup | 4 vCPU, 8 GB, no GPU, Ollama on the same box as the app | one 3 to 4B and one 7 to 9B model, Q4 quantized | median and p90 time to first rows, exact rate, misroutes, `--no-routing` for comparison |
-| CPU only, `ask.summarize` on and off | the same box | the same models | time to first rows and to the full answer: one `side_by_side` run gives both |
-| Modest GPU | homelab RTX 3080 10 GB | the same models | the same fields |
+The formal run is on the GPU hardware once it arrives, against the model that runs there: one `side_by_side` run gives accuracy, misroutes, and time to first rows and to the full answer (`ask.summarize` on and off). The CPU-only run on a shared 4 vCPU box and the 4B against 9B comparison as a work decision are dropped: the work install already uses a local model on a separate machine.
 
 ## Results
 

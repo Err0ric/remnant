@@ -21,16 +21,17 @@ from app.ai.inventory import Exclusions, inventory
 from app.ai.inventory import export as inventory_export
 from app.ai.sessions import sessions, timeline
 from app.ai.usage import ServiceUse, Usage, seen_through
-from app.ai.watch import AiWatch
+from app.ai.watch import AiWatch, describe
 from app.ai.watch_summary import source_classes
 from app.ai.watch_summary import summary as watch_summary
 from app.alerts.items import AlertItem, AlertItems
 from app.api.access import AdminUser, CurrentUser, client_ip, require_role
-from app.api.cache import STALE_MAX_S, PageCache, scope_key
+from app.api.cache import STALE_MAX_S, PageCache, Refresher, scope_key
 from app.api.dashboard_sections import HistoryOut, KpiOut
 from app.auth.service import AuthService
 from app.auth.users import User
 from app.core.errors import NotFoundError
+from app.core.job_status import Failure
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.engine.views import permitted_sources, scope_sources
 from app.meta.db import MetaDB
@@ -546,6 +547,60 @@ async def put_watch(body: WatchIn, request: Request, user: AdminUser) -> WatchOu
         body.agents,
     )
     return WatchOut(**_slots(s))
+
+
+class FailingOut(BaseModel):
+    """A background job that is failing (owner, 2026-11-03). `detail` (the engine's error
+    and a message cut before any quoted value) is for administrators only."""
+
+    job: str  # "ai_watch.review", "page.ai_watch"
+    since: datetime
+    last_at: datetime
+    count: int
+    detail: str | None = None
+
+
+class WatchStatusOut(BaseModel):
+    failing: list[FailingOut]
+
+
+def failing_out(failures: list[Failure], admin: bool) -> list[FailingOut]:
+    return [
+        FailingOut(
+            job=f.job, since=f.since, last_at=f.last_at, count=f.count,
+            detail=describe(f.error, f.engine_error, f.detail) if admin else None,
+        )
+        for f in failures
+    ]  # fmt: skip
+
+
+@router.get("/ai/watch/status")
+async def watch_status(request: Request, user: CurrentUser) -> WatchStatusOut:
+    """Whether AI Watch's checks and its page refresh are failing, for the AI Watch panel:
+    when they started failing and how often. No data; the error detail for admins."""
+    watch: AiWatch = request.app.state.ai_watch
+    refresher: Refresher = request.app.state.refresher
+    failing = watch.jobs.failing("ai_watch.") + refresher.jobs.failing("page.ai_watch")
+    return WatchStatusOut(failing=failing_out(failing, user.role == "admin"))
+
+
+class WatchStepOut(BaseModel):
+    step: str  # events | agents | review
+    ok: bool
+    detail: str | None
+
+
+@router.post("/ai/watch/check")
+async def check_watch(request: Request, user: AdminUser) -> list[WatchStepOut]:
+    """Run every AI Watch step now, the hourly ones included, and say which failed and
+    why (Health > Check now). Audited ai.watch_check."""
+    watch: AiWatch = request.app.state.ai_watch
+    steps = await run_in_threadpool(watch.check_now)
+    await run_in_threadpool(
+        _audit(request).audit.write, "ai.watch_check", "success", user.user_id,
+        client_ip(request), {"failed": [s for s, d in steps if d is not None]},
+    )  # fmt: skip
+    return [WatchStepOut(step=s, ok=d is None, detail=d) for s, d in steps]
 
 
 class DataLevelIn(BaseModel):

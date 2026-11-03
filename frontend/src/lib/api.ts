@@ -915,6 +915,35 @@ export interface IntegrityStatus {
   settings: IntegritySettings;
 }
 
+/** A background job failing right now (owner, 2026-11-03); `detail` for admins only. */
+export interface FailingJob {
+  job: string;
+  since: string;
+  last_at: string;
+  count: number;
+  detail: string | null;
+}
+
+export interface WatchStep {
+  step: "events" | "agents" | "review";
+  ok: boolean;
+  detail: string | null;
+}
+
+/** A local Ollama server's loaded models (Settings > AI providers, owner 2026-11-03). */
+export interface ProviderRuntime {
+  available: boolean;
+  models: {
+    name: string;
+    placement: "gpu" | "cpu" | "split";
+    gpu_percent: number;
+    size_bytes: number;
+    context: number | null;
+    until: string | null;
+    configured: boolean;
+  }[];
+}
+
 export interface HealthChecks {
   devices: WatchedDevice[];
   agents: AgentHealth[];
@@ -922,6 +951,8 @@ export interface HealthChecks {
   quarantined_files?: number;
   /** Pages and panels that failed in browsers, last 24 hours; administrators only. */
   client_errors?: ClientErrorRow[];
+  /** Background checks failing now (admins). */
+  background_failures?: FailingJob[];
   /** Page rollups: counts and times only. */
   rollups?: RollupHealth[];
 }
@@ -2303,6 +2334,8 @@ export const api = {
     request<void>(`/api/providers/${encodeURIComponent(id)}`, { method: "DELETE" }),
   testProvider: (id: string) =>
     request<ProviderHealth>(`/api/providers/${encodeURIComponent(id)}/test`, { method: "POST" }),
+  providerRuntime: (id: string) =>
+    request<ProviderRuntime>(`/api/providers/${encodeURIComponent(id)}/runtime`),
   askProviders: () => request<AskProvider[]>("/api/ask/providers"),
   ask: (body: AskRequest, signal?: AbortSignal) =>
     request<AskResponse>("/api/ask", { ...post(body), signal }),
@@ -2663,6 +2696,8 @@ export const api = {
   setAiMcpRule: (pattern: string, status: "approved" | "not_approved" | null) =>
     request<AiMcpRule[]>("/api/ai/mcp-rules", put({ pattern, status })),
   aiWatch: () => request<AiWatch>("/api/ai/watch"),
+  aiWatchStatus: () => request<{ failing: FailingJob[] }>("/api/ai/watch/status"),
+  checkAiWatch: () => request<WatchStep[]>("/api/ai/watch/check", post({})),
   aiWatchSummary: (days: number) =>
     request<AiWatchSummary>(`/api/ai/watch/summary?days=${days}&tz=${viewerZone()}`),
   setAiWatch: (

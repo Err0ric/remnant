@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Command, PageHeader } from "@/components/shell/PageHeader";
 import { ApiError, api, type ProviderConfig, type ProviderHealth } from "@/lib/api";
+import { LoadedModel } from "./LoadedModel";
 import { LocalityBadge } from "./LocalityBadge";
 import { ModelCell } from "./ModelCell";
 import { ProviderForm } from "./ProviderForm";
@@ -110,6 +111,7 @@ export function ProvidersPage() {
                           saving={choose.isPending}
                           onChoose={(model) => choose.mutate({ id: p.provider_id, model })}
                         />
+                        {p.locality === "local" ? <LoadedModel providerId={p.provider_id} /> : null}
                       </td>
                       <td className="px-3 py-2">{p.has_api_key ? "Saved" : "None"}</td>
                       <td className="px-3 py-2">

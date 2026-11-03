@@ -119,6 +119,7 @@ from app.core.errors import (
     SsoRequiredError,
     TemplateInvalidError,
     UnsupportedMediaError,
+    log_detail,
 )
 from app.core.logging import configure_logging
 from app.core.memory import budget_note, server_budget_mb
@@ -250,12 +251,12 @@ async def _ingest_loop(service: IngestService, interval_s: float, engine: QueryE
     try:
         await asyncio.to_thread(_seed_last_events, service, engine)
     except Exception as exc:  # never fatal: Health shows "never" until the next event
-        log.warning("ingest.seed_failed", error=type(exc).__name__)
+        log.warning("ingest.seed_failed", **log_detail(exc))
     while True:
         try:
             await asyncio.to_thread(service.run_once)
         except Exception as exc:  # keep the loop alive; detail stays out of logs (no raw lines)
-            log.warning("ingest.pass_failed", error=type(exc).__name__)
+            log.warning("ingest.pass_failed", **log_detail(exc))
         await asyncio.sleep(interval_s)
 
 
@@ -264,12 +265,12 @@ async def _maintenance_loop(maintenance: LakeMaintenance) -> None:
         await asyncio.to_thread(maintenance.sweep_all)
         await asyncio.to_thread(maintenance.baseline)
     except Exception as exc:  # never fatal
-        log.warning("maintenance.sweep_failed", error=type(exc).__name__)
+        log.warning("maintenance.sweep_failed", **log_detail(exc))
     while True:
         try:
             await asyncio.to_thread(maintenance.tick)
         except Exception as exc:  # never fatal; retried next minute
-            log.warning("maintenance.failed", error=type(exc).__name__)
+            log.warning("maintenance.failed", **log_detail(exc))
         await asyncio.sleep(60)
 
 
@@ -279,7 +280,7 @@ async def _enrichment_loop(updater: FeedUpdater) -> None:
         try:
             await asyncio.to_thread(updater.run_due)
         except Exception as exc:  # never fatal; retried next round
-            log.warning("enrichment.loop_failed", error=type(exc).__name__)
+            log.warning("enrichment.loop_failed", **log_detail(exc))
         await asyncio.sleep(600)
 
 
@@ -304,27 +305,27 @@ async def _schedule_loop(
         try:
             await asyncio.to_thread(schedules.tick)
         except Exception as exc:  # never fatal; retried next tick
-            log.warning("schedules.failed", error=type(exc).__name__)
+            log.warning("schedules.failed", **log_detail(exc))
         try:
             await asyncio.to_thread(quiet.tick)
         except Exception as exc:  # never fatal; retried next tick
-            log.warning("quiet_watch.failed", error=type(exc).__name__)
+            log.warning("quiet_watch.failed", **log_detail(exc))
         try:
             await asyncio.to_thread(ai_watch.tick)
         except Exception as exc:  # never fatal; retried next tick
-            log.warning("ai_watch.failed", error=type(exc).__name__)
+            log.warning("ai_watch.failed", **log_detail(exc))
         try:
             await asyncio.to_thread(health.tick)
         except Exception as exc:  # never fatal; retried next tick
-            log.warning("device_watch.failed", error=type(exc).__name__)
+            log.warning("device_watch.failed", **log_detail(exc))
         try:
             await asyncio.to_thread(refusals.tick)
         except Exception as exc:  # never fatal; retried next tick
-            log.warning("refusal_watch.failed", error=type(exc).__name__)
+            log.warning("refusal_watch.failed", **log_detail(exc))
         try:
             await asyncio.to_thread(alerts.tick)
         except Exception as exc:  # never fatal; retried next tick
-            log.warning("alerts.failed", error=type(exc).__name__)
+            log.warning("alerts.failed", **log_detail(exc))
         await asyncio.sleep(30)
 
 
@@ -335,7 +336,7 @@ async def _listener_loop(listeners: SyslogListeners, sources: SourceStore) -> No
         try:
             await listeners.reconcile(await asyncio.to_thread(sources.list))
         except Exception as exc:  # the loop must survive one bad pass
-            log.warning("syslog_listener.reconcile_failed", error=type(exc).__name__)
+            log.warning("syslog_listener.reconcile_failed", **log_detail(exc))
         await asyncio.sleep(5)
 
 
@@ -347,7 +348,7 @@ async def _refresh_loop(refresher: Refresher) -> None:
         try:
             await asyncio.to_thread(refresher.tick)
         except Exception as exc:  # the loop must survive one bad pass
-            log.warning("page.refresh_loop_failed", error=type(exc).__name__)
+            log.warning("page.refresh_loop_failed", **log_detail(exc))
 
 
 def _lifespan(config: AppConfig) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:

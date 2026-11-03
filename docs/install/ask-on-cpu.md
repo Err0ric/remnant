@@ -108,4 +108,4 @@ sudo -u remnant .venv/bin/python -m evals.nl_queries.run \
   --base-url http://127.0.0.1:11434/v1 --model qwen3.5:4b --out qwen35-4b-cpu.json
 ```
 
-The report gives executable and exact rates, time to first rows, and routing mistakes in both directions. Run it once with the app idle and note the numbers; the [benchmark plan](../../backend/evals/nl_queries/README.md) lists the CPU-only run this page's estimates should be replaced with.
+The report gives executable and exact rates, time to first rows, and routing mistakes in both directions. Run it once with the app idle and note the numbers: they replace the estimates on this page for your machine. The [suite's README](../../backend/evals/nl_queries/README.md) explains each number.

@@ -112,6 +112,19 @@ export const SOURCE = {
   },
 };
 
+/** Switches for one test; reset them after it. */
+export const mockFlags = { aiWatchFailing: false };
+
+const FAILING = [
+  {
+    job: "ai_watch.review",
+    since: "2026-11-03T12:55:00Z",
+    last_at: "2026-11-03T15:55:00Z",
+    count: 4,
+    detail: "ConversionException: Conversion Error: Could not convert string [values not logged]",
+  },
+];
+
 export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "open" }) {
   const state = { ...auth };
   const install = { name: "" };
@@ -1085,8 +1098,21 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
           cached: 40,
         },
       ]);
+    if (url.endsWith("/api/ai/watch/status"))
+      return json({
+        failing: mockFlags.aiWatchFailing
+          ? FAILING.map((f) => ({ ...f, detail: state.role === "admin" ? f.detail : null }))
+          : [],
+      });
+    if (url.endsWith("/api/ai/watch/check") && method === "POST")
+      return json([
+        { step: "events", ok: true, detail: null },
+        { step: "agents", ok: true, detail: null },
+        { step: "review", ok: false, detail: FAILING[0]!.detail },
+      ]);
     if (url.endsWith("/api/health-checks") && method === "GET")
       return json({
+        background_failures: mockFlags.aiWatchFailing ? FAILING : [],
         devices: watched,
         agents: [
           {
@@ -2702,6 +2728,25 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       };
       providers.push(created);
       return json(created, 201);
+    }
+    if (/\/api\/providers\/[^/]+\/runtime$/.test(url)) {
+      const id = url.split("/api/providers/")[1]!.split("/")[0];
+      const p = providers.find((x) => x.provider_id === id);
+      if (!p || p.locality !== "local") return json({ available: false, models: [] });
+      return json({
+        available: true,
+        models: [
+          {
+            name: "gemma4:26b",
+            placement: "cpu",
+            gpu_percent: 0,
+            size_bytes: 18_000_000_000,
+            context: 65536,
+            until: null,
+            configured: p.model === "gemma4:26b",
+          },
+        ],
+      });
     }
     if (/\/api\/providers\/[^/]+\/test$/.test(url))
       return json({ ok: true, detail: "Reachable", models: ["llama3.1:8b", "qwen2.5:7b"] });

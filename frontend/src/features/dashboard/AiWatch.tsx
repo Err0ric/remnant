@@ -12,6 +12,7 @@ import { navigate, pathFor } from "@/lib/route";
 import { openDrill } from "@/lib/drill";
 import { EntityLink } from "@/components/EntityLink";
 import { PeoplePending } from "@/components/PeoplePending";
+import { AiWatchFailing } from "./AiWatchFailing";
 import { LoadFailed } from "@/components/LoadFailed";
 import { When } from "@/components/When";
 import { StatusBadge, STATUS_LABEL } from "@/features/ai/StatusBadge";
@@ -78,7 +79,7 @@ function DeltaPill({
 /** AI Watch (ADR-0035 Part 2): is anyone using AI we have not approved? Five cards, AI use
  * over 30 days by review status, and the top services, on the viewer's own sources.
  * Hidden on an install with no AI use and nothing to count. */
-export function AiWatch({ days = 7 }: { days?: number }) {
+export function AiWatch({ days = 7, isAdmin = false }: { days?: number; isAdmin?: boolean }) {
   const overview = useQuery({
     queryKey: ["overview"],
     queryFn: api.overview,
@@ -95,6 +96,7 @@ export function AiWatch({ days = 7 }: { days?: number }) {
     return (
       <section aria-label="AI Watch" className="rounded-card border border-border bg-surface">
         <h2 className="border-b border-border px-3 py-2 text-base font-semibold">AI Watch</h2>
+        <AiWatchFailing isAdmin={isAdmin} />
         <LoadFailed
           what="AI Watch"
           error={q.error}
@@ -133,6 +135,7 @@ export function AiWatch({ days = 7 }: { days?: number }) {
           Open AI usage
         </button>
       </div>
+      <AiWatchFailing isAdmin={isAdmin} />
       {s.people_pending_days ? (
         <div className="border-b border-border px-3 py-1.5">
           <PeoplePending pending={s.people_pending_days} of={s.people_days} />

@@ -24,7 +24,7 @@ from app.alerts.dispatch import AlertDispatcher
 from app.alerts.items import AlertItems
 from app.alerts.render import Alert
 from app.core.branding import PRODUCT_NAME
-from app.core.errors import NotFoundError, ParamInvalidError
+from app.core.errors import NotFoundError, ParamInvalidError, log_detail
 from app.core.ids import new_id
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.ingest.quiet import human
@@ -499,7 +499,7 @@ class HealthService:
         try:
             self.stuck_queues()
         except Exception as exc:  # never stops the device check
-            log.warning("health.stuck_queues_failed", error=type(exc).__name__)
+            log.warning("health.stuck_queues_failed", **log_detail(exc))
         devices = self.devices()
         if not devices:
             return 0

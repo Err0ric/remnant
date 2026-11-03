@@ -56,6 +56,8 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | `GET` | `/api/ai/usage` | Services, MCP servers, and Claude usage per person, from the sources the caller may read; with a start, also what is new and what is no longer seen against the period of the same length before it. Audited ai.view. | `?start` (optional): date-time<br>`?end` (optional): date-time |  |
 | `GET` | `/api/ai/watch` | Get Watch |  |  |
 | `PUT` | `/api/ai/watch` | Put Watch |  | `enabled`: boolean<br>`include_unreviewed`?: boolean<br>`sensitive`?: boolean<br>`target_ids`?: list of string<br>`agents`?: boolean |
+| `POST` | `/api/ai/watch/check` | Run every AI Watch step now, the hourly ones included, and say which failed and why (Health > Check now). Audited ai.watch_check. |  |  |
+| `GET` | `/api/ai/watch/status` | Whether AI Watch's checks and its page refresh are failing, for the AI Watch panel: when they started failing and how often. No data; the error detail for admins. |  |  |
 | `GET` | `/api/ai/watch/summary` | AI Watch (ADR-0035 rows 10, 12, 13): five cards against the period before, AI use over 30 days by review status, and the top services, all on the caller's view. Audited ai.view. | `?days` (optional): integer<br>`?tz` (optional): string |  |
 
 ### Alerts
@@ -257,6 +259,7 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | `POST` | `/api/providers` | Add Provider |  | `name`: string<br>`kind`?: `openai_compat` &#124; `anthropic`<br>`base_url`: string<br>`model`?: string<br>`api_key`?: password<br>`acknowledge_cloud`?: boolean |
 | `PATCH` | `/api/providers/{provider_id}` | Update Provider |  | `name`?: string<br>`base_url`?: string<br>`model`?: string<br>`enabled`?: boolean<br>`api_key`?: password<br>`clear_api_key`?: boolean<br>`acknowledge_cloud`?: boolean<br>`redact`?: boolean<br>`reasoning`?: `none` &#124; `low` &#124; `medium` &#124; `high` or `default`<br>`max_concurrent`?: integer<br>`wait_budget_s`?: integer |
 | `DELETE` | `/api/providers/{provider_id}` | Delete Provider |  |  |
+| `GET` | `/api/providers/{provider_id}/runtime` | Local Ollama providers: the models loaded now, whether each runs on GPU, CPU, or both, and its context length (Ollama's /api/ps). Read-only; sends no prompt. |  |  |
 | `POST` | `/api/providers/{provider_id}/test` | Test Provider |  |  |
 
 ### Query

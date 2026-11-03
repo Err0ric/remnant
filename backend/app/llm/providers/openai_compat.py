@@ -35,6 +35,10 @@ class OpenAICompatibleProvider:
         self.model = model
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
         self._http = PinnedJsonClient(base_url, headers, locality, transport, pin)
+        # Ollama's own API sits beside its OpenAI-compatible one: <root>/api/ps.
+        root = base_url.rstrip("/")
+        root = root[: -len("/v1")] if root.endswith("/v1") else root
+        self._native = PinnedJsonClient(root, headers, locality, transport, pin)
 
     def _request(self, method: str, path: str, body: dict[str, Any] | None = None) -> Any:
         return self._http.request(method, path, body)
@@ -93,6 +97,16 @@ class OpenAICompatibleProvider:
             return sorted(str(m["id"]) for m in data["data"])
         except (KeyError, TypeError) as exc:
             raise ProviderError("Provider model list did not match the expected format") from exc
+
+    def loaded(self) -> list[dict[str, Any]]:
+        """Models an Ollama server has in memory now (GET /api/ps): name, size, how much of
+        it is in GPU memory, and its context length. Read-only; no prompt, no data. A
+        server that is not Ollama answers 404 (ProviderError)."""
+        data = self._native.request("GET", "/api/ps")
+        models = data.get("models") if isinstance(data, dict) else None
+        if not isinstance(models, list):
+            raise ProviderError("The server did not list loaded models")
+        return [m for m in models if isinstance(m, dict)][:20]
 
 
 def _message(m: ChatMessage) -> dict[str, Any]:

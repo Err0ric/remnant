@@ -560,12 +560,15 @@ class AiRollup:
         body = {
             "day": day, "cutoff": cutoff.isoformat(), "label": label, "stamp": stamp,
             "catalog": key, "sources": done, "built_at": now.isoformat(),
+            "previous": str(mark.get("stamp", "")),
         }  # fmt: skip
         tmp = root / f".{TODAY_MARK}.tmp"
         tmp.write_text(json.dumps(body))
         os.replace(tmp, root / TODAY_MARK)
-        # Keep this build and the one before (a query may still be reading it).
-        keep = {stamp, str(mark.get("stamp", ""))}
+        # Keep this build and the two before: a query may still be reading the one before,
+        # and one planned just before the swap may have listed the one before that (a
+        # reader also retries once if a file it listed is gone, owner 2026-11-03).
+        keep = {stamp, str(mark.get("stamp", "")), str(mark.get("previous", ""))}
         for f in root.glob("source=*/*.parquet"):
             if f.stem.split("-", 1)[-1] not in keep:
                 f.unlink(missing_ok=True)

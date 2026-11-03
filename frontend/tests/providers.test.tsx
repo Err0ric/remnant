@@ -172,4 +172,13 @@ describe("Locality badge", () => {
     rerender(<LocalityBadge locality="local" />);
     expect(screen.getByText("Local")).toBeInTheDocument();
   });
+
+  it("shows whether a local model is loaded on GPU or CPU, and its context (owner, 2026-11-03)", async () => {
+    await renderAt("/providers");
+    const table = await screen.findByRole("table", { name: "AI providers" });
+    const loaded = await within(table).findByLabelText("Loaded model");
+    // The provider has no model chosen, so gemma4:26b is another loaded model.
+    expect(loaded).toHaveTextContent("Not loaded now; Ollama loads it on the next question.");
+    expect(loaded).toHaveTextContent("Also loaded: gemma4:26b (on CPU only)");
+  });
 });

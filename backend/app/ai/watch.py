@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import structlog
+
 from app.ai.agents import agents
 from app.ai.catalog import NON_USAGE, Catalog
 from app.ai.usage import HOST_EXPR, MACHINE_EXPR, MCP_EXPR, NO_MCP_NAMES, WHO_EXPR, Usage, _values
@@ -27,10 +29,13 @@ from app.alerts.dispatch import AlertDispatcher
 from app.alerts.items import AlertItems
 from app.alerts.render import Alert
 from app.core.branding import PRODUCT_NAME
-from app.core.errors import ParamInvalidError
+from app.core.errors import ParamInvalidError, log_detail
+from app.core.job_status import JobStatus
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.meta.audit import AuditLog
 from app.meta.db import MetaDB
+
+log = structlog.get_logger(__name__)
 
 MAX_TARGETS = 10
 BATCH = 20_000  # rows read per check; the cursor moves past what was read
@@ -96,6 +101,8 @@ class AiWatch:
         self._audit = audit
         self._link = link
         self._clock = clock
+        # Which steps are failing, for Health and the AI Watch panel (owner, 2026-11-03).
+        self.jobs = JobStatus()
 
     def now(self) -> datetime:
         """The watch's clock, which AI Watch's summary uses too (settable in tests)."""
@@ -166,15 +173,60 @@ class AiWatch:
 
     # --- checking ------------------------------------------------------------------------
 
+    STEPS = ("events", "agents", "review")
+
     def tick(self) -> int:
         """Check events received since the last check; returns alert messages queued.
 
         Every check raises AI Watch items for the review queue on Alerts (ADR-0035 row 11,
         ADR-0037 row 13): a service or MCP server that is not approved (or not reviewed
         yet), a sensitive-data signal, an agent change. Messages go out only when the
-        watch's alerts are turned on, as before."""
+        watch's alerts are turned on, as before.
+
+        Three steps, each on its own (owner, 2026-11-03): new events (every check), agent
+        changes, and the hourly review. One failing step no longer stops the others; each
+        failure is logged with its step, the engine's error class, and a safe message,
+        and recorded in `jobs` for Health and the AI Watch panel."""
+        sent = 0
+        for step, run in self._steps():
+            try:
+                sent += run()
+            except Exception as exc:  # one step failing must not stop the others
+                self.jobs.failed(f"ai_watch.{step}", exc, self._clock().astimezone(UTC))
+                log.warning("ai_watch.step_failed", step=step, **log_detail(exc))
+            else:
+                self.jobs.ok(f"ai_watch.{step}")
+        return sent
+
+    def check_now(self) -> list[tuple[str, str | None]]:
+        """Every step at once, the hourly ones included, for "Check now" on Health:
+        (step, None when it worked or the safe error detail)."""
+        self._reviewed_at = None
+        with self._meta.connect() as con:
+            con.execute("UPDATE ai_watch SET agents_checked_at = NULL WHERE id = 1")
+        self.tick()
+        failing = {f.job: f for f in self.jobs.failing("ai_watch.")}
+        out: list[tuple[str, str | None]] = []
+        for step in self.STEPS:
+            f = failing.get(f"ai_watch.{step}")
+            out.append((step, None if f is None else describe(f.error, f.engine_error, f.detail)))
+        return out
+
+    def _steps(self) -> list[tuple[str, Callable[[], int]]]:
         s = self.settings()
         now = self._clock().astimezone(UTC)
+
+        def review() -> int:
+            self._reconcile(now)
+            return 0
+
+        return [
+            ("events", lambda: self._check_events(s, now)),
+            ("agents", lambda: self._agents(s, now)),
+            ("review", review),
+        ]
+
+    def _check_events(self, s: WatchSettings, now: datetime) -> int:
         with self._meta.connect() as con:
             # The cursor lives in the settings row; make it before the first check.
             con.execute(
@@ -253,8 +305,6 @@ class AiWatch:
             sent += 1
         with self._meta.connect() as con:
             con.execute("UPDATE ai_watch SET cursor = ? WHERE id = 1", (newest.isoformat(),))
-        sent += self._agents(s, now)
-        self._reconcile(now)
         return sent
 
     def _catalog_service(self, sid: str) -> Any:
@@ -265,6 +315,8 @@ class AiWatch:
             return
         if self._reviewed_at is not None and now - self._reviewed_at < AGENT_CHECK_EVERY:
             return
+        # Hourly, and also after a failure: a failing review is tried again next hour, not
+        # every 30 seconds, and says so on Health meanwhile.
         self._reviewed_at = now
         since = now - REVIEW_WINDOW
         services = {sv.id: sv for sv in self._catalog.services()}
@@ -589,3 +641,9 @@ def _plain(s: WatchSettings) -> dict[str, Any]:
         "targets": s.target_ids,
         "agents": s.agents,
     }
+
+
+def describe(error: str, engine_error: str | None, detail: str | None) -> str:
+    """A failure in one line for Health: the message, or the classes when there is none."""
+    kind = engine_error or error
+    return f"{kind}: {detail}" if detail else kind

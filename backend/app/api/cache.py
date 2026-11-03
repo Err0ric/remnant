@@ -20,6 +20,8 @@ from starlette.responses import Response
 
 from app.auth.users import User, UserStore
 from app.core import timing
+from app.core.errors import log_detail
+from app.core.job_status import JobStatus
 from app.core.speed import SpeedLog
 from app.core.threads import run_low
 from app.engine.views import permitted_sources
@@ -109,6 +111,8 @@ class Refresher:
         # When each refresh ran (and whether it failed), for Health > Speed: 24 hours.
         self._runs: deque[tuple[float, bool]] = deque(maxlen=50_000)
         self._clock = time.time
+        # Failing refreshes by view kind ("page.ai_watch"), for Health (owner, 2026-11-03).
+        self.jobs = JobStatus()
 
     def watch(
         self, key: Hashable, user_id: str, scope: tuple[str, ...] | None, compute: Compute
@@ -137,11 +141,13 @@ class Refresher:
             try:
                 value = run_low(lambda u=user, a=allowed, c=w.compute: c(u, a))  # type: ignore[misc]  # bound per item
             except Exception as exc:  # one failing view must not stop the others
-                log.warning("page.refresh_failed", view=str(key), error=type(exc).__name__)
+                log.warning("page.refresh_failed", view=str(key), **log_detail(exc))
+                self.jobs.failed(f"page.{_kind(key)}", exc)
                 with self._lock:
                     self._runs.append((self._clock(), False))
                 continue
             self._cache.put(key, value)
+            self.jobs.ok(f"page.{_kind(key)}")
             with self._lock:
                 self._runs.append((self._clock(), True))
             done += 1
@@ -215,3 +221,8 @@ def server_timing(
         return response
 
     return middleware
+
+
+def _kind(key: Hashable) -> str:
+    """The view's kind ("ai_watch") from its cache key, never the viewer or scope."""
+    return str(key[0]) if isinstance(key, tuple) and key else "view"

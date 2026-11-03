@@ -154,6 +154,58 @@ def health(
     return ProviderHealth(ok=found, detail=detail, models=models[:200])
 
 
+@dataclass(frozen=True, slots=True)
+class LoadedModel:
+    name: str
+    size: int  # bytes in memory
+    vram: int  # bytes of it in GPU memory
+    context: int | None  # tokens, when the server reports it
+    until: str | None  # when the server unloads it if idle
+
+    @property
+    def placement(self) -> Literal["gpu", "cpu", "split"]:
+        """gpu (all of it in GPU memory), cpu (none of it), or split."""
+        if self.vram <= 0:
+            return "cpu"
+        return "gpu" if self.vram >= self.size else "split"
+
+
+def loaded_models(
+    record: ProviderRecord, store: ProviderStore, trusted_local_hosts: list[str]
+) -> list[LoadedModel] | None:
+    """What a local Ollama server has loaded (owner, 2026-11-03: GPU or CPU, and the
+    context, without curl). None for a cloud provider or a server that is not Ollama.
+    Sends nothing but the request: no prompt, no event data, no classification check."""
+    endpoint = provider_endpoint(record.kind, record.base_url, trusted_local_hosts)
+    if endpoint.locality != "local" or record.kind != "openai_compat":
+        return None
+    provider = build_provider(record, store, endpoint)
+    loaded = getattr(provider, "loaded", None)
+    if loaded is None:
+        return None
+    try:
+        rows = loaded()
+    except ProviderError:
+        return None
+    out = []
+    for m in rows:
+        ctx = m.get("context_length")
+        out.append(
+            LoadedModel(
+                name=str(m.get("name") or m.get("model") or "")[:200],
+                size=_nonneg(m.get("size")),
+                vram=_nonneg(m.get("size_vram")),
+                context=int(ctx) if isinstance(ctx, int) and ctx > 0 else None,
+                until=str(m["expires_at"])[:40] if m.get("expires_at") else None,
+            )
+        )
+    return out
+
+
+def _nonneg(v: Any) -> int:
+    return int(v) if isinstance(v, int) and v > 0 else 0
+
+
 def data_message(
     payload: Any, sources: list[str], role: Literal["user", "tool"] = "user", **kw: Any
 ) -> ChatMessage:

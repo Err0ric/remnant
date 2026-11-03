@@ -343,10 +343,22 @@ class QueryEngine:
             grant = self._grant(background, large, limit_s - (time.monotonic() - started))
             waited = time.monotonic() - started
             try:
-                return self._execute(
-                    guarded, scope, params, intel, limit_s, cap, rollup, frozenset(skip_days),
-                    name, after, upto, background, grant, waited, page and not large,
-                )  # fmt: skip
+                for attempt in (1, 2):
+                    try:
+                        return self._execute(
+                            guarded, scope, params, intel, limit_s, cap, rollup,
+                            frozenset(skip_days), name, after, upto, background, grant,
+                            waited, page and not large,
+                        )  # fmt: skip
+                    except QueryFailedError as exc:
+                        # A file listed when the views were made was swapped out before
+                        # it was read (compaction, a rollup build): its replacement is
+                        # already in place, so the views are made again, once (owner,
+                        # 2026-11-03: a page failed 0.3 s after the today build).
+                        if attempt == 2 or not _vanished(exc):
+                            raise
+                        log.info("query.retry_vanished_file", query=name)
+                raise AssertionError("unreachable")  # pragma: no cover
             finally:
                 if grant is not None and self._ledger is not None and not background:
                     self._ledger.give(grant)
@@ -447,7 +459,9 @@ class QueryEngine:
             ) from exc
         except duckdb.Error as exc:
             healthy = True  # an ordinary SQL error leaves the instance as it was
-            raise QueryFailedError(self._scrub(str(exc).splitlines()[0])[:300]) from exc
+            failed = QueryFailedError(self._scrub(str(exc).splitlines()[0])[:300])
+            failed.engine_error = type(exc).__name__
+            raise failed from exc
         finally:
             timer.cancel()
             if not background:
@@ -1060,6 +1074,14 @@ class QueryEngine:
             else:
                 con.execute(table(f"CREATE TABLE threat_intel ({INTEL_COLUMNS})"))
         return readable
+
+
+def _vanished(exc: QueryFailedError) -> bool:
+    """A file the query was planned with is gone: DuckDB's IO error for a missing file."""
+    text = str(exc)
+    return exc.engine_error == "IOException" and (
+        "No files found" in text or "No such file" in text or "Cannot open file" in text
+    )
 
 
 def _drop_temp(con: duckdb.DuckDBPyConnection) -> None:

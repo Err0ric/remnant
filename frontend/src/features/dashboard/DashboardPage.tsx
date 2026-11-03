@@ -258,7 +258,7 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
           <AttentionBanner />
         </ErrorBoundary>
         <ErrorBoundary label="AI Watch">
-          <AiWatch days={daysOf(win)} />
+          <AiWatch days={daysOf(win)} isAdmin={isAdmin} />
         </ErrorBoundary>
         <Sections window={win} />
         {error ? (

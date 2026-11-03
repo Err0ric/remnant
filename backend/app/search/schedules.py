@@ -40,7 +40,7 @@ from app.alerts.render import Alert, AlertKind
 from app.auth.users import LOCAL_USER, User, UserStore
 from app.core.branding import PRODUCT_NAME
 from app.core.config import SchedulesConfig
-from app.core.errors import AppError, ConflictError, NotFoundError, ParamInvalidError
+from app.core.errors import AppError, ConflictError, NotFoundError, ParamInvalidError, log_detail
 from app.core.ids import AUTO_PARSER, new_id
 from app.detect.runner import RuleRunner
 from app.detect.store import RuleStore
@@ -601,7 +601,7 @@ class ScheduleService:
                 self.run(sched, fire)
             except Exception as exc:  # one broken schedule never stops the others
                 log.warning(
-                    "schedule.tick_failed", schedule_id=sched.schedule_id, error=type(exc).__name__
+                    "schedule.tick_failed", schedule_id=sched.schedule_id, **log_detail(exc)
                 )
             with self._meta.connect() as con:
                 con.execute(

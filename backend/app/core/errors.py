@@ -16,7 +16,10 @@ class QueryRejectedError(AppError):
 
 
 class QueryFailedError(AppError):
-    """The query was allowed but failed while running (bad column, type error)."""
+    """The query was allowed but failed while running (bad column, type error).
+    `engine_error`: DuckDB's own error class, for the server log."""
+
+    engine_error: str | None = None
 
 
 class QueryMemoryError(QueryFailedError):
@@ -205,3 +208,43 @@ class SsoRefusedError(AppError):
 
 class UnsupportedMediaError(AppError):
     """The request body is in a format this endpoint does not take (OTLP protobuf, say)."""
+
+
+# DuckDB errors whose text can quote values from the data (a string it could not convert,
+# JSON it could not parse). Binder, catalog, and parser errors name columns, types, and
+# functions from the server's own SQL, never event content.
+_DATA_ERRORS = (
+    "Conversion Error",
+    "Invalid Input Error",
+    "Out of Range Error",
+    "Constraint Error",
+    "Mismatch Type Error",
+)
+
+
+def safe_message(message: str, limit: int = 240) -> str:
+    """An error message fit for the server log (owner, 2026-11-03): its first line; for
+    errors that can quote data, cut at the first quote character and before DuckDB's
+    "Input:" echo, so no value from a log line is written out."""
+    text = (message.splitlines() or [""])[0]
+    if text.startswith(_DATA_ERRORS) or "Input:" in text:
+        cut = min((i for i in (text.find("'"), text.find('"'), text.find("Input:")) if i >= 0),
+                  default=len(text))  # fmt: skip
+        text = text[:cut].rstrip(" :.(") + (" [values not logged]" if cut < len(text) else "")
+    return text[:limit]
+
+
+def log_detail(exc: BaseException) -> dict[str, str]:
+    """What a background failure logs: the error class, the engine's own error class when
+    a query failed (BinderException, ConversionException, IOException...), and the safe
+    message."""
+    out = {"error": type(exc).__name__}
+    engine = getattr(exc, "engine_error", None) or (
+        type(exc.__cause__).__name__ if exc.__cause__ is not None else None
+    )
+    if engine:
+        out["engine_error"] = str(engine)
+    detail = safe_message(str(exc))
+    if detail:
+        out["detail"] = detail
+    return out
