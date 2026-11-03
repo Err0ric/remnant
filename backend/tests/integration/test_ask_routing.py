@@ -128,3 +128,47 @@ def test_suggestions_without_a_model(lab: dict[str, Any]) -> None:
     refs = [s["ref"] for s in res.json()]
     assert refs[0] == "linux_auth/ssh_failures_by_source" and len(refs) <= 3
     assert lab["aud"].get("/api/ask/suggest", params={"q": "ssh"}).status_code == 403
+
+
+# --- "Show events" per row (owner, 2026-11-02; D173) --------------------------------------
+
+
+def test_each_row_of_a_library_answer_opens_its_own_events(lab: dict[str, Any]) -> None:
+    lab["calls"]["route"] = {"kind": "data", "query": "linux_auth/ssh_logins", "params": {}}
+    body = ask(lab, "SSH logins for alice@example.com")
+    run = lab["ana"].post(f"/api/ask/{body['ask_id']}/run").json()
+    assert run["drill_keys"] == ["user", "client", "result"]
+    cols, first = run["columns"], run["rows"][0]
+    values = {k: first[cols.index(k)] for k in run["drill_keys"]}
+    seen = len(lab["calls"]["seen"])
+    res = lab["ana"].post(f"/api/ask/{body['ask_id']}/drill", json={"values": values})
+    assert res.status_code == 200, res.text
+    out = res.json()
+    assert len(lab["calls"]["seen"]) == seen  # no model call
+    assert "{{start}}" in out["sql"] and "FROM events" in out["sql"]
+    assert "'alice'" in out["sql"] and "template_id = 'linux_sshd'" in out["sql"]
+    # It runs like any query, through the guard on ana's view, and finds that row's events.
+    q = lab["ana"].post(
+        "/api/query",
+        json={"sql": out["sql"], "start": "2000-01-01T00:00:00Z", "end": "2100-01-01T00:00:00Z"},
+    )
+    assert q.status_code == 200, q.text
+    attempts = first[cols.index("attempts")]
+    assert len(q.json()["rows"]) == attempts
+    assert {r[3] for r in q.json()["rows"]} == {"alice"}
+
+
+def test_show_events_needs_the_keys_and_a_library_answer(lab: dict[str, Any]) -> None:
+    lab["calls"]["route"] = {"kind": "data", "query": "linux_auth/ssh_logins", "params": {}}
+    body = ask(lab, "SSH logins for alice@example.com")
+    ana, url = lab["ana"], f"/api/ask/{body['ask_id']}/drill"
+    assert ana.post(url, json={"values": {"user": "alice"}}).status_code == 404  # not run yet
+    ana.post(f"/api/ask/{body['ask_id']}/run")
+    assert ana.post(url, json={"values": {"user": "alice"}}).status_code == 400  # keys missing
+    # A generated answer has no group keys: nothing to drill into.
+    lab["calls"]["route"] = {"kind": "data", "query": None, "params": {}}
+    generated = ask(lab, "how many events per user")
+    run = ana.post(f"/api/ask/{generated['ask_id']}/run").json()
+    assert run["drill_keys"] == []
+    bad = ana.post(f"/api/ask/{generated['ask_id']}/drill", json={"values": {}})
+    assert bad.status_code == 400

@@ -1,9 +1,11 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import { isAborted, ModelWait } from "@/components/ai/ModelWait";
-import { api, type AskTurn } from "@/lib/api";
+import { api, type AskTurn, type Cell } from "@/lib/api";
+import { closeAsk } from "@/lib/askSlideOver";
 import { setAskProvider, useAskProvider } from "@/lib/askProvider";
 import { navigate } from "@/lib/route";
+import { seedSearch } from "@/lib/searchSeed";
 import { AskTurnBlock, type Turn } from "./AskTurnBlock";
 
 const MAX_TURNS = 3;
@@ -83,6 +85,28 @@ export function AskThread({
       }),
   });
   const summaryStart = useRef<Record<number, number>>({});
+
+  // "Show events" (D173): the server builds the row's events query from the library
+  // query; Search runs it through the guard on the caller's view, audited like any query.
+  const showEvents = useMutation({
+    mutationFn: ({ turn, values }: { turn: Turn; values: Record<string, Cell> }) =>
+      api.askDrill(turn.answer?.ask_id ?? "", values),
+    onSuccess: (d, { turn }) => {
+      seedSearch({
+        sql: d.sql,
+        window: d.start && d.end ? { from: d.start, to: d.end } : undefined,
+        range: d.start && d.end ? undefined : "all",
+        sources: d.sources ?? undefined,
+        origin: `From Ask: ${turn.question}`,
+      });
+      closeAsk();
+      navigate("search");
+    },
+    onError: (error, { turn }) =>
+      update(turn.id, {
+        drillError: error instanceof Error ? error.message : "Could not open those events",
+      }),
+  });
 
   const run = useMutation({
     mutationFn: ({ askId }: { id: number; askId: string }) => {
@@ -345,6 +369,7 @@ export function AskThread({
               onRetry={retry}
               onCheckData={checkData}
               onEdit={onEdit}
+              onShowEvents={(turn, values) => showEvents.mutate({ turn, values })}
             />
           ))}
         </div>

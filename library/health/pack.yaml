@@ -5,6 +5,7 @@ version: 1.0.0
 description: How well each source is parsed.
 queries:
 - id: parser_mix
+  keys: [source_id, parser, parse_status]
   name: Parser mix by source
   description: 'Which parser (template) read each source''s events and how well: rows per source, template,
     and parse status. A source that is mostly generic or envelope_only needs a template; a sudden change

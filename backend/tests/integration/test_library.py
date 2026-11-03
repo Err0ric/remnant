@@ -13,6 +13,7 @@ from app.engine.duckdb import QueryScope
 from app.ingest.records import DecodedLine
 from app.ingest.writer import LakeWriter
 from app.main import create_app
+from app.search.ask_drill import drill_sql
 from app.search.ask_summary import TEMPLATE
 from app.search.library import LIBRARY_DIR, Pack, load, load_dir
 from app.search.params import bind, compile_sql
@@ -64,6 +65,15 @@ def test_library_query_runs_on_fixtures(engine: Any, pack: Pack, query_id: str) 
     if q.answer:  # ADR-0042 row 6: the headline names only columns the query returns
         named = {k.removeprefix("first.") for k in TEMPLATE.findall(q.answer)} - {"n"}
         assert named <= set(res.columns), f"answer names {sorted(named - set(res.columns))}"
+    if q.keys and res.rows:  # D173: the first row's "Show events" finds its events
+        first = dict(zip(res.columns, res.rows[0], strict=True))
+        sql = drill_sql(q.sql, q.keys, {k: first[k] for k in q.keys}, {
+            p.name: p.default for p in q.params if p.default is not None
+        })  # fmt: skip
+        shown = engine.run(
+            compile_sql(sql), QueryScope(None, START, END), {"start": START, "end": END}
+        )
+        assert shown.rows, f"no events behind the first row: {sql}"
     e = q.expect
     if e is None:
         return

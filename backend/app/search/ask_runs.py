@@ -32,6 +32,17 @@ class AskRun:
     params: dict[str, str | int | float | bool] = field(default_factory=dict)
     provider_id: str = ""  # the provider that answered; the summary uses the same one
     template: str | None = None  # a library query's headline template (`answer`)
+    drill: Drill | None = None  # a library query with group keys: "Show events" per row
+
+
+@dataclass(frozen=True, slots=True)
+class Drill:
+    """What "Show events" needs (D173): the library query's own SQL (not the filtered
+    wrapper Ask ran), its group keys, and its parameter values."""
+
+    sql: str
+    keys: list[str]
+    params: dict[str, str | int | float | bool]
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +53,8 @@ class Ran:
     sample: Sample | None
     sources: list[str]
     headline: str
+    start: datetime | None = None  # the window the run read
+    end: datetime | None = None
 
 
 class AskRuns:
@@ -64,11 +77,12 @@ class AskRuns:
         params: dict[str, str | int | float | bool] | None = None,
         provider_id: str = "",
         template: str | None = None,
+        drill: Drill | None = None,
     ) -> AskRun:
         run = AskRun(
             str(uuid.uuid4()), user_id, sql, start, end, sources, list(call_ids), now,
             origin=origin, question=question, params=dict(params or {}),
-            provider_id=provider_id, template=template,
+            provider_id=provider_id, template=template, drill=drill,
         )  # fmt: skip
         with self._lock:
             self._kept[run.ask_id] = run

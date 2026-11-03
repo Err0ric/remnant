@@ -5,6 +5,7 @@ version: 1.0.0
 description: 'SSH, sudo, su, and PAM: who signs in to Linux hosts and who uses root.'
 queries:
 - id: ssh_logins
+  keys: [user, client, result]
   name: SSH logins by user and source
   description: sshd sign-ins per user, client address, and result, with first and last time. Reads the
     linux_sshd template's parsed columns, so it keeps working whatever the message text.
@@ -37,6 +38,7 @@ queries:
   - 'SSH logins by user'
   - 'Which accounts signed in to Linux hosts?'
 - id: ssh_failures_by_source
+  keys: [address]
   answer: "{n} addresses with failed SSH logins; most from {first.address} ({first.failures} failures)"
   name: SSH failures by source address
   group: Linux / SSH
@@ -68,6 +70,7 @@ queries:
   - 'SSH brute force by source'
   - 'Failed SSH logins by IP'
 - id: ssh_invalid_users
+  keys: [tried, address]
   name: SSH attempts for accounts that do not exist
   group: Linux / SSH
   tags:
@@ -97,6 +100,7 @@ queries:
   - 'Invalid user SSH logins'
   - 'Who tried SSH with unknown accounts?'
 - id: sudo_denied
+  keys: [user, host]
   answer: "{n} user and host pairs refused by sudo; most: {first.user} on {first.host} ({first.refusals} refusals)"
   name: sudo refused
   group: Linux / Privilege
@@ -125,6 +129,7 @@ queries:
   - 'Failed sudo attempts'
   - 'sudo denied events'
 - id: sudo_commands
+  keys: [user, host, command]
   name: Commands run with sudo
   group: Linux / Privilege
   tags:
@@ -152,6 +157,7 @@ queries:
   - 'Who used sudo?'
   - 'Commands run as root'
 - id: su_failures
+  keys: [host, account]
   name: Failed su and local sign-ins
   group: Linux / Privilege
   tags:

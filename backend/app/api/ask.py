@@ -23,7 +23,7 @@ from app.api.query import QueryRequest, QueryResponse, _geo, _intel, _run_audite
 from app.auth.service import AuthService
 from app.auth.users import User
 from app.core.config import AppConfig
-from app.core.errors import AppError, ProviderConfigError, RateLimitedError
+from app.core.errors import AppError, ParamInvalidError, ProviderConfigError, RateLimitedError
 from app.engine.duckdb import QueryScope
 from app.engine.views import permitted_sources, scope_sources
 from app.llm import gate
@@ -33,11 +33,12 @@ from app.llm.provider import Locality
 from app.llm.queue import QUEUES
 from app.llm.registry import ProviderRecord, ProviderStore
 from app.meta.db import MetaDB
+from app.search.ask_drill import DrillError, drill_sql
 from app.search.ask_flow import Routed, route_question
 from app.search.ask_route import rank
-from app.search.ask_runs import AskRuns, Ran
+from app.search.ask_runs import AskRuns, Drill, Ran
 from app.search.ask_summary import check_claims, headline, removed_note, sample
-from app.search.library import Library, editor_sql
+from app.search.library import Library, LibraryQuery, editor_sql
 from app.search.saved import SavedSearchStore
 
 router = APIRouter(tags=["ask"])
@@ -243,6 +244,7 @@ async def ask(body: AskRequest, request: Request, user: AskUser) -> AskResponse:
             user.user_id, routed.plan.sql, start, end, body.sources, call_ids, now,
             body.question, origin=c.pack.origin(c.query), params=routed.plan.params,
             provider_id=chosen.provider_id, template=c.query.answer,
+            drill=_drill(c.query, routed.plan.params),
         )  # fmt: skip
         detail |= {"call_ids": call_ids, "ask_id": kept.ask_id}
         await run_in_threadpool(
@@ -370,6 +372,8 @@ class AskRunResponse(QueryResponse):
     summarize: bool
     # Why there is no summary, when there is none and the reason is not "turned off".
     summary_note: str | None = None
+    # Group keys (D173): each row can open its events with POST /api/ask/{id}/drill.
+    drill_keys: list[str] = Field(default_factory=list)
 
 
 @router.post("/ask/{ask_id}/run")
@@ -401,7 +405,7 @@ async def run_answer(ask_id: str, request: Request, user: AskUser) -> AskRunResp
     result = await _run_audited(body, request, user, "query.run", extra, max_rows=ASK_ROWS)
     head = headline(result.columns, result.rows, result.truncated, run.template)
     rows = sample(result.columns, result.rows, result.truncated)
-    runs.ran(run.ask_id, Ran(rows, list(result.sources), head))
+    runs.ran(run.ask_id, Ran(rows, list(result.sources), head, start, end))
     note = None
     if config.ask.summarize and result.rows and rows is None:
         note = "No summary: these rows have no event ids to cite."
@@ -418,6 +422,7 @@ async def run_answer(ask_id: str, request: Request, user: AskUser) -> AskRunResp
         headline=head,
         summarize=config.ask.summarize and rows is not None and bool(run.provider_id),
         summary_note=note,
+        drill_keys=run.drill.keys if run.drill and result.columns else [],
     )
 
 
@@ -492,3 +497,45 @@ async def answer(ask_id: str, request: Request, user: AskUser) -> AnswerOut:
         note=removed_note(checked.removed, len(checked.claims)),
         call_id=got.call_id,
     )
+
+
+def _drill(q: LibraryQuery, plan_params: dict[str, str | int | float | bool]) -> Drill | None:
+    if not q.keys:
+        return None
+    values = {p.name: plan_params.get(p.name, p.default) for p in q.params}
+    return Drill(q.sql, list(q.keys), {k: v for k, v in values.items() if v is not None})
+
+
+Value = str | int | float | bool | None
+
+
+class DrillRequest(BaseModel):
+    # The row's value for each group key, as the run returned it.
+    values: dict[Annotated[str, StringConstraints(max_length=64)], Value] = Field(max_length=8)
+
+
+class DrillOut(BaseModel):
+    sql: str  # for the Search editor; {{start}} and {{end}} come from the window
+    start: datetime | None
+    end: datetime | None
+    sources: list[str] | None
+
+
+@router.post("/ask/{ask_id}/drill")
+async def drill(ask_id: str, body: DrillRequest, request: Request, user: AskUser) -> DrillOut:
+    """ "Show events" for one row of an aggregate library answer (D173): the library
+    query's own WHERE and parameters plus each group key equal to the row's value, built
+    by code, never by a model. Nothing runs here: Search runs it through the guard on the
+    caller's view and audits it like any query."""
+    runs: AskRuns = request.app.state.ask_runs
+    run, ran = runs.result(ask_id, user.user_id, datetime.now(UTC))
+    if run.drill is None:
+        raise ParamInvalidError("This answer's rows have no events to show")
+    for v in body.values.values():
+        if isinstance(v, str) and len(v) > 2_000:
+            raise ParamInvalidError("A value is too long")
+    try:
+        sql = drill_sql(run.drill.sql, run.drill.keys, body.values, run.drill.params)
+    except DrillError as exc:
+        raise ParamInvalidError(f"Cannot show events for this row: {exc}") from exc
+    return DrillOut(sql=sql, start=ran.start, end=ran.end, sources=run.sources)

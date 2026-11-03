@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Show the events behind an Ask row (2026-11-02)
+
+- When **Ask** answers from the query library with counts per person, address, or host, each row now has **Show events**. It opens Search with the events behind that row, on the same time range and filters: the query is built from the library query itself, not by the model, and runs like any search.
+- 19 of the 29 library queries support it; the rest show their rows as before.
+- What changes for existing installs: nothing to do.
+
+### Ask's routing and answer steps can never be given tools (2026-11-02)
+
+- The AI gate now refuses any tool on Ask's routing and answer calls, whatever the caller passes. Only the step that writes SQL can use Ask's two read-only tools.
+- What changes for existing installs: nothing to do.
+
 ### Ask answers with a headline and cited statements (2026-11-02)
 
 - After the rows, **Ask** shows a one-line headline written from the result itself, for example "12 accounts with failed sign-ins; most: dana@example.com (40 failures)". It is never written by the model.

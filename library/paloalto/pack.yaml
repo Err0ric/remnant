@@ -5,6 +5,7 @@ version: 1.0.0
 description: Traffic, threats, GlobalProtect VPN, admin sign-ins, and maintenance on Palo Alto firewalls.
 queries:
 - id: firewall_maintenance
+  keys: [firewall, subtype, event]
   name: Firewall maintenance watch
   description: 'Palo Alto system events that mark maintenance or trouble: HA state changes, commits, restarts,
     software and content installs, and anything medium severity or higher, per firewall and event, with
@@ -46,6 +47,7 @@ queries:
   - 'Firewall system events'
   - 'Did the firewall reboot or change config?'
 - id: pa_admin_signins
+  keys: [user, address]
   name: Firewall admin sign-ins
   group: Palo Alto / System
   tags:
@@ -76,6 +78,7 @@ queries:
   - 'Failed logins on the firewall'
   - 'Who signed in to the firewall?'
 - id: pa_denied_by_source
+  keys: [source, user]
   answer: "{n} sources with denied traffic; most: {first.source} ({first.denied} denied)"
   name: Denied traffic by source
   group: Palo Alto / Traffic
@@ -105,6 +108,7 @@ queries:
   - 'Which addresses are blocked by the firewall?'
   - 'Top blocked sources'
 - id: pa_threats_by_signature
+  keys: [signature]
   name: Threats by signature
   group: Palo Alto / Threat
   tags:
@@ -133,6 +137,7 @@ queries:
   - 'What threats did the firewall detect?'
   - 'Top firewall threat signatures'
 - id: gp_logins_by_user
+  keys: [user, public_address]
   name: GlobalProtect sign-ins by user
   group: Palo Alto / VPN
   tags:

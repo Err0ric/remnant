@@ -662,3 +662,17 @@ def test_refused_calls_are_chained(lab: Lab) -> None:
         lab.gate.call(request(lab, pid, ["secret_hr"]))
     (row,) = calls(lab)
     assert row["chain_seq"] == 1 and row["error"]
+
+
+@pytest.mark.parametrize("prompt", ["ask_answer.v1", "ask_route.v1"])
+def test_ask_routing_and_answer_prompts_never_get_tools(lab: Lab, prompt: str) -> None:
+    """CLAUDE.md rule 3 enforced in the gate (owner review, 2026-11-02): purpose `ask` with
+    a zero-tool prompt is refused if a caller passes Ask's tools, before any model call."""
+    pid = provider(lab, LOCAL_URL)
+    extra: dict[str, Any] = {"citable_event_ids": SENT} if prompt.startswith("ask_answer") else {}
+    with pytest.raises(ValueError, match="No tools are allowed for prompt"):
+        lab.gate.call(
+            request(lab, pid, [], prompt=prompt, tools=["get_schema", "preview_query"], **extra)
+        )
+    assert [r["error"] for r in calls(lab)] == ["request_invalid"]
+    assert all(f.seen == [] for f in lab.fakes)

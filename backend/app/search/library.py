@@ -25,6 +25,8 @@ from app.auth.users import User
 from app.core import safeyaml
 from app.core.errors import ConfigError, ConflictError
 from app.engine.duckdb import QueryEngine, QueryScope
+from app.search.ask_drill import DrillError
+from app.search.ask_drill import base as drill_base
 from app.search.ask_summary import TEMPLATE
 from app.search.params import RESERVED, ParamDef, placeholders
 from app.search.saved import (
@@ -80,6 +82,12 @@ class LibraryQuery(BaseModel):
     # row count and `{first.<column>}` a value of the first row. Never sent to a model.
     answer: Annotated[str, StringConstraints(strip_whitespace=True, max_length=160)] | None = None
 
+    # Group keys (D173): output columns whose values pick out one row's events, so Ask can
+    # offer "Show events" per row. Code builds that query from this SQL (ask_drill).
+    keys: list[Annotated[str, StringConstraints(pattern=r"^[a-z_][a-z0-9_]{0,63}$")]] = Field(
+        default_factory=list, max_length=8
+    )
+
     def spec(self, origin: str) -> SavedSearchIn:
         return SavedSearchIn(
             id=self.id, name=self.name, description=self.description,
@@ -119,6 +127,11 @@ def check(pack: Pack) -> None:
             raise ConfigError(
                 f"{pack.id}/{q.id}: answer may name only {{n}} and {{first.<column>}}"
             )
+        if q.keys:
+            try:
+                drill_base(q.sql, q.keys)
+            except DrillError as exc:
+                raise ConfigError(f"{pack.id}/{q.id}: keys: {exc}") from exc
         if q.flag is not None and not FLAG.match(q.flag):
             raise ConfigError(
                 f"{pack.id}/{q.id}: flag must be 'above N', 'below N', or 'change N%'"

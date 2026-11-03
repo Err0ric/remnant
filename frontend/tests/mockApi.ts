@@ -2770,8 +2770,32 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
             },
       );
     }
+    if (/\/api\/ask\/a\d+\/drill$/.test(url) && method === "POST")
+      return json({
+        sql: "SELECT time, message FROM events WHERE (template_id = 'linux_sshd') AND actor_user_name = 'dana'",
+        start: "2026-11-01T00:00:00Z",
+        end: "2026-11-02T00:00:00Z",
+        sources: null,
+      });
     if (/\/api\/ask\/a\d+\/run$/.test(url) && method === "POST") {
       const q = askQuestions[url.split("/api/ask/")[1]!.split("/")[0]!] ?? "";
+      if (q.includes("ssh logins for"))
+        return json({
+          columns: ["user", "client", "attempts"],
+          rows: [
+            ["dana", "203.0.113.9", 4],
+            ["dana", "198.51.100.4", 1],
+          ],
+          row_count: 2,
+          truncated: false,
+          elapsed_ms: 9,
+          executed_sql: "SELECT ...",
+          sources: ["linux_sshd"],
+          headline: "2 rows. First row: user dana, client 203.0.113.9, attempts 4.",
+          summarize: false,
+          summary_note: "No summary: these rows have no event ids to cite.",
+          drill_keys: ["user", "client"],
+        });
       if (q.includes("summarize"))
         return json({
           columns: ["event_id", "user"],

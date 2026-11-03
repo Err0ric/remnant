@@ -1,4 +1,10 @@
-import { ApiError, type AskResponse, type AskRunResult, type AskSummary } from "@/lib/api";
+import {
+  ApiError,
+  type AskResponse,
+  type AskRunResult,
+  type AskSummary,
+  type Cell,
+} from "@/lib/api";
 import { isAborted, isModelBusy } from "@/components/ai/ModelWait";
 import { cn } from "@/lib/cn";
 import { AskResults } from "./AskResults";
@@ -21,6 +27,7 @@ export interface Turn {
   /** Why there is no summary (no event ids to cite, or the step failed). */
   summaryNote?: string;
   summaryMs?: number;
+  drillError?: string;
 }
 
 const CHECK: Record<AskResponse["check"], string> = {
@@ -87,12 +94,21 @@ interface AskTurnBlockProps {
   onCheckData: (turn: Turn) => void;
   /** Opens this turn's SQL in the SQL editor. */
   onEdit?: (sql: string) => void;
+  /** "Show events" for one row of an aggregate library answer (D173). */
+  onShowEvents?: (turn: Turn, values: Record<string, Cell>) => void;
 }
 
 /** One question and what came of it, as a block, never a chat bubble (DESIGN.md 6.1): the
  * question as a heading, what the model said about its query, the rows, and a collapsed
  * "How I got this" with the SQL, where it came from, the sources read, and the time. */
-export function AskTurnBlock({ turn, onRun, onRetry, onCheckData, onEdit }: AskTurnBlockProps) {
+export function AskTurnBlock({
+  turn,
+  onRun,
+  onRetry,
+  onCheckData,
+  onEdit,
+  onShowEvents,
+}: AskTurnBlockProps) {
   const a = turn.answer;
   const route = a?.route ?? null;
   const working = turn.phase === "finding" || turn.phase === "running" || turn.phase === "writing";
@@ -172,7 +188,18 @@ export function AskTurnBlock({ turn, onRun, onRetry, onCheckData, onEdit }: AskT
         </div>
       ) : null}
       {turn.result ? <Answer turn={turn} /> : null}
-      {turn.result ? <AskResults result={turn.result} /> : null}
+      {turn.result ? (
+        <AskResults
+          result={turn.result}
+          drillKeys={turn.result.drill_keys}
+          onShowEvents={onShowEvents ? (values) => onShowEvents(turn, values) : undefined}
+        />
+      ) : null}
+      {turn.drillError ? (
+        <p role="alert" className="text-sm text-sev-critical-text">
+          {turn.drillError}
+        </p>
+      ) : null}
       {a && turn.phase !== "guidance" ? (
         <details className="rounded border border-border bg-surface text-sm">
           <summary className="cursor-pointer px-3 py-1.5 text-text-secondary">

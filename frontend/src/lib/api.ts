@@ -356,6 +356,16 @@ export interface AskRunResult extends QueryResult {
   summarize: boolean;
   /** Why there is no summary, when there is none and summaries are on. */
   summary_note?: string | null;
+  /** Group keys (D173): each row can open its own events in Search. */
+  drill_keys?: string[];
+}
+
+/** "Show events" for one row: SQL for the Search editor and the window it reads. */
+export interface AskDrill {
+  sql: string;
+  start: string | null;
+  end: string | null;
+  sources: string[] | null;
 }
 
 /** Statements about the rows, each citing their event ids; uncited ones were removed. */
@@ -2300,6 +2310,9 @@ export const api = {
     request<AskSuggestion[]>(`/api/ask/suggest?q=${encodeURIComponent(q)}`),
   runAnswer: (askId: string, signal?: AbortSignal) =>
     request<AskRunResult>(`/api/ask/${encodeURIComponent(askId)}/run`, { ...post({}), signal }),
+  /** "Show events" for one row of an aggregate answer (D173); built by code, runs in Search. */
+  askDrill: (askId: string, values: Record<string, Cell>) =>
+    request<AskDrill>(`/api/ask/${encodeURIComponent(askId)}/drill`, post({ values })),
   /** The answer step (ADR-0042 slice 1c): statements that cite the rows the run kept. */
   askAnswer: (askId: string, signal?: AbortSignal) =>
     request<AskSummary>(`/api/ask/${encodeURIComponent(askId)}/answer`, {

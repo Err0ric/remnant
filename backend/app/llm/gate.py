@@ -192,6 +192,10 @@ class GateResult:
 CITING_PURPOSES = frozenset({"explain", "report"})
 
 
+# Ask prompts that run with zero tools (ADR-0042 row 13).
+ZERO_TOOL_PROMPTS = ("ask_answer.", "ask_route.")
+
+
 def _ask_answer(req: "GateRequest") -> bool:
     """Ask's answer step (ADR-0042 row 8): purpose `ask`, its own prompt, and it cites the
     rows it was sent like Explain. The SQL-writing and routing calls carry no ids."""
@@ -648,6 +652,10 @@ def _tools_for(req: GateRequest) -> list[dict[str, Any]] | None:
         return None
     if req.purpose != "ask":
         raise ValueError(f"No tools are allowed for purpose {req.purpose}")
+    if req.prompt.startswith(ZERO_TOOL_PROMPTS):
+        # Rule 3 holds here, not only in the caller: Ask's routing and answer steps have
+        # no tools (ADR-0042 row 13); only the SQL-writing agent gets the two.
+        raise ValueError(f"No tools are allowed for prompt {req.prompt}")
     if not all(isinstance(name, str) for name in req.tools):
         raise ValueError("Tools are named, not described")
     unknown = sorted(set(req.tools) - set(ASK_TOOL_SCHEMAS))

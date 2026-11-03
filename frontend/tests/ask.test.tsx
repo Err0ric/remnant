@@ -262,4 +262,29 @@ describe("Ask routing (ADR-0042 slice 1b)", () => {
     ).toBeVisible();
     expect(spy.mock.calls.filter(([u]) => String(u).endsWith("/a2/answer"))).toHaveLength(0);
   });
+
+  it("opens a row's own events in Search, built by the server (D173)", async () => {
+    const spy = await renderAt("/ask");
+    await askQuestion("ssh logins for dana@example.com");
+    const block = await screen.findByRole("region", {
+      name: "Question: ssh logins for dana@example.com",
+    });
+    await userEvent.click(
+      await within(block).findByRole("button", {
+        name: "Show events for user dana, client 198.51.100.4",
+      }),
+    );
+    expect(posts(spy, "/api/ask/a1/drill")).toEqual([
+      { values: { user: "dana", client: "198.51.100.4" } },
+    ]);
+    await vi.waitFor(() => expect(window.location.pathname).toMatch(/\/search$/));
+  });
+
+  it("offers Show events only when the answer has group keys", async () => {
+    await renderAt("/ask");
+    await askQuestion("failed logins");
+    const block = await screen.findByRole("region", { name: "Question: failed logins" });
+    await within(block).findByText(/2 addresses with failures/);
+    expect(within(block).queryByRole("button", { name: /^Show events/ })).toBeNull();
+  });
 });

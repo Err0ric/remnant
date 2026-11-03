@@ -12,6 +12,7 @@ Items noted during a slice that belong to a later slice. Move into the slice pla
 | A page not found view with the navigation for unknown routes (they open Health today) | 9 | Owner, 2026-10-31 |
 | Proposed, pending review (D141): name apps on Microsoft 365 > Admin through Graph `servicePrincipals` when the directory audits do not name them. Needs `Application.Read.All`, a change to ADR-0002's permission list; cache names; no call at page time | 9 | Owner, 2026-11-01 |
 | Proposed, pending review (D141): show consents on Microsoft 365 > Admin as well as Apps (D122 keeps them on Apps) | 9 | Owner, 2026-11-01 |
+| Ask evidence query (ADR-0042 row 8): for an aggregate result with no `event_id`, code runs a reviewed evidence query (up to 10 events per top group) so the answer step can cite events. Not built in slice 1c (owner, 2026-11-02): 24 of the 29 shipped library queries are aggregates, so those answers show the headline and rows with no summary. The "Show events" drill-down (D173) covers looking at the events by hand meanwhile | 9 | Owner review of #372, 2026-11-02 |
 | Pin Docker base images by digest | 6 | Slice 1 skeleton |
 | Self-hosted Lucide subset or tree-shake audit | 6 | Slice 1 skeleton |
 | Read-only MCP server (SPEC 3.8, ADR-0003) | 7 | Roadmap, 2026-10-10 |
