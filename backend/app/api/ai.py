@@ -20,7 +20,7 @@ from app.ai.catalog import NON_USAGE, Catalog, DataLevel, Service, ServiceDef
 from app.ai.inventory import Exclusions, inventory
 from app.ai.inventory import export as inventory_export
 from app.ai.sessions import sessions, timeline
-from app.ai.usage import ServiceUse, Usage
+from app.ai.usage import ServiceUse, Usage, seen_through
 from app.ai.watch import AiWatch
 from app.ai.watch_summary import source_classes
 from app.ai.watch_summary import summary as watch_summary
@@ -85,6 +85,9 @@ class PersonOut(BaseModel):
     errors: int
     sensitive: int
     models: list[str]
+    # How this person was seen using Claude: plugin, network, or both (owner, 2026-11-02).
+    seen_through: Literal["plugin", "network", "both"] = "plugin"
+    via: list[str] = []  # telemetry, hooks
 
 
 class GoneOut(BaseModel):
@@ -111,6 +114,8 @@ class UsageOut(BaseModel):
     # yet show their AI use without people (owner, 2026-10-29).
     people_pending_days: int = 0
     people_days: int = 0
+    # Claude users by how they were seen: plugin only, network only (no plugin), and both.
+    claude_seen: dict[str, int] = {}
 
 
 def _catalog(request: Request) -> Catalog:
@@ -170,12 +175,14 @@ async def ai_usage(
         return out  # type: ignore[no-any-return]  # a UsageOut this route stored
     ident = await run_in_threadpool(request.app.state.identities.load)
     # The independent reads at once: a page load waits for the slowest, not the sum.
-    (found, sources), mcp, people, (pending, of) = await asyncio.gather(
+    (found, sources), mcp, people, (pending, of), network = await asyncio.gather(
         run_in_threadpool(usage.all_services, scope),
         run_in_threadpool(usage.mcp, scope, ident),
         run_in_threadpool(usage.people, scope, ident),
         run_in_threadpool(usage.people_pending, scope),
+        run_in_threadpool(usage.claude_network_people, scope),
     )
+    people, claude_seen = seen_through(people, network, ident)
     services = [u for u in found if u.service.kind != NON_USAGE]
     other = [u for u in found if u.service.kind == NON_USAGE]
     changes, compared_from = None, None
@@ -210,6 +217,7 @@ async def ai_usage(
         gone=[GoneOut(**_slots(g)) for g in changes.gone] if changes else [],
         people_pending_days=pending,
         people_days=of,
+        claude_seen=claude_seen,
     )
     cache.put(key, (result, sources))
     return result
@@ -617,6 +625,7 @@ class SessionOut(BaseModel):
     hosts: list[str]
     stopped: bool  # ended
     failed: int = 0  # tool calls that failed
+    state: Literal["ended", "idle", "open"] = "open"  # idle: no record for the idle time
 
 
 class StepOut(BaseModel):
@@ -656,7 +665,8 @@ async def ai_sessions(
     meta: MetaDB = request.app.state.meta
     allowed = await run_in_threadpool(permitted_sources, meta, user)
     engine: QueryEngine = request.app.state.engine
-    rows = await run_in_threadpool(sessions, engine, allowed, datetime.now(UTC), days)
+    idle = request.app.state.config.agents.session_idle_minutes
+    rows = await run_in_threadpool(sessions, engine, allowed, datetime.now(UTC), days, idle)
     if person:
         ident = await run_in_threadpool(request.app.state.identities.load)
         keys = set(ident.keys_for(person))

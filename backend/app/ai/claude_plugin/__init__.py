@@ -3,6 +3,10 @@ packed per source with its server address, token, content choice, pilot list, an
 optionally this server's own certificate. The folders next to this module are the plugins
 as shipped; their files are read, never changed, and written into the zip as they are.
 
+A plugin download also carries `install-local.ps1` (Windows) or `install-local.sh` (macOS
+and Linux): run from the unzipped folder, it builds a local marketplace and installs the
+plugin for that one user, for testing on one machine (owner, 2026-11-02).
+
 `managed=True` instead returns a bundle for endpoint management: the plugin with an empty
 config, and the machine-wide `hooks.conf` (which wins over the plugin's own copy) holding
 the address and token, with a README on where it goes."""
@@ -15,6 +19,8 @@ import json
 import zipfile
 from pathlib import Path
 from typing import Literal
+
+from app.core.branding import PRODUCT_NAME
 
 HERE = Path(__file__).parent
 Platform = Literal["windows", "posix"]
@@ -32,6 +38,9 @@ MACHINE_CONF: dict[str, str] = {
     "macos": "/Library/Application Support/siem-claude-hooks/hooks.conf",
     "linux": "/etc/siem-claude-hooks/hooks.conf",
 }
+INSTALLERS: dict[str, str] = {"windows": "install-local.ps1", "posix": "install-local.sh"}
+# The local marketplace the one-machine installer builds (`<name>@<this>`).
+LOCAL_MARKETPLACE = f"{PRODUCT_NAME.lower()}-local"
 _STAMP = (2026, 1, 1, 0, 0, 0)  # fixed zip times: the same inputs give the same file
 
 
@@ -75,8 +84,10 @@ def build_zip(
     platform: str = "posix",
     ca_pem: bytes | None = None,
     config: str | None = None,
+    installer: bool = True,
 ) -> bytes:
-    """One platform's plugin folder as a zip, ready to upload in the admin console."""
+    """One platform's plugin folder as a zip, ready to upload in the admin console, with
+    the one-machine installer beside it (`installer`)."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as z:
         for name in files(platform):
@@ -87,6 +98,10 @@ def build_zip(
         if config is None:
             config = config_text(url, token, send_content, pilot, CA_NAME if ca_pem else "")
         _add(z, "config", config.encode(), 0o600)
+        if installer:
+            name = INSTALLERS[platform]
+            text = (HERE / "local" / name).read_text().replace("@MARKETPLACE@", LOCAL_MARKETPLACE)
+            _add(z, name, text.encode(), 0o755)
     return buf.getvalue()
 
 
@@ -117,7 +132,9 @@ def build_managed(
     )
     readme = f"""Claude hooks plugin ({LABELS[platform]}), version {VERSION}
 
-1. Upload plugin-{platform}.zip in Claude: Organization settings > Plugins & skills.
+1. Install plugin-{platform}.zip on each machine: unzip it and run its
+   {INSTALLERS[platform]} as the user (a local marketplace, then claude plugin install),
+   or upload it in Claude: Organization settings > Plugins & skills.
    Its own config is empty: it sends only where the managed file below is deployed.
 2. Deploy hooks.conf with your endpoint management tool to:
 {where}

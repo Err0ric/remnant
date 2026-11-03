@@ -1,9 +1,9 @@
 import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
-import { ClaudePlugin } from "./ClaudePlugin";
 import { ApiError, api } from "@/lib/api";
 import { PRODUCT_NAME } from "@/lib/branding";
 import { SectionTitle } from "@/components/SectionTitle";
+import { navigate } from "@/lib/route";
 
 /** The OTLP base address senders use (ADR-0015 row 3). */
 export function otlpEndpoint(): string {
@@ -157,7 +157,6 @@ interface OtlpControlsProps {
 export function OtlpControls({ sourceId, keepContent, canManage }: OtlpControlsProps) {
   const [token, setToken] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
-  const [plugin, setPlugin] = useState(false);
   const rotate = useMutation({
     mutationFn: () => api.rotateOtlpToken(sourceId),
     onSuccess: (r) => {
@@ -219,16 +218,13 @@ export function OtlpControls({ sourceId, keepContent, canManage }: OtlpControlsP
           </button>
           <button
             type="button"
-            onClick={() => setPlugin((v) => !v)}
-            aria-expanded={plugin}
+            onClick={() => navigate("plugins")}
+            title="Claude plugin downloads and their tokens are on Settings > Claude plugins"
             className="text-accent-text hover:underline"
           >
-            Claude plugin
+            Claude plugin: Settings
           </button>
         </span>
-      ) : null}
-      {canManage && plugin ? (
-        <ClaudePlugin sourceId={sourceId} keepContent={kept} onClose={() => setPlugin(false)} />
       ) : null}
       {canManage ? (
         <label className="flex items-start gap-2">

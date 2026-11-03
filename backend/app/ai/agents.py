@@ -60,9 +60,13 @@ WITH u AS (
          'Claude Code on ' || coalesce(device_hostname, 'unknown machine'),
          {WHO_EXPR}, device_hostname,
          CASE WHEN {HOOK_MCP} IS NOT NULL THEN 'MCP server' ELSE 'Tool' END,
-         coalesce({HOOK_MCP}, json_extract_string(unmapped, '$.attr.tool_name')),
+         CASE WHEN message = 'claude_hooks.pre_tool_use'
+              THEN coalesce({HOOK_MCP}, json_extract_string(unmapped, '$.attr.tool_name')) END,
          coalesce(time, time_observed)
-  FROM events WHERE template_id = 'claude_hooks' AND message = 'claude_hooks.pre_tool_use'
+  -- Every hook record is Claude Code use: a session start or a prompt alone makes the agent
+  -- (owner, 2026-11-02); only tool calls name items.
+  FROM events WHERE template_id = 'claude_hooks'
+    AND json_extract_string(unmapped, '$.attr.test_record') IS DISTINCT FROM 'true'
   UNION ALL
   SELECT 'MCP client',
          'mcp|' || coalesce(device_hostname, '?') || '|'

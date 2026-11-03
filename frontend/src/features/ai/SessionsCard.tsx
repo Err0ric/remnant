@@ -47,6 +47,14 @@ function size(s: SessionStep): string {
   return "";
 }
 
+/** How a session's end reads: a stop record, no record for the idle time, or still open. */
+export function sessionState(s: AgentSession, short = false): string {
+  const state = s.state ?? (s.stopped ? "ended" : "open");
+  if (state === "ended") return "ended";
+  if (state === "idle") return short ? "ended (no end event)" : "Ended (no end event)";
+  return short ? "open" : "still open";
+}
+
 function readOpen(): string | null {
   const m = /(?:^|&)session=([^&]+)/.exec(window.location.hash.replace(/^#/, ""));
   return m?.[1] ? decodeURIComponent(m[1]) : null;
@@ -69,8 +77,12 @@ export function SessionsCard() {
     queryFn: () => api.aiSession(open ?? ""),
     enabled: open !== null,
   });
+  const [hideEmpty, setHideEmpty] = useState(true);
   const now = new Date().toISOString();
-  const rows = list.data ?? [];
+  const all = list.data ?? [];
+  // Test or empty sessions (a start and nothing else) clutter the list (owner 2026-11-02).
+  const rows = hideEmpty ? all.filter((r) => r.tool_calls > 0 || r.prompts > 0) : all;
+  const hidden = all.length - rows.length;
   const current = rows.find((r) => r.session_id === open) ?? null;
   const account = (email: string | null) =>
     email ? accounts.data?.rows.find((a) => a.email === email.toLowerCase()) : undefined;
@@ -85,6 +97,17 @@ export function SessionsCard() {
           Claude Code and Cowork sessions from the hooks plugin, last 7 days. Browser chat is not
           covered.
         </span>
+        <label className="ml-auto flex items-center gap-1.5 text-sm text-text-secondary">
+          <input
+            type="checkbox"
+            checked={hideEmpty}
+            onChange={(e) => setHideEmpty(e.target.checked)}
+          />
+          Hide sessions with no tool calls or prompts
+          {hideEmpty && hidden > 0 ? (
+            <span className="tabular-nums text-text-muted">({hidden} hidden)</span>
+          ) : null}
+        </label>
       </div>
       {list.error ? (
         <p role="alert" className="px-3 py-4 text-sm text-danger">
@@ -92,8 +115,9 @@ export function SessionsCard() {
         </p>
       ) : rows.length === 0 && list.isSuccess ? (
         <p className="px-3 py-4 text-sm text-text-secondary">
-          No sessions yet. Download the Claude plugin from an OTLP source on Sources and publish it
-          to your organization.
+          {hidden > 0
+            ? `No sessions with tool calls or prompts. ${hidden} empty ${hidden === 1 ? "session is" : "sessions are"} hidden.`
+            : "No sessions yet. Download the Claude plugin from Settings > Claude plugins and install it."}
         </p>
       ) : (
         <div className="grid min-h-80 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
@@ -119,7 +143,7 @@ export function SessionsCard() {
                       {s.machine ?? ""}
                     </span>
                     <span className="tabular-nums text-text-secondary">
-                      {s.stopped ? "ended" : "open"}, {s.tool_calls} calls
+                      {sessionState(s, true)}, {s.tool_calls} calls
                       {s.failed ? <span className="text-warn">, {s.failed} failed</span> : null}
                     </span>
                   </button>
@@ -193,8 +217,10 @@ function Detail({ id, person, machine, session, steps, account }: DetailProps) {
           <>
             <dt className="text-text-secondary">Started</dt>
             <dd>
-              {stamp(session.started)} UTC, {session.stopped ? "ended" : "still open"}
+              {stamp(session.started)} UTC, {sessionState(session)}
             </dd>
+            <dt className="text-text-secondary">Last seen</dt>
+            <dd>{stamp(session.last)} UTC</dd>
             <dt className="text-text-secondary">Calls</dt>
             <dd className="tabular-nums">
               {session.tool_calls} tool calls

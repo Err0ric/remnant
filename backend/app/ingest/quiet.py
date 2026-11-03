@@ -168,12 +168,16 @@ class QuietWatch:
                 continue
             quiet_for = (now - seen).total_seconds()
             if w.state == "ok" and quiet_for >= w.quiet_after_s:
-                self._update(w.source_id, state="quiet", quiet_since=now.isoformat())
+                # One alert per source per quiet episode (owner 2026-11-02: two at the same
+                # minute): only the tick that moves the row from ok to quiet alerts.
+                if not self._move(w.source_id, "ok", state="quiet", quiet_since=now.isoformat()):
+                    continue
                 self._alert(w, "quiet", f"No events received for {human(quiet_for)}", seen, now)
                 changed += 1
             elif w.state == "quiet" and before is not None and seen > before:
                 gap = (seen - before).total_seconds()
-                self._update(w.source_id, state="ok", quiet_since=None)
+                if not self._move(w.source_id, "quiet", state="ok", quiet_since=None):
+                    continue
                 text = f"Events arriving again after {human(gap)}"
                 if self._items is not None and w.quiet_since:
                     self._items.resolve("gap", f"{w.source_id}@{w.quiet_since}", text)
@@ -227,6 +231,16 @@ class QuietWatch:
             product=PRODUCT_NAME,
         )
         self._dispatcher.enqueue(alert, w.target_ids, None, None, source_id=w.source_id)
+
+    def _move(self, source_id: str, from_state: str, **fields: Any) -> bool:
+        """Change the row only if it is still in `from_state`; True when this call did."""
+        sets = ", ".join(f"{k} = ?" for k in fields)  # keys are literals from this module
+        with self._meta.connect() as con:
+            cur = con.execute(
+                f"UPDATE source_watches SET {sets} WHERE source_id = ? AND state = ?",  # noqa: S608  # literal column names
+                (*fields.values(), source_id, from_state),
+            )
+            return cur.rowcount == 1
 
     def _update(self, source_id: str, **fields: Any) -> None:
         sets = ", ".join(f"{k} = ?" for k in fields)  # keys are literals from this module

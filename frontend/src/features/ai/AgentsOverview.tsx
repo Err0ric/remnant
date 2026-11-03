@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { COUNTED } from "@/features/dashboard/counted";
 import { useState, type ReactNode } from "react";
 import { api, type AgentsOverview, type AgentTool, type PageWindow } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -125,14 +126,25 @@ function Overview({ d }: { d: AgentsOverview }) {
   return (
     <Box label="Overview">
       <div className="grid grid-cols-2 gap-px bg-border lg:grid-cols-3 min-[1400px]:grid-cols-6">
-        <Kpi label="Sessions" kpi={d.sessions} noun="sessions" />
-        <Kpi label="People" kpi={d.people} noun="people" />
-        <Kpi label="Tool calls" kpi={d.calls} noun="tool calls" />
-        <Kpi label="Failed tool calls" kpi={d.failed} noun="failed calls" />
-        <Kpi label="Not-approved MCP servers in use" kpi={d.mcp_not_approved} noun="MCP servers" />
+        <Kpi label="Sessions" kpi={d.sessions} noun="sessions" about={COUNTED.sessions} />
+        <Kpi label="People" kpi={d.people} noun="people" about={COUNTED.agentPeople} />
+        <Kpi label="Tool calls" kpi={d.calls} noun="tool calls" about={COUNTED.toolCalls} />
+        <Kpi
+          label="Failed tool calls"
+          kpi={d.failed}
+          noun="failed calls"
+          about={COUNTED.failedCalls}
+        />
+        <Kpi
+          label="Not-approved MCP servers in use"
+          kpi={d.mcp_not_approved}
+          noun="MCP servers"
+          about={COUNTED.mcpNotApproved}
+        />
         <Kpi
           label="Devices delivering late"
           kpi={d.late_devices}
+          about={COUNTED.lateDevices}
           noun="devices"
           context="Records an hour or more late (the plugin's offline queue)"
         />

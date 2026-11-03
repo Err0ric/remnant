@@ -1,4 +1,6 @@
+import { DashboardAttention } from "./NeedsAttention";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { useEffect, useState } from "react";
 import {
   ApiError,
@@ -11,7 +13,6 @@ import {
 } from "@/lib/api";
 import { navigate } from "@/lib/route";
 import { takeDashboardScroll } from "@/lib/drill";
-import { rangeWords } from "./headline";
 import { stamp } from "@/features/overview/time";
 import { currentDashboard, rememberDashboard } from "./choice";
 import { AddPack } from "./AddPack";
@@ -120,9 +121,6 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
   const onBoard = board
     ? board.panels.map((p) => byId.get(p.schedule_id)).filter((x): x is Schedule => Boolean(x))
     : [];
-  // The range only when every panel shares it; panels with different ranges say their own.
-  const ranges = [...new Set(onBoard.map((x) => rangeWords(x.lookback_minutes)))];
-  const rangeText = ranges.length === 1 ? ranges[0] : null;
   const lastRun = onBoard
     .map((x) => x.recent[0]?.started_at)
     .filter((t): t is string => Boolean(t))
@@ -132,17 +130,19 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
     const s = byId.get(p.schedule_id);
     if (s && board)
       return (
-        <SchedulePanel
-          schedule={s}
-          panel={p}
-          dashboardId={board.dashboard_id}
-          editing={editing}
-          canManage={s.mine || isAdmin}
-          onMove={(step) => move(p.schedule_id, step)}
-          onRemove={() => remove.mutate(p.schedule_id)}
-          sections={board.sections}
-          onMoveTo={(section) => arrange.mutate(placed(layout, p.schedule_id, section))}
-        />
+        <ErrorBoundary key={p.schedule_id} label={`The panel ${s.name}`}>
+          <SchedulePanel
+            schedule={s}
+            panel={p}
+            dashboardId={board.dashboard_id}
+            editing={editing}
+            canManage={s.mine || isAdmin}
+            onMove={(step) => move(p.schedule_id, step)}
+            onRemove={() => remove.mutate(p.schedule_id)}
+            sections={board.sections}
+            onMoveTo={(section) => arrange.mutate(placed(layout, p.schedule_id, section))}
+          />
+        </ErrorBoundary>
       );
     if (!schedules.isSuccess) return null;
     return (
@@ -236,9 +236,11 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
             className="ml-auto text-sm text-text-secondary"
             title={lastRun ? `Newest run ${stamp(lastRun)} UTC` : undefined}
           >
+            {/* Panels cover their own schedule's range, not the window picked above (owner,
+                2026-11-02: "Last 24 hours" here read as the page's range); each panel says
+                its range. */}
             {[
-              rangeText,
-              `${board.panels.length} ${board.panels.length === 1 ? "panel" : "panels"}`,
+              `${board.panels.length} saved-search ${board.panels.length === 1 ? "panel" : "panels"}`,
               board.shared ? "shared" : null,
             ]
               .filter(Boolean)
@@ -249,8 +251,15 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
       <div className="flex flex-col gap-3 px-5 py-3">
         {/* Order (F62): what needs me (only when something does), AI Watch, my panels,
             then sources in one line. */}
-        <AttentionBanner />
-        <AiWatch days={daysOf(win)} />
+        <ErrorBoundary label="Needs attention">
+          <DashboardAttention window={win} days={daysOf(win)} />
+        </ErrorBoundary>
+        <ErrorBoundary label="Alerts needing attention">
+          <AttentionBanner />
+        </ErrorBoundary>
+        <ErrorBoundary label="AI Watch">
+          <AiWatch days={daysOf(win)} />
+        </ErrorBoundary>
         <Sections window={win} />
         {error ? (
           <p role="alert" className="text-sm text-danger">

@@ -64,6 +64,7 @@ export function AddSourceForm({ allowedRoots, initial, onDone }: AddSourceFormPr
     ...initial,
   });
   const [kind, setKind] = useState<SourceKind>("file");
+  const [sender, setSender] = useState<"claude" | "collector">("claude");
   // An OTLP source's token, shown once after it is made (ADR-0015 row 3).
   const [created, setCreated] = useState<{ id: string; token: string } | null>(null);
   const [loki, setLoki] = useState<LokiSettings>({
@@ -123,6 +124,7 @@ export function AddSourceForm({ allowedRoots, initial, onDone }: AddSourceFormPr
       add.mutate({
         ...form,
         kind: "otlp",
+        sender,
         format: "json",
         template_id: form.template_id ?? "auto",
         path: "",
@@ -284,7 +286,36 @@ export function AddSourceForm({ allowedRoots, initial, onDone }: AddSourceFormPr
                 : "Plain text on the network. Use TLS when logs cross networks you do not control."}
             </p>
           </div>
-        ) : kind === "otlp" ? null : (
+        ) : kind === "otlp" ? (
+          <fieldset className="flex flex-col gap-1.5">
+            <legend className="mb-1 text-sm font-semibold text-text-secondary">
+              What will send to it
+            </legend>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                name="otlp-sender"
+                checked={sender === "claude"}
+                onChange={() => setSender("claude")}
+              />
+              Claude Code (telemetry or the hooks plugin)
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                name="otlp-sender"
+                checked={sender === "collector"}
+                onChange={() => setSender("collector")}
+              />
+              Endpoint agents, collectors, or the MCP inventory
+            </label>
+            <p className="text-sm text-text-muted">
+              {sender === "claude"
+                ? "No quiet alert for this source: Claude Code sends only while people use it, so evenings and weekends are quiet. Health flags a machine whose plugin has records waiting and delivered none for 3 days."
+                : "Alerts after 1 hour quiet: agents and collectors send all the time. Change it after adding."}
+            </p>
+          </fieldset>
+        ) : (
           <Field
             label="File or folder"
             help={

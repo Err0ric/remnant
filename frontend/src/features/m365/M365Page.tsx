@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { COUNTED, M365_COUNT_COUNTED, OUTCOME_COUNTED } from "@/features/dashboard/counted";
 import { useState, type ReactNode } from "react";
 import { api, type M365Overview, type PageWindow } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -7,13 +8,28 @@ import { PageHeader } from "@/components/shell/PageHeader";
 import { LoadFailed } from "@/components/LoadFailed";
 import { AdminChanges } from "./AdminChanges";
 import { MailRules } from "./MailRules";
-import { DrillScope, DRILL, Kpi, SetCountries, Top, useDrill } from "@/features/dashboard/Sections";
+import {
+  About,
+  DrillScope,
+  DRILL,
+  Kpi,
+  SetCountries,
+  Top,
+  useDrill,
+} from "@/features/dashboard/Sections";
 import { startIndex, TrendChart, TrendLegend } from "@/features/dashboard/TrendChart";
 import { compareLine } from "@/features/dashboard/History";
 import { WINDOWS, previousPhrase } from "@/features/dashboard/pageWindow";
 import { PanelTitle } from "@/components/PanelTitle";
 import { EventList } from "./EventList";
 import { SignIns } from "./SignIns";
+import {
+  attentionItems,
+  count,
+  failedSigninsItem,
+  NeedsAttention,
+  useOpenAlertsItem,
+} from "@/features/dashboard/NeedsAttention";
 import { notCountedExtra, useSignInAbout } from "./signInCounting";
 
 const KEY = "m365.window";
@@ -161,8 +177,29 @@ function Box({ label, children }: { label: string; children: ReactNode }) {
 function Overview({ m }: { m: M365Overview }) {
   const drill = useDrill();
   const about = useSignInAbout();
+  const alerts = useOpenAlertsItem();
+  const attention = attentionItems([
+    alerts,
+    count(
+      "mail",
+      m.counts.find((c) => c.key === "mail_rules")?.kpi.value,
+      "risky mail rule",
+      "risky mail rules",
+      "m365",
+      "mail",
+    ),
+    count(
+      "consents",
+      m.consents?.extra,
+      "blocked app consent",
+      "blocked app consents",
+      "m365",
+      "apps",
+    ),
+    failedSigninsItem(m.failed),
+  ]);
   const kpis = [
-    <Kpi key="s" label="Sign-ins" kpi={m.sign_ins} />,
+    <Kpi key="s" label="Sign-ins" kpi={m.sign_ins} about={COUNTED.signIns} />,
     <Kpi
       key="f"
       label="Failed sign-ins"
@@ -175,6 +212,7 @@ function Overview({ m }: { m: M365Overview }) {
       key="b"
       label="Blocked by policy"
       kpi={m.blocked ?? null}
+      about={COUNTED.blocked}
       noun="blocked sign-ins"
       context="Conditional Access (53003); also in Failed sign-ins"
     />,
@@ -182,14 +220,22 @@ function Overview({ m }: { m: M365Overview }) {
       key="o"
       label="Sign-ins outside approved countries"
       kpi={m.outside}
+      about={COUNTED.outside}
       context={m.outside ? "Successful sign-ins, by GeoIP of the address" : undefined}
       empty={<SetCountries />}
     />,
-    <Kpi key="r" label="Risky sign-ins" kpi={m.risky} context="Medium or high risk" />,
+    <Kpi
+      key="r"
+      label="Risky sign-ins"
+      kpi={m.risky}
+      context="Medium or high risk"
+      about={COUNTED.risky}
+    />,
     <Kpi
       key="c"
       label="App consents granted"
       kpi={m.consents}
+      about={COUNTED.consents}
       noun="consents"
       extra={
         m.consents?.extra
@@ -205,12 +251,14 @@ function Overview({ m }: { m: M365Overview }) {
       key="a"
       label="Admin changes"
       kpi={m.admin_changes}
+      about={COUNTED.adminChanges}
       noun="changes"
       context="Role grants and Conditional Access edits"
     />,
   ];
   return (
     <>
+      <NeedsAttention items={attention} />
       <Box label="Overview">
         <div className="grid grid-cols-2 gap-px bg-border lg:grid-cols-4 min-[1400px]:grid-cols-7 [&>*:last-child]:col-span-2 min-[1400px]:[&>*:last-child]:col-span-1">
           {kpis}
@@ -224,6 +272,12 @@ function Overview({ m }: { m: M365Overview }) {
             return (
               <li key={c.key} data-kpi={c.label} className="flex items-baseline gap-1.5">
                 <span className="text-text-secondary">{c.label}</span>
+                <About
+                  text={
+                    M365_COUNT_COUNTED[c.key] ??
+                    `${c.label} from the Microsoft 365 Management Activity API, one per record, in this window.`
+                  }
+                />
                 <button
                   type="button"
                   data-drill=""
@@ -369,6 +423,7 @@ function Outcome({ m }: { m: M365Overview }) {
                   style={{ background: `var(--${p.color})` }}
                 />
                 <span className="text-text-secondary">{p.label}</span>
+                <About text={OUTCOME_COUNTED[p.label] ?? `${p.label} sign-ins in this window.`} />
                 <button
                   type="button"
                   data-drill=""

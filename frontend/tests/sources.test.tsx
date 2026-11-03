@@ -388,6 +388,16 @@ describe("OTLP sources (ADR-0015)", () => {
     await userEvent.type(within(form).getByLabelText("Source ID"), "claude_code");
     await userEvent.selectOptions(within(form).getByLabelText("Reads from"), "otlp");
     expect(within(form).queryByLabelText("File or folder")).toBeNull();
+    // Claude Code sends only while people use it: no quiet alert, and the form says why.
+    expect(
+      within(form).getByRole("radio", { name: "Claude Code (telemetry or the hooks plugin)" }),
+    ).toBeChecked();
+    expect(within(form).getByText(/^No quiet alert for this source/)).toBeVisible();
+    await userEvent.click(within(form).getByRole("radio", { name: /^Endpoint agents/ }));
+    expect(within(form).getByText(/^Alerts after 1 hour quiet/)).toBeVisible();
+    await userEvent.click(
+      within(form).getByRole("radio", { name: "Claude Code (telemetry or the hooks plugin)" }),
+    );
     await userEvent.click(within(form).getByRole("button", { name: "Add source" }));
     const panel = await screen.findByRole("region", { name: "Ingest token" });
     expect(within(panel).getByLabelText("Token")).toHaveTextContent("rmt_test_token_value");
@@ -398,7 +408,13 @@ describe("OTLP sources (ADR-0015)", () => {
       string,
       unknown
     >;
-    expect(body).toMatchObject({ kind: "otlp", format: "json", template_id: "auto", path: "" });
+    expect(body).toMatchObject({
+      kind: "otlp",
+      sender: "claude",
+      format: "json",
+      template_id: "auto",
+      path: "",
+    });
     await userEvent.click(within(panel).getByRole("button", { name: "Done" }));
     expect(screen.queryByRole("region", { name: "Ingest token" })).toBeNull();
     const row = (await screen.findByText("claude_code")).closest("tr") as HTMLElement;
@@ -408,8 +424,8 @@ describe("OTLP sources (ADR-0015)", () => {
     ).not.toBeChecked();
   });
 
-  it("downloads the Claude hooks plugin with a pilot list (ADR-0026)", async () => {
-    const spy = await openSources();
+  it("sends Claude plugin downloads to Settings > Claude plugins (owner, 2026-11-02)", async () => {
+    await openSources();
     await userEvent.click(screen.getByRole("button", { name: "Add source" }));
     const form = screen.getByRole("form", { name: "Add source" });
     await userEvent.type(within(form).getByLabelText("Source ID"), "claude_hooks");
@@ -421,46 +437,10 @@ describe("OTLP sources (ADR-0015)", () => {
       }),
     );
     const row = (await screen.findByText("claude_hooks")).closest("tr") as HTMLElement;
-    await userEvent.click(within(row).getByRole("button", { name: "Claude plugin" }));
-    const plugin = within(row).getByRole("form", { name: "Claude plugin for claude_hooks" });
-    expect(plugin).toHaveTextContent("metadata only");
-    expect(plugin).toHaveTextContent("issues a new token for this source");
-    await userEvent.type(
-      within(plugin).getByLabelText("Server address"),
-      "https://siem.example.internal",
-    );
-    await userEvent.type(
-      within(plugin).getByLabelText("Pilot users"),
-      "dana@example.com, erin@example.com",
-    );
-    expect(plugin).toHaveTextContent("Only these 2 people send");
-    URL.createObjectURL = vi.fn(() => "blob:x");
-    URL.revokeObjectURL = vi.fn();
-    await userEvent.click(within(plugin).getByRole("button", { name: "Download plugin" }));
-    expect(await within(plugin).findByRole("status")).toHaveTextContent("Upload the zip");
-    expect(
-      JSON.parse(String(posts(spy, "/api/sources/claude_hooks/claude-plugin")[0]?.[1]?.body)),
-    ).toEqual({
-      server_url: "https://siem.example.internal",
-      pilot_users: ["dana@example.com", "erin@example.com"],
-      platform: "windows",
-      managed: false,
-      trust_server_certificate: true,
-    });
-    // One plugin per platform, each with its own script hash; a bundle for endpoint
-    // management puts the address and token in the machine-wide file instead.
-    expect(plugin).toHaveTextContent("cd".repeat(32));
-    await userEvent.click(within(plugin).getByLabelText(/macOS and Linux/));
-    expect(plugin).toHaveTextContent("ab".repeat(32));
-    await userEvent.click(within(plugin).getByLabelText(/In a machine-wide file/));
-    await userEvent.click(within(plugin).getByLabelText(/self-signed certificate/));
-    await userEvent.click(within(plugin).getByRole("button", { name: "Download bundle" }));
-    await vi.waitFor(() =>
-      expect(posts(spy, "/api/sources/claude_hooks/claude-plugin")).toHaveLength(2),
-    );
-    expect(
-      JSON.parse(String(posts(spy, "/api/sources/claude_hooks/claude-plugin")[1]?.[1]?.body)),
-    ).toMatchObject({ platform: "posix", managed: true, trust_server_certificate: false });
+    // One place mints plugin tokens: the row has no download of its own.
+    expect(within(row).queryByRole("button", { name: "Download plugin" })).toBeNull();
+    await userEvent.click(within(row).getByRole("button", { name: "Claude plugin: Settings" }));
+    await waitFor(() => expect(window.location.pathname).toBe("/plugins"));
   });
 
   it("adds a syslog listener with protocol, port, and allowed senders", async () => {

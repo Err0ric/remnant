@@ -1,4 +1,16 @@
+import { setErrorCsrf } from "./clientErrors";
 import { reportReached, reportUnreachable, unreachableStatus } from "@/lib/connectivity";
+
+export interface ClientErrorRow {
+  at: string;
+  error_id: string;
+  kind: "render" | "panel" | "chunk" | "unhandled";
+  name: string;
+  message: string;
+  route: string;
+  build: string;
+  stale: boolean;
+}
 
 /** One hooks plugin per platform (ADR-0026 amendment 2026-10-29). */
 export type PluginPlatform = "windows" | "posix";
@@ -61,6 +73,14 @@ export interface PluginsInfo {
   sources: { source_id: string; keep_content: boolean }[];
   tokens: OtlpToken[];
   public_url: string | null;
+  /** Whether a package should carry this server's self-signed certificate (owner, 2026-11-02). */
+  certificate?: {
+    self_signed: boolean;
+    names: string[];
+    behind_proxy: boolean;
+    include_by_default: boolean;
+    reason: string;
+  } | null;
 }
 
 export interface ClaudePluginInfo {
@@ -90,6 +110,7 @@ let onAuthLost: (() => void) | null = null;
 export function setCsrfToken(token: string | null) {
   csrfToken = token;
 }
+setErrorCsrf(() => csrfToken);
 
 /** Called when the server says the session is gone, so the app can show sign-in. */
 export function setAuthLostHandler(handler: (() => void) | null) {
@@ -236,6 +257,10 @@ export interface AiPerson {
   errors: number;
   sensitive: number;
   models: string[];
+  /** plugin: telemetry or hooks only; network: DNS, firewall, or proxy to Claude only; both. */
+  seen_through?: "plugin" | "network" | "both";
+  /** Which plugin records: "telemetry", "hooks". */
+  via?: string[];
 }
 
 export interface AiGone {
@@ -262,6 +287,8 @@ export interface AiUsage {
   /** Days whose people are still being rebuilt, of the days read from the rollup. */
   people_pending_days?: number;
   people_days?: number;
+  /** People seen reaching Claude, by how: both, plugin (only), network (only, no plugin). */
+  claude_seen?: Partial<Record<"both" | "plugin" | "network", number>>;
 }
 
 export interface AiMcpRule {
@@ -850,6 +877,8 @@ export interface HealthChecks {
   agents: AgentHealth[];
   /** Damaged lake files moved to data/quarantine (SPEC D51). */
   quarantined_files?: number;
+  /** Pages and panels that failed in browsers, last 24 hours; administrators only. */
+  client_errors?: ClientErrorRow[];
   /** Page rollups: counts and times only. */
   rollups?: RollupHealth[];
 }
@@ -925,6 +954,8 @@ export interface ListenerStatus {
 
 export interface SourceInput {
   source_id: string;
+  /** OTLP only: who sends. Claude Code sources start with no quiet alert (D166). */
+  sender?: "claude" | "collector";
   format: SourceFormat;
   /** file (default), loki, otlp (pushed to the OTLP receiver), m365, or anthropic. */
   kind?: SourceKind;
@@ -1259,6 +1290,8 @@ export interface AgentSession {
   hosts: string[];
   stopped: boolean;
   failed?: number;
+  /** ended: a stop record; idle: no record for the idle time and no stop; open. */
+  state?: "ended" | "idle" | "open";
 }
 
 /** ADR-0030 amendment: a Claude account the hooks plugin reported, and its tier. */
@@ -2332,6 +2365,11 @@ export const api = {
     request<OtlpToken>(
       `/api/sources/${encodeURIComponent(sourceId)}/otlp-tokens/${encodeURIComponent(tokenId)}`,
       { method: "DELETE" },
+    ),
+  testOtlpToken: (sourceId: string, tokenId: string) =>
+    request<{ status: number; ok: boolean; detail: string; session_id: string }>(
+      `/api/sources/${encodeURIComponent(sourceId)}/otlp-tokens/${encodeURIComponent(tokenId)}/test`,
+      post({}),
     ),
   claudePluginInfo: () => request<ClaudePluginInfo>("/api/sources/claude-plugin"),
   agentConfig: (id: string, os: "windows" | "linux") =>

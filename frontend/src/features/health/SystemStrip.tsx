@@ -2,6 +2,8 @@ import type { ReactNode } from "react";
 import type { AlertList, Overview } from "@/lib/api";
 import { since, stamp } from "@/features/overview/time";
 import { eventsChange } from "./flow";
+import { COUNTED } from "@/features/dashboard/counted";
+import { About } from "@/features/dashboard/Sections";
 
 export interface SourceTally {
   total: number;
@@ -18,19 +20,26 @@ interface TileProps {
   tone?: "ok" | "warn" | "danger";
   onClick: () => void;
   title?: string;
+  /** How the number is counted; required for every tile (owner 2026-11-02). */
+  about: string;
 }
 
-const TONE = { ok: "text-ok", warn: "text-warn", danger: "text-danger" };
+// Benign values are muted, never green: status colors are for what needs action (DESIGN.md).
+const TONE = { ok: "text-text-muted", warn: "text-warn", danger: "text-danger" };
 
-function Tile({ label, value, lines, tone, onClick, title }: TileProps) {
+function Tile({ label, value, lines, tone, onClick, title, about }: TileProps) {
   return (
     <button
       type="button"
+      data-kpi={label}
       onClick={onClick}
       title={title}
       className="flex min-w-0 flex-col items-start gap-0.5 rounded-card border border-border bg-surface px-4 py-3 text-left hover:bg-surface-head"
     >
-      <span className="text-sm text-text-secondary">{label}</span>
+      <span className="flex items-center gap-1.5 text-sm text-text-secondary">
+        {label}
+        <About text={about} />
+      </span>
       <span className={`text-kpi tabular-nums ${tone ? TONE[tone] : ""}`}>{value}</span>
       {lines.map((l, i) => (
         <span key={i} className="w-full text-sm text-text-secondary [overflow-wrap:anywhere]">
@@ -70,6 +79,7 @@ export function SystemStrip(p: SystemStripProps) {
     >
       <Tile
         label="Events, last 24 hours"
+        about={COUNTED.events24h}
         value={o ? o.events_24h.toLocaleString() : "·"}
         lines={[change ?? ""]}
         title={o ? `Up to ${stamp(o.generated_at)} UTC` : undefined}
@@ -77,6 +87,7 @@ export function SystemStrip(p: SystemStripProps) {
       />
       <Tile
         label="Sources"
+        about={COUNTED.sourcesHealthy}
         value={
           <>
             {p.tally.healthy}
@@ -99,6 +110,7 @@ export function SystemStrip(p: SystemStripProps) {
       />
       <Tile
         label="Open alerts"
+        about={COUNTED.openAlerts}
         value={p.alerts ? open : "·"}
         tone={open ? "warn" : undefined}
         lines={[
@@ -111,6 +123,7 @@ export function SystemStrip(p: SystemStripProps) {
       {p.isAdmin ? (
         <Tile
           label="Alert delivery, last 24 hours"
+          about={COUNTED.delivery}
           value={failed ? failed : "All delivered"}
           tone={failed || failing.length ? "danger" : undefined}
           lines={[

@@ -209,6 +209,7 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 
 | Method | Path | What it does | Query | JSON body (`?` optional) |
 |---|---|---|---|---|
+| `POST` | `/api/client-errors` | Record one browser error. Over the limit it is counted and dropped, still 204. |  | `kind`: `render` &#124; `panel` &#124; `chunk` &#124; `unhandled`<br>`error_id`: string<br>`name`?: string<br>`message`?: string<br>`route`?: string<br>`build`?: string |
 | `GET` | `/api/health` | Health |  |  |
 | `GET` | `/api/install` | The optional install name (ADR-0038 nav pass 2). Signed-in people only: it may name the organization, so the sign-in page never shows it. |  |  |
 | `PUT` | `/api/install` | Put Install |  | `name`?: string |
@@ -242,6 +243,7 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | `GET` | `/api/plugins` | Each plugin variant with its version, script hash, and the last 24 hours it sent; the OTLP sources; and every named token with the devices that used it. |  |  |
 | `POST` | `/api/sources/{source_id}/otlp-tokens` | A named token for one deployment. Shown once (for a collector config); a plugin download carries it without showing it. Audited source.otlp_token (never the token). |  | `name`: string |
 | `DELETE` | `/api/sources/{source_id}/otlp-tokens/{token_id}` | Revoke one deployment's token; other tokens keep working. Audited. |  |  |
+| `POST` | `/api/sources/{source_id}/otlp-tokens/{token_id}/test` | Post one synthetic SessionStart with this deployment's token through the real receiver (`POST /api/otlp/v1/logs`, in process) and report its HTTP result, so the server side can be checked without a client. Audited source.otlp_token (never the token). |  |  |
 
 ### Providers
 
@@ -333,7 +335,7 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | Method | Path | What it does | Query | JSON body (`?` optional) |
 |---|---|---|---|---|
 | `GET` | `/api/sources` | List Sources |  |  |
-| `POST` | `/api/sources` | Add Source |  | `source_id`: string<br>`format`: `syslog` &#124; `json` &#124; `csv`<br>`kind`?: `file` &#124; `loki` &#124; `otlp` &#124; `m365` &#124; `anthropic` &#124; `syslog`<br>`path`?: string<br>`loki`?: LokiSettings<br>`m365`?: M365Settings<br>`anthropic`?: AnthropicSettings<br>`syslog`?: SyslogSettings<br>`glob`?: string<br>`timezone`?: string<br>`classification`?: `local_only` &#124; `cloud_allowed`<br>`retention_days`?: integer<br>`enabled`?: boolean<br>`template_id`?: string<br>`otlp_keep_content`?: boolean<br>`loki_secret`?: password<br>`credentials`?: ApiCredentials |
+| `POST` | `/api/sources` | Add Source |  | `source_id`: string<br>`format`: `syslog` &#124; `json` &#124; `csv`<br>`kind`?: `file` &#124; `loki` &#124; `otlp` &#124; `m365` &#124; `anthropic` &#124; `syslog`<br>`path`?: string<br>`loki`?: LokiSettings<br>`m365`?: M365Settings<br>`anthropic`?: AnthropicSettings<br>`syslog`?: SyslogSettings<br>`glob`?: string<br>`timezone`?: string<br>`classification`?: `local_only` &#124; `cloud_allowed`<br>`retention_days`?: integer<br>`enabled`?: boolean<br>`template_id`?: string<br>`otlp_keep_content`?: boolean<br>`loki_secret`?: password<br>`credentials`?: ApiCredentials<br>`sender`?: `claude` &#124; `collector` |
 | `POST` | `/api/sources/api/test` | One small read per enabled feed with these settings, before the source is saved. Audited source.api_test with the kind and feeds, never the credentials. |  | `kind`: `m365` &#124; `anthropic`<br>`m365`?: M365Settings<br>`anthropic`?: AnthropicSettings<br>`credentials`?: ApiCredentials |
 | `GET` | `/api/sources/claude-plugin` | The hooks plugins' version and the SHA-256 of each script, to check a copy against. |  |  |
 | `POST` | `/api/sources/discover` | Suggest sources for a folder. Reads files only: creates and grants nothing. |  | `path`: string |

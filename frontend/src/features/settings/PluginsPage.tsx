@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState, type FormEvent } from "react";
+import { Fragment, useState, type FormEvent } from "react";
 import { ApiError, api, type OtlpToken, type PluginPlatform } from "@/lib/api";
 import { PRODUCT_NAME } from "@/lib/branding";
 import { cn } from "@/lib/cn";
@@ -31,22 +31,36 @@ export function PluginsPage() {
   const [name, setName] = useState("");
   const [server, setServer] = useState("");
   const [pilot, setPilot] = useState("");
+  const [cert, setCert] = useState<boolean | null>(null); // null: the server's default
   const [error, setError] = useState<string | null>(null);
   const d = q.data;
   const sourceId = source ?? d?.sources[0]?.source_id ?? null;
   const live = (d?.tokens ?? []).filter(
     (t) => t.source_id === sourceId && !t.revoked_at && t.downloadable,
   );
+  // A token revoked (or gone) since it was picked falls back to "New token", so a download
+  // never asks for a token that no longer exists (owner, 2026-11-02).
+  const chosen = live.some((t) => t.token_id === pick) ? pick : NEW;
+  const pilots = pilot.split(/[\s,;]+/).filter(Boolean);
+  const certInfo = d?.certificate;
+  const typedHost = hostOf(server);
+  const certDefault =
+    !!certInfo?.include_by_default && (!typedHost || certInfo.names.includes(typedHost));
+  const includeCert = !!certInfo?.self_signed && (cert ?? certDefault);
+  const certReason =
+    typedHost && certInfo?.self_signed && !certInfo.names.includes(typedHost)
+      ? `Off: ${typedHost} is not a name on this server's certificate, so another certificate answers there.`
+      : (certInfo?.reason ?? "");
   const download = useMutation({
     mutationFn: (v: { platform: PluginPlatform; managed: boolean }) => {
       if (!sourceId) throw new Error("No source");
       return api.claudePlugin(sourceId, {
         ...(server.trim() ? { server_url: server.trim() } : {}),
-        pilot_users: pilot.split(/[\s,;]+/).filter(Boolean),
+        pilot_users: pilots,
         platform: v.platform,
         managed: v.managed,
-        trust_server_certificate: true,
-        ...(pick === NEW ? { token_name: name.trim() || undefined } : { token_id: pick }),
+        trust_server_certificate: includeCert,
+        ...(chosen === NEW ? { token_name: name.trim() || undefined } : { token_id: chosen }),
       });
     },
     onSuccess: ({ blob }, v) => {
@@ -115,7 +129,7 @@ export function PluginsPage() {
               <label className="flex flex-col gap-1">
                 <span className="font-semibold">Deployment token</span>
                 <select
-                  value={pick}
+                  value={chosen}
                   onChange={(e) => setPick(e.target.value)}
                   className="h-8 rounded border border-border bg-inset px-2"
                 >
@@ -131,7 +145,7 @@ export function PluginsPage() {
                   others.
                 </span>
               </label>
-              {pick === NEW ? (
+              {chosen === NEW ? (
                 <label className="flex flex-col gap-1">
                   <span className="font-semibold">Token name</span>
                   <input
@@ -163,7 +177,36 @@ export function PluginsPage() {
                   placeholder="Empty: everyone who has the plugin"
                   className="h-8 rounded border border-border bg-inset px-2 font-mono"
                 />
+                {pilots.length ? (
+                  <span className="text-text-muted">
+                    Only{" "}
+                    {pilots.length === 1
+                      ? "this person sends"
+                      : `these ${pilots.length} people send`}
+                    .
+                  </span>
+                ) : (
+                  <span role="note" className="text-warn">
+                    Everyone who installs this plugin will send records.
+                  </span>
+                )}
               </label>
+              {certInfo?.self_signed ? (
+                <label className="flex items-start gap-2 md:col-span-2">
+                  <input
+                    type="checkbox"
+                    checked={includeCert}
+                    onChange={(e) => setCert(e.target.checked)}
+                    className="mt-1"
+                  />
+                  <span className="flex flex-col">
+                    <span className="font-semibold">
+                      Include this server's self-signed certificate
+                    </span>
+                    <span className="text-text-muted">{certReason}</span>
+                  </span>
+                </label>
+              ) : null}
             </section>
             {error ? (
               <p role="alert" className="text-sm text-danger">
@@ -213,9 +256,14 @@ export function PluginsPage() {
                     </button>
                   </div>
                   <p className="text-text-muted">
-                    The plugin: upload it in Claude, Organization settings, Plugins and skills, to a
-                    pilot group first. The managed bundle: the plugin with an empty config plus
-                    hooks.conf for your endpoint management tool, with the path it goes to.
+                    The plugin: on one machine, unzip it and run{" "}
+                    <code className="font-mono">
+                      {v.platform === "windows" ? "install-local.ps1" : "install-local.sh"}
+                    </code>{" "}
+                    from a terminal (the desktop app&apos;s Code tab cannot run /plugin); for the
+                    organization, upload it under Organization settings, Plugins and skills. The
+                    managed bundle: the plugin with an empty config plus hooks.conf for your
+                    endpoint management tool, with the path it goes to.
                   </p>
                 </section>
               ))}
@@ -242,6 +290,15 @@ export function PluginsPage() {
   );
 }
 
+/** The host name of a typed server address, lower case; "" when it does not parse. */
+function hostOf(raw: string): string {
+  try {
+    return raw.trim() ? new URL(raw.trim()).hostname.toLowerCase().replace(/^\[|\]$/g, "") : "";
+  } catch {
+    return "";
+  }
+}
+
 function Tokens({ tokens }: { tokens: OtlpToken[] }) {
   const client = useQueryClient();
   const [confirm, setConfirm] = useState<string | null>(null);
@@ -251,6 +308,27 @@ function Tokens({ tokens }: { tokens: OtlpToken[] }) {
       setConfirm(null);
       void client.invalidateQueries({ queryKey: ["plugins"] });
     },
+  });
+  // "Send a test record" (owner 2026-11-02): one synthetic SessionStart through the real
+  // receiver with this deployment's token; the HTTP result shows under the row.
+  const [tested, setTested] = useState<Record<string, { ok: boolean; text: string }>>({});
+  const test = useMutation({
+    mutationFn: (t: OtlpToken) => api.testOtlpToken(t.source_id, t.token_id),
+    onSuccess: (r, t) => {
+      setTested((m) => ({
+        ...m,
+        [`${t.source_id}:${t.token_id}`]: { ok: r.ok, text: `HTTP ${r.status}. ${r.detail}` },
+      }));
+      void client.invalidateQueries({ queryKey: ["plugins"] });
+    },
+    onError: (e, t) =>
+      setTested((m) => ({
+        ...m,
+        [`${t.source_id}:${t.token_id}`]: {
+          ok: false,
+          text: e instanceof ApiError ? e.message : "Could not send the test record",
+        },
+      })),
   });
   const now = new Date().toISOString();
   const submit = (e: FormEvent, t: OtlpToken) => {
@@ -287,58 +365,92 @@ function Tokens({ tokens }: { tokens: OtlpToken[] }) {
             </thead>
             <tbody>
               {tokens.map((t) => (
-                <tr
-                  key={`${t.source_id}:${t.token_id}`}
-                  className={cn(
-                    "border-b border-border last:border-0",
-                    t.revoked_at && "text-text-muted",
-                  )}
-                >
-                  <td className="px-3 py-2 font-semibold">{t.name}</td>
-                  <td className="px-3 py-2 font-mono">{t.prefix}…</td>
-                  <td className="px-3 py-2 font-mono">{t.source_id}</td>
-                  <td
-                    className="px-3 py-2"
-                    title={t.created_at ? `${stamp(t.created_at)} UTC` : undefined}
-                  >
-                    {t.created_at ? since(t.created_at, now) : "Before named tokens"}
-                  </td>
-                  <td className="px-3 py-2">
-                    {t.last_used_at ? since(t.last_used_at, now) : "Never"}
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums" title={t.hosts.join(", ")}>
-                    {t.devices}
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    {t.revoked_at ? (
-                      <span>Revoked {since(t.revoked_at, now)}</span>
-                    ) : confirm === `${t.source_id}:${t.token_id}` ? (
-                      <form onSubmit={(e) => submit(e, t)} className="flex justify-end gap-2">
-                        <span className="text-text-secondary">
-                          {t.devices} {t.devices === 1 ? "device stops" : "devices stop"} sending.
-                        </span>
-                        <button type="submit" className="font-semibold text-danger hover:underline">
-                          Revoke
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setConfirm(null)}
-                          className="text-text-secondary hover:underline"
-                        >
-                          Cancel
-                        </button>
-                      </form>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => setConfirm(`${t.source_id}:${t.token_id}`)}
-                        className="text-accent-text hover:underline"
-                      >
-                        Revoke
-                      </button>
+                <Fragment key={`${t.source_id}:${t.token_id}`}>
+                  <tr
+                    className={cn(
+                      "border-b border-border last:border-0",
+                      t.revoked_at && "text-text-muted",
                     )}
-                  </td>
-                </tr>
+                  >
+                    <td className="px-3 py-2 font-semibold">{t.name}</td>
+                    <td className="px-3 py-2 font-mono">{t.prefix}…</td>
+                    <td className="px-3 py-2 font-mono">{t.source_id}</td>
+                    <td
+                      className="px-3 py-2"
+                      title={t.created_at ? `${stamp(t.created_at)} UTC` : undefined}
+                    >
+                      {t.created_at ? since(t.created_at, now) : "Before named tokens"}
+                    </td>
+                    <td className="px-3 py-2">
+                      {t.last_used_at ? since(t.last_used_at, now) : "Never"}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums" title={t.hosts.join(", ")}>
+                      {t.devices}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      {t.revoked_at ? (
+                        <span>Revoked {since(t.revoked_at, now)}</span>
+                      ) : confirm === `${t.source_id}:${t.token_id}` ? (
+                        <form onSubmit={(e) => submit(e, t)} className="flex justify-end gap-2">
+                          <span className="text-text-secondary">
+                            {t.devices} {t.devices === 1 ? "device stops" : "devices stop"} sending.
+                          </span>
+                          <button
+                            type="submit"
+                            className="font-semibold text-danger hover:underline"
+                          >
+                            Revoke
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirm(null)}
+                            className="text-text-secondary hover:underline"
+                          >
+                            Cancel
+                          </button>
+                        </form>
+                      ) : (
+                        <span className="flex justify-end gap-3">
+                          {t.downloadable ? (
+                            <button
+                              type="button"
+                              aria-label={`Send a test record with ${t.name}`}
+                              disabled={test.isPending}
+                              onClick={() => test.mutate(t)}
+                              className="text-accent-text hover:underline disabled:opacity-60"
+                            >
+                              Send a test record
+                            </button>
+                          ) : null}
+                          <button
+                            type="button"
+                            onClick={() => setConfirm(`${t.source_id}:${t.token_id}`)}
+                            className="text-accent-text hover:underline"
+                          >
+                            Revoke
+                          </button>
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                  {tested[`${t.source_id}:${t.token_id}`] ? (
+                    <tr className="border-b border-border last:border-0">
+                      <td colSpan={7} className="px-3 pb-2">
+                        <p
+                          role="status"
+                          className={cn(
+                            "text-sm",
+                            tested[`${t.source_id}:${t.token_id}`]!.ok
+                              ? "text-text-secondary"
+                              : "text-danger",
+                          )}
+                        >
+                          Test record for {t.name}: {tested[`${t.source_id}:${t.token_id}`]!.text}
+                        </p>
+                      </td>
+                    </tr>
+                  ) : null}
+                </Fragment>
               ))}
             </tbody>
           </table>

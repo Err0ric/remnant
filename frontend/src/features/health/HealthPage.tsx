@@ -3,7 +3,7 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { FormError } from "@/features/auth/FormError";
 import { since, stamp } from "@/features/overview/time";
-import { ApiError, api, type Source, type WatchedDevice } from "@/lib/api";
+import { ApiError, api, type ClientErrorRow, type Source, type WatchedDevice } from "@/lib/api";
 import { navigate, useSection, useSectionTab, type PageId } from "@/lib/route";
 import { SpeedTable } from "./SpeedTable";
 import { EntityLink } from "@/components/EntityLink";
@@ -381,6 +381,9 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
           onDelivery={() => setTab("alerts")}
         />
         {o ? <StatusLine overview={o} now={now} /> : null}
+        {isAdmin && checks.data?.client_errors?.length ? (
+          <BrowserErrors rows={checks.data.client_errors} now={now} />
+        ) : null}
 
         {tab === "speed" ? (
           isAdmin ? (
@@ -740,5 +743,60 @@ function DeviceForm({ targets, onDone }: DeviceFormProps) {
         />
       </div>
     </form>
+  );
+}
+
+const KIND_TEXT: Record<ClientErrorRow["kind"], string> = {
+  render: "Page failed",
+  panel: "Panel failed",
+  chunk: "Page file missing",
+  unhandled: "Script error",
+};
+
+/** Pages and panels that failed in people's browsers (owner 2026-11-02): when, where, the
+ * error id the person sees, and whether the tab ran an older build than the server. */
+function BrowserErrors({ rows, now }: { rows: ClientErrorRow[]; now: string }) {
+  return (
+    <section
+      aria-label="Browser errors"
+      className="overflow-hidden rounded-card border border-border bg-surface"
+    >
+      <h2 className="border-b border-border bg-surface-head px-3 py-2 text-base font-semibold">
+        Browser errors, last 24 hours
+      </h2>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border text-left text-text-secondary">
+              <th className="px-3 py-2 font-semibold">When</th>
+              <th className="px-3 py-2 font-semibold">What</th>
+              <th className="px-3 py-2 font-semibold">Page</th>
+              <th className="px-3 py-2 font-semibold">Error</th>
+              <th className="px-3 py-2 font-semibold">Error id</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((e) => (
+              <tr key={e.error_id + e.at} className="border-b border-border last:border-0">
+                <td className="px-3 py-2" title={`${stamp(e.at)} UTC`}>
+                  {since(e.at, now)}
+                </td>
+                <td className="px-3 py-2">
+                  {KIND_TEXT[e.kind]}
+                  {e.stale ? (
+                    <span className="text-text-muted"> (older build in an open tab)</span>
+                  ) : null}
+                </td>
+                <td className="px-3 py-2 font-mono">{e.route}</td>
+                <td className="px-3 py-2 font-mono text-text-secondary">
+                  {e.name}: {e.message}
+                </td>
+                <td className="px-3 py-2 font-mono">{e.error_id}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }

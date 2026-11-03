@@ -20,75 +20,119 @@ import { OfflineBanner } from "@/components/shell/OfflineBanner";
 import { SettingsNav } from "@/components/shell/SettingsNav";
 import { applyTheme, type Theme } from "@/lib/theme";
 import { ApiError } from "@/lib/api";
+import { PageBoundary } from "@/components/ErrorBoundary";
+import { withChunkReload } from "@/lib/chunkReload";
 
 // Pages load on first visit, so the first screen does not carry every page (install
 // finding: one 961 kB chunk). Search, Schedules, and Overview stay in the main bundle;
 // the SQL editor (CodeMirror) is its own chunk, loaded after the page shows.
-const SsoPage = lazy(() =>
-  import("@/features/settings/SsoPage").then((m) => ({ default: m.SsoPage })),
+const SsoPage = lazy(
+  withChunkReload(() =>
+    import("@/features/settings/SsoPage").then((m) => ({ default: m.SsoPage })),
+  ),
 );
-const PluginsPage = lazy(() =>
-  import("@/features/settings/PluginsPage").then((m) => ({ default: m.PluginsPage })),
+const PluginsPage = lazy(
+  withChunkReload(() =>
+    import("@/features/settings/PluginsPage").then((m) => ({ default: m.PluginsPage })),
+  ),
 );
-const M365Page = lazy(() =>
-  import("@/features/m365/M365Page").then((m) => ({ default: m.M365Page })),
+const M365Page = lazy(
+  withChunkReload(() => import("@/features/m365/M365Page").then((m) => ({ default: m.M365Page }))),
 );
-const SourcesPage = lazy(() =>
-  import("@/features/sources/SourcesPage").then((m) => ({ default: m.SourcesPage })),
+const SourcesPage = lazy(
+  withChunkReload(() =>
+    import("@/features/sources/SourcesPage").then((m) => ({ default: m.SourcesPage })),
+  ),
 );
-const TemplatesPage = lazy(() =>
-  import("@/features/templates/TemplatesPage").then((m) => ({ default: m.TemplatesPage })),
+const TemplatesPage = lazy(
+  withChunkReload(() =>
+    import("@/features/templates/TemplatesPage").then((m) => ({ default: m.TemplatesPage })),
+  ),
 );
-const UsersPage = lazy(() =>
-  import("@/features/users/UsersPage").then((m) => ({ default: m.UsersPage })),
+const UsersPage = lazy(
+  withChunkReload(() =>
+    import("@/features/users/UsersPage").then((m) => ({ default: m.UsersPage })),
+  ),
 );
-const AccountPage = lazy(() =>
-  import("@/features/account/AccountPage").then((m) => ({ default: m.AccountPage })),
+const AccountPage = lazy(
+  withChunkReload(() =>
+    import("@/features/account/AccountPage").then((m) => ({ default: m.AccountPage })),
+  ),
 );
-const SavedSearchesPage = lazy(() =>
-  import("@/features/saved/SavedSearchesPage").then((m) => ({ default: m.SavedSearchesPage })),
+const SavedSearchesPage = lazy(
+  withChunkReload(() =>
+    import("@/features/saved/SavedSearchesPage").then((m) => ({ default: m.SavedSearchesPage })),
+  ),
 );
-const ProvidersPage = lazy(() =>
-  import("@/features/providers/ProvidersPage").then((m) => ({ default: m.ProvidersPage })),
+const ProvidersPage = lazy(
+  withChunkReload(() =>
+    import("@/features/providers/ProvidersPage").then((m) => ({ default: m.ProvidersPage })),
+  ),
 );
-const RulesPage = lazy(() =>
-  import("@/features/detect/RulesPage").then((m) => ({ default: m.RulesPage })),
+const RulesPage = lazy(
+  withChunkReload(() =>
+    import("@/features/detect/RulesPage").then((m) => ({ default: m.RulesPage })),
+  ),
 );
-const DashboardPage = lazy(() =>
-  import("@/features/dashboard/DashboardPage").then((m) => ({ default: m.DashboardPage })),
+const DashboardPage = lazy(
+  withChunkReload(() =>
+    import("@/features/dashboard/DashboardPage").then((m) => ({ default: m.DashboardPage })),
+  ),
 );
-const AlertsPage = lazy(() =>
-  import("@/features/alerts/AlertsPage").then((m) => ({ default: m.AlertsPage })),
+const AlertsPage = lazy(
+  withChunkReload(() =>
+    import("@/features/alerts/AlertsPage").then((m) => ({ default: m.AlertsPage })),
+  ),
 );
-const AlertTargetsPage = lazy(() =>
-  import("@/features/alerts/AlertTargetsPage").then((m) => ({ default: m.AlertTargetsPage })),
+const AlertTargetsPage = lazy(
+  withChunkReload(() =>
+    import("@/features/alerts/AlertTargetsPage").then((m) => ({ default: m.AlertTargetsPage })),
+  ),
 );
-const AboutPage = lazy(() =>
-  import("@/features/settings/AboutPage").then((m) => ({ default: m.AboutPage })),
+const AboutPage = lazy(
+  withChunkReload(() =>
+    import("@/features/settings/AboutPage").then((m) => ({ default: m.AboutPage })),
+  ),
 );
-const AuditLogPage = lazy(() =>
-  import("@/features/audit/AuditLogPage").then((m) => ({ default: m.AuditLogPage })),
+const AuditLogPage = lazy(
+  withChunkReload(() =>
+    import("@/features/audit/AuditLogPage").then((m) => ({ default: m.AuditLogPage })),
+  ),
 );
-const AiUsagePage = lazy(() =>
-  import("@/features/ai/AiUsagePage").then((m) => ({ default: m.AiUsagePage })),
+const AiUsagePage = lazy(
+  withChunkReload(() =>
+    import("@/features/ai/AiUsagePage").then((m) => ({ default: m.AiUsagePage })),
+  ),
 );
-const InvestigatePage = lazy(() =>
-  import("@/features/investigate/InvestigatePage").then((m) => ({ default: m.InvestigatePage })),
+const InvestigatePage = lazy(
+  withChunkReload(() =>
+    import("@/features/investigate/InvestigatePage").then((m) => ({ default: m.InvestigatePage })),
+  ),
 );
-const IdentitiesPage = lazy(() =>
-  import("@/features/identities/IdentitiesPage").then((m) => ({ default: m.IdentitiesPage })),
+const IdentitiesPage = lazy(
+  withChunkReload(() =>
+    import("@/features/identities/IdentitiesPage").then((m) => ({ default: m.IdentitiesPage })),
+  ),
 );
-const EnrichmentPage = lazy(() =>
-  import("@/features/settings/EnrichmentPage").then((m) => ({ default: m.EnrichmentPage })),
+const EnrichmentPage = lazy(
+  withChunkReload(() =>
+    import("@/features/settings/EnrichmentPage").then((m) => ({ default: m.EnrichmentPage })),
+  ),
 );
-const McpPage = lazy(() =>
-  import("@/features/settings/McpPage").then((m) => ({ default: m.McpPage })),
+const McpPage = lazy(
+  withChunkReload(() =>
+    import("@/features/settings/McpPage").then((m) => ({ default: m.McpPage })),
+  ),
 );
-const SetupPage = lazy(() =>
-  import("@/features/setup/SetupPage").then((m) => ({ default: m.SetupPage })),
+const SetupPage = lazy(
+  withChunkReload(() =>
+    import("@/features/setup/SetupPage").then((m) => ({ default: m.SetupPage })),
+  ),
 );
-const HealthPage = lazy(() =>
-  import("@/features/health/HealthPage").then((m) => ({ default: m.HealthPage })),
+const HealthPage = lazy(
+  withChunkReload(() =>
+    import("@/features/health/HealthPage").then((m) => ({ default: m.HealthPage })),
+  ),
 );
 
 /** One fetch per endpoint per page load (owner, 2026-10-31): data stays fresh for 30 s, so
@@ -203,81 +247,83 @@ export function App({ initialTheme, queryClient }: AppProps) {
                         canAudit={!user || user.role !== "analyst"}
                       />
                     ) : null}
-                    <Suspense fallback={<div className="flex-1" aria-busy="true" />}>
-                      {page === "rules" ? (
-                        <RulesPage
-                          isAdmin={!user || user.role === "admin"}
-                          canRun={!user || user.role !== "auditor"}
-                        />
-                      ) : page === "targets" && (!user || user.role === "admin") ? (
-                        <AlertTargetsPage />
-                      ) : page === "alerts" ? (
-                        <AlertsPage
-                          canClose={!user || user.role !== "auditor"}
-                          isAdmin={!user || user.role === "admin"}
-                        />
-                      ) : page === "dashboard" ? (
-                        <DashboardPage me={user} />
-                      ) : page === "schedules" ? (
-                        <SchedulesPage
-                          canCreate={!user || user.role !== "auditor"}
-                          isAdmin={!user || user.role === "admin"}
-                        />
-                      ) : page === "saved" ? (
-                        <SavedSearchesPage key={savedKey} me={user} />
-                      ) : page === "me" && user ? (
-                        <AccountPage me={user} />
-                      ) : page === "providers" && (!user || user.role === "admin") ? (
-                        <ProvidersPage />
-                      ) : page === "users" && (!user || user.role === "admin") ? (
-                        <UsersPage me={user} />
-                      ) : page === "templates" && (!user || user.role === "admin") ? (
-                        <TemplatesPage />
-                      ) : page === "audit" && (!user || user.role !== "analyst") ? (
-                        <AuditLogPage isAdmin={!user || user.role === "admin"} />
-                      ) : page === "about" ? (
-                        <AboutPage />
-                      ) : page === "sso" && (!user || user.role === "admin") ? (
-                        <SsoPage />
-                      ) : page === "plugins" && (!user || user.role === "admin") ? (
-                        <PluginsPage />
-                      ) : page === "m365" ? (
-                        <M365Page />
-                      ) : page === "ai" || page === "agents" ? (
-                        <AiUsagePage
-                          isAdmin={!user || user.role === "admin"}
-                          canExport={!user || user.role !== "auditor"}
-                          area={page}
-                        />
-                      ) : page === "identities" && (!user || user.role === "admin") ? (
-                        <IdentitiesPage />
-                      ) : page === "mcp" && (!user || user.role === "admin") ? (
-                        <McpPage />
-                      ) : page === "enrichment" && (!user || user.role === "admin") ? (
-                        <EnrichmentPage />
-                      ) : page === "setup" && (!user || user.role === "admin") ? (
-                        <SetupPage />
-                      ) : page === "health" ? (
-                        <HealthPage isAdmin={!user || user.role === "admin"} />
-                      ) : page === "investigate" ? (
-                        <InvestigatePage />
-                      ) : page === "overview" ? (
-                        <ToHealth />
-                      ) : page === "home" ? (
-                        <HomeRedirect />
-                      ) : page === "sources" ? (
-                        // Open mode (no accounts) is the local admin.
-                        <SourcesPage canManage={!user || user.role === "admin"} />
-                      ) : (
-                        <SearchPage
-                          key={`${page}:${searchKey}:${searchNav}`}
-                          canSave={!user || user.role !== "auditor"}
-                          canAsk={!user || user.role !== "auditor"}
-                          isAdmin={!user || user.role === "admin"}
-                          initialTab={page === "ask" ? "ask" : undefined}
-                        />
-                      )}
-                    </Suspense>
+                    <PageBoundary key={page}>
+                      <Suspense fallback={<div className="flex-1" aria-busy="true" />}>
+                        {page === "rules" ? (
+                          <RulesPage
+                            isAdmin={!user || user.role === "admin"}
+                            canRun={!user || user.role !== "auditor"}
+                          />
+                        ) : page === "targets" && (!user || user.role === "admin") ? (
+                          <AlertTargetsPage />
+                        ) : page === "alerts" ? (
+                          <AlertsPage
+                            canClose={!user || user.role !== "auditor"}
+                            isAdmin={!user || user.role === "admin"}
+                          />
+                        ) : page === "dashboard" ? (
+                          <DashboardPage me={user} />
+                        ) : page === "schedules" ? (
+                          <SchedulesPage
+                            canCreate={!user || user.role !== "auditor"}
+                            isAdmin={!user || user.role === "admin"}
+                          />
+                        ) : page === "saved" ? (
+                          <SavedSearchesPage key={savedKey} me={user} />
+                        ) : page === "me" && user ? (
+                          <AccountPage me={user} />
+                        ) : page === "providers" && (!user || user.role === "admin") ? (
+                          <ProvidersPage />
+                        ) : page === "users" && (!user || user.role === "admin") ? (
+                          <UsersPage me={user} />
+                        ) : page === "templates" && (!user || user.role === "admin") ? (
+                          <TemplatesPage />
+                        ) : page === "audit" && (!user || user.role !== "analyst") ? (
+                          <AuditLogPage isAdmin={!user || user.role === "admin"} />
+                        ) : page === "about" ? (
+                          <AboutPage />
+                        ) : page === "sso" && (!user || user.role === "admin") ? (
+                          <SsoPage />
+                        ) : page === "plugins" && (!user || user.role === "admin") ? (
+                          <PluginsPage />
+                        ) : page === "m365" ? (
+                          <M365Page />
+                        ) : page === "ai" || page === "agents" ? (
+                          <AiUsagePage
+                            isAdmin={!user || user.role === "admin"}
+                            canExport={!user || user.role !== "auditor"}
+                            area={page}
+                          />
+                        ) : page === "identities" && (!user || user.role === "admin") ? (
+                          <IdentitiesPage />
+                        ) : page === "mcp" && (!user || user.role === "admin") ? (
+                          <McpPage />
+                        ) : page === "enrichment" && (!user || user.role === "admin") ? (
+                          <EnrichmentPage />
+                        ) : page === "setup" && (!user || user.role === "admin") ? (
+                          <SetupPage />
+                        ) : page === "health" ? (
+                          <HealthPage isAdmin={!user || user.role === "admin"} />
+                        ) : page === "investigate" ? (
+                          <InvestigatePage />
+                        ) : page === "overview" ? (
+                          <ToHealth />
+                        ) : page === "home" ? (
+                          <HomeRedirect />
+                        ) : page === "sources" ? (
+                          // Open mode (no accounts) is the local admin.
+                          <SourcesPage canManage={!user || user.role === "admin"} />
+                        ) : (
+                          <SearchPage
+                            key={`${page}:${searchKey}:${searchNav}`}
+                            canSave={!user || user.role !== "auditor"}
+                            canAsk={!user || user.role !== "auditor"}
+                            isAdmin={!user || user.role === "admin"}
+                            initialTab={page === "ask" ? "ask" : undefined}
+                          />
+                        )}
+                      </Suspense>
+                    </PageBoundary>
                   </main>
                 </div>
               </div>

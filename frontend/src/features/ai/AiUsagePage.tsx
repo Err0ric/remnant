@@ -1,3 +1,9 @@
+import {
+  attentionItems,
+  count,
+  NeedsAttention,
+  useOpenAlertsItem,
+} from "@/features/dashboard/NeedsAttention";
 import { EntityLink, EntityList } from "@/components/EntityLink";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useState, type ReactNode } from "react";
@@ -8,6 +14,7 @@ import {
   ApiError,
   api,
   type AiGone,
+  type AiPerson,
   type AiServiceUse,
   type AiStatus,
   type DataLevel,
@@ -62,6 +69,31 @@ function when(iso: string | null): string {
         minute: "2-digit",
       })
     : "·";
+}
+
+/** How a person was seen reaching Claude (owner 2026-11-02). */
+const SEEN: Record<"plugin" | "network" | "both", string> = {
+  plugin: "Plugin",
+  network: "Network",
+  both: "Both",
+};
+
+function seenTitle(p: AiPerson): string {
+  const via = (p.via ?? []).join(" and ");
+  if (p.seen_through === "network")
+    return "DNS, firewall, or proxy logs only: no telemetry or hooks record";
+  if (p.seen_through === "both") return `The ${via || "plugin"} and the network`;
+  return `The ${via || "plugin"} only: not seen on the network`;
+}
+
+/** On the Claude service row: who the network saw, who the plugin saw, and the gap. */
+function SeenSummary({ seen }: { seen: Partial<Record<"both" | "plugin" | "network", number>> }) {
+  return (
+    <div className="text-text-secondary tabular-nums">
+      Seen through: both {seen.both ?? 0}, plugin only {seen.plugin ?? 0}, network only{" "}
+      {seen.network ?? 0}
+    </div>
+  );
 }
 
 const TH = "px-3 py-2 text-left font-semibold";
@@ -124,6 +156,17 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
     (data?.services.filter((s) => s.service.status === "not_approved").length ?? 0) +
     (data?.mcp.filter((m) => m.status === "not_approved").length ?? 0);
   const sensitive = data?.people.reduce((n, p) => n + p.sensitive, 0) ?? 0;
+  // Claude Code users are people the plugin (telemetry or hooks) saw; network-only rows are
+  // people who reached Claude on the network with no plugin record (owner 2026-11-02).
+  const codeUsers = data?.people.filter((p) => p.seen_through !== "network").length ?? 0;
+  const networkOnly = data?.claude_seen?.network ?? 0;
+  const servicesNotApproved =
+    data?.services.filter((s) => s.service.status === "not_approved").length ?? 0;
+  const servicesUnreviewed =
+    data?.services.filter((s) => s.service.status === "unreviewed").length ?? 0;
+  const mcpNotApproved = data?.mcp.filter((m) => m.status === "not_approved").length ?? 0;
+  const mcpUnreviewed = data?.mcp.filter((m) => m.status === "unreviewed").length ?? 0;
+  const alertsItem = useOpenAlertsItem();
   const newServices = new Set(data?.new_services ?? []);
   const newMcp = new Set(data?.new_mcp ?? []);
   const fresh = newServices.size + newMcp.size;
@@ -146,11 +189,63 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
         title={area === "agents" ? "Agents" : "AI usage"}
         meta={
           data
-            ? `${data.services.length} services · ${data.mcp.length} MCP servers · ${data.people.length} Claude Code ${data.people.length === 1 ? "user" : "users"}`
+            ? `${data.services.length} services · ${data.mcp.length} MCP servers · ${codeUsers} Claude Code ${codeUsers === 1 ? "user" : "users"}`
             : null
         }
       />
       <div className="flex flex-col gap-3 px-5 py-3">
+        {!noAccess ? (
+          <NeedsAttention
+            loading={!data}
+            items={attentionItems(
+              area === "agents"
+                ? [
+                    alertsItem,
+                    count(
+                      "mcp-no",
+                      mcpNotApproved,
+                      "not approved MCP server in use",
+                      "not approved MCP servers in use",
+                      "agents",
+                      "mcp",
+                    ),
+                    count(
+                      "mcp-un",
+                      mcpUnreviewed,
+                      "unreviewed MCP server",
+                      "unreviewed MCP servers",
+                      "agents",
+                      "mcp",
+                    ),
+                  ]
+                : [
+                    alertsItem,
+                    count(
+                      "svc-no",
+                      servicesNotApproved,
+                      "not approved AI service in use",
+                      "not approved AI services in use",
+                      "ai",
+                    ),
+                    count(
+                      "svc-un",
+                      servicesUnreviewed,
+                      "unreviewed AI service",
+                      "unreviewed AI services",
+                      "ai",
+                    ),
+                    count(
+                      "sensitive",
+                      sensitive,
+                      "sensitive-data signal",
+                      "sensitive-data signals",
+                      "ai",
+                      "people",
+                    ),
+                  ],
+            )}
+          />
+        ) : null}
         <div className="flex flex-wrap items-center gap-3">
           {/* One time control per page: Agents > Overview has its own window chips. */}
           {area === "agents" && tab === "overview" ? null : (
@@ -261,6 +356,9 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
                           <div className="text-text-muted">
                             {u.service.vendor} · {KIND[u.service.kind] ?? u.service.kind}
                           </div>
+                          {u.service.vendor === "Anthropic" && data?.claude_seen ? (
+                            <SeenSummary seen={data.claude_seen} />
+                          ) : null}
                         </td>
                         <td className={TD}>
                           <StatusBadge status={u.service.status} />
@@ -412,7 +510,18 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
           {tab === "people" ? (
             <Card
               title="Claude Code by person"
-              note="From Claude Code telemetry. Cost is Claude Code's own estimate in USD."
+              note={
+                <>
+                  From Claude Code telemetry and the hooks plugin; network rows are people seen
+                  reaching Claude on DNS, firewall, or proxy logs. Cost is Claude Code's own
+                  estimate in USD.
+                  {networkOnly ? (
+                    <span className="ml-1 tabular-nums text-text-primary">
+                      Seen on the network but no plugin: {networkOnly}.
+                    </span>
+                  ) : null}
+                </>
+              }
               empty={
                 noAccess ? (
                   noAccessText
@@ -428,6 +537,7 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
                 <thead>
                   <tr className="border-b border-border text-text-secondary">
                     <th className={TH}>Person</th>
+                    <th className={TH}>Seen through</th>
                     <th className={`${TH} text-right`}>Cost (USD)</th>
                     <th className={`${TH} text-right`}>Tokens</th>
                     <th className={`${TH} text-right`}>Sessions</th>
@@ -442,6 +552,9 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
                     <tr key={p.person} className="border-b border-border last:border-0">
                       <td className={`${TD} font-mono`}>
                         <EntityLink kind="user" value={p.person} />
+                      </td>
+                      <td className={TD}>
+                        <span title={seenTitle(p)}>{SEEN[p.seen_through ?? "plugin"]}</span>
                       </td>
                       <td className={`${TD} text-right font-mono tabular-nums`}>
                         {typeof p.cost_usd === "number" && Number.isFinite(p.cost_usd)
@@ -601,7 +714,7 @@ function NotUsageList({ items }: { items: AiServiceUse[] }) {
 
 interface CardProps {
   title: string;
-  note: string;
+  note: ReactNode;
   empty: ReactNode;
   children: ReactNode;
 }

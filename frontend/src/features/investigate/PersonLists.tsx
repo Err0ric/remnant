@@ -104,7 +104,9 @@ export function PersonSessions({ person }: { person: string }) {
                   >
                     {s.failed ?? 0}
                   </td>
-                  <td className={`${TD} text-text-secondary`}>{s.stopped ? "Ended" : "Open"}</td>
+                  <td className={`${TD} text-text-secondary`}>
+                    {s.state === "idle" ? "Ended (no end event)" : s.stopped ? "Ended" : "Open"}
+                  </td>
                 </tr>
               ))}
             </tbody>

@@ -1,4 +1,5 @@
 import { createContext, useContext, type ReactNode } from "react";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { useQuery } from "@tanstack/react-query";
 import {
   api,
@@ -17,10 +18,11 @@ import { LoadFailed } from "@/components/LoadFailed";
 import { useViewer } from "@/lib/viewer";
 import { previousPhrase } from "./pageWindow";
 import { startIndex, TrendChart, TrendLegend } from "./TrendChart";
-import { compareLine, NoHistory } from "./History";
+import { compareLine } from "./History";
 import { SectionTitle } from "@/components/SectionTitle";
 import { PanelTitle } from "@/components/PanelTitle";
 import { notCountedExtra, useSignInAbout } from "@/features/m365/signInCounting";
+import { COUNTED } from "./counted";
 
 /** The section around a card: its comparison state and what drill-throughs need. */
 /** The window a section counts over: its start, now, and the start of the one before. */
@@ -117,12 +119,13 @@ export interface KpiProps {
   extra?: { text: string; label: string; noun: string };
   /** Shown instead of a number when the count needs a setting or a source. */
   empty?: ReactNode;
-  /** "How this is counted", behind an (i) beside the label. */
-  about?: string;
+  /** "How this is counted", behind an (i) beside the label. Required: every number says
+   * how it is counted (owner 2026-11-02). */
+  about: string;
 }
 
 export function Kpi({ label, kpi, noun = "events", context, extra, empty, about }: KpiProps) {
-  const { history, before } = useContext(Compare);
+  const { history } = useContext(Compare);
   const drill = useDrill();
   const partial = !history.compared && kpi !== null && kpi.before !== null;
   const open = kpi ? drill(kpi.drill, label) : undefined;
@@ -131,7 +134,7 @@ export function Kpi({ label, kpi, noun = "events", context, extra, empty, about 
     <span
       className={cn(
         "text-kpi tabular-nums min-[1500px]:text-kpi-lg",
-        kpi.value === 0 ? "text-ok" : "text-text",
+        kpi.value === 0 ? "text-text-muted" : "text-text",
       )}
     >
       {kpi.value.toLocaleString()}
@@ -143,16 +146,7 @@ export function Kpi({ label, kpi, noun = "events", context, extra, empty, about 
         <PanelTitle as="span" className="truncate" title={label}>
           {label}
         </PanelTitle>
-        {about ? (
-          <span
-            role="img"
-            aria-label={`How this is counted: ${about}`}
-            title={`How this is counted: ${about}`}
-            className="flex size-3.5 shrink-0 cursor-help items-center justify-center rounded-full border border-text-muted text-[10px] font-semibold leading-none text-text-muted"
-          >
-            i
-          </span>
-        ) : null}
+        <About text={about} />
       </span>
       {kpi ? (
         <span className="flex flex-wrap items-center gap-x-2">
@@ -175,7 +169,6 @@ export function Kpi({ label, kpi, noun = "events", context, extra, empty, about 
       ) : (
         <span className="py-1.5 text-sm text-text-muted">{empty}</span>
       )}
-      {partial ? <NoHistory since={history.since} before={before} /> : null}
       {openExtra && extra ? (
         <button
           type="button"
@@ -189,6 +182,21 @@ export function Kpi({ label, kpi, noun = "events", context, extra, empty, about 
       ) : null}
       {context ? <span className="line-clamp-2 text-sm text-text-muted">{context}</span> : null}
     </div>
+  );
+}
+
+/** The (i) beside a number's label: how it is counted, on hover and for screen readers. */
+export function About({ text }: { text: string }) {
+  return (
+    <span
+      role="img"
+      data-about=""
+      aria-label={`How this is counted: ${text}`}
+      title={`How this is counted: ${text}`}
+      className="flex size-3.5 shrink-0 cursor-help items-center justify-center rounded-full border border-text-muted text-[10px] font-semibold leading-none text-text-muted"
+    >
+      i
+    </span>
   );
 }
 
@@ -519,6 +527,7 @@ function Identity({ s }: { s: DashboardSections }) {
       key="o"
       label="Sign-ins outside approved countries"
       kpi={id.outside}
+      about={COUNTED.outside}
       context={id.outside ? "Successful sign-ins, by GeoIP of the address" : undefined}
       empty={<SetCountries />}
     />,
@@ -526,6 +535,7 @@ function Identity({ s }: { s: DashboardSections }) {
       key="i"
       label="Risky mail rules"
       kpi={id.inbox_rules}
+      about={COUNTED.mailRules}
       noun="rules"
       context="Hiding, deleting, or forwarding outside the domain"
       extra={
@@ -542,6 +552,7 @@ function Identity({ s }: { s: DashboardSections }) {
       key="c"
       label="App consents"
       kpi={id.consents}
+      about={COUNTED.consents}
       noun="consents"
       extra={
         id.consents.extra
@@ -553,8 +564,20 @@ function Identity({ s }: { s: DashboardSections }) {
           : undefined
       }
     />,
-    <Kpi key="r" label="Admin role grants" kpi={id.role_grants} noun="changes" />,
-    <Kpi key="a" label="Conditional Access edits" kpi={id.ca_edits} noun="changes" />,
+    <Kpi
+      key="r"
+      label="Admin role grants"
+      kpi={id.role_grants}
+      noun="changes"
+      about={COUNTED.roleGrants}
+    />,
+    <Kpi
+      key="a"
+      label="Conditional Access edits"
+      kpi={id.ca_edits}
+      noun="changes"
+      about={COUNTED.caEdits}
+    />,
   ];
   return (
     <Section
@@ -591,14 +614,29 @@ function Attacks({ s }: { s: DashboardSections }) {
       key="f"
       label="External sign-in failures"
       kpi={a.failures}
+      about={COUNTED.externalFailures}
       context="SSH, Windows, VPN, and other logins"
     />,
-    <Kpi key="a" label="Attacking addresses" kpi={a.addresses} noun="addresses" />,
-    <Kpi key="c" label="Countries" kpi={a.countries} noun="countries" empty="Needs a GeoIP file" />,
+    <Kpi
+      key="a"
+      label="Attacking addresses"
+      kpi={a.addresses}
+      noun="addresses"
+      about={COUNTED.attackingAddresses}
+    />,
+    <Kpi
+      key="c"
+      label="Countries"
+      kpi={a.countries}
+      noun="countries"
+      empty="Needs a GeoIP file"
+      about={COUNTED.countries}
+    />,
     <Kpi
       key="v"
       label="VPN logins outside approved countries"
       kpi={a.vpn_outside}
+      about={COUNTED.vpnOutside}
       empty={a.has_vpn ? <SetCountries /> : "No VPN logs"}
     />,
   ];
@@ -735,11 +773,18 @@ function Detections({ s }: { s: DashboardSections }) {
   const d = s.detections;
   if (!d) return null;
   const kpis = [
-    <Kpi key="m" label="Rule matches" kpi={d.matches} noun="matched events" />,
+    <Kpi
+      key="m"
+      label="Rule matches"
+      kpi={d.matches}
+      noun="matched events"
+      about={COUNTED.ruleMatches}
+    />,
     <Kpi
       key="r"
       label="Rules that matched"
       kpi={d.rules_matched}
+      about={COUNTED.rulesMatched}
       noun="matches"
       context={
         d.rules_matched.extra !== null ? (
@@ -755,8 +800,14 @@ function Detections({ s }: { s: DashboardSections }) {
         ) : undefined
       }
     />,
-    <Kpi key="h" label="Hosts involved" kpi={d.hosts} noun="hosts" />,
-    <Kpi key="u" label="Users involved" kpi={d.users} noun="people" />,
+    <Kpi key="h" label="Hosts involved" kpi={d.hosts} noun="hosts" about={COUNTED.hostsInvolved} />,
+    <Kpi
+      key="u"
+      label="Users involved"
+      kpi={d.users}
+      noun="people"
+      about={COUNTED.usersInvolved}
+    />,
   ];
   return (
     <Section
@@ -847,9 +898,15 @@ function Part({ window, part }: { window: PageWindow; part: Part }) {
 export function Sections({ window }: { window: PageWindow }) {
   return (
     <>
-      <Part window={window} part="identity" />
-      <Part window={window} part="attacks" />
-      <Part window={window} part="detections" />
+      <ErrorBoundary label="Identity">
+        <Part window={window} part="identity" />
+      </ErrorBoundary>
+      <ErrorBoundary label="Attacks and access">
+        <Part window={window} part="attacks" />
+      </ErrorBoundary>
+      <ErrorBoundary label="Detections">
+        <Part window={window} part="detections" />
+      </ErrorBoundary>
     </>
   );
 }

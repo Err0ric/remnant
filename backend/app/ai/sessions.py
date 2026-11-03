@@ -82,6 +82,9 @@ class Session:
     hosts: list[str] = field(default_factory=list)
     stopped: bool = False  # ended
     failed: int = 0  # tool calls that failed
+    # ended (a stop record), idle (no record for the idle time and no stop: "Ended (no end
+    # event)"), or open
+    state: str = "open"
 
 
 @dataclass(slots=True)
@@ -114,8 +117,28 @@ def _iso(v: Any) -> str:
     return v.astimezone(UTC).isoformat() if isinstance(v, datetime) else str(v)
 
 
+def _state(stopped: bool, last: Any, now: datetime, idle_minutes: int) -> str:
+    if stopped:
+        return "ended"
+    seen = last if isinstance(last, datetime) else None
+    if seen is None and last is not None:
+        try:
+            seen = datetime.fromisoformat(str(last))
+        except ValueError:
+            seen = None
+    if seen is not None and seen.tzinfo is None:
+        seen = seen.replace(tzinfo=UTC)
+    if seen is not None and now - seen >= timedelta(minutes=idle_minutes):
+        return "idle"
+    return "open"
+
+
 def sessions(
-    engine: QueryEngine, allowed: list[str] | None, now: datetime, days: int
+    engine: QueryEngine,
+    allowed: list[str] | None,
+    now: datetime,
+    days: int,
+    idle_minutes: int = 120,
 ) -> list[Session]:
     scope = QueryScope(allowed, now - timedelta(days=days), now)
     rows = engine.run(SESSIONS_SQL, scope, timeout_s=TIMEOUT_S, page=True).rows
@@ -132,6 +155,7 @@ def sessions(
             sorted(str(h) for h in (hosts or [])),
             bool(stopped),
             int(failed or 0),
+            _state(bool(stopped), last, now, idle_minutes),
         )
         for sid, person, machine, started, last, prompts, calls, tools, hosts, stopped, failed in (
             rows

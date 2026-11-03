@@ -198,3 +198,38 @@ def test_new_sources_start_with_alert_if_quiet_on_by_kind(lab: dict[str, Any]) -
             " ORDER BY rowid DESC LIMIT 1"
         ).fetchone()
     assert json.loads(row["detail"])["source_id"] == "lin_two" and row["user_id"]
+
+
+def test_two_ticks_on_one_episode_alert_once(lab: dict[str, Any]) -> None:
+    """Owner 2026-11-02: "stopped sending" fired twice in one minute for one source. Two
+    checks that both saw the source as sending (a stale read) raise one alert and one item."""
+    watch(lab)
+    quiet = lab["app"].state.quiet
+    stale = quiet.all()
+    quiet.all = lambda: stale  # both ticks start from the same read
+    lab["clock"].now = NOW + timedelta(minutes=61)
+    assert tick(lab) == 1
+    assert tick(lab) == 0
+    assert len(lab["rx"].got) == 1
+    with lab["app"].state.meta.connect() as con:
+        n = con.execute(
+            "SELECT count(*) FROM alert_items WHERE kind = 'gap' AND subject = 'lin_auth'"
+        ).fetchone()[0]
+    assert n == 1
+    assert [x for x in actions(lab) if x == "source.quiet"] == ["source.quiet"]
+
+
+def test_claude_code_sources_start_with_no_quiet_alert(lab: dict[str, Any]) -> None:
+    """Owner 2026-11-02: Claude Code telemetry and the hooks plugin send only while people
+    use Claude Code, so a source-level quiet alert would fire every evening."""
+    a, h = lab["admin"], lab["h"]
+    for sid, extra in (
+        ("hooks", {"sender": "claude"}),
+        ("collector", {"sender": "collector"}),
+        ("cc_tel", {"template_id": "claude_code_otel"}),
+    ):
+        body = {"source_id": sid, "kind": "otlp", "format": "json", "template_id": "auto"} | extra
+        assert a.post("/api/sources", json=body, headers=h).status_code == 201
+    watched = {w.source_id for w in lab["app"].state.quiet.all()}
+    assert "hooks" not in watched and "cc_tel" not in watched
+    assert "collector" in watched

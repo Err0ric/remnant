@@ -41,6 +41,7 @@ from app.api.ask import router as ask_router
 from app.api.audit import router as audit_router
 from app.api.auth import router as auth_router
 from app.api.cache import REFRESH_EVERY_S, PageCache, Refresher, clear_on_change, server_timing
+from app.api.client_errors import router as client_errors_router
 from app.api.dashboard_sections import router as dashboard_sections_router
 from app.api.dashboards import router as dashboards_router
 from app.api.enrichment import router as enrichment_router
@@ -78,6 +79,7 @@ from app.auth.oidc import HttpFactory, OidcClient
 from app.auth.service import AuthService
 from app.auth.tls import ensure_self_signed, resolve_tls
 from app.core.branding import PRODUCT_NAME
+from app.core.client_errors import ClientErrors
 from app.core.config import AppConfig, is_loopback_host, load_config
 from app.core.errors import (
     AnswerShapeError,
@@ -396,10 +398,22 @@ def _lifespan(config: AppConfig) -> Callable[[FastAPI], AbstractAsyncContextMana
 HASHED_ASSET = re.compile(r"assets/[\w.-]+-[A-Za-z0-9_-]{8}\.(?:js|css|woff2?|svg|png|webp)")
 
 
+def ui_build(static_dir: Path) -> str | None:
+    """The served build: the hashed entry script's name in index.html ("index-BdM5148w")."""
+    try:
+        html = (static_dir / "index.html").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    m = re.search(r'src="/?assets/([\w.-]+)\.js"', html)
+    return m.group(1) if m else None
+
+
 class SpaStaticFiles(StaticFiles):
     """Serve the web UI; unknown paths (like /setup) get index.html so the app can route them.
 
-    /api/* never falls back, so a missing endpoint stays a 404 instead of an HTML page.
+    /api/* never falls back, so a missing endpoint stays a 404 instead of an HTML page, and
+    neither does assets/*: a chunk an old tab asks for after an update is a 404, which the
+    app sees as a failed chunk and reloads once, never an HTML page parsed as a script.
     """
 
     async def get_response(self, path: str, scope: Scope) -> Response:
@@ -408,7 +422,11 @@ class SpaStaticFiles(StaticFiles):
         try:
             response = await super().get_response(path, scope)
         except StarletteHTTPException as exc:
-            if exc.status_code != 404 or path == "api" or path.startswith("api/"):
+            if (
+                exc.status_code != 404
+                or path in ("api", "assets")
+                or path.startswith(("api/", "assets/"))
+            ):
                 raise
             return self._index(scope)
         if HASHED_ASSET.fullmatch(path) and response.status_code == 200:
@@ -535,6 +553,8 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     app.state.otlp_spool = Spool(config.paths.data_dir / "spool")
     # ADR-0040: refusals become events in the built-in server_events source.
     app.state.server_events = ServerEvents(app.state.otlp_spool, app.state.sources)
+    app.state.client_errors = ClientErrors()
+    app.state.ui_build = None
     events_ = app.state.server_events
 
     def on_refusal(event: str, ip: str | None, detail: dict[str, Any]) -> None:
@@ -614,6 +634,8 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         audit=app.state.auth.audit,
         link=app.state.public_url,
         clock=lambda: app.state.auth.clock(),
+        items=app.state.alert_items,
+        queue_stuck_days=config.agents.queue_stuck_days,
     )
     app.state.ai_catalog = Catalog(meta)
     app.state.identities = IdentityStore(meta)
@@ -759,6 +781,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     )
     app.state.maintenance.on_verified = app.state.integrity_service.seal
     app.include_router(meta_router, prefix="/api")
+    app.include_router(client_errors_router, prefix="/api")
     app.include_router(alert_items_router, prefix="/api")
     app.include_router(auth_router, prefix="/api")
     app.include_router(query_router, prefix="/api")
@@ -822,6 +845,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     static_dir = config.server.static_dir
     if static_dir is not None and static_dir.is_dir():
         app.mount("/", SpaStaticFiles(directory=static_dir, html=True), name="web")
+        app.state.ui_build = ui_build(static_dir)
     return app
 
 

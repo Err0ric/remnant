@@ -36,27 +36,50 @@ Content follows the source's **Keep prompt and tool content** setting at downloa
 
 ## 2. Download a plugin per platform
 
-On the source's row, select **Claude plugin**, then:
+On **Settings > Claude plugins** (the only place that issues plugin tokens; the source's row links there):
 
-- **Platform**: **Windows**, or **macOS and Linux**. Download each one you need; each download issues a new token, so download both before publishing either.
-- **Where the address and token live**:
-  - **In the plugin** (the pilot): one zip, nothing else to deploy.
-  - **In a machine-wide file** (the fleet): a bundle with the plugin (its own config empty), `hooks.conf`, and a README. See step 4.
-- **Include this server's self-signed certificate** (shown when this server serves its generated certificate): the scripts check the server against it. Untick it when people's machines already trust the server's certificate. There is no option to skip checking.
+- **Deployment token**: **New token** with a name ("pilot", "all Windows"), or an existing deployment's token, so a later download carries the same one. Revoking a token stops every copy that carries it, and only those.
 - **Server address**: what people's machines reach this server at, for example `https://siem.example.internal:8080`. It must be `https`.
-- **Pilot users**: Claude account emails or OS user names. Only they send, wherever the plugin is installed. Empty: everyone who has it.
+- **Pilot users**: Claude account emails or OS user names. Only they send, wherever the plugin is installed. Empty: everyone who installs it, and the page says so before you download.
+- **Include this server's self-signed certificate** (shown when this server serves its generated certificate): the scripts then check the server against it. It is off by default when people reach the server through a reverse proxy (trusted proxies are set) or when the address you give is not a name on the server's certificate, because the proxy's certificate is the one their machines see and pinning this one would break every send. The line under the checkbox says which applies. There is no option to skip checking.
+- Then **Download plugin** (for one machine or the organization library) or **Download managed bundle** (for the fleet, step 3b) for **Windows** or **macOS and Linux**.
 
-The page shows the version and the SHA-256 of the platform's script (`hooks/send.ps1` or `hooks/send.sh`); check it against the zip before you publish. Each script is short enough to read in one sitting. Downloads are audited (`source.claude_plugin`, with the platform and pilot list, never the token).
+The page shows the version and the SHA-256 of each platform's script (`hooks/send.ps1` or `hooks/send.sh`); check it against the zip before you publish. Each script is short enough to read in one sitting. Downloads are audited (`source.claude_plugin`, with the platform and pilot list, never the token).
 
-## 3. Publish to your organization
+## 3. Publish
+
+Three paths, in the order to try them. Whichever you use, run the pilot checks (step 7) first on one machine.
+
+**The desktop app's Code tab cannot install plugins**: `/plugin` there answers "/plugin isn't available in this environment". Install from a terminal with the Claude Code CLI (`claude`), as below.
+
+### 3a. One machine: the local installer
+
+For testing on your own machine. The plugin download carries an installer for its platform:
+
+| Platform | Run from the unzipped plugin folder |
+|---|---|
+| Windows | `powershell -ExecutionPolicy Bypass -File .\install-local.ps1` |
+| macOS, Linux | `sh install-local.sh` |
+
+It copies the folder into a local marketplace (`<product>-local`, under `%LOCALAPPDATA%` or `~/.local/share`), then runs `claude plugin marketplace add <that folder>` and `claude plugin install <plugin name>@<product>-local --scope user`, and prints `claude plugin list`. Running it again replaces the earlier copy. Remove it with `claude plugin marketplace remove <product>-local`. The plugin then runs in Claude Code sessions started from the terminal; run pilot check 1 in each client you rely on (the desktop app's Code sessions included) before counting on it there.
+
+### 3b. Fleet: the managed bundle plus the plugin
+
+For everyone on a platform. The managed bundle holds the plugin (its own config empty, so it sends nothing by itself), `hooks.conf`, and a README:
+
+1. Deploy `hooks.conf` (and `server-ca.pem`, if included) with your endpoint management tool to the machine-wide path in step 4, for example `%ProgramData%\siem-claude-hooks\hooks.conf` on Windows.
+2. Get the plugin onto those machines: run the plugin's install (as in 3a, with the managed bundle's `plugin-<platform>.zip`) from the same tool as each user, or require a marketplace that lists it in managed settings ("Manage plugins for your organization" in the Claude Code docs).
+
+The machine-wide file wins over the plugin's own config, so the address, token, and certificate stay under your tool's control.
+
+### 3c. Organization library upload
 
 Organization plugins need a Team or Enterprise plan and an Owner (or Primary Owner) to publish (Anthropic support article "Manage plugins for your organization").
 
 1. **Organization settings > Plugins & skills > Marketplaces > Add > Upload a plugin**. Upload each platform's zip.
-2. Publish each plugin to the people on that platform, if the console lets you choose who gets it. If it does not, every member gets both plugins: the other platform's plugin cannot start on their machine (a hook notice at worst, nothing sent). The pilot checks how often that notice shows (step 6).
-3. **Default access**: **Required** for the pilot (with the pilot list in the plugin), later **Installed by default** or **Required** for everyone.
+2. **Default access**: **Available to install**, **Installed by default**, or **Required**. Installed by default and Required apply to every member: that screen has no per-user or per-group audience, so use **Pilot users** in the plugin to limit who sends.
 
-One machine, or a quick test without the console: unzip the plugin and run `claude --plugin-dir <folder>`.
+**Tested on the Windows desktop app (2026-11-02):** a plugin set to **Available to install** and then turned on for one account landed under `%LOCALAPPDATA%\Claude-Data\...\plugin_<id>\`, but its hooks never ran in the desktop app's local Code sessions (no spool folder, no records). The same plugin sent records when its script was run by hand. Until that changes, prefer 3a or 3b for the desktop app, and confirm any path there with pilot check 1.
 
 ## 4. The machine-wide config (fleet)
 
@@ -68,7 +91,7 @@ The machine-wide file wins over the plugin's own config, which is then not read 
 | macOS | `/Library/Application Support/siem-claude-hooks/hooks.conf` | root, 0644 |
 | Linux | `/etc/siem-claude-hooks/hooks.conf` | root, 0644 |
 
-Users can read the file because the hook runs as them. The token in it can only add records to this one source; anyone who copies it can at most send records that look like that machine's. Rotate it with **New token** on the source's row.
+Users can read the file because the hook runs as them. The token in it can only add records to this one source; anyone who copies it can at most send records that look like that machine's. Rotate it with a new deployment token on **Settings > Claude plugins**.
 
 Windows, as an endpoint management script run as SYSTEM (keep the token in your tool's secret field, not in the script text):
 
@@ -107,6 +130,8 @@ Records the plugin cannot send (refused, timed out, unreachable: at home without
 The Windows plugin runs `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File <plugin>\hooks\send.ps1` on every hook. `-NoProfile` keeps people's profile scripts out. `-ExecutionPolicy Bypass` on every tool call is the pattern defenders hunt for (ATT&CK T1059.001): expect your EDR to notice it, and if you allow it, allow it by the script's SHA-256, never by command line. A Group Policy execution policy overrides the command-line flag. A signed-script option (`-ExecutionPolicy AllSigned` with your code-signing certificate) is planned (ADR-0026 row 17).
 
 ## 7. Pilot checks
+
+Before any client: on **Settings > Claude plugins**, **Send a test record** next to the deployment's token posts one synthetic session start through the real receiver with that token and shows the HTTP result. 200 means the token, the source, and the receiver work; the record names no person or machine and shows on **Sessions** only with "Hide sessions with no tool calls or prompts" unticked. It does not check the network path from a laptop, the proxy, or the certificate; check 1 does.
 
 Run each on one Windows and one Mac (or Linux) pilot machine. Each is pass or fail.
 

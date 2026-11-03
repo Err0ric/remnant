@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { AI_WATCH_COUNTED } from "./counted";
 import {
   api,
   type AiStatus,
@@ -15,7 +16,7 @@ import { LoadFailed } from "@/components/LoadFailed";
 import { When } from "@/components/When";
 import { StatusBadge, STATUS_LABEL } from "@/features/ai/StatusBadge";
 import { TrendChart, TrendLegend } from "./TrendChart";
-import { compareLine, NoHistory } from "./History";
+import { compareLine } from "./History";
 import { SectionTitle } from "@/components/SectionTitle";
 import { PanelTitle } from "@/components/PanelTitle";
 
@@ -30,15 +31,7 @@ export function delta(card: AiWatchCard, days: number): string {
 }
 
 /** What each card counts, for its (i) (ADR-0038 row 13). */
-const ABOUT: Record<AiWatchCard["key"], string> = {
-  services: "AI services in use that are not approved or not reviewed yet, in this range.",
-  people:
-    "People using those services. Devices with no person matched are counted apart, never added in.",
-  agents: "AI agents and MCP servers first seen in this range.",
-  consent:
-    "Microsoft 365 app consents granted in this range, Graph and the Management API counted once. Blocked attempts are shown apart.",
-  sensitive: "Sensitive data signals Claude Code telemetry reported (keys, tokens, card numbers).",
-};
+const ABOUT: Record<AiWatchCard["key"], string> = AI_WATCH_COUNTED;
 
 /** The change against the previous period as a neutral pill: an arrow and the number.
  * Never green or red: more AI use is not good or bad by itself (ADR-0038 row 13). */
@@ -333,8 +326,9 @@ function Card({ card, days, odd, history, bounds }: CardProps) {
         </PanelTitle>
         <span
           role="img"
-          aria-label={`About ${midSentence(card.label)}: ${ABOUT[card.key]}`}
-          title={ABOUT[card.key]}
+          data-about=""
+          aria-label={`How this is counted: ${ABOUT[card.key]}`}
+          title={`How this is counted: ${ABOUT[card.key]}`}
           className="flex size-3.5 shrink-0 cursor-help items-center justify-center rounded-full border border-text-muted text-[10px] font-semibold leading-none text-text-muted"
         >
           i
@@ -368,7 +362,7 @@ function Card({ card, days, odd, history, bounds }: CardProps) {
                 }
                 className={cn(
                   "self-start text-kpi tabular-nums underline-offset-4 hover:underline min-[1500px]:text-kpi-lg",
-                  card.value === 0 && !card.devices ? "text-ok" : "text-text",
+                  card.value === 0 && !card.devices ? "text-text-muted" : "text-text",
                 )}
               >
                 {(card.value ?? 0).toLocaleString()}
@@ -377,7 +371,7 @@ function Card({ card, days, odd, history, bounds }: CardProps) {
               <span
                 className={cn(
                   "text-kpi tabular-nums min-[1500px]:text-kpi-lg",
-                  card.value === 0 && !card.devices ? "text-ok" : "text-text",
+                  card.value === 0 && !card.devices ? "text-text-muted" : "text-text",
                 )}
               >
                 {(card.value ?? 0).toLocaleString()}
@@ -385,7 +379,6 @@ function Card({ card, days, odd, history, bounds }: CardProps) {
             )}
             {partial ? null : <DeltaPill card={card} days={days} onOpen={openBefore} />}
           </span>
-          {partial ? <NoHistory since={history.since} before={before} /> : null}
           {card.devices ? (
             <button
               type="button"

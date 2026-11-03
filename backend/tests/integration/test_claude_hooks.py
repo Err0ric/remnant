@@ -254,7 +254,8 @@ def test_download_holds_the_address_a_named_token_and_the_pilot(
     assert send(lab, {"resourceLogs": []}, token=cfg["REMNANT_TOKEN"]).status_code < 300
     names = set(zipfile.ZipFile(io.BytesIO(res.content)).namelist())
     assert names == {
-        ".claude-plugin/plugin.json", "hooks/hooks.json", "hooks/send.sh", "config", "server-ca.pem"
+        ".claude-plugin/plugin.json", "hooks/hooks.json", "hooks/send.sh", "config", "server-ca.pem",
+        "install-local.sh",  # the one-machine installer (owner, 2026-11-02)
     }  # fmt: skip
     no_ca = download(lab, server_url="https://x.example", trust_server_certificate=False)
     assert "server-ca.pem" not in zipfile.ZipFile(io.BytesIO(no_ca.content)).namelist()

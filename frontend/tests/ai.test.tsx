@@ -111,6 +111,29 @@ describe("AI usage (ADR-0015)", () => {
     const row = within(people).getByText("alice@example.com").closest("tr") as HTMLElement;
     expect(within(row).getByText("12.50")).toBeVisible();
     expect(within(row).getByText("1 signal")).toBeVisible();
+    expect(within(row).getByText("Both")).toBeVisible();
+  });
+
+  it("says how each Claude user was seen, and counts network-only people (owner 2026-11-02)", async () => {
+    await openAi();
+    // The header counts plugin users (telemetry or hooks), not network-only people.
+    expect(await screen.findByText(/2 Claude Code users/)).toBeVisible();
+    const services = await screen.findByRole("region", {
+      name: "AI services seen in network logs",
+    });
+    expect(
+      within(services).getByText(/Seen through: both 1, plugin only 1, network only 1/),
+    ).toBeVisible();
+    await goTo("AI usage", "People");
+    const people = await screen.findByRole("region", { name: "Claude Code by person" });
+    expect(within(people).getByText(/Seen on the network but no plugin: 1/)).toBeVisible();
+    const erin = within(people).getByText("erin@example.com").closest("tr") as HTMLElement;
+    expect(within(erin).getByText("Plugin")).toHaveAttribute(
+      "title",
+      "The hooks only: not seen on the network",
+    );
+    const dana = within(people).getByText("dana@example.com").closest("tr") as HTMLElement;
+    expect(within(dana).getByText("Network")).toBeVisible();
   });
 
   it("shows its tabs in the page header and keeps the open one in the path (ADR-0038)", async () => {
@@ -218,6 +241,30 @@ describe("Agent sessions from the hooks plugin (ADR-0026)", () => {
     expect(items[2]).toHaveTextContent("Calls Read /home/dana/app/auth.py");
     expect(items[3]).toHaveTextContent("github create_issue");
     expect(items[1]).toHaveTextContent("42 chars");
+  });
+
+  it("hides empty sessions by default and names a quiet one ended (owner 2026-11-02)", async () => {
+    window.history.replaceState(null, "", "/ai#agents");
+    mockApi("Codename", { mode: "open" });
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    render(
+      <App
+        initialTheme="dark"
+        queryClient={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      />,
+    );
+    const card = await screen.findByRole("region", { name: "Agent sessions" });
+    const list = await within(card).findByRole("list", { name: "Sessions" });
+    expect(within(list).queryByText("erin@example.com")).toBeNull();
+    expect(within(card).getByText("(1 hidden)")).toBeVisible();
+    await userEvent.click(
+      within(card).getByRole("checkbox", { name: /Hide sessions with no tool calls or prompts/ }),
+    );
+    const erin = within(list).getByText("erin@example.com").closest("button") as HTMLElement;
+    expect(erin).toHaveTextContent("ended (no end event), 0 calls");
   });
 });
 

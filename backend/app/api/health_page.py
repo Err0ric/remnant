@@ -12,6 +12,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.api.access import AdminUser, CurrentUser, client_ip
 from app.auth.service import AuthService
+from app.core.client_errors import ClientErrors
 from app.engine.views import permitted_sources
 from app.ingest.durable import quarantined_count
 from app.search.health import HealthService
@@ -60,6 +61,17 @@ class RollupOut(BaseModel):
     reason: str | None
 
 
+class ClientErrorOut(BaseModel):
+    at: str
+    error_id: str
+    kind: str  # render | panel | chunk | unhandled
+    name: str
+    message: str
+    route: str
+    build: str
+    stale: bool  # the tab ran an older build than the server serves
+
+
 class HealthOut(BaseModel):
     devices: list[DeviceOut]
     agents: list[AgentOut]
@@ -67,6 +79,9 @@ class HealthOut(BaseModel):
     rollups: list[RollupOut] = []
     # Damaged lake files moved out of the way (SPEC D51); kept for an administrator.
     quarantined_files: int = 0
+    # Pages and panels that failed in browsers, the last 24 hours (owner 2026-11-02); for
+    # administrators only.
+    client_errors: list[ClientErrorOut] = []
 
 
 class DeviceIn(BaseModel):
@@ -117,7 +132,19 @@ async def health_checks(request: Request, user: CurrentUser) -> HealthOut:
         agents=[AgentOut(**asdict(a)) for a in agents],
         quarantined_files=await run_in_threadpool(quarantined_count, request.app.state.lake_dir),
         rollups=await run_in_threadpool(_rollups, request),
+        client_errors=_client_errors(request) if admin else [],
     )
+
+
+def _client_errors(request: Request) -> list[ClientErrorOut]:
+    store: ClientErrors = request.app.state.client_errors
+    return [
+        ClientErrorOut(
+            at=e.at.isoformat(), error_id=e.error_id, kind=e.kind, name=e.name,
+            message=e.message, route=e.route, build=e.build, stale=e.stale,
+        )
+        for e in store.recent(datetime.now(UTC))
+    ]  # fmt: skip
 
 
 def _rollups(request: Request) -> list[RollupOut]:

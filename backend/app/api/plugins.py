@@ -4,7 +4,10 @@ only. Router only; tokens live in `app.ingest.otlp_tokens`."""
 
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
+from urllib.parse import urlsplit
 
+import httpx
+from cryptography import x509
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field, StringConstraints
 from starlette.concurrency import run_in_threadpool
@@ -14,6 +17,8 @@ from app.ai.claude_plugin import VERSION as PLUGIN_VERSION
 from app.ai.sessions import _ONE_COPY, _a
 from app.api.access import AdminUser, client_ip
 from app.auth.service import AuthService
+from app.auth.tls import resolve_tls
+from app.core.errors import ConfigError, NotFoundError
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.ingest.otlp_tokens import OtlpTokens, Token
 
@@ -53,12 +58,26 @@ class VariantOut(BaseModel):
     dropped_24h: int
 
 
+class CertificateOut(BaseModel):
+    """Whether a package should carry this server's self-signed certificate (owner,
+    2026-11-02): only when the server serves its own generated certificate and people reach
+    it directly. Behind a reverse proxy the proxy's certificate is the one clients see, and
+    pinning this one would break every send."""
+
+    self_signed: bool  # this server serves its generated self-signed certificate
+    names: list[str]  # the DNS names and addresses that certificate is for
+    behind_proxy: bool  # server.trusted_proxies is set
+    include_by_default: bool
+    reason: str
+
+
 class PluginsOut(BaseModel):
     version: str
     variants: list[VariantOut]
     sources: list[dict[str, Any]]
     tokens: list[TokenOut]
     public_url: str | None
+    certificate: CertificateOut | None = None
 
 
 class NewToken(BaseModel):
@@ -112,7 +131,59 @@ async def plugins(request: Request, _: AdminUser) -> PluginsOut:
         ],
         tokens=[_out(t) for t in await run_in_threadpool(tokens.list)],
         public_url=request.app.state.public_url,
+        certificate=certificate(request),
     )
+
+
+def certificate(request: Request) -> CertificateOut:
+    config = request.app.state.config
+    proxied = bool(config.server.trusted_proxies)
+    try:
+        tls = resolve_tls(config)
+    except ConfigError:
+        tls = None
+    if tls is None or not tls.self_signed:
+        return CertificateOut(
+            self_signed=False,
+            names=[],
+            behind_proxy=proxied,
+            include_by_default=False,
+            reason="This server does not serve its own self-signed certificate.",
+        )
+    names = cert_names(tls.cert.read_bytes())
+    public = request.app.state.public_url
+    host = (urlsplit(public).hostname or "").lower() if public else ""
+    if proxied:
+        reason = (
+            "Off: people reach this server through a reverse proxy, whose certificate is the"
+            " one their computers check."
+        )
+    elif host and host not in names:
+        reason = (
+            f"Off: the public address ({host}) is not a name on this server's certificate,"
+            " so another certificate answers there."
+        )
+    else:
+        reason = "On: people reach this server directly, and it serves its own certificate."
+    return CertificateOut(
+        self_signed=True,
+        names=names,
+        behind_proxy=proxied,
+        include_by_default=reason.startswith("On"),
+        reason=reason,
+    )
+
+
+def cert_names(pem: bytes) -> list[str]:
+    """DNS names and addresses in a certificate's subject alternative names, lower case."""
+    cert = x509.load_pem_x509_certificate(pem)
+    try:
+        san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    except x509.ExtensionNotFound:
+        return []
+    names = [str(n).lower() for n in san.get_values_for_type(x509.DNSName)]
+    names += [str(a) for a in san.get_values_for_type(x509.IPAddress)]
+    return sorted(set(names))
 
 
 @router.post("/sources/{source_id}/otlp-tokens")
@@ -134,6 +205,78 @@ async def revoke_token(
     gone = await run_in_threadpool(tokens.revoke, token_id, source_id, user.user_id)
     await _audit(request, "source.otlp_token", user.user_id, gone, "revoke")
     return _out(gone)
+
+
+class TestRecordOut(BaseModel):
+    status: int  # the receiver's HTTP status
+    ok: bool
+    detail: str
+    session_id: str  # the synthetic session, findable on Agents > Sessions (empty, hidden)
+
+
+def test_payload(session_id: str, at: datetime) -> dict[str, Any]:
+    """One synthetic SessionStart in the plugin's own OTLP shape (owner, 2026-11-02). No
+    person, no host: it marks no device and names no one, and `test_record` keeps it out
+    of Agents."""
+    attrs = {
+        "event_name": "claude_hooks.session_start",
+        "role": "session",
+        "session_id": session_id,
+        "plugin_variant": "server_test",
+        "test_record": "true",
+    }
+    record = {
+        "timeUnixNano": str(int(at.timestamp()) * 1_000_000_000),
+        "body": {"stringValue": "claude_hooks.session_start"},
+        "attributes": [{"key": k, "value": {"stringValue": v}} for k, v in attrs.items()],
+    }
+    resource = {"attributes": [{"key": "service.name", "value": {"stringValue": "claude-hooks"}}]}
+    scope = {"scope": {"name": "claude-hooks"}, "logRecords": [record]}
+    return {"resourceLogs": [{"resource": resource, "scopeLogs": [scope]}]}
+
+
+@router.post("/sources/{source_id}/otlp-tokens/{token_id}/test")
+async def send_test_record(
+    source_id: str, token_id: str, request: Request, user: AdminUser
+) -> TestRecordOut:
+    """Post one synthetic SessionStart with this deployment's token through the real
+    receiver (`POST /api/otlp/v1/logs`, in process) and report its HTTP result, so the
+    server side can be checked without a client. Audited source.otlp_token (never the
+    token)."""
+    tokens: OtlpTokens = request.app.state.otlp_tokens
+    owner, plain = await run_in_threadpool(tokens.plain, token_id)
+    if owner != source_id:
+        raise NotFoundError("No such token, or it was revoked")
+    now = datetime.now(UTC)
+    sid = f"server-test-{now.strftime('%Y%m%dT%H%M%SZ')}"
+    transport = httpx.ASGITransport(app=request.app)
+    async with httpx.AsyncClient(transport=transport, base_url=str(request.base_url)) as c:
+        res = await c.post(
+            "/api/otlp/v1/logs",
+            json=test_payload(sid, now),
+            headers={"Authorization": f"Bearer {plain}"},
+        )
+    ok = res.status_code == 200
+    detail = "Accepted: the receiver took the record with this token." if ok else _reason(res)
+    auth: AuthService = request.app.state.auth
+    await run_in_threadpool(
+        auth.audit.write,
+        "source.otlp_token",
+        "success" if ok else "failure",
+        user.user_id,
+        client_ip(request),
+        {"source_id": source_id, "token_id": token_id, "change": "test", "status": res.status_code},
+    )
+    return TestRecordOut(status=res.status_code, ok=ok, detail=detail, session_id=sid)
+
+
+def _reason(res: httpx.Response) -> str:
+    try:
+        body = res.json()
+    except ValueError:
+        body = {}
+    msg = body.get("detail") or body.get("message") if isinstance(body, dict) else None
+    return f"Refused ({res.status_code}): {msg}" if msg else f"Refused ({res.status_code})"
 
 
 async def _audit(request: Request, action: str, user_id: str, t: Token, what: str) -> None:

@@ -122,7 +122,9 @@ describe("AI Watch on the Dashboard (ADR-0035 Part 2)", () => {
       within(watch).getByRole("img", { name: /^AI use per day over 7 days by review status:/ }),
     ).toBeVisible();
     expect(
-      within(watch).getByRole("img", { name: /^About unapproved AI services:/ }),
+      within(watch).getByRole("img", {
+        name: /^How this is counted: AI services from the catalog/,
+      }),
     ).toBeVisible();
     const top = within(watch).getByRole("table", { name: "Top AI services" });
     expect(within(top).getByRole("link", { name: "DeepSeek" })).toBeVisible();
@@ -256,9 +258,10 @@ describe("Dashboard sections (ADR-0038 edit 10)", () => {
     expect(within(attacks).getByRole("img", { name: "bastion: peak 9, total 14" })).toBeVisible();
     expect(within(attacks).getByText("AS64500 Example Net")).toBeVisible();
     expect(within(attacks).getByText("No VPN logs")).toBeVisible();
-    // The week before is only partly there: no change pills, a plain line instead.
-    expect(within(attacks).getByText("No comparison yet: data starts Oct 21")).toBeVisible();
-    expect(within(attacks).getAllByText("Not enough history for comparison")).toHaveLength(3);
+    // The week before is only partly there: no change pills, and one line for the section
+    // saying when comparisons start, not a note under every number (owner, 2026-11-02).
+    expect(within(attacks).getByText("Comparisons start Nov 4")).toBeVisible();
+    expect(within(attacks).queryByText("Not enough history for comparison")).toBeNull();
     expect(within(attacks).queryByText("↑ 18")).not.toBeInTheDocument();
     expect(within(identity).getByText("↑ 4")).toBeVisible();
     // Addresses with no country say why; the admin is offered the GeoIP update.

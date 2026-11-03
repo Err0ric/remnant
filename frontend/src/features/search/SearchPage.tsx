@@ -1,4 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { withChunkReload } from "@/lib/chunkReload";
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { Command, PageHeader } from "@/components/shell/PageHeader";
 import {
@@ -46,7 +47,9 @@ import { SimplePanel } from "./SimplePanel";
 const FILL_KEY = "app.live.fill"; // Live starts with the last 5 minutes (per browser)
 
 // CodeMirror is most of the bundle; it loads as its own chunk after the page shows.
-const SqlEditor = lazy(() => import("./SqlEditor").then((m) => ({ default: m.SqlEditor })));
+const SqlEditor = lazy(
+  withChunkReload(() => import("./SqlEditor").then((m) => ({ default: m.SqlEditor }))),
+);
 
 interface SearchPageProps {
   /** Admins and analysts author saved searches; auditors are read-only (SPEC 3.6). */

@@ -301,6 +301,15 @@ class M365Config(_Strict):
         return value
 
 
+class AgentsConfig(_Strict):
+    # A Claude Code session with no stop record and no record for this long shows as
+    # "Ended (no end event)" (owner 2026-11-02): a closed window or a crash sends no stop.
+    session_idle_minutes: int = Field(default=120, ge=5, le=10080)
+    # Health: a machine whose hooks plugin queue holds records and delivered none for this
+    # many days is unhealthy and raises an alert item (owner 2026-11-02).
+    queue_stuck_days: int = Field(default=3, ge=1, le=7)
+
+
 class EnrichmentConfig(_Strict):
     # Treat documentation addresses (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24,
     # 2001:db8::/32) as public so a GeoIP file can place them. For the demo install only
@@ -320,6 +329,7 @@ class AppConfig(_Strict):
     network: NetworkConfig = Field(default_factory=NetworkConfig)
     enrichment: EnrichmentConfig = Field(default_factory=EnrichmentConfig)
     m365: M365Config = Field(default_factory=M365Config)
+    agents: AgentsConfig = Field(default_factory=AgentsConfig)
 
 
 def _env_overrides(environ: Mapping[str, str]) -> dict[str, Any]:

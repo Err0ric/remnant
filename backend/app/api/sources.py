@@ -252,6 +252,10 @@ class SourceCreate(SourceConfig):
     # A Loki password or token (ADR-0011): stored encrypted, never returned or logged.
     loki_secret: SecretStr | None = Field(default=None, max_length=4096)
     credentials: ApiCredentials | None = None  # m365 and anthropic sources
+    # OTLP sources: who sends (owner 2026-11-02). Claude Code telemetry and the hooks plugin
+    # send only while people use Claude Code, so their source-level quiet alert starts off;
+    # collectors and endpoint agents send all the time, so theirs starts on.
+    sender: Literal["claude", "collector"] | None = None
 
 
 class SourceCreated(SourceConfig):
@@ -259,10 +263,18 @@ class SourceCreated(SourceConfig):
     otlp_token: str | None = None
 
 
+CLAUDE_TEMPLATES = ("claude_hooks", "claude_code_otel")
+
+
+def quiet_off_by_default(source: SourceConfig, sender: str | None) -> bool:
+    """Claude Code telemetry and hooks sources start with no source-level quiet alert."""
+    return source.kind == "otlp" and (sender == "claude" or source.template_id in CLAUDE_TEMPLATES)
+
+
 @router.post("/sources", status_code=status.HTTP_201_CREATED)
 async def add_source(body: SourceCreate, request: Request, user: AdminUser) -> SourceCreated:
     store = _store(request)
-    config = SourceConfig(**body.model_dump(exclude={"loki_secret", "credentials"}))
+    config = SourceConfig(**body.model_dump(exclude={"loki_secret", "credentials", "sender"}))
     secret = body.loki_secret.get_secret_value() if body.loki_secret else None
     if config.kind in API_KINDS:
         secret = (body.credentials or ApiCredentials()).secret_for(config)
@@ -289,14 +301,17 @@ async def add_source(body: SourceCreate, request: Request, user: AdminUser) -> S
     )
     # Alert if quiet starts on, with no targets: a gap becomes an alert item, and messages
     # go out once an admin adds targets (ADR-0037). Audited as source.quiet_alert_change.
-    await run_in_threadpool(
-        _quiet(request).set,
-        created.source_id,
-        default_quiet_s(created.kind or "file"),
-        [],
-        user,
-        client_ip(request),
-    )
+    # Not for Claude Code sources: no records overnight is normal (D166); Health watches
+    # each device's queue instead.
+    if not quiet_off_by_default(created, body.sender):
+        await run_in_threadpool(
+            _quiet(request).set,
+            created.source_id,
+            default_quiet_s(created.kind or "file"),
+            [],
+            user,
+            client_ip(request),
+        )
     return SourceCreated(**created.model_dump(), otlp_token=token)
 
 

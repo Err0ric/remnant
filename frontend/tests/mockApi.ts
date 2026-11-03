@@ -116,6 +116,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
   const state = { ...auth };
   const install = { name: "" };
   const sources: Record<string, unknown>[] = [{ ...SOURCE }];
+  const pluginTokens: { revoked_at: string | null }[] = [{ revoked_at: null }];
   const watched: Record<string, unknown>[] = [
     {
       device_id: "d0",
@@ -941,6 +942,20 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
           tools: ["Read", "github"],
           hosts: ["docs.example.com"],
           stopped: true,
+          state: "ended",
+        },
+        {
+          session_id: "s-78",
+          person: "erin@example.com",
+          machine: "ws-0418",
+          started: "2026-10-22T09:00:00+00:00",
+          last: "2026-10-22T09:00:00+00:00",
+          prompts: 0,
+          tool_calls: 0,
+          tools: [],
+          hosts: [],
+          stopped: false,
+          state: "idle",
         },
       ]);
     if (url.endsWith("/api/ai/sessions/s-77") && method === "GET")
@@ -1187,7 +1202,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
             prefix: "rmt_ab12",
             created_at: "2026-10-29T10:00:00Z",
             created_by: "u1",
-            revoked_at: null,
+            revoked_at: pluginTokens[0]?.revoked_at ?? null,
             last_used_at: "2026-10-30T10:00:00Z",
             devices: 3,
             hosts: ["ws-1", "ws-2", "ws-3"],
@@ -1195,9 +1210,25 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
           },
         ],
         public_url: "https://siem.example",
+        certificate: {
+          self_signed: true,
+          names: ["siem.internal"],
+          behind_proxy: true,
+          include_by_default: false,
+          reason:
+            "Off: people reach this server through a reverse proxy, whose certificate is the one their computers check.",
+        },
       });
     }
+    if (url.endsWith("/otlp-tokens/t1/test") && init?.method === "POST")
+      return json({
+        status: 200,
+        ok: true,
+        detail: "Accepted: the receiver took the record with this token.",
+        session_id: "server-test-20261102T120000Z",
+      });
     if (url.includes("/otlp-tokens/") && init?.method === "DELETE") {
+      if (pluginTokens[0]) pluginTokens[0].revoked_at = "2026-10-30T11:00:00Z";
       return json({
         token_id: "t1",
         source_id: "claude",
@@ -1943,7 +1974,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       const svc = (id: string, name: string, status: string) => ({
         id,
         name,
-        vendor: "Vendor",
+        vendor: id === "claude" ? "Anthropic" : "Vendor",
         kind: "chat",
         domains: [`${id}.example`],
         status,
@@ -2013,8 +2044,35 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
             errors: 2,
             sensitive: 1,
             models: ["claude-opus-5-5"],
+            seen_through: "both",
+            via: ["telemetry"],
+          },
+          {
+            person: "erin@example.com",
+            cost_usd: 0,
+            tokens: 0,
+            sessions: 1,
+            tool_calls: 0,
+            errors: 0,
+            sensitive: 0,
+            models: [],
+            seen_through: "plugin",
+            via: ["hooks"],
+          },
+          {
+            person: "dana@example.com",
+            cost_usd: 0,
+            tokens: 0,
+            sessions: 0,
+            tool_calls: 0,
+            errors: 0,
+            sensitive: 0,
+            models: [],
+            seen_through: "network",
+            via: [],
           },
         ],
+        claude_seen: { both: 1, plugin: 1, network: 1 },
         sources_in_scope: ["dns", "claude"],
         compared_from: "2026-09-26T12:00:00+00:00",
         new_services: ["chatgpt"],

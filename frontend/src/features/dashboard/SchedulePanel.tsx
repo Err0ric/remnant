@@ -15,7 +15,15 @@ import { navigate } from "@/lib/route";
 import { eventsSql, seedSearch } from "@/lib/searchSeed";
 import { cronLabel, fillSql } from "@/features/schedules/schedule";
 import { since, stamp } from "@/features/overview/time";
-import { flagText, formatHeadline, headlineValue, hasTrend, panelLabel, trend } from "./headline";
+import {
+  flagText,
+  formatHeadline,
+  headlineValue,
+  hasTrend,
+  panelLabel,
+  trend,
+  rangeWords,
+} from "./headline";
 import { barShape, cellText, COLUMNS_AT, type PanelView, type PanelWidth } from "./panelShape";
 import { Sparkline } from "./Sparkline";
 
@@ -161,6 +169,9 @@ export function SchedulePanel({
           {tile ? null : (
             <div className="text-text-muted">
               {s.kind === "search" ? "Saved search" : "Rule"}, {cronLabel(s.cron)}
+              {rangeWords(s.lookback_minutes)
+                ? `, ${rangeWords(s.lookback_minutes)?.toLowerCase()}`
+                : ""}
             </div>
           )}
         </div>
@@ -190,7 +201,7 @@ export function SchedulePanel({
                   disabled={!openSql}
                   onClick={() => openSql && open(openSql)}
                   title={openSql ? "Open the rows behind this number" : undefined}
-                  className={`block max-w-full truncate text-left text-kpi tabular-nums ${goodZero ? "text-ok" : "text-text"} ${openSql ? "hover:underline" : "cursor-default"}`}
+                  className={`block max-w-full truncate text-left text-kpi tabular-nums ${goodZero ? "text-text-muted" : "text-text"} ${openSql ? "hover:underline" : "cursor-default"}`}
                 >
                   {formatHeadline(value)}
                 </button>
@@ -209,7 +220,7 @@ export function SchedulePanel({
           {flag ? (
             <p className="text-warn">{flag}</p>
           ) : goodZero && tile ? (
-            <p className="text-ok">Nothing flagged</p>
+            <p className="text-text-muted">Nothing flagged</p>
           ) : null}
           {last.definition_change ? (
             <p className="text-text-secondary">Changed: {last.definition_change}</p>
@@ -416,7 +427,7 @@ function TileCard({ schedule: s, value, label, flag, goodZero, openSql, now }: T
                 disabled={!openSql}
                 onClick={() => openSql && open(openSql)}
                 title={openSql ? "Open the rows behind this number" : undefined}
-                className={`text-kpi tabular-nums ${goodZero ? "text-ok" : "text-text"} ${openSql ? "hover:underline" : "cursor-default"}`}
+                className={`text-kpi tabular-nums ${goodZero ? "text-text-muted" : "text-text"} ${openSql ? "hover:underline" : "cursor-default"}`}
               >
                 {formatHeadline(value)}
               </button>
@@ -426,7 +437,7 @@ function TileCard({ schedule: s, value, label, flag, goodZero, openSql, now }: T
             </span>
           </div>
           <div
-            className={`truncate text-xs ${flag ? "text-warn" : goodZero ? "text-ok" : "text-text-muted"}`}
+            className={`truncate text-xs ${flag ? "text-warn" : "text-text-muted"}`}
             title={`Last run ${stamp(last.started_at)} UTC`}
           >
             {flag ?? (goodZero ? "Nothing flagged" : since(last.started_at, now))}

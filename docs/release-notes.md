@@ -2,6 +2,60 @@
 
 ## Unreleased
 
+### Quieter quiet alerts for Claude Code (2026-11-02)
+
+- "Stopped sending" now fires once per source each time it goes quiet; two checks at the same minute no longer both alert.
+- When you add an OpenTelemetry source, you choose who sends to it. For **Claude Code (telemetry or the hooks plugin)** the source-level quiet alert starts off, because Claude Code sends only while people use it and evenings would alert every day. Agents and collectors keep the 1-hour quiet alert.
+- **Health > Endpoint agents** no longer flags a hooks plugin machine just for being quiet. It flags a machine whose plugin has records waiting and delivered none for 3 days (`agents.queue_stuck_days`), and raises one alert for it.
+- What changes for existing installs: existing quiet alerts stay as they are. To stop the evening alerts on a Claude Code source you already have, turn its quiet alert off on **Sources**.
+
+### Send a test record from Settings (2026-11-02)
+
+- **Settings > Claude plugins** has **Send a test record** next to each deployment token. It sends one synthetic session start through the real receiver with that token and shows the HTTP result, so you can check the server side before installing the plugin anywhere. The record names no person or machine.
+- What changes for existing installs: nothing to do.
+
+### "How this is counted" on every number (2026-11-02)
+
+- Every number on the Dashboard, Microsoft 365, Agents, AI Watch, and Health has an (i) beside it. Hover it to see which events and sources it counts, over what window, what is left out, and the rule used, for example what "external" means for External sign-in failures and how devices map to people for People using unapproved AI.
+- What changes for existing installs: nothing to do.
+
+### Easier to read at a glance (2026-11-02)
+
+- A **Needs attention** strip at the top of the Dashboard and each area overview lists what to act on, with links: unreviewed AI services, MCP servers not approved, risky mail rules, blocked consents, open alerts, and real failed sign-ins when they jump. It says "Nothing needs attention" when there is nothing.
+- Zero and benign values are shown in muted gray instead of green; colors are kept for alerts.
+- Sections without enough history show one "Comparisons start <date>" line instead of "Not enough history" under every number.
+- The Dashboard header no longer shows a time range that could disagree with the panels; each saved-search panel shows its own.
+- What changes for existing installs: nothing to do.
+
+### No more blank pages (2026-11-02)
+
+- If a page fails to show, you now see "Something went wrong on this page" with a **Reload** button and an error id instead of a blank page. One failing Dashboard panel shows an error card and the rest of the page still loads.
+- After an update, a tab left open on the old version reloads itself once when it needs a page file the new version no longer has. It never reloads in a loop.
+- Page and panel failures are reported to the server: administrators see them on **Health** under "Browser errors, last 24 hours", and they are in the server log as `client.error`. Reports carry the error kind, a short message with values removed, the page path, and the build, never log content.
+- What changes for existing installs: nothing to do. Tabs opened before this update may need one manual refresh.
+
+### Hooks plugin users counted everywhere (2026-11-02)
+
+- A person seen only through the Claude hooks plugin (a session start is enough) now appears on **Agents**, on **AI usage > People**, and in the "Claude Code users" count in the page header. Sessions that telemetry also reports are counted once.
+- A session with no end record and nothing for 2 hours reads **Ended (no end event)**, with its last-seen time, instead of "still open". Set `agents.session_idle_minutes` in config/app.yaml to change the 2 hours.
+- **Sessions** hides sessions with no tool calls or prompts by default; untick **Hide sessions with no tool calls or prompts** to see test and empty sessions.
+- **AI usage > People** has a **Seen through** column: Plugin (telemetry or hooks), Network (DNS, firewall, or proxy logs to Claude), or Both. People seen only on the network are listed and counted as "Seen on the network but no plugin", so a Claude Code user missing the plugin stands out from a browser-only user. The Claude row on Services shows the same three counts.
+- What changes for existing installs: nothing to do. The counts include hooks records already stored.
+
+### Install the hooks plugin on one machine in one step (2026-11-02)
+
+- Every plugin download now carries **install-local.ps1** (Windows) or **install-local.sh** (macOS and Linux). Run it from the unzipped folder: it builds a local marketplace, installs the plugin for your user with the Claude Code CLI, and lists your plugins. Use it to test on one machine; the desktop app's Code tab cannot run `/plugin`.
+- The hooks guide's **Publish** section now has three paths: one machine, fleet (managed bundle plus the plugin), and organization library upload, with what we saw on the Windows desktop app.
+- What changes for existing installs: nothing to do. Download the plugin again to get the installer.
+
+### Claude plugin downloads in one place (2026-11-02)
+
+- **Settings > Claude plugins** is the only place to download the hooks plugin and mint its tokens. The OTLP source row now links there instead of downloading (each row download issued a new token and quietly broke earlier copies).
+- Revoking the token picked in "Deployment token" switches the picker back to **New token**, so the next download no longer fails with "No such token, or it was revoked".
+- **Include this server's self-signed certificate** is now unticked by default when people reach the server through a reverse proxy, or when the address you give is not a name on the server's certificate; a line under the checkbox says why.
+- An empty **Pilot users** list now warns: "Everyone who installs this plugin will send records."
+- What changes for existing installs: nothing to do. Plugins already downloaded keep sending until their token is revoked.
+
 ### Sign-ins by outcome on person, address, and host pages (2026-11-02)
 
 - Person, address, and host pages show the entity's sign-ins by outcome (Real failures, Interrupted, Expired, Other, All) with counts; each opens those sign-ins in Search in one click.
@@ -187,6 +241,7 @@
 - **Health > Page rollups**: for Attacks and access, Microsoft 365, and AI usage, the days built, closed days still to build, when the last day was built, and when today so far was last built (every 5 minutes). A failed build shows unhealthy; today so far older than 15 minutes needs attention.
 - **Server-Timing**: page and query responses say whether they came from the 60-second cache, and how long they waited for a query slot, spent in DuckDB, and spent in the server otherwise. Your browser's network panel shows it under Timing.
 - What changes for existing installs: nothing to do. Until the first rollup run after a restart, days still to build reads "not checked yet".
+
 ### Operations (2026-11-01)
 
 - **AIDE rules**: with AIDE installed, every update writes `/etc/aide/aide.conf.d/90_aide_remnant`, skipping the data folder's `lake/`, `rollup/`, `tmp/`, `enrichment/`, and `meta.sqlite`, and `frontend/node_modules`. `tls/`, the Python environment, the code, the built UI, and `.git` stay watched. It prints a line when it writes or replaces the file. Re-baselining no longer hashes the lake and 16,000 package files.

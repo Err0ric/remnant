@@ -18,7 +18,10 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
+import structlog
+
 from app.alerts.dispatch import AlertDispatcher
+from app.alerts.items import AlertItems
 from app.alerts.render import Alert
 from app.core.branding import PRODUCT_NAME
 from app.core.errors import NotFoundError, ParamInvalidError
@@ -36,9 +39,16 @@ NAME_MAX = 80
 HOURS = 24
 LOW_RATIO = 0.25  # last two hours under a quarter of the usual hourly volume
 LOW_MIN_USUAL = 10.0  # ...only when the device usually logs at least this much an hour
+log = structlog.get_logger(__name__)
+
 AGENT_ATTENTION = timedelta(hours=24)
 INVENTORY_ATTENTION = timedelta(hours=48)  # the inventory script runs daily
 AGENT_UNHEALTHY = timedelta(days=7)
+# The hooks plugin sends only while someone uses Claude Code, so a quiet machine is normal
+# (owner 2026-11-02). What needs attention is a queue that keeps records and delivers
+# none: records waiting at the last check-in and nothing since, for this many days.
+QUEUE_STUCK_DAYS = 3
+STUCK_CHECK_EVERY = timedelta(minutes=15)
 TIMEOUT_S = 20
 
 State = Literal["healthy", "attention", "unhealthy", "unknown"]
@@ -236,7 +246,13 @@ class HealthService:
         audit: AuditLog,
         link: str | None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        items: AlertItems | None = None,
+        queue_stuck_days: int = QUEUE_STUCK_DAYS,
     ) -> None:
+        self._items = items
+        self._stuck_days = queue_stuck_days
+        self._stuck_checked: datetime | None = None
+        self._stuck_raised: set[str] = set()
         self._meta = meta
         self._engine = engine
         self._otlp_sources = otlp_sources
@@ -355,7 +371,9 @@ class HealthService:
             limit = INVENTORY_ATTENTION if inventory else AGENT_ATTENTION
             state: State = "healthy"
             reason = None
-            if t is not None:
+            # A hooks plugin machine is quiet whenever nobody uses Claude Code: no silence
+            # state for it; a stuck queue is checked in _hook_detail.
+            if t is not None and not (hooks and not inventory):
                 gap = now - t
                 if gap > AGENT_UNHEALTHY:
                     state, reason = "unhealthy", f"Last reported {human(gap.total_seconds())} ago"
@@ -416,6 +434,16 @@ class HealthService:
             if len(a.gaps) < 5:
                 a.gaps.append(f"{int(missing)} missing between {_utc(before)} and {_utc(after)}")
         for a in rows:
+            seen = _parse(a.last_seen)
+            idle = (now - seen) if seen else None
+            if a.queued and idle is not None and idle >= timedelta(days=self._stuck_days):
+                noun = "record" if a.queued == 1 else "records"
+                a.state = "unhealthy"
+                a.reason = (
+                    f"{a.queued} {noun} waiting on the machine and nothing delivered for "
+                    f"{human(idle.total_seconds())}: the plugin cannot reach this server"
+                )
+                continue
             if a.missing and a.state == "healthy":
                 noun = "event" if a.missing == 1 else "events"
                 a.state = "attention"
@@ -432,8 +460,46 @@ class HealthService:
 
     # --- background check -------------------------------------------------------------------
 
+    def stuck_queues(self) -> int:
+        """Raise one alert item per machine and episode whose hooks plugin queue holds
+        records and delivered none for the stuck days (owner 2026-11-02). At most every
+        STUCK_CHECK_EVERY; returns how many items it raised."""
+        if self._items is None:
+            return 0
+        now = self._clock().astimezone(UTC)
+        if self._stuck_checked and now - self._stuck_checked < STUCK_CHECK_EVERY:
+            return 0
+        self._stuck_checked = now
+        raised = 0
+        for a in self.agents(None):
+            if a.kind != "Claude hooks plugin" or a.state != "unhealthy" or not a.queued:
+                continue
+            if not (a.reason or "").startswith(f"{a.queued} record"):
+                continue
+            # One per episode: the last delivery names it; raise_item keeps one per ref.
+            ref = f"queue:{a.source_id}:{a.machine}:{a.last_seen}"
+            if ref in self._stuck_raised:
+                continue
+            self._stuck_raised.add(ref)
+            item = self._items.raise_item(
+                "gap",
+                f"{a.source_id}/{a.machine}",
+                f"{a.machine}: Claude hooks records not delivered",
+                ref_id=ref,
+                detail=a.reason or "",
+                sources=[a.source_id],
+                range_start=a.last_seen,
+                devices=[a.machine],
+            )
+            raised += int(item.state == "open")
+        return raised
+
     def tick(self) -> int:
         """Alert on devices that went silent or came back; returns how many changed."""
+        try:
+            self.stuck_queues()
+        except Exception as exc:  # never stops the device check
+            log.warning("health.stuck_queues_failed", error=type(exc).__name__)
         devices = self.devices()
         if not devices:
             return 0

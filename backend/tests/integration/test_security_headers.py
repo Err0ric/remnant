@@ -74,6 +74,17 @@ def test_hashed_assets_are_cached_for_a_year_and_the_page_is_not(tmp_path: Path)
     assert "immutable" not in c.get("/assets/plain.js").headers.get("cache-control", "")
     assert "immutable" not in c.get("/favicon.svg").headers.get("cache-control", "")
     assert c.get("/").headers["cache-control"] == "no-cache"  # a new build shows at once
+    assert c.get("/dashboard").headers["cache-control"] == "no-cache"  # every app route too
+
+
+def test_a_chunk_gone_after_an_update_is_a_404_not_the_page(tmp_path: Path) -> None:
+    """Owner 2026-11-02: an old tab asking for a chunk the new build no longer has gets a
+    404 (the app reloads once), never index.html parsed as a script."""
+    c = client(tmp_path)
+    (tmp_path / "web" / "assets").mkdir()
+    res = c.get("/assets/DashboardPage-Old12345.js")
+    assert res.status_code == 404 and "<html" not in res.text
+    assert c.get("/some/app/route").status_code == 200  # app routes still get the page
 
 
 def test_hsts_only_when_serving_https(tmp_path: Path) -> None:

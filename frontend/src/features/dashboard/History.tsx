@@ -1,25 +1,20 @@
 const day = (iso: string) =>
   new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
-/** Shown on a card instead of the change pill while the period before is only partly
- * covered by the sources behind it (owner 2026-10-30), like the Events tile (F60). */
-export function NoHistory({ since, before }: { since: string | null; before: string }) {
-  return (
-    <span
-      className="text-sm text-text-muted"
-      title={
-        since
-          ? `Data starts ${day(since)}, so ${before} are only partly covered.`
-          : `${before.replace(/^t/, "T")} are only partly covered.`
-      }
-    >
-      Not enough history for comparison
-    </span>
-  );
+/** The window length a "the previous 7 days" or "the previous 24 hours" phrase names. */
+function daysIn(before: string): number {
+  const m = /(\d+)\s+(day|hour)/.exec(before);
+  if (!m) return 7;
+  return m[2] === "hour" ? Number(m[1]) / 24 : Number(m[1]);
 }
 
-/** The section header's comparison line. */
+/** The section header's comparison line: the one place a section says whether its numbers
+ * are compared, so cards no longer repeat "Not enough history" under every number (owner,
+ * 2026-11-02). Comparisons start once the window before is covered: two windows after the
+ * data starts. */
 export function compareLine(compared: boolean, since: string | null, before: string): string {
   if (compared) return `Changes against ${before}`;
-  return since ? `No comparison yet: data starts ${day(since)}` : "No comparison yet";
+  if (!since) return "No comparison yet";
+  const start = new Date(new Date(since).getTime() + 2 * daysIn(before) * 86_400_000);
+  return `Comparisons start ${day(start.toISOString())}`;
 }

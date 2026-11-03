@@ -113,6 +113,10 @@ class PersonUse:
     errors: int
     sensitive: int
     models: list[str]
+    # How this person was seen using Claude (owner, 2026-11-02): "plugin" (telemetry or the
+    # hooks plugin), "network" (DNS, firewall, or proxy to a Claude service), or "both".
+    seen_through: str = "plugin"
+    via: list[str] = field(default_factory=list)  # telemetry, hooks
 
 
 def _values(pairs: list[tuple[str, str]]) -> str:
@@ -409,6 +413,11 @@ FROM t WHERE lower(name) NOT IN {NO_MCP_NAMES}
 GROUP BY 1
 LIMIT 500"""  # noqa: S608  # fixed SQL text
 
+# Claude Code per person from telemetry and the hooks plugin (owner, 2026-11-02: a person
+# seen only through hooks is a Claude Code user too). Sessions, tool calls, and errors come
+# from one source per session: telemetry when it saw the session, else the hook records
+# (as D151 counts MCP calls), so a session both report is counted once. Cost, tokens, and
+# models come from telemetry only. `via` says which sent anything.
 PEOPLE_SQL = """
 WITH c AS (
   SELECT nullif(actor_user_name, '') AS person, message,
@@ -418,19 +427,46 @@ WITH c AS (
          TRY_CAST(json_extract_string(unmapped, '$.attr.sensitive_total') AS BIGINT) AS sens,
          status_id
   FROM events WHERE template_id = 'claude_code_otel'
+),
+seen AS (SELECT DISTINCT session FROM c WHERE session IS NOT NULL),
+h AS (
+  SELECT nullif(actor_user_name, '') AS person, message,
+         json_extract_string(unmapped, '$.attr.session_id') AS session
+  FROM events WHERE template_id = 'claude_hooks'
+),
+hk AS (
+  SELECT person,
+         count(DISTINCT session)
+           FILTER (WHERE session NOT IN (SELECT session FROM seen)) AS sessions,
+         count(*) FILTER (WHERE message = 'claude_hooks.pre_tool_use'
+           AND coalesce(session NOT IN (SELECT session FROM seen), true)) AS tools,
+         count(*) FILTER (WHERE message = 'claude_hooks.post_tool_use_failure'
+           AND coalesce(session NOT IN (SELECT session FROM seen), true)) AS errors
+  FROM h WHERE person IS NOT NULL GROUP BY 1
+),
+tel AS (
+  SELECT person,
+         round(coalesce(sum(value) FILTER (WHERE message = 'claude_code.cost.usage'
+           AND isfinite(value) AND value >= 0 AND value <= 1000000), 0), 4) AS usd,
+         CAST(coalesce(sum(value) FILTER (WHERE message = 'claude_code.token.usage'
+           AND isfinite(value) AND value >= 0 AND value < 1e15), 0) AS BIGINT) AS tokens,
+         count(DISTINCT session) AS sessions,
+         count(*) FILTER (WHERE message = 'claude_code.tool_result') AS tools,
+         count(*) FILTER (WHERE message = 'claude_code.api_error') AS errors,
+         coalesce(sum(sens), 0) AS sensitive,
+         list(DISTINCT model) FILTER (WHERE model IS NOT NULL) AS models
+  FROM c WHERE person IS NOT NULL GROUP BY 1
 )
-SELECT person,
-       round(coalesce(sum(value) FILTER (WHERE message = 'claude_code.cost.usage'
-         AND isfinite(value) AND value >= 0 AND value <= 1000000), 0), 4) AS usd,
-       CAST(coalesce(sum(value) FILTER (WHERE message = 'claude_code.token.usage'
-         AND isfinite(value) AND value >= 0 AND value < 1e15), 0) AS BIGINT),
-       count(DISTINCT session) AS sessions,
-       count(*) FILTER (WHERE message = 'claude_code.tool_result') AS tools,
-       count(*) FILTER (WHERE message = 'claude_code.api_error') AS errors,
-       coalesce(sum(sens), 0) AS sensitive,
-       list(DISTINCT model) FILTER (WHERE model IS NOT NULL) AS models
-FROM c WHERE person IS NOT NULL
-GROUP BY 1 ORDER BY 2 DESC, 3 DESC
+SELECT coalesce(tel.person, hk.person) AS person,
+       coalesce(tel.usd, 0), coalesce(tel.tokens, 0),
+       coalesce(tel.sessions, 0) + coalesce(hk.sessions, 0),
+       coalesce(tel.tools, 0) + coalesce(hk.tools, 0),
+       coalesce(tel.errors, 0) + coalesce(hk.errors, 0),
+       coalesce(tel.sensitive, 0), coalesce(tel.models, []),
+       list_filter(['telemetry', 'hooks'], x -> (x = 'telemetry' AND tel.person IS NOT NULL)
+                                               OR (x = 'hooks' AND hk.person IS NOT NULL)) AS via
+FROM tel FULL OUTER JOIN hk ON tel.person = hk.person
+ORDER BY 2 DESC, 3 DESC, 4 DESC
 LIMIT 1000"""
 
 
@@ -616,6 +652,24 @@ class Usage:
             sources,
         )
 
+    def claude_network_people(self, scope: QueryScope) -> list[str]:
+        """People seen reaching a Claude service (vendor Anthropic in the catalog) on the
+        network: DNS, firewall, or proxy records (owner, 2026-11-02)."""
+        ids = sorted(s.id for s in self._catalog.services() if s.vendor == "Anthropic")
+        if not ids:
+            return []
+        wanted = "[" + ", ".join("'" + i.replace("'", "''") + "'" for i in ids) + "]"
+
+        def build(pairs: list[tuple[str, str]], rollup: bool = False) -> str:
+            return (
+                f"WITH {_use_ctes(pairs, rollup)}\n"
+                f"SELECT DISTINCT who FROM r WHERE who IS NOT NULL"
+                f" AND list_contains({wanted}, service_id) LIMIT 100000"
+            )
+
+        result = self._run_use(build, scope, "ai_use.claude_people")
+        return [str(r[0]) for r in result.rows]
+
     def mcp(self, scope: QueryScope, ident: IdentityMap | None = None) -> list[McpUse]:
         """MCP servers in use. People are counted once across names (`alice` from the
         inventory and `alice@example.com` from telemetry are one person, QA F4)."""
@@ -695,8 +749,10 @@ class Usage:
             cur = merged.get(key)
             if cur is None:
                 merged[key] = PersonUse(key, r.cost_usd, r.tokens, r.sessions, r.tool_calls,
-                                        r.errors, r.sensitive, list(r.models))  # fmt: skip
+                                        r.errors, r.sensitive, list(r.models),
+                                        via=list(r.via))  # fmt: skip
                 continue
+            cur.via = sorted(set(cur.via) | set(r.via))
             cur.cost_usd = round(cur.cost_usd + r.cost_usd, 4)
             cur.tokens += r.tokens
             cur.sessions += r.sessions
@@ -719,8 +775,40 @@ class Usage:
                 errors=int(errors),
                 sensitive=int(sens or 0),
                 models=sorted(str(m) for m in (models or [])),
+                via=[str(v) for v in (via or [])],
             )
-            for p, usd, tokens, sessions, tools, errors, sens, models in self._rows(
+            for p, usd, tokens, sessions, tools, errors, sens, models, via in self._rows(
                 PEOPLE_SQL, scope
             )
         ]
+
+
+def seen_through(
+    people: list[PersonUse], network: list[str], ident: IdentityMap | None = None
+) -> tuple[list[PersonUse], dict[str, int]]:
+    """Each Claude user with how they were seen (owner, 2026-11-02): "plugin" (telemetry
+    or the hooks plugin), "network" (DNS, firewall, or proxy to a Claude service), or
+    "both". People seen only on the network are added with no plugin numbers, so a Claude
+    Code user missing the plugin (or a browser-only user) shows up. Returns the people and
+    the count of each."""
+
+    def key(name: str) -> str:
+        return ident.key(name) if ident else name.lower()
+
+    net: dict[str, str] = {}
+    for n in network:
+        net.setdefault(key(n), n)
+    out: list[PersonUse] = []
+    seen: set[str] = set()
+    for p in people:
+        k = key(p.person)
+        seen.add(k)
+        p.seen_through = "both" if k in net else "plugin"
+        out.append(p)
+    for k, name in sorted(net.items()):
+        if k in seen:
+            continue
+        shown = ident.display(k, ident.org_email(name)) if ident else name
+        out.append(PersonUse(shown, 0.0, 0, 0, 0, 0, 0, [], seen_through="network"))
+    counts = {c: sum(1 for p in out if p.seen_through == c) for c in ("both", "plugin", "network")}
+    return out, counts

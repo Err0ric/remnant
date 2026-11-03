@@ -34,3 +34,11 @@ schedules:
 #   signin_classes:
 #     "50074": failed   # count MFA prompts as failures, for MFA-fatigue hunting
 #     "500121": failed
+
+# A Claude Code session with no end record and nothing for this many minutes reads
+# "Ended (no end event)" on Agents > Sessions (D161).
+# Health flags a machine whose hooks plugin has records waiting and delivered none for
+# this many days, and raises one alert for it (D166).
+# agents:
+#   session_idle_minutes: 120
+#   queue_stuck_days: 3
