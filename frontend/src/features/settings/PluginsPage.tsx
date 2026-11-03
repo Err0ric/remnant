@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useState, type FormEvent } from "react";
-import { ApiError, api, type OtlpToken, type PluginPlatform } from "@/lib/api";
+import { ApiError, api, type OtlpToken, type PluginPlatform, type UnknownToken } from "@/lib/api";
 import { PRODUCT_NAME } from "@/lib/branding";
 import { cn } from "@/lib/cn";
 import { navigate } from "@/lib/route";
@@ -269,6 +269,7 @@ export function PluginsPage() {
               ))}
             </div>
             <Tokens tokens={d.tokens} />
+            <UnknownTokens unknown={d.unknown_tokens ?? []} />
             <section
               aria-label="Check a deployment"
               className="rounded-card border border-border bg-surface p-4 text-sm"
@@ -433,6 +434,31 @@ function Tokens({ tokens }: { tokens: OtlpToken[] }) {
                       )}
                     </td>
                   </tr>
+                  {(t.machines?.length ?? 0) > 0 || t.last_error ? (
+                    <tr className="border-b border-border last:border-0">
+                      <td colSpan={7} className="space-y-1 px-3 pb-2 text-sm">
+                        {t.machines && t.machines.length > 0 ? (
+                          <p className="text-text-secondary">
+                            Machines:{" "}
+                            {t.machines.map((m, i) => (
+                              <span key={m.host}>
+                                {i > 0 ? ", " : ""}
+                                <span className="font-mono text-text-primary">{m.host}</span> last
+                                seen {since(m.last_seen, now)}
+                              </span>
+                            ))}
+                          </p>
+                        ) : null}
+                        {t.last_error ? (
+                          <p className="text-danger">
+                            Last error
+                            {t.last_error_at ? ` ${since(t.last_error_at, now)}` : ""}:{" "}
+                            {t.last_error}
+                          </p>
+                        ) : null}
+                      </td>
+                    </tr>
+                  ) : null}
                   {tested[`${t.source_id}:${t.token_id}`] ? (
                     <tr className="border-b border-border last:border-0">
                       <td colSpan={7} className="px-3 pb-2">
@@ -456,6 +482,49 @@ function Tokens({ tokens }: { tokens: OtlpToken[] }) {
           </table>
         </div>
       )}
+    </section>
+  );
+}
+
+/** Refused tokens that match none of this server's (D170), so an old download or a
+ * mistyped token shows up here instead of failing silently on a client. */
+function UnknownTokens({ unknown }: { unknown: UnknownToken[] }) {
+  const now = new Date().toISOString();
+  if (unknown.length === 0) return null;
+  return (
+    <section
+      aria-label="Unknown tokens"
+      className="overflow-hidden rounded-card border border-border bg-surface"
+    >
+      <h2 className="border-b border-border bg-surface-head px-3 py-2 text-base font-semibold">
+        Unknown tokens
+      </h2>
+      <p className="px-3 pt-2 text-sm text-text-secondary">
+        Tokens this server refused because they match none of its own, usually an old download or a
+        token from another server. Only the first 8 characters are kept.
+      </p>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border text-left text-text-secondary">
+              <th className="px-3 py-2 font-semibold">Token</th>
+              <th className="px-3 py-2 font-semibold">From</th>
+              <th className="px-3 py-2 font-semibold">Last tried</th>
+              <th className="px-3 py-2 text-right font-semibold">Tries</th>
+            </tr>
+          </thead>
+          <tbody>
+            {unknown.map((u) => (
+              <tr key={`${u.prefix}:${u.client}`} className="border-b border-border last:border-0">
+                <td className="px-3 py-2 font-mono">{u.prefix}…</td>
+                <td className="px-3 py-2 font-mono">{u.client || "Unknown"}</td>
+                <td className="px-3 py-2">{since(u.last_at, now)}</td>
+                <td className="px-3 py-2 text-right tabular-nums">{u.count}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }

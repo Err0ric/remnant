@@ -38,6 +38,10 @@ queries:
     ORDER BY failures DESC
   expect:
     rows_at_least: 1
+  ask:
+  - 'Which users had the most failed Microsoft 365 sign-ins?'
+  - 'Failed Entra logins by user'
+  - 'Who failed to sign in to Office 365?'
 - id: m365_password_spray
   name: 'Password spray: one address, many users'
   group: Microsoft 365 / Identity
@@ -71,6 +75,10 @@ queries:
     GROUP BY src_endpoint_ip
     HAVING count(DISTINCT lower(actor_user_name)) >= 5
     ORDER BY users DESC
+  ask:
+  - 'Is there a password spray?'
+  - 'One address failing against many accounts'
+  - 'Password spraying against Microsoft 365'
 - id: m365_failures_then_success
   name: Failures, then a success from the same address
   group: Microsoft 365 / Identity
@@ -113,6 +121,10 @@ queries:
     SELECT * FROM s
     WHERE failures >= 3 AND last_success > first_failure
     ORDER BY failures DESC
+  ask:
+  - 'Failed sign-ins followed by a success'
+  - 'Did anyone get in after failing?'
+  - 'Successful login after many failures'
 - id: m365_signins_by_app
   name: Sign-ins by app
   group: Microsoft 365 / Identity
@@ -139,6 +151,10 @@ queries:
     ORDER BY succeeded + failed DESC
   expect:
     rows: 4
+  ask:
+  - 'Sign-ins by application'
+  - 'Which apps do people sign in to?'
+  - 'Microsoft 365 sign-ins per app'
 - id: m365_inbox_rules
   name: Inbox rules and forwarding
   group: Microsoft 365 / Mail
@@ -165,6 +181,10 @@ queries:
     ORDER BY time DESC
   expect:
     rows_at_least: 1
+  ask:
+  - 'Any new inbox rules or forwarding?'
+  - 'Mail forwarding rules created'
+  - 'Suspicious mailbox rules'
 - id: m365_app_consent
   name: App consents by app
   group: Microsoft 365 / Apps and consent
@@ -200,6 +220,10 @@ queries:
     ORDER BY consents DESC
   expect:
     rows_at_least: 1
+  ask:
+  - 'Which apps were granted consent?'
+  - 'App consents in Microsoft 365'
+  - 'OAuth app consent grants'
 - id: m365_user_consent
   name: Users consenting to applications
   description: '"Consent to application" events: a person granted an app access to their data (or, as
@@ -237,6 +261,10 @@ queries:
   normal: Blocked attempts (status 2) are shown apart; they mean a policy stopped the consent.
   suggested_schedule: daily
   flag: null
+  ask:
+  - 'Which users consented to applications?'
+  - 'Users granting app permissions'
+  - 'User consent to OAuth apps'
 - id: m365_new_service_principals
   name: New service principals not owned by Microsoft
   description: 'Enterprise apps added to the tenant, leaving out the ones Microsoft provisions itself:
@@ -267,6 +295,10 @@ queries:
   normal: Rare. Most rows are someone setting up an in-house or vendor integration on purpose.
   suggested_schedule: daily
   flag: above 0
+  ask:
+  - 'New service principals'
+  - 'New enterprise apps added'
+  - 'Which third-party apps were added to the tenant?'
 - id: m365_admin_changes
   name: Admin role and policy changes
   group: Microsoft 365 / Admin
@@ -304,6 +336,10 @@ queries:
     ORDER BY time DESC
   expect:
     rows_at_least: 1
+  ask:
+  - 'Admin role changes'
+  - 'Who was made an admin?'
+  - 'Conditional Access policy changes'
 - id: m365_copilot_activity
   name: Copilot use by person
   group: Microsoft 365 / Copilot
@@ -330,6 +366,10 @@ queries:
     ORDER BY interactions DESC
   expect:
     rows_at_least: 1
+  ask:
+  - 'Who is using Copilot?'
+  - 'Copilot activity by person'
+  - 'Microsoft Copilot usage'
 - id: m365_external_sharing
   name: Sharing links and external invitations
   group: Microsoft 365 / Data
@@ -355,6 +395,10 @@ queries:
       AND time BETWEEN {{start}} AND {{end}}
     GROUP BY 1, 2
     ORDER BY events DESC
+  ask:
+  - 'Files shared outside the company'
+  - 'External sharing links created'
+  - 'Sharing invitations to outsiders'
 - id: m365_dlp_matches
   name: DLP rule matches by person
   group: Microsoft 365 / Data
@@ -379,3 +423,7 @@ queries:
     ORDER BY matches DESC
   expect:
     rows_at_least: 1
+  ask:
+  - 'DLP rule matches by person'
+  - 'Who triggered DLP?'
+  - 'Data loss prevention alerts'

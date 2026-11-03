@@ -3,7 +3,7 @@ import { isAborted, isModelBusy } from "@/components/ai/ModelWait";
 import { cn } from "@/lib/cn";
 import { AskResults } from "./AskResults";
 
-export type Phase = "finding" | "running" | "ready" | "done" | "failed" | "cancelled";
+export type Phase = "finding" | "running" | "ready" | "done" | "failed" | "cancelled" | "guidance";
 
 export interface Turn {
   id: number;
@@ -20,6 +20,8 @@ const CHECK: Record<AskResponse["check"], string> = {
   ok: "The query runs and returns rows",
   empty: "The query runs but matched no rows",
   failed: "The query did not pass the check",
+  library: "A shipped library query, tested on sample logs",
+  none: "Nothing to run",
 };
 
 function errorText(err: unknown): string {
@@ -34,12 +36,15 @@ function seconds(ms: number | undefined): string {
   return ms === undefined ? "" : `${(ms / 1000).toFixed(1)} s`;
 }
 
-/** The steps this slice performs, in order (ADR-0042 row 16): finding the query (today's
- * agent) and running it. Understanding (slice 1b) and Writing the answer (slice 1c) join
- * when they exist; a step is never shown that does not happen. */
+/** The steps Ask performs, in order (ADR-0042 row 16): understanding the question and
+ * finding the query are one server call, then the query runs. Writing the answer joins in
+ * slice 1c; a step is never shown that does not happen. */
 function Progress({ phase }: { phase: Phase }) {
   const steps: { label: string; state: "done" | "now" | "todo" }[] = [
-    { label: "Finding the right query", state: phase === "finding" ? "now" : "done" },
+    {
+      label: "Understanding and finding the right query",
+      state: phase === "finding" ? "now" : "done",
+    },
     {
       label: "Running",
       state: phase === "running" ? "now" : phase === "finding" ? "todo" : "done",
@@ -69,6 +74,8 @@ interface AskTurnBlockProps {
   turn: Turn;
   onRun: (turn: Turn) => void;
   onRetry: (turn: Turn) => void;
+  /** "Check your data instead": the same question as a data question (condition 3). */
+  onCheckData: (turn: Turn) => void;
   /** Opens this turn's SQL in the SQL editor. */
   onEdit?: (sql: string) => void;
 }
@@ -76,8 +83,9 @@ interface AskTurnBlockProps {
 /** One question and what came of it, as a block, never a chat bubble (DESIGN.md 6.1): the
  * question as a heading, what the model said about its query, the rows, and a collapsed
  * "How I got this" with the SQL, where it came from, the sources read, and the time. */
-export function AskTurnBlock({ turn, onRun, onRetry, onEdit }: AskTurnBlockProps) {
+export function AskTurnBlock({ turn, onRun, onRetry, onCheckData, onEdit }: AskTurnBlockProps) {
   const a = turn.answer;
+  const route = a?.route ?? null;
   const working = turn.phase === "finding" || turn.phase === "running";
   return (
     <section
@@ -86,6 +94,38 @@ export function AskTurnBlock({ turn, onRun, onRetry, onEdit }: AskTurnBlockProps
     >
       <h3 className="text-base font-semibold [overflow-wrap:anywhere]">{turn.question}</h3>
       {working ? <Progress phase={turn.phase} /> : null}
+      {turn.phase === "guidance" ? (
+        <div role="status" className="flex flex-col gap-1 text-sm">
+          <p>
+            Treated as general guidance.{" "}
+            <button
+              type="button"
+              onClick={() => onCheckData(turn)}
+              className="font-semibold text-accent-text hover:underline"
+            >
+              Check your data instead?
+            </button>
+          </p>
+          <p className="text-text-muted">
+            General guidance answers are not available yet; Ask can look in your logs.
+          </p>
+        </div>
+      ) : route && route.kind === "data" && turn.phase !== "finding" ? (
+        <p className="text-sm text-text-secondary">
+          {route.library ? (
+            <>
+              From the query library: <span className="text-text">{route.library.name}</span>
+            </>
+          ) : (
+            "Treated as a question about your data"
+          )}
+          {route.time ? `, ${route.time}` : ""}
+          {route.filters.length
+            ? `, ${route.filters.length === 1 ? "1 filter" : `${route.filters.length} filters`}`
+            : ""}
+          .
+        </p>
+      ) : null}
       {turn.phase === "failed" || turn.phase === "cancelled" ? (
         <div
           role="alert"
@@ -138,14 +178,52 @@ export function AskTurnBlock({ turn, onRun, onRetry, onEdit }: AskTurnBlockProps
         </div>
       ) : null}
       {turn.result ? <AskResults result={turn.result} /> : null}
-      {a ? (
+      {a && turn.phase !== "guidance" ? (
         <details className="rounded border border-border bg-surface text-sm">
           <summary className="cursor-pointer px-3 py-1.5 text-text-secondary">
             How I got this
           </summary>
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 px-3 pb-3 pt-1">
             <dt className="text-text-secondary">Query</dt>
-            <dd>Generated query (not from the library)</dd>
+            <dd>
+              {route?.library ? (
+                <>
+                  Library: {route.library.name}{" "}
+                  <span className="font-mono text-text-muted">
+                    {route.library.ref}@{route.library.version}
+                  </span>
+                </>
+              ) : (
+                "Generated query (not from the library)"
+              )}
+              {route?.reason ? <span className="block text-text-muted">{route.reason}</span> : null}
+            </dd>
+            {route?.filters.length ? (
+              <>
+                <dt className="text-text-secondary">Filters</dt>
+                <dd className="font-mono">
+                  {route.filters.map((f) => (
+                    <span key={f} className="block">
+                      {f}
+                    </span>
+                  ))}
+                </dd>
+              </>
+            ) : null}
+            {route?.time ? (
+              <>
+                <dt className="text-text-secondary">Time</dt>
+                <dd>{route.time}</dd>
+              </>
+            ) : null}
+            <dt className="text-text-secondary">Route</dt>
+            <dd>
+              {route?.by === "follow_up"
+                ? "Follow-up: refined from the last query"
+                : route?.by === "forced"
+                  ? "A data question (you chose Check your data)"
+                  : "A data question"}
+            </dd>
             <dt className="text-text-secondary">SQL</dt>
             <dd>
               <pre
@@ -176,7 +254,7 @@ export function AskTurnBlock({ turn, onRun, onRetry, onEdit }: AskTurnBlockProps
             <dd className="font-mono">
               {turn.result ? turn.result.sources.join(", ") || "None" : "Not run yet"}
             </dd>
-            <dt className="text-text-secondary">Time</dt>
+            <dt className="text-text-secondary">Took</dt>
             <dd className="tabular-nums">
               Finding the query {seconds(turn.askMs)}
               {turn.runMs !== undefined ? `, running ${seconds(turn.runMs)}` : ""}

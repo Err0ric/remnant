@@ -233,3 +233,32 @@ def test_claude_code_sources_start_with_no_quiet_alert(lab: dict[str, Any]) -> N
     watched = {w.source_id for w in lab["app"].state.quiet.all()}
     assert "hooks" not in watched and "cc_tel" not in watched
     assert "collector" in watched
+
+
+def test_existing_push_sources_lose_the_default_quiet_alert_once(lab: dict[str, Any]) -> None:
+    """D168 (owner 2026-11-02): #359 changed the default for new Claude Code sources only.
+    A one-time fix turns off the untouched default on existing push (OTLP) sources, leaves
+    any watch someone changed, never touches file sources, audits each change, and runs
+    once per install."""
+    a, h = lab["admin"], lab["h"]
+    for sid in ("hooks_old", "otel_old", "tuned"):
+        body = {"source_id": sid, "kind": "otlp", "format": "json", "template_id": "auto"}
+        assert a.post("/api/sources", json=body, headers=h).status_code == 201
+    # Someone chose 3 hours for "tuned": theirs to keep. lin_auth is a file source.
+    assert watch(lab, "tuned", quiet_after_s=3 * 3600, target_ids=[]).status_code == 200
+    assert watch(lab, "lin_auth", quiet_after_s=3600, target_ids=[]).status_code == 200
+    quiet = lab["app"].state.quiet
+    with lab["app"].state.meta.connect() as con:  # the install started before this fix
+        con.execute("DELETE FROM one_time_fixes")
+    assert sorted(quiet.retire_push_defaults()) == ["hooks_old", "otel_old"]
+    left = {w.source_id: w.quiet_after_s for w in quiet.all()}
+    assert left == {"tuned": 3 * 3600, "lin_auth": 3600}
+    log = a.get("/api/audit/events", params={"action": "source.quiet_alert_change"}).json()
+    fixed = [e for e in log if (e["detail"] or {}).get("reason", "").startswith("one-time fix")]
+    assert sorted(e["detail"]["source_id"] for e in fixed) == ["hooks_old", "otel_old"]
+    assert all(e["user_id"] is None and e["detail"]["to"] is None for e in fixed)
+    # Once only: a later start changes nothing, even for a new default watch.
+    body = {"source_id": "otel_new", "kind": "otlp", "format": "json", "template_id": "auto"}
+    assert a.post("/api/sources", json=body, headers=h).status_code == 201
+    assert quiet.retire_push_defaults() == []
+    assert "otel_new" in {w.source_id for w in quiet.all()}

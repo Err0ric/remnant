@@ -7,6 +7,14 @@ import { navigate } from "@/lib/route";
 import { AskTurnBlock, type Turn } from "./AskTurnBlock";
 
 const MAX_TURNS = 3;
+/** The asker's time zone, so "today" means their day. */
+const TZ = (() => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone;
+  } catch {
+    return undefined;
+  }
+})();
 
 interface AskThreadProps {
   start: string | undefined;
@@ -64,7 +72,16 @@ export function AskThread({
   });
 
   const ask = useMutation({
-    mutationFn: ({ q, history }: { id: number; q: string; history: AskTurn[] }) => {
+    mutationFn: ({
+      q,
+      history,
+      route,
+    }: {
+      id: number;
+      q: string;
+      history: AskTurn[];
+      route?: "data";
+    }) => {
       abort.current = new AbortController();
       return api.ask(
         {
@@ -73,6 +90,8 @@ export function AskThread({
           start,
           sources: sources.length ? sources : undefined,
           history,
+          tz: TZ,
+          route,
         },
         abort.current.signal,
       );
@@ -81,23 +100,24 @@ export function AskThread({
       const first = history[0]?.question ?? q;
       onAnswer?.({ sql: answer.sql, question: first });
       const auto = Boolean(answer.auto_run && answer.ask_id);
+      const guidance = answer.route?.kind === "knowhow";
       setTurns((all) =>
         all.map((t) =>
           t.id === id
             ? {
                 ...t,
                 answer,
-                phase: auto ? "running" : "ready",
+                phase: guidance ? "guidance" : auto ? "running" : "ready",
                 askMs: Date.now() - (startedAt.current[id] ?? Date.now()),
               }
             : t,
         ),
       );
-      if (auto && answer.ask_id) run.mutate({ id, askId: answer.ask_id });
+      if (auto && !guidance && answer.ask_id) run.mutate({ id, askId: answer.ask_id });
     },
     onError: (error, { id }) => update(id, { phase: "failed", error }),
   });
-  const begin = (q: string, earlier: Turn[]) => {
+  const begin = (q: string, earlier: Turn[], route?: "data") => {
     const id = nextId.current++;
     startedAt.current[id] = Date.now();
     const history = earlier
@@ -105,13 +125,24 @@ export function AskThread({
       .slice(-MAX_TURNS)
       .map((t) => ({ question: t.question, sql: t.answer!.sql }));
     setTurns([...earlier, { id, question: q, phase: "finding" }]);
-    ask.mutate({ id, q, history });
+    ask.mutate({ id, q, history, route });
   };
   const busy = ask.isPending || run.isPending;
+  // With no AI provider, Ask still offers library queries that match the words (C4).
+  const [suggestFor, setSuggestFor] = useState<string | null>(null);
+  const suggestions = useQuery({
+    queryKey: ["ask-suggest", suggestFor],
+    queryFn: () => api.askSuggest(suggestFor ?? ""),
+    enabled: suggestFor !== null,
+  });
   const submit = (e?: FormEvent) => {
     e?.preventDefault();
     const q = question.trim();
-    if (!q || busy || noProviders) return;
+    if (!q || busy) return;
+    if (noProviders) {
+      setSuggestFor(q);
+      return;
+    }
     setQuestion("");
     begin(q, turns);
   };
@@ -127,6 +158,13 @@ export function AskThread({
     begin(
       t.question,
       turns.filter((x) => x.id !== t.id),
+    );
+  // Check your data instead (ADR-0042 condition 3): the same question as a data question.
+  const checkData = (t: Turn) =>
+    begin(
+      t.question,
+      turns.filter((x) => x.id !== t.id),
+      "data",
     );
   const runTurn = (t: Turn) => t.answer?.ask_id && run.mutate({ id: t.id, askId: t.answer.ask_id });
 
@@ -221,7 +259,7 @@ export function AskThread({
         <div className="flex flex-wrap items-center gap-3">
           <button
             type="submit"
-            disabled={!question.trim() || busy || noProviders}
+            disabled={!question.trim() || busy}
             className="h-8 rounded border border-border-strong px-3 text-sm hover:bg-surface-head disabled:opacity-40"
           >
             {turns.length ? "Refine" : "Ask"}
@@ -231,6 +269,30 @@ export function AskThread({
           </span>
         </div>
       </form>
+      {noProviders && suggestFor !== null ? (
+        <section aria-label="Library suggestions" className="flex flex-col gap-1.5 text-sm">
+          <h3 className="font-semibold">Library queries that match your words</h3>
+          {suggestions.data?.length ? (
+            <ul className="flex flex-col gap-1.5">
+              {suggestions.data.map((s) => (
+                <li key={s.ref}>
+                  <button
+                    type="button"
+                    onClick={() => onEdit?.(s.sql)}
+                    className="font-semibold text-accent-text hover:underline"
+                  >
+                    {s.name}
+                  </button>
+                  <span className="block text-text-secondary">{s.why}</span>
+                </li>
+              ))}
+            </ul>
+          ) : suggestions.isSuccess ? (
+            <p className="text-text-secondary">No library query matches those words.</p>
+          ) : null}
+          <p className="text-text-muted">Each opens in the SQL tab, where Run query runs it.</p>
+        </section>
+      ) : null}
       <ModelWait
         providerId={chosen?.provider_id ?? ""}
         label="Finding the right query"
@@ -240,7 +302,14 @@ export function AskThread({
       {turns.length ? (
         <div aria-label="Answers" className="flex flex-col gap-4">
           {turns.map((t) => (
-            <AskTurnBlock key={t.id} turn={t} onRun={runTurn} onRetry={retry} onEdit={onEdit} />
+            <AskTurnBlock
+              key={t.id}
+              turn={t}
+              onRun={runTurn}
+              onRetry={retry}
+              onCheckData={checkData}
+              onEdit={onEdit}
+            />
           ))}
         </div>
       ) : null}

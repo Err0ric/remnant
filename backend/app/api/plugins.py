@@ -35,6 +35,11 @@ FROM hooks
 GROUP BY 1"""  # noqa: S608  # fixed SQL text
 
 
+class MachineOut(BaseModel):
+    host: str
+    last_seen: str
+
+
 class TokenOut(BaseModel):
     token_id: str
     source_id: str
@@ -47,6 +52,17 @@ class TokenOut(BaseModel):
     devices: int
     hosts: list[str]
     downloadable: bool
+    machines: list[MachineOut] = []  # each machine that sent with it, newest first (D170)
+    last_error: str | None = None  # why the receiver last refused it
+    last_error_at: str | None = None
+
+
+class UnknownOut(BaseModel):
+    prefix: str  # the first 8 characters only
+    client: str
+    first_at: str
+    last_at: str
+    count: int
 
 
 class VariantOut(BaseModel):
@@ -78,6 +94,8 @@ class PluginsOut(BaseModel):
     tokens: list[TokenOut]
     public_url: str | None
     certificate: CertificateOut | None = None
+    # Refused tokens that match none of this server's, by prefix (D170): an old download.
+    unknown_tokens: list[UnknownOut] = []
 
 
 class NewToken(BaseModel):
@@ -92,7 +110,9 @@ LABELS = {"windows": "Claude Code for Windows", "posix": "Claude Code for macOS 
 
 
 def _out(t: Token) -> TokenOut:
-    return TokenOut(**{k: getattr(t, k) for k in TokenOut.model_fields})
+    out = {k: getattr(t, k) for k in TokenOut.model_fields if k != "machines"}
+    machines = [MachineOut(host=m.host, last_seen=m.last_seen) for m in t.machines]
+    return TokenOut(**out, machines=machines)
 
 
 @router.get("/plugins")
@@ -132,6 +152,16 @@ async def plugins(request: Request, _: AdminUser) -> PluginsOut:
         tokens=[_out(t) for t in await run_in_threadpool(tokens.list)],
         public_url=request.app.state.public_url,
         certificate=certificate(request),
+        unknown_tokens=[
+            UnknownOut(
+                prefix=u.prefix,
+                client=u.client,
+                first_at=u.first_at,
+                last_at=u.last_at,
+                count=u.count,
+            )
+            for u in await run_in_threadpool(tokens.unknown)
+        ],
     )
 
 

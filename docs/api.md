@@ -79,10 +79,11 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 
 | Method | Path | What it does | Query | JSON body (`?` optional) |
 |---|---|---|---|---|
-| `POST` | `/api/ask` | Ask |  | `question`: string<br>`provider_id`?: string<br>`start`?: date-time<br>`end`?: date-time<br>`sources`?: list of string<br>`history`?: list of Turn |
+| `POST` | `/api/ask` | Ask |  | `question`: string<br>`provider_id`?: string<br>`start`?: date-time<br>`end`?: date-time<br>`sources`?: list of string<br>`history`?: list of Turn<br>`tz`?: string<br>`route`?: `auto` &#124; `data` |
 | `GET` | `/api/ask/providers` | Enabled providers an analyst can choose, local first. No URLs or key state. |  |  |
 | `GET` | `/api/ask/providers/{provider_id}/queue` | Provider Queue |  |  |
-| `POST` | `/api/ask/{ask_id}/run` | Run the SQL an answer produced, as the person who asked, on their current view. Audited as query.run with purpose `ask`, the answer's id, its model call ids, and its origin (`generated`, or a library query id once slice 1b lands). |  |  |
+| `GET` | `/api/ask/suggest` | Library queries that match the question's words, best first, at most 3, with no model at all (ADR-0042 C4): what Ask offers when no AI provider is set up. Reads only which templates the caller's sources have used. | `?q`: string |  |
+| `POST` | `/api/ask/{ask_id}/run` | Run the SQL an answer produced, as the person who asked, on their current view. Audited as query.run with purpose `ask`, the answer's id, its model call ids, and its origin (`generated`, or the library query `<pack>/<id>@<version>`). |  |  |
 
 ### Audit
 

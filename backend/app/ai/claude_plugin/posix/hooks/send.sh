@@ -16,22 +16,43 @@
 # only) and goes out after the next record that reaches the server. Each record carries
 # this install's id and a sequence number, so the server sees what never arrived.
 #
+# Status: each run writes ${CLAUDE_PLUGIN_DATA}/status (key=value): when it last ran, the
+# event, whether it sent, queued, or skipped (and why), the server's HTTP status, the queue
+# depth, and where the config came from. Metadata only: never the token or any content.
+# The installer's --doctor prints it.
+#
 # Needs: sh, awk, sed, curl, and sha256sum or shasum.
 
-trap 'printf "{}\n"' EXIT
 exec 2>/dev/null  # nothing ever reaches the person's screen
 umask 077
 set -f
 
 # Sessions that belong to another plugin: Cowork has its own, Windows has its own.
-case "${CLAUDE_CODE_IS_COWORK:-}" in true | TRUE | True | 1) exit 0 ;; esac
-[ "${OS:-}" = Windows_NT ] && exit 0
-case "$(uname -s 2>/dev/null)" in MINGW* | MSYS* | CYGWIN* | Windows*) exit 0 ;; esac
+case "${CLAUDE_CODE_IS_COWORK:-}" in true | TRUE | True | 1) printf '{}\n'; exit 0 ;; esac
+[ "${OS:-}" = Windows_NT ] && { printf '{}\n'; exit 0; }
+case "$(uname -s 2>/dev/null)" in MINGW* | MSYS* | CYGWIN* | Windows*) printf '{}\n'; exit 0 ;; esac
+
+# Where this plugin keeps its cache, queue, and status.
+data=${CLAUDE_PLUGIN_DATA:-${HOME:-/tmp}/.cache/siem-claude-hooks}
+mkdir -p "$data" 2>/dev/null
+st_event="" st_result="skipped: stopped early" st_http="" st_queue="" from=""
+write_status() {
+  {
+    printf 'last_run=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf 'plugin_variant=posix\n'
+    printf 'last_event=%s\n' "$st_event"
+    printf 'result=%s\n' "$st_result"
+    printf 'http_status=%s\n' "$st_http"
+    printf 'queue=%s\n' "$st_queue"
+    printf 'config=%s\n' "${from:-none}"
+  } > "$data/status.$$" 2>/dev/null && mv "$data/status.$$" "$data/status" 2>/dev/null
+}
+trap 'write_status; printf "{}\n"' EXIT
 
 # --- Config: the machine-wide file wins; the plugin's own copy is the fallback. -------
 # Both are key=value data, read and never run. When the machine file exists, the
 # plugin's copy (in the user's own folder) is not read at all.
-url="" token="" send_content=0 pilot="" ca="" managed_email="" dev=0 from=""
+url="" token="" send_content=0 pilot="" ca="" managed_email="" dev=0
 read_conf() {
   while IFS='=' read -r key value || [ -n "$key" ]; do
     value=$(printf '%s' "$value" | tr -d '\r')
@@ -60,17 +81,16 @@ if [ -r "$machine_conf" ]; then
   fi
 else
   bundled="$(dirname "$0")/../config"
-  [ -r "$bundled" ] || exit 0
+  if ! [ -r "$bundled" ]; then st_result="skipped: no config file"; exit 0; fi
   from=plugin
   read_conf "$bundled"
   # A certificate named without a folder is the one bundled in the plugin.
   case "$ca" in "" | /*) ;; *) ca="$(dirname "$0")/../$ca" ;; esac
 fi
-[ -n "$url" ] && [ -n "$token" ] || exit 0
-
-# Where this plugin keeps its cache and the count of records it could not send.
-data=${CLAUDE_PLUGIN_DATA:-${HOME:-/tmp}/.cache/siem-claude-hooks}
-mkdir -p "$data" 2>/dev/null
+if [ -z "$url" ] || [ -z "$token" ]; then
+  st_result="skipped: the config names no server or no token"
+  exit 0
+fi
 
 # The hook input, capped at 1 MB.
 input=$(head -c 1048576)
@@ -176,7 +196,7 @@ if [ -n "$pilot" ]; then
   for p in $(printf '%s' "$pilot" | tr 'A-Z,' 'a-z '); do
     { [ -n "$me" ] && [ "$p" = "$me" ]; } || { [ -n "$me2" ] && [ "$p" = "$me2" ]; } && ok=1
   done
-  [ "$ok" = 1 ] || exit 0
+  if [ "$ok" != 1 ]; then st_result="skipped: not in PILOT_USERS"; exit 0; fi
 fi
 
 hash() {
@@ -225,6 +245,7 @@ content() { printf '%s' "$input" | awk "$lib"'
   }' k="$1" raw="${2:-0}"; }
 
 event=$(get event)
+st_event=$(printf '%s' "$event" | tr -cd 'A-Za-z' | cut -c1-40)
 case "$event" in
   SessionStart) name=session_start role=session ;;
   UserPromptSubmit) name=user_prompt_submit role=user ;;
@@ -233,7 +254,7 @@ case "$event" in
   PostToolUseFailure) name=post_tool_use_failure role=tool_result ;;
   Stop) name=stop role=turn ;;
   SessionEnd) name=session_end role=session ;;
-  *) exit 0 ;;
+  *) st_result="skipped: an event this plugin does not send"; exit 0 ;;
 esac
 
 # One OTLP attribute: a JSON string value, already escaped.
@@ -325,17 +346,23 @@ host=$(esc "$(uname -n)")
 record() { printf '{"timeUnixNano":"%s000000000","body":{"stringValue":"claude_hooks.%s"},"attributes":[%s]}' "$now" "$name" "$1"; }
 wrap() { printf '{"resourceLogs":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"claude-hooks"}},{"key":"host.name","value":{"stringValue":"%s"}}]},"scopeLogs":[{"scope":{"name":"claude-hooks","version":"2.1.0"},"logRecords":[%s]}]}]}' "$host" "$1"; }
 # One POST of a body on stdin: 2 seconds at most, only the CA named in the config when one
-# is named (never a switch to skip checking), and the answer is never read.
+# is named (never a switch to skip checking), and the answer's body is never read. The
+# HTTP status (000 when the server was not reached) is kept for the status file.
 post() {
   if [ -n "$ca" ] && [ -r "$ca" ]; then
-    curl --silent --fail --output /dev/null --max-time 2 --connect-timeout 1 --cacert "$ca" \
-      -X POST "$url/api/otlp/v1/logs" -H "Content-Type: application/json" \
-      -H "Authorization: Bearer $token" --data-binary @- >/dev/null 2>&1
+    code=$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 2 \
+      --connect-timeout 1 --cacert "$ca" -X POST "$url/api/otlp/v1/logs" \
+      -H "Content-Type: application/json" -H "Authorization: Bearer $token" \
+      --data-binary @- 2>/dev/null)
   else
-    curl --silent --fail --output /dev/null --max-time 2 --connect-timeout 1 \
-      -X POST "$url/api/otlp/v1/logs" -H "Content-Type: application/json" \
-      -H "Authorization: Bearer $token" --data-binary @- >/dev/null 2>&1
+    code=$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 2 \
+      --connect-timeout 1 -X POST "$url/api/otlp/v1/logs" \
+      -H "Content-Type: application/json" -H "Authorization: Bearer $token" \
+      --data-binary @- 2>/dev/null)
   fi
+  case "$code" in '' | *[!0-9]*) code=000 ;; esac
+  printf '%s' "$code" > "$data/http.$$" 2>/dev/null
+  [ "$code" -ge 200 ] && [ "$code" -lt 300 ]
 }
 
 # Queued records go out after the live one, oldest first, 50 to a request, for at most 15
@@ -364,9 +391,11 @@ flush() {
 }
 
 if wrap "$(record "$meta$extra")" | post; then
+  st_result=sent st_http=$(cat "$data/http.$$" 2>/dev/null); rm -f "$data/http.$$"
   [ -n "$pending" ] && rm -f "$pending"
   [ "$queued" -gt 0 ] && flush
 else
+  st_result="queued: not sent" st_http=$(cat "$data/http.$$" 2>/dev/null); rm -f "$data/http.$$"
   # Not sent: the lost count waits for the next record, and this record is queued
   # (metadata only: content is never written to disk). At most 10,000 records (about
   # 20 MB) are kept; past that the oldest are dropped and counted as lost.
@@ -378,4 +407,6 @@ else
     for f in $(ls "$spool" | head -n "$over"); do rm -f "$spool/$f"; printf x >> "$data/dropped"; done
   fi
 fi
+rm -f "$data/http.$$"
+st_queue=$(ls "$spool" 2>/dev/null | wc -l | tr -d ' ')
 exit 0

@@ -79,6 +79,10 @@ Steps 1 and 2 try deterministic code first and ask the model only for what code 
 | 3 | Multi-step (up to N library queries) | Multi-step questions in the eval |
 | 4 | Follow-ups that refine the previous turn | 10 follow-up conversations re-scored |
 
+## As built
+
+- Slice 1b (2026-11-02): routing calls are recorded in `llm_calls` under purpose `ask` with prompt `ask_route.v1`, not a new purpose: the purpose column is a closed set on an append-only table, and adding a value means rebuilding it. The prompt reference tells routing apart from SQL writing. People, addresses, and machines named in a question filter the library query's output columns (`user`, `address`, `host`, ...) as bound parameters; an email also matches its bare login and the identity map's aliases, and How I got this lists every name matched. A library query that cannot filter on a named entity is not used and the agent writes the SQL instead. Follow-ups still go to the agent (slice 4). A general-guidance route returns no query; until slice 2 the panel offers "Check your data instead".
+
 ## Consequences
 
 - Most answers come from tested library SQL, so accuracy rises with the library, not only with the model. Library packs gain `answer` and `ask` fields and need phrasings in review.

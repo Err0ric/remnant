@@ -15,11 +15,42 @@
 # Offline: a record that cannot be sent waits in ${CLAUDE_PLUGIN_DATA}\spool (metadata
 # only) and goes out after the next record that reaches the server. Each record carries
 # this install's id and a sequence number, so the server sees what never arrived.
+#
+# Status: each run writes ${CLAUDE_PLUGIN_DATA}\status (key=value): when it last ran, the
+# event, whether it sent, queued, or skipped (and why), the server's HTTP status, the queue
+# depth, and where the config came from. Metadata only: never the token or any content.
+# The installer's -Doctor prints it.
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
-function Finish {
+$script:statusDir = $env:CLAUDE_PLUGIN_DATA
+if (-not $script:statusDir -and $env:LOCALAPPDATA) {
+    $script:statusDir = Join-Path $env:LOCALAPPDATA 'siem-claude-hooks'
+}
+$script:st = [ordered]@{
+    last_event = ''; result = 'skipped: stopped early'; http_status = ''; queue = ''; config = 'none'
+}
+
+function Write-Status {
+    if (-not $script:statusDir) { return }
+    try {
+        [void](New-Item -ItemType Directory -Force -Path $script:statusDir)
+        $lines = @(
+            # Parentheses: in PowerShell the comma binds before +, which would join both lines.
+            ('last_run=' + [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')),
+            'plugin_variant=windows'
+        )
+        foreach ($k in $script:st.Keys) { $lines += "$k=$($script:st[$k])" }
+        $file = Join-Path $script:statusDir 'status'
+        [System.IO.File]::WriteAllText("$file.$PID", ($lines -join "`n") + "`n")
+        if ([System.IO.File]::Exists($file)) { [System.IO.File]::Delete($file) }
+        [System.IO.File]::Move("$file.$PID", $file)
+    } catch { }
+}
+
+function Finish([string]$why) {
+    if ($why) { $script:st['result'] = $why; Write-Status }
     [Console]::Out.Write("{}`n")
     exit 0
 }
@@ -100,9 +131,10 @@ try {
     }
     if (-not $machine) {
         $bundled = Join-Path (Split-Path -Parent $PSScriptRoot) 'config'
-        if (-not [System.IO.File]::Exists($bundled)) { Finish }
+        if (-not [System.IO.File]::Exists($bundled)) { Finish 'skipped: no config file' }
         $conf = Read-Conf $bundled
     }
+    $script:st['config'] = if ($machine) { 'machine' } else { 'plugin' }
     $url = $conf['REMNANT_URL']
     $token = $conf['REMNANT_TOKEN']
     # Only the machine file can let the environment name the server (testing a build).
@@ -110,11 +142,12 @@ try {
         if ($env:REMNANT_URL) { $url = $env:REMNANT_URL }
         if ($env:REMNANT_TOKEN) { $token = $env:REMNANT_TOKEN }
     }
-    if (-not $url -or -not $token) { Finish }
+    if (-not $url -or -not $token) { Finish 'skipped: the config names no server or no token' }
     $sendContent = ($conf['SEND_CONTENT'] -eq '1')
 
     $data = $env:CLAUDE_PLUGIN_DATA
     if (-not $data) { $data = Join-Path $env:LOCALAPPDATA 'siem-claude-hooks' }
+    $script:statusDir = $data
     [void](New-Item -ItemType Directory -Force -Path $data)
 
     # The hook input, capped at 1 MB.
@@ -162,10 +195,15 @@ try {
         $list = @($pilot.ToLowerInvariant() -split '[\s,]+' | Where-Object { $_ })
         $me = $email.ToLowerInvariant()
         $me2 = "$osUser".ToLowerInvariant()
-        if (-not (($me -and ($list -contains $me)) -or ($me2 -and ($list -contains $me2)))) { Finish }
+        if (-not (($me -and ($list -contains $me)) -or ($me2 -and ($list -contains $me2)))) {
+            Finish 'skipped: not in PILOT_USERS'
+        }
     }
 
     $event = [string](Get-Field $hook 'hook_event_name')
+    $ev = $event -replace '[^A-Za-z]', ''
+    if ($ev.Length -gt 40) { $ev = $ev.Substring(0, 40) }
+    $script:st['last_event'] = $ev
     $map = @{
         'SessionStart'       = @('session_start', 'session')
         'UserPromptSubmit'   = @('user_prompt_submit', 'user')
@@ -175,7 +213,7 @@ try {
         'Stop'               = @('stop', 'turn')
         'SessionEnd'         = @('session_end', 'session')
     }
-    if (-not $map.ContainsKey($event)) { Finish }
+    if (-not $map.ContainsKey($event)) { Finish 'skipped: an event this plugin does not send' }
     $name = $map[$event][0]
     $role = $map[$event][1]
 
@@ -392,13 +430,15 @@ try {
             $code = 0
             if ($parts.Length -ge 2 -and [int]::TryParse($parts[1], [ref]$code)) {
                 $sent = ($code -ge 200 -and $code -lt 300)
+                $script:st['http_status'] = "$code"
             }
-        } catch { $sent = $false }
+        } catch { $sent = $false; if (-not $script:st['http_status']) { $script:st['http_status'] = '000' } }
         if ($client) { $client.Close() }
         return $sent
     }
 
     if (Send-Body (Wrap (Record-Json $attrs.ToArray()))) {
+        $script:st['result'] = 'sent'
         if ($pending) { [System.IO.File]::Delete($pending) }
         if ($queued -gt 0) {
             # Queued records go out after the live one, oldest first, 50 to a request, for
@@ -438,6 +478,7 @@ try {
             }
         }
     } else {
+        $script:st['result'] = 'queued: not sent'
         # Not sent: the lost count waits for the next record, and this record is queued
         # (metadata only: content is never written to disk). At most 10,000 records (about
         # 20 MB) are kept; past that the oldest are dropped and counted as lost.
@@ -456,5 +497,7 @@ try {
             [System.IO.File]::AppendAllText($droppedFile, 'x')
         }
     }
+    $script:st['queue'] = "$(@([System.IO.Directory]::GetFiles($spool, '*.rec')).Count)"
 } catch { }
+Write-Status
 Finish

@@ -53,6 +53,10 @@ queries:
     for the AI usage page.
   suggested_schedule: daily
   flag: null
+  ask:
+  - 'Which AI services are people using?'
+  - 'What AI tools showed up in DNS?'
+  - 'Who is using ChatGPT or Claude?'
 - id: ai_services_by_device
   name: AI services by device (DNS and DHCP)
   description: 'Each AI service query from DNS, named by the device that held the client address at the
@@ -110,6 +114,10 @@ queries:
   normal: Devices without a lease keep their address. Needs the Palo Alto system log for names.
   suggested_schedule: daily
   flag: null
+  ask:
+  - 'Which devices reached AI services?'
+  - 'What machines are using AI tools?'
+  - 'Which computer looked up an AI service?'
 - id: dns_top_domains
   name: Most queried names
   group: DNS / Names
@@ -135,6 +143,10 @@ queries:
     LIMIT 200
   expect:
     rows_at_least: 1
+  ask:
+  - 'What are the most queried domains?'
+  - 'Top DNS names looked up'
+  - 'Which domains get the most lookups?'
 - id: dns_random_looking_names
   name: Random-looking names
   group: DNS / Names
@@ -169,3 +181,7 @@ queries:
     ORDER BY clients, queries DESC
   expect:
     rows_at_least: 1
+  ask:
+  - 'Any random-looking domain names in DNS?'
+  - 'Are there DGA-like DNS lookups?'
+  - 'Suspicious random domains queried'

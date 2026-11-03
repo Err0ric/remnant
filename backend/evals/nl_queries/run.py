@@ -19,7 +19,7 @@ import sys
 import tempfile
 import time
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -32,10 +32,13 @@ from app.core.logging import configure_logging
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.llm.agent import PROMPT, AskAgent, AskTurn
 from app.main import create_app
+from app.search.ask_flow import route_question
+from app.search.params import compile_sql, placeholders
 from evals.nl_queries.compare import Compare, matches
 from evals.nl_queries.fixture import SOURCES, write_lake
 
 SUITE = Path(__file__).parent / "questions.yaml"
+KNOWHOW = Path(__file__).parent / "knowhow.yaml"
 ACTOR = "eval-runner"
 
 
@@ -64,6 +67,12 @@ class CaseResult:
     sql: str | None = None
     error: str | None = None
     call_ids: list[str] = field(default_factory=list)
+    # Routing (ADR-0042 slice 1b): data or knowhow, the library query used, and whether the
+    # route was wrong (a data question sent to know-how, or the reverse).
+    expected_kind: str = "data"
+    route_kind: str | None = None
+    library: str | None = None
+    misroute: bool = False
 
 
 def load_suite(path: Path = SUITE) -> tuple[list[Case], QueryScope]:
@@ -127,15 +136,87 @@ def run_case(
     return out
 
 
+def load_knowhow(path: Path = KNOWHOW) -> list[Case]:
+    doc = yaml.safe_load(path.read_text("utf-8"))
+    return [Case(id=q["id"], question=q["question"], sql="") for q in doc["questions"]]
+
+
+def run_routed(app: FastAPI, provider_id: str, scope: QueryScope, case: Case) -> CaseResult:
+    """The question as Ask handles it (ADR-0042 slice 1b): routed first, the library query
+    run when one fits, the agent otherwise. Follow-ups go to the agent, as in the product.
+    The eval keeps its own fixed window: a time phrase is recorded, not applied."""
+    if case.history:
+        return run_case(app.state.ask, app.state.engine, provider_id, scope, case)
+    out = CaseResult(case.id, case.question, expected_kind="knowhow" if not case.sql else "data")
+    engine: QueryEngine = app.state.engine
+    started = time.perf_counter()
+    try:
+        seen = app.state.library.templates_seen(engine, None)
+        routed = route_question(
+            app.state.gate, engine, app.state.library, seen, ACTOR, provider_id,
+            case.question, scope.end or datetime.now(UTC), None, None, scope,
+        )  # fmt: skip
+    except AppError as exc:
+        out.seconds = round(time.perf_counter() - started, 2)
+        out.error = f"{type(exc).__name__}: {str(exc)[:200]}"
+        return out
+    out.route_kind = routed.kind
+    out.misroute = routed.kind != out.expected_kind
+    if routed.call_id:
+        out.call_ids.append(routed.call_id)
+    if not case.sql:  # know-how: only the route is scored until slice 2
+        out.seconds = round(time.perf_counter() - started, 2)
+        out.exact = not out.misroute
+        return out
+    if routed.plan is None or routed.candidate is None:
+        agent = run_case(app.state.ask, engine, provider_id, scope, case)
+        agent.expected_kind, agent.route_kind, agent.misroute = "data", routed.kind, out.misroute
+        agent.call_ids = out.call_ids + agent.call_ids
+        agent.seconds = round(time.perf_counter() - started, 2)
+        if agent.first_rows_seconds is not None:
+            agent.first_rows_seconds = round(time.perf_counter() - started, 2)
+        return agent
+    out.library = routed.candidate.ref
+    out.sql = routed.plan.sql
+    out.seconds = round(time.perf_counter() - started, 2)
+    reference = engine.run(case.sql, scope)
+    values: dict[str, Any] = dict(routed.plan.params)
+    values |= {"start": scope.start, "end": scope.end}
+    used = placeholders(routed.plan.sql)
+    try:
+        got = engine.run(
+            compile_sql(routed.plan.sql), scope, {k: v for k, v in values.items() if k in used}
+        )
+    except AppError as exc:
+        out.error = f"{type(exc).__name__}: {str(exc)[:200]}"
+        return out
+    out.first_rows_seconds = round(time.perf_counter() - started, 2)
+    out.executable = True
+    out.exact = matches(
+        reference.rows, len(reference.columns), got.rows, len(got.columns), case.compare
+    )
+    return out
+
+
 def summarise(results: list[CaseResult], label: str) -> dict[str, Any]:
     n = len(results)
     seconds = [r.seconds for r in results if r.sql is not None]
     first = [r.first_rows_seconds for r in results if r.first_rows_seconds is not None]
+    routed = [r for r in results if r.route_kind is not None]
+    data = [r for r in results if r.expected_kind == "data"]
+    knowhow = [r for r in results if r.expected_kind == "knowhow"]
     return {
         "label": label,
         "questions": n,
-        "executable_rate": round(sum(r.executable for r in results) / n, 3) if n else 0.0,
-        "exact_rate": round(sum(r.exact for r in results) / n, 3) if n else 0.0,
+        # Data questions only: right rows (know-how answers are scored from slice 2).
+        "executable_rate": round(sum(r.executable for r in data) / len(data), 3) if data else 0.0,
+        "exact_rate": round(sum(r.exact for r in data) / len(data), 3) if data else 0.0,
+        # Routing (ADR-0042 condition 3): wrong routes either way, and library use.
+        "routed": len(routed),
+        "data_sent_to_knowhow": sum(1 for r in data if r.route_kind == "knowhow"),
+        "knowhow_sent_to_data": sum(1 for r in knowhow if r.route_kind == "data"),
+        "knowhow_questions": len(knowhow),
+        "library_rate": round(sum(1 for r in data if r.library) / len(data), 3) if data else 0.0,
         "median_seconds": round(statistics.median(seconds), 2) if seconds else None,
         "p90_seconds": round(sorted(seconds)[int(0.9 * (len(seconds) - 1))], 2)
         if seconds
@@ -162,6 +243,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Sent as reasoning_effort, as the provider's Thinking setting does (none = Off)",
     )
     p.add_argument("--prompt", default=PROMPT, help=f"Ask prompt version (default {PROMPT})")
+    p.add_argument(
+        "--no-routing",
+        action="store_true",
+        help="Ask's SQL agent only, as before slice 1b (for comparison); skips know-how",
+    )
     args = p.parse_args(argv)
 
     key = os.environ.get(args.api_key_env) if args.api_key_env else None
@@ -169,6 +255,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{args.api_key_env} is not set", file=sys.stderr)
         return 2
     cases, scope = load_suite()
+    if not args.no_routing:
+        cases += load_knowhow()
     if args.ids:
         wanted = set(args.ids.split(","))
         cases = [c for c in cases if c.id in wanted]
@@ -183,13 +271,21 @@ def main(argv: list[str] | None = None) -> int:
         app.state.ask.prompt = args.prompt
         results = []
         for case in cases:
-            r = run_case(app.state.ask, app.state.engine, rec.provider_id, scope, case)
+            if args.no_routing:
+                r = run_case(app.state.ask, app.state.engine, rec.provider_id, scope, case)
+            else:
+                r = run_routed(app, rec.provider_id, scope, case)
             mark = "ok   " if r.exact else ("ran  " if r.executable else "fail ")
+            if r.misroute:
+                mark = "route"
             print(f"{mark}{r.id} {r.seconds:>6.1f}s  {r.question}", file=sys.stderr)
             results.append(r)
 
     thinking = f", thinking {args.thinking}" if args.thinking else ""
-    summary = summarise(results, f"{args.model} @ {args.base_url}{thinking}, {args.prompt}")
+    routing = ", agent only" if args.no_routing else ", routed"
+    summary = summarise(
+        results, f"{args.model} @ {args.base_url}{thinking}, {args.prompt}{routing}"
+    )
     print(json.dumps(summary, indent=2))
     if args.out:
         report = {"summary": summary, "results": [asdict(r) for r in results]}

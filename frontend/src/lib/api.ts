@@ -58,6 +58,20 @@ export interface OtlpToken {
   devices: number;
   hosts: string[];
   downloadable: boolean;
+  /** Each machine that sent with it, newest first (D170). */
+  machines?: { host: string; last_seen: string }[];
+  /** Why the receiver last refused it: revoked, source off, bad payload, too many requests. */
+  last_error?: string | null;
+  last_error_at?: string | null;
+}
+
+/** A refused token that matches none of this server's (D170): first 8 characters only. */
+export interface UnknownToken {
+  prefix: string;
+  client: string;
+  first_at: string;
+  last_at: string;
+  count: number;
 }
 
 export interface PluginsInfo {
@@ -73,6 +87,7 @@ export interface PluginsInfo {
   sources: { source_id: string; keep_content: boolean }[];
   tokens: OtlpToken[];
   public_url: string | null;
+  unknown_tokens?: UnknownToken[];
   /** Whether a package should carry this server's self-signed certificate (owner, 2026-11-02). */
   certificate?: {
     self_signed: boolean;
@@ -1544,17 +1559,47 @@ export interface AskRequest {
   start?: string;
   sources?: string[];
   history: AskTurn[];
+  /** The asker's IANA time zone, for "today" and "yesterday". */
+  tz?: string;
+  /** "data": Check your data instead, after a general-guidance route (ADR-0042). */
+  route?: "auto" | "data";
+}
+
+/** How a question was routed (ADR-0042 slice 1b, condition 3). */
+export interface AskRoute {
+  kind: "data" | "knowhow";
+  by: "model" | "forced" | "follow_up";
+  library: { ref: string; name: string; version: string } | null;
+  /** "user = dana@example.com (also dana)", for How I got this. */
+  filters: string[];
+  params: Record<string, string | number | boolean>;
+  /** The time phrase as understood ("today"). */
+  time: string | null;
+  /** Why the library was not used. */
+  reason: string | null;
+}
+
+export interface AskSuggestion {
+  ref: string;
+  name: string;
+  why: string;
+  sql: string;
 }
 
 export interface AskResponse {
-  /** Runs this answer's SQL on the server (POST /api/ask/{ask_id}/run); absent on older servers. */
-  ask_id?: string;
+  /** Runs this answer's SQL on the server (POST /api/ask/{ask_id}/run); null for a
+   * general-guidance route; absent on older servers. */
+  ask_id?: string | null;
+  route?: AskRoute | null;
+  start?: string | null;
+  end?: string | null;
   /** Run without a click: the install allows it and the SQL passed the self-check. */
   auto_run?: boolean;
   sql: string;
   explanation: string;
   assumptions: string[];
-  check: "ok" | "empty" | "failed";
+  /** library: a shipped query (tested on fixtures); none: nothing to check. */
+  check: "ok" | "empty" | "failed" | "library" | "none";
   check_detail: string | null;
   attempts: number;
   provider: AskProvider;
@@ -2233,6 +2278,8 @@ export const api = {
   askProviders: () => request<AskProvider[]>("/api/ask/providers"),
   ask: (body: AskRequest, signal?: AbortSignal) =>
     request<AskResponse>("/api/ask", { ...post(body), signal }),
+  askSuggest: (q: string) =>
+    request<AskSuggestion[]>(`/api/ask/suggest?q=${encodeURIComponent(q)}`),
   runAnswer: (askId: string, signal?: AbortSignal) =>
     request<QueryResult>(`/api/ask/${encodeURIComponent(askId)}/run`, { ...post({}), signal }),
   columns: () => request<ColumnInfo[]>("/api/schema/columns"),

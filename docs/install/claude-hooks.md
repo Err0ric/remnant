@@ -81,6 +81,19 @@ Organization plugins need a Team or Enterprise plan and an Owner (or Primary Own
 
 **Tested on the Windows desktop app (2026-11-02):** a plugin set to **Available to install** and then turned on for one account landed under `%LOCALAPPDATA%\Claude-Data\...\plugin_<id>\`, but its hooks never ran in the desktop app's local Code sessions (no spool folder, no records). The same plugin sent records when its script was run by hand. Until that changes, prefer 3a or 3b for the desktop app, and confirm any path there with pilot check 1.
 
+### Which install paths fire hooks
+
+| Path | Hooks fire? | Evidence |
+|---|---|---|
+| Script run by hand (`send.sh` or `send.ps1` with a hook payload on stdin) | Yes | Owner's test install, Windows, 2026-11-02: records reached the server |
+| Terminal CLI: `claude plugin install` from a marketplace (3a, `install-local`) | Untested on a real client | The installer is tested against a stand-in `claude` that records its calls; that the CLI then runs the hooks in a session is not yet confirmed |
+| Desktop app, Code tab, plugin installed by the CLI for the same user | Untested | |
+| Organization library, **Available to install**, turned on per account (3c) | No, on the Windows desktop app | Owner's test install, 2026-11-02: the plugin landed on disk but no hook ran (no status, spool, or records) |
+| Organization library, **Installed by default** or **Required** (3c) | Untested | |
+| Managed bundle: machine-wide `hooks.conf` plus the plugin (3b) | Untested on a real client | Config handling is tested in the suite |
+
+Mark a row tested only after pilot check 1 passes on that path, and note the client and version.
+
 ## 4. The machine-wide config (fleet)
 
 The machine-wide file wins over the plugin's own config, which is then not read at all, so nothing in the user's folder can redirect records, add a CA, or change the token.
@@ -146,6 +159,25 @@ Run each on one Windows and one Mac (or Linux) pilot machine. Each is pass or fa
 | 7 | The source's Sessions view, as a user who cannot read the source | No sessions |
 
 The script under Windows PowerShell 5.1 is also checked by the `hooks-windows` workflow (`scripts/check_hooks_windows.py`): the `.claude.json` fallback parser and the certificate check.
+
+## Troubleshooting
+
+Since plugin version 2.2.0, every hook run leaves a small **status file** in the plugin's data folder (`$CLAUDE_PLUGIN_DATA/status`; when Claude gives no data folder, `~/.cache/siem-claude-hooks/status` on macOS and Linux or `%LOCALAPPDATA%\siem-claude-hooks\status` on Windows). It holds the last run time, the last event, whether the record was sent, queued, or skipped (and why: no config, not in `PILOT_USERS`, no server or token), the server's HTTP status (`000` when it was not reached), the queue depth, and where the config came from. Never the token, a prompt, or any tool content.
+
+| What you see | What it means |
+|---|---|
+| No status file at all | The hook never ran for this user: the install path did not load the plugin's hooks (see the table above), or Claude was not restarted |
+| `result=skipped: no config file` | The plugin's own `config` is empty and no machine-wide `hooks.conf` exists (the managed bundle's plugin sends only with `hooks.conf`) |
+| `result=skipped: not in PILOT_USERS` | Working as set: this account is not in the pilot list |
+| `result=queued: not sent`, `http_status=000` | The server was not reached: network, proxy, DNS, or the certificate (section 5) |
+| `result=queued: not sent`, `http_status=401` | The token was refused: wrong, revoked, or its source is turned off. **Settings > Claude plugins** shows the last error per token |
+
+**Doctor mode** checks a machine in one go and prints a pass or fail per check: the config, the certificate file, that the server answers, that the token works (it sends one test record, marked as a test, with no person or machine), that `claude plugin list` shows the plugin, and the hook's last status. It never prints the token.
+
+```
+sh install-local.sh --doctor                                          # macOS, Linux
+powershell -ExecutionPolicy Bypass -File .\install-local.ps1 -Doctor  # Windows
+```
 
 ## Turning it off
 

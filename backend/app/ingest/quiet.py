@@ -141,6 +141,50 @@ class QuietWatch:
         )
         return new
 
+    # --- one-time fixes ---------------------------------------------------------------------
+
+    def retire_push_defaults(self) -> list[str]:
+        """Once per install (D168, owner 2026-11-02): turn off the source-level quiet alert
+        on existing push (OTLP) sources that still have the default an install gave them at
+        creation. Claude Code telemetry and the hooks plugin send only while people use
+        Claude Code, so that default alerted every evening. A watch someone changed (another
+        quiet time, alert targets, or any later edit) is left alone. Each change is audited
+        `source.quiet_alert_change` with no user and the reason. Returns the sources."""
+        fix = "quiet_push_default_off"
+        now = self._clock().astimezone(UTC).isoformat()
+        changed: list[dict[str, Any]] = []
+        with self._meta.connect() as con:
+            if con.execute("SELECT 1 FROM one_time_fixes WHERE fix_id = ?", (fix,)).fetchone():
+                return []
+            rows = con.execute(
+                "SELECT w.source_id, w.quiet_after_s, w.target_ids FROM source_watches w"
+                " JOIN sources s ON s.source_id = w.source_id"
+                " WHERE s.kind = 'otlp' AND w.quiet_after_s = ? AND w.target_ids = '[]'"
+                " AND w.updated_at = w.created_at",
+                (default_quiet_s("otlp"),),
+            ).fetchall()
+            for r in rows:
+                con.execute("DELETE FROM source_watches WHERE source_id = ?", (r[0],))
+                changed.append({"source_id": r[0], "from": {"quiet_after_s": r[1], "targets": []}})
+            con.execute(
+                "INSERT INTO one_time_fixes (fix_id, applied_at, changed) VALUES (?, ?, ?)",
+                (fix, now, len(changed)),
+            )
+        for c in changed:
+            self._audit.write(
+                "source.quiet_alert_change",
+                "success",
+                None,
+                None,
+                {
+                    "source_id": c["source_id"],
+                    "from": c["from"],
+                    "to": None,
+                    "reason": "one-time fix: the default quiet alert is off for push sources",
+                },
+            )
+        return [c["source_id"] for c in changed]
+
     # --- checking --------------------------------------------------------------------------
 
     def tick(self) -> int:

@@ -1,0 +1,45 @@
+# General know-how questions for Ask routing (ADR-0042 slice 1b, condition 3). Each must be
+# routed as know-how, not as a question about the logs; a data route is a misroute. Answer
+# quality (the label, no log facts) is scored from slice 2. Synthetic wording only.
+schema_version: 1
+questions:
+  - id: k001
+    question: "What steps should I take to diagnose packet loss on a branch office link?"
+  - id: k002
+    question: "How should I harden sshd on a Linux server?"
+  - id: k003
+    question: "What does Windows event ID 4625 mean?"
+  - id: k004
+    question: "How do I set up DMARC for a domain?"
+  - id: k005
+    question: "What is a password spray attack and how do I stop it?"
+  - id: k006
+    question: "Explain the difference between RFC 3164 and RFC 5424 syslog."
+  - id: k007
+    question: "How should I configure MFA for administrators in Microsoft 365?"
+  - id: k008
+    question: "What is a good retention period for firewall logs?"
+  - id: k009
+    question: "How do I write a Sigma rule for encoded PowerShell?"
+  - id: k010
+    question: "What does a DNS tunnel look like in general?"
+  - id: k011
+    question: "How can I tell if a phishing email is malicious?"
+  - id: k012
+    question: "What should be in an incident response checklist for ransomware?"
+  - id: k013
+    question: "How do I rotate an exposed API key safely?"
+  - id: k014
+    question: "What is MITRE ATT&CK T1110?"
+  - id: k015
+    question: "Which ports should a web server expose to the internet?"
+  - id: k016
+    question: "How do Conditional Access policies work in Entra ID?"
+  - id: k017
+    question: "What is the best way to secure an MCP server?"
+  - id: k018
+    question: "How should I segment a guest Wi-Fi network?"
+  - id: k019
+    question: "Explain what an OAuth consent phishing attack is."
+  - id: k020
+    question: "What are good first steps when a laptop is stolen?"

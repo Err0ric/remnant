@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+### Ask on a CPU-only server (2026-11-02)
+
+- A new install page, **Ask on a CPU-only server**, covers running Ollama next to the app on one machine with no GPU: which small model to pull, how to split 8 GB between the model and the app's query memory, and what speed to expect.
+- What changes for existing installs: nothing. It is documentation only.
+### Why a Claude plugin token was refused (2026-11-02)
+
+- **Settings > Claude plugins** now lists, under each deployment token, every machine that sent with it and when it was last seen, and the last reason the server refused that token: revoked, its source turned off or removed, a bad payload, or too many requests.
+- A new **Unknown tokens** section lists tokens the server refused because they match none of its own (usually an old download), by their first 8 characters and the sending address. The full token is never kept.
+- What changes for existing installs: nothing to do. The server adds two columns to its token table on the first start. Unknown tokens are kept in memory only, so the list starts empty after a restart.
+
+### Hooks plugin diagnostics (2026-11-02)
+
+- Plugin version 2.2.0 leaves a status file after every run (last run, event, sent or queued or skipped and why, HTTP status, queue depth). It holds no token and no content.
+- `install-local.sh --doctor` and `install-local.ps1 -Doctor` check a machine and print a pass or fail list: config, certificate, server, token (with one test record), whether Claude lists the plugin, and the hook's last status.
+- The hooks guide now says which install paths are known to fire hooks and which are untested, and has a troubleshooting table for the status file.
+- What changes for existing installs: download the plugin again and reinstall it to get 2.2.0.
+### Quiet alerts off on existing Claude Code sources (2026-11-02)
+
+- On the first start after this update, the server turns off the 1-hour quiet alert on existing OpenTelemetry sources that still have it exactly as it was set when the source was added (no alert targets, never edited). Quiet alerts you changed are kept. Each change is in the audit log as `source.quiet_alert_change`, with the reason.
+- What changes for existing installs: nothing to do. If an OpenTelemetry source receives from collectors that send all the time and you want its quiet alert back, turn it on again on **Sources**.
+
+### Ask answers from the query library first (2026-11-02)
+
+- Ask now reads the time ("today", "yesterday", "this week", "last 6 hours") and the people, addresses, and machines in your question itself, then picks a shipped library query when one fits and runs it with those as filters. The model only decides which library query fits; it writes SQL only when none does. **How I got this** names the library query, the filters, and the time.
+- Questions that ask for general advice rather than your data are recognized as such; for now Ask offers **Check your data instead**. General guidance answers come in a later update.
+- With no AI provider set up, Ask still suggests up to three library queries that match your words.
+- Every library query now carries example questions (`ask:` in the pack files).
+- What changes for existing installs: nothing to do.
+
 ### Ask answers, from anywhere (2026-11-02)
 
 - **Ask** now runs its query as soon as it passes the safety checks, on your own sources, and shows the rows right under your question. The SQL, where the query came from, the sources read, and the time taken are under **How I got this**; **Edit as SQL** opens it in the SQL tab.

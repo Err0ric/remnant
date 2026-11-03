@@ -225,6 +225,31 @@ def main() -> int:
     backlog = json.loads(ok.bodies[2])["resourceLogs"][0]["scopeLogs"][0]["logRecords"] if len(ok.bodies) > 2 else []
     check(len(backlog) == 2, "the queue went out after the live record")
 
+    # D169: each run leaves a status file in the plugin's data folder; metadata only.
+    def status() -> dict[str, str]:
+        path = tmp / "data" / "status"
+        if not path.exists():
+            return {}
+        text = path.read_text()
+        check("REMNANT_TOKEN" not in text, "the status file holds no token")
+        check("a.txt" not in text and "dana" not in text, "the status file holds no content")
+        return dict(line.split("=", 1) for line in text.splitlines() if "=" in line)
+
+    run(ok.url)
+    st = status()
+    check(st.get("result") == "sent" and st.get("http_status") == "200",
+          f"status after a send: sent, HTTP 200 ({st})")  # fmt: skip
+    check(st.get("last_event") == "PreToolUse" and st.get("queue") == "0",
+          f"status names the event and an empty queue ({st})")  # fmt: skip
+    check(st.get("plugin_variant") == "windows" and bool(st.get("last_run")),
+          "status names the variant and the run time")  # fmt: skip
+    refused = Catcher(status=401)
+    run(refused.url)
+    st = status()
+    check(st.get("result") == "queued: not sent" and st.get("http_status") == "401",
+          f"status after a refusal: queued, HTTP 401 ({st})")  # fmt: skip
+    run(ok.url)  # the queue goes out again
+
     c, k = cert(tmp / "tls")
     other, _ = cert(tmp / "other")
     server = Catcher(tls=(c, k))

@@ -2,10 +2,12 @@
 
 A pack is `library/<pack>/pack.yaml`: queries in the saved-search format (SPEC 5.4) plus
 `requires` (template ids, any one is enough; empty means any source), `group`, `why`,
-`normal`, `suggested_schedule`, `flag`, and `expect` (checked in CI on the template
-fixtures). Library SQL is ordinary SQL from a file: it runs through the guard on the
-caller's `events` view like anything typed (rules 7 and 13). `why` and `normal` are
-display text only and never go to a model.
+`normal`, `suggested_schedule`, `flag`, `expect` (checked in CI on the template
+fixtures), and `ask`: 2 to 5 example phrasings that Ask ranks questions against and may send
+to a model as the query's description (ADR-0042 row 6, owner-accepted narrowing of ADR-0033
+row 6). Library SQL is ordinary SQL from a file: it runs through the guard on the caller's
+`events` view like anything typed (rules 7 and 13). `why` and `normal` are display text
+only and never go to a model.
 """
 
 from __future__ import annotations
@@ -67,6 +69,11 @@ class LibraryQuery(BaseModel):
     suggested_schedule: Literal["hourly", "daily"] | None = None
     flag: str | None = None
     expect: Expect | None = None
+    # Example questions this query answers (ADR-0042 row 6): reviewed in the pack PR like
+    # the SQL; the only library text Ask may send to a model.
+    ask: list[
+        Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=160)]
+    ] = Field(default_factory=list, max_length=5)
 
     def spec(self, origin: str) -> SavedSearchIn:
         return SavedSearchIn(

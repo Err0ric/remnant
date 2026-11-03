@@ -37,5 +37,5 @@ The AI features were tested with Ollama 0.34.1 running `qwen3.5:9b` with Thinkin
 | `ask.v4` (the default), two runs | 99% | 87 to 88% | 2.0 s (p90 3.3 to 3.6 s) |
 | `ask.v6` | Not yet measured on this model | | |
 
-Ingest, search, Sigma rules, schedules, and every page's numbers run on the CPU and do not use or need a GPU. Only Ask, Explain, and parser drafting call a model, and a smaller or CPU-only model makes those slower, not the rest. Details, every run, and how to run the suite against your own model: [backend/evals/nl_queries/README.md](backend/evals/nl_queries/README.md).
+Ingest, search, Sigma rules, schedules, and every page's numbers run on the CPU and do not use or need a GPU. Only Ask, Explain, and parser drafting call a model, and a smaller or CPU-only model makes those slower, not the rest. For a CPU-only server with the model on the same machine, see [install/ask-on-cpu.md](install/ask-on-cpu.md). Details, every run, and how to run the suite against your own model: [backend/evals/nl_queries/README.md](backend/evals/nl_queries/README.md).
 

@@ -20,6 +20,7 @@ from starlette.concurrency import run_in_threadpool
 from app.api.access import client_ip
 from app.auth.service import AuthService
 from app.core.errors import (
+    AppError,
     AuthRequiredError,
     PayloadTooLargeError,
     RateLimitedError,
@@ -85,6 +86,14 @@ def _source(request: Request) -> tuple[SourceConfig, Match]:
             token_id=match.token_id if match else None,
             token_prefix=token[:8] if token.startswith("rmt_") and not match else None,
         )
+        tokens.failed(
+            match,
+            token[:8] if token.startswith("rmt_") else None,
+            client_ip(request) or "",
+            "Refused: the token was revoked" if match and match.revoked
+            else "Refused: its source is turned off or was removed" if match
+            else "Refused: unknown token",
+        )  # fmt: skip
         request.app.state.server_events.refused(
             "otlp_token",
             client_ip(request),
@@ -145,19 +154,33 @@ async def _accept(
     return JSONResponse({})
 
 
+async def _receive(request: Request, kind: str) -> JSONResponse:
+    source, match = await run_in_threadpool(_source, request)
+    tokens: OtlpTokens = request.app.state.otlp_tokens
+    try:
+        _limiter.check(source.source_id, time.monotonic())
+        payload = await _body(request)
+        await run_in_threadpool(tokens.seen, match, _hosts(payload))
+        records = (
+            log_records(payload, source.otlp_keep_content)
+            if kind == "logs"
+            else metric_records(payload)
+        )
+        return await _accept(request, records, source)
+    except AppError as exc:
+        # The token was good but the request was not (D170): why, for Settings > Claude
+        # plugins. A bad payload, a full backlog, or too many requests.
+        await run_in_threadpool(
+            tokens.failed, match, None, client_ip(request) or "", f"Refused: {exc}"[:200]
+        )
+        raise
+
+
 @router.post("/otlp/v1/logs")
 async def otlp_logs(request: Request) -> JSONResponse:
-    source, match = await run_in_threadpool(_source, request)
-    _limiter.check(source.source_id, time.monotonic())
-    payload = await _body(request)
-    await run_in_threadpool(request.app.state.otlp_tokens.seen, match, _hosts(payload))
-    return await _accept(request, log_records(payload, source.otlp_keep_content), source)
+    return await _receive(request, "logs")
 
 
 @router.post("/otlp/v1/metrics")
 async def otlp_metrics(request: Request) -> JSONResponse:
-    source, match = await run_in_threadpool(_source, request)
-    _limiter.check(source.source_id, time.monotonic())
-    payload = await _body(request)
-    await run_in_threadpool(request.app.state.otlp_tokens.seen, match, _hosts(payload))
-    return await _accept(request, metric_records(payload), source)
+    return await _receive(request, "metrics")

@@ -66,6 +66,28 @@ newer version scores at least as well overall on your model.
 
 A generated result counts as exact when some of its columns, one for each reference column, hold the same values. Extra columns, a different column order, and aliases are fine. Rows are compared as a multiset, except for `compare: ordered` questions (top N, first event), where order counts. Whole-number floats equal ints, and a UTC-midnight timestamp equals its date.
 
+## Routing (ADR-0042 slice 1b)
+
+By default the runner asks each question the way Ask does now: routed first (one short model call), the library query run when one fits, the SQL agent otherwise; follow-ups go to the agent. It also runs the 20 general know-how questions in `knowhow.yaml`, which must be routed as know-how. The summary adds:
+
+| Field | Meaning |
+|---|---|
+| `exact_rate`, `executable_rate` | Data questions only: right rows, as before |
+| `data_sent_to_knowhow` | Data questions routed as general guidance (a misroute: the person gets no answer from their logs) |
+| `knowhow_sent_to_data` | Know-how questions routed as data questions (a misroute: SQL for a question that is not about the logs) |
+| `library_rate` | Share of data questions answered by a library query instead of generated SQL |
+| `median_first_rows_seconds`, `p90_first_rows_seconds` | From the question to rows on screen with auto-run |
+
+The fixture's sources are mostly synthetic templates that no library pack requires, so `library_rate` on this suite is low by design; it measures that routing does not hurt the agent path. `--no-routing` runs the agent alone, as before slice 1b, for comparison.
+
+### Benchmark plan (owner, 2026-11-02)
+
+| Run | Box | Models | Report |
+|---|---|---|---|
+| CPU only, the likely first work setup | 4 vCPU, 8 GB, no GPU, Ollama on the same box as the app | one 3 to 4B and one 7 to 9B model, Q4 quantized | median and p90 time to first rows, exact rate, misroutes, `--no-routing` for comparison |
+| CPU only, `ask.summarize` on and off | the same box | the same models | time to first rows and to the full answer, once slice 1c lands |
+| Modest GPU | homelab RTX 3080 10 GB | the same models | the same fields |
+
 ## Results
 
 Record each run in the PR that changes Ask, and in the table below. Every homelab run below used Ollama in a Proxmox container with an NVIDIA RTX 3080 (10 GB) passed through, on an AMD Ryzen 9 5950X host with 32 GB RAM. Latency depends mostly on the GPU; results (executable, exact) depend on the model and prompt, not the hardware. Rows dated before 2026-10-15 were measured on the 100 single questions, before the follow-ups and the `idp_signin` source were added; rerun `ask.v4` on the current suite to compare with `ask.v5`.

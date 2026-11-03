@@ -187,6 +187,10 @@ journalctl -u remnant | grep "SHA-256"
 
 Open the link and create the administrator, as above.
 
+### A local model on the same machine
+
+To run Ask with Ollama on this machine with no GPU (for example 4 vCPU and 8 GB), see [ask-on-cpu.md](ask-on-cpu.md): it lowers this unit's memory limits and the app's memory budget to make room for the model.
+
 ### Updating
 
 Run the update script as root; never fetch or merge by hand first. It fetches `main` from `origin` and stops there if the fetch fails, or if the build the service last ran is already `origin/main` (it says which). It keeps that commit in `/var/lib/remnant/installed_commit`, written by root (root:root, 0644) only after the service came up, and ignored if anything else could have written it, so a checkout moved by hand, or an update that failed partway, is built on the next run even with nothing new to fetch. Otherwise it stops the service, moves to `origin/main` and checks HEAD matches it, rebuilds the web UI, syncs the Python packages, makes `/opt/remnant` readable by the service user, starts the service, and prints the startup lines. Database migrations run on start.

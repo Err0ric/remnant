@@ -41,6 +41,10 @@ queries:
   flag: null
   expect:
     rows_at_least: 1
+  ask:
+  - 'Firewall maintenance and config changes'
+  - 'Firewall system events'
+  - 'Did the firewall reboot or change config?'
 - id: pa_admin_signins
   name: Firewall admin sign-ins
   group: Palo Alto / System
@@ -67,6 +71,10 @@ queries:
     ORDER BY failures DESC, signins DESC
   expect:
     rows_at_least: 1
+  ask:
+  - 'Firewall admin logins'
+  - 'Failed logins on the firewall'
+  - 'Who signed in to the firewall?'
 - id: pa_denied_by_source
   name: Denied traffic by source
   group: Palo Alto / Traffic
@@ -91,6 +99,10 @@ queries:
     ORDER BY denied DESC
   expect:
     rows_at_least: 1
+  ask:
+  - 'Denied traffic by source'
+  - 'Which addresses are blocked by the firewall?'
+  - 'Top blocked sources'
 - id: pa_threats_by_signature
   name: Threats by signature
   group: Palo Alto / Threat
@@ -115,6 +127,10 @@ queries:
     ORDER BY allowed DESC, max_severity DESC
   expect:
     rows_at_least: 1
+  ask:
+  - 'Threats by signature'
+  - 'What threats did the firewall detect?'
+  - 'Top firewall threat signatures'
 - id: gp_logins_by_user
   name: GlobalProtect sign-ins by user
   group: Palo Alto / VPN
@@ -141,6 +157,10 @@ queries:
     ORDER BY failures DESC, signins DESC
   expect:
     rows_at_least: 1
+  ask:
+  - 'VPN logins by user'
+  - 'GlobalProtect sign-ins'
+  - 'Who connected to the VPN?'
 - id: who_had_ip
   name: Who had this address
   description: 'Every Palo Alto DHCP lease and GlobalProtect tunnel assignment for one address, newest
@@ -181,3 +201,7 @@ queries:
   normal: One lease or tunnel per address at a time. Change the address in the query.
   suggested_schedule: null
   flag: null
+  ask:
+  - 'Who had this IP address?'
+  - 'Which user was on this address?'
+  - 'Who was using 10.20.1.5?'

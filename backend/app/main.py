@@ -628,6 +628,8 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         clock=lambda: app.state.auth.clock(),
         items=app.state.alert_items,
     )
+    # One-time fixes (D168): each runs once per install and records that it did.
+    app.state.quiet.retire_push_defaults()
     app.state.health = HealthService(
         meta,
         app.state.engine,

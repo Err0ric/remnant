@@ -143,3 +143,54 @@ def test_equivalent_spellings_compare_equal() -> None:
 
 def test_all_null_rows_are_ignored() -> None:
     assert matches([["bastion"], ["db-01"]], 2 - 1, [["bastion"], [None], ["db-01"]], 1, "set")
+
+
+# --- routing (ADR-0042 slice 1b) ---------------------------------------------------------
+
+ROUTE_PROMPT = "You route a security analyst's question"
+
+
+def _routing_provider(lab: Any, kind_for: Any) -> str:
+    """The SQL agent answers with the reference; routing says what `kind_for` says."""
+
+    class Fake:
+        def __init__(self, record: ProviderRecord, endpoint: Endpoint) -> None:
+            self.provider_id, self.locality = record.provider_id, endpoint.locality
+
+        def chat(self, messages: list[ChatMessage], **_: object) -> ProviderResponse:
+            if ROUTE_PROMPT in messages[0].content:
+                question = json.loads(messages[-1].content)["question"]
+                body: dict[str, Any] = {"kind": kind_for(question), "query": None, "params": {}}
+                return ProviderResponse(text=json.dumps(body), model="fake")
+            question = next(
+                m.content.removeprefix("Question: ")
+                for m in reversed(messages)
+                if m.role == "user" and m.content.startswith("Question: ")
+            )
+            sql = {"sql": BY_QUESTION[question], "explanation": "", "assumptions": []}
+            return ProviderResponse(text=json.dumps(sql), model="fake")
+
+    lab.state.gate._factory = lambda r, _s, e: Fake(r, e)
+    store: ProviderStore = lab.state.providers
+    rec = store.add(f"route-{id(kind_for)}", "http://127.0.0.1:1/v1", "fake", None)
+    store.update(rec.provider_id, None, None, None, True, None, False)
+    return rec.provider_id
+
+
+def test_routed_runs_score_rows_and_count_misroutes_both_ways(lab: Any) -> None:
+    from evals.nl_queries.run import load_knowhow, run_routed
+
+    knowhow = load_knowhow()
+    assert len(knowhow) == 20 and all(not c.sql for c in knowhow)
+    know = {c.question for c in knowhow}
+    right = _routing_provider(lab, lambda q: "knowhow" if q in know else "data")
+    sample = [*CASES[::20], *knowhow[:3]]
+    results = [run_routed(lab, right, SCOPE, c) for c in sample]
+    summary = summarise(results, "oracle, routed")
+    assert summary["exact_rate"] == 1.0 and summary["knowhow_questions"] == 3
+    assert summary["data_sent_to_knowhow"] == 0 == summary["knowhow_sent_to_data"]
+    # A router that calls everything data misroutes every know-how question.
+    wrong = _routing_provider(lab, lambda q: "data")
+    results = [run_routed(lab, wrong, SCOPE, c) for c in knowhow[:3]]
+    assert summarise(results, "x")["knowhow_sent_to_data"] == 3
+    assert all(r.misroute for r in results)

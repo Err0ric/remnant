@@ -26,8 +26,9 @@ class AskRun:
     sources: list[str] | None  # the client's filter; the scope is rebuilt from grants
     call_ids: list[str]
     at: datetime
-    origin: str = "generated"  # or a library query id (slice 1b)
+    origin: str = "generated"  # or a library query, "<pack>/<id>@<version>" (slice 1b)
     question: str = field(default="", repr=False)
+    params: dict[str, str | int | float | bool] = field(default_factory=dict)
 
 
 class AskRuns:
@@ -45,10 +46,12 @@ class AskRuns:
         call_ids: list[str],
         now: datetime,
         question: str = "",
+        origin: str = "generated",
+        params: dict[str, str | int | float | bool] | None = None,
     ) -> AskRun:
         run = AskRun(
             str(uuid.uuid4()), user_id, sql, start, end, sources, list(call_ids), now,
-            question=question,
+            origin=origin, question=question, params=dict(params or {}),
         )  # fmt: skip
         with self._lock:
             self._kept[run.ask_id] = run

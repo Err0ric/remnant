@@ -32,6 +32,10 @@ queries:
   flag: null
   expect:
     rows_at_least: 1
+  ask:
+  - 'Who logged in over SSH?'
+  - 'SSH logins by user'
+  - 'Which accounts signed in to Linux hosts?'
 - id: ssh_failures_by_source
   name: SSH failures by source address
   group: Linux / SSH
@@ -58,6 +62,10 @@ queries:
     ORDER BY failures DESC
   expect:
     rows_at_least: 1
+  ask:
+  - 'Which addresses had the most failed SSH logins?'
+  - 'SSH brute force by source'
+  - 'Failed SSH logins by IP'
 - id: ssh_invalid_users
   name: SSH attempts for accounts that do not exist
   group: Linux / SSH
@@ -83,6 +91,10 @@ queries:
     ORDER BY attempts DESC
   expect:
     rows_at_least: 1
+  ask:
+  - 'SSH attempts for users that do not exist'
+  - 'Invalid user SSH logins'
+  - 'Who tried SSH with unknown accounts?'
 - id: sudo_denied
   name: sudo refused
   group: Linux / Privilege
@@ -106,6 +118,10 @@ queries:
     ORDER BY refusals DESC
   expect:
     rows_at_least: 1
+  ask:
+  - 'Who was refused sudo?'
+  - 'Failed sudo attempts'
+  - 'sudo denied events'
 - id: sudo_commands
   name: Commands run with sudo
   group: Linux / Privilege
@@ -129,6 +145,10 @@ queries:
     ORDER BY last_seen DESC
   expect:
     rows_at_least: 1
+  ask:
+  - 'What commands were run with sudo?'
+  - 'Who used sudo?'
+  - 'Commands run as root'
 - id: su_failures
   name: Failed su and local sign-ins
   group: Linux / Privilege
@@ -155,3 +175,7 @@ queries:
     ORDER BY failures DESC
   expect:
     rows_at_least: 1
+  ask:
+  - 'Failed su attempts'
+  - 'Failed local sign-ins on Linux'
+  - 'Who failed to switch user?'

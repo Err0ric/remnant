@@ -1207,6 +1207,21 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
             devices: 3,
             hosts: ["ws-1", "ws-2", "ws-3"],
             downloadable: true,
+            machines: [
+              { host: "ws-1", last_seen: "2026-10-30T10:00:00Z" },
+              { host: "ws-2", last_seen: "2026-10-30T09:00:00Z" },
+            ],
+            last_error: "Refused: the request body is not valid OTLP JSON",
+            last_error_at: "2026-10-30T09:30:00Z",
+          },
+        ],
+        unknown_tokens: [
+          {
+            prefix: "rmt_zz99",
+            client: "192.0.2.15",
+            first_at: "2026-10-30T08:00:00Z",
+            last_at: "2026-10-30T09:00:00Z",
+            count: 4,
           },
         ],
         public_url: "https://siem.example",
@@ -2741,6 +2756,15 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         executed_sql: "SELECT ...",
         sources: ["linux_sshd"],
       });
+    if (url.includes("/api/ask/suggest?"))
+      return json([
+        {
+          ref: "linux_auth/ssh_failures_by_source",
+          name: "SSH failures by source address",
+          why: "One address failing against many accounts or hosts is guessing (T1110).",
+          sql: "SELECT src_endpoint_ip AS address, count(*) AS failures FROM events GROUP BY 1",
+        },
+      ]);
     if (url.endsWith("/api/ask/providers"))
       return json([
         { provider_id: "p1", name: "Local Ollama", model: "llama3.1:8b", locality: "local" },
@@ -2772,7 +2796,59 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
           403,
         );
       const n = body.history.length + 1;
+      const b = body as { route?: string; question: string };
+      if (b.question.startsWith("how should I") && b.route !== "data")
+        return json({
+          ask_id: null,
+          auto_run: false,
+          sql: "",
+          explanation: "",
+          assumptions: [],
+          check: "none",
+          check_detail: null,
+          attempts: 0,
+          provider: {
+            provider_id: "p1",
+            name: "Local Ollama",
+            model: "llama3.1:8b",
+            locality: "local",
+          },
+          call_ids: ["r1"],
+          route: {
+            kind: "knowhow",
+            by: "model",
+            library: null,
+            filters: [],
+            params: {},
+            time: null,
+            reason: null,
+          },
+        });
+      const library = b.question.includes("ssh logins for");
       return json({
+        route: library
+          ? {
+              kind: "data",
+              by: "model",
+              library: {
+                ref: "linux_auth/ssh_logins",
+                name: "SSH logins by user and source",
+                version: "1.0.0",
+              },
+              filters: ["user = dana@example.com (also dana)"],
+              params: {},
+              time: "today",
+              reason: null,
+            }
+          : {
+              kind: "data",
+              by: b.route === "data" ? "forced" : n > 1 ? "follow_up" : "model",
+              library: null,
+              filters: [],
+              params: {},
+              time: null,
+              reason: "No library query fits this question",
+            },
         ask_id: `a${n}`,
         // "click to run" in a question stands for an install with ask.auto_run off.
         auto_run: !body.question.includes("click to run"),

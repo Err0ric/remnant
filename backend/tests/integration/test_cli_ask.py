@@ -42,7 +42,10 @@ def lab(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         def __init__(self, record: ProviderRecord, endpoint: Endpoint) -> None:
             self.provider_id, self.locality = record.provider_id, endpoint.locality
 
-        def chat(self, *_: object, **__: object) -> ProviderResponse:
+        def chat(self, messages: list[Any], *_: object, **__: object) -> ProviderResponse:
+            if messages and "You route a security analyst's question" in messages[0].content:
+                route = {"kind": "data", "query": None, "params": {}}  # ADR-0042 slice 1b
+                return ProviderResponse(text=json.dumps(route), model="m")
             return replies.pop(0)
 
     app.state.gate._factory = lambda r, _s, e: Fake(r, e)

@@ -160,3 +160,72 @@ describe("Ask (ADR-0042 slice 1a)", () => {
     expect(screen.queryByRole("dialog", { name: "Ask" })).toBeNull();
   });
 });
+
+describe("Ask routing (ADR-0042 slice 1b)", () => {
+  it("names the library query, its filters, and the time under How I got this", async () => {
+    const spy = await renderAt("/ask");
+    await askQuestion("ssh logins for dana@example.com today");
+    const block = await screen.findByRole("region", {
+      name: "Question: ssh logins for dana@example.com today",
+    });
+    expect(
+      (await within(block).findAllByText("SSH logins by user and source", { exact: false }))[0],
+    ).toBeVisible();
+    const how = within(block).getByText("How I got this").closest("details") as HTMLElement;
+    expect(within(how).getByText("linux_auth/ssh_logins@1.0.0")).toBeInTheDocument();
+    expect(within(how).getByText("user = dana@example.com (also dana)")).toBeInTheDocument();
+    const [sent] = posts(spy, "/api/ask") as { tz?: string }[];
+    expect(sent?.tz).toBeTruthy(); // "today" is the asker's day
+  });
+
+  it("says when a question was treated as general guidance and switches on click", async () => {
+    const spy = await renderAt("/ask");
+    await askQuestion("how should I harden sshd?");
+    const block = await screen.findByRole("region", {
+      name: "Question: how should I harden sshd?",
+    });
+    const status = await within(block).findByRole("status");
+    expect(status).toHaveTextContent("Treated as general guidance.");
+    expect(within(block).queryByText("How I got this")).toBeNull();
+    expect(spy.mock.calls.some(([u]) => String(u).includes("/run"))).toBe(false);
+    await userEvent.click(within(status).getByRole("button", { name: "Check your data instead?" }));
+    const again = await screen.findByRole("region", {
+      name: "Question: how should I harden sshd?",
+    });
+    expect(await within(again).findByRole("table", { name: "Results" })).toBeVisible();
+    const bodies = posts(spy, "/api/ask") as { route?: string }[];
+    expect(bodies.map((b) => b.route)).toEqual([undefined, "data"]);
+    // The switched turn replaced the first one; it did not stack a second block.
+    expect(screen.getAllByRole("region", { name: /^Question: how should I/ })).toHaveLength(1);
+  });
+
+  it("offers library queries by keyword when no AI provider is set up", async () => {
+    window.history.replaceState(null, "", "/ask");
+    const spy = mockApi("Codename", { mode: "login", signedIn: true, role: "analyst" });
+    const passthrough = spy.getMockImplementation()!;
+    spy.mockImplementation((url, init) =>
+      String(url).endsWith("/api/ask/providers")
+        ? Promise.resolve(
+            new Response("[]", { status: 200, headers: { "Content-Type": "application/json" } }),
+          )
+        : passthrough(url, init),
+    );
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    render(
+      <App
+        initialTheme="dark"
+        queryClient={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      />,
+    );
+    await screen.findByText(/No AI provider is set up/);
+    await askQuestion("failed ssh logins by source");
+    const found = await screen.findByRole("region", { name: "Library suggestions" });
+    const open = within(found).getByRole("button", { name: "SSH failures by source address" });
+    expect(posts(spy, "/api/ask")).toHaveLength(0); // no model call at all
+    await userEvent.click(open);
+    expect(await screen.findByRole("tab", { name: "SQL", selected: true })).toBeVisible();
+  });
+});

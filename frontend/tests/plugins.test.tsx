@@ -127,4 +127,18 @@ describe("Settings > Claude plugins (D127)", () => {
       ),
     ).toBe(true);
   });
+
+  it("shows each machine's last seen, the token's last error, and unknown tokens (D170)", async () => {
+    await openPlugins();
+    const tokens = screen.getByRole("region", { name: "Deployment tokens" });
+    expect(within(tokens).getByText("ws-1")).toBeVisible();
+    expect(within(tokens).getByText("ws-2")).toBeVisible();
+    expect(
+      within(tokens).getByText(/Refused: the request body is not valid OTLP JSON/),
+    ).toBeVisible();
+    const unknown = screen.getByRole("region", { name: "Unknown tokens" });
+    expect(within(unknown).getByText("rmt_zz99…")).toBeVisible();
+    expect(within(unknown).getByText("192.0.2.15")).toBeVisible();
+    expect(within(unknown).getByText("4")).toBeVisible();
+  });
 });

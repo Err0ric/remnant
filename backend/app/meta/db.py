@@ -1014,6 +1014,20 @@ MIGRATIONS: tuple[Migration, ...] = (
     """
     ALTER TABLE install_settings ADD COLUMN live_limit_minutes INTEGER NOT NULL DEFAULT 30;
     """,
+    # 59: one-time fixes the server applies at start and records here, so each runs once
+    # per install (D168: default quiet alerts on existing push sources turned off).
+    """
+    CREATE TABLE one_time_fixes (
+        fix_id     TEXT PRIMARY KEY,
+        applied_at TEXT NOT NULL,
+        changed    INTEGER NOT NULL DEFAULT 0
+    );
+    """,
+    # 60: the last refusal the receiver gave each named token (D170): why, and when.
+    """
+    ALTER TABLE otlp_tokens ADD COLUMN last_error TEXT;
+    ALTER TABLE otlp_tokens ADD COLUMN last_error_at TEXT;
+    """,
 )
 
 
