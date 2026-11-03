@@ -141,7 +141,7 @@ Order: filter chips, the tab strip (**Simple**, **Ask in plain English**, **SQL*
 | Tab | Spec |
 |---|---|
 | Simple | One monospace search box with a filled Search button; example searches as clickable chips; "Show SQL" reveals the compiled SQL and its bound values in an `--inset` block; "Edit as SQL" opens it in the SQL tab with values written in; notes (such as a field read from `unmapped`) in secondary text. First-time default |
-| Ask in plain English | Model picker with Local or Cloud badge, earlier questions as a numbered list, prompt box, then the generated SQL read-only in an `--inset` block, an outlined Run, and the model explanation. Run copies the SQL to the SQL tab and runs it. Hidden from auditors; with no provider, one line saying Simple and SQL still work. Never chat bubbles |
+| Ask in plain English | Model picker with Local or Cloud badge; a large question box; with a cloud model, "Your question is sent to <provider>" under it. Each turn is a block, never a chat bubble: the question as a heading, progress steps while it works, what the model said about its query (labeled as model text), the results table (entities as links), and a collapsed **How I got this** (where the query came from, the SQL with Edit as SQL, the check, sources read, time, model). Follow-ups stack below and refine the last turn; New question starts over. The query runs at once when it passes the guard; with `ask.auto_run` off the block shows an outlined **Run query** instead (ADR-0042). Hidden from auditors; with no provider, one line saying Simple and SQL still work |
 | SQL | The CodeMirror editor and Run, as below |
 
 The tab last used is remembered per browser. Panels stay mounted, so switching tabs keeps a question and its turns.
@@ -223,6 +223,7 @@ Admin only (F64, ADR-0013). Read only: status (On in `--ok`, Off, Not working in
 | Table header | `--surface-head`, 13px semibold `--text-secondary`, sortable on click |
 | NULL value | `·` in `--text-muted`, never blank, never "null" |
 | Command palette | `Ctrl+K` / `Cmd+K` and the top bar search; opens under the search at its width (680px), `--surface`, 6px radius. Sections: Recent (empty query), then Addresses, People, Hosts, AI services (found by the server in the viewer's own sources, last 30 days; ADR-0038 edit 10), Navigate, Actions, Saved searches, Sources, and **Search events for "..."** last. An entity opens its page. Addresses and hosts in the data font, with country, network, and event count. Flavor names (Séance, Grimoire, Ossuary) resolve as aliases only |
+| Ask slide-over | Ask from any page (ADR-0042): the palette's **Ask** item, or **Ask "<typed text>"** for a sentence typed in the palette, opens a 560px panel on the right with the same Ask blocks, last 24 hours on the viewer's sources. Escape or the close button closes it. For asking only; events still expand inline |
 | Toasts | Only for background job completion. Errors appear inline where they happened |
 
 Icons: Lucide, 16px in nav and buttons, 14px in tables, 1.5px stroke. No emoji anywhere.

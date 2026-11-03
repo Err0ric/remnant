@@ -32,7 +32,7 @@ import {
 } from "@/lib/simpleSearch";
 import { AddToDashboardPanel } from "@/features/dashboard/AddToDashboard";
 import { AiToggle } from "./AiToggle";
-import { AskPanel } from "./AskPanel";
+import { AskThread } from "@/features/ask/AskThread";
 import { FacetSidebar } from "./FacetSidebar";
 import { FieldActionsContext, type FieldActions } from "./fieldActions";
 import { FilterBar } from "./FilterBar";
@@ -586,13 +586,15 @@ export function SearchPage({
             </div>
             {canAsk ? (
               <div hidden={tab !== "ask"}>
-                <AskPanel
+                <AskThread
                   start={rangeStart(range)}
                   sources={sources}
                   isAdmin={isAdmin}
-                  onRun={runAsk}
+                  onEdit={(value) => {
+                    setSql(value);
+                    setTab("sql");
+                  }}
                   onAnswer={setAskAnswer}
-                  pending={pending}
                   toggle={<AiToggle on onChange={() => setTab("simple")} />}
                 />
               </div>

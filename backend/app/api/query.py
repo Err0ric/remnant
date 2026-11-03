@@ -102,7 +102,12 @@ def _placeholders(
 
 
 async def _run_audited(
-    body: QueryRequest, request: Request, user: User, action: str
+    body: QueryRequest,
+    request: Request,
+    user: User,
+    action: str,
+    extra: dict[str, object] | None = None,
+    max_rows: int | None = None,
 ) -> QueryResult:
     engine: QueryEngine = request.app.state.engine
     auth: AuthService = request.app.state.auth
@@ -116,6 +121,7 @@ async def _run_audited(
         "params": body.params,
         "sources_requested": body.sources,
         "sources_in_scope": "all" if sources is None else sources,
+        **(extra or {}),
     }
     sql, values = _placeholders(body.sql, body.params, body.start, body.end)
     try:
@@ -128,6 +134,9 @@ async def _run_audited(
             auth.audit.write, action, "failure", user.user_id, client_ip(request), detail
         )
         raise
+    if max_rows is not None and len(result.rows) > max_rows:
+        result.rows = result.rows[:max_rows]
+        result.truncated = True
     detail |= {
         "rows": len(result.rows),
         "elapsed_ms": result.elapsed_ms,

@@ -34,75 +34,82 @@ async function askQuestion(text: string) {
 
 afterEach(() => vi.restoreAllMocks());
 
-describe("Ask", () => {
-  it("shows the generated SQL and does not run it until Run query is clicked", async () => {
+describe("Ask (ADR-0042 slice 1a)", () => {
+  it("runs the answer by its id, shows the rows, and keeps the SQL under How I got this", async () => {
     const spy = await renderAt("/ask");
     expect(
       await screen.findByRole("button", { name: "Ask in plain English", pressed: true }),
     ).toBeVisible();
     await askQuestion("failed logins by source ip");
-    expect(await screen.findByText(/Checked: the query runs and returns rows/)).toBeInTheDocument();
-    expect(screen.getByText(/turn 1/)).toBeInTheDocument();
-    const generated = () =>
-      (posts(spy, "/api/query") as { sql: string }[]).filter((b) => b.sql.includes("turn 1"));
-    expect(generated()).toHaveLength(0); // only the source picker's own lookup ran
-
-    await userEvent.click(screen.getByRole("button", { name: "Run query" }));
-    expect(await screen.findByRole("region", { name: "Results" })).toBeInTheDocument();
-    expect(generated()).toHaveLength(1);
-  });
-
-  it("also runs from the Run button beside the SQL, and only on click", async () => {
-    const spy = await renderAt("/ask");
+    const block = await screen.findByRole("region", {
+      name: "Question: failed logins by source ip",
+    });
+    const table = await within(block).findByRole("table", { name: "Results" });
+    // The server runs the answer it holds; the client never sends the SQL back.
+    expect(spy.mock.calls.some(([u]) => String(u).endsWith("/api/ask/a1/run"))).toBe(true);
     expect(
-      await screen.findByRole("button", { name: "Ask in plain English", pressed: true }),
-    ).toBeVisible();
-    await askQuestion("failed logins by source ip");
-    await screen.findByText(/Checked: the query runs and returns rows/);
-    const generated = () =>
-      (posts(spy, "/api/query") as { sql: string }[]).filter((b) => b.sql.includes("turn 1"));
-    expect(generated()).toHaveLength(0);
-    await userEvent.click(screen.getByRole("button", { name: "Run" }));
-    expect(await screen.findByRole("region", { name: "Results" })).toBeInTheDocument();
-    expect(generated()).toHaveLength(1);
+      (posts(spy, "/api/query") as { sql: string }[]).filter((b) => b.sql.includes("turn 1")),
+    ).toHaveLength(0);
+    // People, addresses, and hosts are links to their pages.
+    expect(within(table).getByRole("link", { name: "203.0.113.9" })).toBeVisible();
+    // The SQL is collapsed, one click away.
+    const how = within(block).getByText("How I got this").closest("details") as HTMLElement;
+    expect(how).not.toHaveAttribute("open");
+    expect(within(how).getByLabelText("Generated SQL")).toHaveTextContent("turn 1");
+    expect(within(how).getByText("Generated query (not from the library)")).toBeInTheDocument();
+    expect(within(how).getByText("linux_sshd")).toBeInTheDocument();
   });
 
-  it("renders model text as plain text, labelled as model output", async () => {
+  it("waits for Run query when the install keeps click-to-run", async () => {
+    const spy = await renderAt("/ask");
+    await askQuestion("click to run failed logins");
+    const block = await screen.findByRole("region", {
+      name: "Question: click to run failed logins",
+    });
+    await within(block).findByRole("button", { name: "Run query" });
+    const runs = () => spy.mock.calls.filter(([u]) => String(u).includes("/run")).length;
+    expect(runs()).toBe(0);
+    expect(within(block).queryByRole("table", { name: "Results" })).toBeNull();
+    await userEvent.click(within(block).getByRole("button", { name: "Run query" }));
+    expect(await within(block).findByRole("table", { name: "Results" })).toBeVisible();
+    expect(runs()).toBe(1);
+  });
+
+  it("renders model text as plain text, labelled as about the query", async () => {
     await renderAt("/ask");
     await askQuestion("failed logins");
-    const panel = await screen.findByRole("region", { name: "Model explanation" });
-    expect(
-      within(panel).getByText("<b>Failed</b> logins grouped by source IP."),
-    ).toBeInTheDocument();
-    expect(panel.querySelector("b")).toBeNull();
-    expect(within(panel).getByText("Failed means status_id = 2")).toBeInTheDocument();
-    expect(within(panel).getByText(/Written by a model/)).toBeInTheDocument();
+    const block = await screen.findByRole("region", { name: "Question: failed logins" });
+    const text = await within(block).findByText("<b>Failed</b> logins grouped by source IP.");
+    expect(text.querySelector("b")).toBeNull();
+    expect(within(block).getByText("Failed means status_id = 2")).toBeInTheDocument();
+    expect(within(block).getByText(/About the query, written by Local Ollama/)).toBeVisible();
   });
 
-  it("sends earlier turns on a follow-up and starts over on New question", async () => {
+  it("stacks follow-ups below, sends earlier turns, and starts over on New question", async () => {
     const spy = await renderAt("/ask");
     await askQuestion("failed logins");
-    await screen.findByText(/turn 1/);
+    await screen.findByRole("region", { name: "Question: failed logins" });
     await askQuestion("only from 203.0.113.9");
-    await screen.findByText(/turn 2/);
+    await screen.findByRole("region", { name: "Question: only from 203.0.113.9" });
     const [, second] = posts(spy, "/api/ask") as { history: { question: string }[] }[];
     expect(second?.history.map((t) => t.question)).toEqual(["failed logins"]);
-    expect(
-      within(screen.getByRole("list", { name: "Earlier questions" })).getAllByRole("listitem"),
-    ).toHaveLength(2);
+    const answers = screen.getByLabelText("Answers");
+    const heads = within(answers).getAllByRole("heading", { level: 3 });
+    expect(heads.map((h) => h.textContent)).toEqual(["failed logins", "only from 203.0.113.9"]);
 
     await userEvent.click(screen.getByRole("button", { name: "New question" }));
-    expect(screen.queryByRole("region", { name: "Model explanation" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Answers")).toBeNull();
     await askQuestion("anything");
     const third = (posts(spy, "/api/ask") as { history: unknown[] }[])[2];
     expect(third?.history).toEqual([]);
   });
 
-  it("explains a classification block", async () => {
+  it("says where a question goes when the model is in the cloud, and explains a block", async () => {
     await renderAt("/ask");
     await screen.findByRole("option", { name: /Cloud · gpt-x/ });
+    expect(screen.queryByRole("note")).toBeNull();
     await userEvent.selectOptions(screen.getByLabelText("Model"), "p2");
-    expect(screen.getByText("Cloud: local-only sources are blocked")).toBeInTheDocument();
+    expect(screen.getByRole("note")).toHaveTextContent("Your question is sent to Cloud.");
     await askQuestion("failed logins");
     expect(await screen.findByRole("alert")).toHaveTextContent(
       /local-only sources: linux_sshd\. Choose a local provider/,
@@ -112,7 +119,7 @@ describe("Ask", () => {
   it("saves with the question as origin", async () => {
     const spy = await renderAt("/ask");
     await askQuestion("failed logins");
-    await screen.findByText(/turn 1/);
+    await screen.findByRole("table", { name: "Results" });
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     const form = screen.getByRole("form", { name: "Save search" });
     await userEvent.type(within(form).getByLabelText("Name"), "Failed by IP");
@@ -135,7 +142,21 @@ describe("Ask", () => {
     await askQuestion("while the model is busy");
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("The model was busy");
-    await userEvent.click(within(alert).getByRole("button", { name: "Retry" }));
-    expect(await screen.findByLabelText("Generated SQL")).toBeInTheDocument();
+    await userEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("table", { name: "Results" })).toBeInTheDocument();
+  });
+
+  it("opens beside any page from the command palette, with the typed question", async () => {
+    const spy = await renderAt("/dashboard");
+    await userEvent.keyboard("{Control>}k{/Control}");
+    await userEvent.type(await screen.findByRole("combobox"), "failed logins today");
+    await userEvent.click(await screen.findByRole("option", { name: /Ask "failed logins today"/ }));
+    const over = await screen.findByRole("dialog", { name: "Ask" });
+    expect(within(over).getByLabelText("Question")).toHaveValue("failed logins today");
+    await userEvent.click(within(over).getByRole("button", { name: "Ask" }));
+    expect(await within(over).findByRole("table", { name: "Results" })).toBeVisible();
+    expect(posts(spy, "/api/ask")).toHaveLength(1);
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Ask" })).toBeNull();
   });
 });

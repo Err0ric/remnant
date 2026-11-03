@@ -82,6 +82,7 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | `POST` | `/api/ask` | Ask |  | `question`: string<br>`provider_id`?: string<br>`start`?: date-time<br>`end`?: date-time<br>`sources`?: list of string<br>`history`?: list of Turn |
 | `GET` | `/api/ask/providers` | Enabled providers an analyst can choose, local first. No URLs or key state. |  |  |
 | `GET` | `/api/ask/providers/{provider_id}/queue` | Provider Queue |  |  |
+| `POST` | `/api/ask/{ask_id}/run` | Run the SQL an answer produced, as the person who asked, on their current view. Audited as query.run with purpose `ask`, the answer's id, its model call ids, and its origin (`generated`, or a library query id once slice 1b lands). |  |  |
 
 ### Audit
 

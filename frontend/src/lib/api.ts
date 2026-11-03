@@ -1547,6 +1547,10 @@ export interface AskRequest {
 }
 
 export interface AskResponse {
+  /** Runs this answer's SQL on the server (POST /api/ask/{ask_id}/run); absent on older servers. */
+  ask_id?: string;
+  /** Run without a click: the install allows it and the SQL passed the self-check. */
+  auto_run?: boolean;
   sql: string;
   explanation: string;
   assumptions: string[];
@@ -2229,6 +2233,8 @@ export const api = {
   askProviders: () => request<AskProvider[]>("/api/ask/providers"),
   ask: (body: AskRequest, signal?: AbortSignal) =>
     request<AskResponse>("/api/ask", { ...post(body), signal }),
+  runAnswer: (askId: string, signal?: AbortSignal) =>
+    request<QueryResult>(`/api/ask/${encodeURIComponent(askId)}/run`, { ...post({}), signal }),
   columns: () => request<ColumnInfo[]>("/api/schema/columns"),
   authState: () => request<AuthState>("/api/auth/state"),
   setup: (body: { token: string; username: string; password: string }) =>

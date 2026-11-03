@@ -59,6 +59,8 @@ class CaseResult:
     check: str | None = None
     attempts: int = 0
     seconds: float = 0.0
+    # Question to rows on screen with auto-run (ADR-0042 slice 1a): Ask plus running its SQL.
+    first_rows_seconds: float | None = None
     sql: str | None = None
     error: str | None = None
     call_ids: list[str] = field(default_factory=list)
@@ -117,6 +119,7 @@ def run_case(
     except AppError as exc:
         out.error = f"{type(exc).__name__}: {str(exc)[:200]}"
         return out
+    out.first_rows_seconds = round(time.perf_counter() - started, 2)
     out.executable = True
     out.exact = matches(
         reference.rows, len(reference.columns), got.rows, len(got.columns), case.compare
@@ -127,6 +130,7 @@ def run_case(
 def summarise(results: list[CaseResult], label: str) -> dict[str, Any]:
     n = len(results)
     seconds = [r.seconds for r in results if r.sql is not None]
+    first = [r.first_rows_seconds for r in results if r.first_rows_seconds is not None]
     return {
         "label": label,
         "questions": n,
@@ -135,6 +139,11 @@ def summarise(results: list[CaseResult], label: str) -> dict[str, Any]:
         "median_seconds": round(statistics.median(seconds), 2) if seconds else None,
         "p90_seconds": round(sorted(seconds)[int(0.9 * (len(seconds) - 1))], 2)
         if seconds
+        else None,
+        # Auto-run: from the question to rows on screen (ADR-0042 slice 1a).
+        "median_first_rows_seconds": round(statistics.median(first), 2) if first else None,
+        "p90_first_rows_seconds": round(sorted(first)[int(0.9 * (len(first) - 1))], 2)
+        if first
         else None,
     }
 

@@ -301,6 +301,12 @@ class M365Config(_Strict):
         return value
 
 
+class AskConfig(_Strict):
+    # Ask runs its query at once when it passes the guard (ADR-0042, D167); false restores
+    # click-to-run. Guard, read-only engine, and the caller's sources apply either way.
+    auto_run: bool = True
+
+
 class AgentsConfig(_Strict):
     # A Claude Code session with no stop record and no record for this long shows as
     # "Ended (no end event)" (owner 2026-11-02): a closed window or a crash sends no stop.
@@ -330,6 +336,7 @@ class AppConfig(_Strict):
     enrichment: EnrichmentConfig = Field(default_factory=EnrichmentConfig)
     m365: M365Config = Field(default_factory=M365Config)
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
+    ask: AskConfig = Field(default_factory=AskConfig)
 
 
 def _env_overrides(environ: Mapping[str, str]) -> dict[str, Any]:

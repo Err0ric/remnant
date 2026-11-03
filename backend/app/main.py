@@ -165,6 +165,7 @@ from app.meta.db import MetaDB
 from app.meta.secrets import SecretBox
 from app.ops.integrity import IntegrityService
 from app.search import m365 as m365_facts
+from app.search.ask_runs import AskRuns
 from app.search.dashboard import unplaced
 from app.search.dashboards import DashboardStore
 from app.search.handoff import HandoffService
@@ -542,6 +543,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     )
     app.state.explainer = Explainer(app.state.gate, app.state.engine)
     app.state.ask = AskAgent(app.state.gate, app.state.engine, base_vocabulary())
+    app.state.ask_runs = AskRuns()
     load_prompt(config.llm.ask_prompt)  # a missing prompt file stops start-up, not an Ask
     app.state.ask.prompt = config.llm.ask_prompt
     app.state.sources = SourceStore(

@@ -19,7 +19,7 @@ If this file and `docs/SPEC.md` disagree on a product decision, the spec wins an
 1. **Deterministic core.** Ingest, parse, query, and Sigma must work with zero LLM providers configured. Any feature that requires an LLM lives behind `llm/` and degrades to a manual path.
 2. **One gate.** Every provider call goes through `llm/gate.py`. No module may import a provider adapter directly except `llm/gate.py` and tests. CI greps for this.
 3. **LLM has two tools in Ask mode** (`get_schema`, `preview_query`) and **zero tools** in explain and parser-draft purposes. Do not add tools without a spec change.
-4. **Nothing the LLM returns is executed automatically.** SQL is displayed, then run on click. Parser drafts live in `drafts/` until approved. Free-text output is never parsed for commands.
+4. **Nothing the LLM returns is executed automatically, except an Ask query** that passes the guard and runs read-only on the caller's view (ADR-0042, setting `ask.auto_run`). SQL is displayed; parser drafts live in `drafts/` until approved; anything with side effects needs approval; free-text output is never parsed for commands.
 5. **Raw line is sacred.** `raw` column is stored exactly as decoded, never trimmed, never modified by transforms.
 6. **Classification is server-side.** `classification` is copied from the source at ingest. There is no API to change it on events.
 7. **Read-only query engine.** User and LLM SQL runs on a `read_only=True` DuckDB connection with `enable_external_access=false`, through the `sqlglot` allowlist in `engine/guard.py`. Never bypass the guard, including in "internal" endpoints.
@@ -154,7 +154,7 @@ Runtime data lives outside the repo at `./data/` (gitignored) or the compose vol
 | Citation check | Unit | Valid ids pass, one bad id fails, empty list fails for explain purpose |
 | API | Integration (httpx) | Auth enforcement on non-loopback, CSRF on POST, query endpoint respects LIMIT and timeout |
 | Ingest end to end | Integration | Write fixture to temp folder, start watcher, append lines, assert events appear in DuckDB with correct `raw` and partition |
-| Frontend | Vitest + Testing Library | Table renders raw/parsed toggle, Ask panel does not run SQL without click, command palette opens on Ctrl+K |
+| Frontend | Vitest + Testing Library | Table renders raw/parsed toggle, Ask runs an answer only by its id and, with `ask.auto_run` off, only on click; command palette opens on Ctrl+K |
 
 ### Fixtures
 

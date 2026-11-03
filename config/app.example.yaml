@@ -42,3 +42,8 @@ schedules:
 # agents:
 #   session_idle_minutes: 120
 #   queue_stuck_days: 3
+
+# Ask runs its query at once when it passes the guard, on the asker's own sources, and
+# shows the SQL under "How I got this" (ADR-0042). false: Ask waits for Run query.
+# ask:
+#   auto_run: true

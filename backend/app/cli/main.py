@@ -202,8 +202,15 @@ def ask(
     since: SinceOpt = "24h",
     fmt: FormatOpt = "table",
     server: ServerOpt = None,
+    yes: Annotated[
+        bool,
+        typer.Option(
+            "--yes", "-y", help="Run the SQL without asking, if it passed the server's self-check"
+        ),
+    ] = False,
 ) -> None:
-    """A model drafts SQL for your question. It is printed, and runs only if you say yes."""
+    """A model drafts SQL for your question. It is printed, and runs if you say yes (or with
+    --yes, when the server allows auto-run and the SQL passed its self-check)."""
     api = _api(server)
     start = _since(since)
     try:
@@ -243,11 +250,15 @@ def ask(
     check = {"ok": "returns rows", "empty": "matched no rows", "failed": "failed"}[answer["check"]]
     detail = f": {clean(answer['check_detail'])}" if answer.get("check_detail") else ""
     typer.secho(f"-- self-check {check}{detail}", err=True, dim=True)
-    # Never auto-runs (SPEC 5.6): the default is no, and there is no flag to skip asking.
-    if not typer.confirm("Run?", default=False, err=True):
+    # Asks first (SPEC 5.6); --yes runs it only when the server allows auto-run and the SQL
+    # passed its self-check (ADR-0042). Either way the server runs exactly that SQL.
+    if yes and not answer.get("auto_run"):
+        typer.secho("-- not run: the server did not allow auto-run for this answer", err=True)
+        return
+    if not yes and not typer.confirm("Run?", default=False, err=True):
         return
     try:
-        data = api.query(answer["sql"], start=start.isoformat() if start else None, sources=source)
+        data = api.run_answer(answer["ask_id"])
     except ApiError as exc:
         _fail(exc)
         return

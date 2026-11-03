@@ -110,6 +110,17 @@ def test_model_choice_by_name(lab: dict[str, Any]) -> None:
     assert res.exit_code == 1 and "no enabled AI provider named nope" in res.stderr
 
 
-def test_there_is_no_flag_to_skip_the_prompt(lab: dict[str, Any]) -> None:
-    for flag in ("--yes", "-y", "--run"):
-        assert invoke(lab, "q", flag).exit_code != 0
+def test_yes_runs_only_when_the_server_allows_auto_run(lab: dict[str, Any]) -> None:
+    """ADR-0042: --yes skips the prompt when the server allows auto-run; the server runs
+    exactly the answer's SQL, audited with purpose ask."""
+    reply(lab)
+    res = invoke(lab, "events per source", "--yes", "-o", "csv", answer="")
+    assert res.exit_code == 0, res.stderr
+    assert "Run? [y/N]" not in res.stderr and "fw_edge,1" in res.stdout
+    assert query_runs(lab) == 1
+    lab["app"].state.config.ask.auto_run = False
+    reply(lab)
+    res = invoke(lab, "events per source", "-y", answer="")
+    assert "not run: the server did not allow auto-run" in res.stderr
+    assert query_runs(lab) == 1
+    assert invoke(lab, "q", "--run").exit_code != 0  # no other flag

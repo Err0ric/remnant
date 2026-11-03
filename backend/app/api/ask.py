@@ -1,13 +1,16 @@
 """/api/ask: Ask mode (SPEC 5.3). Router only.
 
-Returns SQL for the analyst to review; never runs it for them. Scope comes from the
-caller's grants exactly as in /api/query. Auditors have no Ask (SPEC 3.6).
+Returns the SQL with an `ask_id`; `POST /api/ask/{ask_id}/run` runs exactly that SQL for
+the person who asked, through the guard on their own view, audited like any query with
+purpose `ask` (ADR-0042 slice 1a). With `ask.auto_run` on, the panel calls it at once.
+Scope comes from the caller's grants exactly as in /api/query. Auditors have no Ask
+(SPEC 3.6).
 """
 
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Request
@@ -16,6 +19,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.api.access import client_ip, require_role
 from app.api.cancel import watch_disconnect
+from app.api.query import QueryRequest, QueryResponse, _geo, _intel, _run_audited
 from app.auth.service import AuthService
 from app.auth.users import User
 from app.core.config import AppConfig
@@ -28,6 +32,7 @@ from app.llm.provider import Locality
 from app.llm.queue import QUEUES
 from app.llm.registry import ProviderRecord, ProviderStore
 from app.meta.db import MetaDB
+from app.search.ask_runs import AskRuns
 from app.search.saved import SavedSearchStore
 
 router = APIRouter(tags=["ask"])
@@ -59,6 +64,9 @@ class AskProvider(BaseModel):
 
 
 class AskResponse(BaseModel):
+    ask_id: str
+    # Run without a click: the install allows it and the SQL passed the self-check.
+    auto_run: bool
     sql: str
     explanation: str
     assumptions: list[str]
@@ -168,11 +176,19 @@ async def ask(body: AskRequest, request: Request, user: AskUser) -> AskResponse:
             auth.audit.write, "ask.request", "failure", user.user_id, client_ip(request), detail
         )
         raise
-    detail |= {"call_ids": outcome.call_ids, "check": outcome.check}
+    runs: AskRuns = request.app.state.ask_runs
+    kept = runs.keep(
+        user.user_id, outcome.answer.sql, body.start, body.end, body.sources,
+        outcome.call_ids, datetime.now(UTC), body.question,
+    )  # fmt: skip
+    config: AppConfig = request.app.state.config
+    detail |= {"call_ids": outcome.call_ids, "check": outcome.check, "ask_id": kept.ask_id}
     await run_in_threadpool(
         auth.audit.write, "ask.request", "success", user.user_id, client_ip(request), detail
     )
     return AskResponse(
+        ask_id=kept.ask_id,
+        auto_run=config.ask.auto_run and outcome.check != "failed",
         sql=outcome.answer.sql,
         explanation=outcome.answer.explanation,
         assumptions=outcome.answer.assumptions,
@@ -181,4 +197,41 @@ async def ask(body: AskRequest, request: Request, user: AskUser) -> AskResponse:
         attempts=outcome.attempts,
         provider=chosen,
         call_ids=outcome.call_ids,
+    )
+
+
+# Ask's own caps on a run (ADR-0042 row 1, C2): rows shown and the longest time range.
+ASK_ROWS = 1000
+ASK_MAX_DAYS = 90
+
+
+@router.post("/ask/{ask_id}/run")
+async def run_answer(ask_id: str, request: Request, user: AskUser) -> QueryResponse:
+    """Run the SQL an answer produced, as the person who asked, on their current view.
+    Audited as query.run with purpose `ask`, the answer's id, its model call ids, and its
+    origin (`generated`, or a library query id once slice 1b lands)."""
+    runs: AskRuns = request.app.state.ask_runs
+    run = runs.get(ask_id, user.user_id, datetime.now(UTC))
+    end = run.end or datetime.now(UTC)
+    start = run.start
+    if start is None or end - start > timedelta(days=ASK_MAX_DAYS):
+        start = end - timedelta(days=ASK_MAX_DAYS)
+    body = QueryRequest(sql=run.sql, start=start, end=end, sources=run.sources)
+    extra: dict[str, object] = {
+        "purpose": "ask",
+        "origin": run.origin,
+        "ask_id": run.ask_id,
+        "ask_call_ids": run.call_ids,
+    }
+    result = await _run_audited(body, request, user, "query.run", extra, max_rows=ASK_ROWS)
+    return QueryResponse(
+        columns=result.columns,
+        rows=result.rows,
+        row_count=len(result.rows),
+        truncated=result.truncated,
+        elapsed_ms=result.elapsed_ms,
+        executed_sql=result.executed_sql,
+        sources=result.sources,
+        geo=await run_in_threadpool(_geo, request, result.rows),
+        intel=await run_in_threadpool(_intel, request, result.rows),
     )

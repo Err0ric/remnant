@@ -277,6 +277,11 @@ class Api:
         data: dict[str, Any] = self._call("POST", "/api/ask", body)
         return data
 
+    def run_answer(self, ask_id: str) -> dict[str, Any]:
+        """Run the SQL an Ask answer produced, on the server, audited with purpose ask."""
+        data: dict[str, Any] = self._call("POST", f"/api/ask/{quote(ask_id)}/run", {})
+        return data
+
     def compile_search(self, text: str) -> dict[str, Any]:
         data: dict[str, Any] = self._call("POST", "/api/search/compile", {"text": text})
         return data

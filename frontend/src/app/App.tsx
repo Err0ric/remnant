@@ -20,7 +20,8 @@ import { OfflineBanner } from "@/components/shell/OfflineBanner";
 import { SettingsNav } from "@/components/shell/SettingsNav";
 import { applyTheme, type Theme } from "@/lib/theme";
 import { ApiError } from "@/lib/api";
-import { PageBoundary } from "@/components/ErrorBoundary";
+import { ErrorBoundary, PageBoundary } from "@/components/ErrorBoundary";
+import { AskSlideOver } from "@/features/ask/AskSlideOver";
 import { withChunkReload } from "@/lib/chunkReload";
 
 // Pages load on first visit, so the first screen does not carry every page (install
@@ -214,6 +215,11 @@ export function App({ initialTheme, queryClient }: AppProps) {
                   onToggleMenu={() => setMenu((open) => !open)}
                 />
                 <OfflineBanner />
+                {!user || user.role !== "auditor" ? (
+                  <ErrorBoundary label="Ask">
+                    <AskSlideOver isAdmin={!user || user.role === "admin"} />
+                  </ErrorBoundary>
+                ) : null}
                 {palette ? (
                   <CommandPalette
                     page={page}

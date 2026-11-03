@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { api, type LookupHit } from "@/lib/api";
 import { openEntity } from "@/lib/entity";
 import { setAskProvider, useAskProvider } from "@/lib/askProvider";
+import { openAsk } from "@/lib/askSlideOver";
 import { visibleNav, visibleSections } from "@/lib/nav";
 import { arrange, readRecent, rememberRecent, type PaletteItem } from "@/lib/palette";
 import { navigate, type PageId } from "@/lib/route";
@@ -130,10 +131,11 @@ export function CommandPalette({
       out.push({
         key: "nav:ask",
         section: "Navigate",
-        label: "Ask in plain English",
-        hint: "Search",
-        aliases: ["seance", "question", "ai"],
-        run: () => navigate("ask"),
+        label: "Ask",
+        hint: page === "search" || page === "ask" ? "Search" : "Opens beside this page",
+        aliases: ["seance", "question", "ai", "ask in plain english"],
+        // On Search, the Ask tab; anywhere else, the slide-over (ADR-0042 row 16).
+        run: () => (page === "search" || page === "ask" ? navigate("ask") : openAsk()),
       });
     }
     out.push({
@@ -223,6 +225,17 @@ export function CommandPalette({
           navigate("search");
         },
       });
+      if (canAsk && text.includes(" ")) {
+        // A sentence typed in the palette can be asked straight away (ADR-0042 row 16).
+        out.push({
+          key: "act:ask-text",
+          section: "Search",
+          label: `Ask "${text}"`,
+          hint: "Opens beside this page",
+          found: true,
+          run: () => openAsk(text),
+        });
+      }
     }
     return out;
   }, [

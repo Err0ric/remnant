@@ -2728,6 +2728,19 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         },
       });
     }
+    if (/\/api\/ask\/a\d+\/run$/.test(url) && method === "POST")
+      return json({
+        columns: ["src_endpoint_ip", "failures"],
+        rows: [
+          ["203.0.113.9", 12],
+          ["198.51.100.4", 3],
+        ],
+        row_count: 2,
+        truncated: false,
+        elapsed_ms: 41,
+        executed_sql: "SELECT ...",
+        sources: ["linux_sshd"],
+      });
     if (url.endsWith("/api/ask/providers"))
       return json([
         { provider_id: "p1", name: "Local Ollama", model: "llama3.1:8b", locality: "local" },
@@ -2760,6 +2773,9 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         );
       const n = body.history.length + 1;
       return json({
+        ask_id: `a${n}`,
+        // "click to run" in a question stands for an install with ask.auto_run off.
+        auto_run: !body.question.includes("click to run"),
         sql: `SELECT src_endpoint_ip, count(*) AS failures FROM events GROUP BY 1 -- turn ${n}`,
         explanation: "<b>Failed</b> logins grouped by source IP.",
         assumptions: ["Failed means status_id = 2"],
