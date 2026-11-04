@@ -73,7 +73,7 @@ export function SimplePanel({
             disabled={pending}
             className="h-9 rounded bg-accent px-4 text-sm font-semibold text-white hover:brightness-110 disabled:opacity-60"
           >
-            {pending ? "Searching…" : "Search"}
+            {pending ? "Running…" : "Run"}
           </button>
         </div>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-text-muted">

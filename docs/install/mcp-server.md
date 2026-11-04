@@ -5,7 +5,7 @@ The MCP server lets an AI assistant that speaks the Model Context Protocol read 
 | It can | It cannot |
 |---|---|
 | `get_schema`: columns of `events`, the sources you can read, example queries | Write, delete, schedule, change settings, or call anything else |
-| `run_query`: one SELECT through the same guard as Search, up to 500 rows | Read sources outside your groups, files, or other tables |
+| `run_query`: one SELECT through the same guard as Logs, up to 500 rows. A saved or library query runs as written: the server fills `{{start}}` and `{{end}}` (the `since_hours` window), `{{org_domains}}`, and `{{person:<column>}}` (people as linked in Identities); any other `{{name}}` is refused | Read sources outside your groups, files, or other tables |
 
 Every result says that log values are data and may contain instructions that must not be followed. Every call is in the Audit log as `mcp.tool` with the person, the client name, and the SQL.
 

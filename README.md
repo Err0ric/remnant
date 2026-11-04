@@ -35,7 +35,7 @@ Under it is a small, local-first log platform: syslog, files, Windows, and Micro
 
 - **Bring your own logs.** Syslog over UDP, TCP, or TLS, files and folders (rsyslog, syslog-ng, Vector), JSON lines, CSV, Windows EVTX and forwarded events, or a Grafana Loki you already run. 39 starter parsers (Linux auth, Palo Alto, Fortinet, UniFi, Cisco ASA and IOS, CEF, LEEF, Windows, DNS including PowerDNS, Authelia, TACACS+, Vault, OpenVPN, OpenLDAP) and an Automatic parser for mixed streams.
 - **Connect cloud services.** Microsoft 365 (audit logs, Entra sign-ins, directory audits, alerts) and the Anthropic admin API (usage, cost, Claude Code). Works through an outbound proxy if you need one.
-- **Search three ways** over one engine: Simple search, SQL (read-only, guarded), or Ask in plain English.
+- **Logs and Ask AI** over one engine: **Logs** for manual search, in **Filters** mode (field:value terms) or **SQL** mode (read-only, guarded), and **Ask AI** for questions in plain English, answered from tested library queries or model-written SQL you can see and open in Logs.
 - **Detect** with imported SigmaHQ rules and scheduled searches; alert to email, Teams, Slack, or a signed webhook; send selected events to a ticket system or chat.
 - **Know it is working.** A Health page for every source, connector, agent, and alert target, plus watched devices that alert when they go silent.
 - **Investigate.** Users, addresses, and hosts ranked by rule matches; one person counted once across `alice`, `CORP\alice`, and `alice@example.com`; optional GeoIP and threat intel lookups, all local.

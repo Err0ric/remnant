@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### MCP: saved and library queries run as written (2026-11-04)
+
+- `run_query` on the MCP server fills `{{start}}`, `{{end}}`, `{{org_domains}}`, and `{{person:...}}` the way Logs, saved searches, schedules, and Ask do, so "Who uses Claude Code" gives the same people there. Any other `{{name}}` is refused with a reason.
+### Logs: the Filters button says Run (2026-11-04)
+
+- The button that runs a search in Logs Filters mode now says **Run**, so "Search" names nothing on that page. The README describes Logs (Filters, SQL) and Ask AI.
+- What changes for existing installs: nothing to do.
+
 ### Logs and Ask AI: one name per thing (2026-11-04)
 
 - **Search** is now **Logs** in the left nav and the Investigate tabs, at `/investigate/logs`. Its modes are **Filters** (what the Search tab was) and **SQL**.

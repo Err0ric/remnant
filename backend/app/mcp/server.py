@@ -28,6 +28,8 @@ from app.engine.views import not_cloud_allowed, permitted_sources
 from app.mcp.settings import McpSettings
 from app.meta.audit import AuditLog
 from app.meta.db import MetaDB
+from app.search.identity import IdentityStore, identity_values
+from app.search.params import compile_sql, placeholders, uses_identities
 
 # Newest first. A client asking for one of these gets it back; anything else gets the first.
 PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
@@ -322,9 +324,32 @@ class McpServer:
                 },
                 is_error=False,
             )
+        # Library and saved SQL run here as everywhere else (owner, 2026-11-04; D208):
+        # {{start}} and {{end}} are the window, and {{person:...}} and {{org_domains}} read
+        # Identities as they are now. Any other {{name}} has no value here and is refused.
+        names = placeholders(sql)
+        unknown = sorted(names - {"start", "end", "org_domains"})
+        if unknown:
+            detail["error"] = "ParamInvalidError"
+            self._audit.write("mcp.tool", "failure", user.user_id, ip, detail)
+            return _content(
+                {"error": "run_query fills only {{start}}, {{end}}, {{org_domains}}, and"
+                 " {{person:<column>}}; write the value in for "
+                 + ", ".join("{{" + n + "}}" for n in unknown)},
+                is_error=True,
+            )  # fmt: skip
+        values: dict[str, Any] | None = None
+        run_sql = sql
+        if names or uses_identities(sql):
+            values = identity_values(sql, IdentityStore(self._meta))
+            if "start" in names:
+                values["start"] = scope.start or datetime(1970, 1, 1, tzinfo=UTC)
+            if "end" in names:
+                values["end"] = scope.end or self._clock()
+            run_sql = compile_sql(sql)
         try:
             result = self._engine.run(
-                sql, scope, None, row_cap=limit, timeout_s=QUERY_TIMEOUT_S, intel=False
+                run_sql, scope, values, row_cap=limit, timeout_s=QUERY_TIMEOUT_S, intel=False
             )
         except AppError as exc:
             detail["error"] = type(exc).__name__

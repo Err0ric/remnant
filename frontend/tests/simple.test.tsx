@@ -42,6 +42,9 @@ describe("Simple search", () => {
     expect(screen.getByRole("tab", { name: "Filters", selected: true })).toBeVisible();
     expect(screen.queryByRole("tab", { name: "Ask AI" })).toBeNull();
     await screen.findByText("Failed password for invalid user oracle");
+    // The submit button runs the filters (owner, 2026-11-04): "Run", not "Search".
+    expect(screen.getByRole("button", { name: "Run" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Search" })).toBeNull();
     await userEvent.type(screen.getByLabelText("Search text"), "oracle{Enter}");
     await vi.waitFor(() => expect(posts(spy, "/api/search/compile").at(-1)?.text).toBe("oracle"));
     await vi.waitFor(() =>
