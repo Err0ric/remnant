@@ -121,9 +121,18 @@ Runtime data lives outside the repo at `./data/` (gitignored) or the compose vol
 - Never commit `data/`, `.env`, or `*.key`
 - CI minutes are limited: docs-only PRs run no CI, superseded runs are cancelled, scale tests run only from the `scale` workflow, and `release-checks` runs by hand before a release and whenever an install guide's install or update commands change (not for wording)
 - Every PR description lists which Definition of Done items it satisfies
-- Two repositories: branches and PRs go to the private dev repository only. The public repository is written only by the publish step, after the leak scan and the name check pass, and only by pushing to its URL explicitly. In a working checkout, every remote that points at the public repository has its push URL set to `DISABLED` (`git remote set-url --push <name> DISABLED`), so a stray `git push` to it fails. The session environment can point `origin` back at the public repository with pushing enabled, so push branches to the dev repository by its own remote name (`dev`) or URL, never to `origin`, and check `git remote -v` at the start of a session
+- Two repositories, two remotes in every working checkout: `origin` is the private dev repository (fetch and push), and `public` is the public repository, publish-only, with its push URL set to `DISABLED` (`git remote set-url --push public DISABLED`) so a stray `git push public` fails. Branches and PRs go to `origin`, and `main` tracks `origin/main`. The public repository is written only by the publish step, after the leak scan and the name check pass, by pushing to its URL explicitly (`PUBLIC_URL` in `scripts/publish/publish.sh`), never through a remote.
+- At the start of every session, check `git remote -v`. The session environment can reset `origin` to the public repository with pushing enabled; if it has, re-apply the layout before any push:
+  ```
+  git remote set-url origin https://github.com/Err0ric/remnant-dev
+  git remote set-url --push origin https://github.com/Err0ric/remnant-dev
+  git remote add public https://github.com/Err0ric/remnant 2>/dev/null || git remote set-url public https://github.com/Err0ric/remnant
+  git remote set-url --push public DISABLED
+  git fetch origin && git branch --set-upstream-to=origin/main main
+  ```
+  The environment's unpushed-commits check compares branches against `origin`, so with this layout it sees merged and pushed work as pushed
 - Publishing: `scripts/publish/publish.sh` (with `scan.py` and `test.sh`) holds no names and is never published (`.gitattributes` export-ignore). Before any publish, fetch the denylist from the Project doc `claude/publish-denylist.md` into a temporary file outside the repository and pass it with `--denylist` or `REMNANT_DENYLIST`; the script stops with `NOT PUBLISHED` if it is missing, unreadable, or empty. Never commit the denylist to either repository
-- PRs are squash-merged on GitHub, so the commits on `main` are made and signed by GitHub (committer `noreply@github.com`). That is expected: never rewrite or force-push `main` to change their author or committer. Keep a remote for the repo PRs merge into fetched, so tools that look for unpushed commits see them as pushed
+- PRs are squash-merged on GitHub, so the commits on `main` are made and signed by GitHub (committer `noreply@github.com`). That is expected: never rewrite or force-push `main` to change their author or committer. Keep `origin` fetched, so tools that look for unpushed commits see them as pushed
 
 ## 5. Security rules
 
