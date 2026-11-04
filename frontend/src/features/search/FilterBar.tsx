@@ -26,7 +26,9 @@ const fmt = (iso: string) =>
 
 export function FilterBar({ range, custom, onRange, sources, onSources }: FilterBarProps) {
   const available = useQuery({
-    queryKey: ["sources"],
+    // Its own key: ["sources"] once also held api.sources (a list), and a Dashboard opened
+    // after Search read this result instead and failed on .map (owner, 2026-11-03; D194).
+    queryKey: ["search-source-filter"],
     queryFn: () => api.query({ sql: SOURCES_SQL }),
     staleTime: 60_000,
   });

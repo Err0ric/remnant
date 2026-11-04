@@ -13,10 +13,10 @@ from fastapi import APIRouter, Depends, Query, Request, Response, status
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from app.alerts.items import MAX_MUTE_DAYS, MAX_NOTE, REASONS, AlertItem, AlertItems, Mute
+from app.alerts.items import MAX_NOTE, REASONS, AlertItem, AlertItems, Mute, label
 from app.api.access import AdminUser, CurrentUser, client_ip, require_role
 from app.auth.users import User
-from app.core.errors import ForbiddenError, ParamInvalidError
+from app.core.errors import ConflictError, ForbiddenError, NotFoundError, ParamInvalidError
 from app.engine.views import permitted_sources
 
 router = APIRouter(tags=["alerts"])
@@ -29,6 +29,7 @@ class EventOut(BaseModel):
     user: str | None
     action: str
     reason: str | None
+    reason_label: str | None = None
     note: str | None
 
 
@@ -58,6 +59,13 @@ class ItemOut(BaseModel):
     devices: list[str] = []
     muted_until: str | None
     history: list[EventOut]
+    # The group (ADR-0043): one open item per entity, rule, and day, with its repeats.
+    entity: str | None = None
+    rule: str | None = None
+    day: str | None = None
+    last_seen: str | None = None
+    changes: list[str] = []
+    more_changes: int = 0
 
 
 class MuteOut(BaseModel):
@@ -78,16 +86,33 @@ class ListOut(BaseModel):
     reasons: dict[str, str]
 
 
+Reason = Literal["expected", "approved", "false_positive", "resolved"]
+
+
 class CloseIn(BaseModel):
-    reason: Literal["true_positive", "benign", "false_positive", "follow_up"]
+    reason: Reason
     note: str | None = Field(default=None, max_length=MAX_NOTE)
     # AI Watch items for a service or MCP server: closing may also decide its review
-    # status (owner, 2026-10-29). Admins only; None leaves it unreviewed.
+    # status (owner, 2026-10-29). Admins only; None leaves it unreviewed. Closing as
+    # Approved approves it (ADR-0043 row 17).
     review_status: Literal["approved", "not_approved"] | None = None
 
 
+class BulkCloseIn(BaseModel):
+    item_ids: list[Annotated[str, Field(min_length=1, max_length=64)]] = Field(
+        min_length=1, max_length=200
+    )
+    reason: Reason
+    note: str | None = Field(default=None, max_length=MAX_NOTE)
+
+
+class BulkOut(BaseModel):
+    closed: list[str]
+    skipped: dict[str, str]  # item id -> why it was not closed
+
+
 class MuteIn(BaseModel):
-    days: int = Field(ge=1, le=MAX_MUTE_DAYS)
+    days: Literal[7, 30]
 
 
 def _store(request: Request) -> AlertItems:
@@ -126,7 +151,7 @@ def _out(request: Request, i: AlertItem, mutes: list[Mute]) -> ItemOut:
         closed_at=i.closed_at,
         closed_by=_name(request, i.closed_by),
         close_reason=i.close_reason,
-        close_reason_label=REASONS.get(i.close_reason or ""),
+        close_reason_label=label(i.close_reason),
         note=i.note,
         resolved=i.resolved,
         schedule_id=i.schedule_id,
@@ -134,12 +159,19 @@ def _out(request: Request, i: AlertItem, mutes: list[Mute]) -> ItemOut:
         people=i.people,
         devices=i.devices,
         muted_until=until,
+        entity=i.entity,
+        rule=i.rule,
+        day=i.day,
+        last_seen=i.last_seen,
+        changes=i.changes,
+        more_changes=i.more,
         history=[
             EventOut(
                 at=h.at,
                 user=_name(request, h.user_id),
                 action=h.action,
                 reason=h.reason,
+                reason_label=label(h.reason),
                 note=h.note,
             )
             for h in i.history
@@ -186,7 +218,7 @@ def _list(
         open=sum(1 for i in opened if readable(i)),
         restricted=sum(1 for i in opened if not readable(i)),
         muted=len(mutes),
-        reasons={k: v for k, v in REASONS.items() if k != "muted"},
+        reasons=dict(REASONS),
     )
 
 
@@ -236,25 +268,69 @@ async def get_alert(item_id: str, request: Request, user: CurrentUser) -> ItemOu
     return await run_in_threadpool(_one, request, user, item_id)
 
 
+@router.post("/alerts/close")
+async def close_alerts(body: BulkCloseIn, request: Request, user: Decider) -> BulkOut:
+    """Close several alerts with one reason (ADR-0043 row 19). Each is closed and audited on
+    its own (alert.close with bulk true); one that cannot be closed is skipped and named."""
+    closed: list[str] = []
+    skipped: dict[str, str] = {}
+    for item_id in dict.fromkeys(body.item_ids):
+        try:
+            await _close_one(request, user, item_id, body.reason, body.note, None, bulk=True)
+            closed.append(item_id)
+        except (ForbiddenError, ParamInvalidError, NotFoundError, ConflictError) as exc:
+            skipped[item_id] = str(exc)
+    return BulkOut(closed=closed, skipped=skipped)
+
+
 @router.post("/alerts/{item_id}/close")
 async def close_alert(item_id: str, body: CloseIn, request: Request, user: Decider) -> ItemOut:
-    """Close with a reason; a note is required for False positive and Needs follow-up.
-    Audited as alert.close. With `review_status` (admins, AI Watch service and MCP server
-    items), the service or server is approved or not approved as on AI usage, audited
-    as ai.service_change or ai.mcp_change."""
-    item = await run_in_threadpool(_one, request, user, item_id)
-    target = _review_target(item) if body.review_status else None
-    if body.review_status:
-        if user.role != "admin":
-            raise ForbiddenError("Only an administrator sets the review status")
-        if target is None:
-            raise ParamInvalidError("This alert has no service or MCP server to review")
-    await run_in_threadpool(
-        _store(request).close, item_id, user, body.reason, body.note, client_ip(request)
-    )
-    if target is not None and body.review_status:
-        await run_in_threadpool(_set_review, request, user, target, body.review_status)
+    """Close with a reason: Expected, Approved, False positive (note required), or Resolved.
+    Audited as alert.close. Approved also marks what the alert is about as reviewed: the AI
+    service or MCP server (admins), or the agent, whose open alerts all close (ADR-0043 row
+    17), audited ai.review. With `review_status` (admins, service and MCP server items),
+    the service or server is approved or not approved as on AI usage."""
+    await _close_one(request, user, item_id, body.reason, body.note, body.review_status)
     return await run_in_threadpool(_one, request, user, item_id)
+
+
+async def _close_one(
+    request: Request,
+    user: User,
+    item_id: str,
+    reason: str,
+    note: str | None,
+    review_status: str | None,
+    bulk: bool = False,
+) -> None:
+    item = await run_in_threadpool(_one, request, user, item_id)
+    review = "approved" if reason == "approved" else review_status
+    target = _review_target(item) if review else None
+    if review and target is not None and user.role != "admin":
+        raise ForbiddenError("Only an administrator approves an AI service or MCP server")
+    if review_status and target is None:
+        raise ParamInvalidError("This alert has no service or MCP server to review")
+    await run_in_threadpool(
+        _store(request).close, item_id, user, reason, note, client_ip(request), bulk
+    )
+    if target is not None and review:
+        await run_in_threadpool(_set_review, request, user, target, review)
+    elif reason == "approved" and item.subject.startswith("agent:"):
+        await run_in_threadpool(_approve_agent, request, user, item)
+
+
+def _approve_agent(request: Request, user: User, item: ItemOut) -> None:
+    """Approved on an agent's alert marks the agent reviewed: its other open alerts (the
+    standing review item among them) close as Approved, audited, and ai.review records it."""
+    n = _store(request).close_subject(
+        "ai_watch", item.subject, user, "approved", f"Approved with alert {item.item_id}",
+        client_ip(request),
+    )  # fmt: skip
+    request.app.state.auth.audit.write(
+        "ai.review", "success", user.user_id, client_ip(request),
+        {"agent": item.subject.removeprefix("agent:"), "to": "approved",
+         "via": "alert.close", "closed": n},
+    )  # fmt: skip
 
 
 def _review_target(item: ItemOut) -> tuple[str, str] | None:
@@ -295,7 +371,7 @@ async def reopen_alert(item_id: str, request: Request, user: Decider) -> ItemOut
 
 @router.post("/alerts/{item_id}/mute")
 async def mute_alert(item_id: str, body: MuteIn, request: Request, user: AdminUser) -> ItemOut:
-    """Close new alerts like this one (same kind and subject) for 1 to 30 days; the mute
+    """Close new alerts like this one (same kind and subject) for 7 or 30 days; the mute
     expires on its own. Admins only; audited as alert.mute."""
     await run_in_threadpool(_one, request, user, item_id)
     await run_in_threadpool(_store(request).mute, item_id, body.days, user, client_ip(request))

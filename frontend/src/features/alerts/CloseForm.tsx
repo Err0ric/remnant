@@ -2,8 +2,8 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ApiError, api, type AlertItem, type CloseReason } from "@/lib/api";
 
-const NOTE_REQUIRED: CloseReason[] = ["false_positive", "follow_up"];
-const MUTE_DAYS = [0, 1, 7, 14, 30];
+const NOTE_REQUIRED: CloseReason[] = ["false_positive"];
+const MUTE_DAYS = [0, 7, 30] as const;
 
 interface CloseFormProps {
   item: AlertItem;
@@ -12,13 +12,14 @@ interface CloseFormProps {
   onDone: () => void;
 }
 
-/** Close with a reason (ADR-0037 rows 14 to 16). A note is required for False positive
- * and Needs follow-up. Admins may also mute alerts like this one for up to 30 days. */
+/** Close with a reason (ADR-0043 rows 16 to 18): Expected, Approved, False positive (note
+ * required), or Resolved. Approved also marks the agent, service, or MCP server reviewed.
+ * Admins may also mute alerts like this one for 7 or 30 days. */
 export function CloseForm({ item, reasons, isAdmin, onDone }: CloseFormProps) {
   const client = useQueryClient();
   const [reason, setReason] = useState<CloseReason | null>(null);
   const [note, setNote] = useState("");
-  const [days, setDays] = useState(0);
+  const [days, setDays] = useState<0 | 7 | 30>(0);
   // AI Watch service and MCP server alerts: closing can decide the review status too
   // (owner, 2026-10-29). Admins only, as on AI usage.
   const reviewable =
@@ -29,12 +30,18 @@ export function CloseForm({ item, reasons, isAdmin, onDone }: CloseFormProps) {
   const close = useMutation({
     mutationFn: async () => {
       if (!reason) return;
-      await api.closeAlert(item.item_id, reason, note.trim() || null, review);
-      if (days > 0) await api.muteAlert(item.item_id, days);
+      // Approved approves the service or MCP server itself (ADR-0043 row 17).
+      await api.closeAlert(
+        item.item_id,
+        reason,
+        note.trim() || null,
+        reason === "approved" ? null : review,
+      );
+      if (days !== 0) await api.muteAlert(item.item_id, days);
     },
     onSuccess: async () => {
       await client.invalidateQueries({ queryKey: ["alerts"] });
-      if (review) {
+      if (review || reason === "approved") {
         await client.invalidateQueries({ queryKey: ["ai-usage"] });
         await client.invalidateQueries({ queryKey: ["ai-watch"] });
       }
@@ -65,7 +72,7 @@ export function CloseForm({ item, reasons, isAdmin, onDone }: CloseFormProps) {
           </label>
         ))}
       </fieldset>
-      {reviewable && isAdmin ? (
+      {reviewable && isAdmin && reason !== "approved" ? (
         <fieldset className="grid gap-1">
           <legend className="mb-1 text-sm font-semibold">
             Review status of this {item.subject.startsWith("mcp:") ? "MCP server" : "service"}
@@ -110,8 +117,8 @@ export function CloseForm({ item, reasons, isAdmin, onDone }: CloseFormProps) {
           placeholder={
             reason === "false_positive"
               ? "What made it a false positive, so the rule can be tuned"
-              : reason === "follow_up"
-                ? "What still needs doing, and by whom"
+              : reason === "resolved"
+                ? "What was done"
                 : ""
           }
           className="rounded border border-border bg-surface px-2 py-1"
@@ -122,18 +129,18 @@ export function CloseForm({ item, reasons, isAdmin, onDone }: CloseFormProps) {
           <span>Mute alerts like this</span>
           <select
             value={days}
-            onChange={(e) => setDays(Number(e.target.value))}
+            onChange={(e) => setDays(Number(e.target.value) as 0 | 7 | 30)}
             className="h-7 rounded border border-border bg-surface px-1"
           >
             {MUTE_DAYS.map((d) => (
               <option key={d} value={d}>
-                {d === 0 ? "No" : `For ${d} ${d === 1 ? "day" : "days"}`}
+                {d === 0 ? "No" : `For ${d} days`}
               </option>
             ))}
           </select>
           {days > 0 ? (
             <span className="text-text-muted">
-              New ones close themselves as Muted and stay on the Closed list.
+              New ones like it close themselves as Muted and stay on the Closed list.
             </span>
           ) : null}
         </label>

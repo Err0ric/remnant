@@ -1,0 +1,38 @@
+# Ask routing synonyms (owner, 2026-11-03; D191): each question uses one form of a term and
+# names the library query routing must find. The ranker is checked in the test suite with
+# no model (tests/unit/test_ask_synonyms.py); `run.py --synonyms` checks the full route with
+# a model. Every form in ask_route.PHRASES appears at least once.
+schema_version: 1
+questions:
+  # sign-ins: logins, log-ins, sign-ins, signins, authentications; Microsoft 365 by name
+  - {id: s01, question: "How many failed logins to Microsoft today?", library: m365/m365_failed_signins_by_user}
+  - {id: s02, question: "Failed log-ins to M365 by user", library: m365/m365_failed_signins_by_user}
+  - {id: s03, question: "Which users had failed sign-ins in Office 365?", library: m365/m365_failed_signins_by_user}
+  - {id: s04, question: "failed signins o365 this week", library: m365/m365_failed_signins_by_user}
+  - {id: s05, question: "Failed authentications in Entra by user", library: m365/m365_failed_signins_by_user}
+  - {id: s06, question: "Who failed to log in to Azure AD?", library: m365/m365_failed_signins_by_user}
+  - {id: s07, question: "Failed Entra ID logons per person", library: m365/m365_failed_signins_by_user}
+  - {id: s08, question: "Microsoft 365 sign-ins by app", library: m365/m365_signins_by_app}
+  # firewall: palo alto, pan, pan-os
+  - {id: s09, question: "Denied traffic on the firewall by source", library: paloalto/pa_denied_by_source}
+  - {id: s10, question: "Palo Alto denied traffic by source address", library: paloalto/pa_denied_by_source}
+  - {id: s11, question: "Who logged in to the PAN admin page?", library: paloalto/pa_admin_signins}
+  - {id: s12, question: "PAN-OS admin log-ins", library: paloalto/pa_admin_signins}
+  # vpn: globalprotect, global protect
+  - {id: s13, question: "VPN logins by user", library: paloalto/gp_logins_by_user}
+  - {id: s14, question: "GlobalProtect sign-ins per user this week", library: paloalto/gp_logins_by_user}
+  - {id: s15, question: "Who connected to Global Protect today?", library: paloalto/gp_logins_by_user}
+  # AI agents (D196): claude code, claude, coding agent, ai agent, agents, cowork
+  - {id: s16, question: "Who uses Claude Code?", library: ai_agents/agents_claude_code_users}
+  - {id: s17, question: "Who is using Claude, and on which machines?", library: ai_agents/agents_claude_code_users}
+  - {id: s18, question: "Which coding agent tools does alice use?", library: ai_agents/agents_tools_by_person}
+  - {id: s19, question: "Shell commands run by the AI agent", library: ai_agents/agents_commands_by_person}
+  - {id: s20, question: "Cowork sessions for dana with duration", library: ai_agents/agents_sessions_for_person}
+  - {id: s21, question: "MCP servers the agents used, by machine", library: ai_agents/agents_mcp_by_person}
+  - {id: s22, question: "Which files did the agent write or edit?", library: ai_agents/agents_files_by_person}
+  - {id: s23, question: "Web domains fetched by Claude Code", library: ai_agents/agents_web_by_person}
+  - {id: s24, question: "Personal Claude accounts by machine", library: ai_agents/agents_accounts_by_machine}
+  - {id: s25, question: "Claude Code tool calls with no result", library: ai_agents/agents_calls_without_result}
+  # accessing, touching, opening: files, commands, and web domains
+  - {id: s26, question: "Which path is dana touching with Claude Code?", library: ai_agents/agents_files_by_person}
+  - {id: s27, question: "Which web sites did the coding agent open?", library: ai_agents/agents_web_by_person}

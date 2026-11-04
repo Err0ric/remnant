@@ -50,7 +50,7 @@ describe("The specific ones the owner named", () => {
     expect(COUNTED.externalFailures).toMatch(/not in your internal networks/);
     expect(COUNTED.attackingAddresses).toMatch(/at least one failed login/);
     expect(COUNTED.countries).toMatch(/GeoIP/);
-    expect(AI_WATCH_COUNTED.people).toMatch(/not approved or not reviewed/);
+    expect(AI_WATCH_COUNTED.people).toMatch(/not yet approved \(Not approved or Unreviewed/);
     expect(AI_WATCH_COUNTED.people).toMatch(/Devices no person maps to are counted apart/);
     expect(screen).toBeDefined();
   });

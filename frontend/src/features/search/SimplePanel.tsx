@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useState, type FormEvent } from "react";
 import type { CompiledSearch, SearchPreset } from "@/lib/api";
 
 interface SimplePanelProps {
@@ -11,8 +11,6 @@ interface SimplePanelProps {
   pending: boolean;
   /** Fields the search filters on that have no value anywhere in the time range. */
   emptyColumns?: string[];
-  /** The AI switch, shown at the start of the bar. */
-  toggle?: ReactNode;
   /** Suspicious presets (ADR-0016 row 3): picking one fills the bar and runs it. */
   presets?: SearchPreset[];
   onPreset?: (text: string) => void;
@@ -41,7 +39,6 @@ export function SimplePanel({
   onEditAsSql,
   pending,
   emptyColumns = [],
-  toggle,
   presets = [],
   onPreset,
   onMoveToSql,
@@ -56,7 +53,6 @@ export function SimplePanel({
       <form aria-label="Simple search" onSubmit={submit} className="flex flex-col gap-2">
         <div className="flex flex-wrap gap-2">
           <div className="flex min-w-0 flex-[1_1_240px] gap-2">
-            {toggle}
             <label htmlFor="simple-search" className="sr-only">
               Search text
             </label>

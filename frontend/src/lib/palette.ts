@@ -2,6 +2,7 @@
 
 export type PaletteSection =
   | "Recent"
+  | "Ask AI"
   | "Addresses"
   | "People"
   | "Hosts"
@@ -32,6 +33,7 @@ export interface PaletteItem {
 // events for" is last.
 export const SECTION_ORDER: PaletteSection[] = [
   "Recent",
+  "Ask AI",
   "Addresses",
   "People",
   "Hosts",
@@ -42,6 +44,28 @@ export const SECTION_ORDER: PaletteSection[] = [
   "Sources",
   "Search",
 ];
+// A question typed in the top bar is offered to Ask first (owner, 2026-11-03).
+const QUESTION_WORDS = new Set([
+  "how",
+  "what",
+  "who",
+  "when",
+  "why",
+  "which",
+  "show",
+  "list",
+  "did",
+]);
+
+/** Text that reads as a question: more than one word, and it ends with "?" or starts
+ * with a question word ("how", "show", "did", ...). */
+export function looksLikeQuestion(text: string): boolean {
+  const t = text.trim();
+  if (!/\s/.test(t)) return false;
+  const first = t.split(/\s+/)[0]?.toLowerCase() ?? "";
+  return t.endsWith("?") || QUESTION_WORDS.has(first);
+}
+
 const PER_SECTION_IDLE = 6; // with no query, long lists show their first few
 const RECENT_KEY = "palette-recent";
 const RECENT_MAX = 5;

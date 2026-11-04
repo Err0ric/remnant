@@ -173,3 +173,11 @@ def counts_sql() -> str:
         "       count(*) FILTER (WHERE class = 'organizing' AND time >= $start)\n"
         "FROM classed"
     )
+
+
+def risky_by_person_sql() -> str:
+    """Risky rules per person in the query's range (People and devices ranking, D195)."""
+    return (
+        f"WITH {RULES_CTE.strip()}\n"  # fixed SQL text
+        "SELECT person, count(*) FROM classed WHERE risky AND person IS NOT NULL GROUP BY 1"
+    )

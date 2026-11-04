@@ -27,7 +27,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import structlog
 
-from app.core import timing
+from app.core import lake_files, timing
 from app.core.errors import (
     QueryBusyError,
     QueryFailedError,
@@ -148,11 +148,15 @@ def spill_dir(data_dir: Path) -> Path:
 
 
 # Profiling that reports a query's peak memory and disk overflow (DuckDB 1.1 and later).
-_PEAKS = '{"SYSTEM_PEAK_BUFFER_MEMORY": "true", "SYSTEM_PEAK_TEMP_DIR_SIZE": "true"}'
+_PEAKS = (
+    '{"SYSTEM_PEAK_BUFFER_MEMORY": "true", "SYSTEM_PEAK_TEMP_DIR_SIZE": "true",'
+    ' "CUMULATIVE_ROWS_SCANNED": "true"}'
+)
 # With query tracing on: also per-operator time, rows, and details (files read, filters).
 _TRACE = (
     '{"SYSTEM_PEAK_BUFFER_MEMORY": "true", "SYSTEM_PEAK_TEMP_DIR_SIZE": "true",'
-    ' "OPERATOR_TIMING": "true", "OPERATOR_CARDINALITY": "true", "OPERATOR_ROWS_SCANNED": "true",'
+    ' "CUMULATIVE_ROWS_SCANNED": "true", "OPERATOR_TIMING": "true",'
+    ' "OPERATOR_CARDINALITY": "true", "OPERATOR_ROWS_SCANNED": "true",'
     ' "EXTRA_INFO": "true"}'
 )
 _TRACE_INFO = ("Function", "Table", "Filters", "Total Files Read", "Aggregates", "Join Type")
@@ -219,6 +223,7 @@ class QueryResult:
     elapsed_ms: int
     executed_sql: str
     sources: list[str] = field(default_factory=list)
+    rows_read: int | None = None  # rows DuckDB scanned, for the rollup log lines (D193)
 
 
 class QueryEngine:
@@ -337,7 +342,11 @@ class QueryEngine:
             scope = replace(scope, sources=sorted(keep))
         templates = pinned_templates(guarded.sql, params)
         if templates is not None:  # and only sources whose files can hold those templates
-            scope = replace(scope, sources=self._holding(scope, templates, skip_days))
+            try:
+                held = self._holding(scope, templates, skip_days)
+            except FileNotFoundError:  # a file went while its footer was read: once more
+                held = self._holding(scope, templates, skip_days)
+            scope = replace(scope, sources=held)
         started = time.monotonic()
         with self._background_slot(limit_s) if background else self._slot(limit_s):
             grant = self._grant(background, large, limit_s - (time.monotonic() - started))
@@ -350,13 +359,26 @@ class QueryEngine:
                             frozenset(skip_days), name, after, upto, background, grant,
                             waited, page and not large,
                         )  # fmt: skip
-                    except QueryFailedError as exc:
+                    except (QueryFailedError, FileNotFoundError, duckdb.IOException) as exc:
                         # A file listed when the views were made was swapped out before
-                        # it was read (compaction, a rollup build): its replacement is
-                        # already in place, so the views are made again, once (owner,
-                        # 2026-11-03: a page failed 0.3 s after the today build).
-                        if attempt == 2 or not _vanished(exc):
-                            raise
+                        # it was read (a rollup build; a retired lake file past its grace
+                        # period, D183): its replacement is already in place, so the views
+                        # are made again, once (owner, 2026-11-03: a page failed 0.3 s
+                        # after the today build). Lake reads, rollups, pages, and
+                        # background checks all come through here.
+                        # The views themselves can fail to bind when a listed file is gone
+                        # (DuckDB's own IOException, before any query error is mapped).
+                        gone = isinstance(exc, FileNotFoundError) or _vanished(exc)
+                        if attempt == 2 or not gone:
+                            if isinstance(exc, QueryFailedError):
+                                raise
+                            if not gone:
+                                raise QueryFailedError(str(exc)) from exc
+                            failed = QueryFailedError(
+                                "A file the query needed is gone; run it again"
+                            )
+                            failed.engine_error = type(exc).__name__
+                            raise failed from exc
                         log.info("query.retry_vanished_file", query=name)
                 raise AssertionError("unreachable")  # pragma: no cover
             finally:
@@ -464,6 +486,7 @@ class QueryEngine:
             raise failed from exc
         finally:
             timer.cancel()
+            rows_read = _rows_read(con)
             if not background:
                 self._report(con, name, kind, limit_mb, spill_mb, grant)
                 if self.trace:
@@ -492,6 +515,7 @@ class QueryEngine:
             elapsed_ms=int((time.perf_counter() - started) * 1000),
             executed_sql=shown_sql,
             sources=[d.name.removeprefix("source=") for d in self._source_dirs(scope)],
+            rows_read=rows_read,
         )
 
     def _report(
@@ -664,7 +688,7 @@ class QueryEngine:
         out: dict[str, datetime] = {}
         for source, day in self.first_days(scope).items():
             folder = self._lake / f"source={source}" / f"day={day}"
-            lows = [self._time_min(f) for f in sorted(folder.glob(DAY_FILES))]
+            lows = [self._time_min(f) for f in lake_files.visible(folder)]
             if lows and all(t is not None for t in lows):
                 first = min(t for t in lows if t is not None)
             else:
@@ -776,24 +800,21 @@ class QueryEngine:
         return [d for d in dirs if any(d.glob(ROLLUP_FILES))]
 
     def _lake_globs(self, dirs: list[Path], scope: QueryScope, skip: frozenset[str]) -> list[str]:
-        """File patterns for `events`. With a time range, only the day folders it touches
+        """Files for `events`, listed by name: only the day folders the time range touches
         (the writer files events by their UTC day), so a 7-day query never opens the other
-        days' files; `skip` leaves out days the caller reads from the AI rollup (F63)."""
-        if scope.start is None and scope.end is None and not skip:
-            return [str(d / LAKE_FILES) for d in dirs]
+        days' files; `skip` leaves out days the caller reads from the AI rollup (F63).
+        Each folder's files are those a new read may use (`lake_files.visible`): files
+        compaction retired stay on disk for reads already running but are not listed
+        again (D183)."""
         first = scope.start.astimezone(UTC).date().isoformat() if scope.start else ""
         last = scope.end.astimezone(UTC).date().isoformat() if scope.end else "9999-12-31"
-        out = []
+        out: list[str] = []
         for d in dirs:
             source = d.name.removeprefix("source=")
             for day_dir in d.glob("day=*"):
                 day = day_dir.name.removeprefix("day=")
-                if (
-                    first <= day <= last
-                    and f"{source}|{day}" not in skip
-                    and any(day_dir.glob(DAY_FILES))
-                ):
-                    out.append(str(day_dir / DAY_FILES))
+                if first <= day <= last and f"{source}|{day}" not in skip:
+                    out.extend(str(f) for f in lake_files.visible(day_dir))
         return sorted(out)
 
     def _missing_columns(self, patterns: list[str]) -> list[str]:
@@ -1076,10 +1097,21 @@ class QueryEngine:
         return readable
 
 
-def _vanished(exc: QueryFailedError) -> bool:
+def _rows_read(con: duckdb.DuckDBPyConnection) -> int | None:
+    """Rows the last query scanned, from its profile; None when it has none."""
+    try:
+        info = json.loads(con.get_profiling_information(format="json"))
+        v = info.get("cumulative_rows_scanned")
+        return int(v) if v is not None else None
+    except (duckdb.Error, ValueError, TypeError):
+        return None
+
+
+def _vanished(exc: BaseException) -> bool:
     """A file the query was planned with is gone: DuckDB's IO error for a missing file."""
     text = str(exc)
-    return exc.engine_error == "IOException" and (
+    kind = exc.engine_error if isinstance(exc, QueryFailedError) else type(exc).__name__
+    return kind == "IOException" and (
         "No files found" in text or "No such file" in text or "Cannot open file" in text
     )
 

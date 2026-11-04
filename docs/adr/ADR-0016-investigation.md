@@ -35,3 +35,9 @@ Search has three tabs (Simple, Ask in plain English, SQL). Analysts coming from 
 ## Revision 2026-10-15
 
 After owner review, row 5 is drawn closer to the data-access lane layout the owner preferred: each lane holds titled group boxes (cards carry a `group`), links are right-angled and share a trunk between lanes, the canvas is dotted, cards off the selected path fade, and the selected card opens in a side panel. Investigations opens on an Investigate picker and a Most active table; picking an entity gives the graph the full width. See SPEC D48.
+
+## Revision 2026-11-03
+
+Row 1's AI toggle is replaced by labeled tabs, **Search**, **Ask AI**, and **SQL**, and Ask has its own row in the rail under Investigate (owner, SPEC D180). Ask still shows its SQL and runs only what the guard allows (ADR-0042).
+
+Row 4 is widened at the owner's request (SPEC D195): People and devices lists every user, source IP, and host seen in the range, not only those with rule matches, and the score adds failed sign-ins and attack hits from outside (1 each, up to 25 each), risky inbox rules (5 each), app consents (3 each), AI watch flags (3 each: personal Claude account, unreviewed AI service, new MCP server, blocked or failed tool calls), and alerts about the entity (5 each), each in its own column with the parts on hover. Ties go to the busier entity. The new weights are proposed, pending the owner's review. Still computed per request on the caller's view.

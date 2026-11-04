@@ -64,3 +64,7 @@ ADR-0037 row 6 lists new admin or role grants and app consents in the New column
 
 - **Microsoft 365 rollup** (ADR-0038 section 5, "Speed"): deferred by the owner (D129). Revisit only if the 30-day Overview on the owner's install is above about 3 s; a design would need an ADR (the one-operation key spans sources, access is per source).
 - **Accounts corroboration** (ADR-0030 T3): raise Company, reported and Company, not confirmed when the Anthropic usage or compliance connector names the same email in the window.
+
+## Today so far: build only the new files (owner, 2026-11-03)
+
+- **Incremental today build** (D136, D178): today the build reads every source's whole day so far every 5 minutes, except a source whose files are unchanged since the last build and hold nothing observed after its cutoff (D178, shipped). The next step would add only what changed: rows from new files, and rows observed between the two cutoffs, merged into the last build's groups (sums and counts add; first and last seen take the min and max; people found through DHCP and sign-ins need the identity rows rebuilt or merged the same way). Deferred by the owner: accuracy over speed. It needs a test that a merged build equals a full one on the same lake, including compaction replacing files mid-day (then the source builds in full), late rows stamped before the last cutoff, and a catalog change.

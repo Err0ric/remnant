@@ -94,7 +94,7 @@ describe("AI Watch drill-through (ADR-0039)", () => {
     await userEvent.click(within(watch).getByTitle("Open 2 services in Search"));
     await waitFor(() => expect(window.location.pathname).toBe("/investigate/search"));
     expect(
-      await screen.findByText(/^From Dashboard > AI Watch > Unapproved AI services, Oct 4/),
+      await screen.findByText(/^From Dashboard > AI Watch > AI services not yet approved, Oct 4/),
     ).toBeVisible();
     window.history.back();
     const again = await screen.findByRole("region", { name: "AI Watch" });

@@ -18,6 +18,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 from app.ai.consents import CONSENTS_CTE
+from app.ai.internal_tools import counted
 from app.ai.sessions import _a
 from app.ai.usage import _use_ctes, fact_range
 from app.core.errors import ParamInvalidError
@@ -200,8 +201,10 @@ def timeline(
         ),
         "sessions": (
             f"SELECT {_a('session_id')}, min({_TS}), max({_TS}), any_value(device_hostname),"  # noqa: S608  # escaped literals only
-            " count(*) FILTER (WHERE message = 'claude_hooks.pre_tool_use'),"
-            " count(*) FILTER (WHERE message = 'claude_hooks.post_tool_use_failure')"
+            " count(*) FILTER (WHERE message = 'claude_hooks.pre_tool_use'"
+            f" AND {counted(_a('tool_name'))}),"
+            " count(*) FILTER (WHERE message = 'claude_hooks.post_tool_use_failure'"
+            f" AND {counted(_a('tool_name'))})"
             f" FROM events WHERE template_id = 'claude_hooks' AND {mine}"
             f" AND {_a('session_id')} IS NOT NULL GROUP BY 1 ORDER BY 2 DESC LIMIT 200",
             "sessions",

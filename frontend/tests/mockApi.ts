@@ -311,8 +311,8 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       state: "closed",
       closed_at: "2026-10-22T07:30:00+00:00",
       closed_by: "ana",
-      close_reason: "benign",
-      close_reason_label: "Benign or expected",
+      close_reason: "expected",
+      close_reason_label: "Expected",
       note: "Firewall reboot",
       resolved: "Events arriving again after 25 min",
       schedule_id: null,
@@ -733,21 +733,22 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         cards: [
           {
             key: "services",
-            label: "Unapproved AI services",
+            label: "AI services not yet approved",
             value: 2,
             previous: 1,
-            context: "DeepSeek most used",
+            context: "1 not approved, 1 unreviewed",
             needs: null,
             restricted: false,
             unreviewed: 1,
+            not_approved: 1,
             drill: AI_DRILL,
           },
           {
             key: "people",
-            label: "People using unapproved AI",
+            label: "People using AI not yet approved",
             value: 3,
             previous: 3,
-            context: "3 on DeepSeek",
+            context: "1 on not approved, 3 on unreviewed",
             needs: null,
             restricted: false,
             devices: 2,
@@ -837,14 +838,22 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         restricted: 1,
         muted: alertMutes.length,
         reasons: {
-          true_positive: "True positive",
-          benign: "Benign or expected",
-          false_positive: "False positive (tune the rule)",
-          follow_up: "Needs follow-up",
+          expected: "Expected",
+          approved: "Approved",
+          false_positive: "False positive",
+          resolved: "Resolved",
         },
       });
     }
     if (url.endsWith("/api/alerts/mutes") && method === "GET") return json(alertMutes);
+    if (url.endsWith("/api/alerts/close") && method === "POST") {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { item_ids: string[]; reason: string };
+      for (const id of body.item_ids) {
+        const item = alertItems.find((i) => i.item_id === id);
+        if (item) Object.assign(item, { state: "closed", close_reason: body.reason });
+      }
+      return json({ closed: body.item_ids, skipped: {} });
+    }
     const closeMatch = /\/api\/alerts\/([^/?]+)\/close$/.exec(url);
     if (closeMatch && method === "POST") {
       const body = JSON.parse(String(init?.body ?? "{}")) as { reason: string; note: string };
@@ -853,7 +862,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       Object.assign(item, {
         state: "closed",
         close_reason: body.reason,
-        close_reason_label: "False positive (tune the rule)",
+        close_reason_label: "False positive",
         closed_by: "admin",
         note: body.note,
       });
@@ -918,6 +927,35 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         ],
         alias_suggestions: [{ alias: "carol", person: "carol@example.com", hosts: ["ws-0311"] }],
       });
+    if (/\/api\/people\/[^/]+\/hosts\?/.test(url))
+      return json({
+        person: "alice",
+        start: "2026-10-22T00:00:00+00:00",
+        end: "2026-10-29T00:00:00+00:00",
+        hosts: [
+          {
+            kind: "host",
+            value: "ws-0042",
+            events: 40,
+            failed: 0,
+            first_seen: null,
+            last_seen: "2026-10-28T18:00:00+00:00",
+            sources: ["m365"],
+          },
+        ],
+        addresses: [
+          {
+            kind: "ip",
+            value: "203.0.113.10",
+            events: 12,
+            failed: 3,
+            first_seen: null,
+            last_seen: "2026-10-28T18:00:00+00:00",
+            sources: ["m365"],
+          },
+        ],
+        sources: ["m365"],
+      });
     if (url.includes("/api/entities/risk")) {
       const r = (kind: string, value: string, high: number, rules: string[]) => ({
         kind,
@@ -935,10 +973,32 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       return json({
         users: [
           r("user", "root", 4, ["SSH failed password"]),
+          {
+            ...r("user", "erin@example.com", 0, []),
+            score: 14,
+            events: 120,
+            failed_signins: 3,
+            mail_rules: 1,
+            consents: 0,
+            ai_flags: ["personal_account", "new_mcp"],
+            alerts: 0,
+            parts: { failed_signins: 3, mail_rules: 5, ai_flags: 6 },
+          },
           r("user", "deploy", 1, ["SSH failed password"]),
+          // Seen with nothing against it: still listed (D195).
+          { ...r("user", "jordan", 0, []), events: 40, parts: {} },
         ],
         ips: [r("ip", "203.0.113.9", 4, ["SSH failed password"])],
-        hosts: [],
+        hosts: [
+          {
+            ...r("host", "bastion", 0, []),
+            score: 50,
+            attacks: 30,
+            failed_signins: 30,
+            parts: { failed_signins: 25, attacks: 25 },
+            events: 31,
+          },
+        ],
         matches_considered: 5,
         sources: ["linux_sshd"],
       });
@@ -957,6 +1017,29 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
           hosts: ["docs.example.com"],
           stopped: true,
           state: "ended",
+          top_tools: ["Read", "github"],
+          files: 1,
+          unanswered: 2,
+          new_mcp: ["github"],
+          account: "dana@example.com",
+        },
+        {
+          session_id: "s-79",
+          person: "alice@example.com",
+          machine: "ws-0311",
+          started: "2026-10-22T07:00:00+00:00",
+          last: "2026-10-22T08:05:00+00:00",
+          prompts: 3,
+          tool_calls: 9,
+          tools: ["Bash", "Edit", "Read"],
+          hosts: [],
+          stopped: true,
+          state: "ended",
+          top_tools: ["Bash", "Edit", "Read"],
+          files: 4,
+          unanswered: 0,
+          new_mcp: [],
+          account: null,
         },
         {
           session_id: "s-78",
@@ -1072,9 +1155,13 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         {
           kind: "Claude Code",
           agent: "cc|ws-0042|alice@example.com",
-          label: "Claude Code on ws-0042",
+          label: "Claude Code, alice@example.com: ws-0042, ws-0043",
           owners: ["alice@example.com"],
           machine: "ws-0042",
+          machines: [
+            { name: "ws-0042", last_seen: "2026-10-10T11:30:00+00:00", events_24h: 40 },
+            { name: "ws-0043", last_seen: "2026-10-08T09:00:00+00:00", events_24h: 2 },
+          ],
           first_seen: "2026-09-20T10:00:00+00:00",
           last_seen: "2026-10-10T11:30:00+00:00",
           events_24h: 42,
@@ -1370,6 +1457,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         pack_sql: sql,
         suggested_schedule: "daily",
         flag: null,
+        ask: [] as string[],
         my_copy: null,
         ...extra,
       });
@@ -1387,8 +1475,10 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
                 "SSH logins by user and source",
                 "Linux / SSH",
                 "SELECT actor_user_name FROM events\nWHERE time BETWEEN {{start}} AND {{end}}\nLIMIT 100",
+                { ask: ["SSH logins by user", "Who logged in over SSH?"] },
               ),
               q("sudo_denied", "sudo refused", "Linux / Privilege", "SELECT 2", {
+                ask: ["Who was refused sudo?"],
                 my_copy: {
                   search_id: "sudo_denied",
                   version: "1.0.0",
@@ -1437,6 +1527,68 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         },
         url.endsWith("/copy") ? 201 : 200,
       );
+    }
+    if (url.includes("/activity?days=") && url.includes("/api/ai/people/")) {
+      return json({
+        person: "alice@example.com",
+        start: "2026-10-03T00:00:00+00:00",
+        end: "2026-10-10T00:00:00+00:00",
+        accounts: [
+          {
+            email: "alice@example.net",
+            tier: "personal",
+            account_from: "claude_json",
+            devices: ["ws-0042"],
+            os_users: ["alice"],
+            sessions: 2,
+            first_seen: "2026-10-05T10:00:00+00:00",
+            last_seen: "2026-10-09T10:00:00+00:00",
+            evidence: "example.net is not an organization domain",
+          },
+        ],
+        devices: ["ws-0042"],
+        services: [
+          {
+            service_id: "chatgpt",
+            name: "ChatGPT",
+            events: 12,
+            last_seen: "2026-10-09T09:00:00+00:00",
+          },
+        ],
+        sessions: [
+          {
+            session_id: "s-2",
+            machine: "ws-0042",
+            started: "2026-10-09T10:00:00+00:00",
+            last: "2026-10-09T10:20:00+00:00",
+            summary: "1 prompt; 5 tool calls (Bash, Edit, WebFetch); 2 files; 1 domain; 1 failed",
+            flagged: true,
+          },
+        ],
+        tools: [
+          { name: "Bash", n: 2 },
+          { name: "Edit", n: 1 },
+        ],
+        files: [{ name: "/etc/hosts", n: 1 }],
+        commands: [{ name: "git", n: 1 }],
+        domains: [{ name: "docs.example.com", n: 1 }],
+        mcp: [],
+        flags: [
+          {
+            kind: "outside_folder",
+            text: "Writes outside the session's working folder",
+            count: 1,
+            examples: ["/etc/hosts"],
+          },
+          {
+            kind: "personal_account",
+            text: "Personal Claude account on a machine sending to the company plugin",
+            count: 1,
+            examples: ["alice@example.net on ws-0042"],
+          },
+        ],
+        cut: false,
+      });
     }
     if (url.includes("/timeline?days=")) {
       return json({
@@ -2112,6 +2264,14 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
             models: [],
             seen_through: "network",
             via: [],
+            network: {
+              who: "dlee",
+              services: ["Claude"],
+              lookups: 40,
+              devices: 2,
+              last_seen: "2026-10-10T09:00:00+00:00",
+            },
+            maybe: "dana.lee@example.com",
           },
         ],
         claude_seen: { both: 1, plugin: 1, network: 1 },
@@ -2894,6 +3054,16 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         provider_id: string;
         history: unknown[];
       };
+      if (body.question === "hits the output limit") {
+        return json(
+          {
+            detail:
+              "The model hit its output limit before finishing the answer. An administrator can set Thinking to Off for this provider under AI providers.",
+            code: "provider_output_limit",
+          },
+          502,
+        );
+      }
       if (body.question === "while the model is busy" && !askBusySeen) {
         askBusySeen = true;
         return json(

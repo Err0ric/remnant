@@ -37,6 +37,8 @@ export interface AreaTab {
   page: PageId;
   tab?: string;
   adminOnly?: boolean;
+  /** Only for those who may ask a model (admins and analysts, not auditors). */
+  askOnly?: boolean;
   aliases?: string[];
 }
 
@@ -85,6 +87,8 @@ export const AREAS: Area[] = [
     label: "Investigate",
     tabs: [
       { label: "Search", page: "search" },
+      // Its own row (owner, 2026-11-03: Ask was hard to find behind the AI switch).
+      { label: "Ask", page: "ask", askOnly: true },
       {
         label: "People & devices",
         page: "investigate",
@@ -190,14 +194,12 @@ export function groupOf(areaId: string): RailGroup | undefined {
 }
 
 /** Tabs this user can open. */
-export function visibleTabs(area: Area, isAdmin: boolean): AreaTab[] {
-  return area.tabs.filter((t) => isAdmin || !t.adminOnly);
+export function visibleTabs(area: Area, isAdmin: boolean, canAsk = true): AreaTab[] {
+  return area.tabs.filter((t) => (isAdmin || !t.adminOnly) && (canAsk || !t.askOnly));
 }
 
 /** The area a page belongs to, and which of its tabs is open. */
 export function areaOf(page: PageId, tab: string): { area: Area; tab: AreaTab } | null {
-  // Ask is a mode of Search (ADR-0008); /ask still opens it.
-  if (page === "ask") return areaOf("search", tab);
   for (const area of AREAS) {
     const hits = area.tabs.filter((t) => t.page === page);
     if (hits.length === 0) continue;
@@ -224,7 +226,7 @@ function areaItems(): NavItem[] {
               .map((t) => ({ id: t.tab as string, label: t.label, adminOnly: t.adminOnly })),
           },
           ...a.tabs
-            .filter((t) => t.page !== a.tabs[0]?.page)
+            .filter((t) => t.page !== a.tabs[0]?.page && !t.askOnly)
             .map((t) => ({
               id: `${a.id}:${t.page}`,
               label: `${a.label} › ${t.label}`,

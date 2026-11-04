@@ -1,20 +1,24 @@
 import type { KeyboardEvent } from "react";
-
-export type SearchArea = "search" | "sql";
+import type { SearchTab } from "@/lib/simpleSearch";
 
 interface SearchTabsProps {
-  active: SearchArea;
-  onSelect: (area: SearchArea) => void;
+  active: SearchTab;
+  onSelect: (tab: SearchTab) => void;
+  /** Admins and analysts; auditors have no Ask tab. */
+  canAsk: boolean;
 }
 
-const LABELS: Record<SearchArea, string> = { search: "Search", sql: "SQL" };
-const AREAS: SearchArea[] = ["search", "sql"];
+const LABELS: Record<SearchTab, string> = { simple: "Search", ask: "Ask AI", sql: "SQL" };
 
-/** Search (Simple syntax, or plain English with the AI toggle) and SQL (ADR-0016 row 1). */
-export function SearchTabs({ active, onSelect }: SearchTabsProps) {
+/** Search (Simple syntax), Ask AI (plain English), and SQL (ADR-0016 row 1; owner,
+ * 2026-11-03: labeled tabs instead of the small AI switch, so Ask is easy to find). */
+export function SearchTabs({ active, onSelect, canAsk }: SearchTabsProps) {
+  const tabs: SearchTab[] = canAsk ? ["simple", "ask", "sql"] : ["simple", "sql"];
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
-    const next = active === "search" ? "sql" : "search";
+    const at = Math.max(tabs.indexOf(active), 0);
+    const step = e.key === "ArrowRight" ? 1 : tabs.length - 1;
+    const next = tabs[(at + step) % tabs.length] as SearchTab;
     onSelect(next);
     document.getElementById(`search-tab-${next}`)?.focus();
   };
@@ -25,7 +29,7 @@ export function SearchTabs({ active, onSelect }: SearchTabsProps) {
       onKeyDown={onKeyDown}
       className="flex gap-1 border-b border-border"
     >
-      {AREAS.map((t) => (
+      {tabs.map((t) => (
         <button
           key={t}
           id={`search-tab-${t}`}

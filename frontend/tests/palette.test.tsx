@@ -99,6 +99,40 @@ describe("Command palette", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
+  it("offers a question to Ask AI first, and only to those who may ask", async () => {
+    await renderAt("/dashboard");
+    let dialog = await openWithKeys();
+    const box = within(dialog).getByRole("combobox");
+    await userEvent.type(box, "who signed in from 203.0.113.9");
+    const first = () => within(dialog).getAllByRole("option")[0];
+    await waitFor(() =>
+      expect(first()).toHaveTextContent("Ask AI: who signed in from 203.0.113.9"),
+    );
+    await userEvent.clear(box);
+    await userEvent.type(box, "failed logins today?");
+    await waitFor(() => expect(first()).toHaveTextContent("Ask AI: failed logins today?"));
+    // A sentence that is not a question is offered too, but after the rest.
+    await userEvent.clear(box);
+    await userEvent.type(box, "alice laptop");
+    await waitFor(() =>
+      expect(within(dialog).getByRole("option", { name: /Ask AI: alice laptop/ })).toBeVisible(),
+    );
+    expect(first()).not.toHaveTextContent("Ask AI");
+    await userEvent.keyboard("{Escape}");
+    // One word is never a question.
+    dialog = await openWithKeys();
+    await userEvent.type(within(dialog).getByRole("combobox"), "how");
+    expect(within(dialog).queryByRole("option", { name: /Ask AI/ })).toBeNull();
+  });
+
+  it("offers no Ask AI to auditors", async () => {
+    await renderAt("/dashboard", { mode: "login", signedIn: true, role: "auditor" });
+    const dialog = await openWithKeys();
+    await userEvent.type(within(dialog).getByRole("combobox"), "how many failed logins?");
+    await screen.findAllByRole("option");
+    expect(within(dialog).queryByRole("option", { name: /Ask AI/ })).toBeNull();
+  });
+
   it("offers only the pages a role can open", async () => {
     await renderAt("/overview", { mode: "login", signedIn: true, role: "analyst" });
     const dialog = await openWithKeys();
@@ -156,5 +190,22 @@ describe("Command palette", () => {
     await userEvent.type(within(dialog).getByRole("combobox"), "run the current");
     await userEvent.keyboard("{Enter}");
     await waitFor(() => expect(queries()).toBeGreaterThan(before));
+  });
+});
+
+describe("looksLikeQuestion", () => {
+  it.each([
+    ["how many failed logins", true],
+    ["Show me admin changes", true],
+    ["failed logins today?", true],
+    ["DID alice sign in", true],
+    ["how", false],
+    ["what?", false],
+    ["203.0.113.9", false],
+    ["alice laptop", false],
+    ["showcase laptop", false],
+  ])("%s -> %s", async (text, want) => {
+    const { looksLikeQuestion } = await import("@/lib/palette");
+    expect(looksLikeQuestion(text)).toBe(want);
   });
 });

@@ -24,9 +24,9 @@ function key(t: AreaTab): string {
 export function PageHeader({ title, commands, meta, tabExtras }: PageHeaderProps) {
   const page = usePage();
   const tab = useTab();
-  const { isAdmin } = useViewer();
+  const { isAdmin, canAsk = true } = useViewer();
   const place = areaOf(page, tab);
-  const tabs = place ? visibleTabs(place.area, isAdmin) : [];
+  const tabs = place ? visibleTabs(place.area, isAdmin, canAsk) : [];
   const withTabs = tabs.length > 1;
   return (
     <div className="border-b border-border bg-surface px-5 pt-3">

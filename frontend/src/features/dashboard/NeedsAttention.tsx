@@ -85,7 +85,7 @@ export function NeedsAttention({ items, loading }: { items: AttentionItem[]; loa
   );
 }
 
-/** The Dashboard's strip: unreviewed AI services, risky mail rules, blocked consents, open
+/** The Dashboard's strip: not approved and unreviewed AI services, risky mail rules, blocked consents, open
  * alerts, and real failed sign-ins over the threshold, from the queries the page already
  * makes. */
 export function DashboardAttention({
@@ -107,10 +107,24 @@ export function DashboardAttention({
   });
   const alerts = useOpenAlertsItem();
   const id = identity.data?.identity;
-  const unreviewed = watch.data?.cards.find((c) => c.key === "services")?.unreviewed;
+  // The same wording as AI usage (owner, 2026-11-03): Not approved and Unreviewed apart.
+  const services = watch.data?.cards.find((c) => c.key === "services");
   const items = attentionItems([
     alerts,
-    count("unreviewed", unreviewed, "unreviewed AI service", "unreviewed AI services", "ai"),
+    count(
+      "not-approved",
+      services?.not_approved,
+      "not approved AI service in use",
+      "not approved AI services in use",
+      "ai",
+    ),
+    count(
+      "unreviewed",
+      services?.unreviewed,
+      "unreviewed AI service",
+      "unreviewed AI services",
+      "ai",
+    ),
     count("mail", id?.inbox_rules.value, "risky mail rule", "risky mail rules", "m365", "mail"),
     count(
       "consents",

@@ -16,8 +16,9 @@ interface TrendChartProps {
   /** Stacked bottom first when `stacked`; else drawn in order. */
   series: TrendSeries[];
   stacked?: boolean;
-  /** The window before on the same points: a faint dashed line. */
-  previous?: { label: string; values: number[] };
+  /** The same points one window earlier: a dashed line. `label` says what it is ("Same
+   * hour last week"), `pointLabel` the time of the point compared ("Oct 26, 8 PM"). */
+  previous?: { label: string; values: number[]; pointLabel?: (i: number) => string };
   /** Hover text for a point ("Oct 24, 3 PM") and the axis text ("Oct 24"). */
   pointLabel: (i: number) => string;
   axisLabel: (i: number) => string;
@@ -206,12 +207,16 @@ export function TrendChart({
             })),
           ];
   const total = at !== null && has(at) ? series.reduce((a, s) => a + (s.values[at] ?? 0), 0) : 0;
+  const prevName = (i: number) =>
+    previous?.pointLabel
+      ? `${previous.label} (${previous.pointLabel(i)})`
+      : (previous?.label ?? "");
   const tipText =
     at === null
       ? ""
       : `${label(at)}: ${rows.map((r) => (r.value === null ? r.label : `${r.label} ${r.value.toLocaleString()}`)).join(", ")}${
           stacked && has(at) ? `, total ${total.toLocaleString()}` : ""
-        }${previous && prev[at] !== undefined ? `, ${previous.label} ${prev[at].toLocaleString()}` : ""}${
+        }${previous && prev[at] !== undefined ? `, ${prevName(at)} ${prev[at].toLocaleString()}` : ""}${
           details
             ? details(at)
                 .map((d) => `, ${d.label} ${d.value}`)
@@ -307,9 +312,8 @@ export function TrendChart({
                 )}`}
                 fill="none"
                 stroke="var(--text-muted)"
-                strokeOpacity={0.55}
-                strokeWidth={1.25}
-                strokeDasharray="4 3"
+                strokeWidth={1.75}
+                strokeDasharray="5 3"
                 vectorEffect="non-scaling-stroke"
               />
             ) : null}
@@ -432,7 +436,7 @@ export function TrendChart({
                   ) : null}
                   {previous && prev[at] !== undefined ? (
                     <div className="flex gap-2 whitespace-nowrap text-text-muted">
-                      <span>{previous.label}</span>
+                      <span>{prevName(at)}</span>
                       <span className="ml-auto pl-3 font-mono tabular-nums">
                         {prev[at].toLocaleString()}
                       </span>
@@ -467,7 +471,7 @@ export function TrendLegend({
           {it.dashed ? (
             <span
               aria-hidden="true"
-              className="inline-block w-3.5 border-t border-dashed border-text-muted"
+              className="inline-block w-4 border-t-2 border-dashed border-text-muted"
             />
           ) : (
             <span

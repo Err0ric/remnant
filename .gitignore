@@ -227,7 +227,7 @@ logs/
 .env.*
 !.env.example
 config/app.yaml
-node_modules/
+node_modules
 frontend/dist/
 .ruff_cache/
 .mypy_cache/

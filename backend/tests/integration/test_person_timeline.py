@@ -60,3 +60,26 @@ def test_timeline_api_adds_alerts_about_the_person(tmp_path: Path) -> None:
     assert alerts[0]["item_id"] and alerts[0]["sql"] == ""
     assert "m365_signin" in got["signins_sql"] and "{from}" in got["signins_sql"]
     assert lab["admin"].get("/api/ai/sessions", params={"person": "erin"}).json() == []
+
+
+def test_person_hosts_lists_devices_and_addresses_under_every_name(tmp_path: Path) -> None:
+    """D197: the person page's Hosts and devices section."""
+    lab = make_lab(tmp_path)
+    engine = lab["app"].state.engine
+    LakeWriter(engine._lake).write(
+        [
+            _signin("m365_signin", "2026-10-29T09:58:00Z", "Erin@example.com", 50126),
+            _signin("m365_signin", "2026-10-29T09:59:00Z", "EXAMPLE\\erin"),
+            _signin("m365_signin", "2026-10-29T10:30:00Z", "bob@example.com"),
+        ]
+    )
+    from app.engine.duckdb import QueryScope
+    from app.search.person_hosts import person_hosts
+
+    got = person_hosts(
+        engine, QueryScope(None, START, END), IdentityMap(domains=["example.com"]), "erin"
+    )
+    assert got.addresses and sum(a.events for a in got.addresses) == 2
+    assert sum(a.failed for a in got.addresses) == 1
+    res = lab["admin"].get("/api/people/erin/hosts", params={"days": 30})
+    assert res.status_code == 200 and set(res.json()) >= {"hosts", "addresses", "sources"}

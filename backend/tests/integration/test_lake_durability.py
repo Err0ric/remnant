@@ -7,6 +7,7 @@ from typing import Any
 
 import pyarrow.parquet as pq
 
+from app.core import lake_files
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.ingest.compaction import Compactor
 from app.ingest.durable import quarantine_dir, quarantined_count, readable, sweep
@@ -52,6 +53,6 @@ def test_compaction_skips_a_damaged_input(tmp_path: Path) -> None:
     (a.parent / "part-zz-broken.parquet").write_bytes(b"PAR1 broken")
     report = Compactor(lake, today=lambda: date(2026, 10, 20)).run()
     assert report.files_merged == 3 and report.files_written == 1
-    files = list(a.parent.glob("part-*.parquet"))
+    files = lake_files.visible(a.parent)  # the merged inputs are retired until reaped (D183)
     assert len(files) == 1 and pq.read_table(files[0]).num_rows == 3
     assert quarantined_count(lake) == 1

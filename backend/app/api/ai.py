@@ -19,6 +19,7 @@ from app.ai.agents_overview import overview as agents_overview
 from app.ai.catalog import NON_USAGE, Catalog, DataLevel, Service, ServiceDef
 from app.ai.inventory import Exclusions, inventory
 from app.ai.inventory import export as inventory_export
+from app.ai.person_ai import activity as person_activity
 from app.ai.sessions import sessions, timeline
 from app.ai.usage import ServiceUse, Usage, seen_through
 from app.ai.watch import AiWatch, describe
@@ -77,6 +78,14 @@ class McpUseOut(BaseModel):
     sources: list[str]
 
 
+class NetUseOut(BaseModel):
+    who: str
+    services: list[str]
+    lookups: int
+    devices: int
+    last_seen: str | None
+
+
 class PersonOut(BaseModel):
     person: str
     cost_usd: float
@@ -89,6 +98,8 @@ class PersonOut(BaseModel):
     # How this person was seen using Claude: plugin, network, or both (owner, 2026-11-02).
     seen_through: Literal["plugin", "network", "both"] = "plugin"
     via: list[str] = []  # telemetry, hooks
+    network: NetUseOut | None = None  # what DNS, firewall, or proxy logs saw (D190)
+    maybe: str | None = None  # a network name only: the plugin person it may be
 
 
 class GoneOut(BaseModel):
@@ -210,7 +221,10 @@ async def ai_usage(
         services=[_use_out(u) for u in services],
         non_usage=[_use_out(u) for u in other],
         mcp=[McpUseOut(**_slots(m)) for m in mcp],
-        people=[PersonOut(**_slots(p)) for p in people],
+        people=[
+            PersonOut(**{**_slots(p), "network": _slots(p.network) if p.network else None})
+            for p in people
+        ],
         sources_in_scope=sources,
         compared_from=compared_from,
         new_services=changes.new_services if changes else [],
@@ -252,6 +266,7 @@ class CardOut(BaseModel):
     restricted: bool
     devices: int | None = None  # people card: devices not matched to a person, apart
     unreviewed: int | None = None  # services card: still not reviewed
+    not_approved: int | None = None  # services card: marked Not approved (D184)
     blocked: int | None = None  # consent card: attempts a policy blocked, apart
     blocked_context: str = ""
     rows_sql: str | None = None  # Search SQL for the card's rows (consent card)
@@ -424,9 +439,9 @@ def _answer_review(request: Request, user: User, subject: str, status: str) -> N
     """Approving or not approving a service or MCP server answers its open review items on
     Alerts (ADR-0035 row 11): closed with the decision, audited as alert.close."""
     if status == "approved":
-        reason, note = "benign", "Approved"
+        reason, note = "approved", "Approved"
     elif status == "not_approved":
-        reason, note = "true_positive", "Marked not approved"
+        reason, note = "resolved", "Marked not approved"
     else:
         return
     items: AlertItems = request.app.state.alert_items
@@ -633,12 +648,19 @@ class AgentItemOut(BaseModel):
     name: str
 
 
+class AgentMachineOut(BaseModel):
+    name: str
+    last_seen: str
+    events_24h: int
+
+
 class AgentOut(BaseModel):
     kind: str
     agent: str
     label: str
     owners: list[str]
-    machine: str | None
+    machine: str | None  # the machine it ran on last
+    machines: list[AgentMachineOut]  # every machine, newest first, with its own counts
     first_seen: str
     last_seen: str
     events_24h: int
@@ -665,7 +687,7 @@ async def ai_agents(request: Request, user: CurrentUser) -> list[AgentOut]:
         client_ip(request),
         {"sources_in_scope": allowed, "view": "agents"},
     )
-    return [AgentOut(**_slots(a)) for a in rows]
+    return [AgentOut(**{**_slots(a), "machines": [_slots(m) for m in a.machines]}) for a in rows]
 
 
 class SessionOut(BaseModel):
@@ -681,6 +703,11 @@ class SessionOut(BaseModel):
     stopped: bool  # ended
     failed: int = 0  # tool calls that failed
     state: Literal["ended", "idle", "open"] = "open"  # idle: no record for the idle time
+    top_tools: list[str] = []  # the three most used, most first
+    files: int = 0  # distinct paths touched
+    unanswered: int = 0  # tool calls with no result (blocked, interrupted, or still running)
+    new_mcp: list[str] = []  # MCP servers first used in this session (in the range)
+    account: str | None = None  # the Claude account the plugin reported
 
 
 class StepOut(BaseModel):
@@ -1054,3 +1081,99 @@ async def ai_inventory_include(
         client_ip(request), {"type": type, "key": key[:200]},
     )  # fmt: skip
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+class CountOut(BaseModel):
+    name: str
+    n: int
+
+
+class ServiceSeenOut(BaseModel):
+    service_id: str
+    name: str
+    events: int
+    last_seen: str | None
+
+
+class SessionLineOut(BaseModel):
+    session_id: str
+    machine: str | None
+    started: str
+    last: str
+    summary: str
+    flagged: bool
+
+
+class FlagOut(BaseModel):
+    kind: str
+    text: str
+    count: int
+    examples: list[str]
+
+
+class PersonAiOut(BaseModel):
+    person: str
+    start: str
+    end: str
+    accounts: list[AccountRowOut]
+    devices: list[str]
+    services: list[ServiceSeenOut]
+    sessions: list[SessionLineOut]
+    tools: list[CountOut]
+    files: list[CountOut]
+    commands: list[CountOut]
+    domains: list[CountOut]
+    mcp: list[CountOut]
+    flags: list[FlagOut]
+    cut: bool
+
+
+@router.get("/ai/people/{person}/activity")
+async def ai_person_activity(
+    person: str,
+    request: Request,
+    user: CurrentUser,
+    days: Annotated[int, Query(ge=1, le=30)] = 7,
+) -> PersonAiOut:
+    """One person's AI activity (D189): accounts and devices, AI services the network saw,
+    Claude Code sessions with a one-line summary, rollups (tools, files written or edited,
+    commands, web domains, MCP servers), and flags. Metadata only, from the sources the
+    caller may read. Audited ai.view."""
+    meta: MetaDB = request.app.state.meta
+    allowed = await run_in_threadpool(permitted_sources, meta, user)
+    srcs = [
+        (s.source_id, s.kind or "file", s.template_id) for s in request.app.state.sources.list()
+    ]
+    kinds = source_classes(srcs)
+
+    def mine(ids: list[str]) -> list[str]:
+        return ids if allowed is None else [s for s in ids if s in set(allowed)]
+
+    ident = await run_in_threadpool(request.app.state.identities.load)
+    now = datetime.now(UTC)
+    accts = await run_in_threadpool(
+        accounts, request.app.state.engine, allowed, mine(kinds.get("telemetry", [])),
+        mine(kinds.get("m365", [])), ident.domains, now, max(days, 30),
+    )  # fmt: skip
+    catalog = _catalog(request)
+    out = await run_in_threadpool(
+        person_activity, request.app.state.engine, allowed, ident, catalog.domain_table(),
+        {s.id: s.name for s in catalog.services()}, accts.rows, person[:256], now, days,
+        request.app.state.ai_rollup,
+    )  # fmt: skip
+    await run_in_threadpool(
+        _audit(request).audit.write, "ai.view", "success", user.user_id, client_ip(request),
+        {"sources_in_scope": out.sources, "view": "person", "person": out.person[:256]},
+    )  # fmt: skip
+    return PersonAiOut(
+        person=out.person, start=out.start, end=out.end,
+        accounts=[AccountRowOut(**_slots(a)) for a in out.accounts], devices=out.devices,
+        services=[ServiceSeenOut(**_slots(s)) for s in out.services],
+        sessions=[SessionLineOut(**_slots(s)) for s in out.sessions],
+        tools=[CountOut(**_slots(c)) for c in out.tools],
+        files=[CountOut(**_slots(c)) for c in out.files],
+        commands=[CountOut(**_slots(c)) for c in out.commands],
+        domains=[CountOut(**_slots(c)) for c in out.domains],
+        mcp=[CountOut(**_slots(c)) for c in out.mcp],
+        flags=[FlagOut(**_slots(f)) for f in out.flags], cut=out.cut,
+    )  # fmt: skip

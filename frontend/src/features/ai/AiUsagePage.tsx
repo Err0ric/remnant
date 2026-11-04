@@ -20,7 +20,8 @@ import {
   type DataLevel,
 } from "@/lib/api";
 import { rangeStart, TIME_RANGES, type TimeRangeId } from "@/lib/search";
-import { navigate, useSectionTab } from "@/lib/route";
+import { navigate, pathFor, useSectionTab } from "@/lib/route";
+import { When } from "@/components/When";
 import { AgentsCard } from "./AgentsCard";
 import { SessionsCard } from "./SessionsCard";
 import { AccountsCard } from "./AccountsCard";
@@ -375,7 +376,7 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
                         </td>
                         <td className={`${TD} whitespace-nowrap font-mono`}>{when(u.last_seen)}</td>
                         <td className={`${TD} font-mono text-text-secondary`}>
-                          <EntityList people={u.top_people} machines={u.top_machines} />
+                          <EntityList people={u.top_people} machines={u.top_machines} tab="ai" />
                         </td>
                         {isAdmin ? (
                           <td className={`${TD} text-right`}>
@@ -551,22 +552,39 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
                   {(data?.people ?? []).map((p) => (
                     <tr key={p.person} className="border-b border-border last:border-0">
                       <td className={`${TD} font-mono`}>
-                        <EntityLink kind="user" value={p.person} />
+                        <EntityLink kind="user" value={p.person} tab="ai" />
                       </td>
                       <td className={TD}>
                         <span title={seenTitle(p)}>{SEEN[p.seen_through ?? "plugin"]}</span>
                       </td>
-                      <td className={`${TD} text-right font-mono tabular-nums`}>
-                        {typeof p.cost_usd === "number" && Number.isFinite(p.cost_usd)
-                          ? p.cost_usd.toFixed(2)
-                          : "·"}
-                      </td>
-                      <td className={`${TD} text-right font-mono tabular-nums`}>
-                        {p.tokens.toLocaleString()}
-                      </td>
-                      <td className={`${TD} text-right font-mono tabular-nums`}>{p.sessions}</td>
-                      <td className={`${TD} text-right font-mono tabular-nums`}>{p.tool_calls}</td>
-                      <td className={`${TD} text-right font-mono tabular-nums`}>{p.errors}</td>
+                      {p.seen_through === "network" ? (
+                        // Network only (D190): what the network gives, not empty plugin cells.
+                        <td colSpan={5} className={`${TD} text-text-secondary`}>
+                          <NetworkOnly p={p} isAdmin={isAdmin} />
+                        </td>
+                      ) : (
+                        <>
+                          <td className={`${TD} text-right font-mono tabular-nums`}>
+                            {!reportsCost(p) ? (
+                              <NotReported />
+                            ) : typeof p.cost_usd === "number" && Number.isFinite(p.cost_usd) ? (
+                              p.cost_usd.toFixed(2)
+                            ) : (
+                              "·"
+                            )}
+                          </td>
+                          <td className={`${TD} text-right font-mono tabular-nums`}>
+                            {reportsCost(p) ? p.tokens.toLocaleString() : <NotReported />}
+                          </td>
+                          <td className={`${TD} text-right font-mono tabular-nums`}>
+                            {p.sessions}
+                          </td>
+                          <td className={`${TD} text-right font-mono tabular-nums`}>
+                            {p.tool_calls}
+                          </td>
+                          <td className={`${TD} text-right font-mono tabular-nums`}>{p.errors}</td>
+                        </>
+                      )}
                       <td className={TD}>
                         {p.sensitive ? (
                           <span className="rounded-badge bg-sev-high-bg px-1.5 py-px text-sev-high-text">
@@ -604,6 +622,71 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
       </div>
     </div>
   );
+}
+
+/** Cost and tokens come from Claude Code telemetry only; the hooks plugin and the
+ * network do not report them (D190). */
+function reportsCost(p: AiPerson): boolean {
+  return (p.via ?? []).includes("telemetry");
+}
+
+function NotReported() {
+  return (
+    <span
+      className="font-sans text-text-muted"
+      title="Only Claude Code telemetry reports cost and tokens"
+    >
+      Not reported
+    </span>
+  );
+}
+
+/** A person seen only on the network: the services, lookups, devices, and last seen, and
+ * when the name reads as a plugin person, a hint to link them in Identities (D190). */
+function NetworkOnly({ p, isAdmin }: { p: AiPerson; isAdmin: boolean }) {
+  const n = p.network;
+  const alias = n?.who ?? p.person;
+  return (
+    <span className="flex flex-col gap-0.5">
+      {n ? (
+        <span>
+          Network only: {n.services.join(", ") || "Claude"}, {n.lookups.toLocaleString()}{" "}
+          {n.lookups === 1 ? "lookup" : "lookups"}, {n.devices}{" "}
+          {n.devices === 1 ? "device" : "devices"}, last seen <When iso={n.last_seen} />
+        </span>
+      ) : (
+        <span>Network only</span>
+      )}
+      <span className="text-text-muted">
+        {p.maybe ? (
+          <>
+            Unmatched: may be <span className="font-mono">{p.maybe}</span>.{" "}
+          </>
+        ) : (
+          "Unmatched: not linked to a person. "
+        )}
+        {isAdmin ? (
+          <a
+            href={`${pathFor("identities")}#${identityHash(alias, p.maybe ?? "")}`}
+            onClick={(e) => {
+              if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+              e.preventDefault();
+              navigate("identities", identityHash(alias, p.maybe ?? ""));
+            }}
+            className="text-accent-text hover:underline"
+          >
+            Link in Identities
+          </a>
+        ) : (
+          "An administrator can link them in Identities."
+        )}
+      </span>
+    </span>
+  );
+}
+
+function identityHash(alias: string, person: string): string {
+  return `alias=${encodeURIComponent(alias)}&person=${encodeURIComponent(person)}`;
 }
 
 function NewBadge() {

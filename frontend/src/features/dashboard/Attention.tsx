@@ -13,10 +13,23 @@ interface SourceState {
 
 /** Each enabled source: flowing, or why not. Errors and a quiet watch need someone; a gap
  * that ended is noted but the source is flowing (Health has the detail). */
+/** A list from a response, or none: a body without it, or of another shape, is no list
+ * (D194: a non-list here broke the whole Dashboard). */
+export function listOf<T>(v: T[] | null | undefined | unknown): T[] {
+  return Array.isArray(v) ? (v as T[]) : [];
+}
+
 export function sourceStates(sources: Source[], o: Overview | undefined): SourceState[] {
-  const volume = new Map((o?.volume ?? []).map((v) => [v.source_id, v.gaps]));
-  const health = new Map((o?.sources ?? []).map((h) => [h.source_id, h]));
-  const byId = new Map(sources.map((s) => [s.source_id, s]));
+  const volume = new Map(
+    listOf<Overview["volume"][number]>(o?.volume).map((v) => [
+      v.source_id,
+      listOf<{ ongoing?: boolean; hours?: number }>(v.gaps),
+    ]),
+  );
+  const health = new Map(
+    listOf<Overview["sources"][number]>(o?.sources).map((h) => [h.source_id, h]),
+  );
+  const byId = new Map(listOf<Source>(sources).map((s) => [s.source_id, s]));
   const ids = [...new Set([...byId.keys(), ...health.keys()])].sort();
   return ids
     .filter((id) => byId.get(id)?.enabled ?? true)
@@ -54,7 +67,7 @@ const RANK = { high: 0, medium: 1, low: 2 } as const;
  * so. Hidden entirely when nothing needs me. */
 export function AttentionBanner() {
   const alerts = useQuery({ queryKey: ["alerts", "open"], queryFn: () => api.alerts("open") });
-  const sources = useQuery({ queryKey: ["sources"], queryFn: api.sources });
+  const sources = useQuery({ queryKey: ["source-list"], queryFn: api.sources });
   const overview = useQuery({
     queryKey: ["overview"],
     queryFn: api.overview,
@@ -218,7 +231,7 @@ export function attentionLines(list: AlertList | undefined, states: SourceState[
 /** Sources at the bottom (F62): one line linking to Health. Problems also show in the
  * attention banner at the top. */
 export function SourcesLine() {
-  const sources = useQuery({ queryKey: ["sources"], queryFn: api.sources });
+  const sources = useQuery({ queryKey: ["source-list"], queryFn: api.sources });
   const overview = useQuery({
     queryKey: ["overview"],
     queryFn: api.overview,
@@ -242,7 +255,12 @@ export function SourcesLine() {
   const now = overview.data.generated_at;
   const flowing = states.filter((s) => !s.problem).length;
   const gaps = states.reduce((n, s) => n + s.gaps, 0);
-  const newest = new Map(overview.data.sources.map((s) => [s.source_id, s.last_event_at]));
+  const newest = new Map(
+    listOf<Overview["sources"][number]>(overview.data.sources).map((s) => [
+      s.source_id,
+      s.last_event_at,
+    ]),
+  );
   const worst = states
     .map((s) => ({ id: s.id, last: newest.get(s.id) ?? null }))
     .filter((w): w is { id: string; last: string } => Boolean(w.last))

@@ -39,9 +39,8 @@ describe("Simple search", () => {
   it("is the first tab and sends its values as bound parameters", async () => {
     const { spy } = await renderAt("/search");
     expect(await screen.findByRole("heading", { name: "Investigate", level: 1 })).toBeVisible();
-    expect(
-      screen.getByRole("button", { name: "Ask in plain English", pressed: false }),
-    ).toBeVisible();
+    expect(screen.getByRole("tab", { name: "Search", selected: true })).toBeVisible();
+    expect(screen.getByRole("tab", { name: "Ask AI", selected: false })).toBeVisible();
     await screen.findByText("Failed password for invalid user oracle");
     await userEvent.type(screen.getByLabelText("Search text"), "oracle{Enter}");
     await vi.waitFor(() => expect(posts(spy, "/api/search/compile").at(-1)?.text).toBe("oracle"));
@@ -128,26 +127,43 @@ describe("Simple search", () => {
     expect(await screen.findByRole("tab", { name: "SQL", selected: true })).toBeVisible();
   });
 
-  it("has no AI switch for auditors, and /ask opens Search with it on otherwise", async () => {
+  it("opens Ask AI last used at its own address, so the rail shows Ask", async () => {
+    const { view } = await renderAt("/search");
+    await userEvent.click(await screen.findByRole("tab", { name: "Ask AI" }));
+    expect(window.location.pathname).toBe("/ask");
+    view.unmount();
+    await renderAt("/search");
+    expect(await screen.findByRole("tab", { name: "Ask AI", selected: true })).toBeVisible();
+    await vi.waitFor(() => expect(window.location.pathname).toBe("/ask"));
+  });
+
+  it("has no Ask for auditors; otherwise Ask is a rail row and a tab, and /ask opens it", async () => {
     const { view } = await renderAt("/ask", { mode: "login", signedIn: true, role: "auditor" });
     expect(await screen.findByRole("tab", { name: "Search", selected: true })).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Ask in plain English" })).toBeNull();
+    expect(screen.queryByRole("tab", { name: "Ask AI" })).toBeNull();
+    const audNav = screen.getByRole("navigation", { name: "Primary" });
+    expect(within(audNav).queryByRole("link", { name: "Ask" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Ask" })).toBeNull(); // nor in the header tabs
     view.unmount();
     await renderAt("/ask");
     expect(await screen.findByRole("heading", { name: "Investigate", level: 1 })).toBeVisible();
-    expect(
-      screen.getByRole("button", { name: "Ask in plain English", pressed: true }),
-    ).toBeVisible();
-    // Switching it off goes back to Simple syntax.
-    await userEvent.click(
-      screen.getByRole("button", { name: "Ask in plain English", pressed: true }),
-    );
-    expect(screen.getByLabelText("Search text")).toBeVisible();
+    expect(screen.getByRole("tab", { name: "Ask AI", selected: true })).toBeVisible();
     const nav = screen.getByRole("navigation", { name: "Primary" });
+    expect(within(nav).getByRole("link", { name: "Ask" })).toHaveAttribute("aria-current", "page");
+    // The Search tab goes back to Simple syntax, and the address and the rail follow.
+    await userEvent.type(screen.getByLabelText("Question"), "kept while away");
+    await userEvent.click(screen.getByRole("tab", { name: "Search" }));
+    expect(screen.getByLabelText("Search text")).toBeVisible();
+    expect(window.location.pathname).toBe("/investigate/search");
     expect(within(nav).getByRole("link", { name: "Search" })).toHaveAttribute(
       "aria-current",
       "page",
     );
+    // The rail's Ask opens the same thread, question kept (one page, not remounted).
+    await userEvent.click(within(nav).getByRole("link", { name: "Ask" }));
+    expect(window.location.pathname).toBe("/ask");
+    expect(await screen.findByRole("tab", { name: "Ask AI", selected: true })).toBeVisible();
+    expect(screen.getByLabelText("Question")).toHaveValue("kept while away");
   });
 
   it("saves the compiled SQL with the Simple text as its origin", async () => {
@@ -228,17 +244,20 @@ describe("Simple search", () => {
     expect(refine.field).toBe("source_id");
   });
 
-  it("a field click still filters after switching to Ask before asking anything", async () => {
+  it("hides the search's fields and rows on Ask AI, and keeps them for Search (D192)", async () => {
     const { spy } = await renderAt("/search");
     await screen.findByText("Failed password for invalid user oracle");
-    await userEvent.click(screen.getAllByLabelText("Ask in plain English")[0] as HTMLElement);
+    await userEvent.click(screen.getByRole("tab", { name: "Ask AI" }));
+    // Nothing below the question box is an answer until one runs.
+    expect(screen.queryByRole("complementary", { name: "Fields" })).toBeNull();
+    expect(screen.getByText("Failed password for invalid user oracle")).not.toBeVisible();
+    // Back on Search, the same rows and their fields are still there to filter.
+    await userEvent.click(screen.getByRole("tab", { name: "Search" }));
     const fields = await screen.findByRole("complementary", { name: "Fields" });
-    expect(within(fields).getByText("click to filter")).toBeVisible();
     const src = await within(fields).findByRole("region", { name: /^source$/i });
     await userEvent.click(within(src).getByRole("button", { name: /^linux_sshd/ }));
     await vi.waitFor(() =>
       expect(posts(spy, "/api/search/compile").at(-1)?.text).toBe('source:"linux_sshd"'),
     );
-    expect(screen.getByLabelText("Search text")).toHaveValue('source:"linux_sshd"');
   });
 });

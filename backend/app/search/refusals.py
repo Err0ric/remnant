@@ -119,4 +119,5 @@ class RefusalWatch:
             range_end=str(last) if last else now.isoformat(),
             severity="high",
             refresh=True,
+            group=(f"refusals:{ip}", "refusals"),
         )

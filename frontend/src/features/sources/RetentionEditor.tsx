@@ -23,7 +23,7 @@ export function RetentionEditor({ sourceId, value, canManage }: RetentionEditorP
     onSuccess: () => {
       setOpen(false);
       void client.invalidateQueries({ queryKey: ["source-list"] });
-      void client.invalidateQueries({ queryKey: ["sources"] });
+      void client.invalidateQueries({ queryKey: ["search-source-filter"] });
     },
   });
   if (!open) {

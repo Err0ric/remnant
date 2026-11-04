@@ -2,6 +2,150 @@
 
 ## Unreleased
 
+### Alerts page: summary, filters, and the alert beside the list (2026-11-03)
+
+- **Alerts** uses the full width: a summary of open alerts (by severity, new today, the oldest still open, by category), filters for severity, category, and a person, device, or source, and the list with the open alert beside it.
+- The alert shows what fired, why it matters, who and which devices it is about (linked to their pages), its changes today, Show events, next steps for its rule, and Close, Mute similar for 7 or 30 days, or Reopen.
+- Select several alerts to close them with one reason.
+- What changes for existing installs: nothing to do.
+
+### Plainer close reasons, Approved, and bulk close (2026-11-03)
+
+- Close an alert as **Expected**, **Approved**, **False positive** (with a note), or **Resolved**. Alerts closed before keep their decision and read as the nearest new reason (True positive and Needs follow-up as Resolved, Benign as Expected).
+- **Approved** also marks what the alert is about as reviewed: the AI service or MCP server (administrators), or the agent, whose other open alerts close with it.
+- Mute similar alerts for 7 or 30 days. Close several alerts at once with one reason; each is audited on its own.
+- What changes for existing installs: nothing to do.
+
+### Fewer, grouped alerts for AI agents (2026-11-03)
+
+- One open alert per agent, rule, and day (the install's time zone). Repeats update that alert's count and list of changes instead of adding new alerts, and a message goes out only when the alert is new or gets more severe.
+- A source that stops, sends again, and stops again the same day notifies again only if it was back at least 15 minutes, and at most 3 times a day; after that its alert keeps counting and its title says "flapping".
+- A new agent is announced once. For its first 14 days its "changed" alerts stay quiet while it learns its usual tools; a new MCP server or MCP tool still alerts.
+- Claude Code's own tools (any tool not named `mcp__...`) never raise "changed". New ones arrive with Claude Code updates and show on Agents.
+- New: a personal Claude account on a company device (medium, once per account and device) and 10 or more blocked or failed tool calls in an hour for one agent (high).
+- What changes for existing installs: on the first start, open duplicate alerts from before are merged into the oldest one of each group; each merge is audited and the others close as Merged. New settings: `agents.learning_days` (14), `agents.blocked_burst` (10), `sources.gap_renotify_min_back` (15 minutes), and `sources.gap_max_notify_per_day` (3).
+- What changes for existing installs: on the first start, open duplicate alerts from before are merged into the oldest one of each group; each merge is audited and the others close as Merged. New settings: `agents.learning_days` (14) and `agents.blocked_burst` (10).
+### The menu shows where you are (2026-11-03)
+
+- In the left menu, sub-pages hang on a thin line, and the page you are on has a short blue bar beside it and a bolder label, instead of a filled box.
+- When you fold a section, the bar moves to the section's own row, so you can still tell where you are.
+### One page per person (2026-11-03)
+
+- A person's page in Investigate has five tabs: **Identity and M365** (summary, connections, and Microsoft 365 sign-ins), **AI use**, **Hosts and devices**, **Alerts**, and **Timeline**. AI usage, Agents, and People and devices all open this page.
+- **Hosts and devices** lists the hosts and source addresses on the person's records, with events, failed sign-ins, and last seen. Each opens its own page.
+- The separate Sessions and Sign-ins tabs are gone: Claude sessions are under AI use and sign-ins under Identity and M365.
+### People and devices lists everyone, with the score explained (2026-11-03)
+
+- **Investigate > People & devices** lists every user, IP address, and host seen in the range, not only those a detection rule matched. Ties go to the busier one, so the list is never empty while there is data.
+- The score now also counts failed sign-ins, risky inbox rules and app consents (Microsoft 365), AI watch flags (personal Claude account, unreviewed AI service, new MCP server, blocked tool calls), attack hits from outside, and alerts about them. Each has its own column; hover a score to see its parts.
+- What changes for existing installs: nothing to do. Rankings may change order now that more signals count.
+
+### Ask answers questions about AI agents from the library (2026-11-03)
+
+- A new library pack, **AI agents**, answers common questions about Claude Code and Cowork without a model: who uses it and on which machines, the tools, files, commands, web domains, and MCP servers each person's agent used, personal or unconfirmed Claude accounts by machine, tool calls that got no result, and one person's sessions.
+- Ask treats Claude Code, Claude, coding agent, AI agent, and Cowork as the same thing, and "what is dana accessing" finds files, commands, and web domains.
+- Questions the library cannot answer go to the model, which now knows where the agent's tool, path, command, web host, and account fields are kept.
+- What changes for existing installs: nothing to do. The pack's queries appear in the library once the hooks plugin sends data.
+
+### No more pause at the UTC day change (2026-11-03)
+
+- At 00:00 UTC (4 PM Pacific), while the previous day's summaries were built, every page could pause for several seconds. Signing each request in now has its own threads, so it never waits behind slow page queries.
+- The server log warns (`pool.wait`) when a request waits more than 2 seconds for a worker, with the request, how long it waited, and the jobs that were keeping the workers busy at the 2-second mark. The rollup log lines now give their start time, duration, and rows read.
+- What changes for existing installs: nothing to do.
+
+### AI activity on each person's page (2026-11-03)
+
+- Investigate's person page has an **AI use** tab: flags first (personal Claude account, blocked or failed tool calls, files written outside the session's folder, shell commands, a new MCP server), then the person's Claude accounts and devices, AI services seen on the network, Claude Code sessions newest first with a one-line summary, and what the agent used in the range: tools, files written or edited, commands, web domains, and MCP servers.
+- Any person named on AI usage or Agents opens this tab.
+- Metadata only, as before: no prompt text or tool content.
+### Session rows say what each session did (2026-11-03)
+
+- Each row in **Agents > Sessions** shows how long the session ran, its prompts, tool calls, files touched, web domains, and its three most used tools.
+- Badges flag a blocked or failed call, a personal Claude account, and a new MCP server.
+- Filter the list by person, machine, tool, or sessions with flags.
+### AI usage > People says "Not reported" instead of zero (2026-11-03)
+
+- Cost and tokens read "Not reported" for people whose Claude Code sends no telemetry, instead of 0.00 and 0.
+- People seen only on the network (DNS, firewall, or proxy) show the Claude services, lookups, devices, and last seen the network gives, instead of empty columns.
+- A network name not linked to a person reads "Unmatched", names the person it may be, and has a link that opens Identities with the alias filled in, so one click and a save merges them.
+### Dashboard no longer fails after you have used Search (2026-11-03)
+
+- Opening the Dashboard after Search could show "could not be shown" with an error id, because both pages kept a different list of sources under the same name in the browser. They no longer share it, and Dashboard sections now show what they can even when a response is missing some of its lists.
+- What changes for existing installs: nothing to do.
+
+### A failed Ask answer no longer shows unrelated rows (2026-11-03)
+
+- When Ask cannot answer (a model error, its output limit, or a query that does not pass the check), the page now shows only the error and **Try again**. Rows from an earlier search no longer appear under the failed question.
+- When the model stops at its output limit while thinking, administrators get **Set Thinking to Off**, which opens that provider's settings.
+- What changes for existing installs: nothing to do.
+
+### Ask understands logins, Microsoft, and other usual names (2026-11-03)
+
+- Ask now treats logins, log-ins, sign-ins, and authentications as the same thing, and Microsoft, M365, Office 365, O365, Entra, and Azure AD as Microsoft 365 (also Palo Alto, PAN, and firewall; VPN and GlobalProtect). A question such as "how many failed logins to Microsoft today?" now finds the tested library query instead of going to the model.
+- What changes for existing installs: nothing to do.
+
+### Session timelines read by turn (2026-11-03)
+
+- A Claude Code session's timeline now shows each prompt with the tool calls it led to underneath, each with its result, then how the turn ended. A call with no result says "No result (blocked, interrupted, or still running)".
+- "Turn end" rows are gone, **Around** shows when you point at or tab to a row, and times are in your time zone with UTC on hover.
+- What changes for existing installs: nothing to do.
+
+### Claude Code bookkeeping no longer counts as a tool (2026-11-03)
+
+- Claude Code's own bookkeeping calls (such as a subagent handing back its result) no longer show as a new tool on Agents or in tool counts. They still appear in a session's timeline.
+- What changes for existing installs: nothing to do. Tool counts for past days may drop slightly.
+
+### Agents show every machine a person used (2026-11-03)
+
+- On **Agents**, Claude Code for a person now lists every machine it ran on, newest first, each with its own last seen and events. Activity on a second machine no longer shows under the first machine's name.
+- What changes for existing installs: nothing to do. Agent alert titles name the person and machines, so an open agent alert may get a new title on its next update.
+
+### Example questions in Ask (2026-11-03)
+
+- Before your first question, Ask shows up to six example questions that fit the sources this install has data from, such as "Who logged in over SSH?". One click asks it.
+### AI Watch and Dashboard sections no longer fail during compaction (2026-11-03)
+
+- Compaction, which merges small log files every hour, now keeps the files it replaces for 30 minutes before deleting them. A search or background check that had already started reading them finishes normally instead of failing with "Cannot open file". This was the cause of AI Watch failing every hour on busy sources, and of Dashboard sections such as Attacks and access failing to load.
+- A read no longer counts events twice for a moment while a merge is finishing.
+- The integrity ledger records each removal when the file is actually deleted.
+- What changes for existing installs: nothing to do. Day folders get a small `_retired.json` file while replaced files wait to be deleted.
+
+### AI Watch says "not yet approved" (2026-11-03)
+
+- The Dashboard's AI Watch cards are now **AI services not yet approved** and **People using AI not yet approved**, and each says how many are Not approved and how many are only Unreviewed, for example "0 not approved, 1 unreviewed". Services nobody has reviewed yet are no longer called unapproved.
+- **Needs attention** on the Dashboard lists not approved and unreviewed AI services apart, the same way as the AI usage page.
+- What changes for existing installs: nothing to do.
+
+### Faster today-so-far build for quiet sources (2026-11-03)
+
+- The 5-minute build of today's AI use now skips a source whose files have not changed since the last build, and carries its last result over. Busy sources build as before, so the results are the same.
+- The server log line `ai_rollup.today` now says how many sources were carried over (`reused`).
+- What changes for existing installs: nothing to do. The first build after updating is a full one.
+
+### Questions in the top bar search go to Ask (2026-11-03)
+
+- Type a question in the top bar search (for example "how many failed logins today?" or "show admin changes this week") and **Ask AI: <your question>** is the first option. Enter asks it beside the page you are on.
+- What changes for existing installs: nothing to do.
+
+### Ask is easier to find (2026-11-03)
+
+- **Ask** now has its own row in the left menu under Investigate, right below Search.
+- On the Search page, the small **AI** switch is replaced by three tabs: **Search**, **Ask AI**, and **SQL**. Your question and results are kept when you move between them.
+- Auditors still do not see Ask.
+- What changes for existing installs: nothing to do.
+
+### Clearer comparison line on Dashboard trends (2026-11-03)
+
+- The dashed line on trend charts now says what it is, "Same hour yesterday" or "Same hour last week", instead of "Previous 7 days", and the tooltip shows its date, for example "Same hour last week (Oct 20, 12 AM): 2".
+- The line is darker and slightly thicker, so it is easy to see in both themes.
+- What changes for existing installs: nothing to do.
+
+### AIDE: the spool folder is skipped, and hashes are no longer read as paths (2026-11-03)
+
+- The AIDE rules the update script writes now skip the data folder's `spool/`, where incoming syslog and OpenTelemetry messages wait to be ingested.
+- `update-systemd.sh --aide` no longer mistakes a hash in AIDE's detailed report for a changed file outside the install, which could stop an update for no reason.
+- What changes for existing installs: the next update rewrites `/etc/aide/aide.conf.d/90_aide_remnant` with the new rule and says so; re-baseline as usual.
+
 ### See whether a local model runs on GPU or CPU (2026-11-03)
 
 - **Settings > AI providers** now shows, for a local Ollama provider, whether its model is loaded on GPU, on CPU only, or split between them, its size, and its context length, as Ollama reports them. Other models the server has loaded are listed too.

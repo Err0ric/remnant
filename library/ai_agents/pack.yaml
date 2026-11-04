@@ -1,0 +1,398 @@
+schema_version: 1
+id: ai_agents
+name: AI agents
+version: 1.0.0
+description: 'Claude Code and Cowork activity from the hooks plugin: who uses it, on which machines,
+  and what the agent touched (tools, files, commands, web domains, MCP servers). Metadata only: the
+  plugin keeps no prompt text or tool content. Claude Code bookkeeping calls (SubagentHandback) are
+  not counted as tools.'
+queries:
+- id: agents_claude_code_users
+  keys: [person]
+  answer: "{n} people used Claude Code; most recent: {first.person} on {first.machines}"
+  name: Who uses Claude Code
+  group: AI agents / People
+  tags:
+  - ai
+  - claude-code
+  requires:
+  - claude_hooks
+  why: Everyone the hooks plugin saw, with their machines, sessions, and last use.
+  normal: The people you rolled the plugin out to. A person or machine you did not expect is the one to
+    look at on the person page.
+  suggested_schedule: daily
+  flag: null
+  description: 'Per person (the Claude account email, else the reported user, else the OS user): the
+    machines the plugin ran on, the number of sessions, and the last event. A replayed offline batch can
+    count twice here; the AI usage pages drop the copies.'
+  sql: |-
+    SELECT actor_user_name AS person,
+           string_agg(DISTINCT device_hostname, ', ' ORDER BY device_hostname) AS machines,
+           count(DISTINCT json_extract_string(unmapped, '$.attr.session_id')) AS sessions,
+           max(coalesce(time, time_observed)) AS last_seen
+    FROM events
+    WHERE template_id = 'claude_hooks' AND coalesce(time, time_observed) BETWEEN {{start}} AND {{end}}
+    GROUP BY actor_user_name
+    ORDER BY last_seen DESC
+  ask:
+  - 'Who uses Claude Code?'
+  - 'Which people are using a coding agent?'
+  - 'Who used Claude this week and on which machines?'
+  - 'Who is using Claude Code, and on which machines?'
+  expect:
+    rows_at_least: 1
+- id: agents_tools_by_person
+  keys: [person, tool]
+  answer: "{n} person and tool pairs; most used: {first.tool} by {first.person} ({first.calls} calls)"
+  name: Agent tools used by person
+  group: AI agents / Tools
+  tags:
+  - ai
+  - claude-code
+  requires:
+  - claude_hooks
+  why: Which tools the agent called for each person, and how often.
+  normal: Read, Edit, Bash, and Grep at the top. A rare tool or an MCP tool you have not reviewed is worth
+    a look.
+  suggested_schedule: daily
+  flag: null
+  description: 'Tool calls (the call, not its result) per person and tool, with sessions and last call.
+    Leave person empty for everyone, or give part of a name or email.'
+  params:
+  - name: person
+    type: string
+    default: ''
+    description: Part of a name or email; empty for everyone
+  sql: |-
+    SELECT actor_user_name AS person, json_extract_string(unmapped, '$.attr.tool_name') AS tool,
+           count(*) AS calls,
+           count(DISTINCT json_extract_string(unmapped, '$.attr.session_id')) AS sessions,
+           max(coalesce(time, time_observed)) AS last_call
+    FROM events
+    WHERE template_id = 'claude_hooks' AND message = 'claude_hooks.pre_tool_use'
+      AND coalesce(time, time_observed) BETWEEN {{start}} AND {{end}}
+      AND json_extract_string(unmapped, '$.attr.tool_name') IS NOT NULL
+      AND lower(json_extract_string(unmapped, '$.attr.tool_name')) NOT IN ('subagenthandback')
+      AND ({{person}} = '' OR actor_user_name ILIKE '%' || {{person}} || '%')
+    GROUP BY actor_user_name, json_extract_string(unmapped, '$.attr.tool_name')
+    ORDER BY calls DESC
+  ask:
+  - 'What tools did the agent use?'
+  - 'Which Claude Code tools does alice use?'
+  - 'Tools used by person in Claude Code'
+  expect:
+    rows_at_least: 1
+- id: agents_files_by_person
+  keys: [person, tool, path]
+  answer: "{n} files written or edited; first: {first.path} by {first.person}"
+  name: Files written or edited by the agent
+  group: AI agents / Files
+  tags:
+  - ai
+  - claude-code
+  requires:
+  - claude_hooks
+  why: Which files the agent changed for each person, by path.
+  normal: Paths under each person's project folders. Files under home folders, system paths, or shared
+    drives are the ones to ask about.
+  suggested_schedule: daily
+  flag: null
+  description: 'Write, Edit, MultiEdit, and NotebookEdit calls per person and target path. The path is
+    what the plugin reported; file content is never kept. Filter by person and by part of the path.'
+  params:
+  - name: person
+    type: string
+    default: ''
+    description: Part of a name or email; empty for everyone
+  - name: path_contains
+    type: string
+    default: ''
+    description: Part of the path; empty for every path
+  sql: |-
+    SELECT actor_user_name AS person, json_extract_string(unmapped, '$.attr.tool_name') AS tool,
+           json_extract_string(unmapped, '$.attr.path') AS path, count(*) AS calls,
+           max(coalesce(time, time_observed)) AS last_call
+    FROM events
+    WHERE template_id = 'claude_hooks' AND message = 'claude_hooks.pre_tool_use'
+      AND coalesce(time, time_observed) BETWEEN {{start}} AND {{end}}
+      AND json_extract_string(unmapped, '$.attr.tool_name') IN ('Write', 'Edit', 'MultiEdit', 'NotebookEdit')
+      AND json_extract_string(unmapped, '$.attr.path') IS NOT NULL
+      AND ({{person}} = '' OR actor_user_name ILIKE '%' || {{person}} || '%')
+      AND ({{path_contains}} = '' OR json_extract_string(unmapped, '$.attr.path') ILIKE '%' || {{path_contains}} || '%')
+    GROUP BY actor_user_name, json_extract_string(unmapped, '$.attr.tool_name'),
+             json_extract_string(unmapped, '$.attr.path')
+    ORDER BY last_call DESC
+  ask:
+  - 'What files did Claude Code edit?'
+  - 'Which files is the agent touching for alice?'
+  - 'Files written by the coding agent'
+  - 'What files is the agent accessing or touching?'
+  expect:
+    rows_at_least: 1
+- id: agents_commands_by_person
+  keys: [person, command]
+  answer: "{n} commands; most run: {first.command} by {first.person} ({first.runs} runs)"
+  name: Shell commands run by the agent
+  group: AI agents / Commands
+  tags:
+  - ai
+  - claude-code
+  requires:
+  - claude_hooks
+  why: Which programs the agent ran in a shell for each person.
+  normal: git, npm, python, and test runners. curl, ssh, scp, and anything that sends data out is worth a
+    look.
+  suggested_schedule: daily
+  flag: null
+  description: 'Bash calls per person by the first word of the command, as the plugin stored it; the rest
+    of the command line is never kept.'
+  params:
+  - name: person
+    type: string
+    default: ''
+    description: Part of a name or email; empty for everyone
+  sql: |-
+    SELECT actor_user_name AS person, json_extract_string(unmapped, '$.attr.program') AS command,
+           count(*) AS runs,
+           count(DISTINCT json_extract_string(unmapped, '$.attr.session_id')) AS sessions,
+           max(coalesce(time, time_observed)) AS last_run
+    FROM events
+    WHERE template_id = 'claude_hooks' AND message = 'claude_hooks.pre_tool_use'
+      AND coalesce(time, time_observed) BETWEEN {{start}} AND {{end}}
+      AND json_extract_string(unmapped, '$.attr.program') IS NOT NULL
+      AND ({{person}} = '' OR actor_user_name ILIKE '%' || {{person}} || '%')
+    GROUP BY actor_user_name, json_extract_string(unmapped, '$.attr.program')
+    ORDER BY runs DESC
+  ask:
+  - 'What commands did Claude Code run?'
+  - 'Which shell commands is the agent running?'
+  - 'Commands run by person in Claude Code'
+  - 'What is the agent accessing from the command line?'
+  expect:
+    rows_at_least: 1
+- id: agents_web_by_person
+  keys: [person, tool, domain]
+  answer: "{n} web domains; most: {first.domain} by {first.person} ({first.calls} calls)"
+  name: Web domains fetched or searched by the agent
+  group: AI agents / Web
+  tags:
+  - ai
+  - claude-code
+  requires:
+  - claude_hooks
+  why: Which web sites the agent fetched or searched for each person.
+  normal: Documentation and package sites. Paste sites, file shares, and personal storage are the ones to
+    ask about.
+  suggested_schedule: daily
+  flag: null
+  description: 'WebFetch and WebSearch calls per person and host name. Only the host is kept, never the
+    page or the search text.'
+  params:
+  - name: person
+    type: string
+    default: ''
+    description: Part of a name or email; empty for everyone
+  sql: |-
+    SELECT actor_user_name AS person, json_extract_string(unmapped, '$.attr.tool_name') AS tool,
+           json_extract_string(unmapped, '$.attr.web_host') AS domain, count(*) AS calls,
+           max(coalesce(time, time_observed)) AS last_call
+    FROM events
+    WHERE template_id = 'claude_hooks' AND message = 'claude_hooks.pre_tool_use'
+      AND coalesce(time, time_observed) BETWEEN {{start}} AND {{end}}
+      AND json_extract_string(unmapped, '$.attr.web_host') IS NOT NULL
+      AND ({{person}} = '' OR actor_user_name ILIKE '%' || {{person}} || '%')
+    GROUP BY actor_user_name, json_extract_string(unmapped, '$.attr.tool_name'),
+             json_extract_string(unmapped, '$.attr.web_host')
+    ORDER BY calls DESC
+  ask:
+  - 'What web sites did Claude Code fetch?'
+  - 'Which domains did the agent search or fetch?'
+  - 'Web domains accessed by the coding agent'
+  - 'What sites is the agent opening or accessing?'
+  expect:
+    rows_at_least: 1
+- id: agents_mcp_by_person
+  keys: [person, machine, server, mcp_tool]
+  answer: "{n} MCP tools in use; most: {first.server} {first.mcp_tool} by {first.person}"
+  name: MCP servers and tools by person and machine
+  group: AI agents / MCP
+  tags:
+  - ai
+  - claude-code
+  - mcp
+  requires:
+  - claude_hooks
+  why: Which MCP servers and tools the agent called, for whom, and on which machine.
+  normal: The servers on your MCP allowlist. A server you have not reviewed belongs on the MCP inventory.
+  suggested_schedule: daily
+  flag: null
+  description: 'MCP tool calls per person, machine, server, and tool, with first and last call.'
+  sql: |-
+    SELECT actor_user_name AS person, device_hostname AS machine,
+           json_extract_string(unmapped, '$.attr.mcp_server_name') AS server,
+           json_extract_string(unmapped, '$.attr.mcp_tool_name') AS mcp_tool, count(*) AS calls,
+           min(coalesce(time, time_observed)) AS first_call,
+           max(coalesce(time, time_observed)) AS last_call
+    FROM events
+    WHERE template_id = 'claude_hooks' AND message = 'claude_hooks.pre_tool_use'
+      AND coalesce(time, time_observed) BETWEEN {{start}} AND {{end}}
+      AND json_extract_string(unmapped, '$.attr.mcp_server_name') IS NOT NULL
+    GROUP BY actor_user_name, device_hostname, json_extract_string(unmapped, '$.attr.mcp_server_name'),
+             json_extract_string(unmapped, '$.attr.mcp_tool_name')
+    ORDER BY calls DESC
+  ask:
+  - 'Which MCP servers is Claude Code using?'
+  - 'What MCP tools did people use, by machine?'
+  - 'MCP servers by person'
+  expect:
+    rows_at_least: 1
+- id: agents_accounts_by_machine
+  answer: "{n} machines with a personal or unconfirmed Claude account; first: {first.machine}
+    ({first.status})"
+  name: Personal or unconfirmed Claude accounts by machine
+  group: AI agents / Accounts
+  tags:
+  - ai
+  - claude-code
+  - accounts
+  requires:
+  - claude_hooks
+  why: Machines where Claude Code ran under an account you cannot tie to a company sign-in.
+  normal: Company accounts with a Microsoft 365 sign-in to Claude are left out. A personal account on a
+    company machine is the one to raise.
+  suggested_schedule: daily
+  flag: null
+  description: 'Each machine and the Claude account the plugin reported there. Personal: an email outside
+    the company domain. Not reported: no email (an API key session, or an older plugin). Company, not
+    confirmed: a company email with no successful Microsoft 365 sign-in to Claude by the same email within
+    30 days before the range ends. The Accounts page uses every organization domain; this query takes
+    one.'
+  params:
+  - name: company_domain
+    type: string
+    default: example.com
+    description: Your organization's email domain
+  sql: |-
+    WITH used AS (
+      SELECT device_hostname AS machine,
+             lower(nullif(trim(json_extract_string(unmapped, '$.attr.claude_account_email')), '')) AS email,
+             json_extract_string(unmapped, '$.attr.os_user') AS os_user,
+             json_extract_string(unmapped, '$.attr.session_id') AS session_id,
+             coalesce(time, time_observed) AS t
+      FROM events
+      WHERE template_id = 'claude_hooks' AND coalesce(time, time_observed) BETWEEN {{start}} AND {{end}}
+    ),
+    signed AS (
+      SELECT DISTINCT lower(actor_user_name) AS email
+      FROM events
+      WHERE template_id = 'm365_signin' AND status_id = 1
+        AND coalesce(time, time_observed) BETWEEN {{start}} - INTERVAL 30 DAY AND {{end}}
+        AND (coalesce(resource_name, message) ILIKE '%claude%'
+             OR coalesce(resource_name, message) ILIKE '%anthropic%')
+    ),
+    rated AS (
+      SELECT u.*, CASE
+               WHEN u.email IS NULL THEN 'Not reported'
+               WHEN NOT ends_with(u.email, '@' || lower({{company_domain}})) THEN 'Personal'
+               WHEN s.email IS NULL THEN 'Company, not confirmed'
+               ELSE 'Company, confirmed'
+             END AS status
+      FROM used u LEFT JOIN signed s ON u.email = s.email
+    )
+    SELECT machine, coalesce(email, '(none)') AS account, status,
+           string_agg(DISTINCT os_user, ', ') AS os_users, count(DISTINCT session_id) AS sessions,
+           max(t) AS last_seen
+    FROM rated
+    WHERE status <> 'Company, confirmed'
+    GROUP BY machine, email, status
+    ORDER BY CASE status WHEN 'Personal' THEN 0 WHEN 'Not reported' THEN 1 ELSE 2 END, last_seen DESC
+  ask:
+  - 'Which machines use a personal Claude account?'
+  - 'Show unconfirmed Claude accounts by machine'
+  - 'Is anyone using Claude Code with a personal account?'
+  expect:
+    rows_at_least: 1
+- id: agents_calls_without_result
+  answer: "{n} people with tool calls that got no result; most: {first.person} ({first.no_result} calls)"
+  name: Agent tool calls with no result
+  group: AI agents / Tools
+  tags:
+  - ai
+  - claude-code
+  requires:
+  - claude_hooks
+  why: Tool calls that never came back, per person and tool. Blocked by a hook or a permission rule,
+    interrupted, or still running.
+  normal: A few from people stopping the agent. Many for one tool, or a rise after a policy change, means a
+    rule is blocking it.
+  suggested_schedule: daily
+  flag: null
+  description: 'Per person and tool: calls minus results (success or failure) in the same session, counted
+    only where calls outnumber results. Failed calls are counted apart, as failures.'
+  sql: |-
+    WITH calls AS (
+      SELECT actor_user_name AS person, json_extract_string(unmapped, '$.attr.session_id') AS session_id,
+             json_extract_string(unmapped, '$.attr.tool_name') AS tool,
+             count(*) FILTER (WHERE message = 'claude_hooks.pre_tool_use') AS made,
+             count(*) FILTER (WHERE message IN ('claude_hooks.post_tool_use',
+                                                'claude_hooks.post_tool_use_failure')) AS answered,
+             count(*) FILTER (WHERE message = 'claude_hooks.post_tool_use_failure') AS failed,
+             max(coalesce(time, time_observed)) AS last_call
+      FROM events
+      WHERE template_id = 'claude_hooks' AND coalesce(time, time_observed) BETWEEN {{start}} AND {{end}}
+        AND json_extract_string(unmapped, '$.attr.tool_name') IS NOT NULL
+        AND lower(json_extract_string(unmapped, '$.attr.tool_name')) NOT IN ('subagenthandback')
+      GROUP BY ALL
+    )
+    SELECT person, tool, sum(greatest(made - answered, 0)) AS no_result, sum(failed) AS failed,
+           count(DISTINCT session_id) FILTER (WHERE made > answered) AS sessions, max(last_call) AS last_call
+    FROM calls
+    GROUP BY person, tool
+    HAVING sum(greatest(made - answered, 0)) > 0 OR sum(failed) > 0
+    ORDER BY no_result DESC, failed DESC
+  ask:
+  - 'Which agent tool calls were blocked?'
+  - 'Show Claude Code tool calls that got no result'
+  - 'Were any coding agent calls interrupted or blocked?'
+- id: agents_sessions_for_person
+  keys: [session_id]
+  answer: "{n} sessions; newest started {first.started} on {first.machine}"
+  name: Claude Code sessions for one person
+  group: AI agents / Sessions
+  tags:
+  - ai
+  - claude-code
+  requires:
+  - claude_hooks
+  why: One person's sessions, newest first, with prompts, tool calls, and how long each ran.
+  normal: Sessions in working hours on the person's own machines.
+  suggested_schedule: null
+  flag: null
+  description: 'Sessions for people whose name or email contains the text given (empty for everyone):
+    machine, start, prompt count, tool calls (bookkeeping left out), and minutes from first to last
+    event.'
+  params:
+  - name: person
+    type: string
+    default: ''
+    description: Part of a name or email; empty for everyone
+  sql: |-
+    SELECT json_extract_string(unmapped, '$.attr.session_id') AS session_id,
+           any_value(actor_user_name) AS person, any_value(device_hostname) AS machine,
+           min(coalesce(time, time_observed)) AS started,
+           count(*) FILTER (WHERE message = 'claude_hooks.user_prompt_submit') AS prompts,
+           count(*) FILTER (WHERE message = 'claude_hooks.pre_tool_use'
+             AND lower(coalesce(json_extract_string(unmapped, '$.attr.tool_name'), '')) NOT IN ('subagenthandback')) AS tool_calls,
+           round((epoch(max(coalesce(time, time_observed))) - epoch(min(coalesce(time, time_observed)))) / 60, 1) AS minutes
+    FROM events
+    WHERE template_id = 'claude_hooks' AND coalesce(time, time_observed) BETWEEN {{start}} AND {{end}}
+      AND json_extract_string(unmapped, '$.attr.session_id') IS NOT NULL
+      AND ({{person}} = '' OR actor_user_name ILIKE '%' || {{person}} || '%')
+    GROUP BY json_extract_string(unmapped, '$.attr.session_id')
+    ORDER BY started DESC
+  ask:
+  - 'Show Claude Code sessions for alice'
+  - 'How many prompts and tool calls in each session?'
+  - 'Sessions for one person with duration'
+  expect:
+    rows_at_least: 1

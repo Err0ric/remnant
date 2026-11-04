@@ -122,7 +122,7 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
     onSuccess: async () => {
       setConfirming(null);
       await client.invalidateQueries({ queryKey: ["source-list"] });
-      await client.invalidateQueries({ queryKey: ["sources"] }); // Search filter list
+      await client.invalidateQueries({ queryKey: ["search-source-filter"] }); // Search filter list
     },
   });
 

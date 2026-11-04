@@ -145,7 +145,7 @@ def inventory(
         if _iso(a.last_seen) and str(_iso(a.last_seen)) < start.isoformat():
             continue
         out.append(
-            Item("agent", a.agent, a.label, None, len(a.owners), 1 if a.machine else 0,
+            Item("agent", a.agent, a.label, None, len(a.owners), len(a.machines),
                  a.first_seen, a.last_seen, [a.kind])
         )  # fmt: skip
     apps = engine.run(

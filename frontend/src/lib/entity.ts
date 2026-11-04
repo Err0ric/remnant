@@ -51,15 +51,24 @@ export function isEntityValue(value: unknown): value is string {
 
 /** The Investigations address for an entity; kept in the fragment, so it never reaches a
  * server or proxy log, like Search (D90). */
-export function entitySection(e: Entity): string {
-  return `${e.kind}=${encodeURIComponent(e.value)}`;
+export function entitySection(e: Entity, tab?: EntityTab): string {
+  return `${e.kind}=${encodeURIComponent(e.value)}${tab ? `&tab=${tab}` : ""}`;
 }
 
-export function entityHref(e: Entity): string {
-  return `${pathFor("investigate")}#${entitySection(e)}`;
+/** A person's page can open on a tab: AI usage and Agents open "AI use" (D189). */
+export type EntityTab = "ai";
+
+export function entityHref(e: Entity, tab?: EntityTab): string {
+  return `${pathFor("investigate")}#${entitySection(e, tab)}`;
 }
 
-export function parseEntity(section: string): Entity | null {
+/** The tab named in an entity address (`user=dana%40example.com&tab=ai`), if any. */
+export function parseEntityTab(section: string): EntityTab | null {
+  return /(?:^|&)tab=ai(?:&|$)/.test(section) ? "ai" : null;
+}
+
+export function parseEntity(full: string): Entity | null {
+  const section = full.split("&")[0] ?? "";
   const eq = section.indexOf("=");
   if (eq < 1) return null;
   const kind = section.slice(0, eq) as EntityKind;
@@ -73,6 +82,6 @@ export function parseEntity(section: string): Entity | null {
 }
 
 /** Opens the entity's page (a new history entry, so Back returns here). */
-export function openEntity(e: Entity): void {
-  navigate("investigate", entitySection(e));
+export function openEntity(e: Entity, tab?: EntityTab): void {
+  navigate("investigate", entitySection(e, tab));
 }

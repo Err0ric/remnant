@@ -411,7 +411,7 @@ function Card({ card, days, odd, history, bounds }: CardProps) {
               }}
               className="self-start text-sm text-accent-text no-underline hover:underline"
             >
-              {card.unreviewed.toLocaleString()} not reviewed
+              Review {card.unreviewed.toLocaleString()} unreviewed
             </a>
           ) : null}
           {card.blocked ? (

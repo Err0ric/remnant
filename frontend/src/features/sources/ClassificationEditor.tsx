@@ -27,7 +27,7 @@ export function ClassificationEditor({ sourceId, value }: ClassificationEditorPr
     onSuccess: () => {
       setOpen(false);
       void client.invalidateQueries({ queryKey: ["source-list"] });
-      void client.invalidateQueries({ queryKey: ["sources"] });
+      void client.invalidateQueries({ queryKey: ["search-source-filter"] });
     },
   });
 

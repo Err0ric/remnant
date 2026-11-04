@@ -6,9 +6,10 @@ a session cookie or a CLI bearer token is required on every protected route).
 Cookie-authenticated writes also need the session's CSRF token in X-CSRF-Token.
 """
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Annotated
 
+import anyio
 from fastapi import Depends, Request
 
 from app.auth.service import AuthService
@@ -50,7 +51,26 @@ def resolve_session(request: Request) -> tuple[SessionInfo, User, bool] | None:
     return info, user, from_cookie
 
 
-def current_user(request: Request) -> User:
+# Sign-in checks run on their own few threads, never the shared request pool (owner,
+# 2026-11-03: at the UTC day rollover every pool thread was waiting on a query slot, and a
+# request that only needed its session checked waited 13 s; D193). The work is a SQLite
+# read or two, so a handful of threads is plenty.
+AUTH_THREADS = 8
+_auth_limiter: anyio.CapacityLimiter | None = None
+
+
+def _limiter() -> anyio.CapacityLimiter:
+    global _auth_limiter
+    if _auth_limiter is None:
+        _auth_limiter = anyio.CapacityLimiter(AUTH_THREADS)
+    return _auth_limiter
+
+
+async def _off_pool(fn: Callable[[Request], User], request: Request) -> User:
+    return await anyio.to_thread.run_sync(fn, request, limiter=_limiter())
+
+
+def _current_user(request: Request) -> User:
     auth: AuthService = request.app.state.auth
     mode = auth.mode()
     if mode == "open":
@@ -86,17 +106,26 @@ def current_user(request: Request) -> User:
     return user
 
 
-def interactive_user(request: Request) -> User:
-    """A person at a browser, not an API token: a stolen token cannot mint new tokens."""
-    user = current_user(request)
+async def current_user(request: Request) -> User:
+    """Who is calling (see the module docstring), checked on the sign-in threads."""
+    return await _off_pool(_current_user, request)
+
+
+def _interactive_user(request: Request) -> User:
+    user = _current_user(request)
     if getattr(request.state, "via", None) == "bearer":
         raise InteractiveRequiredError("Sign in to the web interface to manage tokens")
     return user
 
 
-def require_role(*roles: Role) -> Callable[[Request], User]:
-    def check(request: Request) -> User:
-        user = current_user(request)
+async def interactive_user(request: Request) -> User:
+    """A person at a browser, not an API token: a stolen token cannot mint new tokens."""
+    return await _off_pool(_interactive_user, request)
+
+
+def require_role(*roles: Role) -> Callable[[Request], Awaitable[User]]:
+    def _check(request: Request) -> User:
+        user = _current_user(request)
         if user.role not in roles:
             auth: AuthService = request.app.state.auth
             auth.audit.write(
@@ -108,6 +137,9 @@ def require_role(*roles: Role) -> Callable[[Request], User]:
             )
             raise ForbiddenError("Your role does not allow this action")
         return user
+
+    async def check(request: Request) -> User:
+        return await _off_pool(_check, request)
 
     return check
 

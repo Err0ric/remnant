@@ -224,7 +224,9 @@ class QuietWatch:
                     continue
                 text = f"Events arriving again after {human(gap)}"
                 if self._items is not None and w.quiet_since:
-                    self._items.resolve("gap", f"{w.source_id}@{w.quiet_since}", text)
+                    self._items.resolve(
+                        "gap", f"{w.source_id}@{w.quiet_since}", text, group=(w.source_id, "gap")
+                    )
                 self._alert(w, "resumed", text, seen)
                 changed += 1
         return changed
@@ -249,9 +251,12 @@ class QuietWatch:
                 detail=detail,
                 sources=[w.source_id],
                 range_start=seen.isoformat() if seen else None,
+                group=(w.source_id, "gap"),
+                severity="medium",  # every gap shows its severity (ADR-0043 row 15)
+                change=detail,
             )
-            if item.state == "closed":
-                kind = "muted"
+            if item.state == "closed" or not (item.fresh or item.rose):
+                kind = "muted"  # muted, or a repeat on today's open gap: not sent again
             elif self._link:
                 link = f"{self._link}/alerts#item={item.item_id}"
         self._audit.write(

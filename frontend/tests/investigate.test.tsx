@@ -105,6 +105,51 @@ describe("Investigations (ADR-0016)", () => {
     expect(String(call?.[0])).toContain("value=root");
   });
 
+  it("lists everyone seen, with a column per signal and the score's parts on hover (D195)", async () => {
+    await openInvestigate();
+    const table = await screen.findByRole("table", { name: "User" });
+    const heads = within(table)
+      .getAllByRole("columnheader")
+      .map((h) => h.textContent);
+    expect(heads).toEqual([
+      "User",
+      "Score",
+      "Rule matches",
+      "Failed sign-ins",
+      "Risky inbox rules",
+      "App consents",
+      "AI watch flags",
+      "Alerts",
+      "Events",
+    ]);
+    const erin = within(table).getByRole("button", { name: "erin@example.com" }).closest("tr")!;
+    expect(
+      within(erin).getByTitle(
+        /Failed sign-ins: 3\sRisky inbox rules: 5\sAI watch flags: 6\sScore: 14/,
+      ),
+    ).toBeVisible();
+    expect(within(erin).getByTitle("personal Claude account, new MCP server")).toHaveTextContent(
+      "2",
+    );
+    // No rule match and no signal: still listed, last, by its events.
+    const rows = within(table).getAllByRole("row").slice(1);
+    expect(rows.at(-1)).toHaveTextContent("jordan");
+    expect(
+      within(rows.at(-1)!).getByTitle("Nothing adds to the score in this range"),
+    ).toBeVisible();
+    await userEvent.click(screen.getByRole("tab", { name: /^Hosts/ }));
+    const hosts = await screen.findByRole("table", { name: "Host" });
+    expect(
+      within(hosts)
+        .getAllByRole("columnheader")
+        .map((h) => h.textContent),
+    ).toContain("Attack hits");
+    expect(
+      within(hosts).getByTitle(/Failed sign-ins: 25 \(capped\)\sAttack hits: 25 \(capped\)/),
+    ).toBeVisible();
+    expect(screen.getByText(/Only sources you may read are counted\./)).toBeVisible();
+  });
+
   it("highlights a card's path and hands its events to Search", async () => {
     await openInvestigate("/investigate/people#user=root");
     const card = await screen.findByRole("button", { name: /Activities: Failed password/ });
@@ -158,25 +203,64 @@ describe("Person timeline (ADR-0038 section 9)", () => {
     expect(await screen.findByText(/From alice > Timeline/)).toBeVisible();
   });
 
-  it("has Sessions, Sign-ins, and Alerts tabs, and an alert row opens its alert", async () => {
+  it("is one page per person: identity, AI use, hosts, alerts, timeline (D197)", async () => {
     await openInvestigate("/investigate/people#user=alice");
     const tabs = await screen.findByRole("tablist", { name: "Person" });
     expect(
       within(tabs)
         .getAllByRole("tab")
         .map((t) => t.textContent),
-    ).toEqual(["Summary", "Timeline", "Sessions", "Sign-ins", "Alerts"]);
-    await userEvent.click(within(tabs).getByRole("tab", { name: "Sign-ins" }));
+    ).toEqual(["Identity and M365", "AI use", "Hosts and devices", "Alerts", "Timeline"]);
+    // Identity and M365 holds the summary and the sign-ins.
     expect(await screen.findByRole("region", { name: "Sign-ins" })).toBeVisible();
+    await userEvent.click(within(tabs).getByRole("tab", { name: "Hosts and devices" }));
+    const hosts = await screen.findByRole("region", { name: "Hosts and devices" });
+    const table = within(hosts).getByRole("table", { name: "Hosts" });
+    expect(within(table).getByRole("link", { name: "ws-0042" })).toBeVisible();
+    expect(within(hosts).getByRole("table", { name: "Source addresses" })).toHaveTextContent("3");
     await userEvent.click(within(tabs).getByRole("tab", { name: "Alerts" }));
     expect(await screen.findByRole("region", { name: "Alerts" })).toBeVisible();
-    await userEvent.click(within(tabs).getByRole("tab", { name: "Sessions" }));
-    expect(await screen.findByRole("region", { name: "Sessions" })).toBeVisible();
     await userEvent.click(within(tabs).getByRole("tab", { name: "Timeline" }));
     const box = await screen.findByRole("region", { name: "Timeline" });
     await userEvent.click(
       await within(box).findByRole("button", { name: "Sensitive data to AI: alice" }),
     );
     expect(window.location.pathname + window.location.hash).toBe("/alerts#item=a1");
+  });
+});
+
+describe("A person's AI activity (D189)", () => {
+  it("opens on its tab from a link that names it, with flags, sessions, and rollups", async () => {
+    const spy = await openInvestigate(
+      `/investigate/people#user=${encodeURIComponent("alice@example.com")}&tab=ai`,
+    );
+    const tab = await screen.findByRole("tab", { name: "AI use", selected: true });
+    expect(tab).toBeVisible();
+    const page = await screen.findByRole("region", { name: "AI activity" });
+    const flags = within(page).getByRole("region", { name: "Flags" });
+    expect(flags).toHaveTextContent("Writes outside the session's working folder 1: /etc/hosts");
+    expect(flags).toHaveTextContent("Personal Claude account");
+    expect(within(page).getByRole("region", { name: "Accounts and devices" })).toHaveTextContent(
+      "alice@example.net",
+    );
+    expect(within(page).getByRole("link", { name: "ChatGPT" })).toBeVisible();
+    expect(within(page).getByRole("region", { name: "Claude Code sessions" })).toHaveTextContent(
+      "1 prompt; 5 tool calls (Bash, Edit, WebFetch)",
+    );
+    expect(within(page).getByRole("region", { name: "Commands" })).toHaveTextContent("git");
+    expect(within(page).getByRole("region", { name: "MCP servers" })).toHaveTextContent(
+      "No MCP servers",
+    );
+    // The person is the entity, not "alice@example.com&tab=ai".
+    expect(String(spy.mock.calls.find(([u]) => String(u).includes("/activity?"))?.[0])).toContain(
+      "/api/ai/people/alice%40example.com/activity?days=7",
+    );
+  });
+
+  it("is where AI usage and Agents send a person", async () => {
+    const { entityHref } = await import("@/lib/entity");
+    expect(entityHref({ kind: "user", value: "dana@example.com" }, "ai")).toBe(
+      "/investigate/people#user=dana%40example.com&tab=ai",
+    );
   });
 });

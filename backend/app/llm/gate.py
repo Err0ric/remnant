@@ -43,6 +43,7 @@ from app.core.errors import (
     ProviderBusyError,
     ProviderConfigError,
     ProviderError,
+    ProviderOutputLimitError,
     ProviderUnreachableError,
 )
 from app.core.ids import RESERVED_SOURCE_PREFIX, new_id
@@ -395,9 +396,14 @@ class LLMGate:
             except ValidationError as exc:
                 if response.truncated:
                     self._finish(row["call_id"], started, sent_back, "truncated", wait=wait)
-                    raise ProviderError(
-                        _truncated_message(record.reasoning, response, req.max_tokens)
-                    ) from exc
+                    text = _truncated_message(record.reasoning, response, req.max_tokens)
+                    # Thinking Off is the fix: a code the page can offer a link for.
+                    kind = (
+                        ProviderOutputLimitError
+                        if _thinking_fix(record.reasoning, response, req.max_tokens)
+                        else ProviderError
+                    )
+                    raise kind(text) from exc
                 self._finish(row["call_id"], started, sent_back, "schema_invalid", wait=wait)
                 raise AnswerShapeError("The model returned an answer in the wrong shape") from exc
         check: Literal["pass", "fail"] | None = None
@@ -742,6 +748,14 @@ def _response_text(response: ProviderResponse) -> str:
         {"id": c.call_id, "name": c.name, "arguments": c.arguments} for c in response.tool_calls
     ]
     return _canonical({"text": response.text, "tool_calls": calls})
+
+
+def _thinking_fix(reasoning: str | None, response: ProviderResponse, max_tokens: int) -> bool:
+    """True when the advice is to set Thinking to Off (not a full context window, and not
+    already Off)."""
+    written = response.completion_tokens
+    full_context = written is not None and written < max_tokens // 2
+    return not full_context and reasoning != "none"
 
 
 def _truncated_message(reasoning: str | None, response: ProviderResponse, max_tokens: int) -> str:

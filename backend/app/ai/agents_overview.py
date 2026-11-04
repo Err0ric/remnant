@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.ai.catalog import Catalog
+from app.ai.internal_tools import counted
 from app.ai.sessions import _ONE_COPY, _a
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.search import drill
@@ -22,8 +23,10 @@ MAX_TOOLS = 200
 
 _TS = "coalesce(time, time_observed)"
 _TOOL = f"coalesce({_a('mcp_server_name')}, {_a('tool_name')})"
-_CALL = "message = 'claude_hooks.pre_tool_use'"
-_FAIL = "message = 'claude_hooks.post_tool_use_failure'"
+# Claude Code's own bookkeeping is not a tool call (D186).
+_REAL = counted(_a("tool_name"))
+_CALL = f"message = 'claude_hooks.pre_tool_use' AND {_REAL}"
+_FAIL = f"message = 'claude_hooks.post_tool_use_failure' AND {_REAL}"
 
 OVERVIEW_SQL = f"""
 WITH {_ONE_COPY}
@@ -56,7 +59,7 @@ SELECT {_TOOL} AS tool, {_a("mcp_server_name")} IS NOT NULL AS mcp,
        count(*) FILTER (WHERE {_FAIL}) AS failed,
        min({_TS}) AS first_seen, max({_TS}) AS last_seen
 FROM hooks
-WHERE {_TS} >= $start AND {_a("tool_name")} IS NOT NULL
+WHERE {_TS} >= $start AND {_a("tool_name")} IS NOT NULL AND {_REAL}
 GROUP BY 1, 2
 ORDER BY calls DESC, tool
 LIMIT {MAX_TOOLS}"""  # noqa: S608  # fixed SQL text

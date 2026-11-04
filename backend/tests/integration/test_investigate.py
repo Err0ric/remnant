@@ -114,11 +114,14 @@ def test_risk_ranks_entities_by_weighted_rule_matches(lab: dict[str, Any]) -> No
     body = res.json()
     assert body["matches_considered"] > 0
     top_ip = body["ips"][0]
-    # High-level matches weigh 5 each; the parts are shown with the score.
-    assert top_ip["score"] == 5 * top_ip["high"] + 2 * top_ip["medium"] + top_ip["low"]
+    # High-level matches weigh 5 each; the score is the sum of its parts, each shown (D195).
+    rules = 5 * top_ip["high"] + 2 * top_ip["medium"] + top_ip["low"]
+    assert top_ip["parts"]["rule_matches"] == rules
+    assert top_ip["score"] == sum(top_ip["parts"].values())
+    assert top_ip["parts"].get("failed_signins", 0) == min(25, top_ip["failed_signins"])
     assert top_ip["high"] > 0 and "SSH failed password" in top_ip["rules"]
-    assert [r["score"] for r in body["ips"]] == sorted(
-        (r["score"] for r in body["ips"]), reverse=True
+    assert [(-r["score"], -r["events"]) for r in body["ips"]] == sorted(
+        (-r["score"], -r["events"]) for r in body["ips"]
     )
     hosts = {r["value"] for r in body["hosts"]}
     assert hosts & {"bastion", "web-01", "db-01"}
@@ -269,21 +272,30 @@ def test_identities_merge_names_by_domain_and_alias(lab: dict[str, Any]) -> None
     assert {c["label"] for c in one["cards"] if c["lane"] == 0} == {"alice@example.com"}
     ran = admin.post("/api/query", json={"sql": alice[0]["search_sql"]}, headers=h)
     assert ran.status_code == 200 and ran.json()["row_count"] > 0
-    # An alias adds another login to a person; risk rows are added up.
+
+    # An alias adds another login to a person; risk rows are added up. Every name seen in
+    # the range is listed now (D195), so a person shows under their email form.
+    def person(rows: list[dict[str, Any]], name: str) -> dict[str, Any] | None:
+        def named(r: dict[str, Any]) -> bool:
+            return any(n == name or n.startswith(name + "@") for n in r["names"] or [r["value"]])
+
+        return next((r for r in rows if named(r)), None)
+
     risk = admin.get("/api/entities/risk", params=RANGE).json()["users"]
-    by = {r["value"]: r for r in risk}
-    assert "bob" in by and "carol" in by
+    bob, carol = person(risk, "bob"), person(risk, "carol")
+    assert bob and carol and bob is not carol
     admin.put("/api/identities/aliases", json={"alias": "bob", "person": "carol"}, headers=h)
-    merged_risk = {
-        r["value"]: r for r in admin.get("/api/entities/risk", params=RANGE).json()["users"]
-    }
-    assert "bob" not in merged_risk
-    assert merged_risk["carol"]["score"] == by["carol"]["score"] + by["bob"]["score"]
-    assert merged_risk["carol"]["names"] == ["bob", "carol"]
+    after_risk = admin.get("/api/entities/risk", params=RANGE).json()["users"]
+    merged_row = person(after_risk, "carol")
+    assert merged_row and person(after_risk, "bob") is merged_row
+    rules = merged_row["parts"].get("rule_matches", 0)
+    assert rules == bob["parts"].get("rule_matches", 0) + carol["parts"].get("rule_matches", 0)
+    assert merged_row["events"] == bob["events"] + carol["events"]
+    assert {n.split("@")[0] for n in merged_row["names"]} >= {"bob", "carol"}
     # Removing the alias undoes it; nothing stored changed.
     admin.put("/api/identities/aliases", json={"alias": "bob", "person": None}, headers=h)
-    again = {r["value"] for r in admin.get("/api/entities/risk", params=RANGE).json()["users"]}
-    assert "bob" in again
+    again = admin.get("/api/entities/risk", params=RANGE).json()["users"]
+    assert (person(again, "bob") or {})["value"] != (person(again, "carol") or {})["value"]
     raw = admin.post(
         "/api/query",
         json={"sql": "SELECT count(*) FROM events WHERE actor_user_name = 'alice@example.com'"},

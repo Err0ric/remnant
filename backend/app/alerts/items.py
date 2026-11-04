@@ -21,6 +21,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.auth.users import User
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError, ParamInvalidError
@@ -28,17 +29,35 @@ from app.meta.audit import AuditLog
 from app.meta.db import MetaDB
 
 Kind = Literal["schedule", "rule", "ai_watch", "gap"]
-Reason = Literal["true_positive", "benign", "false_positive", "follow_up"]
+Reason = Literal["expected", "approved", "false_positive", "resolved"]
+# The reasons a person picks (ADR-0043 row 16), in the order shown.
 REASONS: dict[str, str] = {
-    "true_positive": "True positive",
-    "benign": "Benign or expected",
-    "false_positive": "False positive (tune the rule)",
-    "follow_up": "Needs follow-up",
-    "muted": "Muted",
+    "expected": "Expected",
+    "approved": "Approved",
+    "false_positive": "False positive",
+    "resolved": "Resolved",
 }
-NOTE_REQUIRED = frozenset({"false_positive", "follow_up"})
+# How stored reasons from before read now (ADR-0043 answer 4), and the system's own.
+LABELS: dict[str, str] = {
+    **REASONS,
+    "true_positive": "Resolved",
+    "benign": "Expected",
+    "follow_up": "Resolved",
+    "muted": "Muted",
+    "merged": "Merged",
+}
+NOTE_REQUIRED = frozenset({"false_positive"})
+MUTE_DAYS = (7, 30)  # ADR-0043 row 18
+
+
+def label(reason: str | None) -> str | None:
+    return LABELS.get(reason, reason) if reason else None
+
+
 MAX_NOTE = 2_000
-MAX_MUTE_DAYS = 30
+MAX_MUTE_DAYS = max(MUTE_DAYS)
+MAX_CHANGES = 20  # lines kept on a grouped item, newest first (ADR-0043 row 2)
+RANK = {None: 0, "info": 0, "low": 1, "medium": 2, "high": 3}
 
 
 @dataclass(slots=True)
@@ -78,6 +97,18 @@ class AlertItem:
     people: list[str] = field(default_factory=list)
     devices: list[str] = field(default_factory=list)
     history: list[ItemEvent] = field(default_factory=list)
+    # The group (ADR-0043 row 1): one open item per entity, rule, and day; repeats add to
+    # `count` and `changes` and move `last_seen`.
+    entity: str | None = None
+    rule: str | None = None
+    day: str | None = None
+    last_seen: str | None = None
+    changes: list[str] = field(default_factory=list)
+    more: int = 0  # changes beyond MAX_CHANGES
+    # What this raise did: created the item, or raised its severity. Only these notify
+    # (row 4); a repeat that only adds to the count does not.
+    fresh: bool = False
+    rose: bool = False
 
 
 @dataclass(slots=True)
@@ -97,13 +128,30 @@ class AlertItems:
         meta: MetaDB,
         audit: AuditLog,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        tz: str = "UTC",
+        gap_min_back: timedelta = timedelta(minutes=15),
+        gap_max_notify: int = 3,
     ) -> None:
+        # Flap guard for gaps (owner, 2026-11-03): see SourcesConfig.
+        self._gap_min_back = gap_min_back
+        self._gap_max_notify = gap_max_notify
         self._meta = meta
         self._audit = audit
         self._clock = clock
+        try:  # the install's time zone draws the day boundary (ADR-0043 answer 1)
+            self._tz = ZoneInfo(tz)
+        except (ZoneInfoNotFoundError, ValueError):
+            self._tz = ZoneInfo("UTC")
 
     def _now(self) -> str:
         return self._clock().astimezone(UTC).isoformat()
+
+    def day_of(self, at: datetime | str) -> str:
+        """The install-time-zone day of an instant, YYYY-MM-DD."""
+        when = datetime.fromisoformat(at) if isinstance(at, str) else at
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=UTC)
+        return when.astimezone(self._tz).date().isoformat()
 
     # --- raising ------------------------------------------------------------------------
 
@@ -126,13 +174,20 @@ class AlertItems:
         refresh: bool = False,
         people: list[str] | None = None,
         devices: list[str] | None = None,
+        group: tuple[str, str] | None = None,
+        change: str | None = None,
     ) -> AlertItem:
         """Write an item (once per kind and ref id). A muted subject closes it at once.
-        With `refresh`, an existing open item takes the new wording and counts."""
+        With `refresh`, an existing open item takes the new wording and counts.
+
+        With `group` (entity, rule), at most one item per kind, entity, rule, and day is
+        open (ADR-0043): a repeat adds its count and `change` line to that item instead of
+        writing a new one, and raises its severity when the repeat is more severe."""
         now = self._now()
         item_id = str(uuid.uuid4())
         who = _names(people)
         dev = _names(devices)
+        line = (change or why or title)[:300]
         with self._meta.connect() as con:
             if ref_id is not None:
                 had = con.execute(
@@ -163,11 +218,29 @@ class AlertItems:
                     )
                 if had:
                     return self._load(con, had["item_id"])
+            if group is not None:
+                grown = self._grow(
+                    con, kind, group, self.day_of(now), line, count, severity, who, dev, now,
+                    range_end,
+                )  # fmt: skip
+                if grown is not None:
+                    return grown
+            entity, rule = group if group is not None else (None, None)
+            group_day = self.day_of(now) if group is not None else None
+            if group is not None:
+                earlier = con.execute(
+                    "SELECT close_reason FROM alert_items WHERE kind = ? AND entity = ?"
+                    " AND rule = ? AND day = ? AND state = 'closed' ORDER BY closed_at DESC",
+                    (kind, entity, rule, group_day),
+                ).fetchone()
+                if earlier is not None:  # row 3: a new item, linked to the decision
+                    said = label(earlier["close_reason"]) or "closed"
+                    detail = f"Closed earlier today as {said}. {detail}".strip()
             con.execute(
                 "INSERT INTO alert_items (item_id, kind, subject, ref_id, title, detail, why,"
                 " count, sources, owner_id, shared, range_start, range_end, created_at, severity,"
-                " people, devices)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " people, devices, entity, rule, day, last_seen, changes)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     item_id,
                     kind,
@@ -186,6 +259,11 @@ class AlertItems:
                     severity,
                     who,
                     dev,
+                    entity,
+                    rule,
+                    group_day,
+                    now if group is not None else None,
+                    json.dumps({"lines": [line], "more": 0}) if group is not None else None,
                 ),
             )
             mute = con.execute(
@@ -205,15 +283,139 @@ class AlertItems:
                 {"item_id": item_id, "kind": kind, "subject": subject, "reason": "muted"},
             )
         with self._meta.connect() as con:
-            return self._load(con, item_id)
+            out = self._load(con, item_id)
+        out.fresh = True
+        return out
 
-    def resolve(self, kind: Kind, ref_id: str, text: str) -> None:
+    def _grow(
+        self,
+        con: sqlite3.Connection,
+        kind: str,
+        group: tuple[str, str],
+        day: str,
+        line: str,
+        count: int | None,
+        severity: str | None,
+        who: str | None,
+        dev: str | None,
+        now: str,
+        range_end: str | None,
+    ) -> AlertItem | None:
+        """Add a repeat to the open item of its group, if there is one (ADR-0043 row 2)."""
+        r = con.execute(
+            "SELECT * FROM alert_items WHERE kind = ? AND entity = ? AND rule = ? AND day = ?"
+            " AND state = 'open'",
+            (kind, group[0], group[1], day),
+        ).fetchone()
+        if r is None:
+            return None
+        log = _changes(r["changes"])
+        lines, more = log
+        if line not in lines:
+            lines.insert(0, line)
+            more += max(0, len(lines) - MAX_CHANGES)
+            lines = lines[:MAX_CHANGES]
+        rose = RANK.get(severity, 0) > RANK.get(r["severity"], 0)
+        # The condition had ended (a quiet source sending again) and is back: say so again,
+        # unless it is flapping. A gap notifies again only when the source was back long
+        # enough, and at most so many times a day; after that the title says so.
+        title = r["title"]
+        notified = _notified(r["changes"])
+        back = False
+        if r["resolved"] is not None:
+            away = _since(r["resolved_at"], now)
+            steady = kind != "gap" or (away is not None and away >= self._gap_min_back)
+            if steady and (kind != "gap" or notified < self._gap_max_notify):
+                back, notified = True, notified + 1
+            elif kind == "gap" and notified >= self._gap_max_notify and "(flapping)" not in title:
+                title = f"{title} (flapping)"[:300]
+        people = sorted({*json.loads(r["people"] or "[]"), *json.loads(who or "[]")})
+        devices = sorted({*json.loads(r["devices"] or "[]"), *json.loads(dev or "[]")})
+        con.execute(
+            "UPDATE alert_items SET count = coalesce(count, 1) + ?, changes = ?, last_seen = ?,"
+            " severity = ?, people = ?, devices = ?, range_end = coalesce(?, range_end),"
+            " resolved = NULL, resolved_at = NULL, title = ? WHERE item_id = ?",
+            (
+                count or 1,
+                json.dumps({"lines": lines, "more": more, "notified": notified}),
+                now,
+                severity if rose else r["severity"],
+                _names(people),
+                _names(devices),
+                range_end,
+                title,
+                r["item_id"],
+            ),
+        )
+        item = self._load(con, r["item_id"])
+        item.rose = rose or back
+        return item
+
+    def merge_open_duplicates(self) -> int:
+        """Once at start (ADR-0043 row 5): give open items raised before grouping their
+        group, and merge open items of the same group into the oldest. The others close as
+        Merged with a note naming the item they joined; each merge is audited. Closed items
+        are not touched. Returns how many were merged."""
+        merged: list[tuple[str, str]] = []
+        with self._meta.connect() as con:
+            rows = con.execute(
+                "SELECT * FROM alert_items WHERE state = 'open' AND entity IS NULL"
+                " ORDER BY created_at, rowid"
+            ).fetchall()
+            for r in rows:
+                key = backfill_group(r["kind"], r["subject"], r["ref_id"])
+                if key is None:
+                    continue
+                day = self.day_of(r["created_at"])
+                into = con.execute(
+                    "SELECT * FROM alert_items WHERE kind = ? AND entity = ? AND rule = ?"
+                    " AND day = ? AND state = 'open'",
+                    (r["kind"], key[0], key[1], day),
+                ).fetchone()
+                if into is None:
+                    line = (r["why"] or r["title"])[:300]
+                    con.execute(
+                        "UPDATE alert_items SET entity = ?, rule = ?, day = ?, last_seen = ?,"
+                        " changes = ? WHERE item_id = ?",
+                        (key[0], key[1], day, r["created_at"],
+                         json.dumps({"lines": [line], "more": 0}), r["item_id"]),
+                    )  # fmt: skip
+                    continue
+                lines, more = _changes(into["changes"])
+                line = (r["why"] or r["title"])[:300]
+                if line not in lines:
+                    lines.append(line)
+                    more += max(0, len(lines) - MAX_CHANGES)
+                    lines = lines[:MAX_CHANGES]
+                worse = RANK.get(r["severity"], 0) > RANK.get(into["severity"], 0)
+                con.execute(
+                    "UPDATE alert_items SET count = coalesce(count, 1) + coalesce(?, 1),"
+                    " changes = ?, last_seen = max(coalesce(last_seen, ''), ?), severity = ?"
+                    " WHERE item_id = ?",
+                    (r["count"], json.dumps({"lines": lines, "more": more}), r["created_at"],
+                     r["severity"] if worse else into["severity"], into["item_id"]),
+                )  # fmt: skip
+                self._set_closed(con, r["item_id"], None, "merged",
+                                 f"Merged into alert {into['item_id']}", self._now())  # fmt: skip
+                merged.append((r["item_id"], into["item_id"]))
+        for item_id, into_id in merged:
+            self._audit.write(
+                "alert.merge", "success", None, None, {"item_id": item_id, "into": into_id}
+            )
+        return len(merged)
+
+    def resolve(
+        self, kind: Kind, ref_id: str, text: str, group: tuple[str, str] | None = None
+    ) -> None:
         """Note that the condition ended (a quiet source sending again); the item stays open
-        until someone closes it."""
+        until someone closes it. With `group`, the open item of that group is the one: a
+        repeat joined it under another ref."""
+        now = self._now()
         with self._meta.connect() as con:
             con.execute(
-                "UPDATE alert_items SET resolved = ? WHERE kind = ? AND ref_id = ?",
-                (text[:300], kind, ref_id),
+                "UPDATE alert_items SET resolved = ?, resolved_at = ?"
+                " WHERE kind = ? AND (ref_id = ? OR (entity = ? AND rule = ? AND state = 'open'))",
+                (text[:300], now, kind, ref_id, *(group or (None, None))),
             )
 
     # --- reading ------------------------------------------------------------------------
@@ -272,9 +474,15 @@ class AlertItems:
     # --- deciding -----------------------------------------------------------------------
 
     def close(
-        self, item_id: str, user: User, reason: str, note: str | None, ip: str | None
+        self,
+        item_id: str,
+        user: User,
+        reason: str,
+        note: str | None,
+        ip: str | None,
+        bulk: bool = False,
     ) -> AlertItem:
-        if reason not in REASONS or reason == "muted":
+        if reason not in REASONS:
             raise ParamInvalidError("Choose a reason")
         note = (note or "").strip() or None
         if reason in NOTE_REQUIRED and not note:
@@ -298,6 +506,7 @@ class AlertItems:
                 "subject": item.subject,
                 "reason": reason,
                 "note": note,
+                **({"bulk": True} if bulk else {}),
             },
         )
         return item
@@ -417,8 +626,8 @@ class AlertItems:
         """Mute new items like this one (same kind and subject) for `days`."""
         if user.role != "admin":
             raise ForbiddenError("Only administrators can mute alerts")
-        if not 1 <= days <= MAX_MUTE_DAYS:
-            raise ParamInvalidError(f"Mute for 1 to {MAX_MUTE_DAYS} days")
+        if days not in MUTE_DAYS:
+            raise ParamInvalidError("Mute for 7 or 30 days")
         item = self.get(item_id, user)
         now = self._clock().astimezone(UTC)
         until = (now + timedelta(days=days)).isoformat()
@@ -501,7 +710,54 @@ def _item(r: sqlite3.Row) -> AlertItem:
         severity=r["severity"],
         people=json.loads(r["people"] or "[]"),
         devices=json.loads(r["devices"] or "[]"),
+        entity=r["entity"],
+        rule=r["rule"],
+        day=r["day"],
+        last_seen=r["last_seen"],
+        changes=_changes(r["changes"])[0],
+        more=_changes(r["changes"])[1],
     )
+
+
+def _notified(raw: str | None) -> int:
+    """Notifications an item has sent: its first, plus each repeat that notified."""
+    try:
+        return int(json.loads(raw or "{}").get("notified", 1))
+    except (ValueError, AttributeError):
+        return 1
+
+
+def _since(at: str | None, now: str) -> timedelta | None:
+    if not at:
+        return None
+    return datetime.fromisoformat(now) - datetime.fromisoformat(at)
+
+
+def _changes(raw: str | None) -> tuple[list[str], int]:
+    try:
+        v = json.loads(raw or "{}")
+    except ValueError:
+        return [], 0
+    return [str(x) for x in v.get("lines", [])], int(v.get("more", 0))
+
+
+def backfill_group(kind: str, subject: str, ref_id: str | None) -> tuple[str, str] | None:
+    """The group of an item raised before grouping (ADR-0043 row 5), from how each raiser
+    named it; None for standing review items, which stay one per subject."""
+    if kind == "ai_watch":
+        if subject.startswith("agent:") and ref_id and ref_id.startswith(subject + ":"):
+            what = ref_id[len(subject) + 1 :]
+            if what == "agent":
+                return None
+            return subject, "agent_busy" if what.startswith("busy:") else "agent_change"
+        if subject.startswith("sensitive:"):
+            return subject, "sensitive"
+        return None
+    if kind == "gap":
+        return subject, "queue" if "/" in subject else "gap"
+    if kind == "rule" and subject.startswith("refusals:"):
+        return subject, "refusals"
+    return subject, kind
 
 
 MAX_NAMES = 20

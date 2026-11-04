@@ -49,6 +49,11 @@ describe("Needs attention (owner, 2026-11-02)", () => {
     const strip = await screen.findByRole("region", { name: "Needs attention" });
     expect(within(strip).getByRole("button", { name: /open alert/ })).toBeVisible();
     expect(within(strip).getByRole("button", { name: "1 blocked app consent" })).toBeVisible();
+    // AI services as on AI usage: Not approved and Unreviewed apart, never "unapproved".
+    expect(
+      within(strip).getByRole("button", { name: "1 not approved AI service in use" }),
+    ).toBeVisible();
+    expect(within(strip).getByRole("button", { name: "1 unreviewed AI service" })).toBeVisible();
     // Panels cover their own ranges: the header no longer names one.
     expect(screen.queryByText(/^Last 24 hours, /)).toBeNull();
   });

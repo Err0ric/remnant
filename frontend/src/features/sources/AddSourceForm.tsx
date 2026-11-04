@@ -105,7 +105,7 @@ export function AddSourceForm({ allowedRoots, initial, onDone }: AddSourceFormPr
     mutationFn: api.addSource,
     onSuccess: async (res) => {
       await client.invalidateQueries({ queryKey: ["source-list"] });
-      await client.invalidateQueries({ queryKey: ["sources"] }); // Search filter list
+      await client.invalidateQueries({ queryKey: ["search-source-filter"] }); // Search filter list
       if (res.otlp_token) setCreated({ id: res.source_id, token: res.otlp_token });
       else onDone();
     },

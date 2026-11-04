@@ -16,7 +16,7 @@ import { openDrill } from "@/lib/drill";
 import { EntityLink } from "@/components/EntityLink";
 import { LoadFailed } from "@/components/LoadFailed";
 import { useViewer } from "@/lib/viewer";
-import { previousPhrase } from "./pageWindow";
+import { comparisonLabel, comparisonTime, previousPhrase } from "./pageWindow";
 import { startIndex, TrendChart, TrendLegend } from "./TrendChart";
 import { compareLine } from "./History";
 import { SectionTitle } from "@/components/SectionTitle";
@@ -308,8 +308,9 @@ function FailedTrend({ s }: { s: DashboardSections }) {
   const hourly = s.window !== "30d";
   const at = (i: number) => new Date(t.points[i] ?? "");
   const rate = id.sign_ins ? ((id.failed.value / id.sign_ins) * 100).toFixed(1) : "0";
-  const before = previousPhrase(s.window).replace(/^the p/, "P");
-  const pointName = (i: number) => (hourly ? `${dayFmt(at(i))}, ${hourFmt(at(i))}` : dayFmt(at(i)));
+  const before = comparisonLabel(s.window);
+  const name = (d: Date) => (hourly ? `${dayFmt(d)}, ${hourFmt(d)}` : dayFmt(d));
+  const pointName = (i: number) => name(at(i));
   const begin = startIndex(t.points, id.history.since);
   return (
     <TrendChart
@@ -326,7 +327,15 @@ function FailedTrend({ s }: { s: DashboardSections }) {
           to: t.points[i + 1] ?? s.end,
         })?.()
       }
-      previous={id.history.compared ? { label: before, values: t.before } : undefined}
+      previous={
+        id.history.compared
+          ? {
+              label: before,
+              values: t.before,
+              pointLabel: (i) => name(comparisonTime(s.window, at(i))),
+            }
+          : undefined
+      }
       pointLabel={(i) => (hourly ? `${dayFmt(at(i))}, ${hourFmt(at(i))}` : dayFmt(at(i)))}
       axisLabel={(i) => (s.window === "24h" ? hourFmt(at(i)) : dayFmt(at(i)))}
       summary={`Failed sign-ins per ${hourly ? "hour" : "day"}: ${id.failed.value.toLocaleString()} in this window${

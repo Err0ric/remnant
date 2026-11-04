@@ -32,8 +32,9 @@ export function IdentitiesPage() {
     onSuccess: refresh,
   });
   const [domain, setDomain] = useState("");
-  const [name, setName] = useState("");
-  const [person, setPerson] = useState("");
+  // AI usage's "Link them in Identities" opens with the alias filled in (D190).
+  const [name, setName] = useState(() => fromHash("alias"));
+  const [person, setPerson] = useState(() => fromHash("person"));
   const d = data.data;
   const current = d?.domains ?? [];
 
@@ -268,4 +269,9 @@ export function IdentitiesPage() {
       </div>
     </div>
   );
+}
+
+function fromHash(key: string): string {
+  const p = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  return (p.get(key) ?? "").slice(0, 256);
 }

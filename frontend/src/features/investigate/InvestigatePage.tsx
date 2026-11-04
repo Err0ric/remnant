@@ -3,14 +3,16 @@ import { useState } from "react";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { ApiError, api, type EntityRisk, type GraphCard, type GraphKind } from "@/lib/api";
 import { navigate, useSection } from "@/lib/route";
-import { entitySection, parseEntity } from "@/lib/entity";
+import { entitySection, parseEntity, parseEntityTab } from "@/lib/entity";
 import { rangeStart, TIME_RANGES, type TimeRangeId } from "@/lib/search";
 import { seedSearch } from "@/lib/searchSeed";
 import { CardDetail } from "./CardDetail";
 import { LaneGraph } from "./LaneGraph";
 import { EntitySummary } from "./EntitySummary";
 import { PersonTimeline } from "./PersonTimeline";
-import { PersonAlerts, PersonSessions, PersonSignIns } from "./PersonLists";
+import { PersonAiActivity } from "./PersonAiActivity";
+import { PersonAlerts, PersonSignIns } from "./PersonLists";
+import { PersonHosts } from "./PersonHosts";
 import { RiskTable } from "./RiskTable";
 import { kindOf, type EntityKind } from "./entityKind";
 import { SectionTitle } from "@/components/SectionTitle";
@@ -25,21 +27,30 @@ const KIND_LABEL: Record<EntityKind, string> = { user: "User", ip: "IP address",
 
 /** Investigations (ADR-0016 rows 4 and 5): risky entities, and lanes showing how one
  * entity, or the organization's AI use, connects to everything it touched. */
-type PersonTab = "summary" | "timeline" | "sessions" | "sign-ins" | "alerts";
-/** A person's tabs (ADR-0038 row 27). */
+type PersonTab = "summary" | "ai" | "hosts" | "alerts" | "timeline";
+/** A person's page, one per person (ADR-0038 row 27, D197): identity and Microsoft 365
+ * (the summary, lanes, and sign-ins), AI use, hosts and devices, alerts, and the timeline.
+ * AI usage, Agents, and People and devices all open this page. */
 const PERSON_TABS: [PersonTab, string][] = [
-  ["summary", "Summary"],
-  ["timeline", "Timeline"],
-  ["sessions", "Sessions"],
-  ["sign-ins", "Sign-ins"],
+  ["summary", "Identity and M365"],
+  ["ai", "AI use"],
+  ["hosts", "Hosts and devices"],
   ["alerts", "Alerts"],
+  ["timeline", "Timeline"],
 ];
+
+/** The page's range in days for AI activity (1 to 30). */
+function rangeDays(range: TimeRangeId): number {
+  return range === "24h" || range === "1h" || range === "15m" ? 1 : range === "30d" ? 30 : 7;
+}
 
 export function InvestigatePage() {
   const [range, setRange] = useState<TimeRangeId>("7d");
   // The entity lives in the address (`#ip=203.0.113.9`), so every pivot link, Back, and a
   // shared link open the same page (product pass step 2). A service opens the AI flow.
-  const linked = parseEntity(useSection());
+  const section = useSection();
+  const linked = parseEntity(section);
+  const linkedTab = parseEntityTab(section);
   const [modeChoice, setMode] = useState<Mode>("entity");
   const mode: Mode = linked?.kind === "service" ? "ai" : modeChoice;
   const entity: Focus | null = linked && linked.kind !== "service" ? linked : null;
@@ -48,7 +59,13 @@ export function InvestigatePage() {
     linked?.kind === "service" ? { kind: "service", value: linked.value } : aiChoice;
   const [selected, setSelected] = useState<GraphCard | null>(null);
   const [riskTab, setRiskTab] = useState<EntityKind>("user");
-  const [personTab, setPersonTab] = useState<PersonTab>("summary");
+  const [personTab, setPersonTab] = useState<PersonTab>(linkedTab ?? "summary");
+  // A link that names a tab opens it (AI usage and Agents open AI activity).
+  const [seenSection, setSeenSection] = useState(section);
+  if (section !== seenSection) {
+    setSeenSection(section);
+    if (linkedTab) setPersonTab(linkedTab);
+  }
   const start = rangeStart(range);
   const rangeLabel = TIME_RANGES.find((r) => r.id === range)?.label ?? "this range";
   const rangeWords = /^last /i.test(rangeLabel) ? `the ${rangeLabel.toLowerCase()}` : rangeLabel;
@@ -104,7 +121,8 @@ export function InvestigatePage() {
   const lists = risk.data
     ? { user: risk.data.users, ip: risk.data.ips, host: risk.data.hosts }
     : { user: [], ip: [], host: [] };
-  const empty = risk.data && risk.data.matches_considered === 0;
+  const empty =
+    risk.data && !risk.data.users.length && !risk.data.ips.length && !risk.data.hosts.length;
   const g = graph.data;
   const followFn = selected ? follow(selected) : null;
 
@@ -194,7 +212,8 @@ export function InvestigatePage() {
                 <div className="pb-2">
                   <SectionTitle>Most active</SectionTitle>
                   <p className="text-xs text-text-muted">
-                    Ranked by detection rule matches in this range. Select a row to investigate.
+                    Everyone seen in this range, ranked by score, then by events. Hover a score for
+                    its parts. Select a row to open the page.
                   </p>
                 </div>
                 <div role="tablist" aria-label="Entity type" className="flex">
@@ -208,32 +227,25 @@ export function InvestigatePage() {
               ) : risk.isLoading ? (
                 <p className="p-4 text-sm text-text-muted">Loading…</p>
               ) : empty ? (
-                <div className="flex flex-col gap-2 p-4 text-sm text-text-secondary">
-                  <p>No detection rule has matched in this range, so nothing is ranked yet.</p>
-                  <p>
-                    Enable rules and run them, or schedule them. You can still open any user, IP
-                    address, or host from the search in the top bar.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => navigate("rules")}
-                    className="self-start text-accent-text hover:underline"
-                  >
-                    Go to Detection rules
-                  </button>
-                </div>
+                <p className="p-4 text-sm text-text-secondary">
+                  No users, IP addresses, or hosts in this range, in the sources you can read. Pick
+                  a longer range, or open any of them from the search in the top bar.
+                </p>
               ) : lists[riskTab].length === 0 ? (
                 <p className="p-4 text-sm text-text-muted">Nothing ranked for this type.</p>
               ) : (
                 <RiskTable
+                  kind={riskTab}
                   label={riskTab === "user" ? "User" : riskTab === "ip" ? "Source IP" : "Host"}
                   rows={lists[riskTab]}
                   onPick={pick}
                 />
               )}
               <p className="border-t border-border px-4 py-2 text-xs text-text-muted">
-                Score: 10 per critical, 5 per high, 2 per medium, 1 per low rule match, plus 3 per
-                flagged schedule run that names it. Only sources you may read are counted.
+                Score: 10 per critical, 5 per high, 2 per medium, 1 per low rule match; 3 per
+                flagged schedule run that names it; 1 per failed sign-in and 1 per attack hit from
+                outside (up to 25 each); 5 per risky inbox rule; 3 per app consent; 3 per AI watch
+                flag; 5 per alert. Only sources you may read are counted.
               </p>
             </section>
           </>
@@ -297,14 +309,14 @@ export function InvestigatePage() {
                 ))}
               </div>
             ) : null}
+            {mode === "entity" && entity?.kind === "user" && personTab === "ai" ? (
+              <PersonAiActivity person={entity.value} days={rangeDays(range)} />
+            ) : null}
             {mode === "entity" && entity?.kind === "user" && personTab === "timeline" ? (
               <PersonTimeline person={entity.value} />
             ) : null}
-            {mode === "entity" && entity?.kind === "user" && personTab === "sessions" ? (
-              <PersonSessions person={entity.value} />
-            ) : null}
-            {mode === "entity" && entity?.kind === "user" && personTab === "sign-ins" ? (
-              <PersonSignIns person={entity.value} />
+            {mode === "entity" && entity?.kind === "user" && personTab === "hosts" ? (
+              <PersonHosts person={entity.value} days={rangeDays(range)} />
             ) : null}
             {mode === "entity" && entity?.kind === "user" && personTab === "alerts" ? (
               <PersonAlerts person={entity.value} />
@@ -345,6 +357,9 @@ export function InvestigatePage() {
                 {canvas}
               </section>
             )}
+            {mode === "entity" && entity?.kind === "user" && personTab === "summary" ? (
+              <PersonSignIns person={entity.value} />
+            ) : null}
             {g &&
             !selected &&
             !(entity?.kind === "user" && personTab !== "summary") &&

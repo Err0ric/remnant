@@ -6,7 +6,13 @@ import { openEntity } from "@/lib/entity";
 import { setAskProvider, useAskProvider } from "@/lib/askProvider";
 import { openAsk } from "@/lib/askSlideOver";
 import { visibleNav, visibleSections } from "@/lib/nav";
-import { arrange, readRecent, rememberRecent, type PaletteItem } from "@/lib/palette";
+import {
+  arrange,
+  looksLikeQuestion,
+  readRecent,
+  rememberRecent,
+  type PaletteItem,
+} from "@/lib/palette";
 import { navigate, type PageId } from "@/lib/route";
 import { openSavedSearch } from "@/lib/savedSeed";
 import { RUN_SEARCH_EVENT, seedSearch } from "@/lib/searchSeed";
@@ -226,11 +232,12 @@ export function CommandPalette({
         },
       });
       if (canAsk && text.includes(" ")) {
-        // A sentence typed in the palette can be asked straight away (ADR-0042 row 16).
+        // A sentence typed in the palette can be asked straight away (ADR-0042 row 16); a
+        // question comes first of everything (owner, 2026-11-03).
         out.push({
           key: "act:ask-text",
-          section: "Search",
-          label: `Ask "${text}"`,
+          section: looksLikeQuestion(text) ? "Ask AI" : "Search",
+          label: `Ask AI: ${text}`,
           hint: "Opens beside this page",
           found: true,
           run: () => openAsk(text),

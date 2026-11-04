@@ -40,6 +40,14 @@ class RiskOut(BaseModel):
     rules: list[str]
     search_sql: str
     names: list[str]  # users: the logged names counted as this person (ADR-0018)
+    # D195: the other signals, each its own column, and the points each part adds.
+    failed_signins: int
+    mail_rules: int
+    consents: int
+    attacks: int
+    alerts: int
+    ai_flags: list[str]
+    parts: dict[str, int]
 
 
 class RiskResponse(BaseModel):
@@ -166,13 +174,15 @@ async def risk(
     start: datetime | None = None,
     end: datetime | None = None,
 ) -> RiskResponse:
-    """Users, source IPs, and hosts ranked by rule matches and flagged schedule runs."""
+    """Users, source IPs, and hosts seen in the range, ranked by a score whose parts are
+    shown: rule matches, flagged runs, failed sign-ins, risky inbox rules, app consents, AI
+    watch flags, attack hits, and alerts naming them (D195); then by events."""
     allowed, scope = await _scope(request, user, start, end)
     engine: QueryEngine = request.app.state.engine
     meta: MetaDB = request.app.state.meta
     ident = await _identities(request)
     ranked, considered, read = await run_in_threadpool(
-        entity_risk, engine, meta, allowed, scope, ident
+        entity_risk, engine, meta, allowed, scope, ident, request.app.state.ai_usage
     )
     await _audit(request, user, "investigate.risk", {"sources_in_scope": read})
     return RiskResponse(

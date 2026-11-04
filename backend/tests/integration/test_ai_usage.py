@@ -337,7 +337,7 @@ def test_review_items_on_alerts_without_alert_messages(lab: dict[str, Any]) -> N
     )
     assert rule.status_code == 200, rule.text
     closed = _ai_items(a, "closed")
-    assert closed["service:chatgpt"]["close_reason"] == "true_positive"
+    assert closed["service:chatgpt"]["close_reason"] == "resolved"
     assert closed["service:chatgpt"]["note"] == "Marked not approved"
     assert closed["mcp:paste-share"]["note"] == "Approved"
     assert "service:chatgpt" not in _ai_items(a)
@@ -388,6 +388,34 @@ def test_ai_watch_summary_cards_chart_and_top(lab: dict[str, Any]) -> None:
     ana = {c["key"]: c for c in lab["ana"].get("/api/ai/watch/summary").json()["cards"]}
     assert ana["services"]["value"] == 0 and ana["sensitive"]["restricted"] is True
     assert ana["agents"]["restricted"] is True
+
+
+def test_not_approved_and_unreviewed_are_counted_and_labelled_apart(
+    lab: dict[str, Any],
+) -> None:
+    """Owner, 2026-11-03: "Unapproved AI services" counted services nobody had reviewed
+    (Not approved 0, Unreviewed 776). The card is "not yet approved" and says the split."""
+    app, a, h = lab["app"], lab["admin"], lab["h"]
+    app.state.ai_watch._clock = lambda: NOW + timedelta(hours=1)
+    cards = {c["key"]: c for c in a.get("/api/ai/watch/summary?days=7").json()["cards"]}
+    before = cards["services"]
+    assert before["label"] == "AI services not yet approved"
+    assert before["not_approved"] == 0 and before["unreviewed"] == before["value"]
+    assert before["context"] == f"0 not approved, {before['value']} unreviewed"
+    # One service marked Not approved, the others left Unreviewed.
+    assert (
+        a.put(
+            "/api/ai/services/deepseek/status", json={"status": "not_approved"}, headers=h
+        ).status_code
+        == 200
+    )
+    cards = {c["key"]: c for c in a.get("/api/ai/watch/summary?days=7").json()["cards"]}
+    svc = cards["services"]
+    assert svc["value"] == before["value"]  # still not yet approved, both kinds
+    assert svc["not_approved"] == 1 and svc["unreviewed"] == before["value"] - 1
+    assert svc["context"] == f"1 not approved, {before['value'] - 1} unreviewed"
+    assert cards["people"]["label"] == "People using AI not yet approved"
+    assert "unapproved" not in json.dumps(cards).lower()
 
 
 def test_cards_know_telemetry_and_m365_read_from_files() -> None:
@@ -465,7 +493,7 @@ def test_the_hourly_check_refreshes_an_open_item_and_leaves_a_closed_one(
     gone = store.raise_item(
         "ai_watch", "service:chatgpt", "New AI service: ChatGPT", ref_id="service:chatgpt"
     )
-    a.post(f"/api/alerts/{gone.item_id}/close", json={"reason": "benign"}, headers=h)
+    a.post(f"/api/alerts/{gone.item_id}/close", json={"reason": "expected"}, headers=h)
     app.state.ai_watch._clock = lambda: NOW + timedelta(hours=2)
     app.state.ai_watch.tick()
     items = _ai_items(a, "all")
@@ -491,7 +519,7 @@ def test_one_rule_for_everything_ai_watch_tracks(lab: dict[str, Any]) -> None:
     sens = next(i for r, i in items.items() if r.startswith("sensitive:alice@example.com:"))
     assert sens["ref_id"].endswith(NOW.date().isoformat()) and sens["state"] == "open"
     # Closing the agent's item is its decision; the next hourly pass does not reopen it.
-    a.post(f"/api/alerts/{agent['item_id']}/close", json={"reason": "benign"}, headers=h)
+    a.post(f"/api/alerts/{agent['item_id']}/close", json={"reason": "expected"}, headers=h)
     watch._reviewed_at = None
     watch.tick()
     assert agent["item_id"] not in {i["item_id"] for i in _ai_items(a).values()}
@@ -506,13 +534,13 @@ def test_closing_an_ai_watch_alert_can_set_its_review_status(lab: dict[str, Any]
     deep = store.raise_item("ai_watch", "service:deepseek", "AI service not reviewed: DeepSeek")
     mcp = store.raise_item("ai_watch", "mcp:paste-share", "MCP server not reviewed: paste-share")
     # Closed without a decision: still not reviewed, and still listed for review.
-    a.post(f"/api/alerts/{deep.item_id}/close", json={"reason": "benign"}, headers=h)
+    a.post(f"/api/alerts/{deep.item_id}/close", json={"reason": "expected"}, headers=h)
     review = a.get("/api/alerts", params={"state": "all", "unreviewed": True}).json()
     assert {i["subject"] for i in review["items"]} >= {"service:deepseek", "service:chatgpt"}
     # Closed with Approve: approved on AI usage, audited, and off the review list.
     res = a.post(
         f"/api/alerts/{chat.item_id}/close",
-        json={"reason": "benign", "review_status": "approved"},
+        json={"reason": "expected", "review_status": "approved"},
         headers=h,
     )
     assert res.status_code == 200, res.text
@@ -520,7 +548,7 @@ def test_closing_an_ai_watch_alert_can_set_its_review_status(lab: dict[str, Any]
     assert svc["chatgpt"]["status"] == "approved"
     res = a.post(
         f"/api/alerts/{mcp.item_id}/close",
-        json={"reason": "true_positive", "review_status": "not_approved"},
+        json={"reason": "resolved", "review_status": "not_approved"},
         headers=h,
     )
     assert res.status_code == 200, res.text
@@ -537,6 +565,6 @@ def test_closing_an_ai_watch_alert_can_set_its_review_status(lab: dict[str, Any]
     other = store.raise_item("ai_watch", "service:gemini", "AI service not reviewed: Gemini")
     ana = lab["ana"].post(
         f"/api/alerts/{other.item_id}/close",
-        json={"reason": "benign", "review_status": "approved"},
+        json={"reason": "expected", "review_status": "approved"},
     )
     assert ana.status_code in (403, 404)

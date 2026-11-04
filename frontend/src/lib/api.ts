@@ -276,6 +276,16 @@ export interface AiPerson {
   seen_through?: "plugin" | "network" | "both";
   /** Which plugin records: "telemetry", "hooks". */
   via?: string[];
+  /** What DNS, firewall, or proxy logs saw for this person (network and both rows). */
+  network?: {
+    who: string;
+    services: string[];
+    lookups: number;
+    devices: number;
+    last_seen: string | null;
+  } | null;
+  /** A network name no plugin person matches: the plugin person it may be. */
+  maybe?: string | null;
 }
 
 export interface AiGone {
@@ -705,6 +715,15 @@ export interface EntityRisk {
   search_sql: string;
   /** Users: the logged names counted as this person. */
   names?: string[];
+  /** D195: the other signals, each its own column. */
+  failed_signins?: number;
+  mail_rules?: number;
+  consents?: number;
+  attacks?: number;
+  alerts?: number;
+  ai_flags?: string[];
+  /** The points each part adds; the score is their sum. */
+  parts?: Record<string, number>;
 }
 
 export interface RiskResponse {
@@ -761,6 +780,26 @@ export interface EntityActivity {
   search_sql: string;
 }
 
+/** A host or address on one person's own records (D197). */
+export interface PersonUsed {
+  kind: "host" | "ip";
+  value: string;
+  events: number;
+  failed: number;
+  first_seen: string | null;
+  last_seen: string | null;
+  sources: string[];
+}
+
+export interface PersonHostsData {
+  person: string;
+  start: string;
+  end: string;
+  hosts: PersonUsed[];
+  addresses: PersonUsed[];
+  sources: string[];
+}
+
 export interface EntitySummary {
   kind: "user" | "ip" | "host";
   value: string;
@@ -804,7 +843,10 @@ export interface AiAgent {
   agent: string;
   label: string;
   owners: string[];
+  /** The machine it ran on last. */
   machine: string | null;
+  /** Every machine it ran on, newest first, each with its own last seen and events. */
+  machines: { name: string; last_seen: string; events_24h: number }[];
   first_seen: string;
   last_seen: string;
   events_24h: number;
@@ -1366,6 +1408,16 @@ export interface AgentSession {
   failed?: number;
   /** ended: a stop record; idle: no record for the idle time and no stop; open. */
   state?: "ended" | "idle" | "open";
+  /** The three most used tools, most first. */
+  top_tools?: string[];
+  /** Distinct paths the session's tools touched. */
+  files?: number;
+  /** Tool calls with no result (blocked, interrupted, or still running). */
+  unanswered?: number;
+  /** MCP servers first used in this session (within the range). */
+  new_mcp?: string[];
+  /** The Claude account the plugin reported. */
+  account?: string | null;
 }
 
 /** ADR-0030 amendment: a Claude account the hooks plugin reported, and its tier. */
@@ -1452,6 +1504,8 @@ export interface LibraryQuery {
   pack_sql: string;
   suggested_schedule: "hourly" | "daily" | null;
   flag: string | null;
+  /** Example questions this query answers, for Ask's empty state. */
+  ask: string[];
   my_copy: { search_id: string; version: string; updated: boolean; sql: string } | null;
 }
 
@@ -1536,6 +1590,43 @@ export interface SessionStep {
   event_id: string;
   /** Delivered this many seconds after it happened (the plugin's offline queue). */
   late_s?: number | null;
+}
+
+/** One person's AI activity (D189): metadata only, from the caller's sources. */
+export interface PersonAiCount {
+  name: string;
+  n: number;
+}
+
+export interface PersonAiFlag {
+  kind: "personal_account" | "failed_calls" | "outside_folder" | "shell" | "new_mcp";
+  text: string;
+  count: number;
+  examples: string[];
+}
+
+export interface PersonAi {
+  person: string;
+  start: string;
+  end: string;
+  accounts: AgentAccount[];
+  devices: string[];
+  services: { service_id: string; name: string; events: number; last_seen: string | null }[];
+  sessions: {
+    session_id: string;
+    machine: string | null;
+    started: string;
+    last: string;
+    summary: string;
+    flagged: boolean;
+  }[];
+  tools: PersonAiCount[];
+  files: PersonAiCount[];
+  commands: PersonAiCount[];
+  domains: PersonAiCount[];
+  mcp: PersonAiCount[];
+  flags: PersonAiFlag[];
+  cut: boolean;
 }
 
 export interface SessionTimeline {
@@ -1941,13 +2032,17 @@ export interface DashboardPanel {
 /** One thing that fired and needs a decision (ADR-0037): a flagged schedule run, a rule run
  * with matches, an AI Watch item, or a gap on a source with Alert if quiet on. */
 export type AlertKind = "schedule" | "rule" | "ai_watch" | "gap";
-export type CloseReason = "true_positive" | "benign" | "false_positive" | "follow_up";
+/** ADR-0043 row 16. Stored reasons from before keep their value; `close_reason_label`
+ * says how they read now. */
+export type CloseReason = "expected" | "approved" | "false_positive" | "resolved";
 
 export interface AlertEvent {
   at: string;
   user: string | null;
   action: "close" | "reopen";
   reason: string | null;
+  /** How the reason reads now (stored reasons from before included). */
+  reason_label?: string | null;
   note: string | null;
 }
 
@@ -1969,7 +2064,7 @@ export interface AlertItem {
   state: "open" | "closed";
   closed_at: string | null;
   closed_by: string | null;
-  close_reason: CloseReason | "muted" | null;
+  close_reason: CloseReason | "muted" | "merged" | string | null;
   close_reason_label: string | null;
   note: string | null;
   /** The condition ended (a quiet source sending again); the item stays open. */
@@ -1983,6 +2078,13 @@ export interface AlertItem {
   devices?: string[];
   muted_until: string | null;
   history: AlertEvent[];
+  /** The group (ADR-0043): one open alert per entity, rule, and day, with its repeats. */
+  entity?: string | null;
+  rule?: string | null;
+  day?: string | null;
+  last_seen?: string | null;
+  changes?: string[];
+  more_changes?: number;
 }
 
 export interface AlertList {
@@ -2016,8 +2118,9 @@ export interface AiWatchCard {
   restricted: boolean;
   /** People card: devices or addresses with no person matched, never added to `value`. */
   devices?: number | null;
-  /** Unapproved services card: those still not reviewed. */
+  /** Services not yet approved: those still not reviewed, and those marked Not approved. */
   unreviewed?: number | null;
+  not_approved?: number | null;
   /** Consent card: attempts a policy blocked, never added to `value`. */
   blocked?: number | null;
   blocked_context?: string;
@@ -2234,7 +2337,12 @@ export const api = {
     ),
   reopenAlert: (id: string) =>
     request<AlertItem>(`/api/alerts/${encodeURIComponent(id)}/reopen`, post({})),
-  muteAlert: (id: string, days: number) =>
+  closeAlerts: (ids: string[], reason: CloseReason, note: string | null) =>
+    request<{ closed: string[]; skipped: Record<string, string> }>(
+      "/api/alerts/close",
+      post({ item_ids: ids, reason, note }),
+    ),
+  muteAlert: (id: string, days: 7 | 30) =>
     request<AlertItem>(`/api/alerts/${encodeURIComponent(id)}/mute`, post({ days })),
   alertMutes: () => request<AlertMute[]>("/api/alerts/mutes"),
   unmuteAlert: (muteId: string) =>
@@ -2257,7 +2365,7 @@ export const api = {
   providerQueue: (id: string) =>
     request<ProviderQueue>(`/api/ask/providers/${encodeURIComponent(id)}/queue`),
   schedules: () => request<Schedule[]>("/api/schedules"),
-  overview: () => request<Overview>("/api/overview"),
+  overview: () => request<Overview>("/api/overview").then(shapeOverview),
   auditEvents: (f: AuditFilters, before?: number) =>
     request<AuditEvent[]>(`/api/audit/events${queryString({ ...f, before, limit: 100 })}`),
   auditCalls: (f: AuditFilters, before?: { ts: string; id: string }) =>
@@ -2562,7 +2670,7 @@ export const api = {
   dashboardSections: (window: PageWindow, part?: "identity" | "attacks" | "detections") =>
     request<DashboardSections>(
       `/api/dashboard/sections?window=${window}${part ? `&part=${part}` : ""}&tz=${viewerZone()}`,
-    ),
+    ).then(shapeSections),
   setPlaces: (body: { approved_countries: string[]; internal_networks: string[] }) =>
     request<Places>("/api/enrichment/places", put(body)),
   setFeed: (id: string, body: { enabled?: boolean; key?: string }) =>
@@ -2641,6 +2749,10 @@ export const api = {
   deleteAiService: (id: string) =>
     request<void>(`/api/ai/services/${encodeURIComponent(id)}`, { method: "DELETE" }),
   aiMcpRules: () => request<AiMcpRule[]>("/api/ai/mcp-rules"),
+  personAi: (person: string, days: number) =>
+    request<PersonAi>(`/api/ai/people/${encodeURIComponent(person)}/activity?days=${days}`),
+  personHosts: (person: string, days: number) =>
+    request<PersonHostsData>(`/api/people/${encodeURIComponent(person)}/hosts?days=${days}`),
   personTimeline: (person: string, days: number) =>
     request<PersonTimelineData>(`/api/people/${encodeURIComponent(person)}/timeline?days=${days}`),
   eventAround: (id: string, at: string) =>
@@ -2696,10 +2808,15 @@ export const api = {
   setAiMcpRule: (pattern: string, status: "approved" | "not_approved" | null) =>
     request<AiMcpRule[]>("/api/ai/mcp-rules", put({ pattern, status })),
   aiWatch: () => request<AiWatch>("/api/ai/watch"),
-  aiWatchStatus: () => request<{ failing: FailingJob[] }>("/api/ai/watch/status"),
+  aiWatchStatus: () =>
+    request<{ failing: FailingJob[] }>("/api/ai/watch/status").then((s) => ({
+      failing: list<FailingJob>(s?.failing),
+    })),
   checkAiWatch: () => request<WatchStep[]>("/api/ai/watch/check", post({})),
   aiWatchSummary: (days: number) =>
-    request<AiWatchSummary>(`/api/ai/watch/summary?days=${days}&tz=${viewerZone()}`),
+    request<AiWatchSummary>(`/api/ai/watch/summary?days=${days}&tz=${viewerZone()}`).then(
+      shapeWatch,
+    ),
   setAiWatch: (
     body: Pick<AiWatch, "enabled" | "include_unreviewed" | "sensitive" | "target_ids">,
   ) => request<AiWatch>("/api/ai/watch", put(body)),
@@ -2708,3 +2825,89 @@ export const api = {
   query: (body: QueryRequest) =>
     request<QueryResult>("/api/query", { method: "POST", body: JSON.stringify(body) }),
 };
+
+// --- Response shapes the Dashboard maps over (owner, 2026-11-03; D194) ------------------
+// A body without a list, or with something else where a list belongs, gets an empty list,
+// so one odd response never takes the page down ("e.map is not a function").
+
+function list<T>(v: unknown): T[] {
+  return Array.isArray(v) ? (v as T[]) : [];
+}
+
+function shapeHistory(h: unknown): SectionHistory {
+  const x = (h ?? {}) as Partial<SectionHistory>;
+  return { compared: Boolean(x.compared), since: x.since ?? null };
+}
+
+function shapeSeries(v: unknown): SectionSeries[] {
+  return list<SectionSeries>(v).map((s) => ({ ...s, counts: list<number>(s.counts) }));
+}
+
+export function shapeSections(d: DashboardSections): DashboardSections {
+  const x = (d ?? {}) as Partial<DashboardSections>;
+  const id = x.identity;
+  const at = x.attacks;
+  const det = x.detections;
+  return {
+    ...(x as DashboardSections),
+    buckets: list<string>(x.buckets),
+    identity: id
+      ? {
+          ...id,
+          failed_trend: {
+            points: list<string>(id.failed_trend?.points),
+            counts: list<number>(id.failed_trend?.counts),
+            before: list<number>(id.failed_trend?.before),
+          },
+          top_failing: list<SectionRow>(id.top_failing),
+          history: shapeHistory(id.history),
+        }
+      : null,
+    attacks: at
+      ? {
+          ...at,
+          by_host: shapeSeries(at.by_host),
+          top_sources: list<SectionRow>(at.top_sources),
+          history: shapeHistory(at.history),
+        }
+      : null,
+    detections: det
+      ? {
+          ...det,
+          by_rule: shapeSeries(det.by_rule),
+          involved: list<SectionRow>(det.involved),
+          history: shapeHistory(det.history),
+        }
+      : null,
+  };
+}
+
+export function shapeWatch(s: AiWatchSummary): AiWatchSummary {
+  const x = (s ?? {}) as Partial<AiWatchSummary>;
+  return {
+    ...(x as AiWatchSummary),
+    cards: list(x.cards),
+    chart: list(x.chart),
+    top: list(x.top),
+    new: list(x.new),
+    sources: list(x.sources),
+  };
+}
+
+export function shapeOverview(o: Overview): Overview {
+  const x = (o ?? {}) as Partial<Overview>;
+  return {
+    ...(x as Overview),
+    hours: list(x.hours),
+    volume: list<Overview["volume"][number]>(x.volume).map((v) => ({
+      ...v,
+      counts: list(v.counts),
+      typical: list(v.typical),
+      marks: list(v.marks),
+      gaps: list(v.gaps),
+    })),
+    sources: list(x.sources),
+    detections: list(x.detections),
+    paused: list(x.paused),
+  };
+}

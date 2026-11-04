@@ -80,6 +80,16 @@ By default the runner asks each question the way Ask does now: routed first (one
 
 The fixture's sources are mostly synthetic templates that no library pack requires, so `library_rate` on this suite is low by design; it measures that routing does not hurt the agent path. `--no-routing` runs the agent alone, as before slice 1b, for comparison.
 
+## Routing synonyms
+
+`synonyms.yaml` holds one question per form of a term people use for the same thing (logins, log-ins, sign-ins, signins, authentications; Microsoft, M365, Office 365, O365, Entra, Azure AD; firewall, Palo Alto, PAN, PAN-OS; VPN, GlobalProtect; Claude Code, Claude, coding agent, AI agent, agents, Cowork; accessing, touching, opening), each naming the library query it should reach (D191). The test suite checks that the ranker puts that query first for every question, with no model (`tests/unit/test_ask_synonyms.py`). With a model, `--synonyms` checks the whole route:
+
+```
+uv run python -m evals.nl_queries.run --base-url http://127.0.0.1:11434/v1 --model qwen3.5:9b --synonyms
+```
+
+It prints `ok` or `MISS` per question and exits 1 when any question missed its query.
+
 ## Two models side by side (one command)
 
 ```

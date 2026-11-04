@@ -26,12 +26,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
+from time import monotonic
 from typing import Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 import structlog
 
+from app.core import lake_files
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.search.auth_facts import BUILD_SQL as AUTH_BUILD_SQL
 from app.search.m365 import BUILD_SQL
@@ -125,6 +127,7 @@ class FactRollup:
         self._sources = sources  # the sources whose days are built
         self._clock = clock
         self._max = max_days_per_run
+        self.rows_read = 0  # rows read by the current run, for its log line
         # What a built day was built with: a changed definition rebuilds every day.
         self.version = hashlib.sha256((self.BUILD_SQL + str(self.SCHEMA)).encode()).hexdigest()[:16]
 
@@ -142,7 +145,8 @@ class FactRollup:
     # --- freshness ----------------------------------------------------------------------
 
     def _inputs(self, lake_day: Path) -> list[list[Any]]:
-        return sorted([p.name, p.stat().st_size] for p in lake_day.glob("part-*.parquet"))
+        # The files a read uses: a retired file going later is not a change (D183).
+        return sorted([p.name, p.stat().st_size] for p in lake_files.visible(lake_day))
 
     def _fresh(self, source: str, day: str, readable: bool = True) -> bool:
         """Built from the day's current files with the current definitions. `readable`:
@@ -171,10 +175,21 @@ class FactRollup:
 
     # --- the job ------------------------------------------------------------------------
 
+    def _query(self, *args: Any, **kwargs: Any) -> Any:
+        """The engine, counting rows read for the run's log line (D193)."""
+        result = self._engine.run(*args, **kwargs)
+        self.rows_read += result.rows_read or 0
+        return result
+
+    def _begin(self) -> tuple[str, float]:
+        self.rows_read = 0
+        return datetime.now(UTC).isoformat(), monotonic()
+
     def run(self) -> RollupReport:
         """Remove days whose lake day is gone, then build stale closed days, newest first,
         at most `max_days_per_run` per call so the job stays bounded."""
         report = RollupReport()
+        started, t0 = self._begin()
         if self._dir.is_dir():
             for built in self._dir.glob("source=*/day=*"):
                 if not (self._lake / built.parent.name / built.name).is_dir():
@@ -192,6 +207,9 @@ class FactRollup:
         if report.built or report.removed or report.skipped:
             log.info(
                 f"{self.TABLE}.run",
+                started=started,
+                duration_s=round(monotonic() - t0, 2),
+                rows_read=self.rows_read,
                 built=report.built,
                 removed=report.removed,
                 pending=report.pending,
@@ -208,7 +226,7 @@ class FactRollup:
         inputs = self._inputs(lake_day)
         out = self._dir / f"source={source}" / f"day={day}"
         out.mkdir(parents=True, exist_ok=True)
-        result = self._engine.run(
+        result = self._query(
             f"SELECT * FROM (\n{self.BUILD_SQL}\n) LIMIT {MAX_ROWS + 1}",  # noqa: S608  # fixed SQL text
             _day_scope(source, day),
             row_cap=MAX_ROWS,
@@ -278,6 +296,7 @@ class FactRollup:
             return 0
         cutoff = now - timedelta(seconds=TODAY_MARGIN_S)
         label = f"{day}@{cutoff.isoformat()}"
+        started, t0 = self._begin()
         done = []
         for source in self._sources():
             lake_day = self._lake / f"source={source}" / f"day={day}"
@@ -290,6 +309,11 @@ class FactRollup:
             "sources": done, "built_at": now.isoformat(),
         }))  # fmt: skip
         os.replace(tmp, self._dir / TODAY)
+        if done:
+            log.info(
+                f"{self.TABLE}.today", started=started, duration_s=round(monotonic() - t0, 2),
+                rows_read=self.rows_read, sources=len(done), cutoff=cutoff.isoformat(),
+            )  # fmt: skip
         return len(done)
 
     def today(self, scope: QueryScope) -> tuple[list[str], list[str], datetime] | None:

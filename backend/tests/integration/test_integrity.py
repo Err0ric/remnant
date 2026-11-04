@@ -70,8 +70,23 @@ def test_compaction_retention_and_quarantine_are_recorded(tmp_path: Path) -> Non
     writer.write(rows("app", old_day, 2))
     for i in range(4):
         writer.write(rows("app", day, 5, start=i * 5))
-    Compactor(lake, today=lambda: TODAY, events=ledger).run()
+    now = datetime.now(UTC)
+    Compactor(lake, today=lambda: TODAY, events=ledger, clock=lambda: now).run()
     assert len(parts(lake, "app", day)) == 1
+    # The merged files are retired, not deleted: still present and recorded (D183).
+    folder = lake / "source=app" / f"day={day.isoformat()}"
+    assert len(list(folder.glob("part-*.parquet"))) == 5
+    with meta.connect() as con:
+        assert not con.execute(
+            "SELECT 1 FROM lake_ledger WHERE reason LIKE 'compacted%'"
+        ).fetchall()
+    age(lake)
+    assert ledger.verify().status == "verified"
+    # After the grace period the next run deletes them and records each removal.
+    later = now + timedelta(hours=1)
+    report = Compactor(lake, today=lambda: TODAY, events=ledger, clock=lambda: later).run()
+    assert report.deleted == 4 and len(list(folder.glob("part-*.parquet"))) == 1
+    assert not (folder / "_retired.json").exists()
     RetentionJob(lake, {}, default_days=30, today=lambda: TODAY, events=ledger).run()
     assert not parts(lake, "app", old_day)
     writer.write(rows("app", TODAY, 1))

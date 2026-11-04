@@ -34,6 +34,7 @@ import structlog
 from app.ai.agents import ITEMS_SQL
 from app.ai.catalog import Catalog
 from app.ai.usage import MCP_DAY_SQL, MCP_SQL, first_services_sql, rollup_build_sql
+from app.core import lake_files
 from app.engine.duckdb import IDENT_FILE, MCP_FILE, TODAY_DIR, QueryEngine, QueryScope
 from app.search.addresses import IDENT_RAW
 from app.search.m365_rollup import _start_day
@@ -131,6 +132,28 @@ def _iso(v: Any) -> str:
     return t.isoformat() if t is not None else str(v)
 
 
+def _max_observed(day_dir: Path) -> datetime | None:
+    """The newest `time_observed` in a lake day's files, from the Parquet statistics; None
+    when any file has none (then nothing is assumed)."""
+    newest: datetime | None = None
+    for f in day_dir.glob("part-*.parquet"):
+        meta = pq.ParquetFile(f).metadata
+        names = [meta.schema.column(i).name for i in range(meta.num_columns)]
+        if "time_observed" not in names:
+            return None
+        col = names.index("time_observed")
+        for g in range(meta.num_row_groups):
+            st = meta.row_group(g).column(col).statistics
+            if st is None or not st.has_min_max:
+                return None
+            v = st.max
+            if not isinstance(v, datetime):
+                return None
+            v = v if v.tzinfo else v.replace(tzinfo=UTC)
+            newest = v if newest is None or v > newest else newest
+    return newest
+
+
 def _first_services(table: pa.Table) -> dict[str, str]:
     """First seen per service in a day's rollup rows."""
     out: dict[str, datetime] = {}
@@ -163,6 +186,7 @@ class AiRollup:
         # Bumped whenever the rollup's files change, so answers kept from it (AI usage
         # and the inventory share them for 60 s) are never older than the files.
         self.generation = 0
+        self.rows_read = 0  # rows read by the current run, for its log line
 
     # --- freshness ----------------------------------------------------------------------
 
@@ -171,7 +195,8 @@ class AiRollup:
         return hashlib.sha256(json.dumps(pairs).encode()).hexdigest()[:16]
 
     def _inputs(self, lake_day: Path) -> list[list[Any]]:
-        return sorted([p.name, p.stat().st_size] for p in lake_day.glob("part-*.parquet"))
+        # The files a read uses: a retired file going later is not a change (D183).
+        return sorted([p.name, p.stat().st_size] for p in lake_files.visible(lake_day))
 
     def _fresh(self, source: str, day: str, key: str, readable: bool = True) -> bool:
         """Built from the day's current files and catalog. `readable`: and has rows to read
@@ -201,11 +226,22 @@ class AiRollup:
 
     # --- the job ------------------------------------------------------------------------
 
+    def _query(self, *args: Any, **kwargs: Any) -> Any:
+        """The engine, counting rows read for the run's log line (D193)."""
+        result = self._engine.run(*args, **kwargs)
+        self.rows_read += result.rows_read or 0
+        return result
+
+    def _begin(self) -> tuple[str, float]:
+        self.rows_read = 0
+        return datetime.now(UTC).isoformat(), monotonic()
+
     def run(self) -> RollupReport:
         """Remove days whose source day is gone, then build stale closed days, newest first,
         at most `max_days_per_run` per call so the job stays bounded (a catalog change
         rebuilds the window over several runs, oldest last: ADR-0035 row 5)."""
         report = RollupReport()
+        started, t0 = self._begin()
         if self._dir.is_dir():
             for built in self._dir.glob("source=*/day=*"):
                 lake_day = self._lake / built.parent.name / built.name
@@ -243,6 +279,9 @@ class AiRollup:
         if report.built or report.removed or report.indexed:
             log.info(
                 "ai_rollup.run",
+                started=started,
+                duration_s=round(monotonic() - t0, 2),
+                rows_read=self.rows_read,
                 built=report.built,
                 removed=report.removed,
                 indexed=report.indexed,
@@ -261,7 +300,7 @@ class AiRollup:
         out.mkdir(parents=True, exist_ok=True)
         self._write_ident(out, scope, day)
         self._write_mcp(out, scope, day)
-        result = self._engine.run(
+        result = self._query(
             rollup_build_sql(self._catalog.domain_table()),
             scope,
             row_cap=MAX_ROWS,
@@ -273,7 +312,7 @@ class AiRollup:
         if result.truncated:
             # Too many rows to be worth it: that day is read live, and marked so.
             (out / PART).unlink(missing_ok=True)
-            svc = self._engine.run(
+            svc = self._query(
                 first_services_sql(self._catalog.domain_table()), scope, timeout_s=120,
                 intel=False, background=True, name="ai_rollup.first",
             ).rows  # fmt: skip
@@ -302,7 +341,7 @@ class AiRollup:
 
     def _write_mcp(self, out: Path, scope: QueryScope, day: str) -> None:
         """The day's MCP rows (MCP_DAY_SQL), so MCP pages read closed days from here."""
-        rows = self._engine.run(
+        rows = self._query(
             MCP_DAY_SQL, scope, timeout_s=120, intel=False, background=True,
             name="ai_rollup.mcp",
         ).rows  # fmt: skip
@@ -342,7 +381,7 @@ class AiRollup:
     ) -> int:
         """The day's identity observations (IDENT_SQL), with the day they belong to (a
         today-so-far build: its label, and only rows observed by `upto`)."""
-        rows = self._engine.run(
+        rows = self._query(
             IDENT_SQL, scope, timeout_s=120, intel=False, background=True,
             name="ai_rollup.ident", upto=upto,
         ).rows  # fmt: skip
@@ -441,11 +480,11 @@ class AiRollup:
         """MCP servers and agents first seen in a source's day (telemetry, inventory, and
         usage reports; a day of other events matches none of their templates)."""
         out: dict[str, str] = {}
-        for row in self._engine.run(
+        for row in self._query(
             MCP_SQL, scope, timeout_s=120, intel=False, background=True, name="ai_rollup.first"
         ).rows:
             out[f"mcp:{row[0]}"] = _iso(row[6])
-        for row in self._engine.run(
+        for row in self._query(
             ITEMS_SQL, scope, {"recent": scope.end or self._clock()}, timeout_s=120,
             intel=False, background=True,
             name="ai_rollup.first",
@@ -516,6 +555,7 @@ class AiRollup:
         now = self._clock().astimezone(UTC)
         day = now.date().isoformat()
         root = self._dir / TODAY_DIR
+        started, t0 = self._begin()
         mark = self._today_mark()
         key = self.catalog_key()
         built_at = mark.get("built_at")
@@ -531,9 +571,16 @@ class AiRollup:
         label = f"{day}@{stamp}"
         start = datetime.combine(date.fromisoformat(day), time(0), UTC)
         done = []
+        inputs: dict[str, list[list[Any]]] = {}
+        reused = 0
         for src in sorted(self._lake.glob("source=*")) if self._lake.is_dir() else []:
             source = src.name.removeprefix("source=")
             if not any((src / f"day={day}").glob("part-*.parquet")):
+                continue
+            inputs[source] = self._inputs(src / f"day={day}")
+            if self._reuse(mark, day, key, source, inputs[source], stamp, label):
+                done.append(source)
+                reused += 1
                 continue
             # The whole day's folder (a row stamped ahead of the clock included); rows
             # observed after the cutoff are read live.
@@ -542,7 +589,7 @@ class AiRollup:
             )
             out = root / f"source={source}"
             out.mkdir(parents=True, exist_ok=True)
-            result = self._engine.run(
+            result = self._query(
                 rollup_build_sql(self._catalog.domain_table()), scope, row_cap=MAX_ROWS,
                 timeout_s=120, intel=False, background=True, name="ai_rollup.today",
                 upto=cutoff,
@@ -561,6 +608,8 @@ class AiRollup:
             "day": day, "cutoff": cutoff.isoformat(), "label": label, "stamp": stamp,
             "catalog": key, "sources": done, "built_at": now.isoformat(),
             "previous": str(mark.get("stamp", "")),
+            # Each built source's lake files then, so the next build can skip it (D178).
+            "inputs": {s: inputs[s] for s in done},
         }  # fmt: skip
         tmp = root / f".{TODAY_MARK}.tmp"
         tmp.write_text(json.dumps(body))
@@ -573,9 +622,61 @@ class AiRollup:
             if f.stem.split("-", 1)[-1] not in keep:
                 f.unlink(missing_ok=True)
         if done:
-            log.info("ai_rollup.today", sources=len(done), cutoff=cutoff.isoformat())
+            log.info(
+                "ai_rollup.today", started=started, duration_s=round(monotonic() - t0, 2),
+                rows_read=self.rows_read, sources=len(done), reused=reused,
+                cutoff=cutoff.isoformat(),
+            )  # fmt: skip
         self.generation += 1
         return len(done)
+
+    def _reuse(
+        self,
+        mark: dict[str, Any],
+        day: str,
+        key: str,
+        source: str,
+        inputs: list[list[Any]],
+        stamp: str,
+        label: str,
+    ) -> bool:
+        """Carry a source's last build over to this one when nothing it reads changed (owner,
+        2026-11-03: the build took 64 s every 5 minutes, rebuilding quiet sources too).
+
+        Only when the result would be identical: the same day and catalog, the source's lake
+        files for the day exactly as they were (names and sizes), and no row in them
+        observed after the last build's cutoff, so the rows up to the new cutoff are exactly
+        the rows the last build counted. Anything unsure (no statistics, a missing file)
+        builds as before. The carried rows get this build's label; nothing else changes."""
+        last = str(mark.get("stamp", ""))
+        if not last or mark.get("day") != day or mark.get("catalog") != key:
+            return False
+        if source not in (mark.get("sources") or []):
+            return False
+        if (mark.get("inputs") or {}).get(source) != inputs:
+            return False
+        try:
+            before = datetime.fromisoformat(str(mark["cutoff"]))
+        except (KeyError, ValueError):
+            return False
+        newest = _max_observed(self._lake / f"source={source}" / f"day={day}")
+        if newest is None or newest > before:
+            return False
+        out = self._dir / TODAY_DIR / f"source={source}"
+        part, ident = out / f"part-{last}.parquet", out / f"ident-{last}.parquet"
+        if not part.is_file() or not ident.is_file():
+            return False
+        for old, new, column in (
+            (part, out / f"part-{stamp}.parquet", "label"),
+            (ident, out / f"ident-{stamp}.parquet", "day"),
+        ):
+            table = pq.read_table(old)
+            at = table.schema.get_field_index(column)
+            table = table.set_column(at, column, pa.array([label] * table.num_rows, pa.string()))
+            tmp = out / f".{new.name}.tmp"
+            pq.write_table(table, tmp)
+            os.replace(tmp, new)
+        return True
 
     @property
     def folder(self) -> Path:

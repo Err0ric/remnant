@@ -12,7 +12,7 @@ import {
 } from "@/lib/api";
 import { DEFAULT_SQL, rangeStart, sqlPlaceholders, type TimeRangeId } from "@/lib/search";
 import { openSavedSearch } from "@/lib/savedSeed";
-import { navigate } from "@/lib/route";
+import { navigate, redirect } from "@/lib/route";
 import { seedSchedule } from "@/lib/scheduleSeed";
 import { RUN_SEARCH_EVENT, takeSearchSeed } from "@/lib/searchSeed";
 import {
@@ -31,7 +31,6 @@ import {
   type SearchTab,
 } from "@/lib/simpleSearch";
 import { AddToDashboardPanel } from "@/features/dashboard/AddToDashboard";
-import { AiToggle } from "./AiToggle";
 import { AskThread } from "@/features/ask/AskThread";
 import { FacetSidebar } from "./FacetSidebar";
 import { FieldActionsContext, type FieldActions } from "./fieldActions";
@@ -41,7 +40,7 @@ import { LibraryPanel, type LibraryPick } from "./LibraryPanel";
 import { LivePanel } from "./LivePanel";
 import { downloadCsv, ResultsCard } from "./ResultsCard";
 import { SaveSearchForm } from "./SaveSearchForm";
-import { SearchTabs, type SearchArea } from "./SearchTabs";
+import { SearchTabs } from "./SearchTabs";
 import { SimplePanel } from "./SimplePanel";
 
 const FILL_KEY = "app.live.fill"; // Live starts with the last 5 minutes (per browser)
@@ -57,7 +56,7 @@ interface SearchPageProps {
   /** Admins and analysts may ask a model; auditors have no Ask. */
   canAsk?: boolean;
   isAdmin?: boolean;
-  /** /ask opens the Ask tab (ADR-0008). */
+  /** /ask opens the Ask AI tab (ADR-0008); the rail lists it as Ask. */
   initialTab?: SearchTab;
 }
 
@@ -85,25 +84,40 @@ export function SearchPage({
   const sqlSeed = seed?.sql !== undefined;
   // Back, Forward, a bookmark, or a shared link (D90): the address says what to show.
   const [urlState] = useState(() => (seed ? null : readSearchUrl()));
-  // Two tabs (ADR-0016 row 1): Search, with the AI switch choosing Simple or Ask, and SQL.
+  // Three tabs (ADR-0016 row 1; owner, 2026-11-03): Search, Ask AI, and SQL. /ask opens
+  // Ask AI; the address follows the tab, so the rail shows Search or Ask.
   const [initial] = useState<SearchTab>(() =>
-    sqlSeed ? "sql" : urlState ? urlState.tab : (initialTab ?? storedTab()),
+    sqlSeed
+      ? "sql"
+      : initialTab === "ask"
+        ? "ask"
+        : urlState
+          ? urlState.tab
+          : (initialTab ?? storedTab()),
   );
-  const [area, setArea] = useState<SearchArea>(initial === "sql" ? "sql" : "search");
-  const [mode, setMode] = useState<"simple" | "ask">(initial === "ask" ? "ask" : "simple");
-  const searchMode = mode === "ask" && !canAsk ? "simple" : mode;
-  const tab: SearchTab = area === "sql" ? "sql" : searchMode;
+  const [chosen, setChosen] = useState<SearchTab>(initial);
+  const tab: SearchTab = chosen === "ask" && !canAsk ? "simple" : chosen;
+  // Back, Forward, or the rail moved between /ask and Search: this page stays mounted.
+  const [seenInitial, setSeenInitial] = useState(initialTab);
+  if (initialTab !== seenInitial) {
+    setSeenInitial(initialTab);
+    if (initialTab === "ask") setChosen("ask");
+    else if (chosen === "ask") setChosen("simple");
+  }
+  // Ask AI last used in this browser, opened as Search: show it at its own address.
+  useEffect(() => {
+    if (tab === "ask" && initialTab !== "ask") redirect("ask");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // The SQL editor (CodeMirror, the largest chunk) loads the first time the SQL tab is
   // opened, then stays mounted so its text and history survive tab changes.
   const [sqlSeen, setSqlSeen] = useState(tab === "sql");
   if (tab === "sql" && !sqlSeen) setSqlSeen(true);
   const setTab = (t: SearchTab) => {
-    if (t === "sql") setArea("sql");
-    else {
-      setArea("search");
-      setMode(t);
-    }
+    setChosen(t);
     storeTab(t);
+    if (t === "ask" && initialTab !== "ask") navigate("ask");
+    else if (t !== "ask" && initialTab === "ask") navigate("search");
   };
   const [facetRequest, setFacetRequest] = useState<FacetRequest | null>(null);
   const presets = useQuery({
@@ -118,6 +132,9 @@ export function SearchPage({
     seed?.sql ?? (urlState?.tab === "sql" && urlState.q ? urlState.q : DEFAULT_SQL),
   );
   const [askAnswer, setAskAnswer] = useState<{ sql: string; question: string } | null>(null);
+  // The answer SQL whose rows are in Results. On the Ask AI tab, Results shows only those:
+  // a failed answer never sits above the last search's rows (owner, 2026-11-03; D192).
+  const [askRan, setAskRan] = useState<string | null>(null);
   const [range, setRange] = useState<TimeRangeId>(
     seed?.range ?? urlState?.range ?? (sqlSeed ? "all" : "24h"),
   );
@@ -219,6 +236,9 @@ export function SearchPage({
       ? coverage.data.columns.filter((_, i) => Number(coverage.data?.rows[0]?.[i] ?? 0) === 0)
       : [];
   const result: QueryResult | undefined = run.data;
+  // Ask AI shows its rows in the answer; Results below holds only a run of the current
+  // answer's own SQL (Run query), never what Search ran before.
+  const hideResults = tab === "ask" && (askAnswer === null || askRan !== askAnswer.sql);
   const pending = run.isPending || simple.isPending;
 
   const typed = (name: string, value: string, defs: SavedSearch["params"]) => {
@@ -284,6 +304,8 @@ export function SearchPage({
   };
   // What ran last, for Back and Forward (D90) and for "unsaved edits" before New search.
   const recorded = useRef(false);
+  const tabNow = useRef(tab);
+  tabNow.current = tab;
   const lastRan = useRef<{ sql: string | null; text: string | null }>({ sql: null, text: null });
   const remember = (vars: Run) => {
     if (vars.text !== undefined) lastRan.current.text = vars.text;
@@ -302,7 +324,8 @@ export function SearchPage({
     } else {
       state = { tab: "sql", q: vars.sql, range };
     }
-    recordSearch(state, !recorded.current);
+    // On /ask the address stays /ask; a run there is the page's own search, not a new one.
+    if (tabNow.current !== "ask") recordSearch(state, !recorded.current);
     recorded.current = true;
   };
   const [confirmNew, setConfirmNew] = useState(false);
@@ -319,6 +342,7 @@ export function SearchPage({
       : sql !== opened.sql
     : false;
   const runAsk = (value: string) => {
+    setAskRan(value);
     setSql(value); // the editor always holds what produced the results
     runSql(value);
   };
@@ -554,53 +578,51 @@ export function SearchPage({
           sources={sources}
           onSources={setSources}
         />
-        <SearchTabs active={area} onSelect={(a) => setTab(a === "sql" ? "sql" : searchMode)} />
+        <SearchTabs active={tab} onSelect={setTab} canAsk={canAsk} />
         {/* Panels stay mounted so a question and its turns survive a look at another tab. */}
-        <div hidden={area !== "search"}>
-          <div id="search-panel-search" role="tabpanel" aria-labelledby="search-tab-search">
-            <div hidden={tab !== "simple"}>
-              <SimplePanel
-                toggle={canAsk ? <AiToggle on={false} onChange={() => setTab("ask")} /> : undefined}
-                presets={presets.data ?? []}
-                onPreset={(value) => {
-                  setText(value);
-                  simple.mutate({ text: value });
-                }}
-                text={text}
-                onText={setText}
-                onRun={() => simple.mutate({ text })}
-                compiled={compiled}
-                emptyColumns={emptyColumns}
-                onMoveToSql={(q) => {
-                  setSql(q);
-                  setText("");
-                  setTab("sql");
-                }}
-                onEditAsSql={() => {
-                  if (!compiled) return;
-                  setSql(inlineParams(compiled));
-                  setTab("sql");
-                }}
-                pending={pending}
-              />
-            </div>
-            {canAsk ? (
-              <div hidden={tab !== "ask"}>
-                <AskThread
-                  start={rangeStart(range)}
-                  sources={sources}
-                  isAdmin={isAdmin}
-                  onEdit={(value) => {
-                    setSql(value);
-                    setTab("sql");
-                  }}
-                  onAnswer={setAskAnswer}
-                  toggle={<AiToggle on onChange={() => setTab("simple")} />}
-                />
-              </div>
-            ) : null}
+        <div hidden={tab !== "simple"}>
+          <div id="search-panel-simple" role="tabpanel" aria-labelledby="search-tab-simple">
+            <SimplePanel
+              presets={presets.data ?? []}
+              onPreset={(value) => {
+                setText(value);
+                simple.mutate({ text: value });
+              }}
+              text={text}
+              onText={setText}
+              onRun={() => simple.mutate({ text })}
+              compiled={compiled}
+              emptyColumns={emptyColumns}
+              onMoveToSql={(q) => {
+                setSql(q);
+                setText("");
+                setTab("sql");
+              }}
+              onEditAsSql={() => {
+                if (!compiled) return;
+                setSql(inlineParams(compiled));
+                setTab("sql");
+              }}
+              pending={pending}
+            />
           </div>
         </div>
+        {canAsk ? (
+          <div hidden={tab !== "ask"}>
+            <div id="search-panel-ask" role="tabpanel" aria-labelledby="search-tab-ask">
+              <AskThread
+                start={rangeStart(range)}
+                sources={sources}
+                isAdmin={isAdmin}
+                onEdit={(value) => {
+                  setSql(value);
+                  setTab("sql");
+                }}
+                onAnswer={setAskAnswer}
+              />
+            </div>
+          </div>
+        ) : null}
         {/* hidden goes on a plain wrapper: a display class such as flex would override it. */}
         <div hidden={tab !== "sql"}>
           <div
@@ -793,52 +815,54 @@ export function SearchPage({
             {refine.error instanceof Error ? refine.error.message : "Could not add the filter"}
           </div>
         ) : null}
-        {run.isError ? (
+        {run.isError && !hideResults ? (
           <div role="alert" className={ALERT}>
             {run.error instanceof Error ? run.error.message : "Query failed"}
           </div>
         ) : null}
       </div>
 
-      <div className="mx-5 mb-5 flex flex-col gap-3 lg:flex-row">
-        {liveSql !== null ? (
-          <LivePanel
-            key={liveKey}
-            sql={liveSql}
-            sources={sources}
-            fillMinutes={liveFill ? 5 : 0}
-            onClose={() => setLiveSql(null)}
-          />
-        ) : null}
-        <div className={liveSql !== null ? "hidden" : "contents"}>
-          <FacetSidebar
-            request={facetRequest}
-            onTerm={
-              // The results on screen came from a Simple search: refine that search, even
-              // when the Ask or SQL tab has been opened since (the results are still its).
-              facetRequest?.text !== undefined
-                ? (term) => {
-                    const next = addTerm(facetRequest.text ?? "", term);
-                    setText(next);
-                    setTab("simple");
-                    simple.mutate({ text: next });
-                  }
-                : null
-            }
-            onRefine={
-              facetRequest?.sql !== undefined
-                ? (field, value, exclude) => refine.mutate({ field, value, exclude })
-                : null
-            }
-          />
-          <FieldActionsContext.Provider value={actions}>
-            <ResultsCard
-              result={result}
-              pending={pending}
-              runKey={(result?.executed_sql ?? "") + (lastRun?.getTime() ?? 0)}
-              canExplain={canSave}
+      <div hidden={hideResults}>
+        <div className="mx-5 mb-5 flex flex-col gap-3 lg:flex-row">
+          {liveSql !== null ? (
+            <LivePanel
+              key={liveKey}
+              sql={liveSql}
+              sources={sources}
+              fillMinutes={liveFill ? 5 : 0}
+              onClose={() => setLiveSql(null)}
             />
-          </FieldActionsContext.Provider>
+          ) : null}
+          <div className={liveSql !== null ? "hidden" : "contents"}>
+            <FacetSidebar
+              request={facetRequest}
+              onTerm={
+                // The results on screen came from a Simple search: refine that search, even
+                // when the Ask or SQL tab has been opened since (the results are still its).
+                facetRequest?.text !== undefined
+                  ? (term) => {
+                      const next = addTerm(facetRequest.text ?? "", term);
+                      setText(next);
+                      setTab("simple");
+                      simple.mutate({ text: next });
+                    }
+                  : null
+              }
+              onRefine={
+                facetRequest?.sql !== undefined
+                  ? (field, value, exclude) => refine.mutate({ field, value, exclude })
+                  : null
+              }
+            />
+            <FieldActionsContext.Provider value={actions}>
+              <ResultsCard
+                result={result}
+                pending={pending}
+                runKey={(result?.executed_sql ?? "") + (lastRun?.getTime() ?? 0)}
+                canExplain={canSave}
+              />
+            </FieldActionsContext.Provider>
+          </div>
         </div>
       </div>
     </div>

@@ -11,7 +11,11 @@ import { ProviderForm } from "./ProviderForm";
 export function ProvidersPage() {
   const client = useQueryClient();
   const [adding, setAdding] = useState(false);
-  const [editing, setEditing] = useState<string | null>(null);
+  // Ask's "Set Thinking to Off" opens this provider's form (D192).
+  const [editing, setEditing] = useState<string | null>(() => {
+    const m = /(?:^|&)edit=([^&]+)/.exec(window.location.hash.replace(/^#/, ""));
+    return m?.[1] ? decodeURIComponent(m[1]) : null;
+  });
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [health, setHealth] = useState<Record<string, ProviderHealth>>({});
   const providers = useQuery({ queryKey: ["providers"], queryFn: api.providers });

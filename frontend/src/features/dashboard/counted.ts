@@ -74,9 +74,9 @@ export const OUTCOME_COUNTED: Record<string, string> = {
 /** AI Watch cards (ADR-0038 row 13), by card key. */
 export const AI_WATCH_COUNTED: Record<string, string> = {
   services:
-    "AI services from the catalog seen in DNS, firewall, proxy, and Claude telemetry whose review status is not approved: not approved (decided against) and unreviewed (no decision yet), shown apart. In the range picked, against the range before.",
+    "AI services from the catalog seen in DNS, firewall, proxy, and Claude telemetry that are not yet approved: Not approved (decided against) and Unreviewed (no decision yet), shown apart below the number. Unreviewed is not a violation. In the range picked, against the range before.",
   people:
-    "Distinct people seen reaching a service that is not approved or not reviewed yet. A person is the user name on the event, or, for network logs that only have an address, the person that address maps to from sign-ins and DHCP in the same hour. Devices no person maps to are counted apart, never added in. In the range picked, against the range before.",
+    "Distinct people seen reaching a service that is not yet approved (Not approved or Unreviewed, shown apart below the number). A person is the user name on the event, or, for network logs that only have an address, the person that address maps to from sign-ins and DHCP in the same hour. Devices no person maps to are counted apart, never added in. In the range picked, against the range before.",
   agents:
     "AI agents and MCP servers first seen in this range: Claude Code per person, MCP setups per machine and client, and API keys, from telemetry, the hooks plugin, the MCP inventory, and the Anthropic usage connector.",
   consent:

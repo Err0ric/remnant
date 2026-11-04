@@ -1,11 +1,12 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
+import { useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { isAborted, ModelWait } from "@/components/ai/ModelWait";
 import { api, type AskTurn, type Cell } from "@/lib/api";
 import { closeAsk } from "@/lib/askSlideOver";
 import { setAskProvider, useAskProvider } from "@/lib/askProvider";
 import { navigate } from "@/lib/route";
 import { seedSearch } from "@/lib/searchSeed";
+import { AskExamples } from "./AskExamples";
 import { AskTurnBlock, type Turn } from "./AskTurnBlock";
 
 const MAX_TURNS = 3;
@@ -28,8 +29,6 @@ interface AskThreadProps {
   onEdit?: (sql: string) => void;
   /** The latest SQL and the first question, for Save; null after New question. */
   onAnswer?: (answer: { sql: string; question: string } | null) => void;
-  /** The AI switch, at the start of the question box (Search page). */
-  toggle?: ReactNode;
   /** Focus the question box on open (the slide-over). */
   autoFocus?: boolean;
 }
@@ -46,7 +45,6 @@ export function AskThread({
   initialQuestion = "",
   onEdit,
   onAnswer,
-  toggle,
   autoFocus,
 }: AskThreadProps) {
   const providerId = useAskProvider();
@@ -185,6 +183,8 @@ export function AskThread({
       .slice(-MAX_TURNS)
       .map((t) => ({ question: t.question, sql: t.answer!.sql }));
     setTurns([...earlier, { id, question: q, phase: "finding" }]);
+    // Nothing on the page is this question's answer until its query runs (D192).
+    onAnswer?.(null);
     ask.mutate({ id, q, history, route });
   };
   const busy = ask.isPending || run.isPending || summarize.isPending;
@@ -204,6 +204,17 @@ export function AskThread({
       return;
     }
     setQuestion("");
+    begin(q, turns);
+  };
+  // An example question, one click (D182): asked at once, or matched to the library
+  // when no provider is set up.
+  const askNow = (q: string) => {
+    if (busy) return;
+    if (noProviders) {
+      setQuestion(q);
+      setSuggestFor(q);
+      return;
+    }
     begin(q, turns);
   };
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -293,7 +304,6 @@ export function AskThread({
           Question
         </label>
         <div className="flex items-start gap-2">
-          {toggle}
           <textarea
             id="ask-question"
             rows={3}
@@ -353,6 +363,9 @@ export function AskThread({
           <p className="text-text-muted">Each opens in the SQL tab, where Run query runs it.</p>
         </section>
       ) : null}
+      {turns.length === 0 && suggestFor === null ? (
+        <AskExamples onPick={askNow} disabled={busy} />
+      ) : null}
       <ModelWait
         providerId={chosen?.provider_id ?? ""}
         label="Finding the right query"
@@ -370,6 +383,14 @@ export function AskThread({
               onCheckData={checkData}
               onEdit={onEdit}
               onShowEvents={(turn, values) => showEvents.mutate({ turn, values })}
+              onFixThinking={
+                isAdmin && chosen
+                  ? () => {
+                      closeAsk();
+                      navigate("providers", `edit=${encodeURIComponent(chosen.provider_id)}`);
+                    }
+                  : undefined
+              }
             />
           ))}
         </div>

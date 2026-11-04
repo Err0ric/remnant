@@ -31,6 +31,21 @@ export function daysOf(w: PageWindow): number {
   return WINDOWS.find((x) => x.id === w)?.days ?? 7;
 }
 
+/** What a trend's dashed line is (owner, 2026-11-03): each point compared with the same
+ * point one window earlier, not an average of the window before. */
+export function comparisonLabel(w: PageWindow): string {
+  if (w === "24h") return "Same hour yesterday";
+  if (w === "7d") return "Same hour last week";
+  return `Same day ${daysOf(w)} days earlier`;
+}
+
+/** The comparison point's time: the same point one window earlier. */
+export function comparisonTime(w: PageWindow, at: Date): Date {
+  const d = new Date(at.getTime());
+  d.setDate(d.getDate() - daysOf(w)); // calendar days, so a clock change keeps the hour
+  return d;
+}
+
 /** "the previous 7 days", "the previous 24 hours". */
 export function previousPhrase(w: PageWindow): string {
   return w === "24h" ? "the previous 24 hours" : `the previous ${daysOf(w)} days`;

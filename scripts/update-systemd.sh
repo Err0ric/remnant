@@ -77,7 +77,7 @@ aide_rules() {
   i=$(re_escape "$INSTALL_DIR")
   echo "# Written by $INSTALL_DIR/scripts/update-systemd.sh; replaced on every update."
   echo "# Data that changes constantly and has its own checks (docs/install/integrity.md)."
-  for sub in lake rollup tmp enrichment; do
+  for sub in lake rollup tmp enrichment spool; do
     printf '!%s/%s(/|$)\n' "$d" "$sub"
   done
   printf '!%s/meta\\.sqlite\n' "$d"
@@ -157,7 +157,11 @@ aide_check() {
   fi
   count() { sed -n "s/^[[:space:]]*$1 entries:[[:space:]]*\([0-9][0-9]*\)[[:space:]]*\$/\1/p" "$report" | head -n 1; }
   echo "AIDE: $(count Added) added, $(count Removed) removed, $(count Changed) changed since the last baseline."
-  paths=$(sed -n 's/^[^:]*: \(\/.*\)$/\1/p' "$report" | sort -u)
+  # Paths only from the entry lists (Added, Removed, Changed: "f+++++: /path",
+  # "f   ...    .C... : /path"), never from the details after them, where a hash or its
+  # continuation line can start with "/" (owner, 2026-11-03: hashes were listed as paths).
+  paths=$(awk '/^Detailed information/ { exit }
+               /^[a-zA-Z!][^:]*: \// { sub(/^[^:]*: /, ""); print }' "$report" | sort -u)
   inst=$(re_escape "$INSTALL_DIR")
   outside=$(printf '%s\n' "$paths" | grep -vE "^$inst(/|\$)" \
     | grep -vxF -e "$STATE_FILE" -e "$AIDE_CONF_D/90_aide_remnant" | grep . || true)

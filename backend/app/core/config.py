@@ -318,6 +318,20 @@ class AgentsConfig(_Strict):
     # Health: a machine whose hooks plugin queue holds records and delivered none for this
     # many days is unhealthy and raises an alert item (owner 2026-11-02).
     queue_stuck_days: int = Field(default=3, ge=1, le=7)
+    # ADR-0043: a new agent's "changed" alerts are silent this many days (new MCP servers
+    # and tools still alert); and this many blocked or failed tool calls in an hour for one
+    # agent raise a high alert.
+    learning_days: int = Field(default=14, ge=0, le=60)
+    blocked_burst: int = Field(default=10, ge=2, le=10_000)
+
+
+class SourcesConfig(_Strict):
+    # Flap guard for a source that stops, sends again, and stops again the same day
+    # (owner, 2026-11-03): its open gap alert notifies again only when the source was back
+    # at least this many minutes, and at most this many times a day in all; after that the
+    # alert keeps counting and its title says "flapping".
+    gap_renotify_min_back: int = Field(default=15, ge=0, le=1440)
+    gap_max_notify_per_day: int = Field(default=3, ge=1, le=100)
 
 
 class EnrichmentConfig(_Strict):
@@ -340,6 +354,7 @@ class AppConfig(_Strict):
     enrichment: EnrichmentConfig = Field(default_factory=EnrichmentConfig)
     m365: M365Config = Field(default_factory=M365Config)
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
+    sources: SourcesConfig = Field(default_factory=SourcesConfig)
     ask: AskConfig = Field(default_factory=AskConfig)
 
 

@@ -52,11 +52,42 @@ SAME = {
     "account": "user", "machines": "host", "hosts": "host", "devices": "host",
     "rules": "rule", "consents": "consent", "apps": "app", "applications": "app",
     "admins": "admin", "administrator": "admin", "domains": "domain", "names": "name",
+    "files": "file", "commands": "command", "tools": "tool", "sessions": "session",
+    "servers": "server", "sites": "domain", "websites": "domain",
 }  # fmt: skip
 
 
+# Many-word and hyphenated forms of one thing, made one word before the text is split
+# (owner, 2026-11-03: "failed logins to microsoft" missed "Failed sign-ins" in Microsoft
+# 365; D191). Ranking only, never SQL. Longer forms first, so "entra id" wins over "entra".
+PHRASES: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(p, re.I), w)
+    for p, w in (
+        (r"\b(?:sign|log)[\s-]?(?:ins?|ons?)\b", " signin "),
+        (r"\b(?:logins|logons|signins|authentications?)\b", " signin "),
+        (r"\bmicrosoft\s+365\b", " m365 "),
+        (r"\boffice\s*365\b", " m365 "),
+        (r"\bazure\s+(?:ad|active\s+directory)\b", " m365 "),
+        (r"\bentra(?:\s+id)?\b", " m365 "),
+        (r"\b(?:o365|microsoft)\b", " m365 "),
+        (r"\bpalo\s*alto(?:\s+networks)?\b", " paloalto "),
+        (r"\bpan[\s-]?os\b", " paloalto "),
+        (r"\bglobal\s*protect\b", " globalprotect "),
+        # AI agents (owner, 2026-11-03; D196): Claude Code, Claude, coding and AI agents,
+        # Cowork. What an agent is "accessing" is its files, commands, and web domains.
+        (r"\bclaude[\s-]+code\b", " agent "),
+        (r"\b(?:coding|ai)[\s-]+agents?\b", " agent "),
+        (r"\b(?:claude|cowork|agents?)\b", " agent "),
+        (r"\b(?:access(?:ing|ed)?|touch(?:ing|ed)?|open(?:ing|ed)?)\b", " file command domain "),
+    )
+]
+
+
 def words(text: str) -> set[str]:
-    return {SAME.get(w, w) for w in WORD.findall(text.lower()) if w not in STOP}
+    t = text.lower()
+    for pattern, word in PHRASES:
+        t = pattern.sub(word, t)
+    return {SAME.get(w, w) for w in WORD.findall(t) if w not in STOP}
 
 
 # --- time --------------------------------------------------------------------------------

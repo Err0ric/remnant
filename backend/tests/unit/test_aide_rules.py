@@ -1,5 +1,5 @@
 """AIDE rules from the update script (owner, 2026-11-01): the data folder's lake, rollup,
-tmp, enrichment, and meta.sqlite, and frontend/node_modules, are skipped; tls/, .venv,
+tmp, enrichment, spool, and meta.sqlite, and frontend/node_modules, are skipped; tls/, .venv,
 .python, backend/app, frontend/dist, and .git stay watched. The data folder comes from the
 service's settings, so a custom one gets matching rules. Checked with AIDE itself when it
 is installed, and with the same regular expressions otherwise."""
@@ -26,6 +26,7 @@ SKIPPED = [
     "rollup/m365/source=a/day=2026-10-31/part-0.parquet",
     "tmp/duckdb/duckdb_temp_storage.tmp",
     "enrichment/dbip-country.mmdb",
+    "spool/otlp/claude/000001.log",
     "meta.sqlite",
     "meta.sqlite-wal",
 ]
@@ -55,6 +56,7 @@ def test_default_layout_is_the_owner_rule_set(tmp_path: Path) -> None:
         "!/var/lib/remnant/rollup(/|$)",
         "!/var/lib/remnant/tmp(/|$)",
         "!/var/lib/remnant/enrichment(/|$)",
+        "!/var/lib/remnant/spool(/|$)",
         "!/var/lib/remnant/meta\\.sqlite",
         "!/opt/remnant/frontend/node_modules(/|$)",
     ]

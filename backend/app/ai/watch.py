@@ -22,11 +22,12 @@ from typing import Any
 
 import structlog
 
-from app.ai.agents import agents
+from app.ai.agents import AgentStatus, agents
 from app.ai.catalog import NON_USAGE, Catalog
+from app.ai.internal_tools import counted
 from app.ai.usage import HOST_EXPR, MACHINE_EXPR, MCP_EXPR, NO_MCP_NAMES, WHO_EXPR, Usage, _values
 from app.alerts.dispatch import AlertDispatcher
-from app.alerts.items import AlertItems
+from app.alerts.items import AlertItem, AlertItems
 from app.alerts.render import Alert
 from app.core.branding import PRODUCT_NAME
 from app.core.errors import ParamInvalidError, log_detail
@@ -41,6 +42,14 @@ MAX_TARGETS = 10
 BATCH = 20_000  # rows read per check; the cursor moves past what was read
 LOOKBACK_FIRST_RUN = timedelta(hours=1)
 AGENT_CHECK_EVERY = timedelta(hours=1)
+
+
+def is_mcp_item(kind: str, name: str) -> bool:
+    """An MCP server, or a tool named `mcp__<server>__<tool>` (ADR-0043 row 8). Any other
+    tool is built in: Claude Code adds built-ins with its updates, so there is no list."""
+    return kind == "MCP server" or name.startswith("mcp__")
+
+
 REVIEW_WINDOW = timedelta(days=7)
 
 
@@ -84,8 +93,16 @@ class AiWatch:
         items: AlertItems | None = None,
         agent_sources: Callable[[], list[str]] = list,
         usage: Usage | None = None,
+        learning_days: int = 14,
+        blocked_burst: int = 10,
+        domains: Callable[[], list[str]] = list,
     ) -> None:
+        self._domains = domains  # the organization's email domains (Identities)
         self._items = items
+        # ADR-0043: a new agent's "changed" alerts wait this long; this many blocked or
+        # failed tool calls in an hour for one agent is a high alert.
+        self._learning_days = learning_days
+        self._blocked_burst = blocked_burst
         # Hourly, every service in use in the last REVIEW_WINDOW that is not approved gets
         # an item if it has none, so a decision is never skipped because its events came
         # before the watch's cursor (owner, 2026-10-23).
@@ -365,7 +382,8 @@ class AiWatch:
             if seen is None or seen < since:
                 continue
             who = ", ".join(a.owners) if a.owners else "no person matched"
-            where = f"; device {a.machine}" if a.machine else ""
+            names = ", ".join(m.name for m in a.machines)
+            where = f"; {'devices' if len(a.machines) > 1 else 'device'} {names}" if names else ""
             self._raise_agent(
                 a.agent, "agent", a.label, f"In use; owner {who}{where}", now, refresh=True,
                 count=len(a.owners),
@@ -464,7 +482,8 @@ class AiWatch:
             return 0
         lines: list[str] = []
         for a in agents(self._engine, None, now):
-            who = f" ({', '.join(a.owners)})" if a.owners else ""
+            # The label names the person when there is one (D185).
+            who = f" ({', '.join(a.owners)})" if a.owners and a.kind != "Claude Code" else ""
             if a.state == "new":  # a new agent is a change too (QA F12); once per agent
                 if self._agent_first(a.agent, "agent", "first seen", now):
                     lines.append(f"{a.label}{who}: new agent")
@@ -472,11 +491,22 @@ class AiWatch:
                 continue
             if a.state != "changed":
                 continue
+            learning = self._learning(a, now)
             for item in a.new_items:
-                if self._agent_first(a.agent, item["kind"], item["name"], now):
-                    line = f"{a.label}{who}: new {item['kind']} {item['name']}"
+                if not self._agent_first(a.agent, item["kind"], item["name"], now):
+                    continue
+                # Recorded either way, for the baseline and the Agents page (ADR-0043).
+                mcp = is_mcp_item(item["kind"], item["name"])
+                if not mcp and (item["kind"] == "Tool" or learning):
+                    continue  # a built-in tool never alerts; others wait out the learning
+                line = f"{a.label}{who}: new {item['kind']} {item['name']}"
+                item_ = self._raise_agent(
+                    a.agent, f"{item['kind']}:{item['name']}", a.label, line, now
+                )
+                if item_ is None or item_.fresh or item_.rose:
                     lines.append(line)
-                    self._raise_agent(a.agent, f"{item['kind']}:{item['name']}", a.label, line, now)
+            if learning:
+                continue  # no busy-hour alert while the agent's usual hour is still forming
             if a.recent_peak is not None and self._agent_first(
                 a.agent, "busy hour", now.date().isoformat(), now
             ):
@@ -486,6 +516,7 @@ class AiWatch:
                 )
                 lines.append(line)
                 self._raise_agent(a.agent, f"busy:{now.date()}", a.label, line, now)
+        lines += self._account_and_blocked(now)
         with self._meta.connect() as con:
             con.execute(
                 "UPDATE ai_watch SET agents_checked_at = ? WHERE id = 1", (now.isoformat(),)
@@ -494,6 +525,57 @@ class AiWatch:
             return 0
         self._alert("ai_agent", lines, s.target_ids, now - AGENT_CHECK_EVERY, now)
         return 1
+
+    def _account_and_blocked(self, now: datetime) -> list[str]:
+        """The last hour's personal Claude accounts on company devices (medium, once per
+        account and device) and bursts of blocked or failed tool calls (high, grouped per
+        agent and day), ADR-0043 rows 11 and 12. Not silenced by the learning period."""
+        if self._items is None:
+            return []
+        scope = QueryScope(None, now - AGENT_CHECK_EVERY, now)
+        out: list[str] = []
+        domains = [d.lower() for d in self._domains()]
+        if domains:
+            for email, device in self._engine.run(PERSONAL_SQL, scope, timeout_s=30.0).rows:
+                at = str(email).rsplit("@", 1)[-1]
+                if not device or at in domains:
+                    continue
+                line = f"Personal Claude account {email} on {device}"
+                item = self._items.raise_item(
+                    "ai_watch", f"account:{email}", line, ref_id=f"personal:{email}:{device}",
+                    why=line, people=[str(email)], devices=[str(device)], severity="medium",
+                    sources=self._agent_sources(), range_end=now.isoformat(),
+                )  # fmt: skip
+                if item.fresh:
+                    out.append(line)
+        rows = self._engine.run(
+            BLOCKED_SQL, scope, {"burst": self._blocked_burst}, timeout_s=30.0
+        ).rows
+        for agent, n in rows:
+            who = str(agent)[3:]
+            line = f"{n} blocked or failed tool calls in an hour by Claude Code for {who}"
+            item = self._items.raise_item(
+                "ai_watch", f"agent:{agent}", f"AI agent: blocked or failed calls, {who}",
+                why=line, count=int(n), severity="high", sources=self._agent_sources(),
+                people=[who] if "@" in who else None, range_end=now.isoformat(),
+                group=(f"agent:{agent}", "blocked_calls"), change=line,
+            )  # fmt: skip
+            if item.fresh or item.rose:
+                out.append(line)
+        return out
+
+    def _learning(self, a: AgentStatus, now: datetime) -> bool:
+        """Is this agent in its learning period (ADR-0043 row 7)? From when it was first
+        recorded as new, else its first event in the baseline window."""
+        if self._learning_days <= 0:
+            return False
+        with self._meta.connect() as con:
+            r = con.execute(
+                "SELECT first_seen FROM ai_agent_items WHERE agent = ? AND item_kind = 'agent'",
+                (a.agent[:300],),
+            ).fetchone()
+        first = _parse(r["first_seen"] if r else None) or _parse(a.first_seen)
+        return first is not None and now - first < timedelta(days=self._learning_days)
 
     def _raise_agent(
         self,
@@ -504,12 +586,20 @@ class AiWatch:
         now: datetime,
         refresh: bool = False,
         count: int | None = None,
-    ) -> None:
+    ) -> AlertItem | None:
         """`what` "agent" is the agent's standing review item (one per agent, closed when
-        someone decides); anything else is a change to an agent already reviewed or not."""
+        someone decides); anything else is a change, grouped per agent, rule, and day
+        (ADR-0043 row 1)."""
         if self._items is None:
-            return
-        self._items.raise_item(
+            return None
+        rule = (
+            None
+            if what == "agent"
+            else "agent_busy"
+            if what.startswith("busy:")
+            else "agent_change"
+        )
+        return self._items.raise_item(
             "ai_watch",
             f"agent:{agent}",
             f"AI agent changed: {label}" if what != "agent" else f"AI agent not reviewed: {label}",
@@ -522,6 +612,8 @@ class AiWatch:
             range_end=now.isoformat(),
             severity="medium",
             refresh=refresh,
+            group=(f"agent:{agent}", rule) if rule else None,
+            change=line,
         )
 
     def _agent_first(self, agent: str, kind: str, item: str, now: datetime) -> bool:
@@ -606,6 +698,24 @@ FROM events WHERE {after} AND template_id = 'claude_code_otel'
 ) ORDER BY obs
 LIMIT {BATCH}"""  # noqa: S608  # fixed SQL text; domains checked against DOMAIN in _values
 
+
+# Hook records of the last hour with a signed-in account, per account and device.
+PERSONAL_SQL = """
+SELECT lower(json_extract_string(unmapped, '$.attr.claude_account_email')) AS email,
+       device_hostname
+FROM events
+WHERE template_id = 'claude_hooks'
+  AND nullif(json_extract_string(unmapped, '$.attr.claude_account_email'), '') IS NOT NULL
+GROUP BY 1, 2"""
+
+# Agents with at least $burst blocked or failed tool calls in the hour (bookkeeping left out).
+BLOCKED_SQL = f"""
+SELECT 'cc|' || coalesce(nullif(actor_user_name, ''), device_hostname, '?') AS agent, count(*)
+FROM events
+WHERE template_id = 'claude_hooks' AND message = 'claude_hooks.post_tool_use_failure'
+  AND {counted("json_extract_string(unmapped, '$.attr.tool_name')")}
+GROUP BY 1
+HAVING count(*) >= $burst"""  # noqa: S608  # fixed SQL text
 
 SENSITIVE_SQL = f"""
 SELECT source_id, coalesce({WHO_EXPR}, device_hostname, 'unknown') AS who,

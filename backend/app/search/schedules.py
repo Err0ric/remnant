@@ -526,9 +526,14 @@ class ScheduleService:
                 range_end=run.range_end,
                 people=about[0],
                 devices=about[1],
+                # One open item per schedule or rule and day (ADR-0043 row 1).
+                group=(sched.target_id if sched.kind == "rule" else sched.schedule_id, sched.kind),
+                change=f"{run.row_count or 0} rows, {run.range_start} to {run.range_end}",
             )
             if item.state == "closed":
                 return  # muted: recorded, not sent
+            if not (item.fresh or item.rose):
+                return  # a repeat on today's open item: counted there, not sent again
             link = f"{self._link}/alerts#item={item.item_id}" if self._link else None
         if self._dispatcher is None:
             return

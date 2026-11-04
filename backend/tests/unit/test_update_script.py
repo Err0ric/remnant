@@ -414,6 +414,30 @@ def test_changes_only_in_the_install_and_its_record_proceed(box: dict[str, Path]
     assert "aideinit -y -f" in _calls(box)
 
 
+def test_hash_lines_in_the_details_are_not_read_as_paths(box: dict[str, Path]) -> None:
+    """Owner, 2026-11-03: a hash (or its continuation line) that starts with "/" in AIDE's
+    detailed section was listed as a changed path outside the install and stopped the
+    update. Only the entry lists name paths."""
+    inst = str(box["install"])
+    env = _aide(box, 4, [f"{inst}/backend/app/main.py"])
+    report = Path(env["AIDE_REPORT"])
+    report.write_text(
+        report.read_text()
+        + "\n---------------------------------------------------\n"
+        + "Detailed information about changes:\n"
+        + "---------------------------------------------------\n\n"
+        + f"File: {inst}/backend/app/main.py\n"
+        + "  SHA256    : /Xk3pQ9vZ2mN8bLr1Ty+aW4cE6dF0gH5j | /Yz9aB2cD4eF6gH8iJ0kL2mN4oP6qR8s\n"
+        + "  SHA512    : 7aQ2wE4rT6yU8iO0pA2sD4fG6hJ8kL0z | qW2eR4tY6uI8oP0aS2dF4gH6jK8lZ0x\n"
+        + "              /c9V1bN3mQ5wE7rT9yU1iO3pA5sD7fG9h | +h1J3kL5zX7cV9bN1mQ3wE5rT7yU9iO\n"
+    )
+    _new_commit(box)
+    res = _run_aide(box, "--aide", **env)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "Changed outside" not in res.stdout
+    assert "/Xk3pQ9" not in res.stdout + res.stderr
+
+
 def test_a_no_op_run_checks_but_does_not_re_baseline(box: dict[str, Path]) -> None:
     _record(box, _git(box["install"], "rev-parse", "HEAD"))
     res = _run_aide(box, "--aide", **_aide(box, 0))

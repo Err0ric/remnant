@@ -254,6 +254,7 @@ With AIDE installed (`/etc/aide/aide.conf.d` present), every run of `update-syst
 !/var/lib/remnant/rollup(/|$)
 !/var/lib/remnant/tmp(/|$)
 !/var/lib/remnant/enrichment(/|$)
+!/var/lib/remnant/spool(/|$)
 !/var/lib/remnant/meta\.sqlite
 !/opt/remnant/frontend/node_modules(/|$)
 ```
@@ -263,6 +264,7 @@ With AIDE installed (`/etc/aide/aide.conf.d` present), every run of `update-syst
 | `lake/`, `rollup/`, `meta.sqlite` (and its `-wal`) | Skipped | Written all day; covered by the app's own hash chain and audit chain |
 | `tmp/` | Skipped | Query overflow, emptied at start |
 | `enrichment/` | Skipped | GeoIP and threat intel files that update on their own |
+| `spool/` | Skipped | Messages from the syslog listener and the OpenTelemetry receiver, waiting to be ingested; written and emptied all day |
 | `frontend/node_modules` | Skipped | About 16,000 files, rebuilt from the lockfile by every update; most of the AIDE database |
 | `tls/` | Watched | The server's key and certificate |
 | `backend/.venv`, `.python`, `backend/app`, `frontend/dist` | Watched | The code and runtime the service runs |

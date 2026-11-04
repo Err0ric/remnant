@@ -96,8 +96,10 @@ class Card:
     # (people card only): "3 more devices not matched to a person".
     devices: int | None = None
     # Consent card: attempts a policy blocked, never added to `value`, and the newest.
-    # Unapproved services card: those still not reviewed (open or closed alerts list).
+    # Services not yet approved (D184): those still not reviewed (open or closed alerts
+    # list) and those marked Not approved, counted apart. Unreviewed is not a violation.
     unreviewed: int | None = None
+    not_approved: int | None = None
     blocked: int | None = None
     blocked_context: str = ""
     # Search SQL for the rows behind the card and behind `blocked` (consent card).
@@ -247,7 +249,8 @@ def summary(
     # no event of the period names its person.
     cur = _Users()
     prev = _Users()
-    people_by_svc: dict[str, set[str]] = defaultdict(set)
+    # People this period on a service of each status (a person can be on both).
+    people_by_status: dict[str, set[str]] = defaultdict(set)
     chart: dict[date, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     # The top services and the first-seen times come from these same rows: one query of
     # events for the whole section (F63).
@@ -273,7 +276,7 @@ def summary(
                 cur_svcs.add(sid)
                 cur.add(who, machine)
                 if who:
-                    people_by_svc[sid].add(str(who))
+                    people_by_status[st].add(str(who))
         elif d >= prev_from and unapproved:
             prev_svcs.add(sid)
             prev.add(who, machine)
@@ -285,26 +288,29 @@ def summary(
     def use_drill(ids: set[str], kind: str) -> str | None:
         return usage_mod.drill_sql(table, ids, kind) if ids else None
 
-    top_unapproved = sorted(cur_svcs, key=lambda s: (-len(people_by_svc[s]), s))
-    lead = top_unapproved[0] if top_unapproved else None
+    # Not yet approved = Not approved + Unreviewed, said apart (owner, 2026-11-03: the
+    # card read "Unapproved" over 0 Not approved and 776 Unreviewed; D184).
     not_reviewed = sum(1 for s in cur_svcs if status(s) == "unreviewed")
+    refused = sum(1 for s in cur_svcs if status(s) == "not_approved")
     cards = [
         Card(
             "services",
-            "Unapproved AI services",
+            "AI services not yet approved",
             len(cur_svcs),
             len(prev_svcs),
-            f"{services[lead].name} most used" if lead else "None in use",
+            f"{refused} not approved, {not_reviewed} unreviewed" if cur_svcs else "None in use",
             unreviewed=not_reviewed,
+            not_approved=refused,
             drill=use_drill(unapproved_ids, "services"),
         ),
         Card(
             "people",
-            "People using unapproved AI",
+            "People using AI not yet approved",
             len(cur.people),
             len(prev.people),
-            f"{len(people_by_svc[lead])} on {services[lead].name}"
-            if lead and people_by_svc[lead]
+            f"{len(people_by_status['not_approved'])} on not approved,"
+            f" {len(people_by_status['unreviewed'])} on unreviewed"
+            if cur.people
             else "",
             devices=cur.unmatched(),
             drill=use_drill(unapproved_ids, "people"),

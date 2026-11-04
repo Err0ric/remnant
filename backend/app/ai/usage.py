@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from app.ai.catalog import DOMAIN, NON_USAGE, Catalog, Service, Status
+from app.ai.internal_tools import counted
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.search.addresses import address_ctes, join_addr
 from app.search.identity import IdentityMap
@@ -104,6 +105,17 @@ class Changes:
 
 
 @dataclass(slots=True)
+class NetUse:
+    """A person seen reaching a Claude service on DNS, firewall, or proxy logs (D190)."""
+
+    who: str
+    services: list[str] = field(default_factory=list)
+    lookups: int = 0
+    devices: int = 0
+    last_seen: str | None = None
+
+
+@dataclass(slots=True)
 class PersonUse:
     person: str
     cost_usd: float
@@ -117,6 +129,10 @@ class PersonUse:
     # hooks plugin), "network" (DNS, firewall, or proxy to a Claude service), or "both".
     seen_through: str = "plugin"
     via: list[str] = field(default_factory=list)  # telemetry, hooks
+    # What the network saw for this person (network and both rows), and for a network
+    # name no plugin person matches, the plugin person it may be (D190).
+    network: NetUse | None = None
+    maybe: str | None = None
 
 
 def _values(pairs: list[tuple[str, str]]) -> str:
@@ -418,7 +434,7 @@ LIMIT 500"""  # noqa: S608  # fixed SQL text
 # from one source per session: telemetry when it saw the session, else the hook records
 # (as D151 counts MCP calls), so a session both report is counted once. Cost, tokens, and
 # models come from telemetry only. `via` says which sent anything.
-PEOPLE_SQL = """
+PEOPLE_SQL = f"""
 WITH c AS (
   SELECT nullif(actor_user_name, '') AS person, message,
          TRY_CAST(json_extract_string(unmapped, '$.value') AS DOUBLE) AS value,
@@ -433,6 +449,8 @@ h AS (
   SELECT nullif(actor_user_name, '') AS person, message,
          json_extract_string(unmapped, '$.attr.session_id') AS session
   FROM events WHERE template_id = 'claude_hooks'
+    -- Claude Code's own bookkeeping is not a tool call (D186).
+    AND {counted("json_extract_string(unmapped, '$.attr.tool_name')")}
 ),
 hk AS (
   SELECT person,
@@ -467,7 +485,7 @@ SELECT coalesce(tel.person, hk.person) AS person,
                                                OR (x = 'hooks' AND hk.person IS NOT NULL)) AS via
 FROM tel FULL OUTER JOIN hk ON tel.person = hk.person
 ORDER BY 2 DESC, 3 DESC, 4 DESC
-LIMIT 1000"""
+LIMIT 1000"""  # noqa: S608  # fixed SQL text
 
 
 def fact_range(scope: QueryScope, upto: datetime) -> dict[str, datetime]:
@@ -652,7 +670,7 @@ class Usage:
             sources,
         )
 
-    def claude_network_people(self, scope: QueryScope) -> list[str]:
+    def claude_network_people(self, scope: QueryScope) -> list[NetUse]:
         """People seen reaching a Claude service (vendor Anthropic in the catalog) on the
         network: DNS, firewall, or proxy records (owner, 2026-11-02)."""
         ids = sorted(s.id for s in self._catalog.services() if s.vendor == "Anthropic")
@@ -663,12 +681,45 @@ class Usage:
         def build(pairs: list[tuple[str, str]], rollup: bool = False) -> str:
             return (
                 f"WITH {_use_ctes(pairs, rollup)}\n"
-                f"SELECT DISTINCT who FROM r WHERE who IS NOT NULL"
-                f" AND list_contains({wanted}, service_id) LIMIT 100000"
+                "SELECT who, list(DISTINCT service_id ORDER BY service_id), sum(n),"
+                " count(DISTINCT machine), max(last_t)"
+                f" FROM r WHERE who IS NOT NULL AND list_contains({wanted}, service_id)"
+                " GROUP BY 1 LIMIT 100000"
             )
 
         result = self._run_use(build, scope, "ai_use.claude_people")
-        return [str(r[0]) for r in result.rows]
+        names = {s.id: s.name for s in self._catalog.services()}
+        return [
+            NetUse(
+                str(who), [names.get(str(s), str(s)) for s in sids or []], int(n or 0),
+                int(devs or 0), last.isoformat() if isinstance(last, datetime) else (
+                    str(last) if last else None),
+            )
+            for who, sids, n, devs, last in result.rows
+        ]  # fmt: skip
+
+    def unreviewed_use(self, scope: QueryScope) -> list[tuple[str | None, str | None]]:
+        """(person, machine) pairs seen using an AI service nobody has reviewed yet, on the
+        network (People and devices ranking, D195)."""
+        ids = sorted(
+            s.id for s in self._catalog.services()
+            if s.status == "unreviewed" and s.kind != NON_USAGE
+        )  # fmt: skip
+        if not ids:
+            return []
+        wanted = "[" + ", ".join("'" + i.replace("'", "''") + "'" for i in ids) + "]"
+
+        def build(pairs: list[tuple[str, str]], rollup: bool = False) -> str:
+            return (
+                f"WITH {_use_ctes(pairs, rollup)}\n"
+                f"SELECT DISTINCT who, machine FROM r WHERE list_contains({wanted}, service_id)"
+                " LIMIT 100000"
+            )
+
+        result = self._run_use(build, scope, "ai_use.unreviewed_people")
+        return [
+            (None if w is None else str(w), None if m is None else str(m)) for w, m in result.rows
+        ]
 
     def mcp(self, scope: QueryScope, ident: IdentityMap | None = None) -> list[McpUse]:
         """MCP servers in use. People are counted once across names (`alice` from the
@@ -784,7 +835,7 @@ class Usage:
 
 
 def seen_through(
-    people: list[PersonUse], network: list[str], ident: IdentityMap | None = None
+    people: list[PersonUse], network: list[NetUse] | list[str], ident: IdentityMap | None = None
 ) -> tuple[list[PersonUse], dict[str, int]]:
     """Each Claude user with how they were seen (owner, 2026-11-02): "plugin" (telemetry
     or the hooks plugin), "network" (DNS, firewall, or proxy to a Claude service), or
@@ -795,20 +846,36 @@ def seen_through(
     def key(name: str) -> str:
         return ident.key(name) if ident else name.lower()
 
-    net: dict[str, str] = {}
+    from app.search.timeline import related  # timeline imports this module
+
+    net: dict[str, NetUse] = {}
     for n in network:
-        net.setdefault(key(n), n)
+        u = n if isinstance(n, NetUse) else NetUse(n)
+        cur = net.get(key(u.who))
+        if cur is None:
+            net[key(u.who)] = NetUse(u.who, list(u.services), u.lookups, u.devices, u.last_seen)
+            continue
+        cur.services = sorted(set(cur.services) | set(u.services))
+        cur.lookups += u.lookups
+        cur.devices += u.devices
+        cur.last_seen = max(filter(None, [cur.last_seen, u.last_seen]), default=None)
     out: list[PersonUse] = []
     seen: set[str] = set()
     for p in people:
         k = key(p.person)
         seen.add(k)
         p.seen_through = "both" if k in net else "plugin"
+        p.network = net.get(k)
         out.append(p)
-    for k, name in sorted(net.items()):
+    for k, u in sorted(net.items()):
         if k in seen:
             continue
-        shown = ident.display(k, ident.org_email(name)) if ident else name
-        out.append(PersonUse(shown, 0.0, 0, 0, 0, 0, 0, [], seen_through="network"))
+        shown = ident.display(k, ident.org_email(u.who)) if ident else u.who
+        # A network name no plugin person matches, that reads as one of them ("dana" and
+        # "dana.lee@example.com"): the hint offers the alias in Identities.
+        maybe = next((p.person for p in people if related(k, key(p.person))), None)
+        out.append(
+            PersonUse(shown, 0.0, 0, 0, 0, 0, 0, [], seen_through="network", network=u, maybe=maybe)
+        )
     counts = {c: sum(1 for p in out if p.seen_through == c) for c in ("both", "plugin", "network")}
     return out, counts

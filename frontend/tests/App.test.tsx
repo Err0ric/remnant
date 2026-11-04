@@ -60,14 +60,13 @@ describe("App shell", () => {
         .filter((li) => li.parentElement?.id === `rail-${name.toLowerCase()}`)
         .map((li) => li.querySelector("a")?.textContent);
     expect(rows("Monitor")).toEqual(["Dashboard", "Alerts"]);
-    expect(rows("Investigate")).toEqual(["Search", "People & devices", "Saved searches"]);
+    expect(rows("Investigate")).toEqual(["Search", "Ask", "People & devices", "Saved searches"]);
     expect(rows("AI")).toEqual(["AI usage", "Agents"]);
     expect(rows("System")).toEqual(["Health", "Settings"]);
     expect(within(nav).getByRole("link", { name: "Search" })).toHaveAttribute(
       "aria-current",
       "page",
     );
-    expect(within(nav).queryByText("Ask")).not.toBeInTheDocument(); // a tab of Search now
     // Admin pages live in the Settings area, not on the main rail.
     expect(within(nav).queryByText("Users and access")).not.toBeInTheDocument();
     await userEvent.click(within(nav).getByRole("link", { name: "Settings" }));
@@ -107,6 +106,62 @@ describe("App shell", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it("marks where you are with a bar and weight, not a fill (D199)", async () => {
+    window.localStorage.removeItem("app.rail.collapsed");
+    window.localStorage.removeItem("app.rail.defaults");
+    await renderApp();
+    const nav = screen.getByRole("navigation", { name: "Primary" });
+    // A page with no sub-pages: the bar on its left edge, accent label, bold, no fill.
+    const search = within(nav).getByRole("link", { name: "Search" });
+    expect(search).toHaveAttribute("aria-current", "page");
+    expect(search).toHaveClass(
+      "before:w-0.5",
+      "before:bg-accent-text",
+      "font-bold",
+      "text-accent-text",
+    );
+    expect(search).not.toHaveClass("bg-accent-subtle");
+    // Sub-pages hang on a 1px guide line in the border token.
+    const agents = within(nav).getByRole("list", { name: "Agents pages" });
+    expect(agents).toHaveClass("border-l", "border-border");
+    // Folding the group that holds the current page puts the bar on its header.
+    const group = within(nav).getByRole("button", { name: "Investigate group" });
+    expect(group).not.toHaveClass("before:bg-accent-text");
+    await userEvent.click(group);
+    expect(group).toHaveClass("before:bg-accent-text", "font-bold", "text-accent-text");
+    const ai = within(nav).getByRole("button", { name: "AI group" });
+    await userEvent.click(ai);
+    expect(ai).not.toHaveClass("before:bg-accent-text");
+  });
+
+  it("puts the bar on the current sub-page, or on its page while the list is folded", async () => {
+    window.localStorage.removeItem("app.rail.collapsed");
+    window.localStorage.removeItem("app.rail.defaults");
+    window.history.replaceState(null, "", "/agents/sessions");
+    mockApi("Codename");
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    render(
+      <App
+        initialTheme="dark"
+        queryClient={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      />,
+    );
+    const nav = await screen.findByRole("navigation", { name: "Primary" });
+    const pages = within(nav).getByRole("list", { name: "Agents pages" });
+    const sessions = within(pages).getByRole("link", { name: "Sessions" });
+    expect(sessions).toHaveAttribute("aria-current", "page");
+    expect(sessions).toHaveClass("before:bg-accent-text", "font-medium", "text-accent-text");
+    expect(sessions).not.toHaveClass("bg-accent-subtle");
+    const parent = within(nav).getByRole("link", { name: "Agents" });
+    expect(parent).toHaveClass("min-[1100px]:before:hidden");
+    await userEvent.click(within(nav).getByRole("button", { name: "Agents sub-pages" }));
+    expect(parent).not.toHaveClass("min-[1100px]:before:hidden");
+    expect(parent).toHaveClass("md:before:bg-accent-text", "min-[1100px]:text-accent-text");
   });
 
   it("lists every page's sub-pages and folds groups, remembered (ADR-0038 edit 10)", async () => {

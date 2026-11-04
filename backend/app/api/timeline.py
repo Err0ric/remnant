@@ -11,7 +11,9 @@ from app.api.access import CurrentUser, client_ip
 from app.api.alert_items import _readable
 from app.auth.service import AuthService
 from app.auth.users import User
+from app.engine.duckdb import QueryScope
 from app.engine.views import permitted_sources
+from app.search.person_hosts import person_hosts
 from app.search.timeline import Row, timeline, window
 
 router = APIRouter(tags=["search"])
@@ -80,6 +82,54 @@ async def person_timeline(
               for r in out.rows],
         more=out.more, sql=out.sql, signins_sql=out.signins_sql,
         maybe=[MaybeOut(name=m.name, devices=m.devices) for m in out.maybe],
+    )  # fmt: skip
+
+
+class UsedOut(BaseModel):
+    kind: str
+    value: str
+    events: int
+    failed: int
+    first_seen: str | None
+    last_seen: str | None
+    sources: list[str]
+
+
+class PersonHostsOut(BaseModel):
+    person: str
+    start: str
+    end: str
+    hosts: list[UsedOut]
+    addresses: list[UsedOut]
+    sources: list[str]
+
+
+@router.get("/people/{person}/hosts")
+async def person_hosts_route(
+    person: str,
+    request: Request,
+    user: CurrentUser,
+    days: Annotated[int, Query(ge=1, le=30)] = 7,
+) -> PersonHostsOut:
+    """The hosts and source addresses on this person's own records, busiest first, with
+    failed sign-ins and first and last seen (D197). Audited `search.person_hosts`."""
+    allowed = await run_in_threadpool(permitted_sources, request.app.state.meta, user)
+    ident = await run_in_threadpool(request.app.state.identities.load)
+    start, end = window(days, datetime.now(UTC))
+    out = await run_in_threadpool(
+        person_hosts, request.app.state.engine, QueryScope(allowed, start, end), ident,
+        person[:256],
+    )  # fmt: skip
+    auth: AuthService = request.app.state.auth
+    await run_in_threadpool(
+        auth.audit.write, "search.person_hosts", "success", user.user_id, client_ip(request),
+        {"person": person[:256], "days": days, "sources_in_scope": out.sources},
+    )  # fmt: skip
+    return PersonHostsOut(
+        person=out.person, start=start.isoformat(), end=end.isoformat(),
+        hosts=[UsedOut.model_validate(u, from_attributes=True) for u in out.hosts],
+        addresses=[UsedOut.model_validate(u, from_attributes=True) for u in out.addresses],
+        sources=out.sources,
     )  # fmt: skip
 
 

@@ -203,7 +203,12 @@ export function App({ initialTheme, queryClient }: AppProps) {
       ) : (
         <AuthGate>
           {(user, signOut) => (
-            <ViewerContext.Provider value={{ isAdmin: !user || user.role === "admin" }}>
+            <ViewerContext.Provider
+              value={{
+                isAdmin: !user || user.role === "admin",
+                canAsk: !user || user.role !== "auditor",
+              }}
+            >
               <div className="flex min-h-full flex-col">
                 <TopBar
                   theme={theme}
@@ -233,11 +238,11 @@ export function App({ initialTheme, queryClient }: AppProps) {
                 ) : null}
                 <div className="flex min-h-0 flex-1 flex-wrap">
                   <SideNav
-                    // Ask is a tab of Search (ADR-0008); /ask still works and opens it.
-                    active={page === "ask" ? "search" : page}
+                    active={page}
                     activeTab={tab}
                     isAdmin={!user || user.role === "admin"}
                     canAudit={!user || user.role !== "analyst"}
+                    canAsk={!user || user.role !== "auditor"}
                     open={menu}
                   />
                   <main
@@ -253,7 +258,7 @@ export function App({ initialTheme, queryClient }: AppProps) {
                         canAudit={!user || user.role !== "analyst"}
                       />
                     ) : null}
-                    <PageBoundary key={page}>
+                    <PageBoundary key={page === "ask" ? "search" : page}>
                       <Suspense fallback={<div className="flex-1" aria-busy="true" />}>
                         {page === "rules" ? (
                           <RulesPage
@@ -321,7 +326,8 @@ export function App({ initialTheme, queryClient }: AppProps) {
                           <SourcesPage canManage={!user || user.role === "admin"} />
                         ) : (
                           <SearchPage
-                            key={`${page}:${searchKey}:${searchNav}`}
+                            // Search and Ask are one page (ADR-0008): moving between them keeps the work.
+                            key={`${page === "ask" ? "search" : page}:${searchKey}:${searchNav}`}
                             canSave={!user || user.role !== "auditor"}
                             canAsk={!user || user.role !== "auditor"}
                             isAdmin={!user || user.role === "admin"}

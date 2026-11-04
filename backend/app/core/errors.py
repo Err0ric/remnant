@@ -134,6 +134,11 @@ class ProviderBusyError(ProviderError):
         self.retry_after_s = retry_after_s
 
 
+class ProviderOutputLimitError(ProviderError):
+    """The model stopped at its output limit while thinking: setting Thinking to Off for the
+    provider is the fix (owner, 2026-11-03: the page links admins straight to it; D192)."""
+
+
 class ProviderUnreachableError(ProviderError):
     """No connection to the model server (refused, timed out, name not found)."""
 

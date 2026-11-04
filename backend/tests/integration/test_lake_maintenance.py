@@ -5,6 +5,7 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from app.core import lake_files
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.ingest.compaction import MANIFEST_SUFFIX, Compactor
 from app.ingest.normalizer import Normalizer, SourceSpec
@@ -28,7 +29,8 @@ def rows(source_id: str, day: date, n: int, start: int = 0) -> list[dict[str, An
 
 
 def parts(lake: Path, source_id: str, day: date) -> list[Path]:
-    return sorted((lake / f"source={source_id}" / f"day={day.isoformat()}").glob("*.parquet"))
+    """The files a read uses: compaction retires merged files (D183) before deleting them."""
+    return lake_files.visible(lake / f"source={source_id}" / f"day={day.isoformat()}")
 
 
 def count(lake: Path, where: str = "TRUE") -> int:
@@ -128,7 +130,9 @@ def test_interrupted_compaction_recovers_without_duplicates(tmp_path: Path) -> N
     output = comp._merge(folder, inputs)  # writes manifest + output, stops before cleanup
     assert output.exists()
     assert list(folder.glob(f"*{MANIFEST_SUFFIX}"))
-    assert count(lake) == 24  # duplicated until recovery runs
+    # Reads leave out the inputs of a manifest whose output is in place: no duplicates even
+    # before recovery runs (D183).
+    assert count(lake) == 12
 
     comp.run()
     assert count(lake) == 12

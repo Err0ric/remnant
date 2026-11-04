@@ -81,7 +81,7 @@ Put the cheap filters (`class_uid`, `status_id`, `template_id`) first so the loo
 
 ## Query library
 
-The query library ships tested questions for common sources, grouped in packs: Microsoft 365, Linux sign-ins and privilege, Palo Alto firewalls, DNS and AI services, and ingest health. On **Search**, **Library** (next to Open) lists the queries whose sources you have: a query is offered only when a source you can read produced events from one of its templates in the last 30 days. Each shows why it is worth running and what normal looks like.
+The query library ships tested questions for common sources, grouped in packs: Microsoft 365, Linux sign-ins and privilege, Palo Alto firewalls, DNS and AI services, AI agents (Claude Code and Cowork from the hooks plugin), and ingest health. On **Search**, **Library** (next to Open) lists the queries whose sources you have: a query is offered only when a source you can read produced events from one of its templates in the last 30 days. Each shows why it is worth running and what normal looks like.
 
 - Clicking a query loads its SQL into the SQL tab, unsaved. Run it as any search: it goes through the query guard and reads only your sources.
 - **Save as my own** makes a private saved search from it. That copy is yours; a new version of the pack never changes it. When the pack's SQL changes, the Library shows **Updated in this version** with the difference and **Replace my copy**.
@@ -90,6 +90,15 @@ The query library ships tested questions for common sources, grouped in packs: M
 
 | Pack | Query | What it answers | Reads |
 |---|---|---|---|
+| AI agents | `agents_claude_code_users` | Everyone the hooks plugin saw, with their machines, sessions, and last use. | `claude_hooks` |
+| AI agents | `agents_tools_by_person` | Which tools the agent called for each person, and how often (bookkeeping calls left out). | `claude_hooks` |
+| AI agents | `agents_files_by_person` | Which files the agent wrote or edited for each person, by path. | `claude_hooks` |
+| AI agents | `agents_commands_by_person` | Which programs the agent ran in a shell for each person (first word only). | `claude_hooks` |
+| AI agents | `agents_web_by_person` | Which web sites the agent fetched or searched for each person (host only). | `claude_hooks` |
+| AI agents | `agents_mcp_by_person` | Which MCP servers and tools the agent called, for whom, and on which machine. | `claude_hooks` |
+| AI agents | `agents_accounts_by_machine` | Machines where Claude Code ran under a personal account or one no company sign-in confirms. | `claude_hooks` |
+| AI agents | `agents_calls_without_result` | Tool calls that never came back: blocked, interrupted, or still running. | `claude_hooks` |
+| AI agents | `agents_sessions_for_person` | One person's sessions with prompts, tool calls, and minutes. | `claude_hooks` |
 | DNS and AI services | `ai_services_dns` | Which AI services the network looks up, and from how many clients. | `dns_bind`, `dns_unbound`, `dns_windows`, `dns_powerdns` |
 | DNS and AI services | `ai_services_by_device` | AI service lookups named by the device that held the address, from Palo Alto DHCP leases. | `dns_bind`, `dns_unbound`, `dns_windows`, `dns_powerdns` |
 | DNS and AI services | `dns_top_domains` | What the network looks up most, and from how many clients. | `dns_bind`, `dns_unbound`, `dns_windows`, `dns_powerdns` |

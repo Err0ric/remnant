@@ -101,3 +101,31 @@ terms:
   - term: granted consent
     aliases: [successful consent, approved consent]
     sql: "message ILIKE 'Consent to application%' AND status_id = 1"
+  - term: claude code event
+    aliases: [claude code, coding agent, ai agent, agent activity, cowork, hooks plugin]
+    sql: "template_id = 'claude_hooks'"
+    note: "Claude Code and Cowork hooks. actor_user_name is the person, device_hostname the machine, message the step (claude_hooks.pre_tool_use and so on). Details: json_extract_string(unmapped, '$.attr.<name>') for session_id, tool_name, path, program, web_host, mcp_server_name, claude_account_email"
+  - term: agent tool call
+    aliases: [tool call, tool use, claude code tool, agent tool]
+    sql: "template_id = 'claude_hooks' AND message = 'claude_hooks.pre_tool_use' AND lower(coalesce(json_extract_string(unmapped, '$.attr.tool_name'), '')) NOT IN ('subagenthandback')"
+    note: "One row per call; the tool is json_extract_string(unmapped, '$.attr.tool_name'). SubagentHandback is Claude Code bookkeeping, never a tool. Results are post_tool_use (success) and post_tool_use_failure"
+  - term: agent file write
+    aliases: [file edited by the agent, files written, files changed by claude code]
+    sql: "template_id = 'claude_hooks' AND message = 'claude_hooks.pre_tool_use' AND json_extract_string(unmapped, '$.attr.tool_name') IN ('Write', 'Edit', 'MultiEdit', 'NotebookEdit')"
+    note: "The target is json_extract_string(unmapped, '$.attr.path')"
+  - term: agent shell command
+    aliases: [command run by the agent, bash command, claude code command]
+    sql: "template_id = 'claude_hooks' AND message = 'claude_hooks.pre_tool_use' AND json_extract_string(unmapped, '$.attr.program') IS NOT NULL"
+    note: "json_extract_string(unmapped, '$.attr.program') is the first word of the command only; the rest is never kept"
+  - term: agent web access
+    aliases: [web fetch, web search, domains fetched by the agent]
+    sql: "template_id = 'claude_hooks' AND message = 'claude_hooks.pre_tool_use' AND json_extract_string(unmapped, '$.attr.web_host') IS NOT NULL"
+    note: "json_extract_string(unmapped, '$.attr.web_host') is the host only"
+  - term: agent mcp call
+    aliases: [mcp tool call, mcp server use]
+    sql: "template_id = 'claude_hooks' AND message = 'claude_hooks.pre_tool_use' AND json_extract_string(unmapped, '$.attr.mcp_server_name') IS NOT NULL"
+    note: "Server in $.attr.mcp_server_name, tool in $.attr.mcp_tool_name"
+  - term: claude account
+    aliases: [claude account email, signed-in claude account, account status]
+    sql: "template_id = 'claude_hooks' AND json_extract_string(unmapped, '$.attr.claude_account_email') IS NOT NULL"
+    note: "The signed-in Claude account reported by the device ($.attr.claude_account_email; $.attr.account_from says where it was read). No email means an API key session or an older plugin. Whether it is a company account is decided on the Accounts page, not here"

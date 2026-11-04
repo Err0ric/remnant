@@ -9,9 +9,15 @@ active partition is not rewritten on every pass.
 
 Crash safety: before the merged file is published, a manifest naming the output
 and its inputs is written next to it. On the next run, a manifest whose output
-exists finishes the job (removes the inputs); one whose output is missing is
-discarded and the inputs stay. Data is never lost; a crash can at worst leave a
-short window of duplicates that the next run removes.
+exists finishes the job (retires the inputs); one whose output is missing is
+discarded and the inputs stay. Data is never lost, and no read counts a row twice:
+reads leave out the inputs of a manifest whose output is in place
+(`app.core.lake_files`).
+
+Merged inputs are retired, not deleted (owner, 2026-11-03: a running read failed with
+"Cannot open file" when compaction deleted a file it had listed). They stay in place for
+`RETIRE_GRACE_S`, hidden from new reads, and a later run deletes them and records the
+removal in the integrity ledger then (D183).
 """
 
 import json
@@ -26,7 +32,9 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import structlog
 
+from app.core import lake_files
 from app.core.ids import uuid7
+from app.core.lake_files import MANIFEST_SUFFIX, RETIRE_GRACE_S
 from app.core.schema import arrow_schema
 from app.ingest.durable import publish, quarantine, readable
 from app.ingest.integrity import LakeEvents, NoEvents
@@ -38,7 +46,6 @@ SORT_KEYS = [("template_id", "ascending"), ("time", "ascending")]
 # DuckDB's own row group size: small enough to skip, large enough to compress well.
 ROW_GROUP_ROWS = 122_880
 
-MANIFEST_SUFFIX = ".compact.json"
 _PARTITION = re.compile(r"day=(\d{4}-\d{2}-\d{2})")
 
 
@@ -48,6 +55,7 @@ class CompactionReport:
     files_merged: int = 0
     files_written: int = 0
     recovered: int = 0
+    deleted: int = 0  # retired files whose grace period was over
 
 
 log = structlog.get_logger(__name__)
@@ -62,7 +70,11 @@ class Compactor:
         min_files_open_day: int = 16,
         today: Callable[[], date] = lambda: datetime.now(UTC).date(),
         events: LakeEvents | None = None,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        grace_s: float = RETIRE_GRACE_S,
     ) -> None:
+        self._clock = clock
+        self._grace = grace_s
         self._lake = lake_dir
         self._events = events or NoEvents()
         self._small = small_bytes
@@ -81,14 +93,15 @@ class Compactor:
             if folder.is_symlink() or not folder.is_dir() or match is None:
                 continue
             report.recovered += self._recover(folder)
+            report.deleted += self._reap(folder)
             try:
                 closed = date.fromisoformat(match.group(1)) < today
             except ValueError:
                 continue
             small = [
                 p
-                for p in sorted(folder.glob("part-*.parquet"))
-                if p.is_file() and not p.is_symlink() and p.stat().st_size < self._small
+                for p in lake_files.visible(folder)
+                if not p.is_symlink() and p.stat().st_size < self._small
             ]
             if len(small) < (2 if closed else self._min_open):
                 continue
@@ -158,10 +171,33 @@ class Compactor:
         return pa.Table.from_arrays(columns, schema=self._schema)
 
     def _finish(self, folder: Path, output: str, inputs: list[str]) -> None:
-        gone = [folder / n for n in inputs if n != output and (folder / n).is_file()]
-        for path in self._events.removed(gone, f"compacted into {output}"):
-            path.unlink(missing_ok=True)
+        """Retire the inputs (reads already running may still open them), then drop the
+        manifest. Retiring first: with the manifest gone, the retired list hides them."""
+        names = [n for n in inputs if n != output and (folder / n).is_file()]
+        lake_files.retire(folder, names, output, self._clock())
         (folder / f"{Path(output).stem}{MANIFEST_SUFFIX}").unlink(missing_ok=True)
+
+    def _reap(self, folder: Path) -> int:
+        """Delete retired files whose grace period is over. The ledger records the
+        removal now, when the file goes; a file whose content no longer matches the
+        ledger is kept (still hidden) for verification to report."""
+        due = lake_files.due(folder, self._clock(), self._grace)
+        if not due:
+            return 0
+        into = lake_files.retired(folder)
+        present = [folder / n for n in due if (folder / n).is_file()]
+        deleted = 0
+        by_output: dict[str, list[Path]] = {}
+        for p in present:
+            by_output.setdefault(into[p.name].get("into", "?"), []).append(p)
+        done = [n for n in due if not (folder / n).is_file()]  # already gone
+        for output, paths in by_output.items():
+            for path in self._events.removed(paths, f"compacted into {output}"):
+                path.unlink(missing_ok=True)
+                done.append(path.name)
+                deleted += 1
+        lake_files.forget(folder, done)
+        return deleted
 
     def _recover(self, folder: Path) -> int:
         recovered = 0

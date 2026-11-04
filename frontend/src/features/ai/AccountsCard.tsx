@@ -128,7 +128,7 @@ export function AccountsCard() {
                     >
                       <td className="px-3 py-2 font-mono">
                         {r.email ? (
-                          <EntityLink kind="user" value={r.email} />
+                          <EntityLink kind="user" value={r.email} tab="ai" />
                         ) : (
                           <span className="text-text-muted">No account reported</span>
                         )}

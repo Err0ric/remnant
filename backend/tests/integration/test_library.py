@@ -115,6 +115,7 @@ def test_library_api_offers_what_your_sources_have_and_copies(tmp_path: Path) ->
     assert "m365_failed_signins_by_user" not in ids and got["hidden"] > 0
     ssh = next(q for p in got["packs"] for q in p["queries"] if q["id"] == "ssh_logins")
     assert ssh["why"] and ssh["normal"] and "{{start}}" in ssh["sql"] and ssh["my_copy"] is None
+    assert "Who logged in over SSH?" in ssh["ask"]  # the pack's example questions (D182)
 
     assert aud.post("/api/library/linux_auth/ssh_logins/copy").status_code == 403
     first = ana.post("/api/library/linux_auth/ssh_logins/copy")
@@ -180,3 +181,25 @@ def test_add_a_pack_makes_searches_schedules_and_panels(tmp_path: Path) -> None:
         lab["aud"].post("/api/library/linux_auth/dashboard", json={"query_ids": ids}).status_code
         == 403
     )
+
+
+def test_each_example_question_ranks_its_own_query_first() -> None:
+    """Ask's empty state offers one example question per library query with no parameter
+    but the time range (D182): the question-form phrasing, as the UI picks it. The ranker
+    must put that query first, so the model sees it at the top of its candidates."""
+    from app.search.ask_route import rank
+    from app.search.library import LIBRARY_DIR, Library, load_dir
+    from app.search.params import PLACEHOLDER
+
+    lib = Library(load_dir(LIBRARY_DIR))
+    seen = {t for p in lib.packs for q in p.queries for t in q.requires}
+    checked = []
+    for p in lib.packs:
+        for q in p.queries:
+            if not q.ask or set(PLACEHOLDER.findall(q.sql)) - {"start", "end"}:
+                continue
+            example = next((a for a in q.ask if a.strip().endswith("?")), q.ask[0])
+            top = rank(example, lib, seen)
+            assert top and top[0].query.id == q.id, (q.id, example, [c.ref for c in top[:3]])
+            checked.append(q.id)
+    assert len(checked) >= 20

@@ -7,6 +7,7 @@ import {
   Cpu,
   Grid2x2,
   LayoutGrid,
+  MessageCircleQuestion,
   Search,
   Settings,
   SquareTerminal,
@@ -34,6 +35,8 @@ interface SideNavProps {
   activeTab: string;
   isAdmin: boolean;
   canAudit: boolean;
+  /** Admins and analysts; auditors have no Ask. */
+  canAsk?: boolean;
   /** Narrow screens only: shown when the top bar's Menu button is pressed. */
   open?: boolean;
 }
@@ -88,12 +91,20 @@ function go(page: PageId | undefined, tab?: string) {
   };
 }
 
-/** A page row: 32px, 15px; the current page on the accent tint. */
-function pageClass(current: boolean): string {
+/** Where you are (D199): a 2px accent bar the height of the row on its left edge. The bar
+ * uses the accent text token, 8:1 on the rail in dark and 6:1 in light, and always comes
+ * with the label in accent one weight up (sub-pages 400 to 500, pages 600 to 700), so
+ * color is never the only cue. */
+const BAR =
+  "relative before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:rounded-full before:bg-accent-text";
+
+/** A page row: 32px, 15px semibold; the current page with the bar, an accent label, bold. */
+function pageClass(current: boolean, bar = current): string {
   return cn(
     "flex min-h-[32px] items-center gap-2.5 rounded px-2.5 text-md no-underline",
+    bar && BAR,
     current
-      ? "bg-accent-subtle text-accent-text"
+      ? "font-bold text-accent-text"
       : "text-text-secondary hover:bg-surface-head hover:text-text",
   );
 }
@@ -122,6 +133,7 @@ const ICONS: Record<string, LucideIcon> = {
   m365: Grid2x2,
   health: Activity,
   "page:search": Search,
+  "page:ask": MessageCircleQuestion,
   "page:investigate": Users,
   "page:saved": BookMarked,
 };
@@ -145,9 +157,10 @@ function rowsOf(
   flatten: boolean,
   isAdmin: boolean,
   place: ReturnType<typeof areaOf>,
+  canAsk = true,
 ): Row[] {
   return areas.flatMap((area): Row[] => {
-    const tabs = visibleTabs(area, isAdmin);
+    const tabs = visibleTabs(area, isAdmin, canAsk);
     const first = tabs[0];
     if (!first) return [];
     if (flatten && tabs.length > 1) {
@@ -179,7 +192,14 @@ function rowsOf(
  * System start folded; each group's open or closed state is remembered in this browser.
  * Headers open and close inline on click. Between 768 and 1100px the rail shows icons, and
  * a page's sub-pages open in a menu beside it on hover or focus. */
-export function SideNav({ active, activeTab, isAdmin, canAudit, open = false }: SideNavProps) {
+export function SideNav({
+  active,
+  activeTab,
+  isAdmin,
+  canAudit,
+  canAsk = true,
+  open = false,
+}: SideNavProps) {
   const [collapsed, setCollapsed] = useState(readCollapsed);
   const settings = visibleSettings(isAdmin, canAudit);
   // Settings opens on Sources, the page used most; the checklist is first in its list.
@@ -243,9 +263,10 @@ export function SideNav({ active, activeTab, isAdmin, canAudit, open = false }: 
               onClick={go(t.page, t.tab)}
               aria-current={current ? "page" : undefined}
               className={cn(
-                "flex min-h-[26px] items-center whitespace-nowrap rounded px-2.5 text-base no-underline",
+                "relative flex min-h-[26px] items-center whitespace-nowrap rounded px-2.5 text-base no-underline",
                 current
-                  ? "bg-accent-subtle font-semibold text-accent-text"
+                  ? // The bar sits on the guide line: 8px of padding and the 1px line to the left.
+                    "font-medium text-accent-text before:absolute before:inset-y-0 before:-left-[9.5px] before:w-0.5 before:rounded-full before:bg-accent-text"
                   : "text-text-secondary hover:bg-surface-head hover:text-text",
               )}
             >
@@ -271,10 +292,11 @@ export function SideNav({ active, activeTab, isAdmin, canAudit, open = false }: 
         const areas = group.areas
           .map((id) => AREAS.find((a) => a.id === id))
           .filter((a): a is Area => Boolean(a));
-        const rows = rowsOf(areas, Boolean(group.flatten), isAdmin, place);
+        const rows = rowsOf(areas, Boolean(group.flatten), isAdmin, place, canAsk);
         const withSettings = group.settings && firstSetting;
         if (!rows.length && !withSettings) return null;
         const shut = collapsed.includes(group.id);
+        const holdsCurrent = rows.some((r) => r.current) || Boolean(withSettings && inSettings);
         const listId = `rail-${group.id}`;
         return (
           <section
@@ -289,7 +311,11 @@ export function SideNav({ active, activeTab, isAdmin, canAudit, open = false }: 
               aria-expanded={!shut}
               aria-label={`${group.label} group`}
               aria-controls={listId}
-              className="flex w-full items-center justify-between rounded px-2.5 py-1 text-sm font-semibold text-text-muted hover:text-text md:hidden min-[1100px]:flex"
+              className={cn(
+                "flex w-full items-center justify-between rounded px-2.5 py-1 text-sm font-semibold hover:text-text md:hidden min-[1100px]:flex",
+                // Folded with the current page inside: the bar says you are in here (D199).
+                shut && holdsCurrent ? cn(BAR, "font-bold text-accent-text") : "text-text-muted",
+              )}
             >
               {group.label}
               <ChevronDown
@@ -326,10 +352,14 @@ export function SideNav({ active, activeTab, isAdmin, canAudit, open = false }: 
                       className={cn(
                         row.subs.length && "min-[1100px]:pr-8",
                         row.subs.length && row.current
-                          ? // The sub-page carries the highlight; the icon rail shows it here.
+                          ? // The sub-page carries the bar while its list is open; the icon
+                            // rail and a folded area show it on this row instead.
                             cn(
                               pageClass(false),
-                              "text-text md:bg-accent-subtle md:text-accent-text min-[1100px]:bg-transparent min-[1100px]:text-text",
+                              "relative text-text md:font-bold md:text-accent-text md:before:absolute md:before:inset-y-0 md:before:left-0 md:before:w-0.5 md:before:rounded-full md:before:bg-accent-text",
+                              areaShut
+                                ? "min-[1100px]:text-accent-text"
+                                : "min-[1100px]:font-semibold min-[1100px]:text-text min-[1100px]:before:hidden",
                             )
                           : pageClass(row.current),
                       )}
@@ -402,7 +432,7 @@ export function SideNav({ active, activeTab, isAdmin, canAudit, open = false }: 
     const areas = group.areas
       .map((id) => AREAS.find((a) => a.id === id))
       .filter((a): a is Area => Boolean(a));
-    const rows = rowsOf(areas, Boolean(group.flatten), isAdmin, place);
+    const rows = rowsOf(areas, Boolean(group.flatten), isAdmin, place, canAsk);
     return (
       <div
         ref={flyBox}

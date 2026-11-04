@@ -37,9 +37,7 @@ afterEach(() => vi.restoreAllMocks());
 describe("Ask (ADR-0042 slice 1a)", () => {
   it("runs the answer by its id, shows the rows, and keeps the SQL under How I got this", async () => {
     const spy = await renderAt("/ask");
-    expect(
-      await screen.findByRole("button", { name: "Ask in plain English", pressed: true }),
-    ).toBeVisible();
+    expect(await screen.findByRole("tab", { name: "Ask AI", selected: true })).toBeVisible();
     await askQuestion("failed logins by source ip");
     const block = await screen.findByRole("region", {
       name: "Question: failed logins by source ip",
@@ -153,7 +151,9 @@ describe("Ask (ADR-0042 slice 1a)", () => {
     const spy = await renderAt("/dashboard");
     await userEvent.keyboard("{Control>}k{/Control}");
     await userEvent.type(await screen.findByRole("combobox"), "failed logins today");
-    await userEvent.click(await screen.findByRole("option", { name: /Ask "failed logins today"/ }));
+    await userEvent.click(
+      await screen.findByRole("option", { name: /Ask AI: failed logins today/ }),
+    );
     const over = await screen.findByRole("dialog", { name: "Ask" });
     expect(within(over).getByLabelText("Question")).toHaveValue("failed logins today");
     await userEvent.click(within(over).getByRole("button", { name: "Ask" }));
@@ -286,5 +286,105 @@ describe("Ask routing (ADR-0042 slice 1b)", () => {
     const block = await screen.findByRole("region", { name: "Question: failed logins" });
     await within(block).findByText(/2 addresses with failures/);
     expect(within(block).queryByRole("button", { name: /^Show events/ })).toBeNull();
+  });
+});
+
+describe("Ask's example questions (D182)", () => {
+  it("offers questions from the library and asks one in one click", async () => {
+    const spy = await renderAt("/ask");
+    const box = await screen.findByRole("region", { name: "Example questions" });
+    // The question form of each phrasing, one per query, from what the library offers.
+    const buttons = within(box).getAllByRole("button");
+    expect(buttons.map((b) => b.textContent)).toEqual([
+      "Who logged in over SSH?",
+      "Who was refused sudo?",
+    ]);
+    await userEvent.click(buttons[0] as HTMLElement);
+    await screen.findByRole("region", { name: "Question: Who logged in over SSH?" });
+    expect(posts(spy, "/api/ask").at(-1)).toMatchObject({ question: "Who logged in over SSH?" });
+    // Gone once there is an answer to refine.
+    expect(screen.queryByRole("region", { name: "Example questions" })).toBeNull();
+  });
+
+  it("are not shown to auditors, who have no Ask", async () => {
+    await renderAt("/ask", { mode: "login", signedIn: true, role: "auditor" });
+    expect(await screen.findByRole("tab", { name: "Search", selected: true })).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Example questions" })).toBeNull();
+  });
+});
+
+describe("pickExamples", () => {
+  const q = (id: string, ask: string[], sql = "SELECT 1 WHERE time > {{start}}") => ({
+    id,
+    name: id,
+    group: "",
+    description: "",
+    why: "",
+    normal: "",
+    tags: [],
+    requires: [],
+    sql,
+    pack_sql: sql,
+    suggested_schedule: null,
+    flag: null,
+    ask,
+    my_copy: null,
+  });
+  const pack = (id: string, queries: ReturnType<typeof q>[]) => ({
+    id,
+    name: id,
+    version: "1",
+    description: "",
+    queries,
+  });
+
+  it("spreads across packs, prefers a question, skips queries that need a value", async () => {
+    const { pickExamples } = await import("@/features/ask/AskExamples");
+    const lib = {
+      hidden: 0,
+      packs: [
+        pack("a", [
+          q("a1", ["A one", "A one?"]),
+          q("a2", ["A two?"], "SELECT 1 WHERE u = {{user}}"),
+          { ...q("a5", ["A five?"]), pack_sql: "SELECT 1 WHERE ip = {{ip}}" }, // sample default
+          q("a3", ["A three"]),
+          q("a4", []),
+        ]),
+        pack("b", [q("b1", ["B one?"]), q("b2", ["B two?"])]),
+        pack("c", [q("c1", ["C one?"])]),
+      ],
+    };
+    expect(pickExamples(lib)).toEqual(["A one?", "B one?", "C one?", "A three", "B two?"]);
+    expect(pickExamples(lib, 2)).toEqual(["A one?", "B one?"]);
+  });
+});
+
+describe("A failed Ask answer (D192)", () => {
+  it("leaves Results empty: the last search's rows never sit under the failed question", async () => {
+    await renderAt("/ask", { mode: "open" });
+    // The page ran its usual search on arrival; on Ask AI its rows are not shown.
+    await vi.waitFor(() => expect(document.querySelector("[aria-label='Results']")).not.toBeNull());
+    const pageResults = () =>
+      document.querySelector("section[aria-label='Results']") as HTMLElement | null;
+    expect(pageResults()?.closest("[hidden]")).not.toBeNull();
+    await askQuestion("hits the output limit");
+    const block = await screen.findByRole("region", { name: "Question: hits the output limit" });
+    const alert = await within(block).findByRole("alert");
+    expect(alert).toHaveTextContent("output limit");
+    expect(within(alert).getByRole("button", { name: "Try again" })).toBeVisible();
+    expect(pageResults()?.closest("[hidden]")).not.toBeNull();
+    // Admins get a one-click way to the setting.
+    await userEvent.click(within(alert).getByRole("button", { name: "Set Thinking to Off" }));
+    expect(window.location.pathname + window.location.hash).toMatch(
+      /^\/settings\/providers.*#edit=p1$|#edit=p1$/,
+    );
+  });
+
+  it("offers no Thinking link to analysts", async () => {
+    await renderAt("/ask");
+    await askQuestion("hits the output limit");
+    const block = await screen.findByRole("region", { name: "Question: hits the output limit" });
+    const alert = await within(block).findByRole("alert");
+    expect(within(alert).queryByRole("button", { name: "Set Thinking to Off" })).toBeNull();
   });
 });

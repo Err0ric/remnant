@@ -25,3 +25,7 @@ Slice 8 asks for hash-chained partitions, scheduled verification, and an exporta
 - The ledger proves the product's own view of what happened. It does not stop a person with root on the server; together with seals sent off the server it makes the change visible.
 - ATT&CK: T1565.001 Stored Data Manipulation and T1070 Indicator Removal against the lake and audit log become detectable. Not AI-facing; no ATLAS mapping.
 - Threats: T22 control implemented; T13 strengthened; T52 added (ledger and chain rewritten together by someone with server access: mitigated by off-server seals).
+
+## Revision 2026-11-03
+
+Compaction retires merged files instead of deleting them at once (SPEC D183): a retired file stays in the lake, hidden from new reads, for a 30-minute grace period, and the `remove` entry ("compacted into ...") is written when it is deleted. Until then the file is still recorded as present, so verification hashes it as usual; a file changed during the grace period is kept and reported as changed.

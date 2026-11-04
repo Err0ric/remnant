@@ -43,6 +43,8 @@ class QueryOut(BaseModel):
     pack_sql: str  # as shipped, for the difference with a copy
     suggested_schedule: str | None
     flag: str | None
+    # Example questions it answers (ADR-0042 row 6), for Ask's empty state (D182).
+    ask: list[str]
     my_copy: CopyOut | None
 
 
@@ -81,7 +83,7 @@ def _query_out(pack: Pack, q: LibraryQuery, mine: dict[str, SavedSearch]) -> Que
     return QueryOut(
         id=q.id, name=q.name, group=q.group, description=q.description, why=q.why,
         normal=q.normal, tags=q.tags, requires=q.requires, sql=editor_sql(q), pack_sql=q.sql,
-        suggested_schedule=q.suggested_schedule, flag=q.flag, my_copy=cp,
+        suggested_schedule=q.suggested_schedule, flag=q.flag, ask=list(q.ask), my_copy=cp,
     )  # fmt: skip
 
 

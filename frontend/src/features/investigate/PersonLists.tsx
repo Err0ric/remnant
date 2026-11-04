@@ -1,19 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { EntityLink } from "@/components/EntityLink";
 import { LoadFailed } from "@/components/LoadFailed";
 import { When } from "@/components/When";
 import { api, type QueryResult } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { drillSql, openDrill } from "@/lib/drill";
-import { navigate, navigateTab } from "@/lib/route";
+import { navigate } from "@/lib/route";
 import { ResultsTable } from "@/features/search/ResultsTable";
 import { SectionTitle } from "@/components/SectionTitle";
 
-const TH = "px-3 py-2 font-semibold";
-const TD = "px-3 py-1.5";
-
-function Box({
+export function Box({
   label,
   note,
   action,
@@ -36,84 +32,6 @@ function Box({
       </div>
       {children}
     </section>
-  );
-}
-
-/** The person's Claude sessions, last 30 days (ADR-0038 row 27); each opens in Agents. */
-export function PersonSessions({ person }: { person: string }) {
-  const q = useQuery({
-    queryKey: ["person-sessions", person],
-    queryFn: () => api.aiSessions(30, person),
-  });
-  return (
-    <Box label="Sessions" note="Claude Code and Cowork sessions, last 30 days">
-      {q.isLoading ? (
-        <div aria-busy="true" className="h-24 animate-pulse" />
-      ) : q.isError ? (
-        <LoadFailed
-          what="sessions"
-          error={q.error}
-          onRetry={() => void q.refetch()}
-          retrying={q.isFetching}
-        />
-      ) : !q.data?.length ? (
-        <p className="px-3 py-4 text-sm text-text-secondary">
-          No sessions by this person in the last 30 days, in the sources you can read.
-        </p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border text-left text-text-secondary">
-                <th className={TH}>Started</th>
-                <th className={TH}>Device</th>
-                <th className={`${TH} text-right`}>Prompts</th>
-                <th className={`${TH} text-right`}>Tool calls</th>
-                <th className={`${TH} text-right`}>Failed</th>
-                <th className={TH}>State</th>
-              </tr>
-            </thead>
-            <tbody>
-              {q.data.map((s) => (
-                <tr key={s.session_id} className="border-b border-border last:border-0">
-                  <td className={`${TD} whitespace-nowrap`}>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        navigateTab(
-                          "agents",
-                          "sessions",
-                          `session=${encodeURIComponent(s.session_id)}`,
-                        )
-                      }
-                      className="text-accent-text hover:underline"
-                    >
-                      <When iso={s.started} />
-                    </button>
-                  </td>
-                  <td className={`${TD} font-mono`}>
-                    {s.machine ? <EntityLink kind="host" value={s.machine} /> : "·"}
-                  </td>
-                  <td className={`${TD} text-right font-mono tabular-nums`}>{s.prompts}</td>
-                  <td className={`${TD} text-right font-mono tabular-nums`}>{s.tool_calls}</td>
-                  <td
-                    className={cn(
-                      `${TD} text-right font-mono tabular-nums`,
-                      s.failed ? "text-warn" : "text-text-muted",
-                    )}
-                  >
-                    {s.failed ?? 0}
-                  </td>
-                  <td className={`${TD} text-text-secondary`}>
-                    {s.state === "idle" ? "Ended (no end event)" : s.stopped ? "Ended" : "Open"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </Box>
   );
 }
 

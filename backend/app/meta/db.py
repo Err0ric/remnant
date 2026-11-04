@@ -46,6 +46,49 @@ def _rebuild_kinds(
     return migrate
 
 
+OLD_REASONS = "('true_positive', 'benign', 'false_positive', 'follow_up', 'muted')"
+NEW_REASONS = (
+    "('true_positive', 'benign', 'false_positive', 'follow_up', 'muted',"
+    " 'expected', 'approved', 'resolved', 'merged')"
+)
+
+
+def _alert_groups(con: sqlite3.Connection) -> None:
+    """Migration 61 (ADR-0043): alert items gain their group (entity, rule, day), when the
+    last repeat came, and the list of changes; the close reasons gain Expected, Approved,
+    Resolved, and Merged. The reason CHECK is a column constraint, so the table is rebuilt
+    from its own definition (same rows, indexes); stored reasons are kept as they were."""
+    (table_sql,) = con.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'alert_items'"
+    ).fetchone()
+    if table_sql.count(OLD_REASONS) != 1:
+        raise sqlite3.DatabaseError("alert_items.close_reason constraint not found")
+    extras = [
+        r[0]
+        for r in con.execute(
+            "SELECT sql FROM sqlite_master WHERE tbl_name = 'alert_items'"
+            " AND type IN ('index', 'trigger') AND sql IS NOT NULL"
+        )
+    ]
+    head = table_sql.index("(")
+    new_sql = "CREATE TABLE alert_items_new " + table_sql[head:].replace(OLD_REASONS, NEW_REASONS)
+    con.execute(new_sql)
+    con.execute("INSERT INTO alert_items_new SELECT * FROM alert_items")
+    con.execute("DROP TABLE alert_items")
+    con.execute("ALTER TABLE alert_items_new RENAME TO alert_items")
+    for sql in extras:
+        con.execute(sql)
+    for col in (
+        "entity TEXT", "rule TEXT", "day TEXT", "last_seen TEXT", "changes TEXT",
+        "resolved_at TEXT",
+    ):  # fmt: skip
+        con.execute(f"ALTER TABLE alert_items ADD COLUMN {col}")
+    con.execute(
+        "CREATE UNIQUE INDEX alert_items_group ON alert_items (kind, entity, rule, day)"
+        " WHERE state = 'open' AND entity IS NOT NULL"
+    )
+
+
 # Migration 28: allow kind 'otlp' (ADR-0015).
 _widen_source_kinds = _rebuild_kinds(("file", "loki"), ("file", "loki", "otlp"))
 
@@ -1028,6 +1071,8 @@ MIGRATIONS: tuple[Migration, ...] = (
     ALTER TABLE otlp_tokens ADD COLUMN last_error TEXT;
     ALTER TABLE otlp_tokens ADD COLUMN last_error_at TEXT;
     """,
+    # 61: alert grouping per entity, rule, and day, and the new close reasons (ADR-0043).
+    _alert_groups,
 )
 
 

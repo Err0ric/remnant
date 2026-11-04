@@ -95,7 +95,19 @@ describe("AI usage (ADR-0015)", () => {
     expect(JSON.parse(String(put?.[1]?.body))).toEqual({ data_level: "internal" });
     await goTo("Agents", "Sessions");
     const agents = await screen.findByRole("table", { name: "Agents" });
-    expect(within(agents).getByText("Claude Code on ws-0042")).toBeVisible();
+    expect(
+      within(agents).getByText("Claude Code, alice@example.com: ws-0042, ws-0043"),
+    ).toBeVisible();
+    // Each machine with its own events (D185).
+    const machines = within(agents).getByRole("list", { name: /^Machines for / });
+    expect(
+      within(machines)
+        .getAllByRole("listitem")
+        .map((li) => li.textContent),
+    ).toEqual([
+      expect.stringMatching(/^ws-0042: last seen .*, 40 in 24 h$/),
+      expect.stringMatching(/^ws-0043: last seen .*, 2 in 24 h$/),
+    ]);
     expect(within(agents).getByText("Changed")).toBeVisible();
     expect(within(agents).getByText("paste-share")).toBeVisible();
   });
@@ -134,6 +146,37 @@ describe("AI usage (ADR-0015)", () => {
     );
     const dana = within(people).getByText("dana@example.com").closest("tr") as HTMLElement;
     expect(within(dana).getByText("Network")).toBeVisible();
+    // D190: cost and tokens only from telemetry; network rows say what the network saw,
+    // and a name that reads as a plugin person links to Identities, filled in.
+    expect(within(erin).getAllByText("Not reported")).toHaveLength(2);
+    expect(within(erin).queryByText("0.00")).toBeNull();
+    expect(dana).toHaveTextContent(/Network only: Claude, 40 lookups, 2 devices, last seen /);
+    expect(dana).toHaveTextContent("Unmatched: may be dana.lee@example.com.");
+    const link = within(dana).getByRole("link", { name: "Link in Identities" });
+    expect(link.getAttribute("href")).toMatch(/#alias=dlee&person=dana\.lee%40example\.com$/);
+    const alice = within(people).getByText("alice@example.com").closest("tr") as HTMLElement;
+    expect(within(alice).getByText("12.50")).toBeVisible(); // telemetry reports cost
+  });
+
+  it("opens Identities with the alias filled in", async () => {
+    window.history.replaceState(null, "", "/identities#alias=dlee&person=dana.lee");
+    mockApi("Codename", { mode: "open" });
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    render(
+      <App
+        initialTheme="dark"
+        queryClient={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      />,
+    );
+    const form = await screen.findByRole("form", { name: "Add an alias" });
+    expect(
+      within(form)
+        .getAllByRole("textbox")
+        .map((i) => (i as HTMLInputElement).value),
+    ).toEqual(["dlee", "dana.lee"]);
   });
 
   it("shows its tabs in the page header and keeps the open one in the path (ADR-0038)", async () => {
@@ -236,11 +279,24 @@ describe("Agent sessions from the hooks plugin (ADR-0026)", () => {
     const detail = await within(card).findByRole("region", { name: "Session detail" });
     expect(within(detail).getByText("Claude account")).toBeVisible();
     const steps = await within(detail).findByRole("list", { name: "Session timeline" });
-    const items = within(steps).getAllByRole("listitem");
-    expect(items).toHaveLength(5);
-    expect(items[2]).toHaveTextContent("Calls Read /home/dana/app/auth.py");
-    expect(items[3]).toHaveTextContent("github create_issue");
-    expect(items[1]).toHaveTextContent("42 chars");
+    // By turn (D187): the prompt, its tool calls each with its result, then the end.
+    const turn = within(steps).getByRole("list", { name: "Turn 1" });
+    const rows = within(turn).getAllByRole("listitem");
+    expect(rows.map((r) => r.textContent?.replace(/^\d{1,2}:\d{2}:\d{2}\s[AP]M/, ""))).toEqual([
+      expect.stringMatching(/^Prompt42 chars/),
+      expect.stringMatching(
+        /^Read No result \(blocked, interrupted, or still running\) \/home\/dana\/app\/auth\.py/,
+      ),
+      expect.stringMatching(/^MCP No result .* github create_issue/),
+      expect.stringMatching(/^Finished, 2 tool calls/),
+    ]);
+    expect(within(steps).getByText("Session started")).toBeVisible();
+    expect(within(steps).queryByText(/Turn end/)).toBeNull();
+    // Times in the viewer's zone, UTC on hover; Around shows on hover or focus only.
+    const t = within(turn).getAllByRole("time")[0]!;
+    expect(t.getAttribute("title")).toMatch(/ UTC$/);
+    const around = within(turn).getAllByRole("button", { name: /^Around this step/ })[0]!;
+    expect(around).toHaveClass("opacity-0", "group-hover:opacity-100", "focus:opacity-100");
   });
 
   it("hides empty sessions by default and names a quiet one ended (owner 2026-11-02)", async () => {
@@ -264,7 +320,47 @@ describe("Agent sessions from the hooks plugin (ADR-0026)", () => {
       within(card).getByRole("checkbox", { name: /Hide sessions with no tool calls or prompts/ }),
     );
     const erin = within(list).getByText("erin@example.com").closest("button") as HTMLElement;
-    expect(erin).toHaveTextContent("ended (no end event), 0 calls");
+    expect(erin).toHaveTextContent("ended (no end event), under a minute");
+    expect(erin).toHaveTextContent("0 prompts, 0 calls, 0 files, 0 web domains");
+  });
+  it("shows each row's counts, top tools, and flags, and filters the list (D188)", async () => {
+    window.history.replaceState(null, "", "/ai#agents");
+    mockApi("Codename", { mode: "open" });
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    render(
+      <App
+        initialTheme="dark"
+        queryClient={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      />,
+    );
+    const card = await screen.findByRole("region", { name: "Agent sessions" });
+    const list = await within(card).findByRole("list", { name: "Sessions" });
+    const dana = within(list).getByText("dana@example.com").closest("button") as HTMLElement;
+    expect(dana).toHaveTextContent("ended, 4 min");
+    expect(dana).toHaveTextContent("1 prompt, 2 calls, 1 file, 1 web domain");
+    expect(dana).toHaveTextContent("Read, github");
+    // An ended session with calls that never returned, and a first-seen MCP server.
+    expect(within(dana).getByText("Blocked or failed call")).toBeVisible();
+    expect(within(dana).getByText("New MCP server")).toBeVisible();
+    const alice = within(list).getByText("alice@example.com").closest("button") as HTMLElement;
+    expect(alice).toHaveTextContent("1 h 5 min");
+    expect(within(alice).queryByText("Blocked or failed call")).toBeNull();
+    const filters = within(card).getByRole("group", { name: "Filter sessions" });
+    await userEvent.selectOptions(within(filters).getByRole("combobox", { name: "Tool" }), "Bash");
+    expect(within(list).queryByText("dana@example.com")).toBeNull();
+    expect(within(filters).getByText("1 of 2 shown")).toBeVisible();
+    await userEvent.selectOptions(within(filters).getByRole("combobox", { name: "Tool" }), "");
+    await userEvent.click(within(filters).getByRole("checkbox", { name: "Has flags" }));
+    expect(within(list).queryByText("alice@example.com")).toBeNull();
+    expect(within(list).getByText("dana@example.com")).toBeVisible();
+    await userEvent.selectOptions(
+      within(filters).getByRole("combobox", { name: "Machine" }),
+      "ws-0311",
+    );
+    expect(within(card).getByText("No sessions match these filters.")).toBeVisible();
   });
 });
 

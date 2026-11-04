@@ -31,6 +31,7 @@ from app.core.errors import ParamInvalidError
 from app.core.timing import in_context
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.meta.db import MetaDB
+from app.search import entity_signals
 from app.search.addresses import OBS_SQL, address_ctes, join_addr, lookup
 from app.search.identity import IdentityMap, key_sql
 
@@ -45,6 +46,14 @@ MAX_CARDS = 60
 PER_LANE = 15
 WEIGHTS = {"critical": 10, "high": 5, "medium": 2}  # anything else: 1
 FLAG_POINTS = 3
+# The other signals (D195, weights proposed pending the owner's review). Counts that can
+# run into thousands (password spraying) are capped so they rank without drowning the rest.
+SIGNAL_POINTS = {
+    "failed_signins": 1, "mail_rules": 5, "consents": 3, "ai_flags": 3, "attacks": 1,
+    "alerts": 5,
+}  # fmt: skip
+SIGNAL_CAP = {"failed_signins": 25, "attacks": 25}
+RANKED = 100  # rows per kind
 
 COLUMN: dict[EntityKind, str] = {
     "user": "actor_user_name",
@@ -139,6 +148,14 @@ class Risk:
     rules: list[str] = field(default_factory=list)
     search_sql: str = ""
     names: list[str] = field(default_factory=list)  # users: the logged names merged here
+    # D195: the other signals, each its own column, and the points each part adds.
+    failed_signins: int = 0
+    mail_rules: int = 0
+    consents: int = 0
+    attacks: int = 0
+    alerts: int = 0
+    ai_flags: list[str] = field(default_factory=list)
+    parts: dict[str, int] = field(default_factory=dict)
 
 
 RISK_SQL = """
@@ -207,11 +224,30 @@ def entity_risk(
     allowed: list[str] | None,
     scope: QueryScope,
     ident: IdentityMap | None = None,
+    usage: Any = None,
 ) -> tuple[dict[EntityKind, list[Risk]], int, list[str]]:
-    """Ranked users, source IPs, and hosts; the number of matches considered; sources read."""
+    """Every user, source IP, and host seen in the range (the busiest of each), ranked by
+    a score whose parts are rule matches, flagged runs, and the D195 signals, then by
+    events; the number of matches considered; sources read."""
+    ident = ident or IdentityMap()
     matches = visible_matches(meta, allowed)
     found: dict[tuple[str, str], Risk] = {}
     read: list[str] = [] if scope.sources is None else list(scope.sources)
+    signals, read = entity_signals.collect(engine, meta, allowed, scope, ident, usage)
+    alerts = entity_signals.alert_names(meta, allowed, scope)
+    for (kind, value), sig in signals.items():
+        if kind not in COLUMN:
+            continue
+        found[(kind, value)] = Risk(
+            kind=kind,
+            value=value,
+            events=sig.events,
+            failed_signins=sig.failed_signins,
+            mail_rules=sig.mail_rules,
+            consents=sig.consents,
+            attacks=sig.attacks,
+            ai_flags=list(sig.ai_flags),
+        )
     if matches:
         result = engine.run(
             RISK_SQL,
@@ -224,39 +260,58 @@ def entity_risk(
             timeout_s=TIMEOUT_S,
             page=True,
         )
-        read = result.sources
-        for kind, value, crit, high, med, low, events, rules in result.rows:
-            found[(kind, value)] = Risk(
-                kind=kind,
-                value=str(value),
-                critical=int(crit),
-                high=int(high),
-                medium=int(med),
-                low=int(low),
-                events=int(events),
-                rules=[str(x) for x in rules or []],
+        read = sorted(set(read) | set(result.sources))
+        for kind, value, crit, high, med, low, _events, rules in result.rows:
+            risk = found.setdefault((kind, str(value)), Risk(kind=kind, value=str(value)))
+            risk.critical, risk.high, risk.medium, risk.low = (
+                int(crit),
+                int(high),
+                int(med),
+                int(low),
             )
+            risk.rules = [str(x) for x in rules or []]
     for (kind, value), n in _flagged(meta, allowed, scope).items():
         risk = found.setdefault((kind, value), Risk(kind=kind, value=value))  # type: ignore[arg-type]  # kind comes from COLUMN keys
         risk.flagged_runs = n
-    ident = ident or IdentityMap()
     merged = _merge_users([r for r in found.values() if r.kind == "user"], ident)
     out: dict[EntityKind, list[Risk]] = {"user": [], "ip": [], "host": []}
     for risk in [r for r in found.values() if r.kind != "user"] + merged:
-        risk.score = (
-            WEIGHTS["critical"] * risk.critical
-            + WEIGHTS["high"] * risk.high
-            + WEIGHTS["medium"] * risk.medium
-            + risk.low
-            + FLAG_POINTS * risk.flagged_runs
-        )
+        risk.alerts = entity_signals.count_alerts(alerts, [risk.value, *risk.names])
+        risk.parts = score_parts(risk)
+        risk.score = sum(risk.parts.values())
         if not risk.search_sql:
             risk.search_sql = search_sql(f"{COLUMN[risk.kind]} = {quote(risk.value)}")
         out[risk.kind].append(risk)
     for kind in out:
-        out[kind].sort(key=lambda r: (-r.score, r.value))
-        out[kind] = out[kind][:50]
+        out[kind].sort(key=lambda r: (-r.score, -r.events, r.value))
+        out[kind] = out[kind][:RANKED]
     return out, len(matches), read
+
+
+def score_parts(r: Risk) -> dict[str, int]:
+    """The points each signal adds (D195), only the ones that add any; the score is their
+    sum, so the page can show where it came from."""
+    rules = (
+        WEIGHTS["critical"] * r.critical + WEIGHTS["high"] * r.high
+        + WEIGHTS["medium"] * r.medium + r.low
+    )  # fmt: skip
+    counts = {
+        "rule_matches": rules,
+        "flagged_runs": FLAG_POINTS * r.flagged_runs,
+        "failed_signins": r.failed_signins,
+        "mail_rules": r.mail_rules,
+        "consents": r.consents,
+        "ai_flags": len(r.ai_flags),
+        "attacks": r.attacks,
+        "alerts": r.alerts,
+    }
+    parts = {}
+    for name, n in counts.items():
+        pts = n if name in ("rule_matches", "flagged_runs") else SIGNAL_POINTS[name] * n
+        pts = min(pts, SIGNAL_CAP.get(name, pts))
+        if pts:
+            parts[name] = pts
+    return parts
 
 
 def _merge_users(rows: list[Risk], ident: IdentityMap) -> list[Risk]:
@@ -276,6 +331,11 @@ def _merge_users(rows: list[Risk], ident: IdentityMap) -> list[Risk]:
             total.events += r.events
             total.flagged_runs += r.flagged_runs
             total.rules = sorted(set(total.rules) | set(r.rules))[:5]
+            total.failed_signins += r.failed_signins
+            total.mail_rules += r.mail_rules
+            total.consents += r.consents
+            total.attacks += r.attacks
+            total.ai_flags = sorted(set(total.ai_flags) | set(r.ai_flags))
         total.names = sorted({r.value for r in rs})
         total.search_sql = search_sql(user_filter_sql(ident, ident.keys_for(key)))
         out.append(total)

@@ -88,9 +88,13 @@ describe("AI Watch on the Dashboard (ADR-0035 Part 2)", () => {
   it("shows five cards against the previous period, the 30-day chart, and top services", async () => {
     const spy = await renderAt("/dashboard");
     const watch = await screen.findByRole("region", { name: "AI Watch" });
-    expect(within(watch).getByText("Unapproved AI services")).toBeVisible();
-    // Not reviewed links to those alerts, closed ones included (owner, 2026-10-29).
-    expect(within(watch).getByRole("link", { name: "1 not reviewed" })).toHaveAttribute(
+    // Not yet approved, with Not approved and Unreviewed apart (owner, 2026-11-03; D184).
+    expect(within(watch).getByText("AI services not yet approved")).toBeVisible();
+    expect(within(watch).getByText("1 not approved, 1 unreviewed")).toBeVisible();
+    expect(within(watch).getByText("People using AI not yet approved")).toBeVisible();
+    expect(within(watch).queryByText(/unapproved/i)).toBeNull();
+    // Unreviewed links to those alerts, closed ones included (owner, 2026-10-29).
+    expect(within(watch).getByRole("link", { name: "Review 1 unreviewed" })).toHaveAttribute(
       "href",
       "/alerts#review",
     );
@@ -203,7 +207,7 @@ describe("A dashboard section that fails to load (F63)", () => {
     expect(screen.queryByText(/cannot reach the server/i)).toBeNull();
     fail = false;
     await userEvent.click(within(alert).getByRole("button", { name: "Retry" }));
-    expect(await within(watch).findByText("Unapproved AI services")).toBeVisible();
+    expect(await within(watch).findByText("AI services not yet approved")).toBeVisible();
     expect(within(watch).queryByRole("alert")).toBeNull();
   });
 });
@@ -251,7 +255,7 @@ describe("Dashboard sections (ADR-0038 edit 10)", () => {
     trend.focus();
     await userEvent.keyboard("{Home}{ArrowRight}{ArrowRight}{ArrowRight}");
     expect(within(identity).getByRole("tooltip")).toHaveTextContent(
-      "Oct 27, 12 AM: Failed sign-ins 4, Previous 7 days 2",
+      "Oct 27, 12 AM: Failed sign-ins 4, Same hour last week (Oct 20, 12 AM) 2",
     );
     const attacks = screen.getByRole("region", { name: "Attacks and access" });
     expect(within(attacks).getByText(/office addresses count as external/)).toBeVisible();

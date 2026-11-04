@@ -78,6 +78,7 @@ from app.auth.groups import GroupStore
 from app.auth.oidc import HttpFactory, OidcClient
 from app.auth.service import AuthService
 from app.auth.tls import ensure_self_signed, resolve_tls
+from app.core import pool_watch
 from app.core.branding import PRODUCT_NAME
 from app.core.client_errors import ClientErrors
 from app.core.config import AppConfig, is_loopback_host, load_config
@@ -102,6 +103,7 @@ from app.core.errors import (
     ProviderBusyError,
     ProviderConfigError,
     ProviderError,
+    ProviderOutputLimitError,
     ProviderUnreachableError,
     QueryBusyError,
     QueryFailedError,
@@ -217,6 +219,7 @@ _ERROR_STATUS: dict[type[Exception], tuple[int, str]] = {
     UnsupportedMediaError: (415, "unsupported_media"),
     CloudAckRequiredError: (409, "cloud_ack_required"),
     ProviderError: (502, "provider_error"),
+    ProviderOutputLimitError: (502, "provider_output_limit"),
     ProviderUnreachableError: (502, "provider_error"),
     ProviderBusyError: (503, "provider_busy"),
     QueryBusyError: (503, "busy"),
@@ -463,6 +466,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     """`sso_http` replaces the HTTP client used to reach the identity provider (tests)."""
     config = config or AppConfig()
     configure_logging()  # idempotent; logs go to stderr as JSON, never stdout
+    pool_watch.install()  # a request that waits over 2 s for a worker says so (D193)
     net = config.network
     configure_egress(
         Egress(
@@ -602,8 +606,13 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     )
     app.state.dashboards = DashboardStore(meta, lambda: app.state.auth.clock())
     app.state.alert_items = alert_items_ = AlertItems(
-        meta, app.state.auth.audit, clock=lambda: app.state.auth.clock()
-    )
+        meta, app.state.auth.audit, clock=lambda: app.state.auth.clock(),
+        tz=config.schedules.timezone,
+        gap_min_back=timedelta(minutes=config.sources.gap_renotify_min_back),
+        gap_max_notify=config.sources.gap_max_notify_per_day,
+    )  # fmt: skip
+    # Open duplicates raised before grouping merge once, audited (ADR-0043 row 5).
+    alert_items_.merge_open_duplicates()
     app.state.refusal_watch = RefusalWatch(app.state.engine, meta, alert_items_)
     app.state.schedules = ScheduleService(
         meta,
@@ -692,6 +701,9 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
             [(s.source_id, s.kind or "file", s.template_id) for s in app.state.sources.list()]
         )["telemetry"],
         usage=app.state.ai_usage,
+        learning_days=config.agents.learning_days,
+        blocked_burst=config.agents.blocked_burst,
+        domains=lambda: app.state.identities.load().domains,
     )
     app.state.audit_reader = AuditReader(meta)
     app.state.overview = OverviewService(

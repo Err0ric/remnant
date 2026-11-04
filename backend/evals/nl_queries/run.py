@@ -41,6 +41,7 @@ from evals.nl_queries.compare import Compare, matches
 from evals.nl_queries.fixture import SOURCES, write_lake
 
 SUITE = Path(__file__).parent / "questions.yaml"
+SYNONYMS = Path(__file__).parent / "synonyms.yaml"
 KNOWHOW = Path(__file__).parent / "knowhow.yaml"
 ACTOR = "eval-runner"
 
@@ -298,6 +299,40 @@ def summarise(results: list[CaseResult], label: str) -> dict[str, Any]:
     }
 
 
+def run_synonyms(
+    app: FastAPI, provider_id: str, scope: QueryScope, ids: str | None, out: Path | None
+) -> int:
+    """Route each synonym question (D191) and say whether it reached the library query it
+    names. Prints one line per question and the share routed right; 1 when any missed."""
+    cases = yaml.safe_load(SYNONYMS.read_text())["questions"]
+    if ids:
+        cases = [c for c in cases if c["id"] in set(ids.split(","))]
+    engine: QueryEngine = app.state.engine
+    seen = {t for p in app.state.library.packs for q in p.queries for t in q.requires}
+    results = []
+    for c in cases:
+        started = time.perf_counter()
+        try:
+            routed = route_question(
+                app.state.gate, engine, app.state.library, seen, ACTOR, provider_id,
+                c["question"], scope.end or datetime.now(UTC), None, None, scope,
+            )  # fmt: skip
+            got = routed.candidate.ref if routed.candidate else None
+            error = None
+        except AppError as exc:
+            got, error = None, f"{type(exc).__name__}: {str(exc)[:200]}"
+        ok = got == c["library"]
+        seconds = round(time.perf_counter() - started, 2)
+        results.append({"id": c["id"], "question": c["question"], "expected": c["library"],
+                        "routed": got, "ok": ok, "error": error, "seconds": seconds})  # fmt: skip
+        print(f"{c['id']}  {'ok  ' if ok else 'MISS'}  {got or error or 'model'}  {c['question']}")
+    right = sum(1 for r in results if r["ok"])
+    print(f"routed to the named query: {right}/{len(results)}")
+    if out:
+        out.write_text(json.dumps({"synonyms": results}, indent=2))
+    return 0 if right == len(results) else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     p.add_argument("--base-url", required=True)
@@ -316,6 +351,11 @@ def main(argv: list[str] | None = None) -> int:
         "--no-routing",
         action="store_true",
         help="Ask's SQL agent only, as before slice 1b (for comparison); skips know-how",
+    )
+    p.add_argument(
+        "--synonyms",
+        action="store_true",
+        help="Only the routing synonyms (synonyms.yaml): is each routed to the query it names",
     )
     args = p.parse_args(argv)
 
@@ -338,6 +378,8 @@ def main(argv: list[str] | None = None) -> int:
         rec = store.add("eval", args.base_url, args.model, key)
         store.update(rec.provider_id, None, None, None, True, None, False, reasoning=args.thinking)
         app.state.ask.prompt = args.prompt
+        if args.synonyms:
+            return run_synonyms(app, rec.provider_id, scope, args.ids, args.out)
         results = []
         for case in cases:
             if args.no_routing:

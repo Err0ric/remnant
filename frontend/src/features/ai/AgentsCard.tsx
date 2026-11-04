@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { ApiError, api } from "@/lib/api";
 import { SectionTitle } from "@/components/SectionTitle";
+import { EntityList } from "@/components/EntityLink";
 
 const STATE: Record<string, { label: string; tint: string }> = {
   changed: { label: "Changed", tint: "bg-sev-high-bg text-sev-high-text" },
@@ -71,9 +72,20 @@ export function AgentsCard() {
                     <td className="px-3 py-2">
                       <div className="font-mono">{a.label}</div>
                       <div className="text-text-muted">{a.kind}</div>
+                      {a.machines.length > 1 ? (
+                        // Each machine with its own activity (owner, 2026-11-03; D185).
+                        <ul aria-label={`Machines for ${a.label}`} className="mt-1">
+                          {a.machines.map((m) => (
+                            <li key={m.name} className="text-text-secondary">
+                              <span className="font-mono text-text">{m.name}</span>: last seen{" "}
+                              {when(m.last_seen)}, {m.events_24h.toLocaleString()} in 24 h
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
                     </td>
                     <td className="px-3 py-2 font-mono text-text-secondary">
-                      {a.owners.join(", ") || "·"}
+                      <EntityList people={a.owners} tab="ai" />
                     </td>
                     <td className="px-3 py-2 text-right font-mono tabular-nums">
                       {a.events_24h.toLocaleString()}

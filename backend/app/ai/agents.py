@@ -2,8 +2,9 @@
 
 An agent is something that acts with AI on someone's behalf:
 
-- Claude Code for a person (telemetry, or the hooks plugin of ADR-0026), shown with the
-  machine it last ran on;
+- Claude Code for a person (telemetry, or the hooks plugin of ADR-0026), with every
+  machine it ran on, newest first, each with its own last seen and events (owner,
+  2026-11-03: one machine's activity showed under another's name);
 - an MCP client on a machine, owned by the person whose profile holds it (MCP inventory);
 - an Anthropic API key (usage reports).
 
@@ -20,6 +21,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from app.ai.internal_tools import counted
 from app.ai.usage import MCP_EXPR, NO_MCP_NAMES, WHO_EXPR
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.search.entities import CLIENT_NAMES
@@ -83,18 +85,33 @@ WITH u AS (
   FROM events WHERE template_id = 'anthropic_reports' AND message = 'anthropic.usage'
     AND json_extract_string(unmapped, '$.api_key_id') IS NOT NULL
 )
+-- Each machine an agent ran on, from the records that machine sent.
+, m AS (
+  SELECT agent, machine, max(t) AS last, count(*) FILTER (WHERE t >= $recent) AS n
+  FROM u WHERE machine IS NOT NULL GROUP BY 1, 2
+), ms AS (
+  SELECT agent,
+         list([machine, CAST(last AS VARCHAR), CAST(n AS VARCHAR)] ORDER BY last DESC, machine)
+           AS machines
+  FROM m GROUP BY 1
+), g AS (
 SELECT kind, agent, any_value(label) AS label,
        list(DISTINCT owner) FILTER (WHERE owner IS NOT NULL) AS owners,
-       max(machine) AS machine, min(t) AS first_seen, max(t) AS last_seen,
+       min(t) AS first_seen, max(t) AS last_seen,
        count(*) FILTER (WHERE t >= $recent) AS recent,
        list(DISTINCT [item_kind, item]) FILTER (
-         WHERE item IS NOT NULL AND lower(item) NOT IN {NO_MCP_NAMES}
+         WHERE item IS NOT NULL AND lower(item) NOT IN {NO_MCP_NAMES} AND {counted("item")}
        ) AS all_items,
        list(DISTINCT [item_kind, item]) FILTER (
          WHERE item IS NOT NULL AND t < $recent AND lower(item) NOT IN {NO_MCP_NAMES}
+           AND {counted("item")}
        ) AS old_items
 FROM u GROUP BY 1, 2
-ORDER BY last_seen DESC
+)
+SELECT g.kind, g.agent, g.label, g.owners, ms.machines, g.first_seen, g.last_seen, g.recent,
+       g.all_items, g.old_items
+FROM g LEFT JOIN ms ON ms.agent = g.agent
+ORDER BY g.last_seen DESC
 LIMIT 2000"""  # noqa: S608  # fixed SQL text
 
 HOURLY_SQL = """
@@ -119,12 +136,19 @@ LIMIT 2000"""
 
 
 @dataclass(slots=True)
+class AgentMachine:
+    name: str
+    last_seen: str
+    events_24h: int
+
+
+@dataclass(slots=True)
 class AgentStatus:
     kind: str
     agent: str
     label: str
     owners: list[str]
-    machine: str | None
+    machine: str | None  # the machine it ran on last
     first_seen: str
     last_seen: str
     events_24h: int
@@ -132,6 +156,7 @@ class AgentStatus:
     new_items: list[dict[str, str]] = field(default_factory=list)
     usual_peak: int | None = None
     recent_peak: int | None = None
+    machines: list[AgentMachine] = field(default_factory=list)  # newest first
 
 
 def _iso(v: Any) -> str:
@@ -149,9 +174,14 @@ def agents(engine: QueryEngine, allowed: list[str] | None, now: datetime) -> lis
         for a, u, p in engine.run(HOURLY_SQL, scope, params, timeout_s=TIMEOUT_S, page=True).rows
     }
     out = []
-    for kind, agent, label, owners, machine, first, last, n24, all_items, old_items in rows:
-        if kind == "Claude Code":  # one per person; machines come and go
-            label = f"Claude Code on {machine or 'unknown machine'}"
+    for kind, agent, label, owners, machine_rows, first, last, n24, all_items, old_items in rows:
+        machines = [AgentMachine(str(m), str(t), int(n or 0)) for m, t, n in (machine_rows or [])]
+        machine = machines[0].name if machines else None
+        names = ", ".join(m.name for m in machines) or "unknown machine"
+        if kind == "Claude Code" and owners:  # one per person, on every machine it ran on
+            label = f"Claude Code, {', '.join(sorted(str(o) for o in owners))}: {names}"
+        elif kind == "Claude Code":  # no person: one per machine
+            label = f"Claude Code on {names}"
         elif kind == "MCP client":
             client = str(agent).split("|", 2)[-1]
             name = CLIENT_NAMES.get(client, client)
@@ -183,6 +213,7 @@ def agents(engine: QueryEngine, allowed: list[str] | None, now: datetime) -> lis
                 new_items=[{"kind": k, "name": v} for k, v in fresh],
                 usual_peak=usual,
                 recent_peak=peak if spike else None,
+                machines=machines,
             )
         )
     order = {"changed": 0, "new": 1, "usual": 2}

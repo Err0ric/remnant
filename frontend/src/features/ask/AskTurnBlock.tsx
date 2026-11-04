@@ -96,6 +96,8 @@ interface AskTurnBlockProps {
   onEdit?: (sql: string) => void;
   /** "Show events" for one row of an aggregate library answer (D173). */
   onShowEvents?: (turn: Turn, values: Record<string, Cell>) => void;
+  /** Admins: opens the provider's edit form, where Thinking is set (D192). */
+  onFixThinking?: () => void;
 }
 
 /** One question and what came of it, as a block, never a chat bubble (DESIGN.md 6.1): the
@@ -108,6 +110,7 @@ export function AskTurnBlock({
   onCheckData,
   onEdit,
   onShowEvents,
+  onFixThinking,
 }: AskTurnBlockProps) {
   const a = turn.answer;
   const route = a?.route ?? null;
@@ -160,6 +163,17 @@ export function AskTurnBlock({
           )}
         >
           <span>{errorText(turn.error)}</span>
+          {onFixThinking &&
+          turn.error instanceof ApiError &&
+          turn.error.code === "provider_output_limit" ? (
+            <button
+              type="button"
+              onClick={onFixThinking}
+              className="h-7 rounded border border-border-strong px-3 text-text hover:bg-surface-head"
+            >
+              Set Thinking to Off
+            </button>
+          ) : null}
           {!isAborted(turn.error) ? (
             <button
               type="button"

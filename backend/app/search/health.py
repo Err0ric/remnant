@@ -490,6 +490,8 @@ class HealthService:
                 sources=[a.source_id],
                 range_start=a.last_seen,
                 devices=[a.machine],
+                group=(f"{a.source_id}/{a.machine}", "queue"),
+                severity="medium",
             )
             raised += int(item.state == "open")
         return raised

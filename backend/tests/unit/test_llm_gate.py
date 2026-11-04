@@ -17,7 +17,12 @@ import pytest
 from pydantic import BaseModel
 
 from app.core.config import LLMConfig
-from app.core.errors import ClassificationBlockedError, ProviderConfigError, ProviderError
+from app.core.errors import (
+    ClassificationBlockedError,
+    ProviderConfigError,
+    ProviderError,
+    ProviderOutputLimitError,
+)
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.ingest.normalizer import Normalizer, SourceSpec
 from app.ingest.records import DecodedLine
@@ -383,20 +388,25 @@ def test_ambiguous_or_missing_answers_are_still_rejected(lab: Lab, text: str) ->
 def test_an_answer_cut_off_at_the_output_limit_says_so(lab: Lab) -> None:
     lab.reply[0] = ProviderResponse(text='{"sql": "SELE', model="m", truncated=True)
     pid = provider(lab, LOCAL_URL)
-    with pytest.raises(ProviderError, match=r"output limit.*set Thinking to Off"):
+    with pytest.raises(ProviderOutputLimitError, match=r"output limit.*set Thinking to Off"):
         lab.gate.call(request(lab, pid, [], response_model=Answer))
     assert calls(lab)[0]["error"] == "truncated"
-    # With thinking already off, the advice changes instead of repeating itself.
+    # With thinking already off, the advice changes instead of repeating itself, and it is
+    # not the error the page offers the Thinking link for (D192).
     lab.store.update(pid, None, None, None, None, None, False, reasoning="none")
     lab.reply[0] = ProviderResponse(text='{"sql": "SELE', model="m", truncated=True)
-    with pytest.raises(ProviderError, match="even with Thinking set to Off"):
+    with pytest.raises(ProviderError, match="even with Thinking set to Off") as off:
         lab.gate.call(request(lab, pid, [], response_model=Answer))
+    assert type(off.value) is ProviderError
     # Cut off after a handful of tokens: the context window filled, not the output limit.
     lab.reply[0] = ProviderResponse(
         text='{"sql": "SELE', model="m", truncated=True, prompt_tokens=4090, completion_tokens=6
     )
-    with pytest.raises(ProviderError, match=r"context window.*4090 tokens.*OLLAMA_CONTEXT_LENGTH"):
+    with pytest.raises(
+        ProviderError, match=r"context window.*4090 tokens.*OLLAMA_CONTEXT_LENGTH"
+    ) as ctx:
         lab.gate.call(request(lab, pid, [], response_model=Answer))
+    assert type(ctx.value) is ProviderError
 
 
 def test_tools_only_for_ask_and_only_the_two_named(lab: Lab) -> None:

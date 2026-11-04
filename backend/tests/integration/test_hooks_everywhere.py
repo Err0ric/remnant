@@ -86,3 +86,33 @@ def test_seen_through_marks_plugin_network_and_both() -> None:
     assert counts == {"both": 1, "plugin": 1, "network": 1}
     dana = next(p for p in out if p.person == "dana@example.com")
     assert (dana.sessions, dana.tool_calls, dana.tokens) == (0, 0, 0)
+
+
+def test_network_people_carry_what_the_network_saw_and_a_match_hint() -> None:
+    """D190 (owner, 2026-11-03): a network-only row shows the services, lookups, devices,
+    and last seen the network gives; a short network name that reads as a plugin person is
+    offered as an alias, and one set in Identities merges the two."""
+    from app.ai.usage import NetUse
+    from app.search.identity import IdentityMap
+
+    def person(name: str) -> PersonUse:
+        return PersonUse(name, 0.0, 0, 1, 0, 0, 0, [], via=["hooks"])
+
+    net = [
+        NetUse("dlee", ["Claude"], 40, 2, "2026-10-10T09:00:00+00:00"),
+        NetUse("judy@example.com", ["Claude"], 3, 1, "2026-10-09T09:00:00+00:00"),
+    ]
+    ident = IdentityMap(domains=["example.com"])
+    out, _ = seen_through([person("dana.lee@example.com")], net, ident)
+    rows = {p.person: p for p in out}
+    d = rows["dlee"]
+    assert d.seen_through == "network" and d.network is not None
+    assert (d.network.services, d.network.lookups, d.network.devices) == (["Claude"], 40, 2)
+    assert d.maybe == "dana.lee@example.com"  # offered as an alias
+    assert rows["judy@example.com"].maybe is None  # nobody it could be
+    # With the alias in Identities, the network name is the same person: one row, both.
+    ident = IdentityMap(domains=["example.com"], aliases={"dlee": "dana.lee"})
+    out, counts = seen_through([person("dana.lee@example.com")], net, ident)
+    assert counts["both"] == 1
+    merged = next(p for p in out if p.seen_through == "both")
+    assert merged.network is not None and merged.network.lookups == 40
