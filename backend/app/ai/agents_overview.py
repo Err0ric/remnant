@@ -13,6 +13,7 @@ from typing import Any
 from app.ai.catalog import Catalog
 from app.ai.internal_tools import counted
 from app.ai.sessions import _ONE_COPY, _a
+from app.ai.test_records import HOOKS as HOOKS_USE
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.search import drill
 from app.search.dashboard import FIRST_EVENT_SQL, History, Kpi, _history, _utc
@@ -64,7 +65,7 @@ GROUP BY 1, 2
 ORDER BY calls DESC, tool
 LIMIT {MAX_TOOLS}"""  # noqa: S608  # fixed SQL text
 
-HOOKS = "template_id = 'claude_hooks'"
+HOOKS = HOOKS_USE
 COLUMNS = (
     "time, actor_user_name, device_hostname, message,"
     f" {_a('session_id')} AS session_id, {_TOOL} AS tool, event_id"

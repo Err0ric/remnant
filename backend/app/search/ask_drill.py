@@ -14,13 +14,14 @@ other shape, so a broken drill fails in review, not on screen.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
 import sqlglot
 from sqlglot import exp
 
-from app.search.params import PLACEHOLDER
+from app.search.params import PERSON, PLACEHOLDER
 
 Scalar = str | int | float | bool | None
 COLUMN = "__ask_col__"  # stands for the filtered output column in a filter condition
@@ -43,11 +44,19 @@ def _marker(name: str) -> str:
     return f"__p_{name}__"
 
 
+# {{person:col}} parses as a call to this name and is written back as the placeholder, so
+# the events query resolves people the same way when it runs (D205).
+_PERSON_FN = "__ask_person__"
+_PERSON_BACK = re.compile(_PERSON_FN + r"\(([a-z_][a-z0-9_]{0,63})\)", re.IGNORECASE)
+KEPT = ("start", "end", "org_domains")  # filled at run time, not written in
+
+
 def base(sql: str, keys: list[str], filtered: list[str] | None = None) -> Base:
     """The query's WHERE and the expression behind each key and each column Ask filtered
     on, or DrillError saying why not. Neither may be an aggregate: an aggregate describes
     the group, not an event, so it cannot pick out events."""
-    text = PLACEHOLDER.sub(lambda m: _marker(m.group(1)), sql)
+    text = PERSON.sub(lambda m: f"{_PERSON_FN}({m.group(1)})", sql)
+    text = PLACEHOLDER.sub(lambda m: _marker(m.group(1)), text)
     try:
         tree = sqlglot.parse_one(text, read="duckdb")
     except sqlglot.errors.ParseError as exc:
@@ -100,14 +109,14 @@ def drill_sql(
         out = PLACEHOLDER.sub(
             lambda m: (
                 m.group(0)
-                if m.group(1) in ("start", "end")
+                if m.group(1) in KEPT
                 else literal(params[m.group(1)])
                 if m.group(1) in params
                 else m.group(0)
             ),
             text,
         )
-        if set(PLACEHOLDER.findall(out)) - {"start", "end"}:
+        if set(PLACEHOLDER.findall(out)) - set(KEPT):
             raise DrillError("a parameter has no value")
         return out
 
@@ -140,6 +149,6 @@ def drill_sql(
         .limit(ROWS)
     )
     out = query.sql(dialect="duckdb", pretty=True)
-    for name in ("start", "end"):
+    for name in KEPT:
         out = out.replace(_marker(name), "{{" + name + "}}")
-    return out
+    return _PERSON_BACK.sub(lambda m: "{{person:" + m.group(1).lower() + "}}", out)

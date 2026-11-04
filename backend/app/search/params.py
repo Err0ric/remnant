@@ -4,6 +4,14 @@
 the database driver. Values are never pasted into SQL text, so a parameter can change
 what a query matches but never what the query is. `start` and `end` are always supplied
 by the server from the requested time range.
+
+Two more come from Identities at run time (ADR-0042 amendment 2026-11-04, D205), never
+from the client: `{{person:<column>}}` is the person a name in that column belongs to
+(the same key Investigate and AI usage use: lower case, `DOMAIN\\` removed, an
+organization address reduced to its login, then the aliases an administrator set), and
+`{{org_domains}}` is the list of organization email domains. The lookup tables are bound
+as parameters, so a placeholder adds no text the guard has not seen; a name with no alias
+is its own person, never guessed.
 """
 
 import re
@@ -15,7 +23,10 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_vali
 from app.core.errors import ParamInvalidError, SearchInvalidError
 
 PLACEHOLDER = re.compile(r"\{\{\s*([a-z_][a-z0-9_]{0,31})\s*\}\}")
-RESERVED = frozenset({"start", "end"})
+PERSON = re.compile(r"\{\{\s*person:([a-z_][a-z0-9_]{0,63})\s*\}\}")
+RESERVED = frozenset({"start", "end", "org_domains"})
+# Bound by the server from Identities when a query uses {{person:...}} or {{org_domains}}.
+IDENTITY_PARAMS = ("id_org", "id_from", "id_to")
 MAX_STRING = 500
 
 ParamType = Literal["int", "float", "string", "bool", "timestamp"]
@@ -45,9 +56,31 @@ def placeholders(sql: str) -> set[str]:
     return set(PLACEHOLDER.findall(sql))
 
 
+def uses_identities(sql: str) -> bool:
+    """True when the query needs the Identities values (IDENTITY_PARAMS) bound."""
+    return bool(PERSON.search(sql)) or "org_domains" in placeholders(sql)
+
+
+def person_sql(column: str) -> str:
+    """The person key of a name in `column`, in SQL over the bound Identities values:
+    the deterministic key (as `identity.key_of`), then the administrator's aliases. A name
+    with no alias is its own person; a blank name is NULL, never a person."""
+    k = f"regexp_replace(lower(trim(CAST({column} AS VARCHAR))), '^[^\\\\@]*\\\\', '')"
+    k = (
+        f"(CASE WHEN list_contains($id_org, split_part({k}, '@', 2))"
+        f" THEN split_part({k}, '@', 1) ELSE {k} END)"
+    )
+    return f"nullif(coalesce(list_extract($id_to, list_position($id_from, {k})), {k}), '')"
+
+
 def compile_sql(sql: str) -> str:
-    """Replace {{name}} with $name. Only names that passed the pattern are ever emitted."""
-    return PLACEHOLDER.sub(lambda m: f"${m.group(1)}", sql)
+    """Replace {{name}} with $name, {{person:col}} with the person key of that column, and
+    {{org_domains}} with the bound domain list. Only names and columns that passed the
+    patterns are ever emitted."""
+    sql = PERSON.sub(lambda m: person_sql(m.group(1)), sql)
+    return PLACEHOLDER.sub(
+        lambda m: "$id_org" if m.group(1) == "org_domains" else f"${m.group(1)}", sql
+    )
 
 
 def check_definition(sql: str, params: list[ParamDef]) -> None:

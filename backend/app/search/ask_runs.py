@@ -33,6 +33,7 @@ class AskRun:
     provider_id: str = ""  # the provider that answered; the summary uses the same one
     template: str | None = None  # a library query's headline template (`answer`)
     drill: Drill | None = None  # a library query with group keys: "Show events" per row
+    tz: str | None = None  # the asker's time zone, for times in the headline
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,11 +82,12 @@ class AskRuns:
         provider_id: str = "",
         template: str | None = None,
         drill: Drill | None = None,
+        tz: str | None = None,
     ) -> AskRun:
         run = AskRun(
             str(uuid.uuid4()), user_id, sql, start, end, sources, list(call_ids), now,
             origin=origin, question=question, params=dict(params or {}),
-            provider_id=provider_id, template=template, drill=drill,
+            provider_id=provider_id, template=template, drill=drill, tz=tz,
         )  # fmt: skip
         with self._lock:
             self._kept[run.ask_id] = run

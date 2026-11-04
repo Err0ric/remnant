@@ -1,9 +1,18 @@
 import { useState } from "react";
 import { EntityLink } from "@/components/EntityLink";
+import { When } from "@/components/When";
 import type { Cell, QueryResult } from "@/lib/api";
 import { kindForColumn } from "@/lib/entity";
 
 const FIRST = 50;
+
+// A time the server sent (ISO 8601 with a zone): shown as every other time in the app,
+// local with UTC on hover, never as the raw string (owner, 2026-11-04).
+const ISO_TIME = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/;
+
+export function isIsoTime(v: Cell): v is string {
+  return typeof v === "string" && ISO_TIME.test(v);
+}
 
 function text(v: Cell): string {
   if (v === null || v === undefined) return "";
@@ -11,8 +20,8 @@ function text(v: Cell): string {
 }
 
 /** An Ask turn's rows (ADR-0042 row 16): monospace, people, addresses, hosts, and services
- * as links to their pages, the first 50 with the rest one click away. Log values are text
- * nodes only. */
+ * as links to their pages, times in the viewer's zone with UTC on hover, the first 50 with
+ * the rest one click away. Log values are text nodes only. */
 interface AskResultsProps {
   result: QueryResult;
   /** Group keys (D173): each row gets "Show events" when there are any. */
@@ -55,7 +64,13 @@ export function AskResults({ result, drillKeys = [], onShowEvents }: AskResultsP
                   const kind = kinds[j];
                   return (
                     <td key={j} className="max-w-96 px-2.5 py-1 align-top font-mono">
-                      {kind ? <EntityLink kind={kind} value={v} /> : text(v)}
+                      {kind ? (
+                        <EntityLink kind={kind} value={v} />
+                      ) : isIsoTime(v) ? (
+                        <When iso={v} className="whitespace-nowrap" />
+                      ) : (
+                        text(v)
+                      )}
                     </td>
                   );
                 })}

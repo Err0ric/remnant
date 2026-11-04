@@ -13,6 +13,7 @@ from typing import Any, Literal
 
 from app.ai.catalog import DOMAIN, NON_USAGE, Catalog, Service, Status
 from app.ai.internal_tools import counted
+from app.ai.test_records import HOOKS
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.search.addresses import address_ctes, join_addr
 from app.search.identity import IdentityMap
@@ -329,15 +330,15 @@ LIMIT 500"""  # noqa: S608  # fixed SQL text; domains checked against DOMAIN in 
 # three by server name. Calls come from one source per session: telemetry when it saw the
 # session, otherwise the hook records, so a session both report is never counted twice. A
 # hook record sent twice (offline queue) is one record (`_ONE_COPY` in ai/sessions.py).
-_HOOK_ONE_COPY = """hooks AS (
+_HOOK_ONE_COPY = f"""hooks AS (
   SELECT * FROM events
-  WHERE template_id = 'claude_hooks'
+  WHERE {HOOKS}
     AND json_extract_string(unmapped, '$.attr.mcp_server_name') IS NOT NULL
   QUALIFY json_extract_string(unmapped, '$.attr.seq') IS NULL OR row_number() OVER (
     PARTITION BY json_extract_string(unmapped, '$.attr.install_id'),
                  json_extract_string(unmapped, '$.attr.seq')
     ORDER BY time_observed, event_id) = 1
-)"""
+)"""  # noqa: S608  # fixed SQL text
 _MCP_ROWS = f"""{_HOOK_ONE_COPY},
 t AS (
   SELECT {MCP_EXPR} AS name, {WHO_EXPR} AS who, device_hostname AS machine,
@@ -448,7 +449,7 @@ seen AS (SELECT DISTINCT session FROM c WHERE session IS NOT NULL),
 h AS (
   SELECT nullif(actor_user_name, '') AS person, message,
          json_extract_string(unmapped, '$.attr.session_id') AS session
-  FROM events WHERE template_id = 'claude_hooks'
+  FROM events WHERE {HOOKS}
     -- Claude Code's own bookkeeping is not a tool call (D186).
     AND {counted("json_extract_string(unmapped, '$.attr.tool_name')")}
 ),

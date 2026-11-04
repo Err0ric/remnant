@@ -241,13 +241,13 @@ class TestRecordOut(BaseModel):
     status: int  # the receiver's HTTP status
     ok: bool
     detail: str
-    session_id: str  # the synthetic session, findable on Agents > Sessions (empty, hidden)
+    session_id: str  # the synthetic session; a test record, so in no count (D203)
 
 
 def test_payload(session_id: str, at: datetime) -> dict[str, Any]:
     """One synthetic SessionStart in the plugin's own OTLP shape (owner, 2026-11-02). No
     person, no host: it marks no device and names no one, and `test_record` keeps it out
-    of Agents."""
+    of every count of use (app/ai/test_records.py, D203)."""
     attrs = {
         "event_name": "claude_hooks.session_start",
         "role": "session",

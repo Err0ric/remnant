@@ -244,7 +244,7 @@ async def ask(body: AskRequest, request: Request, user: AskUser) -> AskResponse:
             user.user_id, routed.plan.sql, start, end, body.sources, call_ids, now,
             body.question, origin=c.pack.origin(c.query), params=routed.plan.params,
             provider_id=chosen.provider_id, template=c.query.answer,
-            drill=_drill(c.query, routed.plan),
+            drill=_drill(c.query, routed.plan), tz=body.tz,
         )  # fmt: skip
         detail |= {"call_ids": call_ids, "ask_id": kept.ask_id}
         await run_in_threadpool(
@@ -259,7 +259,7 @@ async def ask(body: AskRequest, request: Request, user: AskUser) -> AskResponse:
     call_ids += outcome.call_ids
     kept = runs.keep(
         user.user_id, outcome.answer.sql, start, end, body.sources,
-        call_ids, now, body.question, provider_id=chosen.provider_id,
+        call_ids, now, body.question, provider_id=chosen.provider_id, tz=body.tz,
     )  # fmt: skip
     detail |= {"call_ids": call_ids, "check": outcome.check, "ask_id": kept.ask_id}
     await run_in_threadpool(
@@ -403,7 +403,7 @@ async def run_answer(ask_id: str, request: Request, user: AskUser) -> AskRunResp
         "ask_call_ids": run.call_ids,
     }
     result = await _run_audited(body, request, user, "query.run", extra, max_rows=ASK_ROWS)
-    head = headline(result.columns, result.rows, result.truncated, run.template)
+    head = headline(result.columns, result.rows, result.truncated, run.template, run.tz)
     rows = sample(result.columns, result.rows, result.truncated)
     runs.ran(run.ask_id, Ran(rows, list(result.sources), head, start, end))
     note = None

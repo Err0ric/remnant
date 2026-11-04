@@ -22,6 +22,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.ai.internal_tools import counted
+from app.ai.test_records import HOOKS
 from app.ai.usage import MCP_EXPR, NO_MCP_NAMES, WHO_EXPR
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.search.entities import CLIENT_NAMES
@@ -67,8 +68,7 @@ WITH u AS (
          coalesce(time, time_observed)
   -- Every hook record is Claude Code use: a session start or a prompt alone makes the agent
   -- (owner, 2026-11-02); only tool calls name items.
-  FROM events WHERE template_id = 'claude_hooks'
-    AND json_extract_string(unmapped, '$.attr.test_record') IS DISTINCT FROM 'true'
+  FROM events WHERE {HOOKS}
   UNION ALL
   SELECT 'MCP client',
          'mcp|' || coalesce(device_hostname, '?') || '|'
@@ -114,7 +114,7 @@ FROM g LEFT JOIN ms ON ms.agent = g.agent
 ORDER BY g.last_seen DESC
 LIMIT 2000"""  # noqa: S608  # fixed SQL text
 
-HOURLY_SQL = """
+HOURLY_SQL = f"""
 WITH u AS (
   SELECT CASE template_id
            WHEN 'claude_code_otel' THEN 'cc|'
@@ -124,7 +124,7 @@ WITH u AS (
            WHEN 'anthropic_reports' THEN 'key|' || json_extract_string(unmapped, '$.api_key_id')
          END AS agent, date_trunc('hour', coalesce(time, time_observed)) AS h
   FROM events
-  WHERE template_id IN ('claude_code_otel', 'claude_hooks')
+  WHERE template_id = 'claude_code_otel' OR {HOOKS}
      OR (template_id = 'anthropic_reports' AND message = 'anthropic.usage')
 )
 SELECT agent,
@@ -132,7 +132,7 @@ SELECT agent,
        max(n) FILTER (WHERE h >= $recent) AS peak
 FROM (SELECT agent, h, count(*) AS n FROM u WHERE agent IS NOT NULL GROUP BY 1, 2)
 GROUP BY 1
-LIMIT 2000"""
+LIMIT 2000"""  # noqa: S608  # fixed SQL text
 
 
 @dataclass(slots=True)

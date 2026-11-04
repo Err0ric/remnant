@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Ask: people, not accounts (2026-11-04)
+
+- **Who uses Claude Code** counts people: accounts linked to the same person in **Identities** are one row, with an **accounts** column ("dana@example.com (work), dana@example.org (personal)"), and the answer reads "1 person, 2 accounts".
+- A personal account counts as the same person only after an administrator links it in Identities; nothing is linked by a similar name. A session with no account shows "(no account reported)" and is not counted as a person.
+- Saved and library searches can use `{{person:actor_user_name}}` and `{{org_domains}}`, filled from Identities each time they run.
+- What changes for existing installs: link a person's personal Claude account to them in **Identities** to count it as theirs. A saved search with a parameter named `org_domains` must rename it.
+
+### Ask: times in your time zone (2026-11-04)
+
+- Times in Ask results show in your time zone, as on every other page ("Oct 21, 9:05 AM"), with the UTC time when you hover. The answer's headline uses your time zone too.
+- What changes for existing installs: nothing to do.
+
+### Test records are left out of Claude Code counts (2026-11-04)
+
+- The installer's doctor check and **Send a test record** no longer count as a person with a blank name. They are left out of the AI agents library (for example "Who uses Claude Code"), AI usage, Agents, Sessions, and AI watch alerts. Health still shows that they arrived.
+- A record counts as a test only when it is marked as one and names no person and no machine, so a real session cannot be hidden by marking it.
+- What changes for existing installs: nothing to do; test records already stored drop out of the counts on the next page load.
+
 ### AIDE: the check uses the current rules (2026-11-04)
 
 - `update-systemd.sh --aide` writes `/etc/aide/aide.conf.d/90_aide_remnant` before it checks, not after. Rules left by an older update had no spool rule, so the check flagged `/var/lib/remnant/spool/...` and stopped before the new rules could be written; that repeated on every run.

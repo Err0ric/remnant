@@ -14,6 +14,7 @@ from app.engine.duckdb import QueryScope
 from app.ingest.records import DecodedLine
 from app.ingest.writer import LakeWriter
 from app.main import create_app
+from app.search.identity import identity_values
 from app.search.library import LIBRARY_DIR, load
 from app.search.params import bind, compile_sql
 from app.templates.loader import parse_template
@@ -62,6 +63,26 @@ HOOKS = [
     _hook("2026-10-20T10:03:01Z", FAIL, "s1", "ws-alpha", tool_name="Write", **DANA),
     _hook("2026-10-21T09:00:00Z", PRE, "s2", "ws-zulu", tool_name="Read", **ERIN),
     _hook("2026-10-21T09:00:01Z", POST, "s2", "ws-zulu", tool_name="Read", **ERIN),
+    # Test records (installer doctor, Send a test record): no person, no machine.
+    *[
+        json.dumps(
+            {
+                "signal": "log",
+                "time": "2026-10-22T08:00:00Z",
+                "service": "claude-hooks",
+                "event": "claude_hooks.session_start",
+                "attr": {
+                    "event_name": "claude_hooks.session_start",
+                    "session_id": sid,
+                    "plugin_variant": variant,
+                    "test_record": "true",
+                },
+                "body": "claude_hooks.session_start",
+                "resource": {"service_name": "claude-hooks"},
+            }
+        )
+        for sid, variant in (("doctor-1", "doctor"), ("server-test-1", "server_test"))
+    ],
 ]
 
 
@@ -84,7 +105,7 @@ def engine(tmp_path_factory: pytest.TempPathFactory) -> Any:
 
 def _run(engine: Any, qid: str, **params: Any) -> list[dict[str, Any]]:
     q = next(x for x in PACK.queries if x.id == qid)
-    values = bind(q.params, params, START, END, q.sql)
+    values = bind(q.params, params, START, END, q.sql) | identity_values(q.sql, None)
     res = engine.run(compile_sql(q.sql), QueryScope(None, START, END), values)
     return [dict(zip(res.columns, r, strict=True)) for r in res.rows]
 
@@ -117,3 +138,15 @@ def test_person_and_path_filters(engine: Any) -> None:
     assert {r["command"] for r in _run(engine, "agents_commands_by_person", person="dana")} == {
         "git", "rm"
     }  # fmt: skip
+
+
+def test_test_records_are_in_no_query(engine: Any) -> None:
+    """Owner, 2026-11-04: the doctor's record was counted as a person with a blank name.
+    No query in the pack returns a test record's session or a blank person."""
+    for q in PACK.queries:
+        defaults = {p.name: p.default for p in q.params if p.default is not None}
+        for r in _run(engine, q.id, **defaults):
+            assert r.get("person", "x") not in (None, ""), (q.id, r)
+            assert not str(r.get("session_id") or "").startswith(("doctor-", "server-test-"))
+    people = [r["person"] for r in _run(engine, "agents_claude_code_users")]
+    assert sorted(people) == ["dana@example.org", "erin@example.com"]

@@ -1,0 +1,34 @@
+# Answer cases for the ai_agents library pack (owner, 2026-11-04; D203, D205). Each case
+# names the question, the library query routing must pick, the Identities links in place
+# when it runs, and the headline and people the answer must show. The records are hooks
+# plugin records, synthetic only; `test: true` is the installer doctor's record.
+# tests/integration/test_ai_agents_answers.py runs them with no model.
+schema_version: 1
+domains: [example.com]
+records:
+  - {time: "2026-10-20T10:00:00Z", session: s1, host: ws-alpha, account: dana@example.com}
+  - {time: "2026-10-25T10:00:00Z", session: s2, host: ws-alpha, account: dana@example.org}
+  - {time: "2026-10-19T09:00:00Z", session: s4, host: ws-bravo}
+  - {time: "2026-10-22T08:00:00Z", session: doctor-1, test: true}
+cases:
+  # A test record is never a person; an account with no link is its own person.
+  - id: a01
+    question: "Who uses Claude Code?"
+    library: ai_agents/agents_claude_code_users
+    links: {}
+    headline: "2 people, 2 accounts; most recent: dana@example.org on ws-alpha"
+    people: [dana, dana@example.org, "(no account reported)"]
+  # One person, two accounts, once an administrator linked them in Identities.
+  - id: a02
+    question: "Who uses Claude Code?"
+    library: ai_agents/agents_claude_code_users
+    links: {dana@example.org: dana}
+    headline: "1 person, 2 accounts; most recent: dana on ws-alpha"
+    people: [dana, "(no account reported)"]
+    accounts: {dana: "dana@example.com (work), dana@example.org (personal)"}
+  - id: a03
+    question: "How many people use Claude Code?"
+    library: ai_agents/agents_claude_code_users
+    links: {dana@example.org: dana}
+    headline: "1 person, 2 accounts; most recent: dana on ws-alpha"
+    people: [dana, "(no account reported)"]

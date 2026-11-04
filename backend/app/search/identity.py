@@ -41,6 +41,17 @@ def key_of(name: str, domains: list[str]) -> str:
     return local if at and domain in domains else s
 
 
+def identity_values(sql: str, store: IdentityStore | None) -> dict[str, Any]:
+    """The Identities values a query needs at run time, or none when it uses neither
+    placeholder. Without a store (a test app) the map is empty: every name is its own
+    person and no domain is the organization's."""
+    from app.search.params import uses_identities
+
+    if not uses_identities(sql):
+        return {}
+    return (store.load() if store is not None else IdentityMap()).sql_values()
+
+
 def key_sql(col: str) -> str:
     """The same key in SQL; needs the `$id_org` list parameter (see IdentityMap.params)."""
     k = f"regexp_replace(lower(trim({col})), '^[^\\\\@]*\\\\', '')"
@@ -64,6 +75,18 @@ class IdentityMap:
 
     def params(self) -> dict[str, Any]:
         return {"id_org": self.domains or [""]}
+
+    def sql_values(self) -> dict[str, Any]:
+        """The values `{{person:...}}` and `{{org_domains}}` read (params.IDENTITY_PARAMS):
+        the organization domains and the alias table as two lists. Loaded per run, so a
+        query sees the links as they are when it runs. Empty lists hold one blank, which
+        matches only a blank name (and a blank name is never a person)."""
+        pairs = sorted(self.aliases.items())
+        return {
+            "id_org": self.domains or [""],
+            "id_from": [a for a, _ in pairs] or [""],
+            "id_to": [p for _, p in pairs] or [""],
+        }
 
     def key(self, name: str) -> str:
         k = key_of(name, self.domains)

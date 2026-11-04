@@ -25,6 +25,7 @@ import structlog
 from app.ai.agents import AgentStatus, agents
 from app.ai.catalog import NON_USAGE, Catalog
 from app.ai.internal_tools import counted
+from app.ai.test_records import HOOKS
 from app.ai.usage import HOST_EXPR, MACHINE_EXPR, MCP_EXPR, NO_MCP_NAMES, WHO_EXPR, Usage, _values
 from app.alerts.dispatch import AlertDispatcher
 from app.alerts.items import AlertItem, AlertItems
@@ -700,19 +701,19 @@ LIMIT {BATCH}"""  # noqa: S608  # fixed SQL text; domains checked against DOMAIN
 
 
 # Hook records of the last hour with a signed-in account, per account and device.
-PERSONAL_SQL = """
+PERSONAL_SQL = f"""
 SELECT lower(json_extract_string(unmapped, '$.attr.claude_account_email')) AS email,
        device_hostname
 FROM events
-WHERE template_id = 'claude_hooks'
+WHERE {HOOKS}
   AND nullif(json_extract_string(unmapped, '$.attr.claude_account_email'), '') IS NOT NULL
-GROUP BY 1, 2"""
+GROUP BY 1, 2"""  # noqa: S608  # fixed SQL text
 
 # Agents with at least $burst blocked or failed tool calls in the hour (bookkeeping left out).
 BLOCKED_SQL = f"""
 SELECT 'cc|' || coalesce(nullif(actor_user_name, ''), device_hostname, '?') AS agent, count(*)
 FROM events
-WHERE template_id = 'claude_hooks' AND message = 'claude_hooks.post_tool_use_failure'
+WHERE {HOOKS} AND message = 'claude_hooks.post_tool_use_failure'
   AND {counted("json_extract_string(unmapped, '$.attr.tool_name')")}
 GROUP BY 1
 HAVING count(*) >= $burst"""  # noqa: S608  # fixed SQL text

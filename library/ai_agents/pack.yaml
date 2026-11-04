@@ -1,7 +1,7 @@
 schema_version: 1
 id: ai_agents
 name: AI agents
-version: 1.0.0
+version: 1.1.0
 description: 'Claude Code and Cowork activity from the hooks plugin: who uses it, on which machines,
   and what the agent touched (tools, files, commands, web domains, MCP servers). Metadata only: the
   plugin keeps no prompt text or tool content. Claude Code bookkeeping calls (SubagentHandback) are
@@ -9,7 +9,7 @@ description: 'Claude Code and Cowork activity from the hooks plugin: who uses it
 queries:
 - id: agents_claude_code_users
   keys: [person]
-  answer: "{n} people used Claude Code; most recent: {first.person} on {first.machines}"
+  answer: "{count.person|person|people}, {items.accounts|account|accounts}; most recent: {first.person} on {first.machines}"
   name: Who uses Claude Code
   group: AI agents / People
   tags:
@@ -17,28 +17,39 @@ queries:
   - claude-code
   requires:
   - claude_hooks
-  why: Everyone the hooks plugin saw, with their machines, sessions, and last use.
-  normal: The people you rolled the plugin out to. A person or machine you did not expect is the one to
-    look at on the person page.
+  why: Everyone the hooks plugin saw, one row per person, with their Claude accounts, machines, sessions, and last use.
+  normal: The people you rolled the plugin out to, each with their work account. A personal account, or a person or machine you did not expect, is the one to look at on the person page.
   suggested_schedule: daily
   flag: null
-  description: 'Per person (the Claude account email, else the reported user, else the OS user): the
-    machines the plugin ran on, the number of sessions, and the last event. A replayed offline batch can
-    count twice here; the AI usage pages drop the copies.'
+  description: 'One row per person: accounts that Identities links to the same person are grouped
+    (an account with no link is its own person; linking is an administrator''s choice in
+    Identities). Accounts lists each Claude account seen, marked work or personal by the
+    organization domains; a session with no account shows "(no account reported)", and a
+    row with no name at all is not counted as a person. Test records are left out. A replayed
+    offline batch can count twice here; the AI usage pages drop the copies.'
   sql: |-
-    SELECT actor_user_name AS person,
+    SELECT coalesce({{person:actor_user_name}}, '(no account reported)') AS person,
+           array_to_string(list_sort(list(DISTINCT CASE
+             WHEN nullif(trim(json_extract_string(unmapped, '$.attr.claude_account_email')), '') IS NULL
+               THEN '(no account reported)'
+             WHEN {{org_domains}} = [''] THEN lower(trim(json_extract_string(unmapped, '$.attr.claude_account_email')))
+             WHEN list_contains({{org_domains}}, split_part(lower(trim(json_extract_string(unmapped, '$.attr.claude_account_email'))), '@', 2))
+               THEN lower(trim(json_extract_string(unmapped, '$.attr.claude_account_email'))) || ' (work)'
+             ELSE lower(trim(json_extract_string(unmapped, '$.attr.claude_account_email'))) || ' (personal)'
+           END)), ', ') AS accounts,
            string_agg(DISTINCT device_hostname, ', ' ORDER BY device_hostname) AS machines,
            count(DISTINCT json_extract_string(unmapped, '$.attr.session_id')) AS sessions,
            max(coalesce(time, time_observed)) AS last_seen
     FROM events
-    WHERE template_id = 'claude_hooks' AND coalesce(time, time_observed) BETWEEN {{start}} AND {{end}}
-    GROUP BY actor_user_name
+    WHERE (template_id = 'claude_hooks' AND NOT (coalesce(json_extract_string(unmapped, '$.attr.test_record'), '') = 'true' AND nullif(trim(actor_user_name), '') IS NULL AND nullif(trim(device_hostname), '') IS NULL)) AND coalesce(time, time_observed) BETWEEN {{start}} AND {{end}}
+    GROUP BY 1
     ORDER BY last_seen DESC
   ask:
   - 'Who uses Claude Code?'
   - 'Which people are using a coding agent?'
   - 'Who used Claude this week and on which machines?'
   - 'Who is using Claude Code, and on which machines?'
+  - 'How many people use Claude Code?'
   expect:
     rows_at_least: 1
 - id: agents_tools_by_person
@@ -69,7 +80,7 @@ queries:
            count(DISTINCT json_extract_string(unmapped, '$.attr.session_id')) AS sessions,
            max(coalesce(time, time_observed)) AS last_call
     FROM events
-    WHERE template_id = 'claude_hooks' AND message = 'claude_hooks.pre_tool_use'
+    WHERE (template_id = 'claude_hooks' AND NOT (coalesce(json_extract_string(unmapped, '$.attr.test_record'), '') = 'true' AND nullif(trim(actor_user_name), '') IS NULL AND nullif(trim(device_hostname), '') IS NULL)) AND message = 'claude_hooks.pre_tool_use'
       AND coalesce(time, time_observed) BETWEEN {{start}} AND {{end}}
       AND json_extract_string(unmapped, '$.attr.tool_name') IS NOT NULL
       AND lower(json_extract_string(unmapped, '$.attr.tool_name')) NOT IN ('subagenthandback')
@@ -113,7 +124,7 @@ queries:
            json_extract_string(unmapped, '$.attr.path') AS path, count(*) AS calls,
            max(coalesce(time, time_observed)) AS last_call
     FROM events
-    WHERE template_id = 'claude_hooks' AND message = 'claude_hooks.pre_tool_use'
+    WHERE (template_id = 'claude_hooks' AND NOT (coalesce(json_extract_string(unmapped, '$.attr.test_record'), '') = 'true' AND nullif(trim(actor_user_name), '') IS NULL AND nullif(trim(device_hostname), '') IS NULL)) AND message = 'claude_hooks.pre_tool_use'
       AND coalesce(time, time_observed) BETWEEN {{start}} AND {{end}}
       AND json_extract_string(unmapped, '$.attr.tool_name') IN ('Write', 'Edit', 'MultiEdit', 'NotebookEdit')
       AND json_extract_string(unmapped, '$.attr.path') IS NOT NULL
@@ -157,7 +168,7 @@ queries:
            count(DISTINCT json_extract_string(unmapped, '$.attr.session_id')) AS sessions,
            max(coalesce(time, time_observed)) AS last_run
     FROM events
-    WHERE template_id = 'claude_hooks' AND message = 'claude_hooks.pre_tool_use'
+    WHERE (template_id = 'claude_hooks' AND NOT (coalesce(json_extract_string(unmapped, '$.attr.test_record'), '') = 'true' AND nullif(trim(actor_user_name), '') IS NULL AND nullif(trim(device_hostname), '') IS NULL)) AND message = 'claude_hooks.pre_tool_use'
       AND coalesce(time, time_observed) BETWEEN {{start}} AND {{end}}
       AND json_extract_string(unmapped, '$.attr.program') IS NOT NULL
       AND ({{person}} = '' OR actor_user_name ILIKE '%' || {{person}} || '%')
@@ -197,7 +208,7 @@ queries:
            json_extract_string(unmapped, '$.attr.web_host') AS domain, count(*) AS calls,
            max(coalesce(time, time_observed)) AS last_call
     FROM events
-    WHERE template_id = 'claude_hooks' AND message = 'claude_hooks.pre_tool_use'
+    WHERE (template_id = 'claude_hooks' AND NOT (coalesce(json_extract_string(unmapped, '$.attr.test_record'), '') = 'true' AND nullif(trim(actor_user_name), '') IS NULL AND nullif(trim(device_hostname), '') IS NULL)) AND message = 'claude_hooks.pre_tool_use'
       AND coalesce(time, time_observed) BETWEEN {{start}} AND {{end}}
       AND json_extract_string(unmapped, '$.attr.web_host') IS NOT NULL
       AND ({{person}} = '' OR actor_user_name ILIKE '%' || {{person}} || '%')
@@ -234,7 +245,7 @@ queries:
            min(coalesce(time, time_observed)) AS first_call,
            max(coalesce(time, time_observed)) AS last_call
     FROM events
-    WHERE template_id = 'claude_hooks' AND message = 'claude_hooks.pre_tool_use'
+    WHERE (template_id = 'claude_hooks' AND NOT (coalesce(json_extract_string(unmapped, '$.attr.test_record'), '') = 'true' AND nullif(trim(actor_user_name), '') IS NULL AND nullif(trim(device_hostname), '') IS NULL)) AND message = 'claude_hooks.pre_tool_use'
       AND coalesce(time, time_observed) BETWEEN {{start}} AND {{end}}
       AND json_extract_string(unmapped, '$.attr.mcp_server_name') IS NOT NULL
     GROUP BY actor_user_name, device_hostname, json_extract_string(unmapped, '$.attr.mcp_server_name'),
@@ -280,7 +291,7 @@ queries:
              json_extract_string(unmapped, '$.attr.session_id') AS session_id,
              coalesce(time, time_observed) AS t
       FROM events
-      WHERE template_id = 'claude_hooks' AND coalesce(time, time_observed) BETWEEN {{start}} AND {{end}}
+      WHERE (template_id = 'claude_hooks' AND NOT (coalesce(json_extract_string(unmapped, '$.attr.test_record'), '') = 'true' AND nullif(trim(actor_user_name), '') IS NULL AND nullif(trim(device_hostname), '') IS NULL)) AND coalesce(time, time_observed) BETWEEN {{start}} AND {{end}}
     ),
     signed AS (
       SELECT DISTINCT lower(actor_user_name) AS email
@@ -339,7 +350,7 @@ queries:
              count(*) FILTER (WHERE message = 'claude_hooks.post_tool_use_failure') AS failed,
              max(coalesce(time, time_observed)) AS last_call
       FROM events
-      WHERE template_id = 'claude_hooks' AND coalesce(time, time_observed) BETWEEN {{start}} AND {{end}}
+      WHERE (template_id = 'claude_hooks' AND NOT (coalesce(json_extract_string(unmapped, '$.attr.test_record'), '') = 'true' AND nullif(trim(actor_user_name), '') IS NULL AND nullif(trim(device_hostname), '') IS NULL)) AND coalesce(time, time_observed) BETWEEN {{start}} AND {{end}}
         AND json_extract_string(unmapped, '$.attr.tool_name') IS NOT NULL
         AND lower(json_extract_string(unmapped, '$.attr.tool_name')) NOT IN ('subagenthandback')
       GROUP BY ALL
@@ -385,7 +396,7 @@ queries:
              AND lower(coalesce(json_extract_string(unmapped, '$.attr.tool_name'), '')) NOT IN ('subagenthandback')) AS tool_calls,
            round((epoch(max(coalesce(time, time_observed))) - epoch(min(coalesce(time, time_observed)))) / 60, 1) AS minutes
     FROM events
-    WHERE template_id = 'claude_hooks' AND coalesce(time, time_observed) BETWEEN {{start}} AND {{end}}
+    WHERE (template_id = 'claude_hooks' AND NOT (coalesce(json_extract_string(unmapped, '$.attr.test_record'), '') = 'true' AND nullif(trim(actor_user_name), '') IS NULL AND nullif(trim(device_hostname), '') IS NULL)) AND coalesce(time, time_observed) BETWEEN {{start}} AND {{end}}
       AND json_extract_string(unmapped, '$.attr.session_id') IS NOT NULL
       AND ({{person}} = '' OR actor_user_name ILIKE '%' || {{person}} || '%')
     GROUP BY json_extract_string(unmapped, '$.attr.session_id')

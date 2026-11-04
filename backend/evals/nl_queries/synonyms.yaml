@@ -33,6 +33,7 @@ questions:
   - {id: s23, question: "Web domains fetched by Claude Code", library: ai_agents/agents_web_by_person}
   - {id: s24, question: "Personal Claude accounts by machine", library: ai_agents/agents_accounts_by_machine}
   - {id: s25, question: "Claude Code tool calls with no result", library: ai_agents/agents_calls_without_result}
+  - {id: s28, question: "How many people use Claude Code?", library: ai_agents/agents_claude_code_users}
   # accessing, touching, opening: files, commands, and web domains
   - {id: s26, question: "Which path is dana touching with Claude Code?", library: ai_agents/agents_files_by_person}
   - {id: s27, question: "Which web sites did the coding agent open?", library: ai_agents/agents_web_by_person}

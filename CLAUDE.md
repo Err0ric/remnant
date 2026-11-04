@@ -122,16 +122,8 @@ Runtime data lives outside the repo at `./data/` (gitignored) or the compose vol
 - CI minutes are limited: docs-only PRs run no CI, superseded runs are cancelled, scale tests run only from the `scale` workflow, and `release-checks` runs by hand before a release and whenever an install guide's install or update commands change (not for wording)
 - Every PR description lists which Definition of Done items it satisfies
 - Two repositories, two remotes in every working checkout: `origin` is the private dev repository (fetch and push), and `public` is the public repository, publish-only, with its push URL set to `DISABLED` (`git remote set-url --push public DISABLED`) so a stray `git push public` fails. Branches and PRs go to `origin`, and `main` tracks `origin/main`. The public repository is written only by the publish step, after the leak scan and the name check pass, by pushing to its URL explicitly (`PUBLIC_URL` in `scripts/publish/publish.sh`), never through a remote.
-- At the start of every session, check `git remote -v`. The session environment can reset `origin` to the public repository with pushing enabled; if it has, re-apply the layout before any push:
-  ```
-  git remote set-url origin https://github.com/Err0ric/remnant-dev
-  git remote set-url --push origin https://github.com/Err0ric/remnant-dev
-  git remote add public https://github.com/Err0ric/remnant 2>/dev/null || git remote set-url public https://github.com/Err0ric/remnant
-  git remote set-url --push public DISABLED
-  git fetch origin && git branch --set-upstream-to=origin/main main
-  ```
-  The environment's unpushed-commits check compares branches against `origin`, so with this layout it sees merged and pushed work as pushed
-- Publishing: `scripts/publish/publish.sh` (with `scan.py` and `test.sh`) holds no names and is never published (`.gitattributes` export-ignore). Before any publish, fetch the denylist from the Project doc `claude/publish-denylist.md` into a temporary file outside the repository and pass it with `--denylist` or `REMNANT_DENYLIST`; the script stops with `NOT PUBLISHED` if it is missing, unreadable, or empty. Never commit the denylist to either repository
+- The session environment can reset `origin` to the public repository with pushing enabled (it has, twice, once with `main` reset onto the public history). Two guards that do not depend on remembering (D207): `scripts/dev/session-check.sh`, run first in every session (section 8), puts the remotes back to this layout, points `main` at `origin/main`, warns when `main` holds commits that are not on `origin/main`, installs the pre-push guard, and prints `git remote -v`; the guard (`scripts/dev/pre-push`, installed into the checkout's hooks folder because git does not commit hooks) refuses any push whose URL is the public repository unless `REMNANT_PUBLISH=1`, which `publish.sh` sets only for its own two pushes, after the scans pass. Both are export-ignored, like `scripts/publish`. Tests: `bash scripts/dev/test.sh` and `bash scripts/publish/test.sh`. The environment's unpushed-commits check compares branches against `origin`, so with this layout it sees merged and pushed work as pushed
+- Publishing: `scripts/publish/publish.sh` (with `scan.py` and `test.sh`) holds no names and is never published (`.gitattributes` export-ignore, as `scripts/dev` is). It installs the push guard in its own clone of the public repository too. Before any publish, fetch the denylist from the Project doc `claude/publish-denylist.md` into a temporary file outside the repository and pass it with `--denylist` or `REMNANT_DENYLIST`; the script stops with `NOT PUBLISHED` if it is missing, unreadable, or empty. Never commit the denylist to either repository
 - PRs are squash-merged on GitHub, so the commits on `main` are made and signed by GitHub (committer `noreply@github.com`). That is expected: never rewrite or force-push `main` to change their author or committer. Keep `origin` fetched, so tools that look for unpushed commits see them as pushed
 
 ## 5. Security rules
@@ -283,7 +275,7 @@ A slice is done when every box below is checked, demoed end to end from a fresh 
 
 ## 8. How to work in a session
 
-1. Read `docs/SPEC.md` sections relevant to the task and the slice's DoD above. For any UI work also read `docs/DESIGN.md`.
+1. Run `sh scripts/dev/session-check.sh` first, before any fetch, reset, or push (Git, D207). Then read `docs/SPEC.md` sections relevant to the task and the slice's DoD above. For any UI work also read `docs/DESIGN.md`.
 2. State the plan in 5 lines or fewer before editing.
 3. Write the test first for parsers, guards, and the gate.
 4. Keep PRs under ~400 lines of non-fixture diff.

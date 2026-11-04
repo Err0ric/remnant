@@ -85,6 +85,21 @@ Steps 1 and 2 try deterministic code first and ask the model only for what code 
 - Slice 1c (2026-11-02): the headline is code (`app/search/ask_summary.py`); the answer call (`app/llm/ask_summary.py`, prompt `ask_answer.v1`) is audited under purpose `ask`, as routing is. Rows for it are kept server-side from the run, never sent back by the client. Statements are removed when they cite no sent row, or any id that was not sent. Output cap 600 tokens (row 15 said 400). **Proposed, pending review:** the evidence query for aggregates (row 8) is not built; a result without `event_id` gets the headline and rows only (D171).
 - Benchmark (owner, 2026-11-03): the CPU-only run on a shared 4 vCPU box (condition 4, row 18) is dropped; the work install already runs its model on a separate machine. `ask.summarize` on and off is measured in the formal run on the GPU hardware once it arrives, against the model that runs there (`evals.nl_queries.side_by_side`).
 
+## Amendment (owner, 2026-11-04): people from Identities in library SQL
+
+Context: "Who uses Claude Code" answered "3 people" for one person with a work and a personal Claude account (and a test record). Library SQL read only `events`; Identities (ADR-0018) was applied only by AI usage and Investigate, in code. The owner chose a placeholder over an Ask-only regroup and over a domain-only key.
+
+| # | Decision |
+|---|---|
+| A1 | Library and saved SQL may use `{{person:<column>}}`: the person a name in that column belongs to, by the same key Investigate and AI usage use (lower case, `DOMAIN\` removed, an organization address reduced to its login), then the aliases an administrator set. `{{org_domains}}` is the organization email domains. Both compile to SQL over bound parameters (`$id_org`, `$id_from`, `$id_to`); the alias table is never pasted into SQL text, and the client can never supply those values (they are dropped from a request's `params`) |
+| A2 | **The lookup happens at run time, inside the caller's own query** (owner condition). Ask, Search, saved searches, schedules, and "Show events" load Identities when the query runs, and the query reads only the caller's `events` view (rule 13). A link added or removed changes the next run; nothing stored changes |
+| A3 | **An account with no Identities link stays its own person; nothing is guessed** (owner condition). Only the deterministic key and an administrator's alias merge names. A blank name is never a person: the ai_agents query shows "(no account reported)" and its headline does not count that row |
+| A4 | **Linking a personal account (an address outside the organization domains) to a person is a manual administrator action in Identities, audited `identity.change`. Never auto-linked by name similarity** (owner condition). Suggestions stay suggestions until an administrator accepts one (ADR-0018 row 4) |
+| A5 | Headline templates gain `{count.<col>}` (rows with a real value, not blank and not a "(...)" label), `{items.<col>}` (comma-separated real values across rows), and optional words, `{count.person|person|people}`. Still written by code, never sent to a model |
+| A6 | Live (ADR-0036) does not follow a query with these placeholders: it says so instead |
+
+ATLAS: no new model exposure. The model never sees the alias table or the placeholder values; the route still sends only the question and reviewed example questions. Misattribution (T4, SPEC 7.1) is bounded by A3 and A4: a merge only ever follows an audited administrator link.
+
 ## Consequences
 
 - Most answers come from tested library SQL, so accuracy rises with the library, not only with the model. Library packs gain `answer` and `ask` fields and need phrasings in review.

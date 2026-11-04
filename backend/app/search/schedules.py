@@ -49,6 +49,7 @@ from app.engine.views import permitted_sources, scope_sources
 from app.meta.audit import AuditLog
 from app.meta.db import MetaDB
 from app.search.cron import PRESETS, Cron
+from app.search.identity import IdentityStore, identity_values
 from app.search.params import bind, compile_sql
 from app.search.saved import SavedSearch, SavedSearchStore
 
@@ -643,6 +644,8 @@ class ScheduleService:
             if sched.kind == "search":
                 search = self._searches.get(sched.target_id, owner)
                 values = bind(search.params, sched.params, start, last, search.sql)
+                # {{person:...}}: Identities as they are at this run (D205).
+                values |= identity_values(search.sql, IdentityStore(self._meta))
                 allowed = permitted_sources(self._meta, owner)
                 sources = scope_sources(allowed, search.sources)
                 scope = QueryScope(sources, start, last)

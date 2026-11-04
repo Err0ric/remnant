@@ -25,7 +25,7 @@ from app.core.errors import ConflictError, QueryRejectedError
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.ingest.connectors import anthropic, loki, m365
 from app.meta.db import MetaDB
-from app.search.params import RESERVED, compile_sql, placeholders
+from app.search.params import RESERVED, compile_sql, placeholders, uses_identities
 
 POLL_S = 2.0
 LAG_EVERY_S = 10.0
@@ -54,6 +54,8 @@ def live_sql(sql: str, newest: bool = False) -> str:
     Adds the cursor columns and the cursor condition; `{{start}}` and `{{end}}` become the
     stream's start and an open end. The engine still guards the result."""
     names = placeholders(sql)
+    if uses_identities(sql):
+        raise QueryRejectedError("Live does not follow {{person:...}} or {{org_domains}} queries")
     if names - RESERVED:
         raise QueryRejectedError("Live takes no parameters other than {{start}} and {{end}}")
     text = compile_sql(sql).strip().rstrip(";").strip()

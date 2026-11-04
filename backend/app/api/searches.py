@@ -20,6 +20,7 @@ from app.core.errors import AppError, PayloadTooLargeError, SearchInvalidError
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.engine.views import permitted_sources, scope_sources
 from app.meta.db import MetaDB
+from app.search.identity import identity_values
 from app.search.params import bind, compile_sql
 from app.search.saved import SavedSearch, SavedSearchIn, SavedSearchStore
 from app.search.schedules import ScheduleService
@@ -114,6 +115,9 @@ async def run_search(
     end = body.end or datetime.now(UTC)
     start = body.start or end - timedelta(hours=24)
     values = bind(search.params, body.params, start, end, search.sql)
+    values |= await run_in_threadpool(
+        identity_values, search.sql, getattr(request.app.state, "identities", None)
+    )  # {{person:...}}: Identities as they are now (D205)
 
     meta: MetaDB = request.app.state.meta
     allowed = await run_in_threadpool(permitted_sources, meta, user)

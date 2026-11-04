@@ -23,7 +23,7 @@ from app.search.ask_route import (
 )
 from app.search.identity import IdentityMap
 from app.search.library import Library
-from app.search.params import compile_sql, placeholders
+from app.search.params import IDENTITY_PARAMS, compile_sql, placeholders, uses_identities
 
 DESCRIBE_TIMEOUT_S = 10.0
 
@@ -55,7 +55,7 @@ def output_columns(
 ) -> list[str]:
     """The library query's output column names, from a zero-row run on the asker's view."""
     used = placeholders(sql)
-    params = {k: v for k, v in params.items() if k in used}
+    params = {k: v for k, v in params.items() if k in used or k in IDENTITY_PARAMS}
     res = engine.run(
         f"SELECT * FROM (\n{compile_sql(sql)}\n) AS q LIMIT 0",  # noqa: S608  # reviewed library SQL
         scope,
@@ -104,6 +104,8 @@ def route_question(
     values = dict(params)
     values.setdefault("start", when.start or datetime(1970, 1, 1, tzinfo=now.tzinfo))
     values.setdefault("end", when.end or now)
+    if uses_identities(q.sql):  # {{person:...}}: the Identities links as they are now (D205)
+        values |= (ident or IdentityMap()).sql_values()
     columns = output_columns(engine, q.sql, when, values)
     p = plan(q, columns, entities, params, ident)
     if p.unused:

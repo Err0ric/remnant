@@ -15,6 +15,7 @@ from app.ingest.writer import LakeWriter
 from app.main import create_app
 from app.search.ask_drill import drill_sql
 from app.search.ask_summary import TEMPLATE, sample
+from app.search.identity import identity_values
 from app.search.library import LIBRARY_DIR, Pack, load, load_dir
 from app.search.params import bind, compile_sql
 from app.templates.loader import parse_template
@@ -68,10 +69,11 @@ def engine(tmp_path_factory: pytest.TempPathFactory) -> Any:
 @pytest.mark.parametrize(("pack", "query_id"), CASES)
 def test_library_query_runs_on_fixtures(engine: Any, pack: Pack, query_id: str) -> None:
     q = next(x for x in pack.queries if x.id == query_id)
-    values = bind(q.params, {}, START, END, q.sql)
+    # {{person:...}}: an empty Identities map here, as on a fresh install (D205).
+    values = bind(q.params, {}, START, END, q.sql) | identity_values(q.sql, None)
     res = engine.run(compile_sql(q.sql), QueryScope(None, START, END), values)
     if q.answer:  # ADR-0042 row 6: the headline names only columns the query returns
-        named = {k.removeprefix("first.") for k in TEMPLATE.findall(q.answer)} - {"n"}
+        named = {k.partition(".")[2] for k, _, _ in TEMPLATE.findall(q.answer)} - {""}
         assert named <= set(res.columns), f"answer names {sorted(named - set(res.columns))}"
     if "event_id" in res.columns and res.rows:  # D171: Ask's summary can cite these rows
         rows = sample(res.columns, res.rows, res.truncated)
@@ -88,7 +90,9 @@ def test_library_query_runs_on_fixtures(engine: Any, pack: Pack, query_id: str) 
             p.name: p.default for p in q.params if p.default is not None
         })  # fmt: skip
         shown = engine.run(
-            compile_sql(sql), QueryScope(None, START, END), {"start": START, "end": END}
+            compile_sql(sql),
+            QueryScope(None, START, END),
+            {"start": START, "end": END} | identity_values(sql, None),
         )
         assert shown.rows, f"no events behind the first row: {sql}"
     e = q.expect

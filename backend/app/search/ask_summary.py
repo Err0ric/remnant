@@ -14,6 +14,7 @@ import re
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 ANSWER_ROWS = 20  # rows a model may see (ADR-0042 row 8)
 MAX_VALUE = 300  # characters per value sent
@@ -22,10 +23,43 @@ MAX_CHARS = 7_000  # the rows as JSON, about 2,000 tokens: the answer prompt sta
 MAX_CLAIMS = 5
 FIRST_COLUMNS = 3  # values of the first row shown in a generic headline
 
-TEMPLATE = re.compile(r"\{(n|first\.[a-z_][a-z0-9_]{0,63})\}")
+# `{n}` rows, `{first.<col>}` the first row's value, `{count.<col>}` rows whose value is a
+# real one (not blank, not a "(...)" label such as "(no account reported)"), and
+# `{items.<col>}` the comma-separated real values across all rows. A count may carry its
+# words, `{count.person|person|people}`: "1 person", "3 people" (D205).
+TEMPLATE = re.compile(
+    r"\{(n|first\.[a-z_][a-z0-9_]{0,63}|count\.[a-z_][a-z0-9_]{0,63}|items\.[a-z_][a-z0-9_]{0,63})"
+    r"(?:\|([a-z][a-z ]{0,29})\|([a-z][a-z ]{0,29}))?\}"
+)
 
 
-def _show(value: Any) -> str:
+def _real(value: Any) -> bool:
+    text = "" if value is None else str(value).strip()
+    return bool(text) and not text.startswith("(")
+
+
+def _count(key: str, columns: list[str], rows: list[list[Any]]) -> int | None:
+    kind, _, col = key.partition(".")
+    if kind == "n":
+        return len(rows)
+    if col not in columns:
+        return None
+    i = columns.index(col)
+    if kind == "count":
+        return sum(1 for r in rows if _real(r[i]))
+    return sum(sum(1 for x in str(r[i]).split(", ") if _real(x)) for r in rows if r[i] is not None)
+
+
+def _zone(tz: str | None) -> ZoneInfo | None:
+    if not tz:
+        return None
+    try:
+        return ZoneInfo(tz)
+    except (ZoneInfoNotFoundError, ValueError):
+        return None
+
+
+def _show(value: Any, tz: str | None = None) -> str:
     if value is None:
         return "none"
     if isinstance(value, bool):
@@ -35,7 +69,14 @@ def _show(value: Any) -> str:
     if isinstance(value, float):
         return f"{value:,.2f}".rstrip("0").rstrip(".")
     if isinstance(value, datetime):
-        return value.strftime("%Y-%m-%d %H:%M UTC")
+        # The asker's zone, as times read everywhere else (owner, 2026-11-04); UTC when the
+        # browser sent none or an unknown one.
+        zone = _zone(tz)
+        if zone is None or value.tzinfo is None:
+            return value.strftime("%Y-%m-%d %H:%M UTC")
+        local = value.astimezone(zone)
+        hour = local.strftime("%I").lstrip("0") or "12"
+        return f"{local.strftime('%b')} {local.day}, {hour}:{local.strftime('%M %p %Z')}"
     if isinstance(value, date):
         return value.isoformat()
     text = str(value)
@@ -51,6 +92,7 @@ def headline(
     rows: list[list[Any]],
     truncated: bool,
     template: str | None = None,
+    tz: str | None = None,
 ) -> str:
     """One sentence about the result, written by code. A template names `{n}` (rows) and
     `{first.<column>}` (the first row's value); when the result cannot fill it, the
@@ -60,20 +102,28 @@ def headline(
         return "No matching rows in this time range."
     first = dict(zip(columns, rows[0], strict=False))
     if template:
-        names = TEMPLATE.findall(template)
-        if all(k == "n" or k.removeprefix("first.") in first for k in names):
+        names = [m[0] for m in TEMPLATE.findall(template)]
+        if all(
+            (k.removeprefix("first.") in first)
+            if k.startswith("first.")
+            else _count(k, columns, rows) is not None
+            for k in names
+        ):
 
             def fill(m: re.Match[str]) -> str:
-                key = m.group(1)
-                return f"{n:,}" if key == "n" else _show(first[key.removeprefix("first.")])
+                key, one, many = m.group(1), m.group(2), m.group(3)
+                if key.startswith("first."):
+                    return _show(first[key.removeprefix("first.")], tz)
+                c = _count(key, columns, rows) or 0
+                return f"{c:,} {one if c == 1 else many}" if one else f"{c:,}"
 
             text = TEMPLATE.sub(fill, template)
             return text + (" (more rows than shown)" if truncated else "")
     shown = [(c, v) for c, v in first.items() if c != "event_id" and v is not None]
     if n == 1 and len(columns) <= 4:
-        return "; ".join(f"{c}: {_show(v)}" for c, v in shown) or "1 row."
+        return "; ".join(f"{c}: {_show(v, tz)}" for c, v in shown) or "1 row."
     count = f"More than {n:,} rows" if truncated else _rows(n)
-    lead = ", ".join(f"{c} {_show(v)}" for c, v in shown[:FIRST_COLUMNS])
+    lead = ", ".join(f"{c} {_show(v, tz)}" for c, v in shown[:FIRST_COLUMNS])
     return f"{count}. First row: {lead}." if lead else f"{count}."
 
 

@@ -79,7 +79,8 @@ class LibraryQuery(BaseModel):
     ] = Field(default_factory=list, max_length=5)
 
     # The answer headline, written by code from the result (ADR-0042 row 6): `{n}` is the
-    # row count and `{first.<column>}` a value of the first row. Never sent to a model.
+    # row count, `{first.<column>}` a value of the first row, `{count.<column>}` and
+    # `{items.<column>}` counts of real values (ask_summary.TEMPLATE). Never sent to a model.
     answer: Annotated[str, StringConstraints(strip_whitespace=True, max_length=160)] | None = None
 
     # Group keys (D173): output columns whose values pick out one row's events, so Ask can
@@ -125,7 +126,8 @@ def check(pack: Pack) -> None:
             raise ConfigError(f"{pack.id}/{q.id}: give a default for {', '.join(sorted(missing))}")
         if q.answer is not None and re.sub(TEMPLATE, "", q.answer).count("{"):
             raise ConfigError(
-                f"{pack.id}/{q.id}: answer may name only {{n}} and {{first.<column>}}"
+                f"{pack.id}/{q.id}: answer may name only {{n}}, {{first.<column>}},"
+                " {count.<column>}, and {items.<column>}, optionally with |one|many"
             )
         if q.keys:
             try:

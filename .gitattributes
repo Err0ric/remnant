@@ -1,1 +1,2 @@
 scripts/publish export-ignore
+scripts/dev export-ignore

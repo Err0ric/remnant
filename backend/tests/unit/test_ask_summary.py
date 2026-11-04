@@ -34,6 +34,19 @@ def test_headline_from_a_template_or_the_first_row() -> None:
     assert headline(["total"], [[42]], False) == "total: 42"
 
 
+def test_headline_times_read_in_the_askers_zone() -> None:
+    """Owner, 2026-11-04: times in Ask read as everywhere else, in the viewer's zone."""
+    t = datetime(2026, 10, 21, 16, 5, tzinfo=UTC)
+    tpl = "Last used {first.last_seen}"
+    assert headline(["last_seen"], [[t]], False, tpl, "America/Los_Angeles") == (
+        "Last used Oct 21, 9:05 AM PDT"
+    )
+    assert headline(["last_seen"], [[t]], False, tpl) == "Last used 2026-10-21 16:05 UTC"
+    assert headline(["last_seen"], [[t]], False, tpl, "Not/AZone") == (
+        "Last used 2026-10-21 16:05 UTC"
+    )
+
+
 def test_headline_skips_event_ids_and_nulls() -> None:
     at = datetime(2026, 11, 2, 9, 30, tzinfo=UTC)
     got = headline(["event_id", "time", "user", "client"], [[A, at, "dana", None]] * 3, False)

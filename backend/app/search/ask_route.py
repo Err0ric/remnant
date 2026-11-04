@@ -209,6 +209,10 @@ def _text(q: LibraryQuery) -> str:
     return " ".join([q.name, q.group, " ".join(q.tags), " ".join(q.ask), q.description])
 
 
+def _plain(text: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", text.lower()))
+
+
 def rank(question: str, library: Library, seen: set[str], top: int = CANDIDATES) -> list[Candidate]:
     """Library queries offered to this viewer (their templates have events), best first,
     by the share of the question's words each one covers. Zero-score queries are left
@@ -227,6 +231,11 @@ def rank(question: str, library: Library, seen: set[str], top: int = CANDIDATES)
                 continue
             phrase = max((len(want & words(a)) for a in q.ask), default=0)
             score = len(hits) / len(want) + 0.5 * phrase / len(want)
+            # One of its own example questions, word for word: synonyms can make two
+            # queries cover the same words ("people" and "account" are both a user), and
+            # the reviewed example decides (owner, 2026-11-04).
+            if any(_plain(a) == _plain(question) for a in q.ask):
+                score += 0.25
             out.append(Candidate(pack, q, round(score, 3)))
     out.sort(key=lambda c: (-c.score, c.ref))
     return out[:top]

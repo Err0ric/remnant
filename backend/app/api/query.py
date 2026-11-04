@@ -19,7 +19,8 @@ from app.engine.views import permitted_sources, scope_sources
 from app.enrich.geoip import GeoIP
 from app.enrich.intel import ThreatIntel
 from app.meta.db import MetaDB
-from app.search.params import RESERVED, compile_sql, placeholders
+from app.search.identity import identity_values
+from app.search.params import IDENTITY_PARAMS, PERSON, RESERVED, compile_sql, placeholders
 from app.search.presets import presets
 from app.search.refine import refine_sql
 from app.search.simple import MAX_TEXT, compile_search
@@ -82,15 +83,23 @@ def _intel(request: Request, rows: list[list[object]]) -> dict[str, list[IntelHi
 
 
 def _placeholders(
-    sql: str, given: dict[str, Any], start: datetime | None, end: datetime | None
+    sql: str,
+    given: dict[str, Any],
+    start: datetime | None,
+    end: datetime | None,
+    identities: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """`{{start}}`, `{{end}}`, and `{{name}}` work here as in a saved search (SPEC 5.4), so
     a query written for saving runs on the Search page as it will when saved: start and
-    end come from the time range, other names from `params`, all bound by the driver."""
+    end come from the time range, other names from `params`, all bound by the driver.
+    `{{person:col}}` and `{{org_domains}}` read Identities as they are now (D205); the
+    client can never supply those values."""
     names = placeholders(sql)
-    if not names:
-        return sql, dict(given)
-    values: dict[str, Any] = {k: v for k, v in given.items() if k not in RESERVED}
+    if not names and not identities:
+        return compile_sql(sql) if PERSON.search(sql) else sql, dict(given)
+    values: dict[str, Any] = {
+        k: v for k, v in given.items() if k not in RESERVED and k not in IDENTITY_PARAMS
+    }
     missing = sorted(n for n in names - RESERVED if n not in values)
     if missing:
         raise ParamInvalidError(f"No value for {', '.join('{{' + n + '}}' for n in missing)}")
@@ -98,7 +107,13 @@ def _placeholders(
         values["start"] = start or datetime(1970, 1, 1, tzinfo=UTC)
     if "end" in names:
         values["end"] = end or datetime.now(UTC)
+    values |= identities or {}
     return compile_sql(sql), values
+
+
+async def _identities(request: Request, sql: str) -> dict[str, Any]:
+    store = getattr(request.app.state, "identities", None)
+    return await run_in_threadpool(identity_values, sql, store)
 
 
 async def _run_audited(
@@ -123,7 +138,8 @@ async def _run_audited(
         "sources_in_scope": "all" if sources is None else sources,
         **(extra or {}),
     }
-    sql, values = _placeholders(body.sql, body.params, body.start, body.end)
+    ids = await _identities(request, body.sql)
+    sql, values = _placeholders(body.sql, body.params, body.start, body.end, ids)
     try:
         result = await run_in_threadpool(
             lambda: engine.run(sql, scope, values or None, name=action, large=True)
@@ -281,7 +297,8 @@ async def search_facets(body: FacetRequest, request: Request, user: CurrentUser)
         query, params = compiled.sql, compiled.params
         wanted = list(FACET_COLUMNS)
     elif body.sql is not None:
-        query, params = _placeholders(body.sql, body.params, body.start, body.end)
+        ids = await _identities(request, body.sql)
+        query, params = _placeholders(body.sql, body.params, body.start, body.end, ids)
         wanted = [c for c in FACET_COLUMNS if c in set(body.columns)]
     else:
         raise SearchInvalidError("Send the search text or the SQL")

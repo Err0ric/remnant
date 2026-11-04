@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.ai.internal_tools import counted
+from app.ai.test_records import HOOKS
 from app.core.errors import NotFoundError, ParamInvalidError
 from app.engine.duckdb import QueryEngine, QueryScope
 
@@ -27,7 +28,7 @@ def _a(key: str) -> str:
 # number name a record, so the copy is left out (ADR-0026 offline queue).
 _ONE_COPY = f"""hooks AS (
   SELECT * FROM events
-  WHERE template_id = 'claude_hooks'
+  WHERE {HOOKS}
   QUALIFY {_a("seq")} IS NULL OR row_number() OVER (
     PARTITION BY {_a("install_id")}, {_a("seq")} ORDER BY time_observed, event_id) = 1
 )"""  # noqa: S608  # fixed SQL text
