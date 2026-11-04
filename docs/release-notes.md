@@ -5,6 +5,9 @@
 ### MCP: saved and library queries run as written (2026-11-04)
 
 - `run_query` on the MCP server fills `{{start}}`, `{{end}}`, `{{org_domains}}`, and `{{person:...}}` the way Logs, saved searches, schedules, and Ask do, so "Who uses Claude Code" gives the same people there. Any other `{{name}}` is refused with a reason.
+- `local_only` still applies: with the MCP endpoint not marked local, the Claude Code rows, and so the people and accounts, are withheld.
+- What changes for existing installs: nothing to do.
+
 ### Logs: the Filters button says Run (2026-11-04)
 
 - The button that runs a search in Logs Filters mode now says **Run**, so "Search" names nothing on that page. The README describes Logs (Filters, SQL) and Ask AI.
@@ -64,15 +67,20 @@
 - New: a personal Claude account on a company device (medium, once per account and device) and 10 or more blocked or failed tool calls in an hour for one agent (high).
 - What changes for existing installs: on the first start, open duplicate alerts from before are merged into the oldest one of each group; each merge is audited and the others close as Merged. New settings: `agents.learning_days` (14), `agents.blocked_burst` (10), `sources.gap_renotify_min_back` (15 minutes), and `sources.gap_max_notify_per_day` (3).
 - What changes for existing installs: on the first start, open duplicate alerts from before are merged into the oldest one of each group; each merge is audited and the others close as Merged. New settings: `agents.learning_days` (14) and `agents.blocked_burst` (10).
+
 ### The menu shows where you are (2026-11-03)
 
 - In the left menu, sub-pages hang on a thin line, and the page you are on has a short blue bar beside it and a bolder label, instead of a filled box.
 - When you fold a section, the bar moves to the section's own row, so you can still tell where you are.
+- What changes for existing installs: nothing to do.
+
 ### One page per person (2026-11-03)
 
 - A person's page in Investigate has five tabs: **Identity and M365** (summary, connections, and Microsoft 365 sign-ins), **AI use**, **Hosts and devices**, **Alerts**, and **Timeline**. AI usage, Agents, and People and devices all open this page.
 - **Hosts and devices** lists the hosts and source addresses on the person's records, with events, failed sign-ins, and last seen. Each opens its own page.
 - The separate Sessions and Sign-ins tabs are gone: Claude sessions are under AI use and sign-ins under Identity and M365.
+- What changes for existing installs: nothing to do.
+
 ### People and devices lists everyone, with the score explained (2026-11-03)
 
 - **Investigate > People & devices** lists every user, IP address, and host seen in the range, not only those a detection rule matched. Ties go to the busier one, so the list is never empty while there is data.
@@ -97,16 +105,22 @@
 - Investigate's person page has an **AI use** tab: flags first (personal Claude account, blocked or failed tool calls, files written outside the session's folder, shell commands, a new MCP server), then the person's Claude accounts and devices, AI services seen on the network, Claude Code sessions newest first with a one-line summary, and what the agent used in the range: tools, files written or edited, commands, web domains, and MCP servers.
 - Any person named on AI usage or Agents opens this tab.
 - Metadata only, as before: no prompt text or tool content.
+- What changes for existing installs: nothing to do.
+
 ### Session rows say what each session did (2026-11-03)
 
 - Each row in **Agents > Sessions** shows how long the session ran, its prompts, tool calls, files touched, web domains, and its three most used tools.
 - Badges flag a blocked or failed call, a personal Claude account, and a new MCP server.
 - Filter the list by person, machine, tool, or sessions with flags.
+- What changes for existing installs: nothing to do.
+
 ### AI usage > People says "Not reported" instead of zero (2026-11-03)
 
 - Cost and tokens read "Not reported" for people whose Claude Code sends no telemetry, instead of 0.00 and 0.
 - People seen only on the network (DNS, firewall, or proxy) show the Claude services, lookups, devices, and last seen the network gives, instead of empty columns.
 - A network name not linked to a person reads "Unmatched", names the person it may be, and has a link that opens Identities with the alias filled in, so one click and a save merges them.
+- What changes for existing installs: nothing to do.
+
 ### Dashboard no longer fails after you have used Search (2026-11-03)
 
 - Opening the Dashboard after Search could show "could not be shown" with an error id, because both pages kept a different list of sources under the same name in the browser. They no longer share it, and Dashboard sections now show what they can even when a response is missing some of its lists.
@@ -142,6 +156,8 @@
 ### Example questions in Ask (2026-11-03)
 
 - Before your first question, Ask shows up to six example questions that fit the sources this install has data from, such as "Who logged in over SSH?". One click asks it.
+- What changes for existing installs: nothing to do.
+
 ### AI Watch and Dashboard sections no longer fail during compaction (2026-11-03)
 
 - Compaction, which merges small log files every hour, now keeps the files it replaces for 30 minutes before deleting them. A search or background check that had already started reading them finishes normally instead of failing with "Cannot open file". This was the cause of AI Watch failing every hour on busy sources, and of Dashboard sections such as Attacks and access failing to load.
@@ -227,6 +243,7 @@
 
 - A new install page, **Ask on a CPU-only server**, covers running Ollama next to the app on one machine with no GPU: which small model to pull, how to split 8 GB between the model and the app's query memory, and what speed to expect.
 - What changes for existing installs: nothing. It is documentation only.
+
 ### Why a Claude plugin token was refused (2026-11-02)
 
 - **Settings > Claude plugins** now lists, under each deployment token, every machine that sent with it and when it was last seen, and the last reason the server refused that token: revoked, its source turned off or removed, a bad payload, or too many requests.
@@ -239,6 +256,7 @@
 - `install-local.sh --doctor` and `install-local.ps1 -Doctor` check a machine and print a pass or fail list: config, certificate, server, token (with one test record), whether Claude lists the plugin, and the hook's last status.
 - The hooks guide now says which install paths are known to fire hooks and which are untested, and has a troubleshooting table for the status file.
 - What changes for existing installs: download the plugin again and reinstall it to get 2.2.0.
+
 ### Quiet alerts off on existing Claude Code sources (2026-11-02)
 
 - On the first start after this update, the server turns off the 1-hour quiet alert on existing OpenTelemetry sources that still have it exactly as it was set when the source was added (no alert targets, never edited). Quiet alerts you changed are kept. Each change is in the audit log as `source.quiet_alert_change`, with the reason.
