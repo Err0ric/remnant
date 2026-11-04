@@ -75,8 +75,8 @@ describe("Dashboard sections whatever the response (D194)", () => {
     await settled();
   });
 
-  it("opens after Search without mixing up their source lists", async () => {
-    await openDashboard("empty", "/investigate/search");
+  it("opens after Logs without mixing up their source lists", async () => {
+    await openDashboard("empty", "/investigate/logs");
     await screen.findByRole("heading", { level: 1, name: "Investigate" });
     await new Promise((r) => setTimeout(r, 300)); // Search's source filter has loaded
     window.history.pushState(null, "", "/dashboard");

@@ -376,7 +376,7 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
           alerts={alerts.data}
           isAdmin={isAdmin}
           now={now}
-          onEvents={() => navigate("search")}
+          onEvents={() => navigate("logs")}
           onSources={() => setTab("sources")}
           onAttention={() => navigate("alerts")}
           onDelivery={() => setTab("alerts")}

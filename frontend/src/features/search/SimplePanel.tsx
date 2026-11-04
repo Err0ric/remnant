@@ -50,7 +50,7 @@ export function SimplePanel({
   };
   return (
     <div>
-      <form aria-label="Simple search" onSubmit={submit} className="flex flex-col gap-2">
+      <form aria-label="Filters" onSubmit={submit} className="flex flex-col gap-2">
         <div className="flex flex-wrap gap-2">
           <div className="flex min-w-0 flex-[1_1_240px] gap-2">
             <label htmlFor="simple-search" className="sr-only">
@@ -134,7 +134,7 @@ export function SimplePanel({
               onClick={() => onMoveToSql(text.trim())}
               className="rounded border border-border-strong px-2 py-0.5 text-text hover:bg-surface-head"
             >
-              Run it in the SQL tab
+              Run it in SQL mode
             </button>
           </p>
         ) : null}

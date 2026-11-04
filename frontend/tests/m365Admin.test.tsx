@@ -161,7 +161,7 @@ describe("Microsoft 365 > Admin (owner, 2026-11-01)", () => {
     expect(within(table).getByText("Success")).toBeVisible();
     expect(within(table).getByRole("button", { name: "2" })).toHaveAttribute(
       "title",
-      "Open 2 events in Search",
+      "Open 2 events in Logs",
     );
     await userEvent.click(screen.getByRole("checkbox", { name: "Hide routine" }));
     const all = screen.getByRole("table", { name: "Admin changes: Users" });

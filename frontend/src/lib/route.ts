@@ -6,7 +6,7 @@ import { useSyncExternalStore } from "react";
 export type PageId =
   | "home"
   | "overview"
-  | "search"
+  | "logs"
   | "ask"
   | "sources"
   | "templates"
@@ -37,8 +37,8 @@ export type PageId =
 const PATHS: Record<PageId, string> = {
   home: "/",
   overview: "/overview",
-  search: "/investigate/search",
-  ask: "/ask",
+  logs: "/investigate/logs",
+  ask: "/ask-ai",
   sources: "/sources",
   templates: "/templates",
   users: "/users",
@@ -81,7 +81,10 @@ export const PAGE_TABS: Partial<Record<PageId, readonly string[]>> = {
 /** Paths before ADR-0038, kept so links already sent (alert messages, bookmarks) open the
  * same place. A legacy path's `#tab` becomes the tab segment. */
 const LEGACY: Record<string, PageId> = {
-  "/search": "search",
+  "/search": "logs",
+  // Logs and Ask AI before their names settled (D206); search state in the fragment is kept.
+  "/investigate/search": "logs",
+  "/ask": "ask",
   "/saved": "saved",
   "/rules": "rules",
   "/schedules": "schedules",

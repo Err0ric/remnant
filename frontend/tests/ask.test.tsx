@@ -34,10 +34,39 @@ async function askQuestion(text: string) {
 
 afterEach(() => vi.restoreAllMocks());
 
+describe("Old addresses (D206)", () => {
+  it("/ask redirects to /ask-ai, replacing the entry", async () => {
+    const before = window.history.length;
+    await renderAt("/ask");
+    expect(await screen.findByLabelText("Question")).toBeVisible();
+    await vi.waitFor(() => expect(window.location.pathname).toBe("/ask-ai"));
+    expect(window.history.length).toBe(before);
+  });
+
+  it("/search redirects to /investigate/logs, keeping the search in the fragment", async () => {
+    await renderAt("/search#tab=sql&q=SELECT%2042%20AS%20kept&range=7d");
+    await vi.waitFor(() => expect(window.location.pathname).toBe("/investigate/logs"));
+    expect(await screen.findByRole("tab", { name: "SQL", selected: true })).toBeVisible();
+    expect(new URLSearchParams(window.location.hash.slice(1)).get("q")).toBe("SELECT 42 AS kept");
+  });
+
+  it("/investigate/search redirects to /investigate/logs with its fragment", async () => {
+    await renderAt("/investigate/search#tab=sql&q=SELECT%207&range=24h");
+    await vi.waitFor(() => expect(window.location.pathname).toBe("/investigate/logs"));
+    expect(await screen.findByRole("tab", { name: "SQL", selected: true })).toBeVisible();
+    expect(new URLSearchParams(window.location.hash.slice(1)).get("q")).toBe("SELECT 7");
+  });
+});
+
 describe("Ask (ADR-0042 slice 1a)", () => {
   it("runs the answer by its id, shows the rows, and keeps the SQL under How I got this", async () => {
-    const spy = await renderAt("/ask");
-    expect(await screen.findByRole("tab", { name: "Ask AI", selected: true })).toBeVisible();
+    const spy = await renderAt("/ask-ai");
+    expect(await screen.findByRole("heading", { name: "Investigate", level: 1 })).toBeVisible();
+    const tabs = screen.getByRole("navigation", { name: "Investigate tabs" });
+    expect(within(tabs).getByRole("link", { name: "Ask AI" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
     await askQuestion("failed logins by source ip");
     const block = await screen.findByRole("region", {
       name: "Question: failed logins by source ip",
@@ -59,7 +88,7 @@ describe("Ask (ADR-0042 slice 1a)", () => {
   });
 
   it("waits for Run query when the install keeps click-to-run", async () => {
-    const spy = await renderAt("/ask");
+    const spy = await renderAt("/ask-ai");
     await askQuestion("click to run failed logins");
     const block = await screen.findByRole("region", {
       name: "Question: click to run failed logins",
@@ -74,7 +103,7 @@ describe("Ask (ADR-0042 slice 1a)", () => {
   });
 
   it("renders model text as plain text, labelled as about the query", async () => {
-    await renderAt("/ask");
+    await renderAt("/ask-ai");
     await askQuestion("failed logins");
     const block = await screen.findByRole("region", { name: "Question: failed logins" });
     // Slice 1c: model text about the query lives under How I got this, not over the rows.
@@ -87,7 +116,7 @@ describe("Ask (ADR-0042 slice 1a)", () => {
   });
 
   it("stacks follow-ups below, sends earlier turns, and starts over on New question", async () => {
-    const spy = await renderAt("/ask");
+    const spy = await renderAt("/ask-ai");
     await askQuestion("failed logins");
     await screen.findByRole("region", { name: "Question: failed logins" });
     await askQuestion("only from 203.0.113.9");
@@ -106,7 +135,7 @@ describe("Ask (ADR-0042 slice 1a)", () => {
   });
 
   it("says where a question goes when the model is in the cloud, and explains a block", async () => {
-    await renderAt("/ask");
+    await renderAt("/ask-ai");
     await screen.findByRole("option", { name: /Cloud · gpt-x/ });
     expect(screen.queryByRole("note")).toBeNull();
     await userEvent.selectOptions(screen.getByLabelText("Model"), "p2");
@@ -117,10 +146,21 @@ describe("Ask (ADR-0042 slice 1a)", () => {
     );
   });
 
-  it("saves with the question as origin", async () => {
-    const spy = await renderAt("/ask");
+  it("Open in Logs opens the answer's SQL in the SQL mode, and Save keeps the question (D206)", async () => {
+    const spy = await renderAt("/ask-ai");
+    await userEvent.selectOptions(await screen.findByLabelText("Time range"), "7d");
     await askQuestion("failed logins");
-    await screen.findByRole("table", { name: "Results" });
+    const block = await screen.findByRole("region", { name: "Question: failed logins" });
+    await within(block).findByRole("table", { name: "Results" });
+    await userEvent.click(within(block).getByRole("button", { name: "Open in Logs" }));
+    await vi.waitFor(() => expect(window.location.pathname).toBe("/investigate/logs"));
+    expect(await screen.findByRole("tab", { name: "SQL", selected: true })).toBeVisible();
+    expect(screen.getByText("From Ask AI: failed logins")).toBeVisible();
+    // The answer's SQL runs in Logs with the Ask AI page's time range.
+    await vi.waitFor(() =>
+      expect((posts(spy, "/api/query") as { sql: string }[]).at(-1)?.sql).toContain("turn 1"),
+    );
+    expect(screen.getByLabelText("Time range")).toHaveValue("7d");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     const form = screen.getByRole("form", { name: "Save search" });
     await userEvent.type(within(form).getByLabelText("Name"), "Failed by IP");
@@ -132,14 +172,14 @@ describe("Ask (ADR-0042 slice 1a)", () => {
   });
 
   it("is hidden from auditors", async () => {
-    await renderAt("/ask", { mode: "login", signedIn: true, role: "auditor" });
+    await renderAt("/ask-ai", { mode: "login", signedIn: true, role: "auditor" });
     await screen.findByRole("heading", { name: "Investigate", level: 1 });
     const nav = screen.getByRole("navigation", { name: "Primary" });
-    expect(within(nav).queryByText("Ask")).not.toBeInTheDocument();
+    expect(within(nav).queryByText("Ask AI")).not.toBeInTheDocument();
   });
 
   it("says the model is busy and retries on click", async () => {
-    await renderAt("/ask");
+    await renderAt("/ask-ai");
     await askQuestion("while the model is busy");
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("The model was busy");
@@ -154,19 +194,19 @@ describe("Ask (ADR-0042 slice 1a)", () => {
     await userEvent.click(
       await screen.findByRole("option", { name: /Ask AI: failed logins today/ }),
     );
-    const over = await screen.findByRole("dialog", { name: "Ask" });
+    const over = await screen.findByRole("dialog", { name: "Ask AI" });
     expect(within(over).getByLabelText("Question")).toHaveValue("failed logins today");
     await userEvent.click(within(over).getByRole("button", { name: "Ask" }));
     expect(await within(over).findByRole("table", { name: "Results" })).toBeVisible();
     expect(posts(spy, "/api/ask")).toHaveLength(1);
     await userEvent.keyboard("{Escape}");
-    expect(screen.queryByRole("dialog", { name: "Ask" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Ask AI" })).toBeNull();
   });
 });
 
 describe("Ask routing (ADR-0042 slice 1b)", () => {
   it("names the library query, its filters, and the time under How I got this", async () => {
-    const spy = await renderAt("/ask");
+    const spy = await renderAt("/ask-ai");
     await askQuestion("ssh logins for dana@example.com today");
     const block = await screen.findByRole("region", {
       name: "Question: ssh logins for dana@example.com today",
@@ -182,7 +222,7 @@ describe("Ask routing (ADR-0042 slice 1b)", () => {
   });
 
   it("says when a question was treated as general guidance and switches on click", async () => {
-    const spy = await renderAt("/ask");
+    const spy = await renderAt("/ask-ai");
     await askQuestion("how should I harden sshd?");
     const block = await screen.findByRole("region", {
       name: "Question: how should I harden sshd?",
@@ -233,7 +273,7 @@ describe("Ask routing (ADR-0042 slice 1b)", () => {
   });
 
   it("shows the code headline, then only statements that cite rows (slice 1c)", async () => {
-    const spy = await renderAt("/ask");
+    const spy = await renderAt("/ask-ai");
     await askQuestion("summarize dana's logins");
     const block = await screen.findByRole("region", { name: "Question: summarize dana's logins" });
     expect(await within(block).findByText("2 rows. First row: user dana.")).toBeVisible();
@@ -248,7 +288,7 @@ describe("Ask routing (ADR-0042 slice 1b)", () => {
   });
 
   it("shows no summary when nothing cites, and never asks without event ids", async () => {
-    const spy = await renderAt("/ask");
+    const spy = await renderAt("/ask-ai");
     await askQuestion("summarize uncited");
     const block = await screen.findByRole("region", { name: "Question: summarize uncited" });
     expect(
@@ -263,8 +303,8 @@ describe("Ask routing (ADR-0042 slice 1b)", () => {
     expect(spy.mock.calls.filter(([u]) => String(u).endsWith("/a2/answer"))).toHaveLength(0);
   });
 
-  it("opens a row's own events in Search, built by the server (D173)", async () => {
-    const spy = await renderAt("/ask");
+  it("opens a row's own events in Logs, built by the server (D173)", async () => {
+    const spy = await renderAt("/ask-ai");
     await askQuestion("ssh logins for dana@example.com");
     const block = await screen.findByRole("region", {
       name: "Question: ssh logins for dana@example.com",
@@ -277,11 +317,11 @@ describe("Ask routing (ADR-0042 slice 1b)", () => {
     expect(posts(spy, "/api/ask/a1/drill")).toEqual([
       { values: { user: "dana", client: "198.51.100.4" } },
     ]);
-    await vi.waitFor(() => expect(window.location.pathname).toMatch(/\/search$/));
+    await vi.waitFor(() => expect(window.location.pathname).toBe("/investigate/logs"));
   });
 
   it("offers Show events only when the answer has group keys", async () => {
-    await renderAt("/ask");
+    await renderAt("/ask-ai");
     await askQuestion("failed logins");
     const block = await screen.findByRole("region", { name: "Question: failed logins" });
     await within(block).findByText(/2 addresses with failures/);
@@ -291,7 +331,7 @@ describe("Ask routing (ADR-0042 slice 1b)", () => {
 
 describe("Ask's example questions (D182)", () => {
   it("offers questions from the library and asks one in one click", async () => {
-    const spy = await renderAt("/ask");
+    const spy = await renderAt("/ask-ai");
     const box = await screen.findByRole("region", { name: "Example questions" });
     // The question form of each phrasing, one per query, from what the library offers.
     const buttons = within(box).getAllByRole("button");
@@ -307,8 +347,8 @@ describe("Ask's example questions (D182)", () => {
   });
 
   it("are not shown to auditors, who have no Ask", async () => {
-    await renderAt("/ask", { mode: "login", signedIn: true, role: "auditor" });
-    expect(await screen.findByRole("tab", { name: "Search", selected: true })).toBeVisible();
+    await renderAt("/ask-ai", { mode: "login", signedIn: true, role: "auditor" });
+    expect(await screen.findByRole("tab", { name: "Filters", selected: true })).toBeVisible();
     expect(screen.queryByRole("region", { name: "Example questions" })).toBeNull();
   });
 });
@@ -361,18 +401,17 @@ describe("pickExamples", () => {
 
 describe("A failed Ask answer (D192)", () => {
   it("leaves Results empty: the last search's rows never sit under the failed question", async () => {
-    await renderAt("/ask", { mode: "open" });
-    // The page ran its usual search on arrival; on Ask AI its rows are not shown.
-    await vi.waitFor(() => expect(document.querySelector("[aria-label='Results']")).not.toBeNull());
-    const pageResults = () =>
-      document.querySelector("section[aria-label='Results']") as HTMLElement | null;
-    expect(pageResults()?.closest("[hidden]")).not.toBeNull();
+    await renderAt("/ask-ai", { mode: "open" });
+    // Ask AI is its own page: no search runs on arrival, so no other rows are on it.
+    const pageResults = () => document.querySelector("section[aria-label='Results']");
+    await screen.findByLabelText("Question");
+    expect(pageResults()).toBeNull();
     await askQuestion("hits the output limit");
     const block = await screen.findByRole("region", { name: "Question: hits the output limit" });
     const alert = await within(block).findByRole("alert");
     expect(alert).toHaveTextContent("output limit");
     expect(within(alert).getByRole("button", { name: "Try again" })).toBeVisible();
-    expect(pageResults()?.closest("[hidden]")).not.toBeNull();
+    expect(pageResults()).toBeNull();
     // Admins get a one-click way to the setting.
     await userEvent.click(within(alert).getByRole("button", { name: "Set Thinking to Off" }));
     expect(window.location.pathname + window.location.hash).toMatch(
@@ -381,7 +420,7 @@ describe("A failed Ask answer (D192)", () => {
   });
 
   it("offers no Thinking link to analysts", async () => {
-    await renderAt("/ask");
+    await renderAt("/ask-ai");
     await askQuestion("hits the output limit");
     const block = await screen.findByRole("region", { name: "Question: hits the output limit" });
     const alert = await within(block).findByRole("alert");

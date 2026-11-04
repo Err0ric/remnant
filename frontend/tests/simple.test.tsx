@@ -29,7 +29,7 @@ afterEach(() => vi.restoreAllMocks());
 
 describe("Simple search", () => {
   it("loads the SQL editor only when the SQL tab is opened", async () => {
-    await renderAt("/search");
+    await renderAt("/investigate/logs");
     expect(await screen.findByRole("heading", { name: "Investigate", level: 1 })).toBeVisible();
     expect(screen.queryByLabelText("SQL query")).toBeNull();
     await userEvent.click(screen.getByRole("tab", { name: "SQL" }));
@@ -37,10 +37,10 @@ describe("Simple search", () => {
   });
 
   it("is the first tab and sends its values as bound parameters", async () => {
-    const { spy } = await renderAt("/search");
+    const { spy } = await renderAt("/investigate/logs");
     expect(await screen.findByRole("heading", { name: "Investigate", level: 1 })).toBeVisible();
-    expect(screen.getByRole("tab", { name: "Search", selected: true })).toBeVisible();
-    expect(screen.getByRole("tab", { name: "Ask AI", selected: false })).toBeVisible();
+    expect(screen.getByRole("tab", { name: "Filters", selected: true })).toBeVisible();
+    expect(screen.queryByRole("tab", { name: "Ask AI" })).toBeNull();
     await screen.findByText("Failed password for invalid user oracle");
     await userEvent.type(screen.getByLabelText("Search text"), "oracle{Enter}");
     await vi.waitFor(() => expect(posts(spy, "/api/search/compile").at(-1)?.text).toBe("oracle"));
@@ -53,7 +53,7 @@ describe("Simple search", () => {
   });
 
   it("opens the search in the SQL tab with the values written in", async () => {
-    await renderAt("/search");
+    await renderAt("/investigate/logs");
     await screen.findByText("Failed password for invalid user oracle");
     await userEvent.type(screen.getByLabelText("Search text"), "it's{Enter}");
     await userEvent.click(await screen.findByRole("button", { name: "Edit as SQL" }));
@@ -62,14 +62,14 @@ describe("Simple search", () => {
   });
 
   it("shows why a search could not be read", async () => {
-    await renderAt("/search");
+    await renderAt("/investigate/logs");
     await screen.findByText("Failed password for invalid user oracle");
     await userEvent.type(screen.getByLabelText("Search text"), "(a{Enter}");
     expect(await screen.findByRole("alert")).toHaveTextContent("never closed");
   });
 
   it("filters for, filters out, and counts a field from an expanded event", async () => {
-    const { spy } = await renderAt("/search");
+    const { spy } = await renderAt("/investigate/logs");
     const row = (await screen.findByText("Failed password for invalid user oracle")).closest(
       '[role="row"]',
     ) as HTMLElement | null;
@@ -96,7 +96,7 @@ describe("Simple search", () => {
   });
 
   it("opens Investigations on a host from an expanded event", async () => {
-    const { spy } = await renderAt("/search");
+    const { spy } = await renderAt("/investigate/logs");
     const row = (await screen.findByText("Failed password for invalid user oracle")).closest(
       '[role="row"]',
     ) as HTMLElement | null;
@@ -120,54 +120,52 @@ describe("Simple search", () => {
   });
 
   it("remembers the tab last used", async () => {
-    const { view } = await renderAt("/search");
+    const { view } = await renderAt("/investigate/logs");
     await userEvent.click(await screen.findByRole("tab", { name: "SQL" }));
     view.unmount();
-    await renderAt("/search");
+    await renderAt("/investigate/logs");
     expect(await screen.findByRole("tab", { name: "SQL", selected: true })).toBeVisible();
   });
 
-  it("opens Ask AI last used at its own address, so the rail shows Ask", async () => {
-    const { view } = await renderAt("/search");
-    await userEvent.click(await screen.findByRole("tab", { name: "Ask AI" }));
-    expect(window.location.pathname).toBe("/ask");
-    view.unmount();
-    await renderAt("/search");
-    expect(await screen.findByRole("tab", { name: "Ask AI", selected: true })).toBeVisible();
-    await vi.waitFor(() => expect(window.location.pathname).toBe("/ask"));
+  it("opens Filters when the browser last used the former Ask tab (D206)", async () => {
+    window.localStorage.setItem("search-tab", "ask");
+    await renderAt("/investigate/logs");
+    expect(await screen.findByRole("tab", { name: "Filters", selected: true })).toBeVisible();
+    expect(window.location.pathname).toBe("/investigate/logs");
   });
 
-  it("has no Ask for auditors; otherwise Ask is a rail row and a tab, and /ask opens it", async () => {
-    const { view } = await renderAt("/ask", { mode: "login", signedIn: true, role: "auditor" });
-    expect(await screen.findByRole("tab", { name: "Search", selected: true })).toBeVisible();
-    expect(screen.queryByRole("tab", { name: "Ask AI" })).toBeNull();
-    const audNav = screen.getByRole("navigation", { name: "Primary" });
-    expect(within(audNav).queryByRole("link", { name: "Ask" })).toBeNull();
-    expect(screen.queryByRole("link", { name: "Ask" })).toBeNull(); // nor in the header tabs
-    view.unmount();
-    await renderAt("/ask");
-    expect(await screen.findByRole("heading", { name: "Investigate", level: 1 })).toBeVisible();
-    expect(screen.getByRole("tab", { name: "Ask AI", selected: true })).toBeVisible();
+  it("has exactly the Filters and SQL modes; Ask AI is its own page (D206)", async () => {
+    const { view } = await renderAt("/investigate/logs");
+    const modes = await screen.findByRole("tablist", { name: "Logs mode" });
+    expect(
+      within(modes)
+        .getAllByRole("tab")
+        .map((t) => t.textContent),
+    ).toEqual(["Filters", "SQL"]);
+    expect(screen.queryByLabelText("Question")).toBeNull();
     const nav = screen.getByRole("navigation", { name: "Primary" });
-    expect(within(nav).getByRole("link", { name: "Ask" })).toHaveAttribute("aria-current", "page");
-    // The Search tab goes back to Simple syntax, and the address and the rail follow.
-    await userEvent.type(screen.getByLabelText("Question"), "kept while away");
-    await userEvent.click(screen.getByRole("tab", { name: "Search" }));
-    expect(screen.getByLabelText("Search text")).toBeVisible();
-    expect(window.location.pathname).toBe("/investigate/search");
-    expect(within(nav).getByRole("link", { name: "Search" })).toHaveAttribute(
+    expect(within(nav).getByRole("link", { name: "Logs" })).toHaveAttribute("aria-current", "page");
+    // The rail's Ask AI opens its own page.
+    await userEvent.click(within(nav).getByRole("link", { name: "Ask AI" }));
+    expect(window.location.pathname).toBe("/ask-ai");
+    expect(await screen.findByLabelText("Question")).toBeVisible();
+    expect(screen.queryByRole("tablist", { name: "Logs mode" })).toBeNull();
+    expect(within(nav).getByRole("link", { name: "Ask AI" })).toHaveAttribute(
       "aria-current",
       "page",
     );
-    // The rail's Ask opens the same thread, question kept (one page, not remounted).
-    await userEvent.click(within(nav).getByRole("link", { name: "Ask" }));
-    expect(window.location.pathname).toBe("/ask");
-    expect(await screen.findByRole("tab", { name: "Ask AI", selected: true })).toBeVisible();
-    expect(screen.getByLabelText("Question")).toHaveValue("kept while away");
+    view.unmount();
+    // Auditors have no Ask AI: no rail row, no header tab, and /ask-ai lands on Logs.
+    await renderAt("/ask-ai", { mode: "login", signedIn: true, role: "auditor" });
+    expect(await screen.findByRole("tab", { name: "Filters", selected: true })).toBeVisible();
+    await vi.waitFor(() => expect(window.location.pathname).toBe("/investigate/logs"));
+    const audNav = screen.getByRole("navigation", { name: "Primary" });
+    expect(within(audNav).queryByRole("link", { name: "Ask AI" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Ask AI" })).toBeNull(); // nor in the header tabs
   });
 
   it("saves the compiled SQL with the Simple text as its origin", async () => {
-    const { spy } = await renderAt("/search");
+    const { spy } = await renderAt("/investigate/logs");
     await screen.findByText("Failed password for invalid user oracle");
     await userEvent.type(screen.getByLabelText("Search text"), "oracle{Enter}");
     await vi.waitFor(() => expect(posts(spy, "/api/query").at(-1)?.params).toBeTruthy());
@@ -182,7 +180,7 @@ describe("Simple search", () => {
   });
 
   it("says when a filtered field is empty in the time range", async () => {
-    await renderAt("/search");
+    await renderAt("/investigate/logs");
     await screen.findByText("Failed password for invalid user oracle");
     await userEvent.type(screen.getByLabelText("Search text"), "-src_ip:203.0.113.9{Enter}");
     expect(
@@ -191,7 +189,7 @@ describe("Simple search", () => {
   });
 
   it("fills the bar from a Suspicious preset and runs it", async () => {
-    const { spy } = await renderAt("/search");
+    const { spy } = await renderAt("/investigate/logs");
     await screen.findByText("Failed password for invalid user oracle");
     await userEvent.selectOptions(
       await screen.findByLabelText("Suspicious activity presets"),
@@ -206,7 +204,7 @@ describe("Simple search", () => {
   });
 
   it("counts fields for the whole result and filters from a click", async () => {
-    const { spy } = await renderAt("/search");
+    const { spy } = await renderAt("/investigate/logs");
     await screen.findByText("Failed password for invalid user oracle");
     const fields = await screen.findByRole("complementary", { name: "Fields" });
     const ips = await within(fields).findByRole("region", { name: /source ip/i });
@@ -229,7 +227,7 @@ describe("Simple search", () => {
   });
 
   it("in SQL mode, a field click adds the filter to the SQL and runs it", async () => {
-    const { spy } = await renderAt("/search");
+    const { spy } = await renderAt("/investigate/logs");
     await screen.findByText("Failed password for invalid user oracle");
     await userEvent.click(screen.getByRole("tab", { name: "SQL" }));
     await userEvent.click(screen.getByRole("button", { name: "Run query" }));
@@ -242,22 +240,5 @@ describe("Simple search", () => {
     );
     const refine = posts(spy, "/api/query/refine").at(-1) as Body & { field?: string };
     expect(refine.field).toBe("source_id");
-  });
-
-  it("hides the search's fields and rows on Ask AI, and keeps them for Search (D192)", async () => {
-    const { spy } = await renderAt("/search");
-    await screen.findByText("Failed password for invalid user oracle");
-    await userEvent.click(screen.getByRole("tab", { name: "Ask AI" }));
-    // Nothing below the question box is an answer until one runs.
-    expect(screen.queryByRole("complementary", { name: "Fields" })).toBeNull();
-    expect(screen.getByText("Failed password for invalid user oracle")).not.toBeVisible();
-    // Back on Search, the same rows and their fields are still there to filter.
-    await userEvent.click(screen.getByRole("tab", { name: "Search" }));
-    const fields = await screen.findByRole("complementary", { name: "Fields" });
-    const src = await within(fields).findByRole("region", { name: /^source$/i });
-    await userEvent.click(within(src).getByRole("button", { name: /^linux_sshd/ }));
-    await vi.waitFor(() =>
-      expect(posts(spy, "/api/search/compile").at(-1)?.text).toBe('source:"linux_sshd"'),
-    );
   });
 });

@@ -86,9 +86,9 @@ export const AREAS: Area[] = [
     id: "investigate",
     label: "Investigate",
     tabs: [
-      { label: "Search", page: "search" },
-      // Its own row (owner, 2026-11-03: Ask was hard to find behind the AI switch).
-      { label: "Ask", page: "ask", askOnly: true },
+      // One name per thing (D206): Logs is the manual search, Ask AI is its own page.
+      { label: "Logs", page: "logs", aliases: ["search", "events", "query"] },
+      { label: "Ask AI", page: "ask", askOnly: true, aliases: ["ask", "seance"] },
       {
         label: "People & devices",
         page: "investigate",

@@ -282,7 +282,7 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
             <p className="font-semibold">No panels yet</p>
             <p className="text-text-secondary">
               Each scheduled saved search or rule can be a panel here. Schedule one, or use Add to
-              dashboard on Search.
+              dashboard on Logs.
             </p>
             <button
               type="button"

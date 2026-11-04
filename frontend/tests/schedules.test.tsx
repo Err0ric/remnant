@@ -46,11 +46,11 @@ describe("Dashboard", () => {
     expect(within(restricted).queryByRole("table")).toBeNull();
   });
 
-  it("opens a scheduled search in Search with its range and parameters filled in", async () => {
+  it("opens a scheduled search in Logs with its range and parameters filled in", async () => {
     const spy = await renderAt("/dashboard");
     const panel = await screen.findByRole("region", { name: "Failed SSH daily" });
-    await userEvent.click(await within(panel).findByRole("button", { name: "Open in Search" }));
-    await vi.waitFor(() => expect(window.location.pathname).toBe("/investigate/search"));
+    await userEvent.click(await within(panel).findByRole("button", { name: "Open in Logs" }));
+    await vi.waitFor(() => expect(window.location.pathname).toBe("/investigate/logs"));
     await vi.waitFor(() =>
       expect(sent(spy, "POST", (u) => u.endsWith("/api/query")).map((b) => b?.sql)).toContain(
         "SELECT 1 LIMIT 5",
@@ -89,8 +89,8 @@ describe("Dashboard panels (trial finding, ADR-0034)", () => {
     const panel = await screen.findByRole("region", { name: "Failed SSH daily" });
     const table = await within(panel).findByRole("table", { name: "Top rows of Failed SSH daily" });
     expect(within(table).getByText("203.0.113.9")).toHaveAttribute("title", "203.0.113.9");
-    await userEvent.click(within(table).getByRole("button", { name: "Open row 1 in Search" }));
-    await vi.waitFor(() => expect(window.location.pathname).toBe("/investigate/search"));
+    await userEvent.click(within(table).getByRole("button", { name: "Open row 1 in Logs" }));
+    await vi.waitFor(() => expect(window.location.pathname).toBe("/investigate/logs"));
   });
 
   it("says when a source's parser changed before a run (F36)", async () => {

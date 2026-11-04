@@ -1,14 +1,16 @@
 import type { CompiledSearch } from "./api";
 
-export type SearchTab = "simple" | "ask" | "sql";
+/** Logs modes (D206): "simple" is Filters, "sql" is SQL. */
+export type SearchTab = "simple" | "sql";
 
 const TAB_KEY = "search-tab";
 
-/** The tab last used in this browser; Simple the first time (ADR-0009 row 9). */
+/** The mode last used in this browser; Filters the first time (ADR-0009 row 9). "ask",
+ * kept by browsers from before Ask AI was its own page (D206), opens Filters. */
 export function storedTab(): SearchTab {
   try {
     const v = window.localStorage.getItem(TAB_KEY);
-    return v === "ask" || v === "sql" || v === "simple" ? v : "simple";
+    return v === "sql" ? "sql" : "simple";
   } catch {
     return "simple"; // storage blocked
   }

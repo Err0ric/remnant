@@ -59,7 +59,7 @@ interface SchedulePanelProps {
 
 function open(sql: string) {
   seedSearch({ sql });
-  navigate("search");
+  navigate("logs");
 }
 
 function onActivate(go: () => void) {
@@ -258,7 +258,7 @@ export function SchedulePanel({
                       <tr
                         key={i}
                         {...(target ? onActivate(() => open(target)) : {})}
-                        aria-label={target ? `Open row ${i + 1} in Search` : undefined}
+                        aria-label={target ? `Open row ${i + 1} in Logs` : undefined}
                         className={`border-b border-border last:border-0 ${target ? "cursor-pointer hover:bg-surface-head focus-visible:bg-surface-head" : ""}`}
                       >
                         {r.slice(0, shown).map((v, j) => (
@@ -294,7 +294,7 @@ export function SchedulePanel({
             className="h-7 rounded border border-border px-2 text-accent-text hover:bg-surface-head"
             onClick={() => open(openSql as string)}
           >
-            {tile ? "View rows" : run && shown < run.columns.length ? "View all" : "Open in Search"}
+            {tile ? "View rows" : run && shown < run.columns.length ? "View all" : "Open in Logs"}
           </button>
         ) : null}
       </div>

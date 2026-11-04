@@ -33,9 +33,9 @@ describe("Microsoft 365 area (ADR-0038 section 5)", () => {
     }
     const outcomes = screen.getByRole("region", { name: "Sign-in outcomes" });
     expect(within(outcomes).getByRole("img", { name: /12 failed/ })).toHaveAttribute("data-drill");
-    expect(within(overview).getByTitle("Open 31 events in Search")).toBeVisible();
-    await userEvent.click(within(overview).getByTitle("Open 12 failed sign-ins in Search"));
-    await waitFor(() => expect(window.location.pathname).toBe("/investigate/search"));
+    expect(within(overview).getByTitle("Open 31 events in Logs")).toBeVisible();
+    await userEvent.click(within(overview).getByTitle("Open 12 failed sign-ins in Logs"));
+    await waitFor(() => expect(window.location.pathname).toBe("/investigate/logs"));
     expect(
       await screen.findByText(/^From Microsoft 365 > Overview > Failed sign-ins, Oct 24/),
     ).toBeVisible();

@@ -133,26 +133,34 @@ export function CommandPalette({
         run: () => navigate(n.page as PageId, x.id),
       })),
     ]);
+    // Logs is the Investigate area's first tab, so it has no row of its own above (D206).
+    out.push({
+      key: "nav:logs",
+      section: "Navigate",
+      label: "Logs",
+      aliases: ["search", "events", "query", "sql", "filters", "simple search"],
+      run: () => navigate("logs"),
+    });
     if (canAsk) {
       out.push({
         key: "nav:ask",
         section: "Navigate",
-        label: "Ask",
-        hint: page === "search" || page === "ask" ? "Search" : "Opens beside this page",
-        aliases: ["seance", "question", "ai", "ask in plain english"],
-        // On Search, the Ask tab; anywhere else, the slide-over (ADR-0042 row 16).
-        run: () => (page === "search" || page === "ask" ? navigate("ask") : openAsk()),
+        label: "Ask AI",
+        hint: page === "ask" ? undefined : "Opens beside this page",
+        aliases: ["ask", "seance", "question", "ai", "ask in plain english"],
+        // On Ask AI, that page; anywhere else, the slide-over (ADR-0042 row 16).
+        run: () => (page === "ask" ? navigate("ask") : openAsk()),
       });
     }
     out.push({
       key: "nav:library",
       section: "Navigate",
       label: "Query library",
-      hint: "Search",
+      hint: "Logs",
       aliases: ["library", "grimoire", "packs", "shipped queries"],
       run: () => {
         seedSearch({ library: true });
-        navigate("search");
+        navigate("logs");
       },
     });
     out.push({
@@ -162,7 +170,7 @@ export function CommandPalette({
       aliases: ["password", "token", "cli"],
       run: () => navigate("me"),
     });
-    if (page === "search" || page === "ask") {
+    if (page === "logs") {
       out.push({
         key: "act:run",
         section: "Actions",
@@ -210,10 +218,10 @@ export function CommandPalette({
         key: `source:${s.source_id}`,
         section: "Sources",
         label: s.source_id,
-        hint: "Search this source",
+        hint: "Open in Logs",
         run: () => {
           seedSearch({ sources: [s.source_id] });
-          navigate("search");
+          navigate("logs");
         },
       });
     }
@@ -222,13 +230,13 @@ export function CommandPalette({
       for (const h of lookup.data?.hits ?? []) out.push(hitItem(h));
       out.push({
         key: "act:search-text",
-        section: "Search",
+        section: "Logs",
         label: `Search events for "${text}"`,
-        hint: "Last 7 days",
+        hint: "Logs, last 7 days",
         found: true,
         run: () => {
           seedSearch({ sql: textSql(text), range: "7d" });
-          navigate("search");
+          navigate("logs");
         },
       });
       if (canAsk && text.includes(" ")) {
@@ -236,7 +244,7 @@ export function CommandPalette({
         // question comes first of everything (owner, 2026-11-03).
         out.push({
           key: "act:ask-text",
-          section: looksLikeQuestion(text) ? "Ask AI" : "Search",
+          section: looksLikeQuestion(text) ? "Ask AI" : "Logs",
           label: `Ask AI: ${text}`,
           hint: "Opens beside this page",
           found: true,

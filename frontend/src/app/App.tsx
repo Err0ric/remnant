@@ -6,12 +6,12 @@ import { seedVersion, subscribeSeed } from "@/lib/searchSeed";
 import { SideNav } from "@/components/shell/SideNav";
 import { SearchPage } from "@/features/search/SearchPage";
 import { searchNavVersion, subscribeSearchNav } from "@/lib/searchUrl";
-// Small, and the target of "Schedule" handoffs from Search; kept with Search.
+// Small, and the target of "Schedule" handoffs from Logs; kept with Logs.
 import { SchedulesPage } from "@/features/schedules/SchedulesPage";
 import { AuthGate } from "@/features/auth/AuthGate";
 import { TopBar } from "@/components/shell/TopBar";
 import { AccountPasswordPage } from "@/features/auth/AccountPasswordPage";
-import { HomeRedirect, ToHealth } from "@/features/dashboard/HomeRedirect";
+import { HomeRedirect, ToHealth, ToLogs } from "@/features/dashboard/HomeRedirect";
 import { canonical, usePage, useSection, useTab } from "@/lib/route";
 import { ViewerContext } from "@/lib/viewer";
 import { SETTINGS_IDS } from "@/lib/nav";
@@ -21,11 +21,12 @@ import { SettingsNav } from "@/components/shell/SettingsNav";
 import { applyTheme, type Theme } from "@/lib/theme";
 import { ApiError } from "@/lib/api";
 import { ErrorBoundary, PageBoundary } from "@/components/ErrorBoundary";
+import { AskPage } from "@/features/ask/AskPage";
 import { AskSlideOver } from "@/features/ask/AskSlideOver";
 import { withChunkReload } from "@/lib/chunkReload";
 
 // Pages load on first visit, so the first screen does not carry every page (install
-// finding: one 961 kB chunk). Search, Schedules, and Overview stay in the main bundle;
+// finding: one 961 kB chunk). Logs, Schedules, and Overview stay in the main bundle;
 // the SQL editor (CodeMirror) is its own chunk, loaded after the page shows.
 const SsoPage = lazy(
   withChunkReload(() =>
@@ -172,9 +173,9 @@ export function App({ initialTheme, queryClient }: AppProps) {
   // Narrow screens: the side nav is hidden behind a Menu button; any navigation closes it.
   const [menu, setMenu] = useState(false);
   useEffect(() => setMenu(false), [page]);
-  // A handoff into Search or Saved searches remounts that page so it takes the handoff.
+  // A handoff into Logs or Saved searches remounts that page so it takes the handoff.
   const searchKey = useSyncExternalStore(subscribeSeed, seedVersion);
-  // Back and Forward on Search, and New search, rebuild the page from its address (D90).
+  // Back and Forward on Logs, and New search, rebuild the page from its address (D90).
   const searchNav = useSyncExternalStore(subscribeSearchNav, searchNavVersion);
   const savedKey = useSyncExternalStore(subscribeSaved, savedVersion);
 
@@ -221,7 +222,7 @@ export function App({ initialTheme, queryClient }: AppProps) {
                 />
                 <OfflineBanner />
                 {!user || user.role !== "auditor" ? (
-                  <ErrorBoundary label="Ask">
+                  <ErrorBoundary label="Ask AI">
                     <AskSlideOver isAdmin={!user || user.role === "admin"} />
                   </ErrorBoundary>
                 ) : null}
@@ -258,7 +259,7 @@ export function App({ initialTheme, queryClient }: AppProps) {
                         canAudit={!user || user.role !== "analyst"}
                       />
                     ) : null}
-                    <PageBoundary key={page === "ask" ? "search" : page}>
+                    <PageBoundary key={page}>
                       <Suspense fallback={<div className="flex-1" aria-busy="true" />}>
                         {page === "rules" ? (
                           <RulesPage
@@ -321,17 +322,20 @@ export function App({ initialTheme, queryClient }: AppProps) {
                           <ToHealth />
                         ) : page === "home" ? (
                           <HomeRedirect />
+                        ) : page === "ask" ? (
+                          !user || user.role !== "auditor" ? (
+                            <AskPage isAdmin={!user || user.role === "admin"} />
+                          ) : (
+                            <ToLogs />
+                          )
                         ) : page === "sources" ? (
                           // Open mode (no accounts) is the local admin.
                           <SourcesPage canManage={!user || user.role === "admin"} />
                         ) : (
+                          // Logs (D206).
                           <SearchPage
-                            // Search and Ask are one page (ADR-0008): moving between them keeps the work.
-                            key={`${page === "ask" ? "search" : page}:${searchKey}:${searchNav}`}
+                            key={`logs:${searchKey}:${searchNav}`}
                             canSave={!user || user.role !== "auditor"}
-                            canAsk={!user || user.role !== "auditor"}
-                            isAdmin={!user || user.role === "admin"}
-                            initialTab={page === "ask" ? "ask" : undefined}
                           />
                         )}
                       </Suspense>

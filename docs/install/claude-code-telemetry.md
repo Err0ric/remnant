@@ -48,7 +48,7 @@ The token can only send data into this one source. If it leaks, **New token** on
 
 ## 3. Check it
 
-Run anything in Claude Code, wait a minute, then **Search**: `source:claude_code`. Each event's `message` is the event or metric name (`claude_code.tool_result`, `claude_code.cost.usage`, ...); details are under `unmapped`.
+Run anything in Claude Code, wait a minute, then in **Logs** search `source:claude_code`. Each event's `message` is the event or metric name (`claude_code.tool_result`, `claude_code.cost.usage`, ...); details are under `unmapped`.
 
 Useful searches:
 

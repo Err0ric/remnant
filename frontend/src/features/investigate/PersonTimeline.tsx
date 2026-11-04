@@ -30,7 +30,7 @@ function day(iso: string): string {
 }
 
 /** A person's timeline (ADR-0038 section 9): one row per action across sources, newest
- * first, grouped by day; each row opens its own events in Search. */
+ * first, grouped by day; each row opens its own events in Logs. */
 export function PersonTimeline({ person }: { person: string }) {
   const [days, setDays] = useState<(typeof DAYS)[number]>(7);
   const q = useQuery({
@@ -83,7 +83,7 @@ export function PersonTimeline({ person }: { person: string }) {
             }
             className="ml-auto text-sm text-accent-text hover:underline"
           >
-            Open in Search
+            Open in Logs
           </button>
         ) : null}
       </div>
@@ -151,7 +151,7 @@ export function PersonTimeline({ person }: { person: string }) {
                             title={
                               r.item_id
                                 ? "Open the alert"
-                                : `Open ${r.count.toLocaleString()} events in Search`
+                                : `Open ${r.count.toLocaleString()} events in Logs`
                             }
                             className="max-w-full truncate text-left hover:underline"
                           >
@@ -175,7 +175,7 @@ export function PersonTimeline({ person }: { person: string }) {
       ) : null}
       {d?.more ? (
         <p className="border-t border-border px-3 py-2 text-sm text-text-muted">
-          The newest 500 rows. Narrow the window, or open the rest in Search.
+          The newest 500 rows. Narrow the window, or open the rest in Logs.
         </p>
       ) : null}
     </section>

@@ -154,9 +154,12 @@ describe("Search text stays out of server requests (D90)", () => {
       "search-recent",
       JSON.stringify([
         { label: "SELECT 8", url: "/search?tab=sql&q=SELECT%208&range=24h", at: "" },
+        { label: "SELECT 9", url: "/investigate/search#tab=sql&q=SELECT%209", at: "" },
       ]),
     );
     const { recentSearches } = await import("@/lib/searchUrl");
-    expect(recentSearches()[0]!.url).toBe("/investigate/search#tab=sql&q=SELECT%208&range=24h");
+    expect(recentSearches()[0]!.url).toBe("/investigate/logs#tab=sql&q=SELECT%208&range=24h");
+    // Kept before D206: the Logs address.
+    expect(recentSearches()[1]!.url).toBe("/investigate/logs#tab=sql&q=SELECT%209");
   });
 });

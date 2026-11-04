@@ -93,7 +93,7 @@ Start with one source. Add more selectors as separate sources once the first one
 |---|---|---|
 | 2 min | Sources: status and **Behind** | Reading, behind under a few minutes once the back-fill is done |
 | 5 min | Sources: **Parsed by** under the source | Your products' templates (`linux_sshd`, `paloalto_traffic`, ...) plus some `generic_syslog` |
-| 5 min | Search, Simple tab: `host:<a known host>` | Events from that host, newest first |
+| 5 min | Logs, Filters mode: `host:<a known host>` | Events from that host, newest first |
 | 10 min | Search: `user:<your account>` and `src_ip:<your PC>` | Your own sign-ins, if those products send them |
 | 10 min | A row's detail: raw line | Exactly the line Loki holds |
 | 15 min | Overview | Volume by hour, ingest health, no paused or failing items |

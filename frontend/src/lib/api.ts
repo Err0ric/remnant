@@ -366,7 +366,7 @@ export interface AskRunResult extends QueryResult {
   summarize: boolean;
   /** Why there is no summary, when there is none and summaries are on. */
   summary_note?: string | null;
-  /** Group keys (D173): each row can open its own events in Search. */
+  /** Group keys (D173): each row can open its own events in Logs. */
   drill_keys?: string[];
 }
 
@@ -812,7 +812,7 @@ export interface EntitySummary {
   addresses: number;
   /** Microsoft 365's own addresses on server-side records, not counted above. */
   service_addresses?: number;
-  /** Sign-ins by outcome, each opening its rows in Search (D158). */
+  /** Sign-ins by outcome, each opening its rows in Logs (D158). */
   sign_in_slices?: { key: SignInClassFilter; label: string; count: number; search_sql: string }[];
   first_seen: string | null;
   last_seen: string | null;
@@ -2451,7 +2451,7 @@ export const api = {
     request<AskSuggestion[]>(`/api/ask/suggest?q=${encodeURIComponent(q)}`),
   runAnswer: (askId: string, signal?: AbortSignal) =>
     request<AskRunResult>(`/api/ask/${encodeURIComponent(askId)}/run`, { ...post({}), signal }),
-  /** "Show events" for one row of an aggregate answer (D173); built by code, runs in Search. */
+  /** "Show events" for one row of an aggregate answer (D173); built by code, runs in Logs. */
   askDrill: (askId: string, values: Record<string, Cell>) =>
     request<AskDrill>(`/api/ask/${encodeURIComponent(askId)}/drill`, post({ values })),
   /** The answer step (ADR-0042 slice 1c): statements that cite the rows the run kept. */

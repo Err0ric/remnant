@@ -328,7 +328,7 @@ function ExcludeForm({
     >
       <span>
         Exclude <span className="font-mono">{item.name}</span> from the Active list. It still shows
-        in Search, alerts, and AI Watch.
+        in Logs, alerts, and AI Watch.
       </span>
       <input
         value={reason}

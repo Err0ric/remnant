@@ -23,7 +23,7 @@ SELECT count(*) FROM events WHERE raw LIKE '%Failed password%'
 SELECT count(*) FROM events WHERE dst_endpoint_hostname = 'example.com'
 ```
 
-The Simple search tab already matches text against `raw` as well as `message`.
+Filters mode on Logs already matches text against `raw` as well as `message`.
 
 ## When it happens anyway
 
@@ -81,9 +81,9 @@ Put the cheap filters (`class_uid`, `status_id`, `template_id`) first so the loo
 
 ## Query library
 
-The query library ships tested questions for common sources, grouped in packs: Microsoft 365, Linux sign-ins and privilege, Palo Alto firewalls, DNS and AI services, AI agents (Claude Code and Cowork from the hooks plugin), and ingest health. On **Search**, **Library** (next to Open) lists the queries whose sources you have: a query is offered only when a source you can read produced events from one of its templates in the last 30 days. Each shows why it is worth running and what normal looks like.
+The query library ships tested questions for common sources, grouped in packs: Microsoft 365, Linux sign-ins and privilege, Palo Alto firewalls, DNS and AI services, AI agents (Claude Code and Cowork from the hooks plugin), and ingest health. On **Logs**, **Library** (next to Open) lists the queries whose sources you have: a query is offered only when a source you can read produced events from one of its templates in the last 30 days. Each shows why it is worth running and what normal looks like.
 
-- Clicking a query loads its SQL into the SQL tab, unsaved. Run it as any search: it goes through the query guard and reads only your sources.
+- Clicking a query loads its SQL into SQL mode, unsaved. Run it as any search: it goes through the query guard and reads only your sources.
 - **Save as my own** makes a private saved search from it. That copy is yours; a new version of the pack never changes it. When the pack's SQL changes, the Library shows **Updated in this version** with the difference and **Replace my copy**.
 - Every query runs in CI on the template fixtures for its sources, so a template change that would break one fails the build.
 - The packs live in `library/<pack>/pack.yaml` and are read at start. Nothing is downloaded.
@@ -136,9 +136,9 @@ Notes:
 - A summary with a label and a count can be shown as bars on the Dashboard.
 - The `m365` failure queries treat MFA interruptions as interruptions, not failures. Events stored before `m365_management_activity` 1.1.0 recorded failed logons as successes, so older failures are missing.
 
-## Search addresses, history, and where search text goes
+## Logs addresses, history, and where search text goes
 
-Each run on Search records the search in the address after `#`, for example `/search#tab=sql&q=...&range=24h` or `/search#saved=failed_by_ip&p.top=5&range=24h`. Back and Forward step through earlier searches, and the address can be bookmarked or shared. A shared address only shows what the reader's own source access allows; the server scopes every run.
+Each run on Logs records the search in the address after `#`, for example `/logs#tab=sql&q=...&range=24h` or `/logs#saved=failed_by_ip&p.top=5&range=24h` (`tab=simple` is Filters mode). Back and Forward step through earlier searches, and the address can be bookmarked or shared. A shared address only shows what the reader's own source access allows; the server scopes every run.
 
 The search is in the fragment (after `#`), not the query string (after `?`), on purpose:
 
@@ -153,5 +153,5 @@ The search is in the fragment (after `#`), not the query string (after `?`), on 
 
 What is left is on the analyst's own machine: browser history, bookmarks, synced browser profiles, and anywhere an address is pasted (a ticket, a chat). Treat a copied search address like the query itself. Queries over 4,000 characters are not put in the address at all.
 
-Addresses from before this change (`/search?tab=...`) still open; the page moves the state into the fragment at once, so it is not sent again on reload.
+Older addresses (`/search#...`, `/investigate/search#...`, and `/search?tab=...`) still open Logs with the same search; the page moves the state into the fragment at once, so it is not sent again on reload.
 

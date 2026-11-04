@@ -26,7 +26,7 @@ function readWindow(): PageWindow {
 }
 
 /** Agents > Overview and Tools (ADR-0038 section 6): one window for both tabs, from the
- * hooks plugin. Every number opens its rows in Search (ADR-0039). */
+ * hooks plugin. Every number opens its rows in Logs (ADR-0039). */
 export function AgentsArea({ tab }: { tab: "overview" | "tools" }) {
   const [win, setWin] = useState<PageWindow>(readWindow);
   const q = useQuery({
@@ -224,7 +224,7 @@ function ToolRow({ t, now }: { t: AgentTool; now: string }) {
           type="button"
           data-drill=""
           onClick={open}
-          title={`Open ${n.toLocaleString()} events in Search`}
+          title={`Open ${n.toLocaleString()} events in Logs`}
           className={cn(DRILL, "text-left")}
         >
           {t.tool}

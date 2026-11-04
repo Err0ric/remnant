@@ -39,7 +39,7 @@ function literal(value: Cell): string | null {
 
 /**
  * The SQL of a scheduled saved search with its placeholders filled in as literals, so it can
- * be opened in Search for the same range. Returns null when a placeholder has no value. The
+ * be opened in Logs for the same range. Returns null when a placeholder has no value. The
  * result runs as the viewer, through the server's guard, like anything typed in the editor.
  */
 export function fillSql(

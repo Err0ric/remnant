@@ -66,7 +66,7 @@ export function AroundEvent({ eventId, at }: { eventId: string; at: string }) {
             }
             className="ml-auto text-sm text-accent-text hover:underline"
           >
-            Open in Search
+            Open in Logs
           </button>
         ) : null}
       </div>

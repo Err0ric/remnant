@@ -2,7 +2,7 @@
 
 For a team trying the product on its own logs for the first time: firewall syslog already landing on a collector, Microsoft 365, and AI tools to account for. Work top to bottom; each step says what "working" looks like, so you know when to move on.
 
-Keep it **local only**: every source starts `local_only`, so nothing is ever sent to a cloud AI provider. Leave it that way for a trial, and use a local model (Ollama) or none at all. Everything except Ask in plain English and Explain works with no model.
+Keep it **local only**: every source starts `local_only`, so nothing is ever sent to a cloud AI provider. Leave it that way for a trial, and use a local model (Ollama) or none at all. Everything except Ask AI and Explain works with no model.
 
 ## 1. Stand it up
 
@@ -23,7 +23,7 @@ No firewall change is needed: the product reads the files your collector already
 - [ ] On the Sources page, each source shows **Reading** and an event count that grows.
 - [ ] Open a source's parser mix (under its name): most lines should go to a vendor template, not "Generic". A large Generic share means the log format differs from the shipped template; draft a template from a sample (**Settings > Templates > New draft**).
 
-**Working:** in **Search**, `source:paloalto_traffic deny` returns rows with source and destination IPs filled in.
+**Working:** in **Logs**, `source:paloalto_traffic deny` returns rows with source and destination IPs filled in.
 
 For the AI usage view, the firewall must forward **URL filtering** or **DNS** logs, not only traffic logs, so destination host names are there. **User-ID** logs turn IP addresses into people.
 

@@ -10,7 +10,7 @@ import { SectionTitle } from "@/components/SectionTitle";
 
 const TITLE = "Admin changes";
 const ORIGIN = `Microsoft 365 > ${TITLE}`;
-// Most a provisioning group lists when opened; the rest are one click away in Search.
+// Most a provisioning group lists when opened; the rest are one click away in Logs.
 const MAX_CYCLES = 200;
 
 export interface Change {
@@ -187,7 +187,7 @@ function ChangeRow({ c, m, timeZone }: RowProps) {
         <td className="px-2 py-1.5 text-right">
           <button
             type="button"
-            title={`Open ${c.events.toLocaleString()} events in Search`}
+            title={`Open ${c.events.toLocaleString()} events in Logs`}
             onClick={() =>
               openDrill({ sql: eventsSql(c.eventIds), from: m.start, to: m.end, origin: ORIGIN })
             }
@@ -297,7 +297,7 @@ export function AdminChanges({ m, timeZone }: { m: M365Overview; timeZone?: stri
           onClick={() => openDrill({ sql, from: m.start, to: m.end, origin: ORIGIN })}
           className="text-sm text-accent-text hover:underline"
         >
-          Open in Search
+          Open in Logs
         </button>
       </div>
       <p className="border-b border-border px-3 py-1.5 text-sm text-text-secondary">

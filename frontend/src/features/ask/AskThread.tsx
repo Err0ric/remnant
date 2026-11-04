@@ -25,8 +25,9 @@ interface AskThreadProps {
   isAdmin: boolean;
   /** A question to start with (the slide-over opened from the command palette). */
   initialQuestion?: string;
-  /** Opens a turn's SQL in the SQL editor. */
-  onEdit?: (sql: string) => void;
+  /** Opens SQL in the Logs SQL mode (Open in Logs, a library suggestion); `question` is the
+   * thread's first question when the SQL is an answer. */
+  onEdit?: (sql: string, question?: string) => void;
   /** The latest SQL and the first question, for Save; null after New question. */
   onAnswer?: (answer: { sql: string; question: string } | null) => void;
   /** Focus the question box on open (the slide-over). */
@@ -95,10 +96,10 @@ export function AskThread({
         window: d.start && d.end ? { from: d.start, to: d.end } : undefined,
         range: d.start && d.end ? undefined : "all",
         sources: d.sources ?? undefined,
-        origin: `From Ask: ${turn.question}`,
+        origin: `From Ask AI: ${turn.question}`,
       });
       closeAsk();
-      navigate("search");
+      navigate("logs");
     },
     onError: (error, { turn }) =>
       update(turn.id, {
@@ -283,7 +284,7 @@ export function AskThread({
         </div>
         {noProviders ? (
           <p className="text-sm text-text-secondary">
-            No AI provider is set up. Simple and SQL searches work without one.
+            No AI provider is set up. Logs (Filters and SQL) works without one.
             {isAdmin ? (
               <>
                 {" "}
@@ -360,7 +361,7 @@ export function AskThread({
           ) : suggestions.isSuccess ? (
             <p className="text-text-secondary">No library query matches those words.</p>
           ) : null}
-          <p className="text-text-muted">Each opens in the SQL tab, where Run query runs it.</p>
+          <p className="text-text-muted">Each opens in the Logs SQL mode, where Run runs it.</p>
         </section>
       ) : null}
       {turns.length === 0 && suggestFor === null ? (
@@ -381,7 +382,7 @@ export function AskThread({
               onRun={runTurn}
               onRetry={retry}
               onCheckData={checkData}
-              onEdit={onEdit}
+              onEdit={onEdit ? (sql) => onEdit(sql, turns[0]?.question ?? t.question) : undefined}
               onShowEvents={(turn, values) => showEvents.mutate({ turn, values })}
               onFixThinking={
                 isAdmin && chosen

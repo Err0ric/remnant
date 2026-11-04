@@ -39,7 +39,7 @@ export function EventList({ title, sql, m, controls }: EventListProps) {
           }
           className="ml-auto text-sm text-accent-text hover:underline"
         >
-          Open in Search
+          Open in Logs
         </button>
       </div>
       {q.isLoading ? (

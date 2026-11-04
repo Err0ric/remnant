@@ -29,7 +29,7 @@ Use this when you need a different test than "nothing at all", for example "fewe
 
 ## 2. A saved search for the source
 
-1. **Search**, SQL tab:
+1. **Logs**, SQL mode:
 
    ```sql
    SELECT event_id FROM events WHERE source_id = 'fw01'

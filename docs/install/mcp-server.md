@@ -22,7 +22,7 @@ A source counts as local-only when its classification is not **Cloud allowed**, 
 
 ## 2. Get a token (each person)
 
-**Your account** (click your name, top right) **> CLI and API tokens > Create token**. The token reads exactly what you can read in Search. Revoking it disconnects every client that uses it.
+**Your account** (click your name, top right) **> CLI and API tokens > Create token**. The token reads exactly what you can read in Logs. Revoking it disconnects every client that uses it.
 
 ## 3. Connect a client
 

@@ -67,7 +67,7 @@ export function PersonSignIns({ person }: { person: string }) {
             }
             className="text-sm text-accent-text hover:underline"
           >
-            Open in Search
+            Open in Logs
           </button>
         ) : null
       }

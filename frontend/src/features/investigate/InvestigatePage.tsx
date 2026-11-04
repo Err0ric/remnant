@@ -92,7 +92,7 @@ export function InvestigatePage() {
   const pick = (row: EntityRisk) => investigate({ kind: row.kind, value: row.value });
   const openSearch = (sql: string) => {
     seedSearch({ sql, range });
-    navigate("search");
+    navigate("logs");
   };
 
   const focusAi = (f: Focus) => {

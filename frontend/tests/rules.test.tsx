@@ -43,7 +43,7 @@ describe("Detection rules", () => {
     expect(within(table).queryByText("Disabled example")).toBeNull();
   });
 
-  it("runs a rule, shows matches with attribution, and opens them in Search", async () => {
+  it("runs a rule, shows matches with attribution, and opens them in Logs", async () => {
     const spy = await renderAt("/rules");
     const table = await screen.findByRole("table", { name: "Detection rules" });
     await userEvent.click(
@@ -55,8 +55,8 @@ describe("Detection rules", () => {
     expect(await within(panel).findByRole("table", { name: "Matches" })).toBeInTheDocument();
     const [body] = bodies(spy, (u) => u.endsWith("/api/rules/r1/run"));
     expect(Date.parse(String(body?.end)) - Date.parse(String(body?.start))).toBe(86_400_000);
-    await userEvent.click(within(panel).getByRole("button", { name: "Open in Search" }));
-    await vi.waitFor(() => expect(window.location.pathname).toBe("/investigate/search"));
+    await userEvent.click(within(panel).getByRole("button", { name: "Open in Logs" }));
+    await vi.waitFor(() => expect(window.location.pathname).toBe("/investigate/logs"));
     const seeded = await vi.waitFor(() => {
       const q = bodies(spy, (u) => u.endsWith("/api/query")).find((b) =>
         String(b.sql).includes("WHERE event_id IN"),

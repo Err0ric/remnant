@@ -102,10 +102,10 @@ export function RunPanel({ run, onClose, canExplain = false }: RunPanelProps) {
               className="h-8 rounded border border-border px-3 text-accent-text hover:bg-surface-head"
               onClick={() => {
                 seedSearch({ sql: eventsSql(rows.map((m) => m.event_id)) });
-                navigate("search");
+                navigate("logs");
               }}
             >
-              Open in Search
+              Open in Logs
             </button>
             {canExplain ? (
               <button

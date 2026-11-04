@@ -193,10 +193,10 @@ export function ExplainPanel({ eventIds, subject, onClose }: ExplainPanelProps) 
                 seedSearch({
                   sql: eventsSql(cited.filter((id) => answer.events_sent.includes(id))),
                 });
-                navigate("search");
+                navigate("logs");
               }}
             >
-              Open cited events in Search
+              Open cited events in Logs
             </button>
             <button
               type="button"

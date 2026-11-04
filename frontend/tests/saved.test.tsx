@@ -69,7 +69,9 @@ describe("Saving a search", () => {
 describe("Saved searches page", () => {
   it("shows the Ask question a search came from, as text", async () => {
     await renderAt("/saved");
-    expect(await screen.findByText("From Ask: which IPs failed SSH the most?")).toBeInTheDocument();
+    expect(
+      await screen.findByText("From Ask AI: which IPs failed SSH the most?"),
+    ).toBeInTheDocument();
   });
 
   it("runs a search with its default parameters", async () => {
@@ -179,7 +181,7 @@ describe("Saved searches page", () => {
     render(<App initialTheme="dark" queryClient={new QueryClient()} />);
     const box = await screen.findByLabelText("Search text");
     await userEvent.type(box, "SELECT count(*) FROM events");
-    await userEvent.click(await screen.findByRole("button", { name: "Run it in the SQL tab" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Run it in SQL mode" }));
     expect(await screen.findByLabelText("SQL query")).toHaveTextContent(
       "SELECT count(*) FROM events",
     );
@@ -187,7 +189,7 @@ describe("Saved searches page", () => {
 });
 
 describe("Edit (F37)", () => {
-  it("opens your own saved search in Search to change and save it", async () => {
+  it("opens your own saved search in Logs to change and save it", async () => {
     window.history.replaceState(null, "", "/saved");
     window.localStorage.setItem("search-tab", "sql");
     const spy = mockApi("Codename", { mode: "login", signedIn: true, role: "analyst" });
@@ -222,7 +224,7 @@ describe("Edit (F37)", () => {
     const { App } = await import("@/app/App");
     render(<App initialTheme="dark" queryClient={new QueryClient()} />);
     await userEvent.click(await screen.findByRole("button", { name: "Edit My search" }));
-    await waitFor(() => expect(window.location.pathname).toBe("/investigate/search"));
+    await waitFor(() => expect(window.location.pathname).toBe("/investigate/logs"));
     expect(await screen.findByText("Save changes to My search")).toBeInTheDocument();
   });
 

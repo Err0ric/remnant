@@ -69,7 +69,7 @@ describe("Entity pages from a link (product pass step 2)", () => {
       expect(within(slices).getByRole("button", { name: new RegExp(`^${label}`) })).toBeVisible();
     expect(within(slices).getByRole("button", { name: /^Expired/ })).toHaveAttribute(
       "title",
-      "Open 0 expired in Search",
+      "Open 0 expired in Logs",
     );
     await userEvent.click(screen.getByRole("button", { name: /All entities/ }));
     expect(window.location.hash).toBe("");
@@ -159,9 +159,9 @@ describe("Investigations (ADR-0016)", () => {
     expect(other.getAttribute("class")).toContain("opacity-40");
     const detail = screen.getByRole("region", { name: "Selected card" });
     expect(within(detail).getByText("Authentication")).toBeVisible();
-    await userEvent.click(within(detail).getByRole("button", { name: "Open in Search" }));
+    await userEvent.click(within(detail).getByRole("button", { name: "Open in Logs" }));
     await screen.findByRole("heading", { level: 1, name: "Investigate" });
-    expect(window.location.pathname).toBe("/investigate/search");
+    expect(window.location.pathname).toBe("/investigate/logs");
     // Search opens over the same range the investigation used (Last 7 days by default).
     expect(screen.getByLabelText("Time range")).toHaveValue("7d");
   });
@@ -198,7 +198,7 @@ describe("Person timeline (ADR-0038 section 9)", () => {
     const days = within(box).getByRole("list", { name: "Activity by day" });
     expect(within(days).getAllByRole("heading", { level: 3 })).toHaveLength(2);
     const failed = within(box).getByRole("button", { name: "Failed to Office 365" });
-    expect(failed).toHaveAttribute("title", "Open 2 events in Search");
+    expect(failed).toHaveAttribute("title", "Open 2 events in Logs");
     await userEvent.click(failed);
     expect(await screen.findByText(/From alice > Timeline/)).toBeVisible();
   });

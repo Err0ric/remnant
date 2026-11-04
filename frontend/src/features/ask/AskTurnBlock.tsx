@@ -92,7 +92,7 @@ interface AskTurnBlockProps {
   onRetry: (turn: Turn) => void;
   /** "Check your data instead": the same question as a data question (condition 3). */
   onCheckData: (turn: Turn) => void;
-  /** Opens this turn's SQL in the SQL editor. */
+  /** "Open in Logs" (D206): this turn's SQL in the Logs SQL mode. */
   onEdit?: (sql: string) => void;
   /** "Show events" for one row of an aggregate library answer (D173). */
   onShowEvents?: (turn: Turn, values: Record<string, Cell>) => void;
@@ -214,6 +214,21 @@ export function AskTurnBlock({
           {turn.drillError}
         </p>
       ) : null}
+      {a && turn.phase !== "guidance" && onEdit ? (
+        <div className="text-sm">
+          <button
+            type="button"
+            onClick={() => onEdit(a.sql)}
+            className="text-accent-text hover:underline"
+          >
+            Open in Logs
+          </button>
+          <span className="text-text-muted">
+            {" "}
+            · the SQL in the Logs SQL mode, to change or save
+          </span>
+        </div>
+      ) : null}
       {a && turn.phase !== "guidance" ? (
         <details className="rounded border border-border bg-surface text-sm">
           <summary className="cursor-pointer px-3 py-1.5 text-text-secondary">
@@ -284,15 +299,6 @@ export function AskTurnBlock({
               >
                 {a.sql}
               </pre>
-              {onEdit ? (
-                <button
-                  type="button"
-                  onClick={() => onEdit(a.sql)}
-                  className="mt-1 text-accent-text hover:underline"
-                >
-                  Edit as SQL
-                </button>
-              ) : null}
             </dd>
             <dt className="text-text-secondary">Check</dt>
             <dd>

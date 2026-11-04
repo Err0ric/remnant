@@ -1,8 +1,8 @@
 import type { TimeRangeId } from "@/lib/search";
 
 /**
- * A one-shot handoff into Search (for example "Open in Search" from rule matches). Kept in
- * memory for this tab and taken once when the Search page opens; the SQL still runs
+ * A one-shot handoff into Logs (for example "Open in Logs" from rule matches). Kept in
+ * memory for this tab and taken once when the Logs page opens; the SQL still runs
  * through the server's guard like anything typed in the editor.
  */
 export interface SearchSeed {
@@ -19,6 +19,8 @@ export interface SearchSeed {
   savedId?: string;
   /** Where the query came from, shown above it ("From Dashboard > Identity > ..."). */
   origin?: string;
+  /** The Ask AI question the SQL answers ("Open in Logs"): Save keeps it as the origin. */
+  askQuestion?: string;
   /** Open the query library panel (command palette). */
   library?: boolean;
 }

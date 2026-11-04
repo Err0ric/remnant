@@ -282,7 +282,7 @@ function Overview({ m }: { m: M365Overview }) {
                   type="button"
                   data-drill=""
                   onClick={open}
-                  title={`Open ${c.kpi.value.toLocaleString()} events in Search`}
+                  title={`Open ${c.kpi.value.toLocaleString()} events in Logs`}
                   className={cn(DRILL, "font-mono font-semibold tabular-nums")}
                 >
                   {c.kpi.value.toLocaleString()}
@@ -360,7 +360,7 @@ function RowLink({ row }: { row: M365Overview["reasons"][number] }) {
       type="button"
       data-drill=""
       onClick={open}
-      title={`Open ${row.count.toLocaleString()} events in Search`}
+      title={`Open ${row.count.toLocaleString()} events in Logs`}
       className={cn(DRILL, "max-w-full truncate text-left")}
     >
       {row.label}
@@ -428,7 +428,7 @@ function Outcome({ m }: { m: M365Overview }) {
                   type="button"
                   data-drill=""
                   onClick={drill(p.sql, `${p.label} sign-ins`)}
-                  title={`Open ${p.n.toLocaleString()} events in Search`}
+                  title={`Open ${p.n.toLocaleString()} events in Logs`}
                   className={cn(DRILL, "ml-auto font-mono tabular-nums")}
                 >
                   {p.n.toLocaleString()}

@@ -80,7 +80,7 @@ function tone(kind: string, outcome: string): string {
 }
 
 /** This entity's sign-ins by outcome (D158): real failures, interrupted, expired, other,
- * and all, each one click from its rows in Search. Shown only when there are sign-ins. */
+ * and all, each one click from its rows in Logs. Shown only when there are sign-ins. */
 function SignInSlices({ s, onSearch }: { s: Summary; onSearch: (sql: string) => void }) {
   const about = useSignInAbout();
   const slices = s.sign_in_slices ?? [];
@@ -98,7 +98,7 @@ function SignInSlices({ s, onSearch }: { s: Summary; onSearch: (sql: string) => 
             key={x.key}
             type="button"
             onClick={() => onSearch(x.search_sql)}
-            title={`Open ${x.count.toLocaleString()} ${x.key === "all" ? "sign-ins" : x.label.toLowerCase()} in Search`}
+            title={`Open ${x.count.toLocaleString()} ${x.key === "all" ? "sign-ins" : x.label.toLowerCase()} in Logs`}
             className="flex h-7 items-center gap-1.5 border-r border-border px-2.5 last:border-r-0 hover:bg-surface-head"
           >
             {x.label}
@@ -265,7 +265,7 @@ export function EntitySummary({
                   onClick={() => onSearch(a.search_sql)}
                   className="h-7 self-start rounded border border-border-strong px-2 text-sm hover:bg-surface-head"
                 >
-                  View in Search
+                  View in Logs
                 </button>
               </li>
             ))}
@@ -304,7 +304,7 @@ export function EntitySummary({
           onClick={() => onSearch(s.search_sql)}
           className="h-8 rounded border border-border-strong px-3 text-sm hover:bg-surface-head"
         >
-          View {s.events === 1 ? "the event" : `all ${n(s.events)} events`} in Search
+          View {s.events === 1 ? "the event" : `all ${n(s.events)} events`} in Logs
         </button>
       </div>
     </section>

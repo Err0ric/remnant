@@ -52,7 +52,7 @@ export function BuiltInRefusals({ isAdmin }: { isAdmin: boolean }) {
           }
           className="ml-auto text-accent-text hover:underline"
         >
-          Open refusals in Search
+          Open refusals in Logs
         </button>
       </div>
       <p className="text-text-secondary">

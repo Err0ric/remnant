@@ -133,7 +133,7 @@ Follow [docs/ingest/rsyslog.md](../ingest/rsyslog.md) on the same VM, then point
 
 - [ ] Folders appear under `/var/log/remote/<sender IP>/`
 - [ ] Add source `homelab_syslog`, Syslog, path `/logs`, pattern `*.*.*.*/*.log` (sender folders only, skips `demo/`)
-- [ ] `ssh` into the Proxmox host; the login shows up in Search within seconds
+- [ ] `ssh` into the Proxmox host; the login shows up in Logs within seconds
 - [ ] Optional: repeat with [Vector](../ingest/vector.md) on a spare VM and note the version in that guide; it is the one collector guide not yet run
 
 ## Part 5: CLI from your PC (5 min)
@@ -206,7 +206,7 @@ Then run something:
 1. Tick **With data only** to see the rules some source of yours can satisfy (the Sources column).
 2. Enable a few (tick them, then **Enable selected**), for example "Failed Logon From Public IP" if Windows Security events come in.
 3. Pick **Run over: Last 7 days** and **Run** one. The run panel shows the count, the sources read, the matches, and the rule's author.
-4. **Open in Search** shows the matched events.
+4. **Open in Logs** shows the matched events.
 
 - [ ] A rule with no matching source says "No matching sources" instead of scanning everything
 - [ ] Process creation rules that use only Image, ParentImage, or CommandLine also match Security 4688 if you collect it
@@ -219,7 +219,7 @@ Then run something:
 4. **Run now** on each, then open **General > Dashboard**.
 
 - [ ] Each panel shows the count, a small bar trend, the flag when above the threshold, and the top rows
-- [ ] **Open in Search** on the saved-search panel runs the same query for the same range
+- [ ] **Open in Logs** on the saved-search panel runs the same query for the same range
 - [ ] Editing the saved search pauses its schedule with a reason; **Resume** brings it back
 - [ ] An analyst outside a source's group sees "Restricted" on a shared panel that read that source
 

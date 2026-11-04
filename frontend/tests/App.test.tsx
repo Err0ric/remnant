@@ -36,15 +36,16 @@ describe("App shell", () => {
     expect(screen.getByRole("heading", { level: 1, name: "Investigate" })).toBeInTheDocument();
     // The area's tabs say where you are (ADR-0038); no breadcrumb.
     const tabs = screen.getByRole("navigation", { name: "Investigate tabs" });
-    expect(within(tabs).getByRole("link", { name: "Search" })).toHaveAttribute(
+    expect(within(tabs).getByRole("link", { name: "Logs" })).toHaveAttribute(
       "aria-current",
       "page",
     );
+    expect(within(tabs).getByRole("link", { name: "Ask AI" })).toHaveAttribute("href", "/ask-ai");
     expect(within(tabs).getByRole("link", { name: "People & devices" })).toHaveAttribute(
       "href",
       "/investigate/people",
     );
-    expect(window.location.pathname).toBe("/investigate/search");
+    expect(window.location.pathname).toBe("/investigate/logs");
   });
 
   it("uses plain, grouped navigation labels", async () => {
@@ -60,13 +61,15 @@ describe("App shell", () => {
         .filter((li) => li.parentElement?.id === `rail-${name.toLowerCase()}`)
         .map((li) => li.querySelector("a")?.textContent);
     expect(rows("Monitor")).toEqual(["Dashboard", "Alerts"]);
-    expect(rows("Investigate")).toEqual(["Search", "Ask", "People & devices", "Saved searches"]);
+    expect(rows("Investigate")).toEqual(["Logs", "Ask AI", "People & devices", "Saved searches"]);
     expect(rows("AI")).toEqual(["AI usage", "Agents"]);
     expect(rows("System")).toEqual(["Health", "Settings"]);
-    expect(within(nav).getByRole("link", { name: "Search" })).toHaveAttribute(
-      "aria-current",
-      "page",
+    expect(within(nav).getByRole("link", { name: "Logs" })).toHaveAttribute("aria-current", "page");
+    expect(within(nav).getByRole("link", { name: "Logs" })).toHaveAttribute(
+      "href",
+      "/investigate/logs",
     );
+    expect(within(nav).getByRole("link", { name: "Ask AI" })).toHaveAttribute("href", "/ask-ai");
     // Admin pages live in the Settings area, not on the main rail.
     expect(within(nav).queryByText("Users and access")).not.toBeInTheDocument();
     await userEvent.click(within(nav).getByRole("link", { name: "Settings" }));
@@ -114,7 +117,7 @@ describe("App shell", () => {
     await renderApp();
     const nav = screen.getByRole("navigation", { name: "Primary" });
     // A page with no sub-pages: the bar on its left edge, accent label, bold, no fill.
-    const search = within(nav).getByRole("link", { name: "Search" });
+    const search = within(nav).getByRole("link", { name: "Logs" });
     expect(search).toHaveAttribute("aria-current", "page");
     expect(search).toHaveClass(
       "before:w-0.5",
@@ -288,7 +291,7 @@ describe("Search page", () => {
       expect.stringMatching(/^Likely cause: The nearest earlier row/),
     );
     expect(within(box).getByText("This event")).toBeVisible();
-    await userEvent.click(within(box).getByRole("button", { name: "Open in Search" }));
+    await userEvent.click(within(box).getByRole("button", { name: "Open in Logs" }));
     expect(await screen.findByText(/From Around this event/)).toBeVisible();
   });
 

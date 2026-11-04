@@ -1051,7 +1051,7 @@ async def ai_inventory_export(
 
 @router.put("/ai/inventory/exclusions")
 async def ai_inventory_exclude(body: ExcludeIn, request: Request, user: AdminUser) -> ExclusionOut:
-    """Move an item to Excluded with a reason (row 21). It still shows in Search, alerts,
+    """Move an item to Excluded with a reason (row 21). It still shows in Logs, alerts,
     and AI Watch. Audited ai.inventory_exclude."""
     meta: MetaDB = request.app.state.meta
     ex = await run_in_threadpool(

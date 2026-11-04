@@ -132,7 +132,7 @@ const ICONS: Record<string, LucideIcon> = {
   agents: SquareTerminal,
   m365: Grid2x2,
   health: Activity,
-  "page:search": Search,
+  "page:logs": Search,
   "page:ask": MessageCircleQuestion,
   "page:investigate": Users,
   "page:saved": BookMarked,

@@ -246,7 +246,7 @@ export function TrendChart({
           ref={box}
           role="img"
           tabIndex={0}
-          aria-label={`${summary}. Use the arrow keys for values${onOpen ? ", Enter to open a point in Search" : ""}.`}
+          aria-label={`${summary}. Use the arrow keys for values${onOpen ? ", Enter to open a point in Logs" : ""}.`}
           data-drill={onOpen ? "" : undefined}
           onClick={(e) => {
             if (!onOpen) return;
@@ -431,7 +431,7 @@ export function TrendChart({
                     <div className="mt-0.5 whitespace-nowrap text-xs text-accent-text">
                       Open{" "}
                       {stacked ? total.toLocaleString() : (rows[0]?.value ?? 0).toLocaleString()}{" "}
-                      events in Search
+                      events in Logs
                     </div>
                   ) : null}
                   {previous && prev[at] !== undefined ? (

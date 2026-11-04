@@ -68,7 +68,7 @@ function DeltaPill({
       type="button"
       data-drill=""
       onClick={onOpen}
-      title={`${delta(card, days)}. Open the period before in Search`}
+      title={`${delta(card, days)}. Open the period before in Logs`}
       className={cn(cls, "cursor-pointer hover:bg-border")}
     >
       {body}
@@ -274,7 +274,7 @@ interface Bounds {
   before: string;
 }
 
-/** Opens a number's rows in Search over the period, or the period before (ADR-0039). */
+/** Opens a number's rows in Logs over the period, or the period before (ADR-0039). */
 function opener(sql: string | null | undefined, label: string, b: Bounds, before = false) {
   if (!sql) return undefined;
   return () =>
@@ -361,7 +361,7 @@ function Card({ card, days, odd, history, bounds }: CardProps) {
                 title={
                   card.key === "agents"
                     ? "Open the review queue"
-                    : `Open ${(card.value ?? 0).toLocaleString()} ${noun} in Search`
+                    : `Open ${(card.value ?? 0).toLocaleString()} ${noun} in Logs`
                 }
                 className={cn(
                   "self-start text-kpi tabular-nums underline-offset-4 hover:underline min-[1500px]:text-kpi-lg",
@@ -390,7 +390,7 @@ function Card({ card, days, odd, history, bounds }: CardProps) {
                 opener(card.devices_drill, "Devices not matched to a person", bounds) ??
                 (() => navigate("ai", "services"))
               }
-              title="Open these devices in Search"
+              title="Open these devices in Logs"
               className="self-start text-left text-sm text-accent-text hover:underline"
             >
               {card.devices.toLocaleString()} {card.value ? "more " : ""}
@@ -420,7 +420,7 @@ function Card({ card, days, odd, history, bounds }: CardProps) {
                 type="button"
                 data-drill=""
                 onClick={opener(card.blocked_drill, "Blocked consent attempts", bounds)}
-                title="Open the blocked attempts in Search"
+                title="Open the blocked attempts in Logs"
                 className="self-start text-left text-sm text-accent-text hover:underline"
               >
                 {card.blocked.toLocaleString()} blocked consent{" "}
@@ -458,7 +458,7 @@ interface ChartProps {
   days?: number;
   /** The newest event of the sources AI Watch reads: days after it have no data. */
   dataUntil?: string | null;
-  /** Opens one day's AI use in Search (ADR-0039). */
+  /** Opens one day's AI use in Logs (ADR-0039). */
   onOpenDay?: (day: string) => void;
 }
 

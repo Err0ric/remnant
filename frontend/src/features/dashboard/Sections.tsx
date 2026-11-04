@@ -46,7 +46,7 @@ const Compare = createContext<Ctx>({
 
 type Span = "now" | "before" | { from: string; to: string };
 
-/** Opens a number's rows in Search (ADR-0039): the page window, the window before, or one
+/** Opens a number's rows in Logs (ADR-0039): the page window, the window before, or one
  * chart point. Undefined when the server sent no query. */
 export function useDrill() {
   const c = useContext(Compare);
@@ -97,14 +97,14 @@ function Delta({ kpi, label, noun }: { kpi: SectionKpi; label: string; noun: str
       type="button"
       data-drill=""
       onClick={open}
-      title={`Open ${kpi.before.toLocaleString()} ${noun} from ${before} in Search`}
+      title={`Open ${kpi.before.toLocaleString()} ${noun} from ${before} in Logs`}
       className={cn(
         cls,
         "cursor-pointer hover:bg-border focus-visible:outline focus-visible:outline-1 focus-visible:outline-focus-ring",
       )}
     >
       {text}
-      <span className="sr-only"> against the window before; open its {noun} in Search</span>
+      <span className="sr-only"> against the window before; open its {noun} in Logs</span>
     </button>
   );
 }
@@ -112,7 +112,7 @@ function Delta({ kpi, label, noun }: { kpi: SectionKpi; label: string; noun: str
 export interface KpiProps {
   label: string;
   kpi: SectionKpi | null;
-  /** What the number counts, for "Open 12 events in Search". */
+  /** What the number counts, for "Open 12 events in Logs". */
   noun?: string;
   context?: ReactNode;
   /** A sub-line with its own list ("2 blocked"): opens `kpi.extra_drill`. */
@@ -155,8 +155,8 @@ export function Kpi({ label, kpi, noun = "events", context, extra, empty, about 
               type="button"
               data-drill=""
               onClick={open}
-              title={`Open ${kpi.value.toLocaleString()} ${noun} in Search`}
-              aria-label={`${label}: ${kpi.value.toLocaleString()}. Open ${noun} in Search`}
+              title={`Open ${kpi.value.toLocaleString()} ${noun} in Logs`}
+              aria-label={`${label}: ${kpi.value.toLocaleString()}. Open ${noun} in Logs`}
               className={DRILL}
             >
               {value}
@@ -174,7 +174,7 @@ export function Kpi({ label, kpi, noun = "events", context, extra, empty, about 
           type="button"
           data-drill=""
           onClick={openExtra}
-          title={`Open ${extra.noun} in Search`}
+          title={`Open ${extra.noun} in Logs`}
           className={cn(DRILL, "self-start text-sm text-text-muted")}
         >
           {extra.text}
@@ -416,7 +416,7 @@ function Multiples({ title, series, buckets, window, mono, empty }: MultiplesPro
                           e.stopPropagation();
                           open();
                         }}
-                        title={`Open ${total.toLocaleString()} events in Search`}
+                        title={`Open ${total.toLocaleString()} events in Logs`}
                         className={cn(DRILL, "max-w-full truncate text-left")}
                       >
                         {s.label}
@@ -738,7 +738,7 @@ function TopSources({ s, rows }: { s: DashboardSections; rows: SectionRow[] }) {
                 type="button"
                 data-drill=""
                 onClick={open}
-                title={`Open ${r.count.toLocaleString()} events in Search`}
+                title={`Open ${r.count.toLocaleString()} events in Logs`}
                 className={cn(DRILL, "max-w-full truncate text-left")}
               >
                 {place}

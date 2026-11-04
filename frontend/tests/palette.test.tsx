@@ -60,9 +60,28 @@ describe("Command palette", () => {
     await userEvent.type(within(again).getByRole("combobox"), "claude");
     const ai = await within(again).findByRole("group", { name: "AI services" });
     expect(within(ai).getByRole("option", { name: /Claude/ })).toBeInTheDocument();
-    expect(within(again).getByRole("group", { name: "Search" })).toHaveTextContent(
+    expect(within(again).getByRole("group", { name: "Logs" })).toHaveTextContent(
       'Search events for "claude"',
     );
+  });
+
+  it("names Logs and Ask AI, and still finds them by the old words (D206)", async () => {
+    await renderAt("/overview");
+    const dialog = await openWithKeys();
+    const box = within(dialog).getByRole("combobox");
+    await userEvent.type(box, "search");
+    const nav = await within(dialog).findByRole("group", { name: "Navigate" });
+    expect(within(nav).getByRole("option", { name: /^Logs/ })).toBeInTheDocument();
+    await userEvent.clear(box);
+    await userEvent.type(box, "ask");
+    const nav2 = await within(dialog).findByRole("group", { name: "Navigate" });
+    expect(within(nav2).getByRole("option", { name: /^Ask AI/ })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("option", { name: /^Ask$/ })).toBeNull();
+    expect(within(dialog).queryByRole("group", { name: "Search" })).toBeNull();
+    await userEvent.clear(box);
+    await userEvent.type(box, "logs");
+    await userEvent.click(await within(dialog).findByRole("option", { name: /^Logs/ }));
+    await waitFor(() => expect(window.location.pathname).toBe("/investigate/logs"));
   });
 
   it("lists every sub-page by its own name (ADR-0038 nav pass 2)", async () => {
@@ -159,7 +178,7 @@ describe("Command palette", () => {
     const dialog = await openWithKeys();
     await userEvent.type(within(dialog).getByRole("combobox"), "linux_sshd");
     await userEvent.click(await within(dialog).findByText("linux_sshd"));
-    await waitFor(() => expect(window.location.pathname).toBe("/investigate/search"));
+    await waitFor(() => expect(window.location.pathname).toBe("/investigate/logs"));
     await waitFor(() => {
       const bodies = spy.mock.calls
         .filter(([u, i]) => String(u).endsWith("/api/query") && i?.method === "POST")

@@ -120,7 +120,7 @@ export function SavedSearchesPage({ me }: SavedSearchesPageProps) {
             <div className="px-3 py-8 text-center">
               <p className="font-semibold">No saved searches yet</p>
               <p className="mt-1 text-sm text-text-secondary">
-                Write a query on Search and choose Save, or import a YAML file.
+                Write a query on Logs and choose Save, or import a YAML file.
               </p>
             </div>
           ) : (
@@ -145,7 +145,7 @@ export function SavedSearchesPage({ me }: SavedSearchesPageProps) {
                         {s.origin?.ask_prompt ? (
                           // Informational only: the question the SQL was written from.
                           <div className="mt-0.5 max-w-[48ch] truncate text-sm text-text-secondary">
-                            From Ask: {s.origin.ask_prompt}
+                            From Ask AI: {s.origin.ask_prompt}
                           </div>
                         ) : null}
                         {s.origin?.simple_text ? (
@@ -212,7 +212,7 @@ export function SavedSearchesPage({ me }: SavedSearchesPageProps) {
                                 aria-label={`Edit ${s.name}`}
                                 onClick={() => {
                                   seedSearch({ savedId: s.id, sql: s.sql });
-                                  navigate("search");
+                                  navigate("logs");
                                 }}
                                 className="px-2 py-0.5 text-text-secondary hover:text-text"
                               >

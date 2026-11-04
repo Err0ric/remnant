@@ -7,7 +7,7 @@ export type PaletteSection =
   | "People"
   | "Hosts"
   | "AI services"
-  | "Search"
+  | "Logs"
   | "Navigate"
   | "Actions"
   | "Saved searches"
@@ -30,7 +30,7 @@ export interface PaletteItem {
 
 // Entities first (ADR-0038 edit 10): typing an address, a user, or a host is a jump to
 // its page; then pages and the rest, so a page name still opens with Enter; "Search
-// events for" is last.
+// events for" (in Logs) is last.
 export const SECTION_ORDER: PaletteSection[] = [
   "Recent",
   "Ask AI",
@@ -42,7 +42,7 @@ export const SECTION_ORDER: PaletteSection[] = [
   "Actions",
   "Saved searches",
   "Sources",
-  "Search",
+  "Logs",
 ];
 // A question typed in the top bar is offered to Ask first (owner, 2026-11-03).
 const QUESTION_WORDS = new Set([

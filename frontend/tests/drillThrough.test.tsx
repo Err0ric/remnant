@@ -51,20 +51,20 @@ describe("Dashboard drill-through (ADR-0039)", () => {
     }
   });
 
-  it("opens the card's rows in Search, labelled, and Back returns to the Dashboard", async () => {
+  it("opens the card's rows in Logs, labelled, and Back returns to the Dashboard", async () => {
     await renderDashboard();
     const identity = screen.getByRole("region", { name: "Identity" });
     const failed = within(identity).getByRole("button", {
-      name: "Failed sign-ins: 12. Open failed sign-ins in Search",
+      name: "Failed sign-ins: 12. Open failed sign-ins in Logs",
     });
-    expect(failed).toHaveAttribute("title", "Open 12 failed sign-ins in Search");
+    expect(failed).toHaveAttribute("title", "Open 12 failed sign-ins in Logs");
     // Interrupted, expired, and other are named under it and open on their own (D158).
     const apart = within(identity).getByRole("button", {
       name: "+ 37 interrupted or expired, 3 other (not counted)",
     });
-    expect(apart).toHaveAttribute("title", "Open sign-ins not counted in Search");
+    expect(apart).toHaveAttribute("title", "Open sign-ins not counted in Logs");
     await userEvent.click(failed);
-    await waitFor(() => expect(window.location.pathname).toBe("/investigate/search"));
+    await waitFor(() => expect(window.location.pathname).toBe("/investigate/logs"));
     expect(
       await screen.findByText(/^From Dashboard > Identity > Failed sign-ins, Oct 24, 12:00 AM to/),
     ).toBeVisible();
@@ -76,9 +76,9 @@ describe("Dashboard drill-through (ADR-0039)", () => {
   it("opens the window before from the change pill", async () => {
     await renderDashboard();
     const attacks = screen.getByRole("region", { name: "Detections" });
-    const pill = within(attacks).getAllByTitle(/from the previous 7 days in Search$/)[0];
+    const pill = within(attacks).getAllByTitle(/from the previous 7 days in Logs$/)[0];
     await userEvent.click(pill as HTMLElement);
-    await waitFor(() => expect(window.location.pathname).toBe("/investigate/search"));
+    await waitFor(() => expect(window.location.pathname).toBe("/investigate/logs"));
     expect(
       await screen.findByText(
         /^From Dashboard > Detections > Rule matches \(the previous 7 days\), Oct 17/,
@@ -88,11 +88,11 @@ describe("Dashboard drill-through (ADR-0039)", () => {
 });
 
 describe("AI Watch drill-through (ADR-0039)", () => {
-  it("opens a card and a chart day in Search", async () => {
+  it("opens a card and a chart day in Logs", async () => {
     await renderDashboard();
     const watch = screen.getByRole("region", { name: "AI Watch" });
-    await userEvent.click(within(watch).getByTitle("Open 2 services in Search"));
-    await waitFor(() => expect(window.location.pathname).toBe("/investigate/search"));
+    await userEvent.click(within(watch).getByTitle("Open 2 services in Logs"));
+    await waitFor(() => expect(window.location.pathname).toBe("/investigate/logs"));
     expect(
       await screen.findByText(/^From Dashboard > AI Watch > AI services not yet approved, Oct 4/),
     ).toBeVisible();
@@ -101,7 +101,7 @@ describe("AI Watch drill-through (ADR-0039)", () => {
     const chart = within(again).getByRole("img", { name: /^AI use per day/ });
     chart.focus();
     await userEvent.keyboard("{End}{Enter}");
-    await waitFor(() => expect(window.location.pathname).toBe("/investigate/search"));
+    await waitFor(() => expect(window.location.pathname).toBe("/investigate/logs"));
     expect(await screen.findByText(/^From Dashboard > AI Watch > AI use, Oct 10/)).toBeVisible();
   });
 });

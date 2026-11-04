@@ -21,3 +21,9 @@ export function ToHealth() {
   useEffect(() => redirect("health", "sources"), []);
   return <div aria-busy="true" className="flex-1" />;
 }
+
+/** Ask AI opened by someone who may not ask a model (an auditor): Logs instead (D206). */
+export function ToLogs() {
+  useEffect(() => redirect("logs"), []);
+  return <div aria-busy="true" className="flex-1" />;
+}

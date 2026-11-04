@@ -423,7 +423,7 @@ describe("Agents overview and tools (ADR-0038 section 6)", () => {
     expect(within(card).getByRole("button", { name: /^Failed tool calls: 7\./ })).toBeVisible();
     expect(within(box).getByRole("note")).toHaveTextContent("ws-0420");
     await userEvent.click(within(card).getByRole("button", { name: /^Failed tool calls: 7\./ }));
-    expect(window.location.pathname).toBe("/investigate/search");
+    expect(window.location.pathname).toBe("/investigate/logs");
   });
 
   it("lists tools with their type and status", async () => {

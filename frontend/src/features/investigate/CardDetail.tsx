@@ -71,7 +71,7 @@ export function CardDetail({
             onClick={() => onOpenSearch(card.search_sql as string)}
             className="h-8 rounded bg-accent px-3 text-sm font-semibold text-white hover:brightness-110"
           >
-            Open in Search
+            Open in Logs
           </button>
         ) : null}
         {canFollow ? (

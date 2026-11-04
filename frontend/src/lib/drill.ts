@@ -62,7 +62,7 @@ export function openDrill(d: Drill): void {
     window: { from: d.from, to: d.to },
     origin: `From ${d.origin}, ${when(d.from)} to ${when(d.to)}`,
   });
-  navigate("search");
+  navigate("logs");
 }
 
 /** The scroll position the Dashboard left for Search, taken once. */

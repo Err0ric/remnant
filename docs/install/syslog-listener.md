@@ -64,7 +64,7 @@ For TLS, the sender must trust Remnant's certificate: the one you configured, or
    logger -n remnant.example.internal -P 5514 -d "remnant listener test"      # UDP
    logger -n remnant.example.internal -P 5514 -T "remnant listener test"      # TCP
    ```
-2. Within a minute, **Search** `source:firewall "listener test"`. `raw` is the message exactly as sent; `device_ip` is the sender's address when the message did not carry one.
+2. Within a minute, in **Logs**, search `source:firewall "listener test"`. `raw` is the message exactly as sent; `device_ip` is the sender's address when the message did not carry one.
 
 ## What the counts mean
 

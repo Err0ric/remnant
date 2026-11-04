@@ -119,7 +119,7 @@ export function MailRules({ m }: { m: M365Overview }) {
           }
           className="ml-auto text-sm text-accent-text hover:underline"
         >
-          Open in Search
+          Open in Logs
         </button>
       </div>
       <p className="border-b border-border px-3 py-1.5 text-sm text-text-secondary">
