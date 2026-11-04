@@ -438,6 +438,30 @@ def test_hash_lines_in_the_details_are_not_read_as_paths(box: dict[str, Path]) -
     assert "/Xk3pQ9" not in res.stdout + res.stderr
 
 
+def test_the_check_runs_with_this_install_s_current_rules(box: dict[str, Path]) -> None:
+    """Owner, 2026-11-04: rules written by an older script (no spool rule) stayed in place,
+    because the rules were written only after the pre-check and a pre-check that flagged
+    the spool stopped the run first. The rules are written before AIDE checks."""
+    conf_d = box["install"].parent / "no-aide"  # AIDE_CONF_D in _run_aide
+    conf_d.mkdir()
+    rules = conf_d / "90_aide_remnant"
+    rules.write_text("# older rules\n!/var/lib/remnant/lake(/|$)\n")
+    seen = box["install"].parent / "rules-at-check"
+    env = _aide(box, 0)
+    stub = box["bin"] / "aide"
+    stub.write_text(
+        f'#!/bin/sh\ncp "{rules}" "{seen}"\necho "aide $*" >> "$CALLS"\n'
+        'cat "$AIDE_REPORT"\nexit "$AIDE_RC"\n'
+    )
+    _new_commit(box)
+    res = _run_aide(box, "--aide", **env)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "spool(/|$)" in seen.read_text()
+    assert seen.read_text() == rules.read_text()
+    out = res.stdout
+    assert out.index("AIDE rules replaced") < out.index("Checking files against the AIDE baseline")
+
+
 def test_a_no_op_run_checks_but_does_not_re_baseline(box: dict[str, Path]) -> None:
     _record(box, _git(box["install"], "rev-parse", "HEAD"))
     res = _run_aide(box, "--aide", **_aide(box, 0))

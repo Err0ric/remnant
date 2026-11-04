@@ -271,7 +271,7 @@ With AIDE installed (`/etc/aide/aide.conf.d` present), every run of `update-syst
 | `.git` | Watched | The update script runs git as root, so a changed hook would run on the next update |
 | `/etc/remnant`, `/etc/systemd/system/remnant.service` | Watched | Settings and the unit |
 
-Then update with `--aide`. Before changing anything, it runs `aide --check` against the current baseline and prints how many files were added, removed, and changed, with the changed paths outside `/opt/remnant`:
+Then update with `--aide`. It first writes the rules file above, so the check always runs with this install's current rules (a rules file left by an older update, or edited by hand, is replaced before the check, not after). Before changing anything else, it runs `aide --check` against the current baseline and prints how many files were added, removed, and changed, with the changed paths outside `/opt/remnant`:
 
 | What the check finds | What `--aide` does |
 |---|---|

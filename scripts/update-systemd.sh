@@ -185,6 +185,21 @@ aide_baseline() {
   fi
 }
 
+# Only with AIDE installed; one file at this exact path, overwritten, never a second one.
+# Written before the --aide check, so the check runs with this install's current rules:
+# rules left by an older script (no spool rule) otherwise flagged the spool on every
+# check and stopped the run before they could be replaced (owner, 2026-11-04).
+if [ -d "$AIDE_CONF_D" ] && { command -v aide >/dev/null 2>&1 || command -v aideinit >/dev/null 2>&1; }; then
+  rules="$AIDE_CONF_D/90_aide_remnant"
+  new=$(aide_rules)
+  if [ ! -f "$rules" ] || [ "$(cat "$rules")" != "$new" ]; then
+    verb=written; [ -f "$rules" ] && verb=replaced
+    printf '%s\n' "$new" > "$rules"
+    chmod 0644 "$rules"
+    echo "AIDE rules $verb: $rules (data folder $DATA_DIR)"
+  fi
+fi
+
 AIDE_STATE=none
 BASELINE_OK=0
 if [ "$AIDE" -eq 1 ] && command -v aide >/dev/null 2>&1; then
@@ -207,18 +222,6 @@ if [ "$AIDE" -eq 1 ] && command -v aide >/dev/null 2>&1; then
   esac
 elif [ "$AIDE" -eq 1 ]; then
   BASELINE_OK=1  # aideinit without aide, or neither: aide_baseline says what it can do
-fi
-
-# Only with AIDE installed; one file at this exact path, overwritten, never a second one.
-if [ -d "$AIDE_CONF_D" ] && { command -v aide >/dev/null 2>&1 || command -v aideinit >/dev/null 2>&1; }; then
-  rules="$AIDE_CONF_D/90_aide_remnant"
-  new=$(aide_rules)
-  if [ ! -f "$rules" ] || [ "$(cat "$rules")" != "$new" ]; then
-    verb=written; [ -f "$rules" ] && verb=replaced
-    printf '%s\n' "$new" > "$rules"
-    chmod 0644 "$rules"
-    echo "AIDE rules $verb: $rules (data folder $DATA_DIR)"
-  fi
 fi
 
 # a+rX, but only on what lacks it: chmod changes a file's ctime even when the mode is
