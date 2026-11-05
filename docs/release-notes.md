@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+<!-- unreleased:start -->
+
+### Release notes and decisions: one file per change (2026-11-05)
+
+- Each change now adds its own release note file (`docs/release-notes.d/`) and, for a decision, its own row file (`docs/decisions.d/`). `scripts/docs/assemble.py` writes them into this page and the SPEC decisions log, so changes no longer edit the same lines. The page reads as before.
+- What changes for existing installs: nothing to do.
+
 ### MCP: saved and library queries run as written (2026-11-04)
 
 - `run_query` on the MCP server fills `{{start}}`, `{{end}}`, `{{org_domains}}`, and `{{person:...}}` the way Logs, saved searches, schedules, and Ask do, so "Who uses Claude Code" gives the same people there. Any other `{{name}}` is refused with a reason.
@@ -74,6 +81,12 @@
 - When you fold a section, the bar moves to the section's own row, so you can still tell where you are.
 - What changes for existing installs: nothing to do.
 
+### People and devices lists everyone, with the score explained (2026-11-03)
+
+- **Investigate > People & devices** lists every user, IP address, and host seen in the range, not only those a detection rule matched. Ties go to the busier one, so the list is never empty while there is data.
+- The score now also counts failed sign-ins, risky inbox rules and app consents (Microsoft 365), AI watch flags (personal Claude account, unreviewed AI service, new MCP server, blocked tool calls), attack hits from outside, and alerts about them. Each has its own column; hover a score to see its parts.
+- What changes for existing installs: nothing to do. Rankings may change order now that more signals count.
+
 ### One page per person (2026-11-03)
 
 - A person's page in Investigate has five tabs: **Identity and M365** (summary, connections, and Microsoft 365 sign-ins), **AI use**, **Hosts and devices**, **Alerts**, and **Timeline**. AI usage, Agents, and People and devices all open this page.
@@ -81,24 +94,12 @@
 - The separate Sessions and Sign-ins tabs are gone: Claude sessions are under AI use and sign-ins under Identity and M365.
 - What changes for existing installs: nothing to do.
 
-### People and devices lists everyone, with the score explained (2026-11-03)
-
-- **Investigate > People & devices** lists every user, IP address, and host seen in the range, not only those a detection rule matched. Ties go to the busier one, so the list is never empty while there is data.
-- The score now also counts failed sign-ins, risky inbox rules and app consents (Microsoft 365), AI watch flags (personal Claude account, unreviewed AI service, new MCP server, blocked tool calls), attack hits from outside, and alerts about them. Each has its own column; hover a score to see its parts.
-- What changes for existing installs: nothing to do. Rankings may change order now that more signals count.
-
 ### Ask answers questions about AI agents from the library (2026-11-03)
 
 - A new library pack, **AI agents**, answers common questions about Claude Code and Cowork without a model: who uses it and on which machines, the tools, files, commands, web domains, and MCP servers each person's agent used, personal or unconfirmed Claude accounts by machine, tool calls that got no result, and one person's sessions.
 - Ask treats Claude Code, Claude, coding agent, AI agent, and Cowork as the same thing, and "what is dana accessing" finds files, commands, and web domains.
 - Questions the library cannot answer go to the model, which now knows where the agent's tool, path, command, web host, and account fields are kept.
 - What changes for existing installs: nothing to do. The pack's queries appear in the library once the hooks plugin sends data.
-
-### No more pause at the UTC day change (2026-11-03)
-
-- At 00:00 UTC (4 PM Pacific), while the previous day's summaries were built, every page could pause for several seconds. Signing each request in now has its own threads, so it never waits behind slow page queries.
-- The server log warns (`pool.wait`) when a request waits more than 2 seconds for a worker, with the request, how long it waited, and the jobs that were keeping the workers busy at the 2-second mark. The rollup log lines now give their start time, duration, and rows read.
-- What changes for existing installs: nothing to do.
 
 ### AI activity on each person's page (2026-11-03)
 
@@ -119,6 +120,12 @@
 - Cost and tokens read "Not reported" for people whose Claude Code sends no telemetry, instead of 0.00 and 0.
 - People seen only on the network (DNS, firewall, or proxy) show the Claude services, lookups, devices, and last seen the network gives, instead of empty columns.
 - A network name not linked to a person reads "Unmatched", names the person it may be, and has a link that opens Identities with the alias filled in, so one click and a save merges them.
+- What changes for existing installs: nothing to do.
+
+### No more pause at the UTC day change (2026-11-03)
+
+- At 00:00 UTC (4 PM Pacific), while the previous day's summaries were built, every page could pause for several seconds. Signing each request in now has its own threads, so it never waits behind slow page queries.
+- The server log warns (`pool.wait`) when a request waits more than 2 seconds for a worker, with the request, how long it waited, and the jobs that were keeping the workers busy at the 2-second mark. The rollup log lines now give their start time, duration, and rows read.
 - What changes for existing installs: nothing to do.
 
 ### Dashboard no longer fails after you have used Search (2026-11-03)
@@ -153,11 +160,6 @@
 - On **Agents**, Claude Code for a person now lists every machine it ran on, newest first, each with its own last seen and events. Activity on a second machine no longer shows under the first machine's name.
 - What changes for existing installs: nothing to do. Agent alert titles name the person and machines, so an open agent alert may get a new title on its next update.
 
-### Example questions in Ask (2026-11-03)
-
-- Before your first question, Ask shows up to six example questions that fit the sources this install has data from, such as "Who logged in over SSH?". One click asks it.
-- What changes for existing installs: nothing to do.
-
 ### AI Watch and Dashboard sections no longer fail during compaction (2026-11-03)
 
 - Compaction, which merges small log files every hour, now keeps the files it replaces for 30 minutes before deleting them. A search or background check that had already started reading them finishes normally instead of failing with "Cannot open file". This was the cause of AI Watch failing every hour on busy sources, and of Dashboard sections such as Attacks and access failing to load.
@@ -171,11 +173,10 @@
 - **Needs attention** on the Dashboard lists not approved and unreviewed AI services apart, the same way as the AI usage page.
 - What changes for existing installs: nothing to do.
 
-### Faster today-so-far build for quiet sources (2026-11-03)
+### Example questions in Ask (2026-11-03)
 
-- The 5-minute build of today's AI use now skips a source whose files have not changed since the last build, and carries its last result over. Busy sources build as before, so the results are the same.
-- The server log line `ai_rollup.today` now says how many sources were carried over (`reused`).
-- What changes for existing installs: nothing to do. The first build after updating is a full one.
+- Before your first question, Ask shows up to six example questions that fit the sources this install has data from, such as "Who logged in over SSH?". One click asks it.
+- What changes for existing installs: nothing to do.
 
 ### Questions in the top bar search go to Ask (2026-11-03)
 
@@ -188,6 +189,12 @@
 - On the Search page, the small **AI** switch is replaced by three tabs: **Search**, **Ask AI**, and **SQL**. Your question and results are kept when you move between them.
 - Auditors still do not see Ask.
 - What changes for existing installs: nothing to do.
+
+### Faster today-so-far build for quiet sources (2026-11-03)
+
+- The 5-minute build of today's AI use now skips a source whose files have not changed since the last build, and carries its last result over. Busy sources build as before, so the results are the same.
+- The server log line `ai_rollup.today` now says how many sources were carried over (`reused`).
+- What changes for existing installs: nothing to do. The first build after updating is a full one.
 
 ### Clearer comparison line on Dashboard trends (2026-11-03)
 
@@ -292,17 +299,17 @@
 - **Settings > Claude plugins** has **Send a test record** next to each deployment token. It sends one synthetic session start through the real receiver with that token and shows the HTTP result, so you can check the server side before installing the plugin anywhere. The record names no person or machine.
 - What changes for existing installs: nothing to do.
 
-### "How this is counted" on every number (2026-11-02)
-
-- Every number on the Dashboard, Microsoft 365, Agents, AI Watch, and Health has an (i) beside it. Hover it to see which events and sources it counts, over what window, what is left out, and the rule used, for example what "external" means for External sign-in failures and how devices map to people for People using unapproved AI.
-- What changes for existing installs: nothing to do.
-
 ### Easier to read at a glance (2026-11-02)
 
 - A **Needs attention** strip at the top of the Dashboard and each area overview lists what to act on, with links: unreviewed AI services, MCP servers not approved, risky mail rules, blocked consents, open alerts, and real failed sign-ins when they jump. It says "Nothing needs attention" when there is nothing.
 - Zero and benign values are shown in muted gray instead of green; colors are kept for alerts.
 - Sections without enough history show one "Comparisons start <date>" line instead of "Not enough history" under every number.
 - The Dashboard header no longer shows a time range that could disagree with the panels; each saved-search panel shows its own.
+- What changes for existing installs: nothing to do.
+
+### "How this is counted" on every number (2026-11-02)
+
+- Every number on the Dashboard, Microsoft 365, Agents, AI Watch, and Health has an (i) beside it. Hover it to see which events and sources it counts, over what window, what is left out, and the rule used, for example what "external" means for External sign-in failures and how devices map to people for People using unapproved AI.
 - What changes for existing installs: nothing to do.
 
 ### No more blank pages (2026-11-02)
@@ -353,6 +360,8 @@
 
 - The v0.3.0 notes, CLAUDE.md, and the backlog now say the Microsoft 365 connector runs against a live tenant (on a test install since late October 2026); only the Anthropic connectors are still tested against fakes alone.
 - What changes for existing installs: nothing.
+
+<!-- unreleased:end -->
 
 ## v0.3.0 (2026-11-02)
 

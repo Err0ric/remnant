@@ -55,5 +55,12 @@ if grep -nE '^\s+(- )?uses: ' .github/workflows/*.yml | grep -vE '@[0-9a-f]{40}(
   fail=1
 fi
 
+# Release notes and decisions are one file per change, assembled (ADR-0044): the pages
+# must be what the fragments assemble to, with no gaps or duplicate decision numbers.
+if ! python3 scripts/docs/assemble.py --check; then
+  echo "error: release notes or decisions out of date; run python3 scripts/docs/assemble.py" >&2
+  fail=1
+fi
+
 [ "$fail" -eq 0 ] && echo "architecture checks passed"
 exit "$fail"

@@ -1,0 +1,8 @@
+### Failed sign-ins count real failures only (2026-11-02)
+
+- **Failed sign-ins** on the Dashboard, Microsoft 365 > Overview, and person, address, and host pages, and **Top failing users**, now count real failures only: wrong password, locked, MFA denied or failed, expired password, disabled account, user not found, and blocked by Conditional Access. Background token refreshes, expired sessions from sleeping laptops, "stay signed in" prompts, and MFA prompts the person then completed no longer count.
+- Under the number, "+ N interrupted or expired (not counted)" opens those sign-ins; codes Remnant does not know are counted as **other**, never hidden. **Blocked by policy** (Conditional Access) has its own card on Microsoft 365 > Overview, and the outcomes chart shows failed, interrupted, expired, and other.
+- **Microsoft 365 > Sign-ins** filters by Real failures (the default), Interrupted, Expired, Other, or All, and by Interactive or Non-interactive.
+- The (i) beside Failed sign-ins says exactly how it is counted and whether this install changed the classes. To move a code (for example, count MFA interrupts as failures when hunting MFA fatigue), set `m365.signin_classes` in `config/app.yaml` (see `config/app.example.yaml`) and restart.
+- New columns `status_code` (Entra's error code) and `is_interactive` from the sign-ins parser 1.2.0.
+- What changes for existing installs: Failed sign-ins drops to real failures, on stored events too (they are read from the stored record). The Microsoft 365 rollup rebuilds its days once after the update, so the first Microsoft 365 and Dashboard loads may be slower until it finishes.

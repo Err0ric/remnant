@@ -1,0 +1,4 @@
+### AIDE: the check uses the current rules (2026-11-04)
+
+- `update-systemd.sh --aide` writes `/etc/aide/aide.conf.d/90_aide_remnant` before it checks, not after. Rules left by an older update had no spool rule, so the check flagged `/var/lib/remnant/spool/...` and stopped before the new rules could be written; that repeated on every run.
+- What changes for existing installs: the update that brings this fix still runs the script already installed, so its check can flag the spool once more. Write the current rules first, then update: `sudo sh -c 'sh /opt/remnant/scripts/update-systemd.sh --print-aide-rules > /etc/aide/aide.conf.d/90_aide_remnant'`, then `sudo sh /opt/remnant/scripts/update-systemd.sh --aide`. If the printed rules have no `spool` line, the install is older than the spool rule: review the check's list, and if it shows only the spool, run `--aide-accept` once.
