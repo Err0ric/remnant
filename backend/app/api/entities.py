@@ -15,6 +15,7 @@ from app.ai.catalog import Catalog
 from app.api.access import CurrentUser, client_ip
 from app.auth.service import AuthService
 from app.core.errors import SearchInvalidError
+from app.core.timing import phase
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.engine.views import permitted_sources
 from app.enrich.geoip import GeoIP
@@ -23,6 +24,7 @@ from app.search.entities import ai_graph, entity_graph, entity_risk, to_json
 from app.search.entity_summary import entity_summary
 from app.search.identity import IdentityMap, IdentityStore
 from app.search.lookup import lookup
+from app.search.targeted import place
 
 router = APIRouter(tags=["investigate"])
 
@@ -50,10 +52,29 @@ class RiskOut(BaseModel):
     parts: dict[str, int]
 
 
+class PlaceOut(BaseModel):
+    label: str
+    attempts: int
+
+
+class TargetedOut(BaseModel):
+    """A username tried in failed sign-ins that is nobody's (D212)."""
+
+    value: str
+    attempts: int
+    sources: list[str]
+    hosts: list[str]
+    names: list[str]
+    countries: list[PlaceOut]  # empty when GeoIP enrichment is off
+    asns: list[PlaceOut]
+
+
 class RiskResponse(BaseModel):
     users: list[RiskOut]
     ips: list[RiskOut]
     hosts: list[RiskOut]
+    targeted: list[TargetedOut] = []
+    targeted_total: int = 0
     matches_considered: int
     sources: list[str]
 
@@ -177,18 +198,31 @@ async def risk(
     """Users, source IPs, and hosts seen in the range, ranked by a score whose parts are
     shown: rule matches, flagged runs, failed sign-ins, risky inbox rules, app consents, AI
     watch flags, attack hits, and alerts naming them (D195); then by events."""
-    allowed, scope = await _scope(request, user, start, end)
+    # Named phases in Server-Timing, so a slow load shows where it went (review item 7).
+    with phase("access"):
+        allowed, scope = await _scope(request, user, start, end)
     engine: QueryEngine = request.app.state.engine
     meta: MetaDB = request.app.state.meta
-    ident = await _identities(request)
-    ranked, considered, read = await run_in_threadpool(
+    with phase("identities"):
+        ident = await _identities(request)
+    ranked, considered, read, spl = await run_in_threadpool(
         entity_risk, engine, meta, allowed, scope, ident, request.app.state.ai_usage
     )
-    await _audit(request, user, "investigate.risk", {"sources_in_scope": read})
+    with phase("enrichment"):
+        await run_in_threadpool(place, spl.rows, request.app.state.geoip)
+    with phase("audit"):
+        await _audit(request, user, "investigate.risk", {"sources_in_scope": read})
+    targeted_rows = []
+    for t in spl.rows:
+        data = to_json(t)
+        data.pop("ips", None)  # only places are shown, never the addresses behind them
+        targeted_rows.append(TargetedOut(**data))
     return RiskResponse(
         users=[RiskOut(**to_json(r)) for r in ranked["user"]],
         ips=[RiskOut(**to_json(r)) for r in ranked["ip"]],
         hosts=[RiskOut(**to_json(r)) for r in ranked["host"]],
+        targeted=targeted_rows,
+        targeted_total=spl.total,
         matches_considered=considered,
         sources=read,
     )
@@ -213,7 +247,10 @@ async def graph(
             raise SearchInvalidError("Pick a user, IP address, or host to investigate")
         meta: MetaDB = request.app.state.meta
         ident = await _identities(request)
-        g = await run_in_threadpool(entity_graph, engine, meta, allowed, scope, kind, value, ident)
+        names = {t.id: t.name for t in request.app.state.templates.all()}
+        g = await run_in_threadpool(
+            entity_graph, engine, meta, allowed, scope, kind, value, ident, names
+        )
     else:
         if kind not in (None, "user", "mcp", "service") or (kind and not value):
             raise SearchInvalidError("AI flow is for a person, an MCP server, or an AI service")

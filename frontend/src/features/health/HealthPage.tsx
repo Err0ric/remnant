@@ -8,7 +8,7 @@ import { navigate, useSection, useSectionTab, type PageId } from "@/lib/route";
 import { SpeedTable } from "./SpeedTable";
 import { BackgroundFailures } from "./BackgroundFailures";
 import { EntityLink } from "@/components/EntityLink";
-import { lag } from "./flow";
+import { lag, openGaps } from "./flow";
 import { SourceFlow } from "./SourceFlow";
 import { StatusLine } from "./StatusLine";
 import { SystemStrip, type SourceTally } from "./SystemStrip";
@@ -186,8 +186,17 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
   const gapped = new Set(
     (overview.data?.volume ?? []).filter((v) => v.gaps.length).map((v) => v.source_id),
   );
+  // An open source gap alert (or a firing quiet watch) is a gap here too (review item 3).
+  const open = new Map(openGaps(overview.data).map((g) => [g.source_id, g]));
   const flowing = (r: Row): Row => {
     if (!overview.data || r.level !== "healthy") return r;
+    const stopped = open.get(r.key);
+    if (stopped)
+      return {
+        ...r,
+        level: "attention",
+        word: stopped.quiet ? `Quiet ${stopped.quiet}` : "Stopped sending",
+      };
     if (!totals.get(r.key)) return { ...r, level: "attention", word: "No events in 24 hours" };
     if (gapped.has(r.key)) return { ...r, level: "attention", word: "Gap" };
     return r;
@@ -331,7 +340,12 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
   const tally: SourceTally = {
     total: sourceRows.length,
     healthy: sourceRows.filter((r) => r.level === "healthy" && !gapsOf.get(r.key)).length,
-    gaps: list.reduce((n, s) => n + (gapsOf.get(s.source_id) ?? 0), 0),
+    // Gaps in 24 hours, plus each open gap the 24 hours do not already show.
+    gaps: list.reduce(
+      (n, s) => n + Math.max(gapsOf.get(s.source_id) ?? 0, open.has(s.source_id) ? 1 : 0),
+      0,
+    ),
+    openGaps: openGaps(overview.data).filter((g) => list.some((s) => s.source_id === g.source_id)),
     worstLag: worst ? lag(worst.last, now) : null,
     worstLagSource: worst?.id ?? null,
   };

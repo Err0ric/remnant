@@ -1,4 +1,4 @@
-import type { SourceGap } from "@/lib/api";
+import type { Overview, SourceGap } from "@/lib/api";
 
 /** "2:00 AM" in the viewer's zone (or `timeZone`, for tests). */
 export function localTime(iso: string, timeZone?: string): string {
@@ -73,4 +73,36 @@ export function lag(last: string | null, now: string): string | null {
   if (s < 90 * 60) return `${Math.round(s / 60)} min`;
   if (s < 48 * 3600) return `${Math.round(s / 3600)} h`;
   return `${Math.round(s / 86400)} d`;
+}
+
+export interface OpenGap {
+  source_id: string;
+  /** The open source gap alert, or null when only the quiet watch says so. */
+  item_id: string | null;
+  /** "4 d": how long since the source last sent, or null when it never did. */
+  quiet: string | null;
+}
+
+/** Sources with an open gap (review item 3): an open source gap alert, or a quiet watch
+ * that is firing. The same state the source gap alerts use, so the Dashboard footer,
+ * Health, and Alerts agree. Longest quiet first. */
+export function openGaps(o: Overview | undefined): OpenGap[] {
+  const rows = Array.isArray(o?.sources) ? o.sources : [];
+  return rows
+    .filter((s) => s.gap_alert || s.quiet_since)
+    .sort((a, b) => (a.last_event_at ?? "").localeCompare(b.last_event_at ?? ""))
+    .map((s) => ({
+      source_id: s.source_id,
+      item_id: s.gap_alert ?? null,
+      quiet: o ? lag(s.last_event_at, o.generated_at) : null,
+    }));
+}
+
+/** "2 gaps: server_events quiet 4 d, lin_auth quiet 3 h". */
+export function openGapsText(gaps: OpenGap[], max = 3): string {
+  const named = gaps
+    .slice(0, max)
+    .map((g) => (g.quiet ? `${g.source_id} quiet ${g.quiet}` : `${g.source_id} never sent`));
+  const more = gaps.length > max ? `, and ${gaps.length - max} more` : "";
+  return `${gaps.length} ${gaps.length === 1 ? "gap" : "gaps"}: ${named.join(", ")}${more}`;
 }

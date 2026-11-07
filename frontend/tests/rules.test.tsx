@@ -86,6 +86,37 @@ describe("Detection rules", () => {
     expect(within(refused).getByText(/not supported yet/)).toBeInTheDocument();
   });
 
+  it("recommends rules for the viewer's sources and enables one only on click", async () => {
+    const spy = await renderAt("/rules");
+    const rec = await screen.findByRole("table", { name: "Recommended rules" });
+    const row = (await within(rec).findByText("Service installed")).closest("tr");
+    expect(row).not.toBeNull();
+    const cells = within(row as HTMLElement);
+    expect(cells.getByText("medium")).toBeInTheDocument();
+    expect(cells.getByText("windows / security")).toBeInTheDocument();
+    expect(cells.getByText("win_dc")).toBeInTheDocument();
+    expect(cells.getByText("persistence, t1543.003")).toBeInTheDocument();
+    // Listing enables nothing.
+    expect(bodies(spy, (u) => u.endsWith("/api/rules/enabled"))).toEqual([]);
+    await userEvent.click(cells.getByRole("button", { name: "Enable Service installed" }));
+    await vi.waitFor(() =>
+      expect(bodies(spy, (u) => u.endsWith("/api/rules/enabled"))).toEqual([
+        { rule_ids: ["r3"], enabled: true },
+      ]),
+    );
+    await vi.waitFor(() =>
+      expect(screen.queryByRole("table", { name: "Recommended rules" })).toBeNull(),
+    );
+  });
+
+  it("shows recommendations to analysts without an Enable action", async () => {
+    await renderAt("/rules", { mode: "login", signedIn: true, role: "analyst" });
+    const rec = await screen.findByRole("table", { name: "Recommended rules" });
+    await within(rec).findByText("Service installed");
+    expect(within(rec).queryByRole("button", { name: /^Enable/ })).toBeNull();
+    expect(within(rec).queryByRole("checkbox")).toBeNull();
+  });
+
   it("schedules an enabled rule from its row", async () => {
     await renderAt("/rules");
     const table = await screen.findByRole("table", { name: "Detection rules" });

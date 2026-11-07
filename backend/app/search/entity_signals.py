@@ -16,6 +16,7 @@ from datetime import timedelta
 from typing import Any
 
 from app.ai.internal_tools import counted
+from app.core.timing import phase
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.meta.db import MetaDB
 from app.search.dashboard import EXTERNAL_FAILURE
@@ -125,9 +126,14 @@ def collect(
 ) -> tuple[dict[Key, Signals], list[str]]:
     """Signals per (kind, value), and the sources read."""
     out: dict[Key, Signals] = {}
-    seen = engine.run(
-        SEEN_SQL, scope, {"org": [d.lower() for d in ident.domains]}, timeout_s=TIMEOUT_S, page=True
-    )
+    with phase("signals_seen"):
+        seen = engine.run(
+            SEEN_SQL,
+            scope,
+            {"org": [d.lower() for d in ident.domains]},
+            timeout_s=TIMEOUT_S,
+            page=True,
+        )
     for kind, value, events, failed, consents, attacks, blocked, personal in seen.rows:
         s = out.setdefault((str(kind), str(value)), Signals())
         s.events, s.failed_signins = int(events), int(failed)
@@ -136,18 +142,23 @@ def collect(
             _flag(out, (str(kind), str(value)), "blocked_calls")
         if personal:
             _flag(out, (str(kind), str(value)), "personal_account")
-    for person, n in engine.run(risky_by_person_sql(), scope, timeout_s=TIMEOUT_S, page=True).rows:
+    with phase("signals_mail_rules"):
+        risky = engine.run(risky_by_person_sql(), scope, timeout_s=TIMEOUT_S, page=True).rows
+    for person, n in risky:
         out.setdefault(("user", str(person)), Signals()).mail_rules = int(n)
     if scope.start is not None:
         wide = QueryScope(scope.sources, scope.start - NEW_MCP_LOOKBACK, scope.end)
-        rows = engine.run(NEW_MCP_SQL, wide, {"start": scope.start}, timeout_s=TIMEOUT_S).rows
+        with phase("signals_new_mcp"):
+            rows = engine.run(NEW_MCP_SQL, wide, {"start": scope.start}, timeout_s=TIMEOUT_S).rows
         for who, host in rows:
             if who:
                 _flag(out, ("user", str(who)), "new_mcp")
             if host:
                 _flag(out, ("host", str(host)), "new_mcp")
     if usage is not None:
-        for who, machine in usage.unreviewed_use(scope):
+        with phase("signals_unreviewed_ai"):
+            unreviewed = usage.unreviewed_use(scope)
+        for who, machine in unreviewed:
             if who:
                 _flag(out, ("user", who), "unreviewed_service")
             if machine:

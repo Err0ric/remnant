@@ -3,7 +3,7 @@ import { LoadFailed } from "@/components/LoadFailed";
 import { api, type AlertItem, type AlertList, type Overview, type Source } from "@/lib/api";
 import { navigate, pathFor } from "@/lib/route";
 import { When } from "@/components/When";
-import { lag } from "@/features/health/flow";
+import { lag, openGaps, openGapsText } from "@/features/health/flow";
 
 interface SourceState {
   id: string;
@@ -41,7 +41,7 @@ export function sourceStates(sources: Source[], o: Overview | undefined): Source
       const problem =
         s?.status.state === "error" || h?.state === "error"
           ? "has errors"
-          : s?.quiet?.state === "quiet" || h?.quiet_since
+          : s?.quiet?.state === "quiet" || h?.quiet_since || h?.gap_alert
             ? "stopped sending"
             : ongoing
               ? `has sent nothing for ${ongoing.hours} h`
@@ -53,14 +53,15 @@ export function sourceStates(sources: Source[], o: Overview | undefined): Source
 interface Line {
   key: string;
   badge: string;
-  tone: "high" | "medium" | "low";
+  tone: "high" | "medium" | "none";
   text: string;
   at: string | null;
   open: () => void;
   href: string;
 }
 
-const RANK = { high: 0, medium: 1, low: 2 } as const;
+const RANK = { high: 0, medium: 1, none: 2 } as const;
+const SEV_LABEL = { high: "High", medium: "Medium", none: "" } as const;
 
 /** What needs me, one line each, severity first (F62). Open alerts (runs of one search,
  * rule, or source as one line) and sources with errors or that stopped and no alert says
@@ -121,7 +122,7 @@ export function AttentionBanner() {
                       ? "bg-sev-high-bg text-sev-high-text"
                       : l.tone === "medium"
                         ? "bg-sev-medium-bg text-sev-medium-text"
-                        : "bg-sev-low-bg text-sev-low-text"
+                        : ""
                   }`}
                 >
                   {l.badge}
@@ -180,11 +181,12 @@ export function attentionLines(list: AlertList | undefined, states: SourceState[
     (list?.items ?? []).filter((i) => i.kind === "gap").map((i) => i.subject),
   );
   const lines: Line[] = [...groups.values()].map(({ item: i, runs }) => {
-    // High first: High AI Watch items and gaps on watched sources; then the rest.
-    const tone: Line["tone"] = i.severity === "high" || i.kind === "gap" ? "high" : "medium";
+    // The severity stored on the alert, as the Alerts page shows it; never re-derived
+    // here from the kind (review item 2: gaps showed High here and Medium on Alerts).
+    const tone: Line["tone"] = i.severity ?? "none";
     // The badge column is severity only; what kind of alert it is goes in the text
     // (ADR-0038, owner 16:21).
-    const badge = tone === "high" ? "High" : "Medium";
+    const badge = SEV_LABEL[tone];
     const kind =
       i.kind === "schedule"
         ? "Schedule"
@@ -216,8 +218,10 @@ export function attentionLines(list: AlertList | undefined, states: SourceState[
     if (s.problem && !covered.has(s.id))
       lines.push({
         key: `s:${s.id}`,
-        badge: "High",
-        tone: "high",
+        // No alert says so (a source without Alert if quiet, or one the viewer cannot
+        // see the alert for): shown as a source gap would be (ADR-0043 row 15).
+        badge: SEV_LABEL.medium,
+        tone: "medium",
         text: `Source: ${s.id} ${s.problem}`,
         at: null,
         open: () => navigate("health", `source=${encodeURIComponent(s.id)}`),
@@ -265,22 +269,34 @@ export function SourcesLine() {
     .map((s) => ({ id: s.id, last: newest.get(s.id) ?? null }))
     .filter((w): w is { id: string; last: string } => Boolean(w.last))
     .sort((a, b) => a.last.localeCompare(b.last))[0];
+  // Open gaps come from the same state as the source gap alerts (review item 3), so the
+  // line never says "no gaps" while a gap alert is open; it links to those alerts.
+  const enabled = new Set(states.map((s) => s.id));
+  const open = openGaps(overview.data).filter((g) => enabled.has(g.source_id));
   const parts = [
     `${flowing} of ${states.length} flowing`,
-    worst ? `longest wait ${lag(worst.last, now)} (${worst.id})` : null,
-    gaps ? `${gaps} ${gaps === 1 ? "gap" : "gaps"} in 24 hours` : "no gaps",
+    open.length ? openGapsText(open) : null,
+    !open.length && worst ? `longest wait ${lag(worst.last, now)} (${worst.id})` : null,
+    open.length ? null : gaps ? `${gaps} ${gaps === 1 ? "gap" : "gaps"} in 24 hours` : "no gaps",
   ].filter(Boolean);
+  // To the gap alerts when there are any (the one alert when there is one); a quiet watch
+  // with no alert behind it opens Health, where the source is.
+  const alerted = open.filter((g) => g.item_id);
+  const one = alerted.length === 1 ? alerted[0]?.item_id : null;
+  const [area, section] = alerted.length
+    ? (["alerts", one ? `item=${one}` : ""] as const)
+    : (["health", "sources"] as const);
   return (
     <a
-      href={`${pathFor("health")}#sources`}
+      href={`${pathFor(area)}${section ? `#${section}` : ""}`}
       onClick={(e) => {
         if (e.metaKey || e.ctrlKey || e.shiftKey) return;
         e.preventDefault();
-        navigate("health", "sources");
+        navigate(area, section || undefined);
       }}
-      aria-label={`Sources: ${parts.join(", ")}. Open Health`}
+      aria-label={`Sources: ${parts.join(", ")}. Open ${area === "alerts" ? "Alerts" : "Health"}`}
       className={`block rounded-card border border-border bg-surface px-3 py-2 text-sm hover:bg-surface-head ${
-        flowing < states.length ? "text-warn" : "text-text-secondary"
+        flowing < states.length || open.length ? "text-warn" : "text-text-secondary"
       }`}
     >
       <span className="font-semibold text-text">Sources</span> {parts.join(", ")}

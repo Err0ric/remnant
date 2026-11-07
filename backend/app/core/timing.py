@@ -8,9 +8,11 @@ than the wall time; `app` is what is left of the total, never below 0."""
 
 from __future__ import annotations
 
+import re
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar, copy_context
 from dataclasses import dataclass, field
 from typing import Any
@@ -29,6 +31,9 @@ class Timing:
     # parallel overlap, so their sums can pass the total (owner, 2026-11-01).
     waits: list[tuple[float, float]] = field(default_factory=list)
     runs: list[tuple[float, float]] = field(default_factory=list)
+    # Named parts of a slow page (review item 7), wall milliseconds each, in the order they
+    # first ran. Names are fixed words in the code, never data.
+    phases: dict[str, float] = field(default_factory=dict)
 
     def query(self, wait_s: float, db_s: float) -> None:
         end = time.perf_counter()
@@ -69,6 +74,8 @@ class Timing:
             f"db_sum;dur={self.db_ms:.1f}",
             f"wait_sum;dur={self.wait_ms:.1f}",
         ]
+        with self.lock:
+            parts += [f"{name};dur={ms:.1f}" for name, ms in self.phases.items()]
         return ", ".join(parts)
 
 
@@ -100,6 +107,26 @@ def cache(result: str) -> None:
     t = _current.get()
     if t is not None and t.cache != "miss":  # one miss in a request is a miss
         t.cache = result
+
+
+PHASE_NAME = re.compile(r"[a-z][a-z0-9_]{0,31}")
+
+
+@contextmanager
+def phase(name: str) -> Iterator[None]:
+    """Time a named part of the request for the Server-Timing header. The name must be a
+    fixed lower-case word (a data value never becomes a metric name)."""
+    if not PHASE_NAME.fullmatch(name):
+        raise ValueError("phase names are fixed lower-case words")
+    t = _current.get()
+    began = time.perf_counter()
+    try:
+        yield
+    finally:
+        if t is not None:
+            ms = (time.perf_counter() - began) * 1000
+            with t.lock:
+                t.phases[name] = t.phases.get(name, 0.0) + ms
 
 
 def in_context[T](fn: Callable[..., T]) -> Callable[..., T]:

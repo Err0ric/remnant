@@ -61,3 +61,12 @@ def test_newlines_cannot_add_email_headers() -> None:
     a = replace(ALERT, title="x\r\nBcc: someone@example.net")
     subject, _, _ = email_parts(a)
     assert "\r" not in subject and "\n" not in subject
+
+
+def test_severity_from_the_item_shows_in_every_format() -> None:
+    """Review item 2: the message carries the severity stored on the alert item."""
+    gap = replace(ALERT, kind="quiet", count=None, reason=None, severity="medium")
+    assert json.loads(signed_webhook(gap, "s", 1)[0])["severity"] == "medium"
+    assert "Source quiet · Medium" in slack_payload(gap)["text"]
+    assert "Medium" in email_parts(gap)[1]
+    assert "severity" not in json.loads(signed_webhook(ALERT, "s", 1)[0])

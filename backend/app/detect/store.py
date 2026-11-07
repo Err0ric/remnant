@@ -283,6 +283,20 @@ class RuleStore:
             raise NotFoundError("No such rule")
         return _row(r), str(r["yaml"])
 
+    def versions(self, sha256s: list[str]) -> dict[str, str]:
+        """The stored YAML of each named rule version."""
+        out: dict[str, str] = {}
+        with self._meta.connect() as con:
+            for i in range(0, len(sha256s), 500):
+                chunk = sha256s[i : i + 500]
+                marks = ", ".join("?" * len(chunk))
+                rows = con.execute(
+                    f"SELECT sha256, yaml FROM rule_versions WHERE sha256 IN ({marks})",  # noqa: S608  # placeholders only
+                    chunk,
+                ).fetchall()
+                out.update((r["sha256"], str(r["yaml"])) for r in rows)
+        return out
+
     def imports(self, limit: int = 50) -> list[dict[str, object]]:
         with self._meta.connect() as con:
             rows = con.execute(

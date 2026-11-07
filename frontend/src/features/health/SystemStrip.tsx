@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import type { AlertList, Overview } from "@/lib/api";
 import { since, stamp } from "@/features/overview/time";
-import { eventsChange } from "./flow";
+import { eventsChange, openGapsText, type OpenGap } from "./flow";
 import { COUNTED } from "@/features/dashboard/counted";
 import { About } from "@/features/dashboard/Sections";
 
@@ -11,6 +11,8 @@ export interface SourceTally {
   gaps: number;
   worstLag: string | null;
   worstLagSource: string | null;
+  /** Sources with an open gap alert or a firing quiet watch (review item 3). */
+  openGaps?: OpenGap[];
 }
 
 interface TileProps {
@@ -99,9 +101,11 @@ export function SystemStrip(p: SystemStripProps) {
         }
         tone={sourcesOk ? undefined : "warn"}
         lines={[
-          p.tally.gaps
-            ? `${p.tally.gaps} ${p.tally.gaps === 1 ? "gap" : "gaps"} in 24 hours`
-            : "No gaps in 24 hours",
+          p.tally.openGaps?.length
+            ? openGapsText(p.tally.openGaps)
+            : p.tally.gaps
+              ? `${p.tally.gaps} ${p.tally.gaps === 1 ? "gap" : "gaps"} in 24 hours`
+              : "No gaps in 24 hours",
           p.tally.worstLag
             ? `Longest wait: ${p.tally.worstLag} (${p.tally.worstLagSource})`
             : "No events yet",

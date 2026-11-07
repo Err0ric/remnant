@@ -80,6 +80,9 @@ SELECT source_id, coalesce(nullif(device_hostname, ''), nullif(src_endpoint_host
        max(time_observed) AS last,
        count(*) FILTER (WHERE time_observed >= $since) AS n24,
        bool_or(template_id = 'claude_hooks') AS hooks,
+       -- Last hooks record, and last anything else from the machine (owner review, item 9).
+       max(time_observed) FILTER (WHERE template_id = 'claude_hooks') AS hooks_last,
+       max(time_observed) FILTER (WHERE template_id IS DISTINCT FROM 'claude_hooks') AS other_last,
        -- Records the hooks plugin could not send, reported by its next record (ADR-0026).
        coalesce(sum(TRY_CAST(json_extract_string(unmapped, '$.attr.dropped_since_last')
          AS BIGINT)) FILTER (WHERE time_observed >= $since), 0) AS dropped
@@ -146,6 +149,29 @@ def _utc(value: Any) -> str:
     return t.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC") if t else str(value)
 
 
+def _iso_or_none(value: Any) -> str | None:
+    t = _parse(value)
+    return t.isoformat() if t else None
+
+
+def _other_times(agents: list[AgentStatus], machine: str) -> list[datetime]:
+    """When `machine` sent anything other than hook records, from any source."""
+    out = []
+    for x in agents:
+        if x.machine.lower() != machine.lower():
+            continue
+        for t in (x.other_last, None if x.kind == "Claude hooks plugin" else x.last_seen):
+            tt = _parse(t)
+            if tt is not None:
+                out.append(tt)
+    return out
+
+
+def _other_contact(agents: list[AgentStatus], a: AgentStatus) -> str:
+    times = _other_times(agents, a.machine)
+    return f"other telemetry {_utc(max(times))}" if times else "no other telemetry"
+
+
 def _parse(value: Any) -> datetime | None:
     if value is None:
         return None
@@ -194,6 +220,11 @@ class AgentStatus:
     late_24h: int = 0  # delivered more than 5 minutes after they happened
     missing: int = 0  # sequence numbers that never arrived, over 8 days
     gaps: list[str] = field(default_factory=list)  # "120 missing between Oct 27 9:00 and ..."
+    # For the stuck-queue check (owner review, item 9), not shown as they are:
+    queue_reported: bool = False  # the plugin sent its queue figure (queued_at_send)
+    hooks_last: str | None = None  # the hooks plugin's last record
+    other_last: str | None = None  # anything else from the machine, any source
+    stuck: Literal["active", "idle"] | None = None  # holding records: still sending, or not
 
 
 def evaluate(
@@ -365,7 +396,7 @@ class HealthService:
             page=True,
         )
         out = []
-        for source_id, machine, last, n24, hooks, dropped in result.rows:
+        for source_id, machine, last, n24, hooks, hooks_last, other_last, dropped in result.rows:
             t = _parse(last)
             inventory = str(source_id) not in otlp
             limit = INVENTORY_ATTENTION if inventory else AGENT_ATTENTION
@@ -400,6 +431,8 @@ class HealthService:
                     state,
                     reason,
                     lost,
+                    hooks_last=_iso_or_none(hooks_last),
+                    other_last=_iso_or_none(other_last),
                 )
             )
         self._hook_detail(out, allowed, now)
@@ -424,6 +457,7 @@ class HealthService:
             a = by.get((str(src), str(machine)))
             if a is not None:
                 a.queued, a.late_24h = int(queued or 0), int(late or 0)
+                a.queue_reported = queued is not None
         for src, machine, missing, before, after in self._engine.run(
             GAP_SQL, scope, timeout_s=TIMEOUT_S, page=True
         ).rows:
@@ -434,16 +468,40 @@ class HealthService:
             if len(a.gaps) < 5:
                 a.gaps.append(f"{int(missing)} missing between {_utc(before)} and {_utc(after)}")
         for a in rows:
-            seen = _parse(a.last_seen)
+            seen = _parse(a.hooks_last or a.last_seen)
             idle = (now - seen) if seen else None
-            if a.queued and idle is not None and idle >= timedelta(days=self._stuck_days):
-                noun = "record" if a.queued == 1 else "records"
-                a.state = "unhealthy"
-                a.reason = (
-                    f"{a.queued} {noun} waiting on the machine and nothing delivered for "
-                    f"{human(idle.total_seconds())}: the plugin cannot reach this server"
-                )
-                continue
+            if idle is not None and idle >= timedelta(days=self._stuck_days):
+                o = max(_other_times(out, a.machine), default=None)
+                # Still in contact: other telemetry since the hooks went quiet, in the last day.
+                active = o is not None and seen is not None and o > seen
+                active = active and o is not None and now - o <= AGENT_ATTENTION
+                quiet = human(idle.total_seconds())
+                if a.queued:
+                    noun = "record" if a.queued == 1 else "records"
+                    head = (
+                        f"{a.queued} {noun} waiting on the machine and nothing delivered"
+                        f" for {quiet}"
+                    )
+                    if active:
+                        a.state, a.stuck = "unhealthy", "active"
+                        a.reason = (
+                            f"{head} while it still sends other telemetry: the plugin cannot"
+                            " reach this server"
+                        )
+                    else:
+                        a.state, a.stuck = "attention", "idle"
+                        a.reason = (
+                            f"{head}, and no telemetry at all from the machine since"
+                            f" {_utc(seen)}: it looks idle or offline"
+                        )
+                    continue
+                if not a.queue_reported and active:
+                    a.state, a.stuck = "unhealthy", "active"
+                    a.reason = (
+                        f"No hooks records delivered for {quiet} while the machine still sends"
+                        " other telemetry (the plugin does not report its queue)"
+                    )
+                    continue
             if a.missing and a.state == "healthy":
                 noun = "event" if a.missing == 1 else "events"
                 a.state = "attention"
@@ -471,26 +529,35 @@ class HealthService:
             return 0
         self._stuck_checked = now
         raised = 0
-        for a in self.agents(None):
-            if a.kind != "Claude hooks plugin" or a.state != "unhealthy" or not a.queued:
+        everyone = self.agents(None)
+        for a in everyone:
+            # Only a machine still in contact: one that sends nothing at all is idle or
+            # offline, info on Health with no alert item (D214, proposed).
+            if a.kind != "Claude hooks plugin" or a.stuck != "active":
                 continue
-            if not (a.reason or "").startswith(f"{a.queued} record"):
-                continue
+            last = a.hooks_last or a.last_seen
             # One per episode: the last delivery names it; raise_item keeps one per ref.
-            ref = f"queue:{a.source_id}:{a.machine}:{a.last_seen}"
+            ref = f"queue:{a.source_id}:{a.machine}:{last}"
             if ref in self._stuck_raised:
                 continue
             self._stuck_raised.add(ref)
+            depth = str(a.queued) if a.queue_reported else "not reported by the plugin"
+            other = _other_contact(everyone, a)
             item = self._items.raise_item(
                 "gap",
                 f"{a.source_id}/{a.machine}",
                 f"{a.machine}: Claude hooks records not delivered",
                 ref_id=ref,
-                detail=a.reason or "",
+                detail=(
+                    f"{a.reason or ''}. Records waiting: {depth}. Last contact:"
+                    f" {_utc(last)} (hooks); {other}"
+                ),
                 sources=[a.source_id],
-                range_start=a.last_seen,
+                range_start=last,
                 devices=[a.machine],
                 group=(f"{a.source_id}/{a.machine}", "queue"),
+                # The one severity every surface reads: a machine still in contact that
+                # holds records, or delivers none, is a delivery problem.
                 severity="medium",
             )
             raised += int(item.state == "open")

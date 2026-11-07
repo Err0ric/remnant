@@ -54,7 +54,7 @@ class ItemOut(BaseModel):
     note: str | None
     resolved: str | None
     schedule_id: str | None  # the schedule whose run fired: its rows are that run's sample
-    severity: str | None  # high | medium for AI Watch items (ADR-0035 row 11)
+    severity: str | None  # high | medium as stored on the item; the only severity it has
     people: list[str] = []
     devices: list[str] = []
     muted_until: str | None
@@ -84,6 +84,9 @@ class ListOut(BaseModel):
     restricted: int  # open items the viewer may not read: counted, not described
     muted: int  # active mutes
     reasons: dict[str, str]
+    # Open items the viewer may read, by their stored severity ("other" when none): the
+    # Alerts strip shows these, so it can never disagree with the badges in the list.
+    by_severity: dict[str, int] = {}
 
 
 Reason = Literal["expected", "approved", "false_positive", "resolved"]
@@ -213,12 +216,18 @@ def _list(
         found = [i for i in found if any(ident.key(p) in keys for p in i.people)]
     opened = found if state == "open" else store.items(user, "open")
     mutes = store.mutes()
+    sev = {"high": 0, "medium": 0, "other": 0}
+    for i in opened:
+        if readable(i):
+            key = i.severity if i.severity in ("high", "medium") else "other"
+            sev[key] += 1
     return ListOut(
         items=[_out(request, i, mutes) for i in found if readable(i)],
         open=sum(1 for i in opened if readable(i)),
         restricted=sum(1 for i in opened if not readable(i)),
         muted=len(mutes),
         reasons=dict(REASONS),
+        by_severity=sev,
     )
 
 

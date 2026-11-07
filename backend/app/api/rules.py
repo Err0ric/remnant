@@ -69,6 +69,10 @@ class RuleListOut(RuleOut):
     source_ids: list[str]
 
 
+class RecommendedOut(RuleListOut):
+    attack_tags: list[str]  # the rule's `attack.*` tags
+
+
 class RuleDetail(RuleOut):
     yaml: str
 
@@ -172,6 +176,21 @@ async def list_rules(request: Request, user: CurrentUser) -> list[RuleListOut]:
             source_ids=by_ls.get(LogSource(r.product, r.service, r.category), []),
         )
         for r in rows
+    ]
+
+
+@router.get("/rules/recommended")
+async def recommended_rules(request: Request, user: CurrentUser) -> list[RecommendedOut]:
+    """Disabled rules that compile now and match a source the caller may read. Listing
+    enables nothing; an admin enables a rule through POST /rules/enabled."""
+    rows = await run_in_threadpool(_runner(request).recommended, user)
+    return [
+        RecommendedOut(
+            **_out(r).model_dump(),
+            source_ids=sources,
+            attack_tags=[t for t in r.tags if t.lower().startswith("attack.")],
+        )
+        for r, sources in rows
     ]
 
 

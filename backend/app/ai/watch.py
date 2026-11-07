@@ -14,6 +14,7 @@ sightings are kept, so restarts do not repeat alerts.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -75,6 +76,30 @@ class _Review:
     devices: set[str] = field(default_factory=set)  # seen with no person named
     matched: set[str] = field(default_factory=set)  # devices seen with a person
     sources: set[str] = field(default_factory=set)
+    # The addresses each device with no person was seen at (owner review, item 8).
+    seen: dict[str, set[str]] = field(default_factory=dict)
+
+    def saw(self, machine: str, ip: object) -> None:
+        if ip:
+            self.seen.setdefault(machine, set()).add(str(ip))
+
+
+def _is_ip(value: str) -> bool:
+    try:
+        ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _device_words(device: str, ips: set[str]) -> str:
+    """A device with no person as an alert names it: its host name and where it was seen."""
+    at = sorted(ips - {device})
+    if _is_ip(device):
+        return f"address {device} (no host name seen)"
+    if not at:
+        return f"{device} (no address seen)"
+    return f"{device} at {', '.join(at[:3])}" + (" and more" if len(at) > 3 else "")
 
 
 def _ts(value: datetime) -> str:
@@ -266,7 +291,7 @@ class AiWatch:
         api = services.get("anthropic_api")
         sensitive_ok = not (api is not None and api.data_level == "confidential")
         review: dict[tuple[str, str], _Review] = {}
-        for src, kind, name, who, machine, observed, sens in rows:
+        for src, kind, name, who, machine, observed, sens, ip in rows:
             seen = _parse(str(observed)) if observed is not None else None
             if seen and seen > newest:
                 newest = seen
@@ -298,6 +323,7 @@ class AiWatch:
                     r.matched.add(str(machine))
             elif machine:
                 r.devices.add(str(machine))
+                r.saw(str(machine), ip)
             r.sources.add(str(src))
             if status == "unreviewed" and not s.include_unreviewed:
                 continue
@@ -338,7 +364,7 @@ class AiWatch:
         self._reviewed_at = now
         since = now - REVIEW_WINDOW
         services = {sv.id: sv for sv in self._catalog.services()}
-        for sid, sources, people, devices, matched in self._usage.review(
+        for sid, sources, people, devices, matched, seen in self._usage.review(
             QueryScope(None, since, now)
         ):
             svc = services.get(str(sid))
@@ -349,6 +375,8 @@ class AiWatch:
             r.devices = {str(d) for d in devices or []}
             r.matched = {str(m) for m in matched or []}
             r.sources = {str(x) for x in sources or []}
+            for machine, ip in seen or []:
+                r.saw(str(machine), ip)
             self._raise_use("service", str(sid), r, since, now, refresh=True)
         rules = self._catalog.mcp_rules()
         for name, sources, people, devices, matched in self._usage.review_mcp(
@@ -418,8 +446,15 @@ class AiWatch:
         if devices:
             parts.append(
                 f"{len(devices)} {'device' if len(devices) == 1 else 'devices'} not matched to a"
-                " person: " + ", ".join(devices[:5]) + (" and more" if len(devices) > 5 else "")
+                " person: "
+                + ", ".join(_device_words(d, r.seen.get(d, set())) for d in devices[:5])
+                + (" and more" if len(devices) > 5 else "")
             )
+        # Each device by its host name and the addresses it was seen at, every one a link on
+        # Alerts (told apart by shape there): a device known only by its address is that.
+        named = sorted(
+            {d for d in devices[:20]} | {ip for d in devices[:20] for ip in r.seen.get(d, set())}
+        )
         self._items.raise_item(
             "ai_watch",
             f"{kind}:{name}",
@@ -431,7 +466,7 @@ class AiWatch:
             ),
             ref_id=f"{kind}:{name}",
             people=list(people),
-            devices=list(devices),
+            devices=named,
             why="Not approved" if not_approved else "Not reviewed yet",
             detail=". ".join(parts),
             count=len(people),
@@ -673,17 +708,19 @@ SELECT * FROM (
 WITH cat(service_id, domain) AS (VALUES {_values(pairs)}),
 h AS (
   SELECT source_id AS src, {HOST_EXPR} AS host, {WHO_EXPR} AS who,
-         {MACHINE_EXPR} AS machine, time_observed AS obs, row_number() OVER () AS rid
+         {MACHINE_EXPR} AS machine, nullif(src_endpoint_ip, '') AS ip,
+         time_observed AS obs, row_number() OVER () AS rid
   FROM events WHERE {after}
 ),
 svc AS (
-  SELECT src, 'service' AS kind, cat.service_id AS name, who, machine, obs,
+  SELECT src, 'service' AS kind, cat.service_id AS name, who, machine, obs, ip,
          row_number() OVER (PARTITION BY rid ORDER BY length(cat.domain) DESC) AS rn
   FROM h JOIN cat ON h.host = cat.domain OR ends_with(h.host, '.' || cat.domain)
 )
-SELECT src, kind, name, who, machine, obs, CAST(NULL AS VARCHAR) AS sens FROM svc WHERE rn = 1
+SELECT src, kind, name, who, machine, obs, CAST(NULL AS VARCHAR) AS sens, ip
+FROM svc WHERE rn = 1
 UNION ALL
-SELECT src, 'mcp', name, who, machine, obs, NULL FROM (
+SELECT src, 'mcp', name, who, machine, obs, NULL, NULL FROM (
   SELECT source_id AS src, {MCP_EXPR} AS name, {WHO_EXPR} AS who, device_hostname AS machine,
          time_observed AS obs
   FROM events WHERE {after} AND template_id = 'claude_code_otel'
@@ -693,7 +730,7 @@ SELECT src, 'mcp', name, who, machine, obs, NULL FROM (
 ) WHERE name IS NOT NULL AND lower(name) NOT IN {NO_MCP_NAMES}
 UNION ALL
 SELECT source_id, 'sensitive', NULL, {WHO_EXPR}, device_hostname, time_observed,
-       json_extract(unmapped, '$.attr.sensitive')::VARCHAR
+       json_extract(unmapped, '$.attr.sensitive')::VARCHAR, NULL
 FROM events WHERE {after} AND template_id = 'claude_code_otel'
   AND TRY_CAST(json_extract_string(unmapped, '$.attr.sensitive_total') AS BIGINT) > 0
 ) ORDER BY obs

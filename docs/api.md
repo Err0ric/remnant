@@ -284,6 +284,7 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | `POST` | `/api/rules/import` | Import Rules |  | `path`: string |
 | `GET` | `/api/rules/imports` | List Imports |  |  |
 | `GET` | `/api/rules/imports/{import_id}/refusals` | Import Refusals |  |  |
+| `GET` | `/api/rules/recommended` | Disabled rules that compile now and match a source the caller may read. Listing enables nothing; an admin enables a rule through POST /rules/enabled. |  |  |
 | `GET` | `/api/rules/runs` | List Runs | `?rule_id` (optional): string<br>`?limit` (optional): integer |  |
 | `GET` | `/api/rules/runs/{run_id}` | Get Run |  |  |
 | `GET` | `/api/rules/runs/{run_id}/matches` | Run Matches |  |  |

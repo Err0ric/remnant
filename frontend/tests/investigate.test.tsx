@@ -150,6 +150,38 @@ describe("Investigations (ADR-0016)", () => {
     expect(screen.getByText(/Only sources you may read are counted\./)).toBeVisible();
   });
 
+  it("lists usernames only tried from outside apart from users (D212)", async () => {
+    const spy = await openInvestigate();
+    const users = await screen.findByRole("table", { name: "User" });
+    expect(within(users).queryByText("minecraft")).toBeNull();
+    await userEvent.click(screen.getByRole("tab", { name: "Targeted usernames (2)" }));
+    const table = await screen.findByRole("table", { name: "Targeted usernames" });
+    expect(
+      within(table)
+        .getAllByRole("columnheader")
+        .map((h) => h.textContent),
+    ).toEqual([
+      "Username",
+      "Attempts",
+      "Sources",
+      "Top countries",
+      "Top networks (ASN)",
+      "Hosts targeted",
+    ]);
+    const row = within(table).getByRole("button", { name: "minecraft" }).closest("tr")!;
+    expect(row).toHaveTextContent("1,240");
+    expect(row).toHaveTextContent("Netherlands 900, Brazil 340");
+    expect(row).toHaveTextContent("AS64500 Example Net 900");
+    expect(row).toHaveTextContent("bastion, web-01");
+    // Enrichment off for this one: the place cells are empty, not "unknown".
+    const ubuntu = within(table).getByRole("button", { name: "ubuntu" }).closest("tr")!;
+    expect(within(ubuntu).getAllByRole("cell")[3]).toHaveTextContent(/^$/);
+    await userEvent.click(within(table).getByRole("button", { name: "minecraft" }));
+    await screen.findByRole("group", { name: /Investigation lanes/ });
+    const call = spy.mock.calls.find(([u]) => String(u).includes("value=minecraft"));
+    expect(String(call?.[0])).toContain("kind=user");
+  });
+
   it("highlights a card's path and hands its events to Search", async () => {
     await openInvestigate("/investigate/people#user=root");
     const card = await screen.findByRole("button", { name: /Activities: Failed password/ });
@@ -211,8 +243,14 @@ describe("Person timeline (ADR-0038 section 9)", () => {
         .getAllByRole("tab")
         .map((t) => t.textContent),
     ).toEqual(["Identity and M365", "AI use", "Hosts and devices", "Alerts", "Timeline"]);
-    // Identity and M365 holds the summary and the sign-ins.
-    expect(await screen.findByRole("region", { name: "Sign-ins" })).toBeVisible();
+    // Identity and M365 holds the summary and the sign-ins, times local with UTC on hover
+    // as Ask shows them, never the raw UTC string (review item 6).
+    const signins = await screen.findByRole("region", { name: "Sign-ins" });
+    expect(signins).toBeVisible();
+    const at = await within(signins).findByText("Oct 30, 9:58 AM"); // tests run in UTC
+    expect(at.tagName).toBe("TIME");
+    expect(at).toHaveAttribute("title", "2026-10-30 09:58 UTC");
+    expect(within(signins).queryByText(/2026-10-30/)).toBeNull();
     await userEvent.click(within(tabs).getByRole("tab", { name: "Hosts and devices" }));
     const hosts = await screen.findByRole("region", { name: "Hosts and devices" });
     const table = within(hosts).getByRole("table", { name: "Hosts" });

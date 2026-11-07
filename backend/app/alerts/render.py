@@ -47,6 +47,8 @@ _LABEL = {
     "handoff": "Events handed off",
 }
 
+_SEVERITY = {"high": "High", "medium": "Medium"}
+
 
 @dataclass(frozen=True, slots=True)
 class Alert:
@@ -62,6 +64,9 @@ class Alert:
     # Hand-off only (ADR-0024): the events an analyst chose to send, already scoped to what
     # they may read and to what this target may receive. Every other alert carries none.
     events: tuple[dict[str, Any], ...] | list[dict[str, Any]] = ()
+    # The severity stored on the alert item this message is about (high | medium), the same
+    # field the Dashboard and Alerts show; None when no item carries one.
+    severity: str | None = None
 
 
 def _one_line(text: str, limit: int = 200) -> str:
@@ -70,6 +75,8 @@ def _one_line(text: str, limit: int = 200) -> str:
 
 def _summary(a: Alert) -> str:
     parts = [_LABEL[a.kind]]
+    if a.severity in _SEVERITY:
+        parts.append(_SEVERITY[a.severity])
     if a.count is not None:
         parts.append(
             f"{a.count} {'match' if a.count == 1 else 'matches'}"
@@ -198,6 +205,8 @@ def webhook_body(a: Alert) -> bytes:
         "range_end": a.range_end,
         "link": a.link,
     }
+    if a.severity is not None:
+        doc["severity"] = a.severity
     if a.events:
         doc["events"] = list(a.events)
     return json.dumps(doc, separators=(",", ":"), sort_keys=True, default=str).encode()

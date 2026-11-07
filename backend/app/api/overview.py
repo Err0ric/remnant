@@ -1,6 +1,7 @@
 """GET /api/overview: the home page's numbers (ADR-0008). Router only."""
 
 from dataclasses import asdict
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -40,6 +41,10 @@ class SourceHealthOut(BaseModel):
     rate_per_min: float
     # Set while a quiet-source alert (ADR-0014) says nothing has arrived for too long.
     quiet_since: str | None = None
+    # The open source gap alert on this source, if any (review item 3): the footer and
+    # Health count the same gaps the Alerts page lists. Not set once the source has sent
+    # again after the alert last fired, even when no watch is left to mark it resolved.
+    gap_alert: str | None = None
 
 
 class DetectionOut(BaseModel):
@@ -108,6 +113,16 @@ async def overview(request: Request, user: CurrentUser) -> OverviewOut:
     # Quiet state is read fresh on every call, not cached with the numbers above.
     watches = await run_in_threadpool(request.app.state.quiet.all)
     quiet = {w.source_id: w.quiet_since for w in watches if w.state == "quiet"}
+    gaps = await run_in_threadpool(request.app.state.alert_items.open_gaps)
     for s in data["sources"]:
         s["quiet_since"] = quiet.get(s["source_id"])
+        gap = gaps.get(s["source_id"])
+        last = s.get("last_event_at")
+        if gap is not None and (last is None or _instant(last) <= _instant(gap[1])):
+            s["gap_alert"] = gap[0]
     return OverviewOut(**data)
+
+
+def _instant(iso: str) -> datetime:
+    when = datetime.fromisoformat(iso)
+    return when if when.tzinfo else when.replace(tzinfo=UTC)

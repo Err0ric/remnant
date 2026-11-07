@@ -7,6 +7,7 @@ Cookie-authenticated writes also need the session's CSRF token in X-CSRF-Token.
 """
 
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from typing import Annotated
 
 import anyio
@@ -142,6 +143,13 @@ def require_role(*roles: Role) -> Callable[[Request], Awaitable[User]]:
         return await _off_pool(_check, request)
 
     return check
+
+
+def now(request: Request) -> datetime:
+    """The app's "now" for read endpoints (`app.state.clock`), so a test can pin it next to
+    its event dates and give the same result on any day."""
+    clock: Callable[[], datetime] | None = getattr(request.app.state, "clock", None)
+    return clock() if clock else datetime.now(UTC)
 
 
 def client_ip(request: Request) -> str | None:

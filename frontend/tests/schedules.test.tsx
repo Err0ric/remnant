@@ -119,11 +119,14 @@ describe("Dashboards at scale (ADR-0034)", () => {
     await renderAt("/dashboard");
     const banner = await screen.findByRole("region", { name: "Needs you" });
     const lines = (await within(banner).findAllByRole("row")).slice(1); // after the header
-    // High first: the not-approved service and the source with errors; then the alert.
+    // High first: the not-approved service; then the rest, by the severity each alert
+    // stores (review item 2: a rule alert without one shows no badge, as on Alerts).
     expect(lines[0]).toHaveTextContent(/^High/);
     // The badge column is severity only; the kind is in the text (ADR-0038).
     const badges = lines.map((l) => within(l).getAllByRole("cell")[0]?.textContent);
-    expect(badges.every((b) => b === "High" || b === "Medium")).toBe(true);
+    expect(badges.every((b) => b === "High" || b === "Medium" || b === "")).toBe(true);
+    const rule = lines.find((l) => /Failed logons/.test(l.textContent ?? ""));
+    expect(rule && within(rule).getAllByRole("cell")[0]?.textContent).toBe("");
     // The AI Watch title already says the decision needed: no trailing reason.
     expect(
       within(banner).getByRole("link", { name: "AI Watch: New AI service: DeepSeek" }),

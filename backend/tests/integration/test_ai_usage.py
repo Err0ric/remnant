@@ -316,7 +316,10 @@ def test_review_items_on_alerts_without_alert_messages(lab: dict[str, Any]) -> N
     assert chatgpt["sources"] == ["dns"] and chatgpt["severity"] == "medium"
     # DNS names no person: the addresses are devices, apart, never counted as people.
     assert chatgpt["count"] == 0
-    assert chatgpt["detail"] == "1 device not matched to a person: 10.20.1.5"
+    assert chatgpt["detail"] == (
+        "1 device not matched to a person: address 10.20.1.5 (no host name seen)"
+    )
+    assert chatgpt["devices"] == ["10.20.1.5"]
     assert "service:bzr" not in " ".join(items)  # an ad tag is not AI use
     sens = next(i for r, i in items.items() if r.startswith("sensitive:alice@example.com:"))
     assert sens["severity"] == "high" and sens["why"] == "aws_access_key x1"
@@ -465,6 +468,36 @@ def test_every_unapproved_service_in_use_has_an_item_until_decided(lab: dict[str
     watch.tick()
     assert "service:chatgpt" not in _ai_items(a)
     assert _ai_items(a, "closed")["service:chatgpt"]["note"] == "Approved"
+
+
+def test_an_item_with_no_person_names_the_device_and_its_address(
+    lab: dict[str, Any], tmp_path: Path
+) -> None:
+    """Owner review, item 8: an AI service in use with no person attached names the
+    device by its host name (here from a DHCP lease) and the address it was seen at, so
+    both open from the alert."""
+    app, a, h = lab["app"], lab["admin"], lab["h"]
+    lease = (
+        "<14>Oct 10 10:50:00 pa-fw01 1,2026/10/10 10:50:00,012345678901,SYSTEM,dhcp,,"
+        "2026/10/10 10:50:00,vsys1,lease-start,,,,general,informational,"
+        '"DHCP lease started ip 10.20.1.5 --> mac 00:00:5e:00:53:05 - hostname ws-0101,'
+        ' interface ethernet1/2",,,,,,,,pa-fw01'
+    )
+    folder = tmp_path / "logs" / "dhcp"
+    folder.mkdir()
+    (folder / "a.log").write_text(lease + "\n")
+    body = {"source_id": "dhcp", "format": "syslog", "path": str(folder), "template_id": "auto"}
+    assert a.post("/api/sources", json=body, headers=h).status_code == 201
+    app.state.ingest.run_once()
+    watch = app.state.ai_watch
+    watch._clock = lambda: NOW + timedelta(hours=2)
+    watch._reviewed_at = None
+    watch.tick()
+    chatgpt = _ai_items(a)["service:chatgpt"]
+    assert chatgpt["people"] == [] and chatgpt["count"] == 0
+    assert chatgpt["detail"] == "1 device not matched to a person: ws-0101 at 10.20.1.5"
+    # Both are on the item, for the host and address links on Alerts.
+    assert chatgpt["devices"] == ["10.20.1.5", "ws-0101"]
 
 
 def test_new_in_24_hours_is_first_seen_not_a_review_decision(lab: dict[str, Any]) -> None:

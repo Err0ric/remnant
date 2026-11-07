@@ -1,7 +1,7 @@
 schema_version: 1
 id: paloalto_userid
 name: Palo Alto Networks User-ID
-version: 1.1.0
+version: 1.2.0
 author: starter-pack
 description: >-
   PAN-OS USERID logs: IP-to-user mappings learned from a data source (domain controller,
@@ -71,7 +71,16 @@ mapping:
     actor_user_name: { from: user }
     src_endpoint_ip: { from: source_ip }
     src_endpoint_port: { from: source_port }
-    message: { from: data_source_name }
+    # A plain activity name per subtype. data_source_name is often empty (GlobalProtect,
+    # XML API), and an unmapped message would fall back to the whole CSV payload.
+    message:
+      from: subtype
+      map:
+        login: User-ID login
+        logout: User-ID logout
+        register-tag: User-ID tag registered
+        unregister-tag: User-ID tag removed
+      default: User-ID event
     activity_id: { from: subtype, map: { login: 1, logout: 2 }, default: 99 }
     status_id: { from: subtype, map: { login: 1, logout: 1 }, default: 0 }
 
@@ -81,14 +90,27 @@ tests:
     expect:
       parse_status: ok
       class_uid: 3002
-      fields: { actor_user_name: "example\\alice", src_endpoint_ip: 10.20.1.5, activity_id: 1, message: dc01.example.internal }
+      fields: { actor_user_name: "example\\alice", src_endpoint_ip: 10.20.1.5, activity_id: 1, message: User-ID login }
   - name: logout mapping
     input: "<14>Oct  9 20:42:00 pa-fw01 1,2026/10/09 20:42:00,012345678901,USERID,logout,2561,2026/10/09 20:42:00,vsys1,10.20.1.6,example\\bob,gp-gateway,0,1,0,0,0,globalprotect,globalprotect,7290000402,0x0,0,0,0,0,,pa-fw01"
     expect:
       parse_status: ok
-      fields: { activity_id: 2, status_id: 1 }
+      fields: { activity_id: 2, status_id: 1, message: User-ID logout }
   - name: tag registration is a base event
     input: "<14>Oct  9 20:43:00 pa-fw01 1,2026/10/09 20:43:00,012345678901,USERID,register-tag,2561,2026/10/09 20:43:00,vsys1,,example\\carol,api,0,1,0,0,0,xml-api,xml-api,7290000403,0x0,0,0,0,0,,pa-fw01,1,,,,,,quarantine"
     expect:
       parse_status: ok
       class_uid: 0
+      fields: { message: User-ID tag registered }
+  - name: a mapping with no data source name still reads as a plain activity
+    input: "<14>Oct  9 20:44:00 pa-fw01 1,2026/10/09 20:44:00,012345678901,USERID,login,2561,2026/10/09 20:44:00,vsys1,192.168.10.20,bob,,0,1,2700,0,0,globalprotect,,7290000404,0x8000000000000000,0,0,0,0,,pa-fw01,1,,,,,,,,,"
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { actor_user_name: bob, src_endpoint_ip: 192.168.10.20, message: User-ID login }
+  - name: an unknown subtype gets the generic label
+    input: "<14>Oct  9 20:45:00 pa-fw01 1,2026/10/09 20:45:00,012345678901,USERID,group-update,2561,2026/10/09 20:45:00,vsys1,10.20.1.5,example\\alice,,0,1,0,0,0,xml-api,,7290000405,0x0,0,0,0,0,,pa-fw01"
+    expect:
+      parse_status: ok
+      class_uid: 0
+      fields: { message: User-ID event }

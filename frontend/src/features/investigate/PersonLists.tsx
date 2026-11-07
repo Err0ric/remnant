@@ -86,7 +86,7 @@ export function PersonSignIns({ person }: { person: string }) {
           No Microsoft 365 sign-ins by this person in the last 7 days.
         </p>
       ) : q.data ? (
-        <ResultsTable result={q.data} view="parsed" compact geo={q.data.geo} />
+        <ResultsTable result={q.data} view="parsed" compact geo={q.data.geo} localTimes />
       ) : null}
     </Box>
   );

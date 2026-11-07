@@ -31,6 +31,7 @@ from app.ai.watch_summary import source_classes
 from app.alerts.dispatch import AlertDispatcher
 from app.alerts.items import AlertItems
 from app.alerts.net import Egress, configure_egress
+from app.alerts.supersede import RULES_REVISION, current_rules, still_raised
 from app.alerts.targets import TargetStore
 from app.api.addresses import router as addresses_router
 from app.api.ai import router as ai_router
@@ -496,6 +497,8 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     app.add_middleware(TrustedProxyMiddleware, trusted=parse_trusted(config.server.trusted_proxies))
     app.state.config = config
     app.state.meta = meta
+    # "Now" for read endpoints (app.api.access.now); tests pin it next to their event dates.
+    app.state.clock = lambda: datetime.now(UTC)
     oidc = None
     if config.sso.enabled:
         oidc = OidcClient(
@@ -613,6 +616,9 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     )  # fmt: skip
     # Open duplicates raised before grouping merge once, audited (ADR-0043 row 5).
     alert_items_.merge_open_duplicates()
+    # Gap items from before gaps carried a severity get the gap's one, so every surface
+    # reads one stored value (review item 2, 2026-11-06).
+    alert_items_.fill_severity()
     app.state.refusal_watch = RefusalWatch(app.state.engine, meta, alert_items_)
     app.state.schedules = ScheduleService(
         meta,
@@ -640,6 +646,13 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     )
     # One-time fixes (D168): each runs once per install and records that it did.
     app.state.quiet.retire_push_defaults()
+    # Open alerts the current rules would no longer raise close once per upgrade, audited
+    # (D213, proposed). After the fixes above, which change what the rules see.
+    rules = current_rules(meta)
+    alert_items_.close_superseded(
+        lambda item: still_raised(item, rules),
+        f"alerts_superseded:{RULES_REVISION}:{app_version()}",
+    )
     app.state.health = HealthService(
         meta,
         app.state.engine,

@@ -237,7 +237,7 @@ hj AS (
 {address_ctes("hj", "who0 IS NULL OR shost IS NULL", kept=rollup)},
 r AS (
   SELECT service_id, hj.source_id, n, first_t, last_t, hj.t, coalesce(who0, addr.rwho) AS who,
-         coalesce(shost, addr.rhost, hj.ip, dev) AS machine
+         coalesce(shost, addr.rhost, hj.ip, dev) AS machine, hj.ip AS ip
   FROM hj {join_addr("hj")}
 )"""  # noqa: S608  # fixed SQL text; domains checked against DOMAIN in _values
 
@@ -313,13 +313,16 @@ LIMIT 500000"""  # noqa: S608  # fixed SQL text; domains checked against DOMAIN 
 
 def review_sql(pairs: list[tuple[str, str]], rollup: bool = False) -> str:
     """Per service: the sources it was seen in, its people, and its machines, for the AI
-    watch's review items (ADR-0035 row 11)."""
+    watch's review items (ADR-0035 row 11). `seen` pairs each machine with no person with
+    the address it was seen at, so an item names both."""
     return f"""
 WITH {_use_ctes(pairs, rollup)}
 SELECT service_id, list(DISTINCT source_id) AS sources,
        list(DISTINCT who) FILTER (WHERE who IS NOT NULL) AS people,
        list(DISTINCT machine) FILTER (WHERE machine IS NOT NULL AND who IS NULL) AS devices,
-       list(DISTINCT machine) FILTER (WHERE machine IS NOT NULL AND who IS NOT NULL) AS matched
+       list(DISTINCT machine) FILTER (WHERE machine IS NOT NULL AND who IS NOT NULL) AS matched,
+       list(DISTINCT [machine, ip])
+         FILTER (WHERE machine IS NOT NULL AND ip IS NOT NULL AND who IS NULL) AS seen
 FROM r
 GROUP BY 1
 LIMIT 500"""  # noqa: S608  # fixed SQL text; domains checked against DOMAIN in _values
@@ -623,7 +626,8 @@ class Usage:
         return {} if self._rollup is None else dict(self._rollup.first_seen(sources))
 
     def review(self, scope: QueryScope) -> list[list[Any]]:
-        """(service id, sources, people, devices without a person, devices with one)."""
+        """(service id, sources, people, devices without a person, devices with one,
+        [device, address] pairs without a person)."""
         return list(self._run_use(review_sql, scope, "ai_use.review").rows)
 
     def review_mcp(self, scope: QueryScope) -> list[list[Any]]:

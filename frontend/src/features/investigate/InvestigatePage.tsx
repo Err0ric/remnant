@@ -14,6 +14,7 @@ import { PersonAiActivity } from "./PersonAiActivity";
 import { PersonAlerts, PersonSignIns } from "./PersonLists";
 import { PersonHosts } from "./PersonHosts";
 import { RiskTable } from "./RiskTable";
+import { TargetedTable } from "./TargetedTable";
 import { kindOf, type EntityKind } from "./entityKind";
 import { SectionTitle } from "@/components/SectionTitle";
 
@@ -24,6 +25,14 @@ interface Focus {
 }
 
 const KIND_LABEL: Record<EntityKind, string> = { user: "User", ip: "IP address", host: "Host" };
+/** The landing tabs: the three kinds, then usernames only ever tried from outside (D212). */
+type RiskTab = EntityKind | "targeted";
+const RISK_TABS: [RiskTab, string][] = [
+  ["user", "Users"],
+  ["ip", "IP addresses"],
+  ["host", "Hosts"],
+  ["targeted", "Targeted usernames"],
+];
 
 /** Investigations (ADR-0016 rows 4 and 5): risky entities, and lanes showing how one
  * entity, or the organization's AI use, connects to everything it touched. */
@@ -58,7 +67,7 @@ export function InvestigatePage() {
   const aiFocus: Focus | null =
     linked?.kind === "service" ? { kind: "service", value: linked.value } : aiChoice;
   const [selected, setSelected] = useState<GraphCard | null>(null);
-  const [riskTab, setRiskTab] = useState<EntityKind>("user");
+  const [riskTab, setRiskTab] = useState<RiskTab>("user");
   const [personTab, setPersonTab] = useState<PersonTab>(linkedTab ?? "summary");
   // A link that names a tab opens it (AI usage and Agents open AI activity).
   const [seenSection, setSeenSection] = useState(section);
@@ -121,12 +130,23 @@ export function InvestigatePage() {
   const lists = risk.data
     ? { user: risk.data.users, ip: risk.data.ips, host: risk.data.hosts }
     : { user: [], ip: [], host: [] };
+  const targeted = risk.data?.targeted ?? [];
+  const counts: Record<RiskTab, number> = {
+    user: lists.user.length,
+    ip: lists.ip.length,
+    host: lists.host.length,
+    targeted: risk.data?.targeted_total ?? targeted.length,
+  };
   const empty =
-    risk.data && !risk.data.users.length && !risk.data.ips.length && !risk.data.hosts.length;
+    risk.data &&
+    !risk.data.users.length &&
+    !risk.data.ips.length &&
+    !risk.data.hosts.length &&
+    !targeted.length;
   const g = graph.data;
   const followFn = selected ? follow(selected) : null;
 
-  const kindTabs = (Object.keys(KIND_LABEL) as EntityKind[]).map((k) => (
+  const kindTabs = RISK_TABS.map(([k, name]) => (
     <button
       key={k}
       type="button"
@@ -139,7 +159,8 @@ export function InvestigatePage() {
           : "border-transparent text-text-secondary hover:text-text"
       }`}
     >
-      {k === "user" ? "Users" : k === "ip" ? "IP addresses" : "Hosts"} ({lists[k].length})
+      {/* A count only once it is known: never "(0)" while the page is still loading. */}
+      {risk.data ? `${name} (${counts[k].toLocaleString()})` : name}
     </button>
   ));
 
@@ -225,12 +246,31 @@ export function InvestigatePage() {
                   {risk.error instanceof ApiError ? risk.error.message : "Could not load risk"}
                 </p>
               ) : risk.isLoading ? (
-                <p className="p-4 text-sm text-text-muted">Loading…</p>
+                <div role="status" aria-busy="true" className="flex flex-col gap-2 p-4">
+                  <p className="text-sm text-text-secondary">
+                    Counting people and devices for {rangeWords}. A long range over busy sources can
+                    take a while.
+                  </p>
+                  <div className="h-1 w-full overflow-hidden rounded bg-surface-head">
+                    <div className="h-1 w-1/3 animate-pulse rounded bg-accent" />
+                  </div>
+                </div>
               ) : empty ? (
                 <p className="p-4 text-sm text-text-secondary">
                   No users, IP addresses, or hosts in this range, in the sources you can read. Pick
                   a longer range, or open any of them from the search in the top bar.
                 </p>
+              ) : riskTab === "targeted" ? (
+                targeted.length === 0 ? (
+                  <p className="p-4 text-sm text-text-muted">
+                    No usernames were only ever tried in failed sign-ins in this range.
+                  </p>
+                ) : (
+                  <TargetedTable
+                    rows={targeted}
+                    onPick={(t) => investigate({ kind: "user", value: t.value })}
+                  />
+                )
               ) : lists[riskTab].length === 0 ? (
                 <p className="p-4 text-sm text-text-muted">Nothing ranked for this type.</p>
               ) : (
@@ -245,7 +285,9 @@ export function InvestigatePage() {
                 Score: 10 per critical, 5 per high, 2 per medium, 1 per low rule match; 3 per
                 flagged schedule run that names it; 1 per failed sign-in and 1 per attack hit from
                 outside (up to 25 each); 5 per risky inbox rule; 3 per app consent; 3 per AI watch
-                flag; 5 per alert. Only sources you may read are counted.
+                flag; 5 per alert. Only sources you may read are counted. Users are names with a
+                successful sign-in, a Microsoft 365 identity, or an Identities link; names only ever
+                tried in failed sign-ins are under Targeted usernames.
               </p>
             </section>
           </>

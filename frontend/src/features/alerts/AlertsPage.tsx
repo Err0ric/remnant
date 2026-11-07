@@ -7,6 +7,7 @@ import { cn } from "@/lib/cn";
 import { navigate, pathFor, useSection, useSectionTab } from "@/lib/route";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { EntityLink } from "@/components/EntityLink";
+import { DeviceRows } from "./DeviceRows";
 import { AroundEvent } from "@/features/search/AroundEvent";
 import { When } from "@/components/When";
 import { CloseForm } from "./CloseForm";
@@ -73,7 +74,7 @@ export function AlertsPage({ canClose, isAdmin }: AlertsPageProps) {
     setPicked(id);
     if (focus) navigate("alerts");
   };
-  const summary = summarize(all);
+  const summary = summarize(all, new Date(), reviewing ? undefined : data?.by_severity);
   const filtered = rows.length !== all.length;
   const visibleChecked = rows.filter((i) => checked.has(i.item_id) && i.state === "open");
   return (
@@ -617,19 +618,7 @@ function AlertDetail({ item, canClose, isAdmin, reasons }: DetailProps) {
             </dd>
           </>
         ) : null}
-        {item.devices?.length ? (
-          <>
-            <dt className="text-text-muted">Devices</dt>
-            <dd className="font-mono">
-              {item.devices.map((d, i) => (
-                <span key={d}>
-                  {i ? ", " : ""}
-                  <EntityLink kind="host" value={d} />
-                </span>
-              ))}
-            </dd>
-          </>
-        ) : null}
+        <DeviceRows devices={item.devices ?? []} />
         <dt className="text-text-muted">When</dt>
         <dd>
           First <When iso={item.created_at} />

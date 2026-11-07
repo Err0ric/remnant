@@ -726,10 +726,24 @@ export interface EntityRisk {
   parts?: Record<string, number>;
 }
 
+/** A username tried in failed sign-ins that is nobody's (D212): no successful sign-in, no
+ * Microsoft 365 identity, no Identities link. Places are empty when enrichment is off. */
+export interface TargetedUsername {
+  value: string;
+  attempts: number;
+  sources: string[];
+  hosts: string[];
+  names: string[];
+  countries: { label: string; attempts: number }[];
+  asns: { label: string; attempts: number }[];
+}
+
 export interface RiskResponse {
   users: EntityRisk[];
   ips: EntityRisk[];
   hosts: EntityRisk[];
+  targeted?: TargetedUsername[];
+  targeted_total?: number;
   matches_considered: number;
   sources: string[];
 }
@@ -1779,6 +1793,11 @@ export interface SigmaRuleListed extends SigmaRule {
   source_ids: string[];
 }
 
+/** A disabled rule that compiles now and would run on a source the caller may read. */
+export interface SigmaRuleRecommended extends SigmaRuleListed {
+  attack_tags: string[];
+}
+
 export interface SigmaRuleDetail extends SigmaRule {
   yaml: string;
 }
@@ -1867,6 +1886,8 @@ export interface OverviewSourceHealth {
   error: string | null;
   /** Set while the source's quiet-source alert is firing (ADR-0014). */
   quiet_since?: string | null;
+  /** The open source gap alert on this source: what the footer and Health count. */
+  gap_alert?: string | null;
   /** Events received in the last 15 minutes, per minute (F55). */
   rate_per_min: number;
 }
@@ -2071,7 +2092,7 @@ export interface AlertItem {
   resolved: string | null;
   /** The schedule whose run fired: its rows are that run's sample. */
   schedule_id: string | null;
-  /** AI Watch items (ADR-0035 row 11). */
+  /** The one severity stored on the alert; every surface shows this field as given. */
   severity: "high" | "medium" | null;
   /** Who and which devices the rows that fired are about (ADR-0038 row 28). */
   people?: string[];
@@ -2094,6 +2115,8 @@ export interface AlertList {
   restricted: number;
   muted: number;
   reasons: Record<CloseReason, string>;
+  /** Open readable items by their stored severity; what the strip shows. */
+  by_severity?: { high: number; medium: number; other: number };
 }
 
 export interface AlertMute {
@@ -2425,6 +2448,7 @@ export const api = {
       `/api/schedules/${encodeURIComponent(id)}/runs/${encodeURIComponent(runId)}`,
     ),
   rules: () => request<SigmaRuleListed[]>("/api/rules"),
+  recommendedRules: () => request<SigmaRuleRecommended[]>("/api/rules/recommended"),
   rule: (id: string) => request<SigmaRuleDetail>(`/api/rules/${encodeURIComponent(id)}`),
   importRules: (path: string) => request<RuleImportReport>("/api/rules/import", post({ path })),
   setRulesEnabled: (ruleIds: string[], enabled: boolean) =>

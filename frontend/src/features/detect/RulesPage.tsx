@@ -8,6 +8,7 @@ import { seedSchedule } from "@/lib/scheduleSeed";
 import { TIME_RANGES } from "@/lib/search";
 import { BulkSchedule } from "./BulkSchedule";
 import { RecentRuns } from "./RecentRuns";
+import { RecommendedRules } from "./RecommendedRules";
 import { RuleImportPanel } from "./RuleImportPanel";
 import { RuleYaml } from "./RuleYaml";
 import { RulesTable } from "./RulesTable";
@@ -135,6 +136,7 @@ export function RulesPage({ isAdmin, canRun }: RulesPageProps) {
           <RunPanel run={openRun} onClose={() => setOpenRun(null)} canExplain={canRun} />
         ) : null}
         {viewing ? <RuleYaml ruleId={viewing} onClose={() => setViewing(null)} /> : null}
+        <RecommendedRules isAdmin={isAdmin} />
         <RecentRuns runs={runs.data ?? []} onOpen={(r) => setOpenRun(r)} />
         <div className="flex flex-wrap items-center gap-3 text-sm">
           <input

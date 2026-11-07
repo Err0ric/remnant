@@ -1,0 +1,5 @@
+### Hooks records not delivered: idle machines apart from stuck ones (2026-11-06)
+
+- A machine whose Claude hooks plugin holds records and has delivered none for 3 days is now told apart by whether it still sends anything else. If it still sends other telemetry (Claude Code OpenTelemetry, the MCP inventory), the plugin cannot reach the server: Health shows it as unhealthy and a medium "Claude hooks records not delivered" alert is raised. If it sends nothing at all, the machine looks idle or offline: Health shows it as attention with the records waiting and the last contact, and no alert is raised.
+- The alert says how many records are waiting, or that the plugin does not report its queue, and when the machine was last in contact, by hooks and by other telemetry. A plugin that does not report its queue now raises the alert too, when the machine keeps sending other telemetry and no hook record arrives.
+- What changes for existing installs: idle or offline machines no longer raise new alerts, and their Health state moves from unhealthy to attention. Alerts already open stay until closed.

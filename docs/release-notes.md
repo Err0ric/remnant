@@ -4,6 +4,67 @@
 
 <!-- unreleased:start -->
 
+### Hooks records not delivered: idle machines apart from stuck ones (2026-11-06)
+
+- A machine whose Claude hooks plugin holds records and has delivered none for 3 days is now told apart by whether it still sends anything else. If it still sends other telemetry (Claude Code OpenTelemetry, the MCP inventory), the plugin cannot reach the server: Health shows it as unhealthy and a medium "Claude hooks records not delivered" alert is raised. If it sends nothing at all, the machine looks idle or offline: Health shows it as attention with the records waiting and the last contact, and no alert is raised.
+- The alert says how many records are waiting, or that the plugin does not report its queue, and when the machine was last in contact, by hooks and by other telemetry. A plugin that does not report its queue now raises the alert too, when the machine keeps sending other telemetry and no hook record arrives.
+- What changes for existing installs: idle or offline machines no longer raise new alerts, and their Health state moves from unhealthy to attention. Alerts already open stay until closed.
+
+### Alerts that current rules no longer raise close on upgrade (2026-11-06)
+
+- On the first start after this upgrade, the server checks every open alert against the current rules and closes the ones they would no longer raise, with the reason "Superseded by rule change". Today that is two kinds: "AI agent changed" alerts about built-in Claude Code tools only (built-in tools no longer raise "changed", ADR-0043), and source gap alerts for a source that was removed or whose Alert if quiet is off.
+- Alerts the current rules would still raise stay open, and so does any alert someone already acted on (reopened, or with a note). The check runs once per version and never again on its own.
+- To see which alerts were closed: Alerts > Closed shows the reason "Superseded by rule change" on each, with the closing in its history; Audit lists one `alert.close` row per alert with reason `superseded` and no user. Any of them can be reopened.
+- What changes for existing installs: on the next start, open alerts from retired rules close by themselves, each with an audit row; nothing to do unless you want to reopen one.
+
+### People and devices says it is loading, and where the time goes (2026-11-06)
+
+- While People and devices loads, its tabs show no counts (no more "Users (0)") and the table area says it is counting, with a progress bar; the counts appear when the ranking arrives.
+- The page's response carries a Server-Timing header with a named time for each part of the load (signals, rule matches, the people split, enrichment, identities, audit), so the browser's network panel shows what is slow. Only fixed names and durations, never data.
+- What changes for existing installs: nothing to set up.
+
+### The Sources line agrees with the gap alerts (2026-11-06)
+
+- The Sources line at the bottom of the Dashboard and the Sources tile on Health now count every source with an open source gap alert, from the same state the alerts use. Before, they could say "6 of 6 flowing, no gaps" while two gap alerts were open and a source had sent nothing for days.
+- When gaps are open the line names them, for example "4 of 6 flowing, 2 gaps: server_events quiet 4 d, win_dc quiet 3 h", and opens those alerts (the one alert when there is one).
+- A gap alert stays counted after its source's quiet alert is turned off, until the source sends again or someone closes the alert.
+- What changes for existing installs: nothing to do; open source gap alerts show on the Dashboard and Health at once.
+
+### AI service alerts name the device and its address (2026-11-06)
+
+- An "AI service not approved" or "not reviewed" alert with no person attached now names each device by its host name and the address it was seen at ("ws-0101 at 10.20.1.5"), or says "no host name seen" when only the address is known. The host name comes from the event itself or from who held the address at the time (DHCP, logons).
+- On Alerts, host names open the host page and addresses open the IP page, each on its own row (Devices, Addresses). Before this, an address showed under Devices and opened as a host.
+- What changes for existing installs: open AI service alerts pick up the device and address on the next hourly review; closed alerts stay as they were.
+
+### Person page sign-ins in local time (2026-11-06)
+
+- The Sign-ins table on a person's page shows times in your time zone with the UTC time on hover, as Ask results and the rest of the app do, instead of raw UTC stamps.
+- What changes for existing installs: nothing to set up; Logs keeps its UTC stamps.
+
+### Plain names for User-ID activities (2026-11-06)
+
+- Palo Alto User-ID lines now read as "User-ID login", "User-ID logout", "User-ID tag registered", or "User-ID tag removed" in messages and on the person page's "How it connects" lanes, instead of the CSV line with its digits masked. The data source name moves to unmapped.
+- An activity whose lines carry no message, or a message that is a whole delimited record, is named by its template (or its event class) on the investigator graph, and its card still opens a search for exactly those lines.
+- What changes for existing installs: User-ID events ingested from now on get the plain message (template 1.2.0); events already in the lake keep their stored message, and the graph names them by template where that message was the raw record.
+
+### One severity per alert (2026-11-06)
+
+- An alert now has one severity, stored on the alert, and every place reads that one value: Needs attention on the Dashboard, the Alerts list, its detail pane, the "Open by severity" counts, and the messages sent to alert targets. Before, source gap alerts showed High on the Dashboard while the Alerts page showed Medium or no severity and its counts said "High 0".
+- Messages to Slack, Teams, email, and webhooks name the severity of a source gap alert; webhooks get a `severity` field when the alert has one.
+- What changes for existing installs: on the next start, source gap alerts saved without a severity get Medium, the severity source gaps carry today, and the Dashboard shows source gap alerts as Medium.
+
+### People and devices lists sprayed usernames apart (2026-11-06)
+
+- Users now lists only accounts with a successful sign-in, a Microsoft 365 identity, or an Identities link. Names that were only ever tried in failed sign-ins (root, ubuntu, oracle, and the like) move to a new Targeted usernames tab with the attempts, sources, top attacking countries and networks (when GeoIP enrichment is on), and the hosts they were tried on.
+- A targeted name that later signs in successfully moves back to Users.
+- What changes for existing installs: brute-force usernames leave the Users tab and appear under Targeted usernames; nothing to set up.
+
+### Recommended rules for your sources (2026-11-06)
+
+- Detection rules has a new Recommended rules for your sources list: imported rules that are off, still compile, and would run on a source you can read, with their level, log source, the sources they would run on, and ATT&CK tags.
+- Nothing is turned on for you. An administrator clicks Enable on a rule, or selects several, and the change is audited like any other rule enable. Sources you cannot read never add a recommendation.
+- What changes for existing installs: nothing until an administrator enables a recommended rule; rules already enabled are not listed.
+
 ### Release notes and decisions: one file per change (2026-11-05)
 
 - Each change now adds its own release note file (`docs/release-notes.d/`) and, for a decision, its own row file (`docs/decisions.d/`). `scripts/docs/assemble.py` writes them into this page and the SPEC decisions log, so changes no longer edit the same lines. The page reads as before.

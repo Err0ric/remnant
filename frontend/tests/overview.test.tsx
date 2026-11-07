@@ -176,7 +176,11 @@ describe("Landing page (ADR-0031)", () => {
     expect(window.location.pathname).toBe("/dashboard");
     const banner = await screen.findByRole("region", { name: "Needs you" });
     expect(await within(banner).findByRole("link", { name: /has errors/ })).toBeVisible();
-    const sources = screen.getByRole("link", { name: /^Sources: .*1 gap in 24 hours/ });
+    // win_dc's quiet watch is firing: the line counts it instead of "1 gap in 24 hours"
+    // (review item 3: the footer agrees with the gap alerts).
+    const sources = screen.getByRole("link", {
+      name: /^Sources: 1 of 2 flowing, 1 gap: win_dc never sent\. Open Health$/,
+    });
     await userEvent.click(sources);
     expect(await screen.findByRole("heading", { name: "Health", level: 1 })).toBeVisible();
   });

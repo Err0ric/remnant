@@ -89,7 +89,7 @@ def app(tmp_path_factory: pytest.TempPathFactory) -> Any:
 
 
 def _rank(app: Any, allowed: list[str] | None = None) -> dict[str, Any]:
-    ranked, _, _ = entity_risk(
+    ranked, _, _, _ = entity_risk(
         app.state.engine, app.state.meta, allowed, QueryScope(allowed, START, END),
         IdentityMap(domains=["example.com"]), app.state.ai_usage,
     )  # fmt: skip

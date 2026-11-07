@@ -151,6 +151,34 @@ def test_prep_numbers_notes_and_renumbers_a_clashing_decision(root: Path) -> Non
     assert A.main(["--root", str(root), "--check"]) == 0
 
 
+def test_prep_closes_a_gap_and_swaps_without_clobbering(root: Path) -> None:
+    """PRs written in parallel pick spaced numbers (D211, D213, ...); each lands as the
+    next free one after main's highest, and a new number that is another of the PR's old
+    ones is not overwritten."""
+    git(root, "init", "-q", "-b", "main")
+    add(root, "docs/decisions.d/D209-base.md", row(209, "base"))
+    A.main(["--root", str(root)])
+    git(root, "add", "-A")
+    git(root, "commit", "-qm", "base")
+    git(root, "checkout", "-qb", "mine")
+    add(root, "docs/decisions.d/D209-one.md", row(209, "one"))  # clashes with main
+    add(root, "docs/decisions.d/D210-two.md", row(210, "two"))  # free, but D209 needs it
+    add(root, "docs/decisions.d/D214-three.md", row(214, "three"))  # leaves a gap
+    add(root, "code.py", "# D209, D210 and D214.\n")
+    git(root, "add", "-A")
+    git(root, "commit", "-qm", "mine")
+    assert A.main(["--root", str(root), "--prep", "--base", "main", "--pr", "422"]) == 0
+    d = root / "docs/decisions.d"
+    assert sorted(p.name for p in d.glob("D*.md")) == [
+        "D209-base.md", "D210-one.md", "D211-two.md", "D212-three.md",
+    ]  # fmt: skip
+    assert (d / "D210-one.md").read_text() == row(210, "one")
+    assert (d / "D211-two.md").read_text() == row(211, "two")
+    assert (d / "D212-three.md").read_text() == row(212, "three")
+    assert (root / "code.py").read_text() == "# D210, D211 and D212.\n"
+    assert A.main(["--root", str(root), "--check"]) == 0
+
+
 def test_release_freezes_the_notes(root: Path) -> None:
     add(root, "docs/release-notes.d/414-a.md", note("A"))
     add(root, "docs/release-notes.d/415-b.md", note("B"))

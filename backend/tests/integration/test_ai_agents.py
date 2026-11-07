@@ -136,5 +136,6 @@ def test_one_person_on_two_machines_is_one_agent_listing_both(lab: dict[str, Any
     got = {m.name: m.events_24h for m in d.machines}
     assert got == {"ws-alpha": 3, "ws-zulu": 0}  # each machine's own events
     assert [m.name for m in d.machines] == ["ws-alpha", "ws-zulu"]
+    lab["app"].state.clock = lambda: NOW + timedelta(hours=1)  # the same "now" as above, any day
     out = next(x for x in a.get("/api/ai/agents").json() if x["agent"] == d.agent)
     assert [m["name"] for m in out["machines"]] == ["ws-alpha", "ws-zulu"]

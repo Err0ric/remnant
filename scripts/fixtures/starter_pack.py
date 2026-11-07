@@ -595,15 +595,24 @@ def paloalto_globalprotect(out: Path) -> None:
 
 
 def paloalto_userid(out: Path) -> None:
+    # Data sources as PAN-OS 10.x/11.x name them: a domain controller (server monitoring),
+    # GlobalProtect and the XML API (no data source name), and the User-ID agent.
+    sources = (("dc01.example.internal", "ad-dc", "syslog"), ("", "globalprotect", ""),
+               ("UIA", "agent", ""), ("", "xml-api", "xml-api"))
+    labels = {"login": "User-ID login", "logout": "User-ID logout",
+              "register-tag": "User-ID tag registered", "unregister-tag": "User-ID tag removed"}
     def build(s: Sample, i: int) -> tuple[dict[str, str], dict[str, Any]]:
         user, ip = f"example\\{s.rng.choice(USERS)}", s.rng.choice(INTERNAL)
-        sub = s.rng.choice(("login", "login", "logout", "register-tag"))
+        sub = s.rng.choice(("login", "login", "logout", "register-tag", "unregister-tag"))
+        name, source, kind = s.rng.choice(sources)
         values = {"type": "USERID", "subtype": sub, "source_ip": ip, "user": user,
-                  "data_source_name": "dc01.example.internal", "event_id": "0", "repeat_count": "1",
-                  "data_source": "ad-dc", "data_source_type": "syslog"}
-        exp = {"class_uid": 3002 if sub in ("login", "logout") else 0, "actor_user_name": user}
+                  "data_source_name": name, "event_id": "0", "repeat_count": "1",
+                  "data_source": source, "data_source_type": kind}
+        exp = {"class_uid": 3002 if sub in ("login", "logout") else 0, "actor_user_name": user,
+               "message": labels[sub]}
         if sub in ("login", "logout"):
             exp["activity_id"] = 1 if sub == "login" else 2
+            exp["src_endpoint_ip"] = ip
         return values, exp
     _pan_sample(out, "paloalto_userid", 37, build)
 

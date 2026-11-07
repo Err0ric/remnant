@@ -224,6 +224,15 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
     rule("r1", "Failed logon burst", "Jane Doe", true),
     rule("r2", "Disabled example", "", false),
   ];
+  const recommendedRules = [
+    {
+      ...rule("r3", "Service installed", "Jane Doe", false),
+      level: "medium",
+      tags: ["attack.persistence", "attack.t1543.003"],
+      attack_tags: ["attack.persistence", "attack.t1543.003"],
+      source_ids: ["win_dc"],
+    },
+  ];
   const ruleRuns: Record<string, unknown>[] = [];
   const runSummary = (id: string, count: number | null, extra: Record<string, unknown> = {}) => ({
     run_id: id,
@@ -999,6 +1008,30 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
             events: 31,
           },
         ],
+        targeted: [
+          {
+            value: "minecraft",
+            attempts: 1240,
+            sources: ["linux_sshd"],
+            hosts: ["bastion", "web-01"],
+            names: ["minecraft"],
+            countries: [
+              { label: "Netherlands", attempts: 900 },
+              { label: "Brazil", attempts: 340 },
+            ],
+            asns: [{ label: "AS64500 Example Net", attempts: 900 }],
+          },
+          {
+            value: "ubuntu",
+            attempts: 300,
+            sources: ["linux_sshd"],
+            hosts: ["bastion"],
+            names: ["ubuntu"],
+            countries: [],
+            asns: [],
+          },
+        ],
+        targeted_total: 2,
         matches_considered: 5,
         sources: ["linux_sshd"],
       });
@@ -2815,6 +2848,8 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
     }
     if (url.endsWith("/api/rules") && method === "GET") return json(rules);
     if (url.endsWith("/api/rules/runs")) return json(ruleRuns);
+    if (url.endsWith("/api/rules/recommended") && method === "GET")
+      return json(recommendedRules.filter((r) => !r.enabled));
     if (url.endsWith("/api/rules/import"))
       return json({
         import_id: "imp2",
@@ -2833,7 +2868,8 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         rule_ids: string[];
         enabled: boolean;
       };
-      for (const r of rules) if (body.rule_ids.includes(r.rule_id)) r.enabled = body.enabled;
+      for (const r of [...rules, ...recommendedRules])
+        if (body.rule_ids.includes(r.rule_id)) r.enabled = body.enabled;
       return json({ changed: body.rule_ids.length });
     }
     if (/\/api\/rules\/runs\/[^/]+\/matches$/.test(url))
@@ -3416,6 +3452,13 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
             code: "query_rejected",
           },
           400,
+        );
+      if (body.sql.startsWith("SELECT time FROM events WHERE template_id = 'm365_signin'"))
+        return json(
+          result({
+            columns: ["time", "actor_user_name", "status_id"],
+            rows: [["2026-10-30T09:58:00+00:00", "alice@example.com", 2]],
+          }),
         );
       if (body.sql.includes("AS last_event"))
         return json(

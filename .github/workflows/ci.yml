@@ -4,8 +4,10 @@ on:
   push:
     branches: [main]
   # Docs and ADRs alone never run CI (the private repo's minutes are limited). A PR that
-  # also changes code still runs.
+  # also changes code still runs, once: PRs open as drafts, draft runs skip every job, and
+  # the queue marks a PR ready (after the local suites pass) just before it merges.
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths-ignore:
       - "docs/**"
       - "**/*.md"
@@ -21,12 +23,12 @@ permissions:
 
 jobs:
   # Private dev repo only (its minutes are limited): a PR runs the backend job only when
-  # something outside frontend/ and the docs changed, and the frontend job only when
-  # frontend/ changed. Scale tests never run here (`-m scale` is excluded by default; run
-  # them with the scale workflow, on demand).
+  # backend/, library/, templates/ or scripts/ changed, and the frontend job only when
+  # frontend/ changed (a change to this file runs both). Scale tests never run here
+  # (`-m scale` is excluded by default; run them with the scale workflow, on demand).
   # The public repo always runs everything.
   changes:
-    if: github.event_name == 'pull_request' && github.event.repository.private
+    if: github.event_name == 'pull_request' && github.event.repository.private && !github.event.pull_request.draft
     runs-on: ubuntu-latest
     outputs:
       backend: ${{ steps.diff.outputs.backend }}
@@ -41,12 +43,11 @@ jobs:
         run: |
           files=$(git diff --name-only "$BASE"...HEAD)
           echo "$files"
-          code=$(echo "$files" | grep -vE '^frontend/|^docs/|\.md$' || true)
-          echo "backend=$([ -n "$code" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          echo "frontend=$(echo "$files" | grep -qE '^(frontend/|\.github/)' && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "backend=$(echo "$files" | grep -qE '^(backend|library|templates|scripts)/|^\.github/workflows/ci\.yml$' && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "frontend=$(echo "$files" | grep -qE '^frontend/|^\.github/workflows/ci\.yml$' && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
   architecture:
-    if: github.event_name != 'push' || !github.event.repository.private  # private dev repo: the PR run is the gate; public minutes are free
+    if: (github.event_name != 'push' || !github.event.repository.private) && !github.event.pull_request.draft  # private dev repo: the PR run is the gate; public minutes are free
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -56,6 +57,7 @@ jobs:
     needs: changes
     if: >-
       always() && (github.event_name != 'push' || !github.event.repository.private)
+      && !github.event.pull_request.draft
       && (needs.changes.result == 'skipped' || needs.changes.outputs.backend == 'true')
     runs-on: ubuntu-latest
     defaults:
@@ -106,6 +108,7 @@ jobs:
     needs: changes
     if: >-
       always() && (github.event_name != 'push' || !github.event.repository.private)
+      && !github.event.pull_request.draft
       && (needs.changes.result == 'skipped' || needs.changes.outputs.frontend == 'true')
     runs-on: ubuntu-latest
     defaults:

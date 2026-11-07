@@ -182,7 +182,8 @@ def _git(root: Path, *args: str) -> str:
 
 def prep(root: Path, base: str, pr: int) -> list[str]:
     """In the PR branch after its rebase onto `base`: give `new-` notes the PR number,
-    give each decision this PR added whose number `base` already has the next free one
+    give the decisions this PR added the next free numbers after `base`'s highest (a clash
+    or a gap is renumbered)
     (citations of the old number in the files this PR changed follow), then assemble.
     Returns what it changed, for the queue's log."""
     done: list[str] = []
@@ -201,20 +202,30 @@ def prep(root: Path, base: str, pr: int) -> list[str]:
         for f in added
         if f.startswith(DECISIONS_DIR + "/") and (m := DECISION_NAME.match(Path(f).name))
     )
-    others = {n for n, _ in mine}
-    free = max(taken | others, default=FROZEN) + 1
+    # Numbers follow on from base with no gap and no clash, in this PR's own order, so
+    # PRs that picked numbers in parallel land as the next free ones whatever the merge order.
+    free = max(taken, default=FROZEN) + 1
     renames: dict[int, int] = {}
-    for n, f in mine:
-        if n not in taken:
-            continue
-        renames[n] = free
-        path = root / f
-        new = path.with_name(re.sub(r"^D\d+", f"D{free}", path.name))
-        text = path.read_text().replace(f"| D{n} |", f"| D{free} |", 1)
-        path.write_text(text)
-        _git(root, "mv", f, str(new.relative_to(root)))
-        done.append(f"D{n} -> D{free} ({new.name}; main already has D{n})")
+    for n, _ in mine:
+        if n != free:
+            renames[n] = free
         free += 1
+    moves: list[tuple[Path, Path]] = []
+    for n, f in mine:
+        if n not in renames:
+            continue
+        path = root / f
+        new = path.with_name(re.sub(r"^D\d+", f"D{renames[n]}", path.name))
+        text = path.read_text().replace(f"| D{n} |", f"| D{renames[n]} |", 1)
+        path.write_text(text)
+        tmp = path.with_name(f"tmp-{path.name}")
+        # Two steps: a new number may be another of this PR's old ones.
+        _git(root, "mv", f, str(tmp.relative_to(root)))
+        moves.append((tmp, new))
+        why = f"main already has D{n}" if n in taken else "the next free number"
+        done.append(f"D{n} -> D{renames[n]} ({new.name}; {why})")
+    for tmp, new in moves:
+        _git(root, "mv", str(tmp.relative_to(root)), str(new.relative_to(root)))
     if renames:
         # Only lines this PR added cite its own decision; the same number on a line from
         # main is the decision that took it first. Assembled table rows are rewritten by

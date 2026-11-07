@@ -163,7 +163,13 @@ export interface Summary {
 
 /** The strip over the list: open alerts by severity, new today (the viewer's day), the
  * oldest still open, and how many per category. */
-export function summarize(items: AlertItem[], now: Date = new Date()): Summary {
+/** The strip's figures. `counts` are the server's by stored severity (the same field each
+ * badge reads); without them they are counted from the items' own field. */
+export function summarize(
+  items: AlertItem[],
+  now: Date = new Date(),
+  counts?: { high: number; medium: number; other: number },
+): Summary {
   const open = items.filter((i) => i.state === "open");
   const today = now.toDateString();
   const categories: Record<Category, number> = { detection: 0, search: 0, ai: 0, gap: 0 };
@@ -173,9 +179,9 @@ export function summarize(items: AlertItem[], now: Date = new Date()): Summary {
     null,
   );
   return {
-    high: open.filter((i) => i.severity === "high").length,
-    medium: open.filter((i) => i.severity === "medium").length,
-    other: open.filter((i) => !i.severity).length,
+    high: counts?.high ?? open.filter((i) => i.severity === "high").length,
+    medium: counts?.medium ?? open.filter((i) => i.severity === "medium").length,
+    other: counts?.other ?? open.filter((i) => !i.severity).length,
     newToday: open.filter((i) => new Date(i.created_at).toDateString() === today).length,
     oldest,
     categories,

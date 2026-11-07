@@ -89,6 +89,36 @@ def _alert_groups(con: sqlite3.Connection) -> None:
     )
 
 
+SUPERSEDED_REASONS = NEW_REASONS[:-1] + ", 'superseded')"
+
+
+def _alert_superseded(con: sqlite3.Connection) -> None:
+    """Migration 62 (D213): the close reason `superseded`, for open alerts the current rules
+    would no longer raise, closed by the server on upgrade. The reason CHECK is a column
+    constraint, so the table is rebuilt from its own definition (same rows, indexes)."""
+    (table_sql,) = con.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'alert_items'"
+    ).fetchone()
+    if table_sql.count(NEW_REASONS) != 1:
+        raise sqlite3.DatabaseError("alert_items.close_reason constraint not found")
+    extras = [
+        r[0]
+        for r in con.execute(
+            "SELECT sql FROM sqlite_master WHERE tbl_name = 'alert_items'"
+            " AND type IN ('index', 'trigger') AND sql IS NOT NULL"
+        )
+    ]
+    head = table_sql.index("(")
+    con.execute(
+        "CREATE TABLE alert_items_new " + table_sql[head:].replace(NEW_REASONS, SUPERSEDED_REASONS)
+    )
+    con.execute("INSERT INTO alert_items_new SELECT * FROM alert_items")
+    con.execute("DROP TABLE alert_items")
+    con.execute("ALTER TABLE alert_items_new RENAME TO alert_items")
+    for sql in extras:
+        con.execute(sql)
+
+
 # Migration 28: allow kind 'otlp' (ADR-0015).
 _widen_source_kinds = _rebuild_kinds(("file", "loki"), ("file", "loki", "otlp"))
 
@@ -1073,6 +1103,8 @@ MIGRATIONS: tuple[Migration, ...] = (
     """,
     # 61: alert grouping per entity, rule, and day, and the new close reasons (ADR-0043).
     _alert_groups,
+    # 62: the close reason `superseded`, for alerts a rule change retired (D213).
+    _alert_superseded,
 )
 
 

@@ -6,7 +6,7 @@ Usage numbers come from the caller's own events view and reading them is audited
 
 import asyncio
 from dataclasses import fields
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Query, Request, Response, status
@@ -27,6 +27,7 @@ from app.ai.watch_summary import source_classes
 from app.ai.watch_summary import summary as watch_summary
 from app.alerts.items import AlertItem, AlertItems
 from app.api.access import AdminUser, CurrentUser, client_ip, require_role
+from app.api.access import now as app_now
 from app.api.cache import STALE_MAX_S, PageCache, Refresher, scope_key
 from app.api.dashboard_sections import HistoryOut, KpiOut
 from app.auth.service import AuthService
@@ -199,7 +200,7 @@ async def ai_usage(
     other = [u for u in found if u.service.kind == NON_USAGE]
     changes, compared_from = None, None
     if start is not None:
-        stop = end or datetime.now(UTC)
+        stop = end or app_now(request)
         earlier = start - (stop - start)
         # The scope's end is inclusive; stop just short of `start` so no event is in both.
         before = await _scope(request, user, earlier, start - timedelta(microseconds=1))
@@ -375,7 +376,7 @@ async def ai_watch_summary(
             chart_drill=s.chart_drill,
             people_pending_days=pending,
             people_days=of,
-            updated_at=datetime.now(UTC),
+            updated_at=app_now(request),
         )
         return result.model_dump_json().encode(), list(s.sources)
 
@@ -678,7 +679,7 @@ async def ai_agents(request: Request, user: CurrentUser) -> list[AgentOut]:
     meta: MetaDB = request.app.state.meta
     allowed = await run_in_threadpool(permitted_sources, meta, user)
     engine: QueryEngine = request.app.state.engine
-    rows = await run_in_threadpool(agents, engine, allowed, datetime.now(UTC))
+    rows = await run_in_threadpool(agents, engine, allowed, app_now(request))
     await run_in_threadpool(
         _audit(request).audit.write,
         "ai.view",
@@ -748,7 +749,7 @@ async def ai_sessions(
     allowed = await run_in_threadpool(permitted_sources, meta, user)
     engine: QueryEngine = request.app.state.engine
     idle = request.app.state.config.agents.session_idle_minutes
-    rows = await run_in_threadpool(sessions, engine, allowed, datetime.now(UTC), days, idle)
+    rows = await run_in_threadpool(sessions, engine, allowed, app_now(request), days, idle)
     if person:
         ident = await run_in_threadpool(request.app.state.identities.load)
         keys = set(ident.keys_for(person))
@@ -776,7 +777,7 @@ async def ai_session(
     meta: MetaDB = request.app.state.meta
     allowed = await run_in_threadpool(permitted_sources, meta, user)
     engine: QueryEngine = request.app.state.engine
-    t = await run_in_threadpool(timeline, engine, allowed, session_id, datetime.now(UTC), days)
+    t = await run_in_threadpool(timeline, engine, allowed, session_id, app_now(request), days)
     await run_in_threadpool(
         _audit(request).audit.write,
         "ai.view",
@@ -838,7 +839,7 @@ async def agents_accounts(
         mine(kinds.get("telemetry", [])),
         mine(kinds.get("m365", [])),
         domains,
-        datetime.now(UTC),
+        app_now(request),
         days,
     )
     await run_in_threadpool(
@@ -908,7 +909,7 @@ async def agents_overview_get(
         request.app.state.engine,
         _catalog(request),
         telemetry,
-        datetime.now(UTC),
+        app_now(request),
         days,
     )
     await run_in_threadpool(
@@ -992,7 +993,7 @@ async def _inventory(request: Request, user: User, days: int) -> tuple[list[Any]
         allowed,
         ident,
         excluded,
-        datetime.now(UTC),
+        app_now(request),
         days,
     )
 
@@ -1041,7 +1042,7 @@ async def ai_inventory_export(
         {"format": format, "days": days, "type": type, "excluded": excluded,
          "rows": len(rows), "sources_in_scope": sources},
     )  # fmt: skip
-    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M")
+    stamp = app_now(request).strftime("%Y%m%d-%H%M")
     return Response(
         body,
         media_type="text/csv" if format == "csv" else "application/json",
@@ -1150,15 +1151,15 @@ async def ai_person_activity(
         return ids if allowed is None else [s for s in ids if s in set(allowed)]
 
     ident = await run_in_threadpool(request.app.state.identities.load)
-    now = datetime.now(UTC)
+    at = app_now(request)
     accts = await run_in_threadpool(
         accounts, request.app.state.engine, allowed, mine(kinds.get("telemetry", [])),
-        mine(kinds.get("m365", [])), ident.domains, now, max(days, 30),
+        mine(kinds.get("m365", [])), ident.domains, at, max(days, 30),
     )  # fmt: skip
     catalog = _catalog(request)
     out = await run_in_threadpool(
         person_activity, request.app.state.engine, allowed, ident, catalog.domain_table(),
-        {s.id: s.name for s in catalog.services()}, accts.rows, person[:256], now, days,
+        {s.id: s.name for s in catalog.services()}, accts.rows, person[:256], at, days,
         request.app.state.ai_rollup,
     )  # fmt: skip
     await run_in_threadpool(

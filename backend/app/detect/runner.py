@@ -20,11 +20,17 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from app.auth.users import User
-from app.core.errors import AppError, ForbiddenError, NotFoundError, ParamInvalidError
+from app.core.errors import (
+    AppError,
+    ForbiddenError,
+    NotFoundError,
+    ParamInvalidError,
+    RuleRejectedError,
+)
 from app.core.ids import AUTO_PARSER, new_id
 from app.detect.logsource import LogSource, applies
 from app.detect.rules import compile_rule
-from app.detect.store import RuleStore
+from app.detect.store import RuleRow, RuleStore
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.engine.views import permitted_sources
 from app.ingest.sources import SourceStore
@@ -39,6 +45,7 @@ MAX_RANGE = timedelta(days=366)
 RUN_TIMEOUT_S = 60.0
 AUTO_SEEN_WINDOW = timedelta(days=30)
 AUTO_SEEN_TTL_S = 60.0
+_LEVEL_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "informational": 4}
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +90,7 @@ class RuleRunner:
         self._sources = sources
         self._templates = templates
         self._seen_cache: dict[tuple[str, ...], tuple[float, dict[str, set[str]]]] = {}
+        self._compiles: dict[str, bool] = {}  # rule version sha256 -> compiles now
         self._rules = rules
         self._audit = audit
 
@@ -140,6 +148,26 @@ class RuleRunner:
                 for sid, d in declared
             ]
         return {ls: [sid for sid, d in declared if applies(ls, d)] for ls in logsources}
+
+    def recommended(self, user: User) -> list[tuple[RuleRow, list[str]]]:
+        """Imported rules worth enabling for this caller: disabled, compiling with the
+        current pipeline, and with a logsource that one of the caller's permitted sources
+        declares. Read only: listing never enables, imports, or audits anything."""
+        rows = [r for r in self._rules.all() if not r.enabled]
+        keys = {LogSource(r.product, r.service, r.category) for r in rows}
+        by_ls = self.sources_by_logsource(keys, user)
+        candidates = [(r, by_ls.get(LogSource(r.product, r.service, r.category), [])) for r in rows]
+        candidates = [(r, s) for r, s in candidates if s]
+        missing = sorted({r.sha256 for r, _ in candidates} - self._compiles.keys())
+        for sha, text in self._rules.versions(missing).items():
+            try:
+                compile_rule(text.encode("utf-8"))
+                self._compiles[sha] = True
+            except RuleRejectedError:
+                self._compiles[sha] = False
+        out = [(r, s) for r, s in candidates if self._compiles.get(r.sha256, False)]
+        out.sort(key=lambda x: (_LEVEL_ORDER.get(x[0].level.lower(), 5), x[0].title.lower()))
+        return out
 
     def _auto_ids(self) -> set[str]:
         return {s.source_id for s in self._sources.list() if s.template_id == AUTO_PARSER}

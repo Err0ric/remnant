@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.alerts.dispatch import AlertDispatcher
-from app.alerts.items import AlertItems
+from app.alerts.items import GAP_SEVERITY, AlertItems
 from app.alerts.render import Alert
 from app.auth.users import User
 from app.core.branding import PRODUCT_NAME
@@ -241,6 +241,7 @@ class QuietWatch:
     ) -> None:
         action = "source.quiet" if kind == "quiet" else "source.resumed"
         link = f"{self._link}/health#source={w.source_id}" if self._link else None
+        severity: str | None = None
         if kind == "quiet" and self._items is not None and now is not None:
             # A gap on a watched source is an alert item (ADR-0037 owner answer 3).
             item = self._items.raise_item(
@@ -252,9 +253,10 @@ class QuietWatch:
                 sources=[w.source_id],
                 range_start=seen.isoformat() if seen else None,
                 group=(w.source_id, "gap"),
-                severity="medium",  # every gap shows its severity (ADR-0043 row 15)
+                severity=GAP_SEVERITY,  # every gap shows its severity (ADR-0043 row 15)
                 change=detail,
             )
+            severity = item.severity  # the message says what the alert says
             if item.state == "closed" or not (item.fresh or item.rose):
                 kind = "muted"  # muted, or a repeat on today's open gap: not sent again
             elif self._link:
@@ -278,6 +280,7 @@ class QuietWatch:
             range_end=None,
             link=link,
             product=PRODUCT_NAME,
+            severity=severity,
         )
         self._dispatcher.enqueue(alert, w.target_ids, None, None, source_id=w.source_id)
 

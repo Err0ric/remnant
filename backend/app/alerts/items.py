@@ -45,7 +45,9 @@ LABELS: dict[str, str] = {
     "follow_up": "Resolved",
     "muted": "Muted",
     "merged": "Merged",
+    "superseded": "Superseded by rule change",
 }
+SUPERSEDED_NOTE = "Superseded by rule change"  # D213: closed by the server on upgrade
 NOTE_REQUIRED = frozenset({"false_positive"})
 MUTE_DAYS = (7, 30)  # ADR-0043 row 18
 
@@ -58,6 +60,9 @@ MAX_NOTE = 2_000
 MAX_MUTE_DAYS = max(MUTE_DAYS)
 MAX_CHANGES = 20  # lines kept on a grouped item, newest first (ADR-0043 row 2)
 RANK = {None: 0, "info": 0, "low": 1, "medium": 2, "high": 3}
+# The one severity a source gap carries (ADR-0043 row 15: as set on the source, today
+# medium). Stored on the item; every surface reads the item's field, none re-derives it.
+GAP_SEVERITY = "medium"
 
 
 @dataclass(slots=True)
@@ -92,7 +97,7 @@ class AlertItem:
     note: str | None
     resolved: str | None  # the condition ended (a quiet source sending again)
     schedule_id: str | None = None  # the schedule whose run fired, for its rows
-    severity: str | None = None  # high | medium (AI Watch); None for the rest
+    severity: str | None = None  # high | medium, as stored; None for schedules and rules
     # Who and which devices the item is about, from the rows that fired (ADR-0038 row 28).
     people: list[str] = field(default_factory=list)
     devices: list[str] = field(default_factory=list)
@@ -403,6 +408,73 @@ class AlertItems:
                 "alert.merge", "success", None, None, {"item_id": item_id, "into": into_id}
             )
         return len(merged)
+
+    def fill_severity(self) -> int:
+        """At start: gap items stored before gaps carried a severity get the gap's one
+        (ADR-0043 row 15), so the Dashboard, the Alerts strip, and the list read the same
+        stored value. Idempotent; returns how many items changed."""
+        with self._meta.connect() as con:
+            cur = con.execute(
+                "UPDATE alert_items SET severity = ? WHERE kind = 'gap' AND severity IS NULL",
+                (GAP_SEVERITY,),
+            )
+            return cur.rowcount
+
+    def open_gaps(self) -> dict[str, tuple[str, str]]:
+        """Each source's open, unresolved source gap alert: source id to (item id, when it
+        last fired). What the Dashboard footer and Health count as a gap, so they agree with
+        the Alerts page (review item 3, 2026-11-06). Gaps of one machine's queue
+        (`source/machine`) are not a source's gap."""
+        with self._meta.connect() as con:
+            rows = con.execute(
+                "SELECT subject, item_id, coalesce(last_seen, created_at) AS at"
+                " FROM alert_items WHERE kind = 'gap' AND state = 'open' AND resolved IS NULL"
+                " AND instr(subject, '/') = 0 ORDER BY created_at"
+            ).fetchall()
+        return {r["subject"]: (r["item_id"], r["at"]) for r in rows}
+
+    def close_superseded(self, still_raised: Callable[[AlertItem], bool], fix_id: str) -> list[str]:
+        """Once per `fix_id` (D213, proposed): close each open alert `still_raised` says the
+        current rules would not raise now, as Superseded by rule change, by the server (no
+        user), one `alert.close` audit row each. An alert someone acted on (a decision in
+        its history or a note) is never touched. Returns the closed item ids."""
+        closed: list[AlertItem] = []
+        with self._meta.connect() as con:
+            if con.execute("SELECT 1 FROM one_time_fixes WHERE fix_id = ?", (fix_id,)).fetchone():
+                return []
+            rows = con.execute(
+                "SELECT a.*, NULL AS run_schedule FROM alert_items a WHERE a.state = 'open'"
+                " AND a.note IS NULL AND NOT EXISTS (SELECT 1 FROM alert_item_history h"
+                " WHERE h.item_id = a.item_id AND h.user_id IS NOT NULL)"
+                " ORDER BY a.created_at, a.rowid"
+            ).fetchall()
+            now = self._now()
+            for r in rows:
+                item = _item(r)
+                if still_raised(item):
+                    continue
+                self._set_closed(con, item.item_id, None, "superseded", SUPERSEDED_NOTE, now)
+                closed.append(item)
+            con.execute(
+                "INSERT INTO one_time_fixes (fix_id, applied_at, changed) VALUES (?, ?, ?)",
+                (fix_id, now, len(closed)),
+            )
+        for item in closed:
+            self._audit.write(
+                "alert.close",
+                "success",
+                None,
+                None,
+                {
+                    "item_id": item.item_id,
+                    "kind": item.kind,
+                    "subject": item.subject,
+                    "reason": "superseded",
+                    "note": SUPERSEDED_NOTE,
+                    "fix": fix_id,
+                },
+            )
+        return [i.item_id for i in closed]
 
     def resolve(
         self, kind: Kind, ref_id: str, text: str, group: tuple[str, str] | None = None

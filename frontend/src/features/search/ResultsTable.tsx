@@ -3,6 +3,8 @@ import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } fr
 import { SeverityBadge } from "@/components/SeverityBadge";
 import type { Cell, GeoInfo, QueryResult } from "@/lib/api";
 import { EntityLink } from "@/components/EntityLink";
+import { When } from "@/components/When";
+import { isIsoTime } from "@/features/ask/AskResults";
 import { kindForColumn, type EntityKind } from "@/lib/entity";
 import { cn } from "@/lib/cn";
 import { geoShort } from "@/lib/geo";
@@ -37,6 +39,9 @@ interface ResultsTableProps {
   fresh?: Set<string>;
   /** Told when a row opens or closes (Live holds new rows while one is open). */
   onOpenChange?: (open: boolean) => void;
+  /** Times in the viewer's zone with UTC on hover, as Ask shows them, instead of the
+   * UTC stamps Logs shows (a person's sign-ins, review item 6). */
+  localTimes?: boolean;
 }
 
 export function ResultsTable({
@@ -49,6 +54,7 @@ export function ResultsTable({
   geo,
   fresh,
   onOpenChange,
+  localTimes = false,
 }: ResultsTableProps) {
   const geoOf = (v: unknown) => (geo && typeof v === "string" ? geo[v] : undefined);
   const intelOf = (v: unknown) =>
@@ -221,7 +227,9 @@ export function ResultsTable({
                               className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-danger align-middle"
                             />
                           ) : null}
-                          {kindForColumn(c) ? (
+                          {localTimes && isIsoTime(row[i] ?? null) ? (
+                            <When iso={row[i] as string} />
+                          ) : kindForColumn(c) ? (
                             <EntityLink
                               kind={kindForColumn(c) as EntityKind}
                               value={row[i]}

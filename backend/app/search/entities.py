@@ -28,10 +28,10 @@ from app.ai.usage import (
     fact_range,
 )
 from app.core.errors import ParamInvalidError
-from app.core.timing import in_context
+from app.core.timing import in_context, phase
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.meta.db import MetaDB
-from app.search import entity_signals
+from app.search import entity_signals, targeted
 from app.search.addresses import OBS_SQL, address_ctes, join_addr, lookup
 from app.search.identity import IdentityMap, key_sql
 
@@ -225,16 +225,20 @@ def entity_risk(
     scope: QueryScope,
     ident: IdentityMap | None = None,
     usage: Any = None,
-) -> tuple[dict[EntityKind, list[Risk]], int, list[str]]:
+) -> tuple[dict[EntityKind, list[Risk]], int, list[str], targeted.Split]:
     """Every user, source IP, and host seen in the range (the busiest of each), ranked by
     a score whose parts are rule matches, flagged runs, and the D195 signals, then by
-    events; the number of matches considered; sources read."""
+    events; the number of matches considered; sources read; and the targeted usernames,
+    which are left out of the users (D212)."""
     ident = ident or IdentityMap()
-    matches = visible_matches(meta, allowed)
+    # Each part is named in the Server-Timing header (review item 7).
+    with phase("rule_matches"):
+        matches = visible_matches(meta, allowed)
     found: dict[tuple[str, str], Risk] = {}
     read: list[str] = [] if scope.sources is None else list(scope.sources)
     signals, read = entity_signals.collect(engine, meta, allowed, scope, ident, usage)
-    alerts = entity_signals.alert_names(meta, allowed, scope)
+    with phase("alerts"):
+        alerts = entity_signals.alert_names(meta, allowed, scope)
     for (kind, value), sig in signals.items():
         if kind not in COLUMN:
             continue
@@ -249,17 +253,18 @@ def entity_risk(
             ai_flags=list(sig.ai_flags),
         )
     if matches:
-        result = engine.run(
-            RISK_SQL,
-            scope,
-            {
-                "ids": [m.event_id for m in matches],
-                "levels": [m.level for m in matches],
-                "rules": [m.rule for m in matches],
-            },
-            timeout_s=TIMEOUT_S,
-            page=True,
-        )
+        with phase("rule_match_query"):
+            result = engine.run(
+                RISK_SQL,
+                scope,
+                {
+                    "ids": [m.event_id for m in matches],
+                    "levels": [m.level for m in matches],
+                    "rules": [m.rule for m in matches],
+                },
+                timeout_s=TIMEOUT_S,
+                page=True,
+            )
         read = sorted(set(read) | set(result.sources))
         for kind, value, crit, high, med, low, _events, rules in result.rows:
             risk = found.setdefault((kind, str(value)), Risk(kind=kind, value=str(value)))
@@ -270,11 +275,31 @@ def entity_risk(
                 int(low),
             )
             risk.rules = [str(x) for x in rules or []]
-    for (kind, value), n in _flagged(meta, allowed, scope).items():
+    with phase("flagged_runs"):
+        flagged = _flagged(meta, allowed, scope)
+    for (kind, value), n in flagged.items():
         risk = found.setdefault((kind, value), Risk(kind=kind, value=value))  # type: ignore[arg-type]  # kind comes from COLUMN keys
         risk.flagged_runs = n
-    merged = _merge_users([r for r in found.values() if r.kind == "user"], ident)
+    with phase("people_split"):
+        spl = targeted.split(engine, scope, ident)
+    read = sorted(set(read) | set(spl.sources))
+    merged = [
+        r
+        for r in _merge_users([r for r in found.values() if r.kind == "user"], ident)
+        if ident.key(r.names[0] if r.names else r.value) not in spl.targeted
+    ]
     out: dict[EntityKind, list[Risk]] = {"user": [], "ip": [], "host": []}
+    with phase("scoring"):
+        _score(out, found, merged, alerts)
+    return out, len(matches), read, spl
+
+
+def _score(
+    out: dict[EntityKind, list[Risk]],
+    found: dict[tuple[str, str], Risk],
+    merged: list[Risk],
+    alerts: list[set[str]],
+) -> None:
     for risk in [r for r in found.values() if r.kind != "user"] + merged:
         risk.alerts = entity_signals.count_alerts(alerts, [risk.value, *risk.names])
         risk.parts = score_parts(risk)
@@ -285,7 +310,6 @@ def entity_risk(
     for kind in out:
         out[kind].sort(key=lambda r: (-r.score, -r.events, r.value))
         out[kind] = out[kind][:RANKED]
-    return out, len(matches), read
 
 
 def score_parts(r: Risk) -> dict[str, int]:
@@ -378,17 +402,25 @@ class Graph:
 
 # Lines that differ only in numbers (ports, pids, addresses, ttys) are one activity.
 PATTERN = "regexp_replace(message, '[0-9]+', '#', 'g')"
+# No message, or a message that is a whole delimited record (a template that mapped no
+# message falls back to the payload, such as a vendor CSV line): the activity is named by
+# its template instead, never by the masked record.
+RECORD_LIKE = (
+    "(coalesce(message, '') = '' OR length(message)"
+    " - length(replace(replace(message, ',', ''), '|', '')) >= 8)"
+)
 
 ENTITY_SQL = """
 SELECT source_id, class_uid,
-       coalesce(nullif(left({PATTERN}, 60), ''), '(no message)') AS activity,
+       CASE WHEN {RECORD_LIKE} THEN '' ELSE left({PATTERN}, 60) END AS activity,
+       CASE WHEN {RECORD_LIKE} THEN template_id END AS tpl,
        coalesce(nullif(dst_endpoint_hostname, ''), nullif(dst_endpoint_ip, '')) AS target,
        count(*) AS n,
        count(*) FILTER (WHERE event_id IN (SELECT unnest($ids))) AS m,
        max(coalesce(severity_id, 0)) AS sev
 FROM events
 WHERE {where}
-GROUP BY 1, 2, 3, 4
+GROUP BY 1, 2, 3, 4, 5
 ORDER BY n DESC
 LIMIT 2000"""
 
@@ -471,9 +503,11 @@ def entity_graph(
     kind: Literal["user", "ip", "host"],
     value: str,
     ident: IdentityMap | None = None,
+    template_names: dict[str, str] | None = None,
 ) -> Graph:
     """Entity -> Sources -> Activities -> Targets (ADR-0016 row 5). A user is everyone
-    named as the same person (ADR-0018)."""
+    named as the same person (ADR-0018). `template_names` (id to name) labels the
+    activities whose lines carry no readable message."""
     ident = ident or IdentityMap()
     ids = [m.event_id for m in visible_matches(meta, allowed)]
     params: dict[str, object] = {"ids": ids or [""]}
@@ -487,7 +521,7 @@ def entity_graph(
         params["v"] = value
         label = ident.display(ident.key(value), ident.org_email(value))
     result = engine.run(
-        ENTITY_SQL.format(where=where, PATTERN=PATTERN),
+        ENTITY_SQL.format(where=where, PATTERN=PATTERN, RECORD_LIKE=RECORD_LIKE),
         scope,
         params,
         timeout_s=TIMEOUT_S,
@@ -513,19 +547,25 @@ def entity_graph(
         if names:
             b.cards[root].sublabel = f"IP address · {', '.join(names)}"
     b.cards[root].search_sql = search_sql(literal)
-    for source_id, class_uid, activity, target, n, m, sev in result.rows:
+    for source_id, class_uid, activity, tpl, target, n, m, sev in result.rows:
         n, m, sev = int(n), int(m), int(sev or 0)
         b.cards[root].events += n
         b.cards[root].matches += m
         b.cards[root].max_severity = max(b.cards[root].max_severity, sev)
         s = b.card(1, str(source_id), str(source_id), n, m, sev)
         b.cards[s].search_sql = search_sql(f"{literal} AND source_id = {quote(str(source_id))}")
-        a = b.card(2, f"{class_uid}|{activity}", str(activity), n, m, sev)
-        b.cards[a].sublabel = CLASS_NAMES.get(int(class_uid or 0), f"Class {class_uid}")
+        cls = CLASS_NAMES.get(int(class_uid or 0), f"Class {class_uid}")
+        if activity:
+            a = b.card(2, f"{class_uid}|{activity}", str(activity), n, m, sev)
+            match = f"left({PATTERN}, 60) = {quote(str(activity))}"
+        else:
+            name = (template_names or {}).get(str(tpl or ""), "")
+            a = b.card(2, f"{class_uid}|tpl:{tpl}", name or f"{cls} event", n, m, sev)
+            klass = "class_uid IS NULL" if class_uid is None else f"class_uid = {int(class_uid)}"
+            match = f"template_id = {quote(str(tpl or ''))} AND {klass} AND {RECORD_LIKE}"
+        b.cards[a].sublabel = cls
         b.cards[a].group = b.cards[a].sublabel
-        b.cards[a].search_sql = search_sql(
-            f"{literal} AND left({PATTERN}, 60) = {quote(str(activity))}"
-        )
+        b.cards[a].search_sql = search_sql(f"{literal} AND {match}")
         b.edge(root, s, n)
         b.edge(s, a, n)
         if target:
