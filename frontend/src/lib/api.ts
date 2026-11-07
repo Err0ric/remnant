@@ -685,9 +685,22 @@ export interface AnthropicSettings {
   backfill_days: number;
 }
 
+/** Proxmox VE guest inventory connector settings (ADR-0045). No secret here. */
+export interface ProxmoxSettings {
+  /** A node or cluster host name, no scheme. */
+  host: string;
+  port: number;
+  /** user@realm!name; the secret goes in credentials.token_secret. */
+  token_id: string;
+  /** A pinned cluster CA (PEM); otherwise the system store verifies. */
+  ca_pem?: string | null;
+  poll_minutes: number;
+}
+
 /** Write-only credentials for an API source; stored encrypted, never returned. */
 export interface ApiCredentials {
   api_key?: string;
+  token_secret?: string;
   client_secret?: string;
   certificate_pem?: string;
   private_key_pem?: string;
@@ -777,6 +790,43 @@ export interface LookupHit {
     asn: number | null;
     org: string | null;
   } | null;
+}
+
+/** A Proxmox guest that held an IP, MAC, or host name (ADR-0045 A5, A6). */
+export interface InventoryMatch {
+  source_id: string;
+  vmid: number;
+  type: string;
+  name: string;
+  node: string;
+  first_seen: string;
+  last_seen: string;
+  /** The guest's latest inventory event still shows the value. */
+  current: boolean;
+  /** Show events: this guest's inventory events. */
+  search_sql: string;
+}
+
+/** Why an address has no events (ADR-0045 Part B), from facts the server holds. */
+export interface AddressCoverage {
+  value: string;
+  start: string;
+  end: string;
+  events: number;
+  categories: {
+    category: string;
+    sources: {
+      source_id: string;
+      state: "receiving" | "not_receiving" | "never" | "off";
+      since: string | null;
+      records_address: boolean;
+    }[];
+  }[];
+  missing: string[];
+  inventory_source: boolean;
+  inventory: InventoryMatch[];
+  restricted: boolean;
+  can_add_source: boolean;
 }
 
 /** Investigator lanes (ADR-0016 row 5). */
@@ -1052,7 +1102,7 @@ export interface Identities {
 
 export type GraphKind = "user" | "ip" | "host" | "mcp" | "service";
 
-export type SourceKind = "file" | "loki" | "otlp" | "m365" | "anthropic" | "syslog";
+export type SourceKind = "file" | "loki" | "otlp" | "m365" | "anthropic" | "syslog" | "proxmox";
 
 /** A syslog listener source's socket (ADR-0021). */
 export interface SyslogSettings {
@@ -1092,8 +1142,9 @@ export interface SourceInput {
   loki?: LokiSettings | null;
   m365?: M365Settings | null;
   anthropic?: AnthropicSettings | null;
+  proxmox?: ProxmoxSettings | null;
   syslog?: SyslogSettings | null;
-  /** Write-only, for m365 and anthropic sources. */
+  /** Write-only, for m365, anthropic, and proxmox sources. */
   credentials?: ApiCredentials;
   /** Write-only: a Loki password or token, stored encrypted. */
   loki_secret?: string;
@@ -1816,8 +1867,21 @@ export interface RuleImportReport {
   updated: number;
   unchanged: number;
   refused: number;
+  /** Not usable rule files: unsafe names, too large, malformed, duplicate ids. */
+  skipped?: number;
+  /** Rules that do not compile with the current pipeline. */
+  not_compiling?: number;
   truncated: boolean;
   refusals: RuleRefusal[];
+}
+
+/** The pinned SigmaHQ core release the server can download on an admin's click (D211). */
+export interface SigmaHqRelease {
+  release: string;
+  asset: string;
+  sha256: string;
+  url: string;
+  max_upload_bytes: number;
 }
 
 export interface RuleRun {
@@ -2451,6 +2515,10 @@ export const api = {
   recommendedRules: () => request<SigmaRuleRecommended[]>("/api/rules/recommended"),
   rule: (id: string) => request<SigmaRuleDetail>(`/api/rules/${encodeURIComponent(id)}`),
   importRules: (path: string) => request<RuleImportReport>("/api/rules/import", post({ path })),
+  sigmaHqRelease: () => request<SigmaHqRelease>("/api/rules/sigmahq"),
+  importSigmaHq: () => request<RuleImportReport>("/api/rules/import/sigmahq", post({})),
+  importRulesZip: (file: Blob) =>
+    request<RuleImportReport>("/api/rules/import/upload", { method: "POST", body: file }),
   setRulesEnabled: (ruleIds: string[], enabled: boolean) =>
     request<{ changed: number }>("/api/rules/enabled", post({ rule_ids: ruleIds, enabled })),
   runRule: (id: string, start: string, end: string) =>
@@ -2632,9 +2700,10 @@ export const api = {
   testLoki: (body: LokiSettings & { secret?: string }) =>
     request<LokiTestResult>("/api/sources/loki/test", post(body)),
   testApiSource: (body: {
-    kind: "m365" | "anthropic";
+    kind: "m365" | "anthropic" | "proxmox";
     m365?: M365Settings;
     anthropic?: AnthropicSettings;
+    proxmox?: ProxmoxSettings;
     credentials: ApiCredentials;
   }) => request<ApiTestResult>("/api/sources/api/test", post(body)),
   replaceCredentials: (id: string, credentials: ApiCredentials) =>
@@ -2746,6 +2815,20 @@ export const api = {
     if (q.value) p.set("value", q.value);
     if (q.start) p.set("start", q.start);
     return request<EntityGraph>(`/api/entities/graph?${p.toString()}`);
+  },
+  inventoryMatches: (values: string[], start?: string) => {
+    const p = new URLSearchParams();
+    for (const v of values) p.append("value", v);
+    if (start) p.set("start", start);
+    return request<{ matches: Record<string, InventoryMatch[]> }>(
+      `/api/inventory/matches?${p.toString()}`,
+    );
+  },
+  addressCoverage: (value: string, start?: string, end?: string) => {
+    const p = new URLSearchParams({ value });
+    if (start) p.set("start", start);
+    if (end) p.set("end", end);
+    return request<AddressCoverage>(`/api/inventory/coverage?${p.toString()}`);
   },
   entityLookup: (q: string) =>
     request<{ hits: LookupHit[]; days: number }>(

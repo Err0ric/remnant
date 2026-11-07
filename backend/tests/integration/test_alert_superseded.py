@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from app.alerts.items import AlertItems
-from app.alerts.supersede import Rules, still_raised
+from app.alerts.supersede import Rules, why_superseded
 from app.auth.users import User
 from app.meta.audit import AuditLog
 from app.meta.db import MetaDB
@@ -63,7 +63,7 @@ def test_removed_rules_close_with_the_reason_and_an_audit_row(store: Any) -> Non
     unwatched = _gap(items, "otel_cc")  # its quiet alert was turned off (D168)
     gone = _gap(items, "old_src")  # the source was removed
 
-    closed = items.close_superseded(lambda i: still_raised(i, RULES), "fix-a")
+    closed = items.close_superseded(lambda i: why_superseded(i, RULES), "fix-a")
     assert sorted(closed) == sorted([built_in, legacy, unwatched, gone])
     with meta.connect() as con:
         rows = {
@@ -73,14 +73,18 @@ def test_removed_rules_close_with_the_reason_and_an_audit_row(store: Any) -> Non
         }  # fmt: skip
     for r in rows.values():
         assert (r["state"], r["close_reason"], r["closed_by"]) == ("closed", "superseded", None)
-        assert r["note"] == "Superseded by rule change"
+    # The note says why (owner, 2026-11-07).
+    tools = "Superseded by rule change: built-in Claude Code tools no longer raise an alert when they change"
+    assert rows[built_in]["note"] == tools and rows[legacy]["note"] == tools
+    assert rows[unwatched]["note"] == "Superseded by rule change: quiet alerts off for this source"
+    assert rows[gone]["note"] == "Superseded by rule change: this source was removed"
     shown = items.get(built_in, User("u1", "ana", "admin"))
     assert shown.history[-1].reason == "superseded" and shown.history[-1].user_id is None
     audits = _close_rows(meta)
     assert sorted(a["item_id"] for a in audits) == sorted(closed)
     assert all(a["user_id"] is None and a["reason"] == "superseded" for a in audits)
     # A later run (another upgrade) finds nothing left to close and writes nothing.
-    assert items.close_superseded(lambda i: still_raised(i, RULES), "fix-a2") == []
+    assert items.close_superseded(lambda i: why_superseded(i, RULES), "fix-a2") == []
     assert len(_close_rows(meta)) == len(closed)
 
 
@@ -113,7 +117,7 @@ def test_still_raised_or_acted_on_stays_open_and_twice_changes_nothing(store: An
         ref_id="agent:cc|frank@example.com:Tool:Bash", why="something else",
     ).item_id  # fmt: skip
 
-    assert items.close_superseded(lambda i: still_raised(i, RULES), "fix-b") == []
+    assert items.close_superseded(lambda i: why_superseded(i, RULES), "fix-b") == []
     with meta.connect() as con:
         states = dict(con.execute("SELECT item_id, state FROM alert_items").fetchall())
     for item_id in (mcp, watched, blocked, review, touched, unreadable):
@@ -122,7 +126,7 @@ def test_still_raised_or_acted_on_stays_open_and_twice_changes_nothing(store: An
     # Once per fix id: a second run with the same id reads nothing, even with an alert a
     # rule would now retire.
     later = _change(items, "agent:cc|heidi@example.com", "Claude Code on ws-gamma: new Tool Grep")
-    assert items.close_superseded(lambda i: still_raised(i, RULES), "fix-b") == []
+    assert items.close_superseded(lambda i: why_superseded(i, RULES), "fix-b") == []
     with meta.connect() as con:
         assert (
             con.execute("SELECT state FROM alert_items WHERE item_id = ?", (later,)).fetchone()[0]

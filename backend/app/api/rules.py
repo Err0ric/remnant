@@ -5,6 +5,7 @@ YAML, because matches name the rule they came from. Admins and analysts run rule
 and matches are shown only to callers who may read every source the run read.
 """
 
+import hashlib
 from datetime import datetime
 from typing import Annotated
 
@@ -14,6 +15,8 @@ from starlette.concurrency import run_in_threadpool
 
 from app.api.access import AdminUser, CurrentUser, client_ip, require_role
 from app.auth.users import User
+from app.core.errors import PayloadTooLargeError, RuleRejectedError
+from app.detect import sigmahq
 from app.detect.logsource import LogSource
 from app.detect.runner import MatchRow, RuleRunner, RunRow
 from app.detect.store import ImportReport, RuleRow, RuleStore
@@ -42,6 +45,8 @@ class ImportOut(BaseModel):
     updated: int
     unchanged: int
     refused: int
+    skipped: int  # not usable rule files: unsafe names, too large, malformed, duplicate ids
+    not_compiling: int  # rules that do not compile with the current pipeline
     truncated: bool
     refusals: list[RefusalOut]  # first 200; the rest via /rules/imports/{id}/refusals
 
@@ -160,6 +165,8 @@ def _import_out(r: ImportReport) -> ImportOut:
         updated=r.updated,
         unchanged=r.unchanged,
         refused=len(r.refusals),
+        skipped=r.skipped,
+        not_compiling=r.not_compiling,
         truncated=r.truncated,
         refusals=[RefusalOut(path=x.path, reason=x.reason) for x in r.refusals[:200]],
     )
@@ -192,6 +199,26 @@ async def recommended_rules(request: Request, user: CurrentUser) -> list[Recomme
         )
         for r, sources in rows
     ]
+
+
+class SigmaHqOut(BaseModel):
+    release: str
+    asset: str
+    sha256: str
+    url: str
+    max_upload_bytes: int
+
+
+@router.get("/rules/sigmahq")
+async def sigmahq_release(_: AdminUser) -> SigmaHqOut:
+    """The pinned SigmaHQ core release the import button fetches (D211)."""
+    return SigmaHqOut(
+        release=sigmahq.RELEASE_TAG,
+        asset=sigmahq.ASSET_NAME,
+        sha256=sigmahq.ASSET_SHA256,
+        url=sigmahq.ASSET_URL,
+        max_upload_bytes=sigmahq.MAX_ZIP_BYTES,
+    )
 
 
 @router.get("/rules/imports")
@@ -248,6 +275,70 @@ async def import_rules(body: ImportIn, request: Request, actor: AdminUser) -> Im
         _store(request).import_path, body.path, actor.user_id, client_ip(request)
     )
     return _import_out(report)
+
+
+async def _import_zip(
+    request: Request, actor: User, data: bytes, label: str, details: dict[str, object]
+) -> ImportOut:
+    report = await run_in_threadpool(
+        _store(request).import_archive, data, label, details, actor.user_id, client_ip(request)
+    )
+    return _import_out(report)
+
+
+async def _audit_failure(
+    request: Request, actor: User, details: dict[str, object], exc: Exception
+) -> None:
+    await run_in_threadpool(
+        request.app.state.auth.audit.write,
+        "rule.import",
+        "failure",
+        actor.user_id,
+        client_ip(request),
+        {**details, "error": str(exc)[:200]},
+    )
+
+
+@router.post("/rules/import/sigmahq")
+async def import_sigmahq(request: Request, actor: AdminUser) -> ImportOut:
+    """Download the pinned SigmaHQ core package from GitHub, check its SHA-256 before
+    reading it, and import its rules (disabled). The only network call rule import makes,
+    and only on this request. A mismatch imports nothing."""
+    details: dict[str, object] = {
+        "origin": "sigmahq",
+        "release": sigmahq.RELEASE_TAG,
+        "sha256": sigmahq.ASSET_SHA256,
+    }
+    try:
+        data = await run_in_threadpool(sigmahq.fetch_pinned)
+    except RuleRejectedError as exc:
+        await _audit_failure(request, actor, details, exc)
+        raise
+    label = f"SigmaHQ {sigmahq.RELEASE_TAG} ({sigmahq.ASSET_NAME})"
+    return await _import_zip(request, actor, data, label, details)
+
+
+@router.post("/rules/import/upload")
+async def import_upload(request: Request, actor: AdminUser) -> ImportOut:
+    """Import the rules of an uploaded zip (the SigmaHQ core package on an offline
+    install). Read in memory, never extracted; rules start disabled."""
+    cap = sigmahq.MAX_ZIP_BYTES
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > cap:
+        raise PayloadTooLargeError("Rule packages are limited to 20 MB")
+    raw = bytearray()
+    async for chunk in request.stream():
+        raw += chunk
+        if len(raw) > cap:
+            raise PayloadTooLargeError("Rule packages are limited to 20 MB")
+    data = bytes(raw)
+    sha = hashlib.sha256(data).hexdigest()
+    details: dict[str, object] = {"origin": "upload", "sha256": sha, "size": len(data)}
+    try:
+        return await _import_zip(request, actor, data, f"Uploaded zip {sha[:12]}", details)
+    except RuleRejectedError as exc:
+        await _audit_failure(request, actor, details, exc)
+        raise
 
 
 @router.post("/rules/enabled")

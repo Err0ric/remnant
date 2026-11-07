@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.alerts.items import AlertItems
+from app.core import clock
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.ingest.server_events import SOURCE_ID
 from app.meta.db import MetaDB
@@ -83,7 +84,7 @@ class RefusalWatch:
 
     def tick(self, now: datetime | None = None) -> int:
         """Raise an item per address over the threshold; returns how many were checked."""
-        now = (now or datetime.now(UTC)).astimezone(UTC)
+        now = (now or clock.now()).astimezone(UTC)
         if self._last is not None and now - self._last < EVERY:
             return 0
         self._last = now

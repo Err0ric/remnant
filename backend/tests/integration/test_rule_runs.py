@@ -2,6 +2,7 @@
 
 import shutil
 import sqlite3
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -232,10 +233,11 @@ def test_rules_on_an_automatic_source_read_only_rows_of_matching_templates(
 
 
 def test_the_rule_list_names_an_automatic_source_only_for_templates_it_used(
-    lab: dict[str, Any], tmp_path: Path
+    lab: dict[str, Any], tmp_path: Path, pin_now: Callable[[datetime], None]
 ) -> None:
     """An Automatic source with only sshd lines is listed under Linux rules, not under
     every Windows rule it could in theory hold."""
+    pin_now(datetime(2026, 10, 10, 13, 0, tzinfo=UTC))  # after this file's event dates
     auto = tmp_path / "logs" / "auto_lin"
     auto.mkdir()
     (auto / "syslog").write_text(

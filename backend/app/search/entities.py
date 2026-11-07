@@ -12,7 +12,7 @@ import ipaddress
 import json
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
 
 from app.ai.catalog import NON_USAGE, Catalog
@@ -27,6 +27,7 @@ from app.ai.usage import (
     catalog_values,
     fact_range,
 )
+from app.core import clock
 from app.core.errors import ParamInvalidError
 from app.core.timing import in_context, phase
 from app.engine.duckdb import QueryEngine, QueryScope
@@ -537,7 +538,7 @@ def entity_graph(
     b.cards[root].sublabel = {"user": "User", "ip": "IP address", "host": "Host"}[kind]
     if kind == "ip":
         # Who had the address most recently in the range (ADR-0020 row 1).
-        at = scope.end or datetime.now(UTC)
+        at = scope.end or clock.now()
         try:
             holders = lookup(engine, QueryScope(scope.sources), value, at)
         except ParamInvalidError:
@@ -731,7 +732,7 @@ def _ai_rows_rolled(
     """The AI flow's rows with closed days from the rollup: Claude Code and MCP inventory
     from events (small, by template; `skip_days` would drop them), the rest from the
     rollup and the days it does not cover, both at once."""
-    web_params = {**params, "covered": covered, **fact_range(scope, scope.end or datetime.now(UTC))}
+    web_params = {**params, "covered": covered, **fact_range(scope, scope.end or clock.now())}
     with ThreadPoolExecutor(max_workers=1) as pool:
         tools = pool.submit(
             in_context(engine.run),
@@ -783,7 +784,7 @@ def ai_graph(
         params["v"] = value
     # Browser and app use comes from the daily AI rollup when it has days in range, like
     # AI usage (owner re-time, 2026-11-01: the graph read 30 days of DNS on every load).
-    planned = scope if scope.end is not None else replace(scope, end=datetime.now(UTC))
+    planned = scope if scope.end is not None else replace(scope, end=clock.now())
     skip, covered, after = rollup.plan(planned) if rollup is not None else ([], [], None)
     if covered:
         rows, sources = _ai_rows_rolled(engine, catalog, scope, where, params, skip, covered, after)

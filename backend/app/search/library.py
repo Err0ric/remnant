@@ -13,7 +13,7 @@ only and never go to a model.
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -22,7 +22,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
 
 from app.auth.users import User
-from app.core import safeyaml
+from app.core import clock, safeyaml
 from app.core.errors import ConfigError, ConflictError
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.search.ask_drill import DrillError
@@ -197,7 +197,7 @@ class Library:
     def templates_seen(self, engine: QueryEngine, allowed: list[str] | None) -> set[str]:
         """Templates the viewer's sources produced recently (row 3: from template_id
         counts, so a template with no events offers nothing)."""
-        now = datetime.now(UTC)
+        now = clock.now()
         res = engine.run(
             "SELECT DISTINCT template_id FROM events WHERE template_id IS NOT NULL",
             QueryScope(allowed, now - timedelta(days=SEEN_DAYS), now),

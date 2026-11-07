@@ -1105,6 +1105,11 @@ MIGRATIONS: tuple[Migration, ...] = (
     _alert_groups,
     # 62: the close reason `superseded`, for alerts a rule change retired (D213).
     _alert_superseded,
+    # 63: allow kind 'proxmox', the guest inventory connector (ADR-0045).
+    _rebuild_kinds(
+        ("file", "loki", "otlp", "m365", "anthropic", "syslog"),
+        ("file", "loki", "otlp", "m365", "anthropic", "syslog", "proxmox"),
+    ),
 )
 
 

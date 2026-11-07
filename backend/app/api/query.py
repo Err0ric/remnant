@@ -12,6 +12,7 @@ from starlette.concurrency import run_in_threadpool
 from app.api.access import CurrentUser, client_ip
 from app.auth.service import AuthService
 from app.auth.users import User
+from app.core import clock
 from app.core.errors import AppError, ParamInvalidError, SearchInvalidError
 from app.engine.duckdb import QueryEngine, QueryResult, QueryScope
 from app.engine.export import to_csv
@@ -106,7 +107,7 @@ def _placeholders(
     if "start" in names:
         values["start"] = start or datetime(1970, 1, 1, tzinfo=UTC)
     if "end" in names:
-        values["end"] = end or datetime.now(UTC)
+        values["end"] = end or clock.now()
     values |= identities or {}
     return compile_sql(sql), values
 

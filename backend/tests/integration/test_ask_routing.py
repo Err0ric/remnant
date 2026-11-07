@@ -5,6 +5,8 @@ shown (data or general guidance) with a switch, and every step is audited."""
 
 import json
 import sqlite3
+from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -18,7 +20,8 @@ ROUTE_PROMPT = "You route a security analyst's question"
 
 
 @pytest.fixture
-def lab(tmp_path: Any) -> dict[str, Any]:
+def lab(tmp_path: Any, pin_now: Callable[[datetime], None]) -> dict[str, Any]:
+    pin_now(datetime(2026, 10, 20, 12, 0, tzinfo=UTC))  # after this file's event dates
     out = make_lab(tmp_path)
     app = out["app"]
     calls: dict[str, Any] = {"route": {"kind": "data", "query": None, "params": {}}, "seen": []}

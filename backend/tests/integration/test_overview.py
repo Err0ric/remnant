@@ -1,7 +1,9 @@
 """GET /api/overview (ADR-0008): numbers read as the viewer, cached, audited once."""
 
 import sqlite3
+from collections.abc import Callable
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -115,7 +117,10 @@ def test_each_source_has_a_typical_count_and_a_mark_per_hour(lab: dict[str, Any]
         assert set(v["marks"]) <= {"", "busy", "quiet"}
 
 
-def test_ingest_status_is_seeded_from_stored_events(lab: dict[str, Any]) -> None:
+def test_ingest_status_is_seeded_from_stored_events(
+    lab: dict[str, Any], pin_now: Callable[[datetime], None]
+) -> None:
+    pin_now(datetime(2026, 10, 10, 13, 0, tzinfo=UTC))  # after this file's event dates
     # QA F8: after a restart, Health showed "never" for sources that had data.
     from app.ingest.watcher import IngestService
     from app.main import _seed_last_events

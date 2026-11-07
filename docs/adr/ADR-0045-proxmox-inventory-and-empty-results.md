@@ -55,6 +55,10 @@ This is a new connector, a new kind of stored data (an inventory, not events fro
 ## Rollout (after review)
 
 1. Connector, template with fixtures, Sources setup (token, CA, schedule, permission check), with tests against a fake Proxmox API: both PVE versions, a mutating token refused, LXC interfaces, an agent-less VM, DHCP churn. Guide `docs/install/proxmox.md` with the exact role and token steps.
+   - Status (2026-11-07): built against the fake API (Proxmox 8 and 9 shapes), with the owner's conservative defaults of 2026-11-06 (agent IPs: config and container addresses only on a refused request, "Agent IPs not available with this token"; the record from an allowlist, no cloud-init field kept). Verified on Proxmox 8 and 9: pending the owner's homelab results.
 2. The match line on the top bar, IP and host pages, and People and devices, and its tests.
+   - Status (2026-11-07): built (`/api/inventory/matches`); host pages match the exact guest name, proposed as D215.
 3. The empty-result block (B), with the category test and tests for each line, the not-receiving case, and the no-access line.
+   - Status (2026-11-07): built (`/api/inventory/coverage`) on the top bar, IP pages, and empty Ask answers; gap alerts are not read yet, only each source's last event and its kind's quiet period (D215, proposed).
 4. SPEC: T68, a D-row (as a `docs/decisions.d` file), and a release note per PR.
+   - Status (2026-11-07): T68 recorded as T68a to T68c in SPEC 7.1 with step 1; D210 already accepted.

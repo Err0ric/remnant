@@ -473,7 +473,9 @@ class Template(_Strict):
     description: Annotated[str, StringConstraints(max_length=2000)] = ""
     # SPEC 3.6: from the OCSF class the template mostly produces; drives suggested groups.
     # Empty means no suggestion (for example a generic template).
-    category: Literal["", "identity", "network", "dns", "system", "application", "findings"] = ""
+    category: Literal[
+        "", "identity", "network", "dns", "system", "application", "findings", "inventory"
+    ] = ""
     # Product family for optional vendor groups (paloalto, windows, linux, ...).
     vendor: Annotated[str, StringConstraints(pattern=r"^[a-z0-9_]{0,32}$")] = ""
     classification_default: Literal["local_only", "cloud_allowed"] = "local_only"

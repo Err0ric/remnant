@@ -65,14 +65,23 @@ def _agent_change(item: AlertItem) -> bool:
     return bool(what) and what != "agent" and not what.startswith("busy:")
 
 
-def still_raised(item: AlertItem, rules: Rules) -> bool:
-    """Would the current rules raise this alert now? True whenever unsure."""
+def why_superseded(item: AlertItem, rules: Rules) -> str | None:
+    """Why the current rules would not raise this alert now, for its close note (owner,
+    2026-11-07), or None when they would, or when unsure."""
     if _agent_change(item):
         lines = item.changes or [item.why or ""]
         kinds = [_built_in_change(line) for line in lines]
-        if not kinds or any(k is None for k in kinds):
-            return True  # a line this check cannot read: keep it
-        return not all(kinds)
+        if not kinds or any(k is None for k in kinds) or not all(kinds):
+            return None  # a line this check cannot read, or an MCP change: keep it
+        return "built-in Claude Code tools no longer raise an alert when they change"
     if item.kind == "gap" and "/" not in item.subject:
-        return item.subject in rules.sources and item.subject in rules.watched
-    return True
+        if item.subject not in rules.sources:
+            return "this source was removed"
+        if item.subject not in rules.watched:
+            return "quiet alerts off for this source"
+    return None
+
+
+def still_raised(item: AlertItem, rules: Rules) -> bool:
+    """Would the current rules raise this alert now? True whenever unsure."""
+    return why_superseded(item, rules) is None

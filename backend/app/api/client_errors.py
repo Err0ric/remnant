@@ -3,7 +3,6 @@ page chunk that failed to load (owner 2026-11-02), so it shows on Health and in 
 server's log. Signed-in users only (CSRF like every POST); rate-limited; the body holds no
 log content (the browser scrubs the message). Router only."""
 
-from datetime import UTC, datetime
 from typing import Annotated, Literal
 
 import structlog
@@ -11,6 +10,7 @@ from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel, StringConstraints
 
 from app.api.access import CurrentUser
+from app.core import clock
 from app.core.client_errors import ClientError, ClientErrors
 
 router = APIRouter(tags=["meta"])
@@ -32,7 +32,7 @@ class ClientErrorIn(BaseModel):
 async def client_error(body: ClientErrorIn, request: Request, user: CurrentUser) -> Response:
     """Record one browser error. Over the limit it is counted and dropped, still 204."""
     store: ClientErrors = request.app.state.client_errors
-    now = datetime.now(UTC)
+    now = clock.now()
     if store.allow(user.user_id, now):
         served = request.app.state.ui_build
         stale = bool(served and body.build and body.build not in ("dev", served))

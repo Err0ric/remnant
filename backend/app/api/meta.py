@@ -1,6 +1,5 @@
 """Health and product metadata. Routers only, no business logic."""
 
-from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 
 from fastapi import APIRouter, Depends, Request
@@ -9,6 +8,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.api.access import AdminUser, CurrentUser, client_ip, current_user
 from app.auth.service import AuthService
+from app.core import clock
 from app.core.branding import PRODUCT_NAME
 from app.core.build import full_version
 from app.core.schema import COLUMNS, OCSF_VERSION, SCHEMA_VERSION
@@ -92,7 +92,7 @@ async def put_install(request: Request, body: InstallIn, user: AdminUser) -> Ins
                 "INSERT INTO install_settings (id, name, updated_at, updated_by)"
                 " VALUES (1, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET name = excluded.name,"
                 " updated_at = excluded.updated_at, updated_by = excluded.updated_by",
-                (name, datetime.now(UTC).isoformat(), user.user_id),
+                (name, clock.now().isoformat(), user.user_id),
             )
 
     await run_in_threadpool(save)

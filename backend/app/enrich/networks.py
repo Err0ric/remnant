@@ -113,3 +113,66 @@ def save(meta: MetaDB, countries: list[str], networks: list[str], user_id: str) 
             (json.dumps(countries), json.dumps(networks), now, user_id),
         )
     return load(meta)
+
+
+# Text that is plainly one address, in the forms `ipaddress` reads the same way: dotted
+# IPv4 with no leading zeros, and IPv6 of hex groups with at most one "::". Anything else
+# (spaces, a zone, an embedded IPv4 tail) goes to the `is_internal` function, so the answer
+# is always the one Python gives (owner, 2026-11-07: per-row Python made People and
+# devices slow).
+_V4_OCTET = "(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])"
+_V4_RE = rf"({_V4_OCTET}\.){{3}}{_V4_OCTET}"
+_V6_GROUPS = "([0-9a-f]{1,4}:)*[0-9a-f]{1,4}"
+_V6_FULL_RE = "([0-9a-f]{1,4}:){7}[0-9a-f]{1,4}"
+_V6_SKIP_RE = f"({_V6_GROUPS})?::({_V6_GROUPS})?"
+
+
+def _v4_int(col: str) -> str:
+    parts = [f"CAST(split_part({col}, '.', {i}) AS BIGINT)" for i in (1, 2, 3, 4)]
+    return f"({parts[0]} * 16777216 + {parts[1]} * 65536 + {parts[2]} * 256 + {parts[3]})"
+
+
+def _hex_groups(part: str) -> str:
+    """Colon-separated groups as one hex string, each group padded to 4 digits."""
+    padded = f"regexp_replace({part}, '([0-9a-f]+)', '000\\1', 'g')"
+    return f"replace(regexp_replace({padded}, '0*([0-9a-f]{{4}})(:|$)', '\\1\\2', 'g'), ':', '')"
+
+
+def _groups(part: str) -> str:
+    colons = f"length({part}) - length(replace({part}, ':', ''))"
+    return f"CASE WHEN {part} = '' THEN 0 ELSE {colons} + 1 END"
+
+
+def internal_sql(col: str, nets: Iterable[Network]) -> str:
+    """A SQL expression with the answer `is_internal(col)` gives for these networks,
+    worked out in SQL for plain IPv4 and IPv6 text (integer and fixed-width hex range
+    checks) and by the `is_internal` function only for anything else. `col` is a fixed
+    column expression; the networks become numeric and hex literals."""
+    v4 = [n for n in nets if n.version == 4]
+    v6 = [n for n in nets if n.version == 6]
+    num = _v4_int(col)
+    in_v4 = " OR ".join(
+        f"{num} BETWEEN {int(n.network_address)} AND {int(n.broadcast_address)}" for n in v4
+    )
+    low = f"lower({col})"
+    left, right = f"split_part({low}, '::', 1)", f"split_part({low}, '::', 2)"
+    full = f"{_hex_groups(low)}"
+    skip = (
+        f"{_hex_groups(left)} || repeat('0000', 8 - {_groups(left)} - {_groups(right)})"
+        f" || {_hex_groups(right)}"
+    )
+    ranges = [
+        (format(int(n.network_address), "032x"), format(int(n.broadcast_address), "032x"))
+        for n in v6
+    ]
+
+    def in_v6(h: str) -> str:
+        return " OR ".join(f"({h}) BETWEEN '{lo}' AND '{hi}'" for lo, hi in ranges) or "false"
+
+    return (
+        f"CASE WHEN regexp_full_match({col}, '{_V4_RE}') THEN ({in_v4 or 'false'})"
+        f" WHEN regexp_full_match({low}, '{_V6_FULL_RE}') THEN ({in_v6(full)})"
+        f" WHEN regexp_full_match({low}, '{_V6_SKIP_RE}')"
+        f" AND {_groups(left)} + {_groups(right)} <= 7 THEN ({in_v6(skip)})"
+        f" ELSE is_internal({col}) END"
+    )

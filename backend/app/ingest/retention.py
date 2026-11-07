@@ -9,9 +9,10 @@ import re
 import shutil
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, timedelta
 from pathlib import Path
 
+from app.core import clock
 from app.ingest.integrity import LakeEvents, NoEvents
 
 _SOURCE = re.compile(r"source=([a-z0-9][a-z0-9_]{0,63})")
@@ -30,7 +31,7 @@ class RetentionJob:
         lake_dir: Path,
         retention_days: Mapping[str, int],
         default_days: int = 30,
-        today: Callable[[], date] = lambda: datetime.now(UTC).date(),
+        today: Callable[[], date] = lambda: clock.now().date(),
         events: LakeEvents | None = None,
     ) -> None:
         self._lake = lake_dir

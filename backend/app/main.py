@@ -31,7 +31,7 @@ from app.ai.watch_summary import source_classes
 from app.alerts.dispatch import AlertDispatcher
 from app.alerts.items import AlertItems
 from app.alerts.net import Egress, configure_egress
-from app.alerts.supersede import RULES_REVISION, current_rules, still_raised
+from app.alerts.supersede import RULES_REVISION, current_rules, why_superseded
 from app.alerts.targets import TargetStore
 from app.api.addresses import router as addresses_router
 from app.api.ai import router as ai_router
@@ -53,6 +53,7 @@ from app.api.handoff import router as handoff_router
 from app.api.health_page import router as health_page_router
 from app.api.identities import router as identities_router
 from app.api.integrity import router as integrity_router
+from app.api.inventory import router as inventory_router
 from app.api.library import router as library_router
 from app.api.live import router as live_router
 from app.api.m365 import router as m365_router
@@ -79,7 +80,7 @@ from app.auth.groups import GroupStore
 from app.auth.oidc import HttpFactory, OidcClient
 from app.auth.service import AuthService
 from app.auth.tls import ensure_self_signed, resolve_tls
-from app.core import pool_watch
+from app.core import clock, pool_watch
 from app.core.branding import PRODUCT_NAME
 from app.core.client_errors import ClientErrors
 from app.core.config import AppConfig, is_loopback_host, load_config
@@ -236,7 +237,7 @@ LAST_EVENTS_SQL = "SELECT source_id, max(time_observed) FROM events GROUP BY 1 L
 
 def _seed_last_events(service: IngestService, engine: QueryEngine) -> None:
     """Newest stored event per source over the last 30 days, read once at start (QA F8)."""
-    now = datetime.now(UTC)
+    now = clock.now()
     result = engine.run(
         LAST_EVENTS_SQL, QueryScope(sources=None, start=now - timedelta(days=30), end=now)
     )
@@ -497,8 +498,6 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     app.add_middleware(TrustedProxyMiddleware, trusted=parse_trusted(config.server.trusted_proxies))
     app.state.config = config
     app.state.meta = meta
-    # "Now" for read endpoints (app.api.access.now); tests pin it next to their event dates.
-    app.state.clock = lambda: datetime.now(UTC)
     oidc = None
     if config.sso.enabled:
         oidc = OidcClient(
@@ -650,7 +649,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     # (D213, proposed). After the fixes above, which change what the rules see.
     rules = current_rules(meta)
     alert_items_.close_superseded(
-        lambda item: still_raised(item, rules),
+        lambda item: why_superseded(item, rules),
         f"alerts_superseded:{RULES_REVISION}:{app_version()}",
     )
     app.state.health = HealthService(
@@ -844,6 +843,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     app.include_router(handoff_router, prefix="/api")
     app.include_router(integrity_router, prefix="/api")
     app.include_router(addresses_router, prefix="/api")
+    app.include_router(inventory_router, prefix="/api")
     app.include_router(around_router, prefix="/api")
     app.include_router(library_router, prefix="/api")
     app.include_router(live_router, prefix="/api")

@@ -2,7 +2,7 @@
 
 import shutil
 import threading
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit, urlunsplit
@@ -28,6 +28,7 @@ from app.api.access import AdminUser, CurrentUser, client_ip
 from app.api.schedules import DeliveryOut
 from app.auth.service import AuthService
 from app.auth.tls import resolve_tls
+from app.core import clock
 from app.core.branding import PRODUCT_NAME
 from app.core.errors import (
     ConfigError,
@@ -45,7 +46,8 @@ from app.ingest.connectors.base import ConnectorError
 from app.ingest.connectors.loki import LokiSettings
 from app.ingest.connectors.loki import test_connection as loki_test
 from app.ingest.connectors.m365 import M365Settings, check_certificate
-from app.ingest.connectors.registry import API_KINDS, probe, secret_text
+from app.ingest.connectors.proxmox import ProxmoxSettings
+from app.ingest.connectors.registry import API_KINDS, check_on_save, probe, secret_text
 from app.ingest.discovery import DiscoveryReport, discover
 from app.ingest.listener import ListenerStatus, SyslogListeners
 from app.ingest.quiet import MAX_QUIET_S, MIN_QUIET_S, QuietWatch, Watch, default_quiet_s
@@ -202,6 +204,7 @@ async def list_sources(request: Request, user: CurrentUser) -> list[SourceOut]:
             item.path = ""
             item.loki = None  # the Loki address and query are for administrators too
             item.m365 = item.anthropic = None  # tenant and app ids likewise
+            item.proxmox = None  # the hypervisor's address and token id likewise
             item.status.warnings = []
             if item.status.listener is not None:
                 item.status.listener.senders = []  # addresses on the network: admins only
@@ -221,9 +224,10 @@ async def source_settings(request: Request, _: AdminUser) -> SourceSettings:
 class ApiCredentials(BaseModel):
     """Credentials for an API source: stored encrypted, never returned or logged.
     Anthropic: api_key. Microsoft 365: certificate_pem and private_key_pem, or
-    client_secret, matching the source's auth setting."""
+    client_secret, matching the source's auth setting. Proxmox: token_secret."""
 
     api_key: SecretStr | None = Field(default=None, max_length=512)
+    token_secret: SecretStr | None = Field(default=None, max_length=64)
     client_secret: SecretStr | None = Field(default=None, max_length=512)
     certificate_pem: str | None = Field(default=None, max_length=16384)
     private_key_pem: SecretStr | None = Field(default=None, max_length=16384)
@@ -235,6 +239,7 @@ class ApiCredentials(BaseModel):
             return secret_text(
                 source.kind,
                 api_key=_plain(self.api_key),
+                token_secret=_plain(self.token_secret),
                 client_secret=_plain(self.client_secret),
                 certificate_pem=self.certificate_pem,
                 private_key_pem=_plain(self.private_key_pem),
@@ -267,7 +272,10 @@ CLAUDE_TEMPLATES = ("claude_hooks", "claude_code_otel")
 
 
 def quiet_off_by_default(source: SourceConfig, sender: str | None) -> bool:
-    """Claude Code telemetry and hooks sources start with no source-level quiet alert."""
+    """Claude Code telemetry and hooks sources, and the Proxmox inventory, start with no
+    source-level quiet alert."""
+    if source.kind == "proxmox":
+        return True  # writes only on a change, plus one heartbeat a day (ADR-0045 A3b)
     return source.kind == "otlp" and (sender == "claude" or source.template_id in CLAUDE_TEMPLATES)
 
 
@@ -278,6 +286,7 @@ async def add_source(body: SourceCreate, request: Request, user: AdminUser) -> S
     secret = body.loki_secret.get_secret_value() if body.loki_secret else None
     if config.kind in API_KINDS:
         secret = (body.credentials or ApiCredentials()).secret_for(config)
+        await _check_token(request, config, secret)
     if config.template_id in (None, AUTO_PARSER):
         created = await run_in_threadpool(store.add, config, secret)
     else:
@@ -450,7 +459,7 @@ async def claude_plugin(
             raise NotFoundError("No such token for this source")
         token_id, token_name = body.token_id, None
     else:
-        label = body.token_name or f"{body.platform} {datetime.now(UTC):%Y-%m-%d}"
+        label = body.token_name or f"{body.platform} {clock.now():%Y-%m-%d}"
         made, token = await run_in_threadpool(tokens.create, source_id, label, user.user_id)
         token_id, token_name = made.token_id, made.name
     if body.managed:
@@ -548,12 +557,25 @@ async def test_loki(body: LokiTest, request: Request, user: AdminUser) -> LokiTe
     return LokiTestOut(**out)
 
 
+async def _check_token(request: Request, config: SourceConfig, secret: str | None) -> None:
+    """A Proxmox token with any privilege beyond PVEAuditor's is refused before it is
+    stored (ADR-0045 A7)."""
+    ingest: IngestService = request.app.state.ingest
+    try:
+        await run_in_threadpool(
+            check_on_save, config.kind, config.proxmox, secret, ingest.api_transport
+        )
+    except ConnectorError as exc:
+        raise SourceRejectedError(str(exc)) from None
+
+
 class ApiTest(BaseModel):
     """Settings and credentials to try before an API source is saved."""
 
-    kind: Literal["m365", "anthropic"]
+    kind: Literal["m365", "anthropic", "proxmox"]
     m365: M365Settings | None = None
     anthropic: AnthropicSettings | None = None
+    proxmox: ProxmoxSettings | None = None
     credentials: ApiCredentials = ApiCredentials()
 
 
@@ -562,7 +584,7 @@ class ApiTestOut(BaseModel):
     thumbprint: str | None = None  # Microsoft 365 certificates: the value Entra shows
 
 
-def _api_source(kind: Literal["m365", "anthropic"], body: ApiTest) -> SourceConfig:
+def _api_source(kind: Literal["m365", "anthropic", "proxmox"], body: ApiTest) -> SourceConfig:
     try:
         return SourceConfig(
             source_id="connection_test",
@@ -570,6 +592,7 @@ def _api_source(kind: Literal["m365", "anthropic"], body: ApiTest) -> SourceConf
             kind=kind,
             m365=body.m365 if kind == "m365" else None,
             anthropic=body.anthropic if kind == "anthropic" else None,
+            proxmox=body.proxmox if kind == "proxmox" else None,
         )
     except ValidationError as exc:
         msg = str(exc.errors()[0]["msg"]).removeprefix("Value error, ")
@@ -584,7 +607,7 @@ async def test_api(body: ApiTest, request: Request, user: AdminUser) -> ApiTestO
     secret = body.credentials.secret_for(config)
     ingest: IngestService = request.app.state.ingest
     now = request.app.state.auth.clock()
-    settings = config.m365 or config.anthropic
+    settings = config.m365 or config.anthropic or config.proxmox
     if settings is None:
         raise SourceRejectedError(f"Give the {body.kind} settings")
     thumb = None
@@ -625,6 +648,7 @@ async def replace_credentials(
     if not found:
         raise NotFoundError("No such source")
     secret = body.secret_for(found[0])
+    await _check_token(request, found[0], secret)
     await run_in_threadpool(store.set_connector_secret, source_id, secret)
     await run_in_threadpool(
         _audit(request).audit.write,

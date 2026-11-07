@@ -2,7 +2,6 @@
 window (ADR-0038 section 5). Router only; `app.search.m365` reads the caller's own view.
 Audited as `m365.overview` with the sources read."""
 
-from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Query, Request, Response
@@ -15,6 +14,7 @@ from app.api.access import CurrentUser, client_ip
 from app.api.cache import STALE_MAX_S, PageCache, scope_key
 from app.auth.service import AuthService
 from app.auth.users import User
+from app.core import clock
 from app.engine import signin_classes
 from app.engine.views import permitted_sources
 from app.enrich import networks
@@ -50,7 +50,7 @@ async def m365_overview(
             app.state.m365_rollup, tz,
         )  # fmt: skip
         data = to_dict(out)
-        data["updated_at"] = datetime.now(UTC)  # "updated N s ago" on the page (D147)
+        data["updated_at"] = clock.now()  # "updated N s ago" on the page (D147)
         return bytes(JSONResponse(jsonable_encoder(data)).body), list(out.read)
 
     hit = cache.peek(key, STALE_MAX_S) if default else cache.get(key)

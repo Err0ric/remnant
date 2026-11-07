@@ -3,6 +3,7 @@ import { useState, type FormEvent } from "react";
 import { Field } from "@/features/auth/Field";
 import { ANTHROPIC_DEFAULTS, ApiSourceFields, M365_DEFAULTS } from "./ApiSourceFields";
 import { LokiFields } from "./LokiFields";
+import { PROXMOX_DEFAULTS, ProxmoxFields } from "./ProxmoxFields";
 import { OtlpTokenPanel } from "./OtlpSetup";
 import { ParserSelect } from "./ParserSelect";
 import { AUTO_PARSER, parserHelp, parserName } from "@/lib/parsers";
@@ -15,6 +16,7 @@ import {
   type ApiCredentials,
   type LokiSettings,
   type M365Settings,
+  type ProxmoxSettings,
   type SourceFormat,
   type SourceInput,
   type SourceKind,
@@ -33,6 +35,8 @@ const KIND_HELP: Record<SourceKind, string> = {
   m365: "Read every 5 minutes with a read-only app registration. See docs/install/m365.md for the exact permissions.",
   anthropic:
     "Reports are read every 5 minutes once each hour or day is final. No chat content is read.",
+  proxmox:
+    "Reads the guest inventory (names, MACs, IPs) with a read-only PVEAuditor token. Writes an event only when a guest appears, changes, or disappears. See docs/install/proxmox.md.",
   syslog:
     "Devices send syslog to this server on the port below. In Docker, publish the port too (docs/install/syslog-listener.md).",
 };
@@ -76,6 +80,7 @@ export function AddSourceForm({ allowedRoots, initial, onDone }: AddSourceFormPr
   const [lokiSecret, setLokiSecret] = useState("");
   const [m365, setM365] = useState<M365Settings>(M365_DEFAULTS);
   const [anthropic, setAnthropic] = useState<AnthropicSettings>(ANTHROPIC_DEFAULTS);
+  const [proxmox, setProxmox] = useState<ProxmoxSettings>(PROXMOX_DEFAULTS);
   const [credentials, setCredentials] = useState<ApiCredentials>({});
   const [syslog, setSyslog] = useState<SyslogSettings>({
     protocol: "udp",
@@ -141,6 +146,19 @@ export function AddSourceForm({ allowedRoots, initial, onDone }: AddSourceFormPr
         glob: "*",
         m365: kind === "m365" ? m365 : null,
         anthropic: kind === "anthropic" ? anthropic : null,
+        credentials,
+      });
+      return;
+    }
+    if (kind === "proxmox") {
+      add.mutate({
+        ...form,
+        kind,
+        format: "json",
+        template_id: "proxmox_inventory",
+        path: "",
+        glob: "*",
+        proxmox,
         credentials,
       });
       return;
@@ -213,6 +231,8 @@ export function AddSourceForm({ allowedRoots, initial, onDone }: AddSourceFormPr
               if (next === "syslog") setForm((f) => ({ ...f, format: "syslog" }));
               if (next === "anthropic")
                 setForm((f) => ({ ...f, format: "json", template_id: "anthropic_reports" }));
+              if (next === "proxmox")
+                setForm((f) => ({ ...f, format: "json", template_id: "proxmox_inventory" }));
             }}
             className="h-9 rounded border border-border-strong bg-inset px-2 text-sm text-text"
           >
@@ -222,6 +242,7 @@ export function AddSourceForm({ allowedRoots, initial, onDone }: AddSourceFormPr
             <option value="otlp">OpenTelemetry: Claude Code, endpoint agents, MCP inventory</option>
             <option value="m365">Microsoft 365: audit, Entra sign-ins, alerts</option>
             <option value="anthropic">Anthropic: usage, cost, Claude Code, audit</option>
+            <option value="proxmox">Proxmox VE: guest inventory (names, MACs, IPs)</option>
           </select>
           <p className="text-sm text-text-muted">{KIND_HELP[kind]}</p>
         </div>
@@ -243,6 +264,14 @@ export function AddSourceForm({ allowedRoots, initial, onDone }: AddSourceFormPr
             credentials={credentials}
             onM365={setM365}
             onAnthropic={setAnthropic}
+            onCredentials={setCredentials}
+          />
+        ) : kind === "proxmox" ? (
+          <ProxmoxFields
+            part="required"
+            value={proxmox}
+            credentials={credentials}
+            onChange={setProxmox}
             onCredentials={setCredentials}
           />
         ) : kind === "syslog" ? (
@@ -338,6 +367,15 @@ export function AddSourceForm({ allowedRoots, initial, onDone }: AddSourceFormPr
             credentials={credentials}
             onM365={setM365}
             onAnthropic={setAnthropic}
+            onCredentials={setCredentials}
+          />
+        ) : null}
+        {kind === "proxmox" ? (
+          <ProxmoxFields
+            part="optional"
+            value={proxmox}
+            credentials={credentials}
+            onChange={setProxmox}
             onCredentials={setCredentials}
           />
         ) : null}
@@ -443,6 +481,15 @@ export function AddSourceForm({ allowedRoots, initial, onDone }: AddSourceFormPr
             credentials={credentials}
             onM365={setM365}
             onAnthropic={setAnthropic}
+            onCredentials={setCredentials}
+          />
+        ) : null}
+        {kind === "proxmox" ? (
+          <ProxmoxFields
+            part="test"
+            value={proxmox}
+            credentials={credentials}
+            onChange={setProxmox}
             onCredentials={setCredentials}
           />
         ) : null}

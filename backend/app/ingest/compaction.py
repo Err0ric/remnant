@@ -25,13 +25,14 @@ import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 import structlog
 
+from app.core import clock as _clock
 from app.core import lake_files
 from app.core.ids import uuid7
 from app.core.lake_files import MANIFEST_SUFFIX, RETIRE_GRACE_S
@@ -68,9 +69,9 @@ class Compactor:
         small_bytes: int = 32 << 20,
         target_bytes: int = 128 << 20,
         min_files_open_day: int = 16,
-        today: Callable[[], date] = lambda: datetime.now(UTC).date(),
+        today: Callable[[], date] = lambda: _clock.now().date(),
         events: LakeEvents | None = None,
-        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        clock: Callable[[], datetime] = lambda: _clock.now(),
         grace_s: float = RETIRE_GRACE_S,
     ) -> None:
         self._clock = clock

@@ -38,7 +38,7 @@ For the AI usage view, the firewall must forward **URL filtering** or **DNS** lo
 
 ## 4. Detection rules
 
-- [ ] Put Sigma rules in a folder under `rule_roots` (the SigmaHQ repository's `rules/windows` and `rules/linux` are a start), then **Detect > Detection rules > Import rules**.
+- [ ] **Detect > Detection rules > Import SigmaHQ core rules**: the server downloads the pinned SigmaHQ core release once and checks its SHA-256 (offline, upload the same `sigma_core.zip`). Or put your own rules in a folder under `rule_roots` and use **Import rules**. Imported rules start disabled; **Recommended rules for your sources** lists the ones that would run on your data.
 - [ ] Enable a handful you care about. Run them over the last 7 days.
 - [ ] Schedule the ones worth watching (**Detect > Schedules**, kind Rule) with an alert target (Teams, email).
 

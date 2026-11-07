@@ -2,7 +2,7 @@
 window (ADR-0038 edit 10). Router only; the numbers come from `app.search.dashboard` on the
 caller's own view. Audited as `dashboard.sections` with the sources read."""
 
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Query, Request, Response
@@ -13,6 +13,7 @@ from app.api.access import CurrentUser, client_ip
 from app.api.cache import STALE_MAX_S, PageCache, scope_key
 from app.auth.service import AuthService
 from app.auth.users import User
+from app.core import clock
 from app.engine.views import permitted_sources
 from app.enrich import networks
 from app.enrich.geoip import GeoInfo, GeoIP
@@ -151,7 +152,7 @@ async def dashboard_sections(
         )  # fmt: skip
         data = to_json(out)
         data["geoip_date"] = app.state.feeds.state("geoip_country").installed_at
-        data["updated_at"] = datetime.now(UTC)
+        data["updated_at"] = clock.now()
         read = data.pop("read", None) or []
         return SectionsOut(**data).model_dump_json().encode(), read
 

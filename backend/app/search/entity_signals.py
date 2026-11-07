@@ -18,8 +18,9 @@ from typing import Any
 from app.ai.internal_tools import counted
 from app.core.timing import phase
 from app.engine.duckdb import QueryEngine, QueryScope
+from app.enrich import networks
 from app.meta.db import MetaDB
-from app.search.dashboard import EXTERNAL_FAILURE
+from app.search.dashboard import FAILURE_WITH_ADDRESS
 from app.search.identity import IdentityMap
 from app.search.mail_rules import risky_by_person_sql
 
@@ -43,38 +44,71 @@ def _a(key: str) -> str:
 
 _EMAIL = f"lower(nullif(trim({_a('claude_account_email')}), ''))"
 
-# One row per entity: events, failed sign-ins, app consents (each consent once, D150),
-# attack hits from outside, blocked tool calls, and whether a personal Claude account ran.
-SEEN_SQL = f"""
-WITH e AS (
+_KIND = "CASE WHEN grouping(u) = 0 THEN 'user' WHEN grouping(ip) = 0 THEN 'ip' ELSE 'host' END"
+_PER_ENTITY = f"""SELECT {_KIND} AS kind, coalesce(u, ip, h) AS value,"""
+
+
+def seen_sql(internal: str = "is_internal(ip)") -> str:
+    """One row per entity: events, failed sign-ins, app consents (each consent once, D150),
+    attack hits from outside, blocked tool calls, and whether a personal Claude account ran.
+    `internal` is the membership test for the column `ip` (`networks.internal_sql`).
+
+    Shaped for speed (owner, 2026-11-07): events are counted per user, address, and host
+    in one grouping pass over three columns, and the signals are read only from the rows
+    that can carry one (sign-ins, hook events, consents), so DNS and firewall rows are
+    never fanned out; "internal" is decided once per distinct address of a failed sign-in,
+    in SQL, not once per row."""
+    return f"""
+WITH n AS (
+  {_PER_ENTITY} count(*) AS events
+  FROM (SELECT actor_user_name AS u, src_endpoint_ip AS ip, device_hostname AS h FROM events)
+  GROUP BY GROUPING SETS ((u), (ip), (h))
+),
+s AS (
   SELECT actor_user_name AS u, src_endpoint_ip AS ip, device_hostname AS h,
          class_uid = 3002 AND status_id = 2 AS fail,
          CASE WHEN message ILIKE 'Consent to application%'
               THEN coalesce(metadata_correlation_uid, CAST(event_id AS VARCHAR)) END AS consent,
-         coalesce({EXTERNAL_FAILURE}, false) AS attack,
-         template_id = 'claude_hooks' AND message = 'claude_hooks.post_tool_use_failure'
-           AND {counted(_a("tool_name"))} AS blocked,
-         template_id = 'claude_hooks' AND len($org) > 0 AND {_EMAIL} IS NOT NULL
-           AND NOT list_contains($org, split_part({_EMAIL}, '@', 2)) AS personal
+         coalesce({FAILURE_WITH_ADDRESS}, false) AS addressed,
+         -- CASE, so the JSON is read on hook rows only
+         CASE WHEN template_id = 'claude_hooks' THEN
+           message = 'claude_hooks.post_tool_use_failure' AND {counted(_a("tool_name"))}
+         ELSE false END AS blocked,
+         CASE WHEN template_id = 'claude_hooks' THEN
+           len($org) > 0 AND {_EMAIL} IS NOT NULL
+           AND NOT list_contains($org, split_part({_EMAIL}, '@', 2))
+         ELSE false END AS personal
   FROM events
+  WHERE class_uid = 3002 OR template_id = 'claude_hooks'
+     OR message ILIKE 'Consent to application%'
 ),
-x AS (
-  SELECT 'user' AS kind, u AS value, fail, consent, false AS attack, blocked, personal
-  FROM e WHERE nullif(u, '') IS NOT NULL
-  UNION ALL
-  SELECT 'ip', ip, fail, NULL, attack, false, false FROM e WHERE nullif(ip, '') IS NOT NULL
-  UNION ALL
-  SELECT 'host', h, fail, NULL, attack, blocked, personal FROM e WHERE nullif(h, '') IS NOT NULL
+a AS (SELECT ip, {internal} AS inside FROM (SELECT DISTINCT ip FROM s WHERE addressed)),
+g AS (
+  {_PER_ENTITY}
+         count(*) FILTER (WHERE fail) AS failed,
+         count(*) FILTER (WHERE addressed AND NOT coalesce(a.inside, false)) AS attacks,
+         count(*) FILTER (WHERE blocked) AS blocked,
+         bool_or(personal) AS personal
+  FROM s LEFT JOIN a USING (ip) GROUP BY GROUPING SETS ((u), (ip), (h))
+),
+-- Consents count for users only, each once (D150): a few rows, apart from the grouping.
+c AS (
+  SELECT 'user' AS kind, u AS value, count(DISTINCT consent) AS consents
+  FROM s WHERE consent IS NOT NULL GROUP BY 2
 )
-SELECT kind, value, count(*) AS events,
-       count(*) FILTER (WHERE fail) AS failed,
-       count(DISTINCT consent) AS consents,
-       count(*) FILTER (WHERE attack) AS attacks,
-       count(*) FILTER (WHERE blocked) AS blocked,
-       bool_or(personal) AS personal
-FROM x GROUP BY 1, 2
-QUALIFY row_number() OVER (PARTITION BY kind ORDER BY count(*) DESC, value) <= {SEEN_PER_KIND}
-"""  # noqa: S608  # fixed SQL text; the org domains are a parameter
+SELECT kind, value, n.events,
+       coalesce(g.failed, 0) AS failed,
+       coalesce(c.consents, 0) AS consents,
+       CASE WHEN kind = 'user' THEN 0 ELSE coalesce(g.attacks, 0) END AS attacks,
+       CASE WHEN kind = 'ip' THEN 0 ELSE coalesce(g.blocked, 0) END AS blocked,
+       CASE WHEN kind = 'ip' THEN false ELSE coalesce(g.personal, false) END AS personal
+FROM n LEFT JOIN g USING (kind, value) LEFT JOIN c USING (kind, value)
+WHERE nullif(value, '') IS NOT NULL
+QUALIFY row_number() OVER (PARTITION BY kind ORDER BY n.events DESC, value) <= {SEEN_PER_KIND}
+"""  # noqa: S608  # fixed SQL text; `internal` is built from parsed networks
+
+
+SEEN_SQL = seen_sql()
 
 # MCP servers first used (over the lookback) inside the range, with who used them there.
 NEW_MCP_SQL = f"""
@@ -124,16 +158,32 @@ def collect(
     ident: IdentityMap,
     usage: Any = None,
 ) -> tuple[dict[Key, Signals], list[str]]:
-    """Signals per (kind, value), and the sources read."""
-    out: dict[Key, Signals] = {}
+    """Signals per (kind, value), and the sources read. The queries run one after another:
+    each already uses every query thread, and side by side they were no faster on a
+    2 vCPU server (owner, 2026-11-07), only harder to read in Server-Timing."""
+    internal = networks.internal_sql("ip", networks.load(meta).networks())
     with phase("signals_seen"):
         seen = engine.run(
-            SEEN_SQL,
+            seen_sql(internal),
             scope,
             {"org": [d.lower() for d in ident.domains]},
             timeout_s=TIMEOUT_S,
             page=True,
         )
+    with phase("signals_mail_rules"):
+        risky = engine.run(risky_by_person_sql(), scope, timeout_s=TIMEOUT_S, page=True).rows
+    mcp_rows: list[Any] = []
+    if scope.start is not None:
+        wide = QueryScope(scope.sources, scope.start - NEW_MCP_LOOKBACK, scope.end)
+        with phase("signals_new_mcp"):
+            mcp_rows = engine.run(
+                NEW_MCP_SQL, wide, {"start": scope.start}, timeout_s=TIMEOUT_S
+            ).rows
+    unreviewed: list[tuple[str | None, str | None]] = []
+    if usage is not None:
+        with phase("signals_unreviewed_ai"):
+            unreviewed = usage.unreviewed_use(scope)
+    out: dict[Key, Signals] = {}
     for kind, value, events, failed, consents, attacks, blocked, personal in seen.rows:
         s = out.setdefault((str(kind), str(value)), Signals())
         s.events, s.failed_signins = int(events), int(failed)
@@ -142,27 +192,18 @@ def collect(
             _flag(out, (str(kind), str(value)), "blocked_calls")
         if personal:
             _flag(out, (str(kind), str(value)), "personal_account")
-    with phase("signals_mail_rules"):
-        risky = engine.run(risky_by_person_sql(), scope, timeout_s=TIMEOUT_S, page=True).rows
     for person, n in risky:
         out.setdefault(("user", str(person)), Signals()).mail_rules = int(n)
-    if scope.start is not None:
-        wide = QueryScope(scope.sources, scope.start - NEW_MCP_LOOKBACK, scope.end)
-        with phase("signals_new_mcp"):
-            rows = engine.run(NEW_MCP_SQL, wide, {"start": scope.start}, timeout_s=TIMEOUT_S).rows
-        for who, host in rows:
-            if who:
-                _flag(out, ("user", str(who)), "new_mcp")
-            if host:
-                _flag(out, ("host", str(host)), "new_mcp")
-    if usage is not None:
-        with phase("signals_unreviewed_ai"):
-            unreviewed = usage.unreviewed_use(scope)
-        for who, machine in unreviewed:
-            if who:
-                _flag(out, ("user", who), "unreviewed_service")
-            if machine:
-                _flag(out, ("host", machine), "unreviewed_service")
+    for who, host in mcp_rows:
+        if who:
+            _flag(out, ("user", str(who)), "new_mcp")
+        if host:
+            _flag(out, ("host", str(host)), "new_mcp")
+    for who, machine in unreviewed:
+        if who:
+            _flag(out, ("user", who), "unreviewed_service")
+        if machine:
+            _flag(out, ("host", machine), "unreviewed_service")
     return out, list(seen.sources)
 
 

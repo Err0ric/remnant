@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { ApiError, api } from "@/lib/api";
+import { RuleImportResult } from "./RuleImportResult";
 
 interface RuleImportPanelProps {
   onClose: () => void;
@@ -58,35 +59,7 @@ export function RuleImportPanel({ onClose }: RuleImportPanelProps) {
           {run.error instanceof ApiError ? run.error.message : "The import did not work"}
         </p>
       ) : null}
-      {report ? (
-        <div role="status" className="flex flex-col gap-2 text-sm">
-          <div>
-            {report.files} files read · {report.accepted} accepted ({report.new_rules} new,{" "}
-            {report.updated} updated, {report.unchanged} unchanged) · {report.refused} refused
-            {report.truncated ? " · stopped early at an import limit" : ""}
-          </div>
-          {report.refusals.length ? (
-            <div className="max-h-60 overflow-auto rounded border border-border">
-              <table aria-label="Refused rules" className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border bg-surface-head text-left text-text-secondary">
-                    <th className="px-2 py-1 font-semibold">File</th>
-                    <th className="px-2 py-1 font-semibold">Reason</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {report.refusals.map((r) => (
-                    <tr key={r.path} className="border-b border-border last:border-0">
-                      <td className="px-2 py-1 font-mono">{r.path}</td>
-                      <td className="px-2 py-1">{r.reason}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
+      {report ? <RuleImportResult report={report} /> : null}
     </section>
   );
 }

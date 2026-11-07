@@ -2,7 +2,7 @@ import { Field } from "@/features/auth/Field";
 import type { ApiCredentials } from "@/lib/api";
 
 interface ApiCredentialsFieldsProps {
-  kind: "m365" | "anthropic";
+  kind: "m365" | "anthropic" | "proxmox";
   /** Microsoft 365 only: which credential the app registration uses. */
   auth?: "certificate" | "secret";
   value: ApiCredentials;
@@ -14,6 +14,20 @@ const AREA =
 
 /** Write-only credential inputs for an API source; stored encrypted, never shown again. */
 export function ApiCredentialsFields({ kind, auth, value, onChange }: ApiCredentialsFieldsProps) {
+  if (kind === "proxmox") {
+    return (
+      <Field
+        label="Token secret"
+        help="Shown once by Proxmox when the token is made. Stored encrypted. A token that can change anything is refused."
+        type="password"
+        value={value.token_secret ?? ""}
+        onChange={(e) => onChange({ token_secret: e.target.value.trim() })}
+        autoComplete="new-password"
+        className="font-mono"
+        required
+      />
+    );
+  }
   if (kind === "anthropic") {
     return (
       <Field

@@ -1,6 +1,6 @@
 """A person's timeline (ADR-0038 section 9). Router only."""
 
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Query, Request
@@ -11,6 +11,7 @@ from app.api.access import CurrentUser, client_ip
 from app.api.alert_items import _readable
 from app.auth.service import AuthService
 from app.auth.users import User
+from app.core import clock
 from app.engine.duckdb import QueryScope
 from app.engine.views import permitted_sources
 from app.search.person_hosts import person_hosts
@@ -61,7 +62,7 @@ async def person_timeline(
     first, with the forms of the name that matched. Audited `search.timeline`."""
     allowed = await run_in_threadpool(permitted_sources, request.app.state.meta, user)
     ident = await run_in_threadpool(request.app.state.identities.load)
-    start, end = window(days, datetime.now(UTC))
+    start, end = window(days, clock.now())
     out = await run_in_threadpool(
         timeline, request.app.state.engine, allowed, ident,
         request.app.state.ai_catalog.domain_table(), person[:256], start, end,
@@ -115,7 +116,7 @@ async def person_hosts_route(
     failed sign-ins and first and last seen (D197). Audited `search.person_hosts`."""
     allowed = await run_in_threadpool(permitted_sources, request.app.state.meta, user)
     ident = await run_in_threadpool(request.app.state.identities.load)
-    start, end = window(days, datetime.now(UTC))
+    start, end = window(days, clock.now())
     out = await run_in_threadpool(
         person_hosts, request.app.state.engine, QueryScope(allowed, start, end), ident,
         person[:256],

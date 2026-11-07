@@ -21,6 +21,7 @@ from app.ai.consents import CONSENTS_CTE
 from app.ai.internal_tools import counted
 from app.ai.sessions import _a
 from app.ai.usage import _use_ctes, fact_range
+from app.core import clock
 from app.core.errors import ParamInvalidError
 from app.core.timing import in_context
 from app.engine.duckdb import QueryEngine, QueryScope
@@ -164,7 +165,7 @@ def timeline(
     ) -> list[list[Any]]:
         res = engine.run(
             sql, scope,
-            {"covered": covered, **fact_range(scope, scope.end or datetime.now(UTC))}
+            {"covered": covered, **fact_range(scope, scope.end or clock.now())}
             if covered else None,
             timeout_s=TIMEOUT_S,
             intel=False, rollup=bool(covered), skip_days=skip or (), name=f"timeline.{name}",

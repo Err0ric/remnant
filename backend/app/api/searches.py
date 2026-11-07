@@ -3,7 +3,7 @@
 Runs use the caller's source scope and the caller's audit identity, never the author's.
 """
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Annotated, Any
 
 import yaml
@@ -15,7 +15,7 @@ from app.api.access import AdminUser, CurrentUser, client_ip, require_role
 from app.api.query import QueryResponse
 from app.auth.service import AuthService
 from app.auth.users import User
-from app.core import safeyaml
+from app.core import clock, safeyaml
 from app.core.errors import AppError, PayloadTooLargeError, SearchInvalidError
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.engine.views import permitted_sources, scope_sources
@@ -112,7 +112,7 @@ async def run_search(
     search_id: str, body: RunRequest, request: Request, user: CurrentUser
 ) -> QueryResponse:
     search = await run_in_threadpool(_store(request).get, search_id, user)
-    end = body.end or datetime.now(UTC)
+    end = body.end or clock.now()
     start = body.start or end - timedelta(hours=24)
     values = bind(search.params, body.params, start, end, search.sql)
     values |= await run_in_threadpool(

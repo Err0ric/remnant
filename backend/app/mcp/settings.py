@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
 
+from app.core import clock
 from app.meta.db import MetaDB
 
 
@@ -33,7 +33,7 @@ class McpSettingsStore:
         return McpSettings(bool(row[0]), bool(row[1]), row[2], row[3])
 
     def save(self, enabled: bool, endpoint_local: bool, user_id: str) -> McpSettings:
-        now = datetime.now(UTC).isoformat()
+        now = clock.now().isoformat()
         with self._meta.connect() as con:
             con.execute(
                 "INSERT INTO mcp_settings (id, enabled, endpoint_local, updated_at, updated_by)"

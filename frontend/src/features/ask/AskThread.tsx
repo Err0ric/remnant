@@ -379,6 +379,7 @@ export function AskThread({
             <AskTurnBlock
               key={t.id}
               turn={t}
+              start={start}
               onRun={runTurn}
               onRetry={retry}
               onCheckData={checkData}

@@ -305,7 +305,7 @@ A baseline is only ever taken after a check you have seen, never silently. Repla
 | Add sources: files under the allowed folder, or Loki | **Sources** |
 | Group sources and grant groups to people; ungrouped sources are visible to administrators only | **Users and access > Source groups** |
 | Optional: a local model for Ask | **AI providers** (keep sources **Local only** unless you choose otherwise per source) |
-| Optional: Sigma rules | **Detection rules > Import rules** from the rules folder |
+| Optional: Sigma rules | **Detection rules > Import SigmaHQ core rules** (downloads the pinned release on click, or upload its `sigma_core.zip` offline), or **Import rules** from the rules folder |
 | Optional: alert targets for schedules and rules | **Alert targets** |
 | Optional: sign-in with Microsoft Entra ID or another OIDC provider | [sso-entra.md](sso-entra.md) |
 | Recommended: an alert when a source stops sending | [quiet-sources.md](quiet-sources.md) |

@@ -2,7 +2,8 @@
 
 import json
 import sys
-from datetime import timedelta
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -50,7 +51,10 @@ def test_agent_with_a_new_mcp_server_is_changed(lab: dict[str, Any]) -> None:
     assert inv.label == "Cursor MCP setup on ws-0042" and inv.state == "new"
 
 
-def test_agents_endpoint_is_scoped(lab: dict[str, Any]) -> None:
+def test_agents_endpoint_is_scoped(
+    lab: dict[str, Any], pin_now: Callable[[datetime], None]
+) -> None:
+    pin_now(datetime(2026, 10, 10, 13, 0, tzinfo=UTC))  # after this file's event dates
     res = lab["admin"].get("/api/ai/agents")
     assert res.status_code == 200, res.text
     assert any(a["kind"] == "Claude Code" for a in res.json())
@@ -108,7 +112,9 @@ def test_data_level_is_admin_only_audited_and_clears_sensitive_alerts(lab: dict[
     ] is None
 
 
-def test_one_person_on_two_machines_is_one_agent_listing_both(lab: dict[str, Any]) -> None:
+def test_one_person_on_two_machines_is_one_agent_listing_both(
+    lab: dict[str, Any], pin_now: Callable[[datetime], None]
+) -> None:
     """Owner, 2026-11-03: today's activity on a second machine showed under the name of the
     first. One agent per person lists every machine, newest first, and each machine's own
     events. Machine names sort the other way from their activity, so a name-order pick of
@@ -136,6 +142,6 @@ def test_one_person_on_two_machines_is_one_agent_listing_both(lab: dict[str, Any
     got = {m.name: m.events_24h for m in d.machines}
     assert got == {"ws-alpha": 3, "ws-zulu": 0}  # each machine's own events
     assert [m.name for m in d.machines] == ["ws-alpha", "ws-zulu"]
-    lab["app"].state.clock = lambda: NOW + timedelta(hours=1)  # the same "now" as above, any day
+    pin_now(NOW + timedelta(hours=1))  # the same "now" as above, on any day
     out = next(x for x in a.get("/api/ai/agents").json() if x["agent"] == d.agent)
     assert [m["name"] for m in out["machines"]] == ["ws-alpha", "ws-zulu"]

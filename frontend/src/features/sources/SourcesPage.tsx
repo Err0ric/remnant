@@ -251,7 +251,10 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
                           {s.template_id === AUTO_PARSER ? (
                             <ParserMix counts={mixFor.get(s.source_id) ?? new Map()} />
                           ) : null}
-                          {s.kind !== "otlp" && s.kind !== "m365" && s.kind !== "anthropic" ? (
+                          {s.kind !== "otlp" &&
+                          s.kind !== "m365" &&
+                          s.kind !== "anthropic" &&
+                          s.kind !== "proxmox" ? (
                             <TimeZoneEditor
                               sourceId={s.source_id}
                               value={s.timezone}
@@ -266,7 +269,9 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
                               keepContent={s.otlp_keep_content ?? false}
                               canManage={canManage}
                             />
-                          ) : s.kind === "m365" || s.kind === "anthropic" ? (
+                          ) : s.kind === "m365" ||
+                            s.kind === "anthropic" ||
+                            s.kind === "proxmox" ? (
                             <ApiSummary source={s} canManage={canManage} />
                           ) : s.kind === "syslog" ? (
                             <ListenerSummary

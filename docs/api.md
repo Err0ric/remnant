@@ -197,6 +197,13 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | `PUT` | `/api/integrity/settings` | Where failures and the optional daily seal are sent. Targets must exist. |  | `target_ids`?: list of string<br>`send_seals`?: boolean |
 | `POST` | `/api/integrity/verify` | Run a verification now, under the lake lock so compaction and retention wait. Sealed, audited, and alerted the same way as the scheduled run. |  |  |
 
+### Inventory
+
+| Method | Path | What it does | Query | JSON body (`?` optional) |
+|---|---|---|---|---|
+| `GET` | `/api/inventory/coverage` | For an address with no events: per category of the caller's sources, what was searched and whether each source could have recorded it (ADR-0045 B2 to B4). | `?value`: string<br>`?start` (optional): date-time<br>`?end` (optional): date-time |  |
+| `GET` | `/api/inventory/matches` | The Proxmox guests that held each IP, MAC, or host name (exact matches only). | `?value`: list of string<br>`?start` (optional): date-time<br>`?end` (optional): date-time |  |
+
 ### Investigate
 
 | Method | Path | What it does | Query | JSON body (`?` optional) |
@@ -282,12 +289,15 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | `GET` | `/api/rules` | List Rules |  |  |
 | `POST` | `/api/rules/enabled` | Set Enabled |  | `rule_ids`: list of string<br>`enabled`: boolean |
 | `POST` | `/api/rules/import` | Import Rules |  | `path`: string |
+| `POST` | `/api/rules/import/sigmahq` | Download the pinned SigmaHQ core package from GitHub, check its SHA-256 before reading it, and import its rules (disabled). The only network call rule import makes, and only on this request. A mismatch imports nothing. |  |  |
+| `POST` | `/api/rules/import/upload` | Import the rules of an uploaded zip (the SigmaHQ core package on an offline install). Read in memory, never extracted; rules start disabled. |  |  |
 | `GET` | `/api/rules/imports` | List Imports |  |  |
 | `GET` | `/api/rules/imports/{import_id}/refusals` | Import Refusals |  |  |
 | `GET` | `/api/rules/recommended` | Disabled rules that compile now and match a source the caller may read. Listing enables nothing; an admin enables a rule through POST /rules/enabled. |  |  |
 | `GET` | `/api/rules/runs` | List Runs | `?rule_id` (optional): string<br>`?limit` (optional): integer |  |
 | `GET` | `/api/rules/runs/{run_id}` | Get Run |  |  |
 | `GET` | `/api/rules/runs/{run_id}/matches` | Run Matches |  |  |
+| `GET` | `/api/rules/sigmahq` | The pinned SigmaHQ core release the import button fetches (D211). |  |  |
 | `GET` | `/api/rules/{rule_id}` | Get Rule |  |  |
 | `POST` | `/api/rules/{rule_id}/run` | Run Rule |  | `start`: date-time<br>`end`: date-time |
 
@@ -346,8 +356,8 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | Method | Path | What it does | Query | JSON body (`?` optional) |
 |---|---|---|---|---|
 | `GET` | `/api/sources` | List Sources |  |  |
-| `POST` | `/api/sources` | Add Source |  | `source_id`: string<br>`format`: `syslog` &#124; `json` &#124; `csv`<br>`kind`?: `file` &#124; `loki` &#124; `otlp` &#124; `m365` &#124; `anthropic` &#124; `syslog`<br>`path`?: string<br>`loki`?: LokiSettings<br>`m365`?: M365Settings<br>`anthropic`?: AnthropicSettings<br>`syslog`?: SyslogSettings<br>`glob`?: string<br>`timezone`?: string<br>`classification`?: `local_only` &#124; `cloud_allowed`<br>`retention_days`?: integer<br>`enabled`?: boolean<br>`template_id`?: string<br>`otlp_keep_content`?: boolean<br>`loki_secret`?: password<br>`credentials`?: ApiCredentials<br>`sender`?: `claude` &#124; `collector` |
-| `POST` | `/api/sources/api/test` | One small read per enabled feed with these settings, before the source is saved. Audited source.api_test with the kind and feeds, never the credentials. |  | `kind`: `m365` &#124; `anthropic`<br>`m365`?: M365Settings<br>`anthropic`?: AnthropicSettings<br>`credentials`?: ApiCredentials |
+| `POST` | `/api/sources` | Add Source |  | `source_id`: string<br>`format`: `syslog` &#124; `json` &#124; `csv`<br>`kind`?: `file` &#124; `loki` &#124; `otlp` &#124; `m365` &#124; `anthropic` &#124; `syslog` &#124; `proxmox`<br>`path`?: string<br>`loki`?: LokiSettings<br>`m365`?: M365Settings<br>`anthropic`?: AnthropicSettings<br>`proxmox`?: ProxmoxSettings<br>`syslog`?: SyslogSettings<br>`glob`?: string<br>`timezone`?: string<br>`classification`?: `local_only` &#124; `cloud_allowed`<br>`retention_days`?: integer<br>`enabled`?: boolean<br>`template_id`?: string<br>`otlp_keep_content`?: boolean<br>`loki_secret`?: password<br>`credentials`?: ApiCredentials<br>`sender`?: `claude` &#124; `collector` |
+| `POST` | `/api/sources/api/test` | One small read per enabled feed with these settings, before the source is saved. Audited source.api_test with the kind and feeds, never the credentials. |  | `kind`: `m365` &#124; `anthropic` &#124; `proxmox`<br>`m365`?: M365Settings<br>`anthropic`?: AnthropicSettings<br>`proxmox`?: ProxmoxSettings<br>`credentials`?: ApiCredentials |
 | `GET` | `/api/sources/claude-plugin` | The hooks plugins' version and the SHA-256 of each script, to check a copy against. |  |  |
 | `POST` | `/api/sources/discover` | Suggest sources for a folder. Reads files only: creates and grants nothing. |  | `path`: string |
 | `POST` | `/api/sources/loki/test` | One small query with these settings, before a Loki source is saved (ADR-0011). |  | `url`: string<br>`query`: string<br>`tenant`?: string<br>`auth`?: `none` &#124; `basic` &#124; `bearer`<br>`username`?: string<br>`backfill_hours`?: integer<br>`label_map`?: object<br>`secret`?: password |
@@ -357,7 +367,7 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | `DELETE` | `/api/sources/{source_id}` | Delete Source |  |  |
 | `GET` | `/api/sources/{source_id}/agent-config` | OpenTelemetry Collector config for an agent group (ADR-0017 row 2). Holds no secret: the token is read from a file on the endpoint. Audited source.agent_config. | `?os` (optional): `windows` &#124; `linux`<br>`?server_name` (optional): string |  |
 | `POST` | `/api/sources/{source_id}/claude-plugin` | The hooks plugin for this OTLP source as a zip: server address, a named token (an existing one, or a new one: earlier packages keep sending until theirs is revoked), content on only when the source keeps content, and the pilot list. Audited source.claude_plugin with the token id and name (never the token). |  | `pilot_users`?: list of string<br>`server_url`?: string<br>`platform`?: `windows` &#124; `posix`<br>`managed`?: boolean<br>`trust_server_certificate`?: boolean<br>`token_id`?: string<br>`token_name`?: string |
-| `PUT` | `/api/sources/{source_id}/credentials` | Replace an API source's credentials (a renewed certificate or a new key). Reading continues from the saved position. Audited source.credentials, never the values. |  | `api_key`?: password<br>`client_secret`?: password<br>`certificate_pem`?: string<br>`private_key_pem`?: password |
+| `PUT` | `/api/sources/{source_id}/credentials` | Replace an API source's credentials (a renewed certificate or a new key). Reading continues from the saved position. Audited source.credentials, never the values. |  | `api_key`?: password<br>`token_secret`?: password<br>`client_secret`?: password<br>`certificate_pem`?: string<br>`private_key_pem`?: password |
 | `GET` | `/api/sources/{source_id}/deliveries` | Quiet and resumed alerts sent for this source, newest first (no message content). |  |  |
 | `POST` | `/api/sources/{source_id}/otlp-token` | A new ingest token for an OTLP source; the old one stops working at once. Shown once, stored hashed, audited source.otlp_token (never the token). |  |  |
 | `PUT` | `/api/sources/{source_id}/watch` | Alert when this source receives nothing for `quiet_after_s`; null turns it off. Audited as source.quiet_alert_change with the old and new setting. |  | `quiet_after_s`: integer<br>`target_ids`?: list of string |

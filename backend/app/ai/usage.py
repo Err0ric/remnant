@@ -14,6 +14,7 @@ from typing import Any, Literal
 from app.ai.catalog import DOMAIN, NON_USAGE, Catalog, Service, Status
 from app.ai.internal_tools import counted
 from app.ai.test_records import HOOKS
+from app.core import clock
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.search.addresses import address_ctes, join_addr
 from app.search.identity import IdentityMap
@@ -581,7 +582,7 @@ class Usage:
         more when it has them (ADR-0035 row 8). A range with a start and no end (the AI
         usage page sends only a start) uses the rollup's closed days too, and still reads
         everything after the start, events stamped ahead of the clock included."""
-        upto = scope.end or datetime.now(UTC)
+        upto = scope.end or clock.now()
         covered: list[str] = []
         keys: list[str] = []
         after = None
@@ -612,7 +613,7 @@ class Usage:
     def people_pending(self, scope: QueryScope) -> tuple[int, int]:
         """(days still being re-checked for who had an address, days read from the rollup)
         in the range: until a day is re-checked, its AI use shows without people."""
-        upto = scope.end or datetime.now(UTC)
+        upto = scope.end or clock.now()
         if self._rollup is None or scope.start is None or upto - scope.start < timedelta(days=2):
             return 0, 0
         covered = self._rollup.covered(replace(scope, end=upto))
@@ -741,7 +742,7 @@ class Usage:
         (today, days not built yet) from events (D151)."""
         days: list[str] = []
         if self._rollup is not None and scope.start is not None:
-            days = self._rollup.mcp_covered(replace(scope, end=scope.end or datetime.now(UTC)))
+            days = self._rollup.mcp_covered(replace(scope, end=scope.end or clock.now()))
         if not days:
             res = self._engine.run(MCP_SQL, scope, timeout_s=TIMEOUT_S, name="ai_mcp", page=True)
         else:

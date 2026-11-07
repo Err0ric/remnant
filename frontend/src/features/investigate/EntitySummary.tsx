@@ -5,6 +5,8 @@ import { EntityLink } from "@/components/EntityLink";
 import { When } from "@/components/When";
 import { ApiError, api, type EntitySummary as Summary } from "@/lib/api";
 import { useSignInAbout } from "@/features/m365/signInCounting";
+import { EmptyAddress } from "./EmptyAddress";
+import { InventoryLine } from "./InventoryLine";
 
 interface EntitySummaryProps {
   kind: "user" | "ip" | "host";
@@ -203,6 +205,10 @@ export function EntitySummary({
   return (
     <section aria-label="Summary" className="flex flex-col gap-3">
       <p className="text-md">{finding(s, rangeWords)}</p>
+      {kind !== "user" ? <InventoryLine value={value} start={start} /> : null}
+      {kind === "ip" && !s.events ? (
+        <EmptyAddress value={value} start={start} rangeWords={rangeWords} />
+      ) : null}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         {kpis}
         <Kpi label="First seen" small value={<When iso={s.first_seen} />} />

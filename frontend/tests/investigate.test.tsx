@@ -75,6 +75,15 @@ describe("Entity pages from a link (product pass step 2)", () => {
     expect(window.location.hash).toBe("");
   });
 
+  it("names the Proxmox guest on a host page, with Show events (ADR-0045 A5)", async () => {
+    await openInvestigate("/investigate/people#host=build-runner");
+    const summary = await screen.findByRole("region", { name: "Summary" });
+    const inv = await within(summary).findByRole("list", { name: "Proxmox inventory" });
+    expect(inv).toHaveTextContent("Proxmox VM 104 build-runner on pve2");
+    await userEvent.click(within(inv).getByRole("button", { name: "Show events" }));
+    expect(window.location.pathname).toBe("/investigate/logs");
+  });
+
   it("opens an AI service in the AI flow", async () => {
     const spy = await openInvestigate("/investigate/people#service=chatgpt");
     expect(await screen.findByRole("group", { name: /People, AI clients/ })).toBeVisible();

@@ -24,6 +24,7 @@ from app.core.ids import AUTO_PARSER, RESERVED_SOURCE_PREFIX
 from app.ingest.connectors.anthropic import AnthropicSettings
 from app.ingest.connectors.loki import LokiSettings
 from app.ingest.connectors.m365 import M365Settings
+from app.ingest.connectors.proxmox import ProxmoxSettings
 from app.ingest.envelope import SyslogEnvelopeConfig
 from app.ingest.listener_settings import SyslogSettings
 from app.ingest.normalizer import SourceFormat, SourceSpec
@@ -34,11 +35,12 @@ CONNECTOR_LABELS = {
     "loki": "Loki",
     "m365": "Microsoft 365",
     "anthropic": "Anthropic",
+    "proxmox": "Proxmox",
     "syslog": "Syslog listener",
 }
 # Kinds whose records the server receives and spools for ingest, with their file suffix.
 SPOOL_SUFFIX = {"otlp": ".jsonl", "syslog": ".syslog"}
-SourceKind = Literal["file", "loki", "otlp", "m365", "anthropic", "syslog"]
+SourceKind = Literal["file", "loki", "otlp", "m365", "anthropic", "syslog", "proxmox"]
 
 
 # Settings that can change after a source is added (F44). Tenant, app, cloud, key type, and
@@ -46,6 +48,7 @@ SourceKind = Literal["file", "loki", "otlp", "m365", "anthropic", "syslog"]
 EDITABLE_SETTINGS: dict[str, frozenset[str]] = {
     "m365": frozenset({"content_types", "graph", "backfill_hours"}),
     "anthropic": frozenset({"feeds", "backfill_days"}),
+    "proxmox": frozenset({"poll_minutes", "ca_pem"}),
     "loki": frozenset({"query", "backfill_hours"}),
 }
 
@@ -65,6 +68,7 @@ class SourceConfig(BaseModel):
     loki: LokiSettings | None = None
     m365: M365Settings | None = None
     anthropic: AnthropicSettings | None = None
+    proxmox: ProxmoxSettings | None = None  # guest inventory (ADR-0045)
     syslog: SyslogSettings | None = None
     glob: str = Field(default="*", min_length=1, max_length=200)
     timezone: str = "UTC"
@@ -104,6 +108,7 @@ class SourceConfig(BaseModel):
             "loki": self.loki,
             "m365": self.m365,
             "anthropic": self.anthropic,
+            "proxmox": self.proxmox,
             "syslog": self.syslog,
         }
         for kind, value in settings.items():
@@ -122,7 +127,7 @@ class SourceConfig(BaseModel):
             raise ValueError(f"A {CONNECTOR_LABELS[self.kind]} source needs its settings")
         if self.kind == "syslog" and self.format != "syslog":
             raise ValueError("A syslog listener source uses format syslog")
-        if self.kind in ("m365", "anthropic") and self.format != "json":
+        if self.kind in ("m365", "anthropic", "proxmox") and self.format != "json":
             raise ValueError("API records are stored as JSON lines; use format json")
         return self
 
@@ -132,6 +137,7 @@ class SourceConfig(BaseModel):
             "loki": self.loki,
             "m365": self.m365,
             "anthropic": self.anthropic,
+            "proxmox": self.proxmox,
             "syslog": self.syslog,
         }.get(self.kind)
         return value.model_dump_json() if value is not None else None
@@ -366,6 +372,7 @@ class SourceStore:
                 loki=_loaded(LokiSettings, "loki", r["kind"], r["connector"]),
                 m365=_loaded(M365Settings, "m365", r["kind"], r["connector"]),
                 anthropic=_loaded(AnthropicSettings, "anthropic", r["kind"], r["connector"]),
+                proxmox=_loaded(ProxmoxSettings, "proxmox", r["kind"], r["connector"]),
                 syslog=_loaded(SyslogSettings, "syslog", r["kind"], r["connector"]),
                 otlp_keep_content=bool(r["otlp_keep_content"]),
             )
@@ -479,7 +486,7 @@ class SourceStore:
         if not found:
             raise NotFoundError("No such source")
         src = found[0]
-        settings: BaseModel | None = src.m365 or src.anthropic or src.loki
+        settings: BaseModel | None = src.m365 or src.anthropic or src.proxmox or src.loki
         if settings is None or src.kind not in EDITABLE_SETTINGS:
             raise SourceRejectedError("This source has no connector settings to change")
         allowed = EDITABLE_SETTINGS[src.kind]

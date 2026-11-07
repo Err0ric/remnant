@@ -2,6 +2,8 @@
 keep who and why, and audited exports for admins and analysts only."""
 
 import json
+from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 
 from app.ingest.writer import LakeWriter
@@ -11,7 +13,10 @@ from tests.integration.test_m365_consents import _write
 from tests.integration.test_schedules import make_lab
 
 
-def test_inventory_lists_types_excludes_and_exports(tmp_path: Path) -> None:
+def test_inventory_lists_types_excludes_and_exports(
+    tmp_path: Path, pin_now: Callable[[datetime], None]
+) -> None:
+    pin_now(datetime(2026, 11, 1, 12, 0, tzinfo=UTC))  # after this file's event dates
     lab = make_lab(tmp_path)
     engine, admin, h = lab["app"].state.engine, lab["admin"], lab["h"]
     _write(engine, [])  # one granted and one blocked consent

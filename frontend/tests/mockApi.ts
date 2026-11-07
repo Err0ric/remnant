@@ -2047,6 +2047,51 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         },
       });
     }
+    if (url.includes("/api/inventory/matches")) {
+      const values = new URL(url, "http://x").searchParams.getAll("value");
+      return json({
+        matches: Object.fromEntries(
+          values.map((v) => [
+            v,
+            v === "10.20.30.40" || v === "build-runner"
+              ? [
+                  {
+                    source_id: "pve",
+                    vmid: 104,
+                    type: "qemu",
+                    name: "build-runner",
+                    node: "pve2",
+                    first_seen: "2026-10-11T10:00:00+00:00",
+                    last_seen: "2026-10-12T11:00:00+00:00",
+                    current: true,
+                    search_sql: "SELECT time, source_id, raw FROM events",
+                  },
+                ]
+              : [],
+          ]),
+        ),
+      });
+    }
+    if (url.includes("/api/inventory/coverage")) {
+      const value = new URL(url, "http://x").searchParams.get("value") ?? "";
+      return json({
+        value,
+        start: "2026-10-11T12:00:00+00:00",
+        end: "2026-10-12T12:00:00+00:00",
+        events: 0,
+        categories: [
+          {
+            category: "dns",
+            sources: [{ source_id: "dns", state: "receiving", since: null, records_address: true }],
+          },
+        ],
+        missing: ["network", "system", "identity"],
+        inventory_source: true,
+        inventory: [],
+        restricted: false,
+        can_add_source: true,
+      });
+    }
     if (url.includes("/api/entities/lookup")) {
       const q = new URL(url, "http://x").searchParams.get("q") ?? "";
       const all = [
@@ -2850,6 +2895,31 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
     if (url.endsWith("/api/rules/runs")) return json(ruleRuns);
     if (url.endsWith("/api/rules/recommended") && method === "GET")
       return json(recommendedRules.filter((r) => !r.enabled));
+    if (url.endsWith("/api/rules/sigmahq") && method === "GET")
+      return json({
+        release: "r2026-07-01",
+        asset: "sigma_core.zip",
+        sha256: "0".repeat(64),
+        url: "https://github.com/SigmaHQ/sigma/releases/download/r2026-07-01/sigma_core.zip",
+        max_upload_bytes: 20 * 1024 * 1024,
+      });
+    if (url.endsWith("/api/rules/import/sigmahq") || url.endsWith("/api/rules/import/upload"))
+      return json({
+        import_id: "imp3",
+        path: url.endsWith("/upload") ? "Uploaded zip 0123456789ab" : "SigmaHQ r2026-07-01",
+        files: 1377,
+        accepted: 1376,
+        new_rules: 1376,
+        updated: 0,
+        unchanged: 0,
+        refused: 1,
+        skipped: 0,
+        not_compiling: 1,
+        truncated: false,
+        refusals: [
+          { path: "rules/windows/x.yml", reason: "Windows category 'x' is not supported yet" },
+        ],
+      });
     if (url.endsWith("/api/rules/import"))
       return json({
         import_id: "imp2",
@@ -3337,6 +3407,15 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
             ? "A1B2C3D4E5F60718293A4B5C6D7E8F9012345678"
             : null,
         });
+      if (body.kind === "proxmox")
+        return json({
+          feeds: {
+            permissions: "ok: read only (PVEAuditor)",
+            version: "ok: Proxmox VE 9.0.3",
+            guests: "ok: 3 guests",
+          },
+          thumbprint: null,
+        });
       return json({ feeds: { usage: "ok" }, thumbprint: null });
     }
     if (url.includes("/api/sources/") && url.endsWith("/credentials") && method === "PUT")
@@ -3349,7 +3428,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       };
       delete body.credentials; // write-only: the server never returns it
       if (
-        !["loki", "otlp", "m365", "anthropic", "syslog"].includes(body.kind ?? "") &&
+        !["loki", "otlp", "m365", "anthropic", "syslog", "proxmox"].includes(body.kind ?? "") &&
         !body.path.startsWith("/logs")
       )
         return json(

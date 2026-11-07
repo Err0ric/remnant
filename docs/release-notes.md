@@ -4,6 +4,54 @@
 
 <!-- unreleased:start -->
 
+### Closed-by-rule-change alerts say why (2026-11-07)
+
+- An alert closed as "Superseded by rule change" on upgrade now says why in its note: "built-in Claude Code tools no longer raise an alert when they change", "quiet alerts off for this source", or "this source was removed".
+- What changes for existing installs: alerts closed this way from now on carry the reason; ones closed before keep the short note.
+
+### Which Proxmox guest an address is, and why an address has no events (2026-11-07)
+
+- The top bar search, IP and host pages, and People and devices name the Proxmox guest behind an exact IP, MAC, or host name: "Proxmox VM 104 build-runner on pve2", with first and last seen and Show events. An address two guests held at different times shows both.
+- When an address has no events, the top bar, its IP page, and an empty Ask answer that names it say what was searched, category by category: "DNS (2 sources): no lookups by this address", which sources were not receiving or are turned off, which kinds of source you have none of, whether it is in the Proxmox inventory, and Add a source for administrators. Written by the app from your sources' settings and health, never by the AI model.
+- Only sources you may read are searched or named; others get one line, "Sources you don't have access to were not searched."
+- What changes for existing installs: nothing to do; the lines appear where they apply, and the inventory line needs a Proxmox source.
+
+### People and devices loads faster (2026-11-07)
+
+- People and devices loads faster. The signals behind the ranking no longer test every event's address in Python: events are counted per user, address, and host in one pass, the signals are read only from sign-ins, hook events, and consents, and "internal" is decided in SQL once per distinct address of a failed sign-in. Rankings, scores, and their order are unchanged. On a 2 vCPU test server with 30 days and 7.3 million events (DNS, firewall traffic with probes from many outside addresses, sign-ins with a password spray, Claude Code hooks), median of 3 loads:
+
+  | Server-Timing part | Before (ms) | After (ms) |
+  |---|---:|---:|
+  | signals_seen | 18,496 | 1,755 |
+  | signals_mail_rules | 34 | 28 |
+  | signals_new_mcp | 68 | 68 |
+  | signals_unreviewed_ai | 493 | 502 |
+  | people_split | 327 | 371 |
+  | people_attackers | 128 | 138 |
+  | scoring | 5 | 4 |
+  | audit | 4 | 4 |
+  | db | 19,374 | 2,636 |
+  | app | 570 | 65 |
+  | total | 19,944 | 2,930 |
+
+- What changes for existing installs: nothing to do; the page reads the same data and the Internal networks list in Settings > Enrichment, only faster.
+
+### Proxmox guest inventory source (2026-11-06)
+
+- New source kind **Proxmox VE**: reads which VMs and containers exist, their node, status, tags, MACs, and IP addresses, with a read-only PVEAuditor API token. Setup: `docs/install/proxmox.md`. Verified on Proxmox 8 and 9: pending.
+- A token that can do more than read (for example `Sys.Modify` or `VM.Allocate`) is refused when the source is saved, when its token is replaced, and on every poll. The certificate is always checked; a self-signed cluster CA can be pinned.
+- Each event is the connector's own short record, never Proxmox's response: guest descriptions, notes, and cloud-init settings (user, password, SSH keys) are never stored or logged.
+- Events are written only when a guest appears, changes, or disappears, plus one heartbeat per guest a day. On Proxmox 8, VM addresses come from the config only and Sources says "Agent IPs not available with this token".
+- New starter template `proxmox_inventory`, category Inventory.
+- What changes for existing installs: nothing until a Proxmox source is added; the database gains the `proxmox` source kind on upgrade.
+
+### Import SigmaHQ core rules (2026-11-07)
+
+- Detection rules has an **Import SigmaHQ core rules** button for administrators. It downloads the SigmaHQ core rule package for the release pinned in the app (`r2026-07-01`) from GitHub, only when you click, and imports it only if its SHA-256 matches. Without internet access, upload the same `sigma_core.zip` instead.
+- Imported rules start disabled and show up under **Recommended rules for your sources** when one of your sources would run them. Importing the same release again adds nothing and keeps rules you enabled.
+- A broken rule file in a package or folder is skipped with its reason instead of stopping the import; the result counts rules imported, skipped, and not compiling.
+- What changes for existing installs: nothing until an administrator clicks the button or uploads a package; no rules are fetched on start-up or on a schedule.
+
 ### Hooks records not delivered: idle machines apart from stuck ones (2026-11-06)
 
 - A machine whose Claude hooks plugin holds records and has delivered none for 3 days is now told apart by whether it still sends anything else. If it still sends other telemetry (Claude Code OpenTelemetry, the MCP inventory), the plugin cannot reach the server: Health shows it as unhealthy and a medium "Claude hooks records not delivered" alert is raised. If it sends nothing at all, the machine looks idle or offline: Health shows it as attention with the records waiting and the last contact, and no alert is raised.

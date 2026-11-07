@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from app.auth.users import User
+from app.core import clock
 from app.core.errors import (
     AppError,
     ForbiddenError,
@@ -190,7 +191,7 @@ class RuleRunner:
         cached = self._seen_cache.get(key)
         if cached is not None and now - cached[0] < AUTO_SEEN_TTL_S:
             return cached[1]
-        scope = QueryScope(sources=list(key), start=datetime.now(UTC) - AUTO_SEEN_WINDOW)
+        scope = QueryScope(sources=list(key), start=clock.now() - AUTO_SEEN_WINDOW)
         try:
             result = self._engine.run(
                 "SELECT DISTINCT source_id, template_id FROM events WHERE template_id IS NOT NULL",
@@ -216,7 +217,7 @@ class RuleRunner:
         if not row.enabled and user.role != "admin":
             raise ForbiddenError("This rule is disabled; an administrator can enable it")
         run_id = new_id()
-        started = datetime.now(UTC)
+        started = clock.now()
         detail: dict[str, object] = {
             "run_id": run_id,
             "rule_id": rule_id,

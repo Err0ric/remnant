@@ -2,6 +2,7 @@
 template fixtures for its `requires` with no error; `expect` states the answer there. A
 template change that breaks a library query fails here."""
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -108,7 +109,10 @@ def test_library_query_runs_on_fixtures(engine: Any, pack: Pack, query_id: str) 
             assert first.get(k) == v, f"{k}: {first.get(k)!r}"
 
 
-def test_library_api_offers_what_your_sources_have_and_copies(tmp_path: Path) -> None:
+def test_library_api_offers_what_your_sources_have_and_copies(
+    tmp_path: Path, pin_now: Callable[[datetime], None]
+) -> None:
+    pin_now(datetime(2026, 10, 20, 12, 0, tzinfo=UTC))  # after this file's event dates
     from tests.integration.test_schedules import make_lab
 
     lab = make_lab(tmp_path)

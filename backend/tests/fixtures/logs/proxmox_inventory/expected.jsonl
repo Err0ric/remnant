@@ -1,0 +1,10 @@
+{"class_uid": 5001, "device_hostname": "build-runner", "device_ip": "10.20.30.40", "message": "appeared", "parse_status": "ok", "resource_type": "qemu", "time": "2026-11-06T12:00:00+00:00"}
+{"class_uid": 5001, "device_hostname": "dns-cache", "device_ip": "10.20.31.41", "message": "appeared", "parse_status": "ok", "resource_type": "lxc", "time": "2026-11-06T12:00:01+00:00"}
+{"class_uid": 5001, "device_hostname": "web-01", "message": "appeared", "parse_status": "ok", "resource_type": "qemu", "time": "2026-11-06T12:00:02+00:00"}
+{"class_uid": 5001, "device_hostname": "web-02", "device_ip": "10.20.31.43", "message": "appeared", "parse_status": "ok", "resource_type": "qemu", "time": "2026-11-06T12:00:03+00:00"}
+{"class_uid": 5001, "device_hostname": "db-primary", "device_ip": "10.20.30.44", "message": "appeared", "parse_status": "ok", "resource_type": "lxc", "time": "2026-11-06T12:00:04+00:00"}
+{"class_uid": 5001, "device_hostname": "scanner", "device_ip": "10.20.31.45", "message": "appeared", "parse_status": "ok", "resource_type": "qemu", "time": "2026-11-06T12:00:05+00:00"}
+{"class_uid": 5001, "device_hostname": "grafana", "message": "appeared", "parse_status": "ok", "resource_type": "qemu", "time": "2026-11-06T12:00:06+00:00"}
+{"class_uid": 5001, "device_hostname": "jump-host", "device_ip": "10.20.31.47", "message": "appeared", "parse_status": "ok", "resource_type": "lxc", "time": "2026-11-06T12:00:07+00:00"}
+{"class_uid": 5001, "device_hostname": "ci-cache", "device_ip": "10.20.30.48", "message": "appeared", "parse_status": "ok", "resource_type": "qemu", "time": "2026-11-06T12:00:08+00:00"}
+{"class_uid": 5001, "device_hostname": "backup-proxy", "device_ip": "10.20.31.49", "message": "appeared", "parse_status": "ok", "resource_type": "qemu", "time": "2026-11-06T12:00:09+00:00"}

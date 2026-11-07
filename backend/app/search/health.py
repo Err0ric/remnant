@@ -23,6 +23,7 @@ import structlog
 from app.alerts.dispatch import AlertDispatcher
 from app.alerts.items import AlertItems
 from app.alerts.render import Alert
+from app.core import clock
 from app.core.branding import PRODUCT_NAME
 from app.core.errors import NotFoundError, ParamInvalidError, log_detail
 from app.core.ids import new_id
@@ -276,7 +277,7 @@ class HealthService:
         dispatcher: AlertDispatcher,
         audit: AuditLog,
         link: str | None,
-        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        clock: Callable[[], datetime] = lambda: clock.now(),
         items: AlertItems | None = None,
         queue_stuck_days: int = QUEUE_STUCK_DAYS,
     ) -> None:

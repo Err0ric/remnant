@@ -130,6 +130,36 @@ describe("Detection rules", () => {
     await vi.waitFor(() => expect(within(form).getByLabelText("Rule")).toHaveValue("r1"));
   });
 
+  it("imports the pinned SigmaHQ core release on click, or an uploaded zip", async () => {
+    const spy = await renderAt("/rules");
+    const posted = () =>
+      spy.mock.calls
+        .filter(([, i]) => i?.method === "POST")
+        .map(([u]) => String(u))
+        .filter((u) => u.includes("/api/rules/import/"));
+    await userEvent.click(await screen.findByRole("button", { name: "Import SigmaHQ core rules" }));
+    const panel = await screen.findByRole("region", { name: "Import SigmaHQ core rules" });
+    const go = await within(panel).findByRole("button", {
+      name: "Download and import r2026-07-01",
+    });
+    // Opening the panel fetches nothing.
+    expect(posted()).toEqual([]);
+    await userEvent.click(go);
+    expect(await within(panel).findByRole("status")).toHaveTextContent(
+      "1377 files read · 1376 imported (1376 new, 0 updated, 0 unchanged) · 0 skipped · 1 not compiling",
+    );
+    expect(within(panel).getByRole("table", { name: "Refused rules" })).toHaveTextContent(
+      "not supported yet",
+    );
+    const file = new File([new Uint8Array([80, 75, 3, 4])], "sigma_core.zip", {
+      type: "application/zip",
+    });
+    await userEvent.upload(within(panel).getByLabelText("Or upload a rule package (zip)"), file);
+    await vi.waitFor(() =>
+      expect(posted()).toEqual(["/api/rules/import/sigmahq", "/api/rules/import/upload"]),
+    );
+  });
+
   it("lets auditors read but not run, import, or select", async () => {
     await renderAt("/rules", { mode: "login", signedIn: true, role: "auditor" });
     const table = await screen.findByRole("table", { name: "Detection rules" });
@@ -137,6 +167,7 @@ describe("Detection rules", () => {
     expect(within(table).queryByRole("button", { name: /^Run / })).toBeNull();
     expect(within(table).queryByRole("checkbox")).toBeNull();
     expect(screen.queryByRole("button", { name: "Import rules" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Import SigmaHQ core rules" })).toBeNull();
   });
 
   it("shows rule YAML as text and keeps disabled rules unrunnable for analysts", async () => {

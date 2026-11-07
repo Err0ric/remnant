@@ -38,6 +38,7 @@ from app.alerts.dispatch import AlertDispatcher
 from app.alerts.items import AlertItems
 from app.alerts.render import Alert, AlertKind
 from app.auth.users import LOCAL_USER, User, UserStore
+from app.core import clock
 from app.core.branding import PRODUCT_NAME
 from app.core.config import SchedulesConfig
 from app.core.errors import AppError, ConflictError, NotFoundError, ParamInvalidError, log_detail
@@ -198,7 +199,7 @@ class ScheduleService:
         rule_runner: RuleRunner,
         engine: QueryEngine,
         audit: AuditLog,
-        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        clock: Callable[[], datetime] = lambda: clock.now(),
         *,
         dispatcher: AlertDispatcher | None = None,
         link: str | None = None,

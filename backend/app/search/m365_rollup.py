@@ -33,7 +33,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import structlog
 
-from app.core import lake_files
+from app.core import clock, lake_files
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.search.auth_facts import BUILD_SQL as AUTH_BUILD_SQL
 from app.search.m365 import BUILD_SQL
@@ -118,7 +118,7 @@ class FactRollup:
         lake_dir: Path,
         rollup_dir: Path,
         sources: Callable[[], list[str]],
-        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        clock: Callable[[], datetime] = lambda: clock.now(),
         max_days_per_run: int = 60,
     ) -> None:
         self._engine = engine
@@ -183,7 +183,7 @@ class FactRollup:
 
     def _begin(self) -> tuple[str, float]:
         self.rows_read = 0
-        return datetime.now(UTC).isoformat(), monotonic()
+        return clock.now().isoformat(), monotonic()
 
     def run(self) -> RollupReport:
         """Remove days whose lake day is gone, then build stale closed days, newest first,

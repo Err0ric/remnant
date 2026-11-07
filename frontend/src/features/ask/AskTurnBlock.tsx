@@ -8,6 +8,7 @@ import {
 import { isAborted, isModelBusy } from "@/components/ai/ModelWait";
 import { cn } from "@/lib/cn";
 import { AskResults } from "./AskResults";
+import { EmptyAddress, addressIn } from "@/features/investigate/EmptyAddress";
 
 export type Phase =
   "finding" | "running" | "writing" | "ready" | "done" | "failed" | "cancelled" | "guidance";
@@ -98,6 +99,8 @@ interface AskTurnBlockProps {
   onShowEvents?: (turn: Turn, values: Record<string, Cell>) => void;
   /** Admins: opens the provider's edit form, where Thinking is set (D192). */
   onFixThinking?: () => void;
+  /** The thread's range start, for the no-events lines under an empty answer (B5). */
+  start?: string;
 }
 
 /** One question and what came of it, as a block, never a chat bubble (DESIGN.md 6.1): the
@@ -111,6 +114,7 @@ export function AskTurnBlock({
   onEdit,
   onShowEvents,
   onFixThinking,
+  start,
 }: AskTurnBlockProps) {
   const a = turn.answer;
   const route = a?.route ?? null;
@@ -207,6 +211,14 @@ export function AskTurnBlock({
           result={turn.result}
           drillKeys={turn.result.drill_keys}
           onShowEvents={onShowEvents ? (values) => onShowEvents(turn, values) : undefined}
+        />
+      ) : null}
+      {turn.result && turn.result.rows.length === 0 && addressIn(turn.question) ? (
+        // Written by code from the server's facts, never by the model (ADR-0045 B5).
+        <EmptyAddress
+          value={addressIn(turn.question) ?? ""}
+          start={start}
+          rangeWords="this time range"
         />
       ) : null}
       {turn.drillError ? (

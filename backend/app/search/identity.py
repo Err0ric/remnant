@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from typing import Any
 
+from app.core import clock
 from app.core.errors import ParamInvalidError
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.meta.db import MetaDB
@@ -149,7 +149,7 @@ class IdentityStore:
                 clean.append(d)
         if len(clean) > MAX_DOMAINS:
             raise ParamInvalidError(f"At most {MAX_DOMAINS} organization domains")
-        now = datetime.now(UTC).isoformat()
+        now = clock.now().isoformat()
         with self._meta.connect() as con:
             con.execute("DELETE FROM identity_domains")
             con.executemany(
@@ -177,7 +177,7 @@ class IdentityStore:
             con.execute(
                 "INSERT INTO identity_aliases (alias, person, created_by, created_at)"
                 " VALUES (?, ?, ?, ?)",
-                (a, person.strip()[:NAME_MAX], actor, datetime.now(UTC).isoformat()),
+                (a, person.strip()[:NAME_MAX], actor, clock.now().isoformat()),
             )
 
 

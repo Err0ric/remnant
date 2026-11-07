@@ -216,3 +216,73 @@ FROM range(2) a(i), range(2) b(f)""")  # test data
         total += con.execute("SELECT count(*) FROM e").fetchone()[0]  # type: ignore[index]  # one row
         con.execute(f"COPY e TO '{out}/part-0000.parquet' (FORMAT parquet, COMPRESSION zstd)")
     return total
+
+
+# Brute-force names a password spray tries (nobody's accounts), and a few IPv6 attackers.
+_SPRAY = "['root','admin','ubuntu','oracle','test','minecraft','postgres','git','ftp','guest']"
+
+
+def write_people(lake: Path, days: int, end: datetime, per_day: int = 100_000) -> int:
+    """What People and devices reads on a small office (owner, 2026-11-07): firewall
+    traffic as busy as the DNS beside it (a third of it probes from many outside IPv6
+    addresses, as an exposed firewall sees), Linux sign-ins on 40 servers with a password
+    spray from outside (IPv4 and IPv6), Windows logons for 300 people on their
+    workstations, and Claude Code hook events. Synthetic: RFC 1918 and documentation
+    addresses, .internal hosts, example.com people. Returns the rows written."""
+    con = duckdb.connect()
+    con.execute("SET TimeZone = 'UTC'")
+    con.execute(duckdb_create_table_sql("e"))
+    at = "TIMESTAMPTZ '{date} 00:00:00+00' + to_microseconds((i * 86400000000 // {n})::BIGINT)"
+    outside = (
+        "CASE WHEN i % 11 = 0 THEN '2001:db8:' || to_hex(i % 4096) || '::' || to_hex(i % 97 + 1)"
+        " WHEN i % 2 = 0 THEN '203.0.113.' || (i % 254 + 1)"
+        " ELSE '198.51.100.' || (i % 254 + 1) END"
+    )
+    sources = (
+        # source, template, rows a day, class, status, user, src ip, host, dst ip, message, unmapped
+        ("fw", "paloalto_traffic", per_day, "4001", "1", "NULL",
+         # one row in 3 is a probe from outside, from a wide spread of addresses
+         "CASE WHEN i % 3 = 0 THEN '2001:db8:' || to_hex(hash(i, '{date}') % 65536) || '::'"
+         " || to_hex(i % 65521) ELSE '10.20.' || (i % 4) || '.' || (i % 250 + 1) END",
+         "'pa-01.corp.internal'",
+         "'198.51.100.' || (i % 200 + 1)", "'end'", "'{}'"),
+        ("lin_auth", "linux_sshd", per_day // 5, "3002", "CASE WHEN i % 4 = 0 THEN 1 ELSE 2 END",
+         f"CASE WHEN i % 4 = 0 THEN 'user' || (i % 300) ELSE {_SPRAY}[i % 10 + 1] END",
+         f"CASE WHEN i % 4 = 0 THEN '10.20.1.' || (i % 250 + 1) ELSE {outside} END",
+         "'srv' || lpad((i % 40)::VARCHAR, 2, '0') || '.corp.internal'", "NULL",
+         "CASE WHEN i % 4 = 0 THEN 'Accepted publickey' ELSE 'Failed password' END", "'{}'"),
+        ("win", "windows_nxlog_json", per_day // 5, "3002", "CASE WHEN i % 25 = 0 THEN 2 ELSE 1 END",
+         "'user' || (i % 300) || '@example.com'", "'10.30.' || (i % 4) || '.' || (i % 250 + 1)",
+         "'ws-' || lpad((i % 300)::VARCHAR, 4, '0') || '.corp.internal'", "NULL",
+         "'An account was logged on'", "'{}'"),
+        ("hooks", "claude_hooks", per_day // 50, "6003", "1",
+         "'user' || (i % 40) || '@example.com'", "NULL",
+         "'ws-' || lpad((i % 40)::VARCHAR, 4, '0') || '.corp.internal'", "NULL",
+         "CASE WHEN i % 30 = 0 THEN 'claude_hooks.post_tool_use_failure'"
+         " ELSE 'claude_hooks.pre_tool_use' END",
+         "'{\"attr\":{\"tool_name\":\"Bash\",\"claude_account_email\":\"user' || (i % 40)"
+         " || CASE WHEN i % 40 = 7 THEN '@example.net' ELSE '@example.com' END || '\"'"
+         " || CASE WHEN i % 13 = 0 THEN ',\"mcp_server_name\":\"wiki' || (i % 3) || '\"' ELSE '' END"
+         " || '}}'"),
+    )  # fmt: skip
+    total = 0
+    for back in range(days - 1, -1, -1):
+        date = (end - timedelta(days=back)).strftime("%Y-%m-%d")
+        for source, tpl, n, cls, status, user, ip, host, dst, msg, unmapped in sources:
+            out = lake / f"source={source}" / f"day={date}"
+            out.mkdir(parents=True, exist_ok=True)
+            con.execute("DELETE FROM e")
+            t = at.format(date=date, n=n)
+            ip = ip.replace("{date}", date)  # each day its own probes
+            con.execute(f"""
+INSERT INTO e (event_id, source_id, template_id, template_version, time, time_observed,
+  class_uid, status_id, activity_id, actor_user_name, src_endpoint_ip, device_hostname,
+  dst_endpoint_ip, message, unmapped, raw, raw_bytes_invalid, parse_status,
+  classification, owner_id)
+SELECT '{date}-{source}-' || i, '{source}', '{tpl}', '1.0.0', {t}, {t}, {cls}, {status}, 1,
+  {user}, {ip}, {host}, {dst}, {msg}, {unmapped}, 'line ' || i, false, 'ok', 'local_only',
+  'system'
+FROM range({n}) t(i)""")  # test data, fixed text
+            total += con.execute("SELECT count(*) FROM e").fetchone()[0]  # type: ignore[index]  # one row
+            con.execute(f"COPY e TO '{out}/part-0000.parquet' (FORMAT parquet, COMPRESSION zstd)")
+    return total

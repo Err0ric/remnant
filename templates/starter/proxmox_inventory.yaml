@@ -1,0 +1,60 @@
+schema_version: 1
+id: proxmox_inventory
+name: Proxmox VE guest inventory
+version: 1.0.0
+author: starter-pack
+description: >-
+  Records written by the Proxmox connector (ADR-0045): one line when a VM or container
+  appears, changes, or disappears, and one heartbeat per guest a day. Each line is the
+  connector's own minimal record, {"feed": "proxmox.guest", ...}, with the guest's name,
+  VMID, type, node, status, tags, MACs, and IPs (each with where it came from: config,
+  agent, or container). Never the API response: descriptions, notes, and cloud-init
+  fields are not stored. The event (appeared, changed, disappeared, heartbeat) is the
+  message; VMID, node, MACs, the full IP list, and tags stay in unmapped.
+category: inventory
+vendor: proxmox
+classification_default: local_only
+
+envelope:
+  type: none
+
+match:
+  regex: '^\{"feed":"proxmox\.guest"'
+  min_confidence: 0.95
+
+payload:
+  format: json
+  json: { root: "$" }
+
+transforms:
+  - { field: time, op: timestamp, args: { format: iso8601 } }
+
+mapping:
+  class_uid: 5001            # Device Inventory Info
+  fields:
+    time: { from: time }
+    device_hostname: { from: name }
+    device_ip: { from: ips.0.ip }
+    resource_type: { from: type }
+    message: { from: event }
+    activity_id: { default: 1 }
+
+tests:
+  - name: a VM appears with an agent address
+    input: '{"feed":"proxmox.guest","event":"appeared","time":"2026-11-06T12:00:00Z","vmid":104,"type":"qemu","name":"build-runner","node":"pve2","status":"running","tags":["ci"],"macs":["52:54:00:12:34:56"],"ips":[{"ip":"10.20.30.40","from":"agent"}]}'
+    expect:
+      parse_status: ok
+      class_uid: 5001
+      fields: { device_hostname: build-runner, device_ip: 10.20.30.40, resource_type: qemu, message: appeared, time: "2026-11-06T12:00:00+00:00" }
+  - name: a container with no address disappears
+    input: '{"feed":"proxmox.guest","event":"disappeared","time":"2026-11-06T12:15:00Z","vmid":201,"type":"lxc","name":"dns-cache","node":"pve1","status":"stopped","tags":[],"macs":["52:54:00:aa:bb:01"],"ips":[]}'
+    expect:
+      parse_status: ok
+      class_uid: 5001
+      fields: { device_hostname: dns-cache, resource_type: lxc, message: disappeared }
+  - name: a daily heartbeat for an LXC container with a static address
+    input: '{"feed":"proxmox.guest","event":"heartbeat","time":"2026-11-07T12:00:00Z","vmid":202,"type":"lxc","name":"web-01","node":"pve3","status":"running","tags":["web"],"macs":["52:54:00:aa:bb:02"],"ips":[{"ip":"192.168.10.6","from":"config"},{"ip":"2001:db8::6","from":"container"}]}'
+    expect:
+      parse_status: ok
+      class_uid: 5001
+      fields: { device_hostname: web-01, device_ip: 192.168.10.6, message: heartbeat, time: "2026-11-07T12:00:00+00:00" }

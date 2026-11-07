@@ -20,6 +20,7 @@ from app.ai.agents import agents
 from app.ai.catalog import NON_USAGE, Catalog
 from app.ai.consents import CONSENTS_CTE
 from app.ai.usage import Usage
+from app.core import clock
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.meta.db import MetaDB
 from app.search.identity import IdentityMap
@@ -89,7 +90,7 @@ class Exclusions:
         return {(str(t), str(k)): Exclusion(str(r), str(b), str(a)) for t, k, r, b, a in rows}
 
     def set(self, item_type: str, key: str, reason: str, by: str) -> Exclusion:
-        at = datetime.now(UTC).isoformat()
+        at = clock.now().isoformat()
         reason = reason.strip()[:MAX_REASON]
         with self._meta.connect() as con:
             con.execute(

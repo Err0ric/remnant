@@ -11,11 +11,12 @@ replaced by the generic parser for that line.
 """
 
 from collections.abc import Callable, Iterable, Mapping
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 import regex
 
+from app.core import clock
 from app.ingest.envelope import Envelope, EnvelopeParser
 from app.ingest.normalizer import Normalizer, SourceSpec
 from app.ingest.payload.regexpayload import MATCH_TIMEOUT_S
@@ -40,7 +41,7 @@ class AutoNormalizer:
         spec: SourceSpec,
         templates: Iterable[Template],
         starter_ids: frozenset[str] = frozenset(),
-        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        clock: Callable[[], datetime] = lambda: clock.now(),
         tables: Mapping[str, LookupTable] | None = None,
     ) -> None:
         self._spec = spec

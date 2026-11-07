@@ -433,12 +433,15 @@ class AlertItems:
             ).fetchall()
         return {r["subject"]: (r["item_id"], r["at"]) for r in rows}
 
-    def close_superseded(self, still_raised: Callable[[AlertItem], bool], fix_id: str) -> list[str]:
-        """Once per `fix_id` (D213, proposed): close each open alert `still_raised` says the
-        current rules would not raise now, as Superseded by rule change, by the server (no
-        user), one `alert.close` audit row each. An alert someone acted on (a decision in
-        its history or a note) is never touched. Returns the closed item ids."""
-        closed: list[AlertItem] = []
+    def close_superseded(
+        self, why_superseded: Callable[[AlertItem], str | None], fix_id: str
+    ) -> list[str]:
+        """Once per `fix_id` (D213): close each open alert the current rules would not raise
+        now (`why_superseded` gives the reason, or None to keep it), as Superseded by rule
+        change with that reason in the note, by the server (no user), one `alert.close`
+        audit row each. An alert someone acted on (a decision in its history or a note) is
+        never touched. Returns the closed item ids."""
+        closed: list[tuple[AlertItem, str]] = []
         with self._meta.connect() as con:
             if con.execute("SELECT 1 FROM one_time_fixes WHERE fix_id = ?", (fix_id,)).fetchone():
                 return []
@@ -451,15 +454,17 @@ class AlertItems:
             now = self._now()
             for r in rows:
                 item = _item(r)
-                if still_raised(item):
+                why = why_superseded(item)
+                if why is None:
                     continue
-                self._set_closed(con, item.item_id, None, "superseded", SUPERSEDED_NOTE, now)
-                closed.append(item)
+                note = f"{SUPERSEDED_NOTE}: {why}"
+                self._set_closed(con, item.item_id, None, "superseded", note, now)
+                closed.append((item, note))
             con.execute(
                 "INSERT INTO one_time_fixes (fix_id, applied_at, changed) VALUES (?, ?, ?)",
                 (fix_id, now, len(closed)),
             )
-        for item in closed:
+        for item, note in closed:
             self._audit.write(
                 "alert.close",
                 "success",
@@ -470,11 +475,11 @@ class AlertItems:
                     "kind": item.kind,
                     "subject": item.subject,
                     "reason": "superseded",
-                    "note": SUPERSEDED_NOTE,
+                    "note": note,
                     "fix": fix_id,
                 },
             )
-        return [i.item_id for i in closed]
+        return [i.item_id for i, _ in closed]
 
     def resolve(
         self, kind: Kind, ref_id: str, text: str, group: tuple[str, str] | None = None

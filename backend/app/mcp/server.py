@@ -20,6 +20,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.auth.users import User
+from app.core import clock
 from app.core.branding import PRODUCT_NAME
 from app.core.errors import AppError
 from app.core.schema import COLUMNS
@@ -117,7 +118,7 @@ class McpServer:
         meta: MetaDB,
         audit: AuditLog,
         version: str,
-        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        clock: Callable[[], datetime] = lambda: clock.now(),
     ) -> None:
         self._engine = engine
         self._meta = meta

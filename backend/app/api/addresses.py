@@ -9,6 +9,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.api.access import CurrentUser, client_ip
 from app.auth.service import AuthService
+from app.core import clock
 from app.core.errors import AppError
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.engine.views import permitted_sources
@@ -54,7 +55,7 @@ async def address(
     User-ID, GlobalProtect, DHCP leases, and the sign-ins that name a machine's person
     (ADR-0029)."""
     # A time without a zone is UTC, like every other time in the API.
-    when = (at or datetime.now(UTC)) if (at is None or at.tzinfo) else at.replace(tzinfo=UTC)
+    when = (at or clock.now()) if (at is None or at.tzinfo) else at.replace(tzinfo=UTC)
     when = when.astimezone(UTC)
     allowed = await run_in_threadpool(permitted_sources, request.app.state.meta, user)
     engine: QueryEngine = request.app.state.engine

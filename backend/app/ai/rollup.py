@@ -34,7 +34,7 @@ import structlog
 from app.ai.agents import ITEMS_SQL
 from app.ai.catalog import Catalog
 from app.ai.usage import MCP_DAY_SQL, MCP_SQL, first_services_sql, rollup_build_sql
-from app.core import lake_files
+from app.core import clock, lake_files
 from app.engine.duckdb import IDENT_FILE, MCP_FILE, TODAY_DIR, QueryEngine, QueryScope
 from app.search.addresses import IDENT_RAW
 from app.search.m365_rollup import _start_day
@@ -172,7 +172,7 @@ class AiRollup:
         catalog: Catalog,
         lake_dir: Path,
         rollup_dir: Path,
-        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        clock: Callable[[], datetime] = lambda: clock.now(),
         max_days_per_run: int = 60,
     ) -> None:
         self._engine = engine
@@ -234,7 +234,7 @@ class AiRollup:
 
     def _begin(self) -> tuple[str, float]:
         self.rows_read = 0
-        return datetime.now(UTC).isoformat(), monotonic()
+        return clock.now().isoformat(), monotonic()
 
     def run(self) -> RollupReport:
         """Remove days whose source day is gone, then build stale closed days, newest first,

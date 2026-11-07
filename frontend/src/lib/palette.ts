@@ -4,6 +4,7 @@ export type PaletteSection =
   | "Recent"
   | "Ask AI"
   | "Addresses"
+  | "Proxmox inventory"
   | "People"
   | "Hosts"
   | "AI services"
@@ -35,6 +36,7 @@ export const SECTION_ORDER: PaletteSection[] = [
   "Recent",
   "Ask AI",
   "Addresses",
+  "Proxmox inventory",
   "People",
   "Hosts",
   "AI services",

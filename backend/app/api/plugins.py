@@ -2,7 +2,7 @@
 the named per-deployment tokens of each OTLP source, and what each variant has sent. Admin
 only. Router only; tokens live in `app.ingest.otlp_tokens`."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Annotated, Any
 from urllib.parse import urlsplit
 
@@ -18,6 +18,7 @@ from app.ai.sessions import _ONE_COPY, _a
 from app.api.access import AdminUser, client_ip
 from app.auth.service import AuthService
 from app.auth.tls import resolve_tls
+from app.core import clock
 from app.core.errors import ConfigError, NotFoundError
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.ingest.otlp_tokens import OtlpTokens, Token
@@ -122,7 +123,7 @@ async def plugins(request: Request, _: AdminUser) -> PluginsOut:
     srcs = [s for s in request.app.state.sources.list() if s.kind == "otlp"]
     tokens: OtlpTokens = request.app.state.otlp_tokens
     engine: QueryEngine = request.app.state.engine
-    now = datetime.now(UTC)
+    now = clock.now()
     rows: list[list[Any]] = []
     if srcs:
         scope = QueryScope([s.source_id for s in srcs], now - timedelta(hours=24), now)
@@ -277,7 +278,7 @@ async def send_test_record(
     owner, plain = await run_in_threadpool(tokens.plain, token_id)
     if owner != source_id:
         raise NotFoundError("No such token, or it was revoked")
-    now = datetime.now(UTC)
+    now = clock.now()
     sid = f"server-test-{now.strftime('%Y%m%dT%H%M%SZ')}"
     transport = httpx.ASGITransport(app=request.app)
     async with httpx.AsyncClient(transport=transport, base_url=str(request.base_url)) as c:

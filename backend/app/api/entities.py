@@ -4,7 +4,7 @@ Numbers come from the caller's own events view; reading them is audited
 (`investigate.risk`, `investigate.graph`) with the sources read.
 """
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Query, Request
@@ -14,6 +14,7 @@ from starlette.concurrency import run_in_threadpool
 from app.ai.catalog import Catalog
 from app.api.access import CurrentUser, client_ip
 from app.auth.service import AuthService
+from app.core import clock
 from app.core.errors import SearchInvalidError
 from app.core.timing import phase
 from app.engine.duckdb import QueryEngine, QueryScope
@@ -320,7 +321,7 @@ async def entity_lookup(
     """The top bar search (ADR-0038 edit 10): addresses, users, and hosts seen in the
     caller's own sources (the last 30 days unless a range is given), and AI services by
     name."""
-    end = end or datetime.now(UTC)
+    end = end or clock.now()
     start = start or end - timedelta(days=LOOKUP_DAYS)
     _allowed, scope = await _scope(request, user, start, end)
     engine: QueryEngine = request.app.state.engine

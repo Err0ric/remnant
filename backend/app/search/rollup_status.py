@@ -11,6 +11,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
+from app.core import clock
+
 MANIFEST = "_built.json"
 TODAY_LATE_S = 15 * 60  # three missed 5-minute builds
 LABELS = {
@@ -44,7 +46,7 @@ class RunLog:
 
     def ran(self, name: str, pending: int | None = None, error: bool = False) -> None:
         with self.lock:
-            self.runs[name] = Run(datetime.now(UTC), pending, error)
+            self.runs[name] = Run(clock.now(), pending, error)
 
     def get(self, name: str) -> Run | None:
         with self.lock:

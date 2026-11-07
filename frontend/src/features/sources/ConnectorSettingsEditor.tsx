@@ -19,6 +19,7 @@ export function ConnectorSettingsEditor({ source, onClose }: ConnectorSettingsEd
   const [m365, setM365] = useState(source.m365 ?? null);
   const [anthropic, setAnthropic] = useState(source.anthropic ?? null);
   const [loki, setLoki] = useState(source.loki ?? null);
+  const [pve, setPve] = useState(source.proxmox ?? null);
   const save = useMutation({
     mutationFn: () => {
       const changes: Record<string, unknown> = m365
@@ -29,11 +30,14 @@ export function ConnectorSettingsEditor({ source, onClose }: ConnectorSettingsEd
           }
         : anthropic
           ? { feeds: anthropic.feeds, backfill_days: anthropic.backfill_days }
-          : { query: loki?.query, backfill_hours: loki?.backfill_hours };
+          : pve
+            ? { poll_minutes: pve.poll_minutes, ca_pem: pve.ca_pem ?? null }
+            : { query: loki?.query, backfill_hours: loki?.backfill_hours };
       const before: Record<string, unknown> =
         (source.m365 as Record<string, unknown> | null | undefined) ??
         (source.anthropic as Record<string, unknown> | null | undefined) ??
         (source.loki as Record<string, unknown> | null | undefined) ??
+        (source.proxmox as Record<string, unknown> | null | undefined) ??
         {};
       const changed = Object.fromEntries(
         Object.entries(changes).filter(([k, v]) => JSON.stringify(v) !== JSON.stringify(before[k])),
@@ -100,6 +104,30 @@ export function ConnectorSettingsEditor({ source, onClose }: ConnectorSettingsEd
           />
         </>
       ) : null}
+      {pve ? (
+        <>
+          <Field
+            label="Read every (minutes)"
+            type="number"
+            min={5}
+            max={1440}
+            value={pve.poll_minutes}
+            onChange={(e) => setPve({ ...pve, poll_minutes: Number(e.target.value) })}
+          />
+          <div className="flex flex-col gap-1">
+            <label htmlFor="pve-ca-edit" className="text-sm font-semibold">
+              Cluster CA (PEM), empty for the system store
+            </label>
+            <textarea
+              id="pve-ca-edit"
+              value={pve.ca_pem ?? ""}
+              onChange={(e) => setPve({ ...pve, ca_pem: e.target.value || null })}
+              spellCheck={false}
+              className="min-h-24 rounded border border-border-strong bg-inset px-2 py-1.5 font-mono text-sm text-text"
+            />
+          </div>
+        </>
+      ) : null}
       {loki ? (
         <>
           <Field
@@ -114,7 +142,9 @@ export function ConnectorSettingsEditor({ source, onClose }: ConnectorSettingsEd
       <p className="text-sm text-text-muted">
         {loki
           ? "The stored sign-in is kept. To change the Loki address or sign-in, add a new source."
-          : "The stored credential is kept. To change the tenant, app, cloud, or key type, use Replace credentials or add a new source."}
+          : pve
+            ? "The stored token is kept. Replace credentials changes the token secret; to change the host or token ID, add a new source."
+            : "The stored credential is kept. To change the tenant, app, cloud, or key type, use Replace credentials or add a new source."}
       </p>
       <FormError message={save.error instanceof ApiError ? save.error.message : null} />
       <div className="flex gap-2">

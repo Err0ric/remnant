@@ -279,6 +279,7 @@ export function InvestigatePage() {
                   label={riskTab === "user" ? "User" : riskTab === "ip" ? "Source IP" : "Host"}
                   rows={lists[riskTab]}
                   onPick={pick}
+                  start={start}
                 />
               )}
               <p className="border-t border-border px-4 py-2 text-xs text-text-muted">

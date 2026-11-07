@@ -1,6 +1,7 @@
 """Shared test setup."""
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from datetime import datetime
 from pathlib import Path
 
 import keyring
@@ -51,3 +52,22 @@ def _fast_password_hashing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         passwords, "_hasher", PasswordHasher(time_cost=1, memory_cost=8, parallelism=1)
     )
+
+
+@pytest.fixture(autouse=True)
+def _unpinned_clock() -> Iterator[None]:
+    """Every test starts and ends with the real clock."""
+    from app.core import clock
+
+    clock.pin(None)
+    yield
+    clock.pin(None)
+
+
+@pytest.fixture
+def pin_now() -> Callable[[datetime], None]:
+    """Pin the read paths' "now" (`app.core.clock`) next to a test's fixed event dates, so
+    windows such as "the last 30 days" give the same result on any day."""
+    from app.core import clock
+
+    return clock.pin

@@ -174,23 +174,29 @@ def _text(doc: dict[str, Any], key: str) -> str:
 def compile_rule(data: bytes) -> CompiledRule:
     """Parse, convert, narrow, and guard-check one rule file."""
     if len(data) > MAX_RULE_BYTES:
-        raise RuleRejectedError(f"Rule file is larger than {MAX_RULE_BYTES // 1024} KB")
+        raise RuleRejectedError(
+            f"Rule file is larger than {MAX_RULE_BYTES // 1024} KB", skipped=True
+        )
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError as exc:
-        raise RuleRejectedError("Rule file is not UTF-8 text") from exc
+        raise RuleRejectedError("Rule file is not UTF-8 text", skipped=True) from exc
     try:
         doc = safeyaml.load(text)
     except yaml.YAMLError as exc:
         mark = getattr(exc, "problem_mark", None)
         where = f" at line {mark.line + 1}, column {mark.column + 1}" if mark else ""
-        raise RuleRejectedError(f"Rule file is not valid YAML{where}") from exc
+        raise RuleRejectedError(f"Rule file is not valid YAML{where}", skipped=True) from exc
     if not isinstance(doc, dict):
-        raise RuleRejectedError("Rule file must be one YAML mapping")
+        raise RuleRejectedError("Rule file must be one YAML mapping", skipped=True)
     if "correlation" in doc or "action" in doc:
         raise RuleRejectedError("Correlation rules and rule collections are not supported yet")
     if not isinstance(doc.get("detection"), dict):
-        raise RuleRejectedError("Rule has no detection block")
+        raise RuleRejectedError("Rule has no detection block", skipped=True)
+    for key in ("id", "title"):
+        # pySigma assumes text here and raises AttributeError on a number or a list.
+        if key in doc and not isinstance(doc[key], str):
+            raise RuleRejectedError(f"Rule {key} must be text", skipped=True)
     logsource = doc.get("logsource")
     ls = LogSource.from_mapping(logsource if isinstance(logsource, dict) else None)
     if ls.is_empty():
@@ -212,6 +218,10 @@ def compile_rule(data: bytes) -> CompiledRule:
         raise RuleRejectedError(
             f"Rule cannot be converted: {str(exc).splitlines()[0][:200]}"
         ) from exc
+    except (AttributeError, TypeError, ValueError, KeyError, IndexError) as exc:
+        # pySigma raises plain errors on some malformed rules; one bad file never stops
+        # an import, it is skipped with its reason.
+        raise RuleRejectedError(f"Rule is malformed ({type(exc).__name__})", skipped=True) from exc
     condition = f"({narrowing}) AND ({detection})" if narrowing else detection
     if audit is not None:
         audit_narrowing = AUDIT_4688.format(

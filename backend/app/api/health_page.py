@@ -13,6 +13,7 @@ from starlette.concurrency import run_in_threadpool
 from app.api.access import AdminUser, CurrentUser, client_ip
 from app.api.ai import FailingOut, failing_out
 from app.auth.service import AuthService
+from app.core import clock
 from app.core.client_errors import ClientErrors
 from app.engine.views import permitted_sources
 from app.ingest.durable import quarantined_count
@@ -153,13 +154,13 @@ def _client_errors(request: Request) -> list[ClientErrorOut]:
             at=e.at.isoformat(), error_id=e.error_id, kind=e.kind, name=e.name,
             message=e.message, route=e.route, build=e.build, stale=e.stale,
         )
-        for e in store.recent(datetime.now(UTC))
+        for e in store.recent(clock.now())
     ]  # fmt: skip
 
 
 def _rollups(request: Request) -> list[RollupOut]:
     state = request.app.state
-    now = datetime.now(UTC)
+    now = clock.now()
     return [
         RollupOut(**asdict(rollup_status(name, getattr(state, name), state.rollup_runs, now)))
         for name in ("auth_rollup", "m365_rollup", "ai_rollup")

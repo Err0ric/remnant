@@ -558,6 +558,39 @@ describe("OTLP sources (ADR-0015)", () => {
     expect(JSON.parse(String(put?.[1]?.body))).toEqual({ api_key: "sk-ant-admin01-new" });
   });
 
+  it("adds a Proxmox inventory source after a permission test, never showing the secret", async () => {
+    const spy = await openSources();
+    await userEvent.click(screen.getByRole("button", { name: "Add source" }));
+    const form = screen.getByRole("form", { name: "Add source" });
+    await userEvent.type(within(form).getByLabelText("Source ID"), "pve");
+    await userEvent.selectOptions(within(form).getByLabelText("Reads from"), "proxmox");
+    expect(within(form).getByText("Verified on Proxmox 8 and 9: pending")).toBeInTheDocument();
+    await userEvent.type(within(form).getByLabelText("Proxmox host"), "pve1.example.internal");
+    await userEvent.type(within(form).getByLabelText("API token ID"), "remnant@pve!inventory");
+    await userEvent.type(
+      within(form).getByLabelText("Token secret"),
+      "0b5e7c1a-3f2d-4e8a-9c6b-1d2e3f4a5b6c",
+    );
+    await userEvent.click(within(form).getByRole("button", { name: "Test connection" }));
+    expect(await within(form).findByText("Works. Read only (PVEAuditor).")).toBeInTheDocument();
+    await userEvent.click(within(form).getByRole("button", { name: "Add source" }));
+    const row = (await screen.findByText("pve")).closest("tr") as HTMLElement;
+    const body = JSON.parse(String(posts(spy, "/api/sources").at(-1)?.[1]?.body)) as Record<
+      string,
+      unknown
+    >;
+    expect(body).toMatchObject({
+      kind: "proxmox",
+      format: "json",
+      template_id: "proxmox_inventory",
+      proxmox: { host: "pve1.example.internal", port: 8006, token_id: "remnant@pve!inventory" },
+      credentials: { token_secret: "0b5e7c1a-3f2d-4e8a-9c6b-1d2e3f4a5b6c" },
+    });
+    expect(within(row).getByText("Token user remnant@pve")).toBeInTheDocument();
+    expect(within(row).getByText("Verified on Proxmox 8 and 9: pending")).toBeInTheDocument();
+    expect(within(row).queryByText(/0b5e7c1a/)).toBeNull();
+  });
+
   it("keeps settings with defaults in a separate, labeled Optional block", async () => {
     await openSources();
     await userEvent.click(screen.getByRole("button", { name: "Add source" }));

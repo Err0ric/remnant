@@ -4,6 +4,7 @@ listed, even with no rule match; the score is the sum of parts each shown on its
 ties go to the busier entity; only the caller's sources count."""
 
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,12 @@ from app.templates.runtime import TemplateNormalizer
 
 ROOT = Path(__file__).resolve().parents[3]
 START, END = datetime(2026, 10, 1, tzinfo=UTC), datetime(2027, 1, 1, tzinfo=UTC)
+AT = datetime(2026, 10, 22, 12, 0, tzinfo=UTC)  # "now" for this file: after its event dates
+
+
+@pytest.fixture(autouse=True)
+def _now(pin_now: Callable[[datetime], None]) -> None:
+    pin_now(AT)
 
 
 def _hook(t: str, event: str, session: str, host: str, **attr: Any) -> str:
@@ -75,12 +82,13 @@ def app(tmp_path_factory: pytest.TempPathFactory) -> Any:
         ("m365_management_activity", MGMT, "m365"),
     ):  # fmt: skip
         spec = parse_template((ROOT / "templates" / "starter" / f"{template}.yaml").read_text())
-        norm = TemplateNormalizer(spec, template)
+        norm = TemplateNormalizer(spec, template, clock=lambda: AT)  # the year for RFC 3164 lines
         for x in lines:
             r = norm.normalize(DecodedLine(text=x, bytes_invalid=False, truncated=False))
             r["source_id"] = source
             rows.append(r)
     LakeWriter(app.state.engine._lake).write(rows)
+    app.state.auth.clock = lambda: AT  # the alert sits inside START..END
     app.state.alert_items.raise_item(
         "ai_watch", "Personal account", "Personal Claude account on ws-alpha",
         sources=["hooks"], devices=["ws-alpha"],

@@ -168,7 +168,13 @@ class CloudAckRequiredError(AppError):
 
 
 class RuleRejectedError(AppError):
-    """A Sigma rule cannot be compiled or is refused as unsafe (ADR-0006)."""
+    """A Sigma rule cannot be compiled or is refused as unsafe (ADR-0006). `skipped` marks
+    a file that is not a usable rule at all (malformed), as opposed to one that does not
+    compile; an import counts the two apart."""
+
+    def __init__(self, message: str = "", *, skipped: bool = False) -> None:
+        super().__init__(message)
+        self.skipped = skipped
 
 
 class SsoRequiredError(AppError):

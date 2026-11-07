@@ -65,6 +65,26 @@ describe("Command palette", () => {
     );
   });
 
+  it("names the Proxmox guest behind an address and says why it has no events (ADR-0045)", async () => {
+    const spy = await renderAt("/overview");
+    const dialog = await openWithKeys();
+    await userEvent.type(within(dialog).getByRole("combobox"), "10.20.30.40");
+    const inv = await within(dialog).findByRole("group", { name: "Proxmox inventory" });
+    expect(
+      within(inv).getByRole("option", { name: /Proxmox VM 104 build-runner on pve2/ }),
+    ).toBeInTheDocument();
+    const why = await within(dialog).findByRole("region", { name: "Why there are no events" });
+    expect(why).toHaveTextContent("No events for 10.20.30.40 in the last 30 days.");
+    expect(why).toHaveTextContent("DNS (1 source): no lookups by this address");
+    expect(why).toHaveTextContent("No firewall source");
+    // A name is not an address: no inventory or coverage request for it.
+    await userEvent.clear(within(dialog).getByRole("combobox"));
+    await userEvent.type(within(dialog).getByRole("combobox"), "claude");
+    await within(dialog).findByRole("group", { name: "AI services" });
+    const asked = spy.mock.calls.map(([u]) => String(u)).filter((u) => u.includes("/inventory/"));
+    expect(asked.every((u) => u.includes("10.20.30.40"))).toBe(true);
+  });
+
   it("names Logs and Ask AI, and still finds them by the old words (D206)", async () => {
     await renderAt("/overview");
     const dialog = await openWithKeys();

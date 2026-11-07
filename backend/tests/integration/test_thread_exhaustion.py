@@ -1,8 +1,9 @@
 """After a burst of "can't start new thread", the server recovers on its own (trial)."""
 
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -31,7 +32,10 @@ def no_new_threads() -> Iterator[None]:
         threading.Thread.start = real  # type: ignore[method-assign]
 
 
-def test_requests_work_again_after_thread_creation_recovers(data_dir: Path) -> None:
+def test_requests_work_again_after_thread_creation_recovers(
+    data_dir: Path, pin_now: Callable[[datetime], None]
+) -> None:
+    pin_now(datetime(2026, 10, 10, 13, 0, tzinfo=UTC))  # after this file's event dates
     config = load_config(Path("missing.yaml"), {"APP__PATHS__DATA_DIR": str(data_dir)})
     c = TestClient(create_app(config), base_url="http://127.0.0.1", raise_server_exceptions=False)
     with c:

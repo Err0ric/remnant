@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 
+from app.core import clock
 from app.core.errors import log_detail
 
 
@@ -39,7 +40,7 @@ class JobStatus:
             self._failing.pop(job, None)
 
     def failed(self, job: str, exc: BaseException, now: datetime | None = None) -> Failure:
-        at = now or datetime.now(UTC)
+        at = now or clock.now()
         d = log_detail(exc)
         with self._lock:
             had = self._failing.get(job)

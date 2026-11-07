@@ -31,6 +31,7 @@ from app.ai.usage import HOST_EXPR, MACHINE_EXPR, MCP_EXPR, NO_MCP_NAMES, WHO_EX
 from app.alerts.dispatch import AlertDispatcher
 from app.alerts.items import AlertItem, AlertItems
 from app.alerts.render import Alert
+from app.core import clock
 from app.core.branding import PRODUCT_NAME
 from app.core.errors import ParamInvalidError, log_detail
 from app.core.job_status import JobStatus
@@ -115,7 +116,7 @@ class AiWatch:
         dispatcher: AlertDispatcher,
         audit: AuditLog,
         link: str | None,
-        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        clock: Callable[[], datetime] = lambda: clock.now(),
         items: AlertItems | None = None,
         agent_sources: Callable[[], list[str]] = list,
         usage: Usage | None = None,

@@ -2,6 +2,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Search } from "lucide-react";
 import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { api, type LookupHit } from "@/lib/api";
+import { CoverageLines } from "@/features/investigate/EmptyAddress";
+import { guestLabel, showGuestEvents } from "@/features/investigate/InventoryLine";
 import { openEntity } from "@/lib/entity";
 import { setAskProvider, useAskProvider } from "@/lib/askProvider";
 import { openAsk } from "@/lib/askSlideOver";
@@ -66,6 +68,11 @@ function hitItem(h: LookupHit): PaletteItem {
   };
 }
 
+// An IPv4 or IPv6 address, or a MAC: what the Proxmox inventory can match (ADR-0045 A6).
+const ADDRESS = /^(?:\d{1,3}(?:\.\d{1,3}){3}|[0-9a-fA-F:]*:[0-9a-fA-F:.]+)$/;
+const MAC = /^[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){5}$/;
+const LOOKUP_DAYS_MS = 30 * 86_400_000;
+
 /** SQL for "Search events for": the text as one literal, matched in the raw line. The guard
  * still checks it, on a read-only connection. */
 function textSql(text: string): string {
@@ -106,6 +113,23 @@ export function CommandPalette({
     queryKey: ["entity-lookup", typed],
     queryFn: () => api.entityLookup(typed),
     enabled: typed.length >= 2,
+    staleTime: 30_000,
+  });
+  // The lookup's own 30 days, fixed per typed value so the cache key does not move.
+  const [since] = useState(() => new Date(Date.now() - LOOKUP_DAYS_MS).toISOString());
+  const isMac = MAC.test(typed);
+  const isIp = !isMac && ADDRESS.test(typed);
+  const inventory = useQuery({
+    queryKey: ["inventory-matches", [typed], since],
+    queryFn: () => api.inventoryMatches([typed], since),
+    enabled: isIp || isMac,
+    staleTime: 30_000,
+  });
+  const noIpHit = lookup.isSuccess && !lookup.data.hits.some((h) => h.kind === "ip");
+  const coverage = useQuery({
+    queryKey: ["address-coverage", typed, since, undefined],
+    queryFn: () => api.addressCoverage(typed, since),
+    enabled: isIp && noIpHit,
     staleTime: 30_000,
   });
   const searches = useQuery({ queryKey: ["searches"], queryFn: api.searches, staleTime: 30_000 });
@@ -228,6 +252,16 @@ export function CommandPalette({
     const text = query.trim();
     if (text.length >= 2) {
       for (const h of lookup.data?.hits ?? []) out.push(hitItem(h));
+      for (const m of inventory.data?.matches[typed] ?? []) {
+        out.push({
+          key: `inventory:${m.source_id}:${m.vmid}`,
+          section: "Proxmox inventory",
+          label: guestLabel(m),
+          hint: m.current ? "Show events" : "Held it earlier; Show events",
+          found: true,
+          run: () => showGuestEvents(m),
+        });
+      }
       out.push({
         key: "act:search-text",
         section: "Logs",
@@ -256,6 +290,8 @@ export function CommandPalette({
   }, [
     query,
     lookup.data,
+    inventory.data,
+    typed,
     isAdmin,
     canAudit,
     canAsk,
@@ -338,6 +374,11 @@ export function CommandPalette({
             Esc
           </kbd>
         </div>
+        {coverage.data && typed === query.trim() ? (
+          <div className="border-b border-border p-2">
+            <CoverageLines data={coverage.data} rangeWords="the last 30 days" />
+          </div>
+        ) : null}
         <div id="palette-list" role="listbox" className="max-h-[60vh] overflow-y-auto py-1">
           {groups.length === 0 ? (
             <p className="px-3 py-6 text-center text-sm text-text-muted">Nothing matches</p>

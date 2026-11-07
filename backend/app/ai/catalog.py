@@ -14,7 +14,6 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from functools import cache
 from pathlib import Path
 from typing import Any, Literal
@@ -22,6 +21,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.core import clock
 from app.core.errors import NotFoundError, ParamInvalidError
 from app.meta.db import MetaDB
 
@@ -313,4 +313,4 @@ class Catalog:
 
 
 def _now() -> str:
-    return datetime.now(UTC).isoformat()
+    return clock.now().isoformat()

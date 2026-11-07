@@ -21,6 +21,7 @@ from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.ai import consents
+from app.core import clock
 from app.core.errors import RuleRejectedError
 from app.detect.rules import compile_rule
 from app.engine.duckdb import QueryEngine, QueryScope
@@ -236,7 +237,7 @@ def fact_run(run: _Run, sources: list[str], rollup: Any) -> tuple[_Run, bool]:
     part = rollup.today(scope) if rollup is not None else None
     keys = covered + (part[0] if part else [])
     lo = run.scope.start or datetime(1970, 1, 1, tzinfo=UTC)
-    hi = run.scope.end or datetime.now(UTC)
+    hi = run.scope.end or clock.now()
     params = {**run.params, "covered": keys, "fact_lo": lo, "fact_hi": hi}
     after = (part[1], part[2]) if part else None
     return _Run(run.engine, run.scope, params, covered, after), bool(keys)
@@ -407,11 +408,16 @@ def _outside(
 
 
 FAILED_SIGNIN = f"template_id = 'm365_signin' AND {FAILED}"
+
+
 # Failures from addresses outside Internal networks, as the Attacks counts read them.
-EXTERNAL_FAILURE = (
+# Failed sign-ins with an address, outside Microsoft 365; from outside when the address is
+# not internal (People and devices tests that once per address, not per row).
+FAILURE_WITH_ADDRESS = (
     "class_uid = 3002 AND status_id = 2 AND template_id NOT LIKE 'm365_%'\n"
-    "  AND nullif(src_endpoint_ip, '') IS NOT NULL AND NOT is_internal(src_endpoint_ip)"
+    "  AND nullif(src_endpoint_ip, '') IS NOT NULL"
 )
+EXTERNAL_FAILURE = FAILURE_WITH_ADDRESS + " AND NOT is_internal(src_endpoint_ip)"
 
 
 def outside_where(templates: list[str], approved: tuple[str, ...]) -> str:

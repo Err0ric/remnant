@@ -3,7 +3,6 @@
 import contextlib
 from collections.abc import AsyncIterator
 from dataclasses import asdict
-from datetime import UTC, datetime
 from typing import Any, Literal
 
 from fastapi import APIRouter, Request, Response, status
@@ -13,6 +12,7 @@ from starlette.concurrency import run_in_threadpool
 from app.api.access import AdminUser, CurrentUser, client_ip
 from app.api.cancel import watch_disconnect
 from app.auth.service import AuthService
+from app.core import clock
 from app.llm.parser_draft import ParserDrafter
 from app.meta.audit import Outcome
 from app.templates.changes import record as record_template_versions
@@ -91,7 +91,7 @@ async def template_changes(request: Request, _: AdminUser) -> list[TemplateChang
     reg = _registry(request)
     meta = request.app.state.meta
     templates = reg.all()
-    await run_in_threadpool(record_template_versions, meta, templates, datetime.now(UTC))
+    await run_in_threadpool(record_template_versions, meta, templates, clock.now())
     found = await run_in_threadpool(template_report, meta, templates)
     return [
         TemplateChangeOut(

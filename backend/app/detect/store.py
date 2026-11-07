@@ -11,6 +11,9 @@ changed, the rule moves to the new version. Every import, enable, and disable is
 Limits, because a rule folder is input from the internet: 10,000 files, 200 MB, 16 folder
 levels, 10 minutes; hidden folders (`.git`) are skipped; each file is opened with the same
 checks as log files (regular file, still inside the roots when opened).
+
+The SigmaHQ core package (D211) goes through the same path from a zip read in memory:
+the pinned release fetched on an admin's click, or the zip uploaded (`detect/sigmahq.py`).
 """
 
 import json
@@ -18,13 +21,14 @@ import os
 import sqlite3
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 
+from app.core import clock
 from app.core.errors import ConflictError, NotFoundError, RuleRejectedError, SourceRejectedError
 from app.core.ids import new_id
+from app.detect import sigmahq
 from app.detect.rules import MAX_RULE_BYTES, CompiledRule, compile_rule
 from app.ingest.sources import display_name, open_regular, resolve_source_path
 from app.meta.audit import AuditLog
@@ -42,6 +46,7 @@ _SUFFIXES = (".yml", ".yaml")
 class Refusal:
     path: str
     reason: str
+    skipped: bool = False  # not a usable rule file (unsafe name, too large, malformed)
 
 
 @dataclass(slots=True)
@@ -55,6 +60,14 @@ class ImportReport:
     unchanged: int = 0
     refusals: list[Refusal] = field(default_factory=list)
     truncated: bool = False  # a limit stopped the walk early
+
+    @property
+    def skipped(self) -> int:
+        return sum(1 for r in self.refusals if r.skipped)
+
+    @property
+    def not_compiling(self) -> int:
+        return sum(1 for r in self.refusals if not r.skipped)
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,37 +117,83 @@ class RuleStore:
             self._audit.write("rule.import", "denied", actor_id, ip, {"path": path[:500]})
             raise
         report = ImportReport(import_id=new_id(), path=str(root))
-        compiled: list[tuple[str, CompiledRule, str]] = []  # (shown path, rule, yaml text)
-        seen_ids: dict[str, str] = {}
-        total = 0
         deadline = time.monotonic() + MAX_SECONDS
+        self._compile_and_save(report, self._read_files(root, report, deadline), actor_id)
+        self._audit_import(report, actor_id, ip, {})
+        return report
+
+    def import_archive(
+        self, data: bytes, label: str, details: dict[str, object], actor_id: str, ip: str | None
+    ) -> ImportReport:
+        """Import the rule files of a zip held in memory (the SigmaHQ core package, D211).
+        `details` (the release tag or the upload's SHA-256) goes into the audit row."""
+        if not self._importing.acquire(blocking=False):
+            raise ConflictError("Another rule import is running; try again when it finishes")
+        try:
+            report = ImportReport(import_id=new_id(), path=label[:500])
+            walk = sigmahq.Walk()
+            items = (
+                (m.name, m.data if m.data is not None else Refusal(m.name, m.reason, True))
+                for m in sigmahq.members(data, walk)
+            )
+            self._compile_and_save(report, items, actor_id)
+            report.truncated = report.truncated or walk.truncated
+            self._audit_import(report, actor_id, ip, details)
+            return report
+        finally:
+            self._importing.release()
+
+    def _read_files(
+        self, root: Path, report: ImportReport, deadline: float
+    ) -> Iterator[tuple[str, bytes | Refusal]]:
+        total = 0
         for listed in self._files(root, report, deadline):
             shown = _shown(listed, root)
-            report.files += 1
             try:
                 with open_regular(listed, self._roots) as fh:
                     data = fh.read(MAX_RULE_BYTES + 1)
             except OSError:
-                report.refusals.append(Refusal(shown, "File could not be opened"))
+                yield shown, Refusal(shown, "File could not be opened")
                 continue
             total += len(data)
             if total > MAX_TOTAL_BYTES:
                 report.truncated = True
-                break
+                return
+            yield shown, data
+
+    def _compile_and_save(
+        self,
+        report: ImportReport,
+        items: Iterable[tuple[str, bytes | Refusal]],
+        actor_id: str,
+    ) -> None:
+        compiled: list[tuple[str, CompiledRule, str]] = []  # (shown path, rule, yaml text)
+        seen_ids: dict[str, str] = {}
+        for shown, data in items:
+            report.files += 1
+            if isinstance(data, Refusal):
+                report.refusals.append(data)
+                continue
             try:
                 rule = compile_rule(data)
             except RuleRejectedError as exc:
-                report.refusals.append(Refusal(shown, str(exc)[:300]))
+                report.refusals.append(Refusal(shown, str(exc)[:300], exc.skipped))
                 continue
             if rule.rule_id in seen_ids:
                 report.refusals.append(
-                    Refusal(shown, f"Same rule id as {seen_ids[rule.rule_id]}; first one kept")
+                    Refusal(
+                        shown, f"Same rule id as {seen_ids[rule.rule_id]}; first one kept", True
+                    )
                 )
                 continue
             seen_ids[rule.rule_id] = shown
             compiled.append((shown, rule, data.decode("utf-8")))
         report.accepted = len(compiled)
         self._save(report, compiled, actor_id)
+
+    def _audit_import(
+        self, report: ImportReport, actor_id: str, ip: str | None, details: dict[str, object]
+    ) -> None:
         self._audit.write(
             "rule.import",
             "success",
@@ -143,15 +202,17 @@ class RuleStore:
             {
                 "import_id": report.import_id,
                 "path": report.path,
+                **details,
                 "files": report.files,
                 "accepted": report.accepted,
                 "refused": len(report.refusals),
+                "skipped": report.skipped,
+                "not_compiling": report.not_compiling,
                 "new": report.new_rules,
                 "updated": report.updated,
                 "truncated": report.truncated,
             },
         )
-        return report
 
     def _files(self, root: Path, report: ImportReport, deadline: float) -> Iterator[Path]:
         if root.is_file():
@@ -173,7 +234,7 @@ class RuleStore:
     def _save(
         self, report: ImportReport, compiled: list[tuple[str, CompiledRule, str]], actor_id: str
     ) -> None:
-        now = datetime.now(UTC).isoformat()
+        now = clock.now().isoformat()
         with self._meta.connect() as con:
             con.execute(
                 "INSERT INTO rule_imports (import_id, path, imported_by, imported_at, files,"

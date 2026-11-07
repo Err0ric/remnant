@@ -10,7 +10,7 @@ Scope comes from the caller's grants exactly as in /api/query. Auditors have no 
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -22,6 +22,7 @@ from app.api.cancel import watch_disconnect
 from app.api.query import QueryRequest, QueryResponse, _geo, _intel, _run_audited
 from app.auth.service import AuthService
 from app.auth.users import User
+from app.core import clock
 from app.core.config import AppConfig
 from app.core.errors import AppError, ParamInvalidError, ProviderConfigError, RateLimitedError
 from app.engine.duckdb import QueryScope
@@ -192,7 +193,7 @@ async def ask(body: AskRequest, request: Request, user: AskUser) -> AskResponse:
         "sources_requested": body.sources,
         "examples": [s.id for s in found],
     }
-    now = datetime.now(UTC)
+    now = clock.now()
     routed: Routed | None = None
     try:
         async with watch_disconnect(request):
@@ -384,8 +385,8 @@ async def run_answer(ask_id: str, request: Request, user: AskUser) -> AskRunResp
     written by code from the rows."""
     runs: AskRuns = request.app.state.ask_runs
     config: AppConfig = request.app.state.config
-    run = runs.get(ask_id, user.user_id, datetime.now(UTC))
-    end = run.end or datetime.now(UTC)
+    run = runs.get(ask_id, user.user_id, clock.now())
+    end = run.end or clock.now()
     start = run.start
     if start is None or end - start > timedelta(days=ASK_MAX_DAYS):
         start = end - timedelta(days=ASK_MAX_DAYS)
@@ -449,7 +450,7 @@ async def answer(ask_id: str, request: Request, user: AskUser) -> AnswerOut:
     runs: AskRuns = request.app.state.ask_runs
     config: AppConfig = request.app.state.config
     auth: AuthService = request.app.state.auth
-    run, ran = runs.result(ask_id, user.user_id, datetime.now(UTC))
+    run, ran = runs.result(ask_id, user.user_id, clock.now())
     if not config.ask.summarize:
         raise ProviderConfigError("Summaries are turned off on this server (ask.summarize)")
     if ran.sample is None or not run.provider_id:
@@ -537,7 +538,7 @@ async def drill(ask_id: str, body: DrillRequest, request: Request, user: AskUser
     by code, never by a model. Nothing runs here: Search runs it through the guard on the
     caller's view and audits it like any query."""
     runs: AskRuns = request.app.state.ask_runs
-    run, ran = runs.result(ask_id, user.user_id, datetime.now(UTC))
+    run, ran = runs.result(ask_id, user.user_id, clock.now())
     if run.drill is None:
         raise ParamInvalidError("This answer's rows have no events to show")
     for v in body.values.values():

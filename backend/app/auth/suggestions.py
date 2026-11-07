@@ -26,6 +26,7 @@ CATEGORY_NAMES = {
     "system": "System",
     "application": "Application",
     "findings": "Findings",
+    "inventory": "Inventory",
 }
 VENDOR_NAMES = {
     "paloalto": "Palo Alto Networks",
@@ -36,6 +37,7 @@ VENDOR_NAMES = {
     "ubiquiti": "Ubiquiti",
     "isc": "ISC BIND",
     "nlnetlabs": "Unbound",
+    "proxmox": "Proxmox",
 }
 
 

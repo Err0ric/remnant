@@ -18,6 +18,7 @@ from starlette.concurrency import run_in_threadpool
 from app.api.access import AdminUser, CurrentUser, client_ip
 from app.auth.service import AuthService
 from app.auth.users import User
+from app.core import clock
 from app.core.errors import AppError, NotFoundError
 from app.engine.duckdb import QueryEngine
 from app.engine.views import permitted_sources, scope_sources
@@ -85,7 +86,7 @@ async def live(
     reg = _reg(request)
     allowed = await run_in_threadpool(permitted_sources, meta, user)
     scope = scope_sources(allowed, sources)
-    now = datetime.now(UTC)
+    now = clock.now()
     stream = reg.open(user.user_id, client, now)
     resumed = since is not None
     start = now - timedelta(minutes=fill_minutes)
@@ -157,9 +158,7 @@ async def live(
                 first = False
                 if time.monotonic() - last_lag >= lv.LAG_EVERY_S:
                     last_lag = time.monotonic()
-                    sources_lag = await run_in_threadpool(
-                        lv.lag, engine, scope, kinds, datetime.now(UTC)
-                    )
+                    sources_lag = await run_in_threadpool(lv.lag, engine, scope, kinds, clock.now())
                     yield _sse("lag", {"sources": sources_lag})
                 await asyncio.sleep(reg.poll_s)
         finally:

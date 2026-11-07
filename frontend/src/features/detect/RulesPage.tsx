@@ -11,6 +11,7 @@ import { RecentRuns } from "./RecentRuns";
 import { RecommendedRules } from "./RecommendedRules";
 import { RuleImportPanel } from "./RuleImportPanel";
 import { RuleYaml } from "./RuleYaml";
+import { SigmaHqImportPanel } from "./SigmaHqImportPanel";
 import { RulesTable } from "./RulesTable";
 import { RunPanel } from "./RunPanel";
 import { filterRules } from "./rules";
@@ -28,6 +29,7 @@ interface RulesPageProps {
 export function RulesPage({ isAdmin, canRun }: RulesPageProps) {
   const client = useQueryClient();
   const [importing, setImporting] = useState(false);
+  const [importingCore, setImportingCore] = useState(false);
   const [text, setText] = useState("");
   const [enabledOnly, setEnabledOnly] = useState(false);
   const [withDataOnly, setWithDataOnly] = useState(false);
@@ -95,6 +97,11 @@ export function RulesPage({ isAdmin, canRun }: RulesPageProps) {
                 disabled={importing}
               />
               <Command
+                label="Import SigmaHQ core rules"
+                onClick={() => setImportingCore(true)}
+                disabled={importingCore}
+              />
+              <Command
                 label={`Enable selected (${selected.size})`}
                 onClick={() => setEnabled.mutate(true)}
                 disabled={!selected.size || setEnabled.isPending}
@@ -118,6 +125,7 @@ export function RulesPage({ isAdmin, canRun }: RulesPageProps) {
       <div className="flex flex-col gap-3 px-5 py-3">
         <BuiltInRefusals isAdmin={isAdmin} />
         {importing ? <RuleImportPanel onClose={() => setImporting(false)} /> : null}
+        {importingCore ? <SigmaHqImportPanel onClose={() => setImportingCore(false)} /> : null}
         {bulk ? (
           <BulkSchedule
             rules={all.filter((r) => selected.has(r.rule_id))}

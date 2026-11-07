@@ -1,4 +1,6 @@
-import type { EntityRisk } from "@/lib/api";
+import { useQuery } from "@tanstack/react-query";
+import { api, type EntityRisk } from "@/lib/api";
+import { InventoryMatches } from "./InventoryLine";
 
 type Kind = "user" | "ip" | "host";
 
@@ -7,6 +9,8 @@ interface RiskTableProps {
   kind: Kind;
   rows: EntityRisk[];
   onPick: (row: EntityRisk) => void;
+  /** The range's start, for the Proxmox inventory lines on address and host rows. */
+  start?: string;
 }
 
 const LEVELS = [
@@ -76,7 +80,15 @@ function Cell({ r, col }: { r: EntityRisk; col: Column }) {
 
 /** People and devices, ranked by a score whose parts each have a column and show on
  * hover (ADR-0016 row 4, D195), then by events. A row opens the person or host page. */
-export function RiskTable({ label, kind, rows, onPick }: RiskTableProps) {
+export function RiskTable({ label, kind, rows, onPick, start }: RiskTableProps) {
+  // Which Proxmox guest each address or host is (ADR-0045 A5): exact matches only.
+  const values = kind === "user" ? [] : rows.slice(0, 50).map((r) => r.value);
+  const inventory = useQuery({
+    queryKey: ["inventory-matches", values, start],
+    queryFn: () => api.inventoryMatches(values, start),
+    enabled: values.length > 0,
+    staleTime: 60_000,
+  });
   const top = Math.max(1, ...rows.map((r) => r.score));
   const cols = COLUMNS[kind];
   const NUM = "px-3 py-2 text-right font-mono tabular-nums align-top";
@@ -114,6 +126,7 @@ export function RiskTable({ label, kind, rows, onPick }: RiskTableProps) {
                 >
                   {r.value}
                 </button>
+                <InventoryMatches matches={inventory.data?.matches[r.value] ?? []} compact />
                 {r.names && r.names.length > 1 ? (
                   <div className="text-xs text-text-muted">
                     Logged as <span className="font-mono">{r.names.join(", ")}</span>

@@ -3,7 +3,8 @@ the hooks plugin counts as Claude Code use everywhere (Agents, the header count,
 usage); a session with no record for the idle time reads "Ended (no end event)"; and each
 Claude user says whether the plugin, the network, or both saw them."""
 
-from datetime import timedelta
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.ai.usage import PersonUse, seen_through
@@ -28,7 +29,11 @@ def _erin(lab: dict[str, Any], *rows: dict[str, Any]) -> None:  # noqa: F811
     LakeWriter(lab["app"].state.engine._lake).write(list(rows))
 
 
-def test_a_hooks_only_person_counts_everywhere(lab: dict[str, Any]) -> None:  # noqa: F811
+def test_a_hooks_only_person_counts_everywhere(
+    lab: dict[str, Any],  # noqa: F811
+    pin_now: Callable[[datetime], None],
+) -> None:
+    pin_now(datetime(2026, 10, 10, 13, 0, tzinfo=UTC))  # after this file's event dates
     # The owner's case: one manual SessionStart and nothing else.
     _erin(lab, _hook("claude_hooks.session_start", "h-1", 40))
     a = lab["admin"]

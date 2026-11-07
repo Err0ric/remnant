@@ -3,6 +3,7 @@ import { useState, type FormEvent } from "react";
 import { FormError } from "@/features/auth/FormError";
 import { ApiCredentialsFields } from "./ApiCredentialsFields";
 import { ConnectorSettingsButton } from "./ConnectorSettingsEditor";
+import { PROXMOX_VERIFIED } from "./ProxmoxFields";
 import { ApiError, api, type ApiCredentials, type Source } from "@/lib/api";
 
 function lag(seconds: number): string {
@@ -16,11 +17,15 @@ interface ApiSummaryProps {
   canManage: boolean;
 }
 
-/** What a Microsoft 365 or Anthropic source reads, how far behind it is, and a way to
- * replace its credentials (a renewed certificate or a new key). */
+const LABEL = { m365: "Microsoft 365", anthropic: "Anthropic", proxmox: "Proxmox" } as const;
+
+/** What a Microsoft 365, Anthropic, or Proxmox source reads, how far behind it is, and a
+ * way to replace its credentials (a renewed certificate, a new key, or a new token). */
 export function ApiSummary({ source, canManage }: ApiSummaryProps) {
   const client = useQueryClient();
-  const kind = source.kind === "m365" ? "m365" : "anthropic";
+  const kind =
+    source.kind === "m365" ? "m365" : source.kind === "proxmox" ? "proxmox" : "anthropic";
+  const pve = source.proxmox;
   const [open, setOpen] = useState(false);
   const [creds, setCreds] = useState<ApiCredentials>({});
   const replace = useMutation({
@@ -45,10 +50,20 @@ export function ApiSummary({ source, canManage }: ApiSummaryProps) {
     <div className="flex flex-col gap-1">
       <div className="flex flex-wrap items-center gap-2">
         <span className="rounded-badge bg-sev-info-bg px-2 py-px font-sans text-xs text-text-secondary">
-          {kind === "m365" ? "Microsoft 365" : "Anthropic"}
+          {LABEL[kind]}
         </span>
         {source.m365 ? <span className="break-all">{source.m365.tenant_id}</span> : null}
+        {pve ? <span className="break-all">{`${pve.host}:${pve.port}`}</span> : null}
       </div>
+      {pve ? (
+        <div className="break-all text-sm text-text-secondary">
+          Token user {pve.token_id.split("!")[0]}
+          {pve.ca_pem ? " · pinned CA" : null}
+        </div>
+      ) : null}
+      {kind === "proxmox" ? (
+        <div className="font-sans text-sm text-text-muted">{PROXMOX_VERIFIED}</div>
+      ) : null}
       {feeds.length ? (
         <div className="break-words text-sm text-text-secondary">{feeds.join(", ")}</div>
       ) : null}
