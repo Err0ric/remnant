@@ -805,6 +805,10 @@ export interface InventoryMatch {
   current: boolean;
   /** Show events: this guest's inventory events. */
   search_sql: string;
+  /** How it matched: an IP or MAC, or the host name ("matched by name"). */
+  matched_by: "ip" | "mac" | "name";
+  /** One of several guests that share the name: a possible match, not a pick (D215). */
+  possible: boolean;
 }
 
 /** Why an address has no events (ADR-0045 Part B), from facts the server holds. */

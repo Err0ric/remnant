@@ -35,6 +35,8 @@ class MatchOut(BaseModel):
     last_seen: str
     current: bool
     search_sql: str
+    matched_by: str  # ip | mac | name
+    possible: bool  # one of several guests sharing the name (D215)
 
 
 class MatchesOut(BaseModel):

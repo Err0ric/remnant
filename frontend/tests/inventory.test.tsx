@@ -14,6 +14,8 @@ const VM: InventoryMatch = {
   last_seen: "2026-11-06T12:00:00+00:00",
   current: true,
   search_sql: "SELECT 1",
+  matched_by: "ip",
+  possible: false,
 };
 
 function coverage(over: Partial<AddressCoverage> = {}): AddressCoverage {
@@ -106,5 +108,28 @@ describe("Empty results say why (ADR-0045 Part B)", () => {
     expect(addressIn("traffic from 2001:db8::5 to the dns servers")).toBe("2001:db8::5");
     expect(addressIn("failed sign-ins at 12:30 today")).toBeNull();
     expect(addressIn("version 1.2.3.4.5")).toBeNull();
+  });
+});
+
+describe("host-name matches (D215)", () => {
+  it("labels a match one guest's name made", () => {
+    render(<InventoryMatches matches={[{ ...VM, matched_by: "name" }]} />);
+    expect(screen.getByText("matched by name")).toBeInTheDocument();
+    expect(screen.queryByText(/Possible matches/)).toBeNull();
+  });
+
+  it("lists guests that share a name as possible matches, picking none", () => {
+    const other = { ...VM, vmid: 105, node: "pve1", matched_by: "name" as const, possible: true };
+    render(<InventoryMatches matches={[{ ...VM, matched_by: "name", possible: true }, other]} />);
+    expect(
+      screen.getByText("Possible matches: 2 guests are named build-runner"),
+    ).toBeInTheDocument();
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
+    expect(screen.queryByText("matched by name")).toBeNull();
+  });
+
+  it("shows no name note for an IP match", () => {
+    render(<InventoryMatches matches={[VM]} compact />);
+    expect(screen.getByText(guestLabel(VM))).toBeInTheDocument();
   });
 });

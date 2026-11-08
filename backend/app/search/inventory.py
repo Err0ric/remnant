@@ -16,7 +16,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
@@ -28,6 +28,20 @@ LOOKBACK = timedelta(days=1, hours=1)
 MAX_ROWS = 20_000
 _MAC = re.compile(r"^[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){5}$")
 Kind = Literal["ip", "mac", "name"]
+
+# Names that installers and templates give by default: a host page never matches a guest by
+# one of these alone (D215). Checked after a trailing number or separator is dropped, so
+# "Debian-12", "ubuntu2" and "pve1" count too.
+DEFAULT_NAMES = frozenset(
+    {
+        "localhost", "localdomain", "debian", "ubuntu", "ubuntu-server", "alpine", "centos",
+        "rocky", "almalinux", "fedora", "arch", "archlinux", "rhel", "opensuse", "suse",
+        "kali", "pve", "proxmox", "vm", "ct", "lxc", "container", "host", "server", "node",
+        "test", "template", "tmpl", "default", "new", "docker", "k3s", "worker", "linux",
+        "windows", "win", "desktop", "router", "nas",
+    }
+)  # fmt: skip
+_TRAILING = re.compile(r"[-_.]?\d+$")
 
 ROWS_SQL = f"""SELECT source_id, coalesce(time, time_observed) AS t, raw
 FROM events
@@ -46,6 +60,8 @@ class Match:
     last_seen: str
     current: bool  # the guest's latest event still shows the value
     search_sql: str  # Show events
+    matched_by: Kind = "ip"  # ip | mac | name: the UI labels a name match "matched by name"
+    possible: bool = False  # a name several guests share: listed as possible matches (D215)
 
 
 def classify(value: str) -> tuple[Kind, str]:
@@ -58,6 +74,12 @@ def classify(value: str) -> tuple[Kind, str]:
     if _MAC.fullmatch(text):
         return "mac", text.lower().replace("-", ":")
     return "name", text.lower()
+
+
+def is_default_name(name: str) -> bool:
+    """A name too common to identify a guest by itself (D215)."""
+    text = name.strip().lower().split(".", 1)[0]
+    return text in DEFAULT_NAMES or _TRAILING.sub("", text) in DEFAULT_NAMES
 
 
 def _holds(rec: dict[str, Any], kind: Kind, value: str) -> bool:
@@ -106,6 +128,8 @@ def match_rows(
     last seen. A guest whose hold ended (a later event without the value) before `start`
     is left out: the lookback rows only carry a hold into the range."""
     kind, clean = classify(value)
+    if kind == "name" and (not clean or is_default_name(clean)):
+        return []
     seen: dict[tuple[str, int], dict[str, Any]] = {}
     latest: dict[tuple[str, int], dict[str, Any]] = {}
     for src, t, rec in rows:
@@ -129,9 +153,13 @@ def match_rows(
             last_seen=_iso(g["last"]),
             current=_holds(latest[(src, vmid)], kind, clean),
             search_sql=events_sql(src, vmid),
+            matched_by=kind,
         )
         for (src, vmid), g in seen.items()
         if not (start and "ended" in g and g["ended"] <= start)
     ]
+    if kind == "name" and len(out) > 1:
+        # By name only when exactly one guest has it; several are possible matches, none picked.
+        out = [replace(m, possible=True) for m in out]
     out.sort(key=lambda m: m.last_seen, reverse=True)
     return sorted(out, key=lambda m: not m.current)

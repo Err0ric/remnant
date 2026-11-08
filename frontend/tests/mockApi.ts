@@ -2065,6 +2065,8 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
                     last_seen: "2026-10-12T11:00:00+00:00",
                     current: true,
                     search_sql: "SELECT time, source_id, raw FROM events",
+                    matched_by: "ip",
+                    possible: false,
                   },
                 ]
               : [],

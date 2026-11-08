@@ -22,22 +22,49 @@ interface InventoryMatchesProps {
   compact?: boolean;
 }
 
+/** "matched by name" or "possible match": a name match is never presented as an IP or MAC
+ * one (D215). Empty for an IP or MAC match. */
+export function matchNote(m: InventoryMatch): string {
+  if (m.matched_by !== "name") return "";
+  return m.possible ? "possible match" : "matched by name";
+}
+
 /** The guests that held an address, each with first and last seen and Show events. */
 export function InventoryMatches({ matches, compact }: InventoryMatchesProps) {
   if (!matches.length) return null;
+  const possible = matches.some((m) => m.possible);
   if (compact)
     return (
       <div className="flex flex-col text-xs text-text-muted">
         {matches.map((m) => (
-          <span key={`${m.source_id}:${m.vmid}`}>{guestLabel(m)}</span>
+          <span key={`${m.source_id}:${m.vmid}`}>
+            {guestLabel(m)}
+            {matchNote(m) ? ` (${matchNote(m)})` : ""}
+          </span>
         ))}
       </div>
     );
+  return (
+    <div className="flex flex-col gap-1">
+      {possible && (
+        <p className="text-sm text-text-muted">
+          Possible matches: {matches.length} guests are named {matches[0]?.name}
+        </p>
+      )}
+      <InventoryList matches={matches} />
+    </div>
+  );
+}
+
+function InventoryList({ matches }: { matches: InventoryMatch[] }) {
   return (
     <ul aria-label="Proxmox inventory" className="flex flex-col gap-1 text-sm">
       {matches.map((m) => (
         <li key={`${m.source_id}:${m.vmid}`} className="flex flex-wrap items-baseline gap-x-2">
           <span className="font-semibold text-text">{guestLabel(m)}</span>
+          {matchNote(m) && !m.possible && (
+            <span className="text-xs text-text-muted">{matchNote(m)}</span>
+          )}
           <span className="text-text-muted">
             first seen <When iso={m.first_seen} />, last seen <When iso={m.last_seen} />
             {m.current ? "" : " (no longer holds it)"}

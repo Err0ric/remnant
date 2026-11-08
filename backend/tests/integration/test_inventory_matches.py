@@ -70,6 +70,29 @@ def test_exact_ip_mac_and_name_matches_with_first_and_last_seen(lab: dict[str, A
     assert shown.status_code == 200 and len(shown.json()["rows"]) == 1
 
 
+def test_a_name_one_guest_has_matches_by_name(lab: dict[str, Any]) -> None:
+    (vm,) = matches(lab["admin"], "build-runner")["build-runner"]
+    assert (vm["vmid"], vm["matched_by"], vm["possible"]) == (104, "name", False)
+    (by_ip,) = matches(lab["admin"], "10.20.30.41")["10.20.30.41"]
+    assert (by_ip["matched_by"], by_ip["possible"]) == ("ip", False)
+
+
+def test_a_name_several_guests_share_lists_them_as_possible(lab: dict[str, Any]) -> None:
+    lab["fake"].guests[105]["res"]["name"] = "build-runner"  # a second guest takes the name
+    poll(lab)
+    got = matches(lab["admin"], "build-runner")["build-runner"]
+    assert sorted(m["vmid"] for m in got) == [104, 105]  # both listed, none picked
+    assert all(m["possible"] and m["matched_by"] == "name" for m in got)
+
+
+def test_default_names_never_match_by_name_alone(lab: dict[str, Any]) -> None:
+    lab["fake"].guests[105]["res"]["name"] = "ubuntu"
+    lab["fake"].guests[201]["res"]["name"] = "debian-12"
+    poll(lab)
+    got = matches(lab["admin"], "ubuntu", "Debian-12", "localhost", "pve1")
+    assert all(v == [] for v in got.values())
+
+
 def test_an_address_two_guests_held_shows_both(lab: dict[str, Any]) -> None:
     guests = lab["fake"].guests
     guests[201]["report"][1]["inet"] = "192.168.10.77/24"  # the container lets .5 go
