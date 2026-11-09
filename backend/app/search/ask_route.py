@@ -241,6 +241,47 @@ def rank(question: str, library: Library, seen: set[str], top: int = CANDIDATES)
     return out[:top]
 
 
+# Questions shaped like general guidance ("how do I", "what is", "why"): the model decides
+# data or know-how for these, as before (owner, 2026-11-08). "How many" is not one.
+GUIDANCE = re.compile(
+    r"^\s*(?:how\s+(?:do|does|did|should|can|could|would|to)\b|what\s+(?:is|are|does|do)\b"
+    r"|why\b|explain\b|describe\b)",
+    re.I,
+)
+
+
+def _core(text: str, entities: list[Entity]) -> set[str]:
+    """The words a question asks about, without the people, addresses, and machines it
+    names (those become filters) or bare numbers (times are read separately)."""
+    for e in entities:
+        text = text.replace(e.value, " ")
+    return {w for w in words(text) if not w.isdigit()}
+
+
+def confident(
+    question: str, candidates: list[Candidate], entities: list[Entity]
+) -> Candidate | None:
+    """The one library query that answers the question with no model call, or None.
+
+    Confident means: one of the query's reviewed example questions has exactly the same
+    words as the question once synonyms, stop words, time words, and named entities are
+    set aside, and no other candidate has such an example. On the eval suites
+    (evals/nl_queries) a word set equal to an example never picked a wrong query, while the
+    closest wrong pick shared 0.8 of its words ("which internal addresses had failed SSH
+    logins" adds a filter the query does not apply), so anything short of all of them is
+    left to the router. A query with its own parameters is left to the router too, which
+    fills them from the question, and so is a question shaped like general guidance."""
+    if GUIDANCE.match(question):
+        return None
+    want = _core(question, entities)
+    if not want:
+        return None
+    exact = [c for c in candidates if any(_core(a, []) == want for a in c.query.ask)]
+    if len(exact) != 1 or exact[0].query.params:
+        return None
+    return exact[0]
+
+
 # --- the SQL that runs -------------------------------------------------------------------
 
 # Output column names a library query uses for each kind of entity (as the UI links them).

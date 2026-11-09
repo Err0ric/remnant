@@ -176,10 +176,10 @@ describe("Landing page (ADR-0031)", () => {
     expect(window.location.pathname).toBe("/dashboard");
     const banner = await screen.findByRole("region", { name: "Needs you" });
     expect(await within(banner).findByRole("link", { name: /has errors/ })).toBeVisible();
-    // win_dc's quiet watch is firing: the line counts it instead of "1 gap in 24 hours"
-    // (review item 3: the footer agrees with the gap alerts).
+    // win_dc has errors and linux_sshd had a gap: neither is healthy, as Health counts
+    // them (handoff item 4: one summary from the server for both pages).
     const sources = screen.getByRole("link", {
-      name: /^Sources: 1 of 2 flowing, 1 gap: win_dc never sent\. Open Health$/,
+      name: /^Sources: 0 of 2 healthy, 1 gap in 24 hours, longest wait 4 min \(linux_sshd\)\. Open Health$/,
     });
     await userEvent.click(sources);
     expect(await screen.findByRole("heading", { name: "Health", level: 1 })).toBeVisible();

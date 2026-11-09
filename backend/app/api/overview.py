@@ -10,6 +10,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.api.access import CurrentUser, client_ip
 from app.search.overview import OverviewService
+from app.search.source_state import Condition, SourceInput, assess
 
 router = APIRouter(tags=["overview"])
 
@@ -45,6 +46,26 @@ class SourceHealthOut(BaseModel):
     # Health count the same gaps the Alerts page lists. Not set once the source has sent
     # again after the alert last fired, even when no watch is left to mark it resolved.
     gap_alert: str | None = None
+    # server_events has events only when someone uses or probes the server: quiet is fine.
+    quiet_expected: bool = False
+    # One state for Health and the Dashboard footer (handoff item 4, app.search.source_state):
+    # healthy, quiet, gap, attention, error, or paused.
+    condition: Condition = "healthy"
+
+
+class WaitOut(BaseModel):
+    source_id: str
+    last_event_at: str | None
+
+
+class SourceSummaryOut(BaseModel):
+    """ "N of M healthy", the quiet sources, gaps, and the longest wait, counted once."""
+
+    total: int
+    healthy: int
+    quiet: list[WaitOut]
+    gaps: int
+    longest_wait: WaitOut | None
 
 
 class DetectionOut(BaseModel):
@@ -92,6 +113,7 @@ class OverviewOut(BaseModel):
     events_compared_24h: int
     events_usual_24h: float | None
     new_sources: list[str]
+    source_summary: SourceSummaryOut
 
 
 @router.get("/overview")
@@ -120,7 +142,30 @@ async def overview(request: Request, user: CurrentUser) -> OverviewOut:
         last = s.get("last_event_at")
         if gap is not None and (last is None or _instant(last) <= _instant(gap[1])):
             s["gap_alert"] = gap[0]
-    return OverviewOut(**data)
+    volume = {v["source_id"]: v for v in data["volume"]}
+    conditions, summary = assess([_input(s, volume.get(s["source_id"])) for s in data["sources"]])
+    for s in data["sources"]:
+        s["condition"] = conditions[s["source_id"]]
+        s.pop("reading_issue", None)
+    return OverviewOut(**data, source_summary=SourceSummaryOut(**asdict(summary)))
+
+
+def _input(s: dict[str, Any], v: dict[str, Any] | None) -> SourceInput:
+    gaps = (v or {}).get("gaps") or []
+    return SourceInput(
+        source_id=s["source_id"],
+        state=s["state"],
+        last_event_at=s.get("last_event_at"),
+        total_24h=int((v or {}).get("total") or 0),
+        gaps=len(gaps),
+        ongoing_gap=any(g.get("ongoing") for g in gaps),
+        quiet_since=s.get("quiet_since"),
+        gap_alert=s.get("gap_alert"),
+        quiet_expected=bool(s.get("quiet_expected")),
+        reading_issue=bool(s.get("reading_issue")),
+        records_skipped=int(s.get("records_skipped") or 0),
+        files_waiting=int(s.get("files_waiting") or 0),
+    )
 
 
 def _instant(iso: str) -> datetime:

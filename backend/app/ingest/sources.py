@@ -46,6 +46,26 @@ KNOWN_KINDS: frozenset[str] = frozenset(get_args(SourceKind))
 
 log = structlog.get_logger(__name__)
 
+# Built-in sources the server writes itself, by id and template (ADR-0040). Each records
+# only when someone uses or probes this server (sign-ins, changes, refusals), so a quiet
+# night or weekend is expected: Health and the Dashboard never call it quiet or count it as
+# the longest wait (handoff items 4 and 9).
+BUILT_IN_QUIET_OK: frozenset[str] = frozenset({"server_events"})
+
+
+def built_in(source: "SourceConfig") -> bool:
+    """A source the server created and writes itself."""
+    return (
+        source.source_id in BUILT_IN_QUIET_OK
+        and source.kind == "otlp"
+        and source.template_id == source.source_id
+    )
+
+
+def quiet_expected(source: "SourceConfig") -> bool:
+    """A source with events only when someone uses or probes the server: quiet is fine."""
+    return built_in(source)
+
 
 # Settings that can change after a source is added (F44). Tenant, app, cloud, key type, and
 # the Loki address and sign-in stay: they go with the stored credential.

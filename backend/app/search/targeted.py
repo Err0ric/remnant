@@ -8,7 +8,10 @@ and none of these is a targeted username: password spraying tries names like roo
 and oracle that are nobody's, and they are listed apart with the attempts against them.
 An account with no sign-in attempts at all stays under Users, as before.
 
-Every count is SQL over the caller's own `events` view; test records are left out.
+Every count is SQL over the caller's own `events` view. Test records are left out by
+construction: a test record names no person (`app.ai.test_records`), and every row read
+here names one, so the check is not repeated (owner item 2, 2026-11-08: it read the JSON
+of every sign-in, most of the page's time on a real-shaped week).
 """
 
 from __future__ import annotations
@@ -17,7 +20,6 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from app.ai.test_records import NOT_TEST
 from app.core.timing import phase
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.search.identity import IdentityMap, key_of
@@ -42,7 +44,7 @@ SELECT actor_user_name AS u,
        list(DISTINCT {_HOST}) FILTER (WHERE {_FAIL} AND {_HOST} IS NOT NULL) AS hosts
 FROM events
 WHERE nullif(trim(actor_user_name), '') IS NOT NULL
-  AND (class_uid = 3002 OR template_id LIKE 'm365_%') AND {NOT_TEST}
+  AND (class_uid = 3002 OR template_id LIKE 'm365_%')
 GROUP BY 1
 ORDER BY failed DESC, u
 LIMIT {MAX_NAMES}"""  # noqa: S608  # fixed SQL text
@@ -51,7 +53,7 @@ ATTACKERS_SQL = f"""
 SELECT actor_user_name AS u, src_endpoint_ip AS ip, count(*) AS n
 FROM events
 WHERE {_FAIL} AND list_contains($names, actor_user_name)
-  AND nullif(src_endpoint_ip, '') IS NOT NULL AND {NOT_TEST}
+  AND nullif(src_endpoint_ip, '') IS NOT NULL
 GROUP BY 1, 2
 QUALIFY row_number() OVER (PARTITION BY u ORDER BY count(*) DESC, ip) <= {IPS_PER_NAME}"""  # noqa: S608  # fixed SQL text
 

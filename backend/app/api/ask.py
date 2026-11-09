@@ -77,7 +77,8 @@ class RouteOut(BaseModel):
     """How the question was routed (ADR-0042 condition 3), for the turn and How I got this."""
 
     kind: Literal["data", "knowhow"]
-    by: Literal["model", "forced", "follow_up"]
+    # library: matched in code to a library query, with no model call (owner, 2026-11-08).
+    by: Literal["model", "forced", "follow_up", "library"]
     library: LibraryRef | None = None
     filters: list[str] = Field(default_factory=list)  # "user = dana@example.com"
     params: dict[str, str | int | float | bool] = Field(default_factory=dict)
@@ -316,6 +317,9 @@ def _route_detail(r: Routed) -> dict[str, object]:
         "time": r.span.label if r.span else None,
         "entities": len(r.entities),
         "reason": r.reason,
+        # Which route answered and how long routing took, to compare the two later.
+        "via": r.via,
+        "ms": r.route_ms,
     }
 
 

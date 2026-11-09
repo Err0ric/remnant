@@ -1,16 +1,13 @@
 import type { ReactNode } from "react";
-import type { AlertList, Overview } from "@/lib/api";
+import type { AlertList, Overview, SourceSummary } from "@/lib/api";
 import { since, stamp } from "@/features/overview/time";
-import { eventsChange, openGapsText, type OpenGap } from "./flow";
+import { eventsChange, sourcesSummaryText, type OpenGap } from "./flow";
 import { COUNTED } from "@/features/dashboard/counted";
 import { About } from "@/features/dashboard/Sections";
 
 export interface SourceTally {
-  total: number;
-  healthy: number;
-  gaps: number;
-  worstLag: string | null;
-  worstLagSource: string | null;
+  /** Counted once on the server, the same the Dashboard footer shows (handoff item 4). */
+  summary: SourceSummary;
   /** Sources with an open gap alert or a firing quiet watch (review item 3). */
   openGaps?: OpenGap[];
 }
@@ -54,7 +51,8 @@ function Tile({ label, value, lines, tone, onClick, title, about }: TileProps) {
 
 interface SystemStripProps {
   overview: Overview | undefined;
-  tally: SourceTally;
+  /** Not yet loaded: the tile shows a dot. */
+  tally: SourceTally | undefined;
   /** Open alerts the viewer may read (ADR-0037). */
   alerts: AlertList | undefined;
   isAdmin: boolean;
@@ -74,7 +72,14 @@ export function SystemStrip(p: SystemStripProps) {
   const open = p.alerts?.open ?? 0;
   const failed = o?.alerts?.failed_deliveries ?? 0;
   const failing = (o?.alerts?.targets ?? []).filter((t) => t.failing);
-  const sourcesOk = p.tally.healthy === p.tally.total && p.tally.gaps === 0;
+  const sum = p.tally?.summary;
+  const sourcesOk = !sum || (sum.healthy === sum.total && sum.gaps === 0);
+  // The same words as the Dashboard footer: "2 quiet: ...", the gaps, the longest wait.
+  const sourceLines = sum
+    ? sourcesSummaryText(sum, o?.generated_at ?? p.now).details.map(
+        (d) => d.charAt(0).toUpperCase() + d.slice(1),
+      )
+    : [""];
   return (
     <div
       className={`grid grid-cols-1 gap-3 sm:grid-cols-2 ${p.isAdmin ? "xl:grid-cols-4" : "xl:grid-cols-3"}`}
@@ -91,25 +96,20 @@ export function SystemStrip(p: SystemStripProps) {
         label="Sources"
         about={COUNTED.sourcesHealthy}
         value={
-          <>
-            {p.tally.healthy}
-            <span className="text-base font-normal text-text-secondary">
-              {" "}
-              of {p.tally.total} healthy
-            </span>
-          </>
+          sum ? (
+            <>
+              {sum.healthy}
+              <span className="text-base font-normal text-text-secondary">
+                {" "}
+                of {sum.total} healthy
+              </span>
+            </>
+          ) : (
+            "·"
+          )
         }
         tone={sourcesOk ? undefined : "warn"}
-        lines={[
-          p.tally.openGaps?.length
-            ? openGapsText(p.tally.openGaps)
-            : p.tally.gaps
-              ? `${p.tally.gaps} ${p.tally.gaps === 1 ? "gap" : "gaps"} in 24 hours`
-              : "No gaps in 24 hours",
-          p.tally.worstLag
-            ? `Longest wait: ${p.tally.worstLag} (${p.tally.worstLagSource})`
-            : "No events yet",
-        ]}
+        lines={sourceLines}
         onClick={p.onSources}
       />
       <Tile

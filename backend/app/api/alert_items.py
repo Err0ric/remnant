@@ -6,13 +6,16 @@ mute. Items whose run read a source the viewer may not read are counted as restr
 never described.
 """
 
+import ipaddress
 from collections.abc import Callable
+from datetime import datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, Request, Response, status
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
+from app.ai.host_people import Asked, DevicePerson, for_alerts
 from app.alerts.items import MAX_NOTE, REASONS, AlertItem, AlertItems, Mute, label
 from app.api.access import AdminUser, CurrentUser, client_ip, require_role
 from app.auth.users import User
@@ -22,6 +25,7 @@ from app.engine.views import permitted_sources
 router = APIRouter(tags=["alerts"])
 Decider = Annotated[User, Depends(require_role("admin", "analyst"))]
 State = Literal["open", "closed", "all"]
+Review = Literal["approved", "not_approved", "unreviewed", "unknown"]
 
 
 class EventOut(BaseModel):
@@ -31,6 +35,17 @@ class EventOut(BaseModel):
     reason: str | None
     reason_label: str | None = None
     note: str | None
+
+
+class DevicePersonOut(BaseModel):
+    """Who used a device the alert names, from the hooks plugin's records the viewer reads
+    (owner item 5; ADR-0048 C1): one person is attributed, several are possible."""
+
+    device: str
+    level: Literal["attributed", "possible"]
+    people: list[str]  # up to 3
+    count: int
+    how: Literal["hooks", "hooks_identities"]
 
 
 class ItemOut(BaseModel):
@@ -66,6 +81,10 @@ class ItemOut(BaseModel):
     last_seen: str | None = None
     changes: list[str] = []
     more_changes: int = 0
+    # AI service and MCP server items: the catalog status now, which "Why it matters"
+    # follows; "unknown" for a service the catalog does not list; None for other items.
+    review_status: Review | None = None
+    device_people: list[DevicePersonOut] = []
 
 
 class MuteOut(BaseModel):
@@ -135,7 +154,65 @@ def _readable(request: Request, user: User) -> Callable[[AlertItem], bool]:
     return lambda i: allowed is None or set(i.sources) <= set(allowed)
 
 
-def _out(request: Request, i: AlertItem, mutes: list[Mute]) -> ItemOut:
+def _review_status(request: Request, i: AlertItem) -> Review | None:
+    if i.kind != "ai_watch":
+        return None
+    catalog = request.app.state.ai_catalog
+    if i.subject.startswith("service:"):
+        sid = i.subject.removeprefix("service:")
+        svc = next((s for s in catalog.services() if s.id == sid), None)
+        return "unknown" if svc is None else svc.status
+    if i.subject.startswith("mcp:"):
+        status: Review = catalog.mcp_status(i.subject.removeprefix("mcp:"), catalog.mcp_rules())
+        return status
+    return None
+
+
+def _device_people(
+    request: Request, user: User, items: list[AlertItem]
+) -> dict[str, list[DevicePerson]]:
+    """People on the hosts AI service and MCP server items name, from hooks sources the
+    caller reads only (T70, D219); the whole Identities map for an administrator (D223)."""
+    asked = [
+        Asked(i.item_id, [d for d in i.devices if not _is_ip(d)],
+              datetime.fromisoformat(i.range_start), datetime.fromisoformat(i.range_end))
+        for i in items
+        if _review_target_of(i) is not None and i.range_start and i.range_end
+    ]  # fmt: skip
+    if not any(a.hosts for a in asked):
+        return {}
+    hooks = [
+        s.source_id for s in request.app.state.sources.list()
+        if s.kind == "otlp" or s.template_id == "claude_hooks"
+    ]  # fmt: skip
+    allowed = permitted_sources(request.app.state.meta, user)
+    mine = hooks if allowed is None else [s for s in hooks if s in set(allowed)]
+    return for_alerts(
+        request.app.state.engine, mine, request.app.state.identities.load(),
+        user.role == "admin", asked,
+    )  # fmt: skip
+
+
+def _is_ip(value: str) -> bool:
+    try:
+        ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _review_target_of(i: AlertItem) -> str | None:
+    if i.kind != "ai_watch":
+        return None
+    return next((k for k in ("service", "mcp") if i.subject.startswith(f"{k}:")), None)
+
+
+def _out(
+    request: Request,
+    i: AlertItem,
+    mutes: list[Mute],
+    people: dict[str, list[DevicePerson]] | None = None,
+) -> ItemOut:
     until = next((m.until for m in mutes if m.kind == i.kind and m.subject == i.subject), None)
     return ItemOut(
         item_id=i.item_id,
@@ -168,6 +245,13 @@ def _out(request: Request, i: AlertItem, mutes: list[Mute]) -> ItemOut:
         last_seen=i.last_seen,
         changes=i.changes,
         more_changes=i.more,
+        review_status=_review_status(request, i),
+        device_people=[
+            DevicePersonOut(
+                device=d.device, level=d.level, people=d.people, count=d.count, how=d.how
+            )
+            for d in (people or {}).get(i.item_id, [])
+        ],
         history=[
             EventOut(
                 at=h.at,
@@ -225,8 +309,10 @@ def _list(
         if readable(i):
             key = i.severity if i.severity in ("high", "medium") else "other"
             sev[key] += 1
+    shown = [i for i in found if readable(i)]
+    people = _device_people(request, user, shown)
     return ListOut(
-        items=[_out(request, i, mutes) for i in found if readable(i)],
+        items=[_out(request, i, mutes, people) for i in shown],
         open=sum(1 for i in opened if readable(i)),
         restricted=sum(1 for i in opened if not readable(i)),
         muted=len(mutes),
@@ -250,12 +336,13 @@ async def list_alerts(
     return await run_in_threadpool(_list, request, user, state, unreviewed, person)
 
 
-def _one(request: Request, user: User, item_id: str) -> ItemOut:
+def _one(request: Request, user: User, item_id: str, people: bool = True) -> ItemOut:
     store = _store(request)
     item = store.get(item_id, user)
     if not _readable(request, user)(item):
         raise ForbiddenError("This alert read a source you cannot read")
-    return _out(request, item, store.mutes())
+    found = _device_people(request, user, [item]) if people else None
+    return _out(request, item, store.mutes(), found)
 
 
 @router.get("/alerts/mutes")
@@ -316,7 +403,7 @@ async def _close_one(
     review_status: str | None,
     bulk: bool = False,
 ) -> None:
-    item = await run_in_threadpool(_one, request, user, item_id)
+    item = await run_in_threadpool(_one, request, user, item_id, False)
     review = "approved" if reason == "approved" else review_status
     target = _review_target(item) if review else None
     if review and target is not None and user.role != "admin":

@@ -14,7 +14,8 @@ from tests.integration.test_query_api import data_dir  # fixture
 
 __all__ = ["data_dir"]
 
-QUERY = {"sql": "SELECT count(*) AS n FROM events"}
+# This file's own events only: the running server writes its requests to server_events.
+QUERY = {"sql": "SELECT count(*) AS n FROM events WHERE source_id = 'linux_auth'"}
 
 
 @contextmanager

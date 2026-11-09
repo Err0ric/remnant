@@ -11,6 +11,7 @@ CodeMirror replaces it on the next update, so nothing visible depends on it.
 import ipaddress
 import secrets
 import time
+from collections.abc import Callable
 from urllib.parse import urlsplit
 
 import structlog
@@ -20,6 +21,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.core.net import Network, client_address
+from app.ingest.server_events import wanted
 
 log = structlog.get_logger("app.http")
 
@@ -42,9 +44,13 @@ def content_security_policy(nonce: str) -> str:
 
 
 class SecurityMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app: ASGIApp, https: bool) -> None:
+    def __init__(
+        self, app: ASGIApp, https: bool, recorder: Callable[..., None] | None = None
+    ) -> None:
         super().__init__(app)
         self._https = https
+        # Records changes and exports into the server_events source (handoff item 9).
+        self._recorder = recorder
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         nonce = secrets.token_urlsafe(16)
@@ -88,14 +94,30 @@ class SecurityMiddleware(BaseHTTPMiddleware):
             headers["Cache-Control"] = "no-store"
 
         user = getattr(request.state, "user", None)
+        duration_ms = round((time.perf_counter() - started) * 1000, 1)
+        client = request.client.host if request.client else None
+        path = request.url.path  # never the query string
+        if self._recorder is not None and wanted(request.method, path):
+            route = getattr(request.scope.get("route"), "path", None)
+            if isinstance(route, str) and not route.startswith("/api/"):
+                route = "/api" + route  # routers are mounted under /api
+            self._recorder(
+                request.method,
+                route if isinstance(route, str) else path,  # the template: no ids or names
+                response.status_code,
+                duration_ms,
+                getattr(user, "user_id", None),
+                getattr(user, "username", None),
+                client,
+            )
         log.info(
             "http.request",
             method=request.method,
-            path=request.url.path,  # never the query string
+            path=path,
             status=response.status_code,
-            duration_ms=round((time.perf_counter() - started) * 1000, 1),
+            duration_ms=duration_ms,
             user_id=getattr(user, "user_id", None),
-            client=request.client.host if request.client else None,
+            client=client,
             # The TCP peer when a trusted proxy supplied the client address (ADR-0027).
             peer=request.scope.get(PEER_KEY),
             request_id=request_id,

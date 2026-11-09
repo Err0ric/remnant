@@ -83,7 +83,11 @@ export function SearchPage({ canSave }: SearchPageProps) {
   // opened, then stays mounted so its text and history survive tab changes.
   const [sqlSeen, setSqlSeen] = useState(tab === "sql");
   if (tab === "sql" && !sqlSeen) setSqlSeen(true);
-  const setTab = (t: SearchTab) => {
+  // Only a click on a tab is remembered as this browser's mode. Opening a saved or library
+  // search, or refining one into SQL, switches the tab for this visit only, so Logs keeps
+  // opening on Filters unless the person chose SQL.
+  const setTab = setChosen;
+  const chooseTab = (t: SearchTab) => {
     setChosen(t);
     storeTab(t);
   };
@@ -530,7 +534,7 @@ export function SearchPage({ canSave }: SearchPageProps) {
           sources={sources}
           onSources={setSources}
         />
-        <SearchTabs active={tab} onSelect={setTab} />
+        <SearchTabs active={tab} onSelect={chooseTab} />
         {/* Panels stay mounted so the text in each survives a look at the other mode. */}
         <div hidden={tab !== "simple"}>
           <div id="search-panel-simple" role="tabpanel" aria-labelledby="search-tab-simple">

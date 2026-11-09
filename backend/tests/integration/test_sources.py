@@ -219,9 +219,11 @@ def test_server_lifespan_polls_sources(env: dict[str, Path]) -> None:
             "/api/sources", json={"source_id": "linux_auth", "format": "syslog", "path": str(f)}
         )
         deadline = time.monotonic() + 5
-        while time.monotonic() < deadline and count(env) == 0:
+        # Only this source: the running server also writes its requests to server_events.
+        mine = "source_id = 'linux_auth'"
+        while time.monotonic() < deadline and count(env, mine) == 0:
             time.sleep(0.1)
-    assert count(env) == 1
+    assert count(env, mine) == 1
 
 
 def test_delete_unknown_source_is_404(env: dict[str, Path]) -> None:

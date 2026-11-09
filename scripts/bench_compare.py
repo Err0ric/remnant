@@ -291,7 +291,7 @@ def settle(api: Api) -> int:
     return seen[-1] if seen else -1
 
 
-def build(code: Path, lake: Path, events: int, router: int, log: Path) -> int:
+def build(code: Path, lake: Path, events: int, router: int, log: Path, shape: float = 0.0) -> int:
     shutil.rmtree(lake, ignore_errors=True)
     for d in ("data", "logs", "vol", "lab", "rules"):
         (lake / d).mkdir(parents=True)
@@ -322,10 +322,16 @@ def build(code: Path, lake: Path, events: int, router: int, log: Path) -> int:
             api.call("POST", "/api/searches", {"id": sid, "name": name, "sql": sql, "visibility": "shared"})  # fmt: skip
         api.call("POST", "/api/providers", {"name": ROUTER, "base_url": f"http://127.0.0.1:{router}/v1", "model": "bench-router"})  # fmt: skip
         point_router(api, router)
+        if shape:  # opt-in: a real-shaped week of sign-ins and DNS beside it (owner item 2)
+            env = {**os.environ, "PYTHONPATH": str(code / "backend")}
+            gen = ROOT / "scripts" / "fixtures" / "real_shape.py"
+            cmd = [sys.executable, str(gen), "--lake", str(lake / "data" / "lake"), "--scale", str(shape)]  # fmt: skip
+            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, cwd=code / "backend", env=env)  # noqa: S603  # fmt: skip
         n = settle(api)
     finally:
         stop(proc)
-    (lake / "built.json").write_text(json.dumps({"events": n, "loggen": events, "at": time.time()}))
+    kept = {"events": n, "loggen": events, "shape": shape, "at": time.time()}
+    (lake / "built.json").write_text(json.dumps(kept))
     return n
 
 
@@ -453,6 +459,11 @@ def main() -> int:
     # events, the size #445 was measured on; costs that grow with the lake show up.
     ap.add_argument("--events", type=int, default=400_000, help="loggen events in the lake")
     ap.add_argument("--lake", type=Path, default=ROOT / "data" / "bench" / "lake")
+    # Off by default, so the queue's lake stays the documented one. 1 adds about 1.9M
+    # sign-ins and 5.7M DNS queries over 7 days (scripts/fixtures/real_shape.py, 2.7 GB);
+    # use its own --lake, since each side copies the data folder.
+    ap.add_argument("--real-shape", type=float, default=0.0, metavar="SCALE",
+                    help="add a real-shaped week of sign-ins and DNS at this scale")  # fmt: skip
     ap.add_argument("--rebuild", action="store_true", help="build the lake even if one is kept")
     ap.add_argument("--only", action="append", default=[], help="pages to time (default all)")
     ap.add_argument("--json", type=Path, help="also write the medians here")
@@ -472,13 +483,16 @@ def main() -> int:
         built = lake / "built.json"
         kept = json.loads(built.read_text()) if built.is_file() else {}
         # A kept lake counts only if it is a day old at most and the size asked for.
-        fresh = time.time() - kept.get("at", 0) < 86400 and kept.get("loggen") == args.events
+        fresh = (
+            time.time() - kept.get("at", 0) < 86400 and kept.get("loggen") == args.events
+            and kept.get("shape", 0.0) == args.real_shape
+        )  # fmt: skip
         router = ThreadingHTTPServer(("127.0.0.1", 0), Router)
         router_port = int(router.server_address[1])
         threading.Thread(target=router.serve_forever, daemon=True).start()
         if args.rebuild or not fresh:
             t = time.monotonic()
-            n = build(before, lake, args.events, router_port, log)
+            n = build(before, lake, args.events, router_port, log, args.real_shape)
             print(f"lake: {n:,} events, built in {time.monotonic() - t:.0f} s", file=sys.stderr)
         sides: dict[str, Api] = {}
         for name, code in (("before", before), ("after", after)):

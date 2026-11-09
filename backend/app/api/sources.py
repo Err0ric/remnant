@@ -52,7 +52,13 @@ from app.ingest.discovery import DiscoveryReport, discover
 from app.ingest.listener import ListenerStatus, SyslogListeners
 from app.ingest.quiet import MAX_QUIET_S, MIN_QUIET_S, QuietWatch, Watch, default_quiet_s
 from app.ingest.skew import skew_text
-from app.ingest.sources import SourceConfig, SourceStore, spool_dir
+from app.ingest.sources import (
+    SourceConfig,
+    SourceStore,
+    built_in,
+    quiet_expected,
+    spool_dir,
+)
 from app.ingest.watcher import IngestService, SourceStatus, source_state
 from app.meta.db import MetaDB
 from app.templates.drafts import DraftStore
@@ -123,6 +129,10 @@ class QuietOut(BaseModel):
 class SourceOut(SourceConfig):
     status: StatusOut
     quiet: QuietOut | None = None
+    # Server-set, never accepted on input: a built-in source, and one with events only when
+    # someone uses or probes the server, so its quiet is expected (handoff items 4 and 9).
+    built_in: bool = False
+    quiet_expected: bool = False
 
     @model_validator(mode="after")
     def _kind_fields(self) -> "SourceOut":
@@ -191,6 +201,8 @@ async def list_sources(request: Request, user: CurrentUser) -> list[SourceOut]:
             **s.model_dump(),
             status=_status_out(s, statuses.get(s.source_id)),
             quiet=_quiet_out(watches.get(s.source_id)),
+            built_in=built_in(s),
+            quiet_expected=quiet_expected(s),
         )
         for s in sources
     ]

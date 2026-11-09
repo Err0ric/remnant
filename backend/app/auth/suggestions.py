@@ -1,19 +1,23 @@
 """Suggested source groups (SPEC 3.6, D22). Suggestions only.
 
 One suggestion per template category, and per vendor, that has at least one configured
-source. Accepting one creates the group if it does not exist and adds the sources the admin
+source. A source's templates are its fixed template, or for an Automatic source (ADR-0012)
+the templates that read its lines recently. The server's own built-in source
+(`server_events`) is never suggested: it is the app's record of refusals, not a log source
+an admin groups. Accepting one creates the group if it does not exist and adds the sources the admin
 ticked, all of which must belong to that suggestion. It never removes a source from a group,
 never adds a person to one, and so never grants access by itself. Every accept is audited.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from typing import Literal
 
 from app.auth.groups import Group, GroupStore
 from app.auth.users import User
 from app.core.errors import ConflictError
-from app.ingest.sources import SourceConfig
+from app.core.ids import AUTO_PARSER
+from app.ingest.sources import SourceConfig, built_in
 from app.meta.audit import AuditLog
 from app.templates.validator import Template
 
@@ -55,23 +59,29 @@ def suggest(
     sources: list[SourceConfig],
     template_of: Callable[[str], Template | None],
     groups: list[Group],
+    seen: Mapping[str, Collection[str]] | None = None,
 ) -> list[Suggestion]:
-    by: dict[tuple[Kind, str], list[str]] = {}
+    """`seen`: template ids that read each Automatic source's lines recently."""
+    by: dict[tuple[Kind, str], set[str]] = {}
     for source in sources:
-        template = template_of(source.template_id) if source.template_id else None
-        if template is None:
-            continue  # generic parsers carry no category
-        if template.category:
-            by.setdefault(("category", template.category), []).append(source.source_id)
-        if template.vendor:
-            by.setdefault(("vendor", template.vendor), []).append(source.source_id)
+        if built_in(source):
+            continue
+        if source.template_id == AUTO_PARSER:
+            ids = sorted((seen or {}).get(source.source_id, ()))
+        else:
+            ids = [source.template_id] if source.template_id else []  # generic: none
+        for template in filter(None, map(template_of, ids)):
+            if template.category:
+                by.setdefault(("category", template.category), set()).add(source.source_id)
+            if template.vendor:
+                by.setdefault(("vendor", template.vendor), set()).add(source.source_id)
     named = {g.name.casefold(): g for g in groups}
     out: list[Suggestion] = []
-    for (kind, key), ids in sorted(by.items()):
+    for (kind, key), found in sorted(by.items()):
         name = (CATEGORY_NAMES if kind == "category" else VENDOR_NAMES).get(key, key)
         group = named.get(name.casefold())
         have = set(group.source_ids) if group else set()
-        ids = sorted(ids)
+        ids = sorted(found)
         missing = [s for s in ids if s not in have]
         out.append(Suggestion(kind, key, name, group.group_id if group else None, ids, missing))
     return out

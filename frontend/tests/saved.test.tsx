@@ -10,7 +10,7 @@ async function renderAt(
   auth: MockAuth = { mode: "login", signedIn: true, role: "analyst" },
 ) {
   window.history.replaceState(null, "", path);
-  window.localStorage.setItem("search-tab", "sql");
+  window.localStorage.setItem("logs-tab", "sql");
   const spy = mockApi("Codename", auth);
   vi.resetModules();
   const { loadBranding } = await import("@/lib/branding");
@@ -171,7 +171,7 @@ describe("Saved searches page", () => {
   });
 
   it("offers to move SQL typed into the Simple box", async () => {
-    window.localStorage.setItem("search-tab", "simple");
+    window.localStorage.setItem("logs-tab", "simple");
     window.history.replaceState(null, "", "/search");
     mockApi("Codename", { mode: "login", signedIn: true, role: "analyst" });
     vi.resetModules();
@@ -191,7 +191,7 @@ describe("Saved searches page", () => {
 describe("Edit (F37)", () => {
   it("opens your own saved search in Logs to change and save it", async () => {
     window.history.replaceState(null, "", "/saved");
-    window.localStorage.setItem("search-tab", "sql");
+    window.localStorage.setItem("logs-tab", "sql");
     const spy = mockApi("Codename", { mode: "login", signedIn: true, role: "analyst" });
     const real = spy.getMockImplementation();
     const mine = {

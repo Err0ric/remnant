@@ -1,14 +1,16 @@
 schema_version: 1
 id: server_events
-name: Refused credentials on this server
-version: 1.0.0
+name: This server's sign-ins, changes, and refusals
+version: 1.1.0
 author: starter-pack
 description: >-
-  This server's own security events (ADR-0040), written by the server into the built-in
-  server_events source: refused ingest tokens (OTLP), refused sign-ins (wrong password,
-  the sign-in rate limit, single sign-on refusals), and refused API tokens. Never a
-  password or a token: the token's id or its first 8 characters, the reason, and the
-  address the request came from stay in unmapped.
+  This server's own events (ADR-0040, handoff item 9), written by the server into the
+  built-in server_events source: successful sign-ins (server.sign_in), every API request
+  that changes something or exports data (server.request: method, route template, status,
+  duration), and refused ingest tokens, sign-ins, single sign-on, and API tokens
+  (server.refused.*). Metadata only: never a query string, a body, a header, a cookie, a
+  password, or a token (at most a token's id or its first 8 characters). The user id, the
+  route, and the HTTP status stay in unmapped.
 category: identity
 vendor: generic
 classification_default: local_only
@@ -17,7 +19,7 @@ envelope:
   type: none
 
 match:
-  regex: '^\{"signal":"log".*"service":"app-server".*"event":"server\.refused\.'
+  regex: '^\{"signal":"log".*"service":"app-server".*"event":"server\.(?:refused\.|sign_in"|request")'
   min_confidence: 0.95
 
 payload:
@@ -26,17 +28,28 @@ payload:
 
 transforms:
   - { field: time, op: timestamp, args: { format: iso8601 } }
+  - { field: attr.outcome, op: map, args: { into: outcome, values: { success: 1, failure: 2 }, optional: true } }
+  - field: event
+    op: map
+    args:
+      into: outcome
+      values: { server.refused.otlp_token: 2, server.refused.sign_in: 2, server.refused.sso: 2, server.refused.api_token: 2 }
+      optional: true
+  - { field: attr.method, op: map, args: { into: activity, values: { POST: 1, GET: 2, PUT: 3, PATCH: 3, DELETE: 4 }, optional: true } }
 
 mapping:
-  class_uid: 3002            # Authentication
+  class_uid: 3002            # Authentication: sign-ins and refusals
+  class_by:
+    field: event
+    values: { server.request: 6003 }   # API Activity
   fields:
     time: { from: time }
-    activity_id: { default: 1 }   # Logon
-    status_id: { default: 2 }     # Failure
+    activity_id: { from: activity, default: 1 }   # Logon for sign-ins and refusals
+    status_id: { from: outcome, default: 2 }       # older refusal lines carry no outcome
     src_endpoint_ip: { from: attr.client }
     actor_user_name: { from: attr.username }
     message: { from: event }
-    status_detail: { from: attr.reason }
+    status_detail: { from: [attr.reason, attr.path] }
 
 tests:
   - name: a refused ingest token names the token by its id
@@ -57,3 +70,21 @@ tests:
       parse_status: ok
       class_uid: 3002
       fields: { src_endpoint_ip: 192.0.2.44, message: server.refused.api_token, status_id: 2 }
+  - name: a sign-in that succeeded names the user and the address
+    input: '{"signal":"log","time":"2026-11-08T09:00:00+00:00","service":"app-server","event":"server.sign_in","attr":{"outcome":"success","user_id":"0f3c2a10-0000-4000-8000-000000000001","username":"alice","client":"203.0.113.50","method":"password","session":"browser","dropped_since_last":0},"resource":{"service_name":"app-server"}}'
+    expect:
+      parse_status: ok
+      class_uid: 3002
+      fields: { src_endpoint_ip: 203.0.113.50, actor_user_name: alice, message: server.sign_in, status_id: 1, activity_id: 1 }
+  - name: a change is API activity with its route, never a query string
+    input: '{"signal":"log","time":"2026-11-08T09:00:05+00:00","service":"app-server","event":"server.request","attr":{"outcome":"success","method":"DELETE","path":"/api/tokens/{token_id}","status":204,"duration_ms":3.2,"user_id":"0f3c2a10-0000-4000-8000-000000000001","username":"alice","client":"203.0.113.50","dropped_since_last":0},"resource":{"service_name":"app-server"}}'
+    expect:
+      parse_status: ok
+      class_uid: 6003
+      fields: { src_endpoint_ip: 203.0.113.50, actor_user_name: alice, message: server.request, status_id: 1, activity_id: 4, status_detail: "/api/tokens/{token_id}" }
+  - name: a refused change is a failure
+    input: '{"signal":"log","time":"2026-11-08T09:00:06+00:00","service":"app-server","event":"server.request","attr":{"outcome":"failure","method":"POST","path":"/api/auth/login","status":401,"duration_ms":180.4,"client":"198.51.100.7","dropped_since_last":0},"resource":{"service_name":"app-server"}}'
+    expect:
+      parse_status: ok
+      class_uid: 6003
+      fields: { src_endpoint_ip: 198.51.100.7, message: server.request, status_id: 2, activity_id: 1, status_detail: /api/auth/login }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Overview } from "@/lib/api";
-import { sourceStates } from "@/features/dashboard/Attention";
+import { attentionLines, sourceStates } from "@/features/dashboard/Attention";
 import { openGaps, openGapsText } from "@/features/health/flow";
 
 function overview(sources: Partial<Overview["sources"][number]>[]): Overview {
@@ -16,6 +16,7 @@ function overview(sources: Partial<Overview["sources"][number]>[]): Overview {
       records_skipped: 0,
       error: null,
       rate_per_min: 0,
+      condition: s.gap_alert || s.quiet_since ? "quiet" : "healthy",
       ...s,
     })),
     detections: [],
@@ -26,6 +27,7 @@ function overview(sources: Partial<Overview["sources"][number]>[]): Overview {
     events_compared_24h: 0,
     events_usual_24h: null,
     new_sources: [],
+    source_summary: { total: 0, healthy: 0, quiet: [], gaps: 0, longest_wait: null },
   } as Overview;
 }
 
@@ -50,5 +52,18 @@ describe("footer and alerts agree (review item 3)", () => {
     const states = sourceStates([], o);
     expect(states.filter((s) => !s.problem).map((s) => s.id)).toEqual(["lin_auth"]);
     expect(states.find((s) => s.id === "server_events")?.problem).toBe("stopped sending");
+  });
+});
+
+describe("Needs you banner keeps its inputs (handoff item 4, owner rule 5)", () => {
+  it("lists no source that is quiet only in the shared count", () => {
+    // win_dc sent nothing in 24 hours with no watch or alert: quiet in the shared count
+    // and on Health, but the banner shows only errors, stopped sources, and ongoing gaps.
+    const o = overview([
+      { source_id: "dns", state: "error", condition: "error" },
+      { source_id: "win_dc", last_event_at: "2026-11-04T12:00:00+00:00", condition: "quiet" },
+    ]);
+    const lines = attentionLines(undefined, sourceStates([], o));
+    expect(lines.map((l) => l.text)).toEqual(["Source: dns has errors"]);
   });
 });

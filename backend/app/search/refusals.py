@@ -1,7 +1,8 @@
 """Built-in detection: refused credentials from one address (ADR-0040, owner 2026-10-30).
 
-Reads the server_events source: when one address has THRESHOLD or more refusals (ingest
-tokens, sign-ins, single sign-on, API tokens) in WINDOW, an alert item is raised, one per
+Reads the refusals in the server_events source, never its sign-ins or requests (handoff
+item 9): when one address has THRESHOLD or more refusals (ingest tokens, sign-ins, single
+sign-on, API tokens) in WINDOW, an alert item is raised, one per
 address per hour, with what was refused. On by default because it protects this server
 and only counts refusals; an admin can turn it off or change the threshold (audited
 `detect.refusals`). Sigma correlation rules (counts over time) are not supported yet, so
@@ -28,7 +29,8 @@ SELECT src_endpoint_ip AS ip, count(*) AS n,
        list(DISTINCT message ORDER BY message) AS kinds,
        min(coalesce(time, time_observed)) AS first, max(coalesce(time, time_observed)) AS last
 FROM events
-WHERE template_id = 'server_events' AND nullif(src_endpoint_ip, '') IS NOT NULL
+WHERE template_id = 'server_events' AND message LIKE 'server.refused.%'
+  AND nullif(src_endpoint_ip, '') IS NOT NULL
 GROUP BY 1
 HAVING count(*) >= $threshold
 ORDER BY n DESC
@@ -38,7 +40,8 @@ LIMIT 50"""
 ROWS_SQL = (
     "SELECT time, message AS refused, actor_user_name, status_detail AS reason,"
     " src_endpoint_ip, event_id\nFROM events\nWHERE template_id = 'server_events'"
-    " AND src_endpoint_ip = {ip}\nORDER BY coalesce(time, time_observed) DESC"
+    " AND message LIKE 'server.refused.%' AND src_endpoint_ip = {ip}"
+    "\nORDER BY coalesce(time, time_observed) DESC"
 )
 
 LABELS = {

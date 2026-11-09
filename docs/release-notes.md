@@ -4,6 +4,67 @@
 
 <!-- unreleased:start -->
 
+### Sign-ins and changes to this server are searchable in Logs (2026-11-08)
+
+- The built-in `server_events` source now also records successful sign-ins (password and single sign-on) and every request that changes something or exports data: the time, user id and name, client address (through trusted proxies), method, route, status, and duration. Searching an address in Logs answers "who is this", not only the server journal.
+- Never recorded: page reads, health polling, static files, ingest pushes, query strings, request bodies, headers, cookies, passwords, or tokens.
+- Records are capped at 300 a minute for requests and 300 for sign-ins and refusals together, so a flood cannot fill the disk or crowd out a refused sign-in. The refused-credentials alert still counts refusals only.
+- The source stays local-only and admin-only unless an admin adds it to a group. Health and the Dashboard still never call it quiet on a day nobody signs in. In GET /api/sources and GET /api/overview, the `events_on_failure` flag is now `quiet_expected`.
+- What you will notice: sign-ins and admin changes to this server can be searched in Logs under the `server_events` source, for example by an address.
+- What changes for existing installs: nothing to do; records start with the first sign-in after the update. To go back, roll back the update (`docs/install/team-vm.md`, Rolling back, `update-systemd.sh --rollback`): the older version stops writing these records and the ones already stored stay searchable.
+
+### Daily backups by the server (2026-11-08)
+
+- The server now backs up its data folder every day at 02:15 (install time zone) and keeps the last 14, with no cron entry or script. Administrators change the time, the count, or turn it off under Settings, About and licenses, Backups; every change is in the audit log.
+- Health has a Backups tab: the last run in your local time (UTC on hover), its result and size, how many are on disk, and the next run. A failed run shows as Unhealthy with the reason.
+- With no successful backup for 48 hours, one alert opens on Alerts; the next successful backup closes it.
+- Old backups are deleted only after a new one succeeds. A run that would leave the disk nearly full is skipped and shown on Health instead. A restore now leaves the `backups/` folder in place.
+- The install guides (backup.md, team-vm.md, single-user.md) say where backups are, how to restore one, what a backup holds, and how a restore and a rollback differ.
+- What you will notice: a Backups tab on Health and a Backups section in Settings, About and licenses; backup files appear in the data folder's `backups/` after the first 02:15.
+- What changes for existing installs: backups turn on automatically; the first one runs at the next 02:15 after the update, never at once. They use disk space in the data folder (about 14 times one backup); set `APP__BACKUP__DIR` to put them elsewhere, or turn them off in Settings. Your hand-made backups are never deleted. To go back, roll back the update (`docs/install/team-vm.md`, Rolling back, `update-systemd.sh --rollback`): the older version ignores the new settings and leaves the backup files in place for you to keep or delete.
+
+### Plain User-ID lines on the person page, suggested groups for Automatic sources, Logs opens on Filters (2026-11-08)
+
+- Person page, What it did: a Palo Alto User-ID row stored before 2026-11-06 no longer shows the raw CSV line as its subtitle. Any line whose message is a whole delimited record now reads as a plain summary of its parsed fields, for example "Palo Alto Networks User-ID: alice at 192.0.2.20, learned from globalprotect". View in Logs still opens the same rows.
+- Settings, Users and access: suggested source groups now cover Automatic sources by the templates that read their lines in the last 30 days, so a firewall or server feed on Automatic is suggested under its category and vendor. The server's own built-in source of refusals is never suggested. Suggestions still grant nothing until an admin approves them.
+- Logs opens on the Filters tab. Only a click on a tab is remembered; opening a saved or library search in SQL, Edit as SQL, or a field click in SQL switches the tab for that visit only. A link that names a tab still opens it, and Auditors with SQL turned off still see no editor.
+- What you will notice: Logs opens on Filters, User-ID rows on a person page read as a plain sentence, and Users and access suggests groups for your Automatic sources.
+- What changes for existing installs: nothing to do. Each browser opens Logs on Filters once, then remembers the tab you click. No data, settings, or update steps change. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`).
+
+### AI service alerts name who used the device, and say why by the service's status (2026-11-08)
+
+- An AI service or MCP server alert that named only a device now shows a Person on device line when the Claude hooks plugin has records from that host in the alert's time range: "erin@example.com, seen on this host in the hooks plugin". Two names that Identities links into one person are shown once, with "(names linked in Identities)".
+- When several people used the host in that range, the line says "Possible: erin@example.com or frank@example.com, 2 people seen on this host in the hooks plugin" and picks nobody. These names are not added to the alert's people or counts.
+- The names come only from hooks sources you can read; without them you see the device as before.
+- "Why it matters" and the next steps now follow the service's status in the AI service catalog today: Not approved, Unreviewed, a service not in the catalog, and Approved (after the alert was raised) each have their own wording. GET /api/alerts adds `review_status` and `device_people` to each alert.
+- What you will notice: on an alert such as one for Gemini, the person who used the device when the hooks plugin saw them, and wording that says the service is Not approved.
+- What changes for existing installs: nothing to do. No data, settings, or update steps change. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`).
+
+### Health and the Dashboard agree on how many sources are healthy (2026-11-08)
+
+- The Sources tile on Health and the Sources line at the bottom of the Dashboard now read one count, worked out once on the server. Before, Health could say "4 of 6 healthy" with two quiet sources while the Dashboard said "6 of 6 flowing, no gaps".
+- Both say it in the same words, for example "4 of 6 healthy, 2 quiet: win_dc 2 d, vpn 6 h, no gaps in 24 hours". The count is the one Health already showed: a quiet source (nothing in 24 hours, a quiet alert firing, or an open gap alert) or one with a gap in the last 24 hours is not healthy, and a paused source counts in the total but is never healthy. The Needs you banner is unchanged.
+- The built-in source of refused sign-ins and tokens (`server_events`) is expected to be quiet: it is never called quiet and never named as the longest wait. GET /api/sources marks it with `built_in` and `events_on_failure`; GET /api/overview adds a `condition` per source and a `source_summary`.
+- What you will notice: the Dashboard's Sources line now says "N of M healthy" and names quiet sources, matching Health.
+- What changes for existing installs: nothing to do. No data, settings, or update steps change. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`).
+
+### People & devices opens faster on large installs (2026-11-08)
+
+- People & devices no longer reads the extra fields of every sign-in. Windows sign-ins carry about 1.5 KB of fields with no column of their own; two checks read them for every sign-in in the range: the test record check in who counts as a person (a test record names no one, and every row there names someone) and the Claude Code hook fields in the ranking (now read from hook rows alone).
+- On a synthetic week of 1.9 million sign-ins and 5.7 million DNS queries, the page's server time went from about 7.9 s to 1.4 s, and its server CPU from about 15 s to 2.4 s. The ranking, scores, and Identities scoping are unchanged.
+- The speed check can add the same real-shaped week to its lake (`--real-shape`, off by default).
+- What you will notice: People & devices opens much faster on large installs.
+- What changes for existing installs: nothing to do. No data, settings, or update steps change. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`).
+
+### Ask answers library questions without waiting for the model (2026-11-08)
+
+- Ask now matches a question to the library in code first. When one library query is a confident match (its own example question, in the same words once synonyms, time words, and the people, addresses, and machines named are set aside), it answers with no model call. Before, every first question waited on a routing call to the model, about 25 s on a CPU-only local model.
+- Every other question goes to the model exactly as before: a near miss, a question shaped like general guidance ("how do I", "what is"), and a library query that takes its own values.
+- How I got this says "A data question, matched to the library without the model" for these answers.
+- The Ask audit row's route now records which route answered (`via`: `library` or `model`, with the library entry when one was used) and how long routing took (`ms`), so the two can be compared later. A library answer is audited as an Ask with no model call.
+- What you will notice: library questions in Ask answer in a couple of seconds, without waiting for the model.
+- What changes for existing installs: nothing to do. No data, settings, or update steps change; the audit row details gain two fields. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`).
+
 ### The app's own lists are built on the server (2026-11-08)
 
 - The person page's sign-ins, the Microsoft 365 Sign-ins, Mail, Apps, and Admin lists, and the Sources page's event counts and parser mix no longer send SQL from the browser to the query endpoint. They call their own endpoints (`/api/people/{person}/signins`, `/api/m365/list`, `/api/sources/event-counts`, `/api/sources/parser-mix`), which build the SQL on the server and run it on your own sources, through the same guard, and audited as `query.view` with the list's name.

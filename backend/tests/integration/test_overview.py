@@ -162,3 +162,32 @@ def test_a_steady_source_that_stops_has_a_gap_and_rates_are_per_minute(
     assert gap["ongoing"] is False
     assert o["events_24h"] == sum(v["total"] for v in o["volume"])
     assert all(isinstance(s["rate_per_min"], float) for s in o["sources"])
+
+
+def test_health_and_the_footer_read_one_source_summary(lab: dict[str, Any]) -> None:
+    """Handoff item 4: one condition per source and one summary, from the server."""
+    from app.ingest.watcher import SourceStatus
+
+    lab["app"].state.server_events.ensure_source()
+    ingest = lab["app"].state.ingest
+    with ingest._lock:  # read, with nothing refused for days
+        ingest._status["server_events"] = SourceStatus(last_pass_at=datetime.now(UTC))
+    fresh(lab)
+    o = lab["admin"].get("/api/overview").json()
+    by_id = {s["source_id"]: s for s in o["sources"]}
+    refusals = by_id["server_events"]
+    assert refusals["quiet_expected"] is True and refusals["condition"] == "healthy"
+    summary = o["source_summary"]
+    on = [s for s in o["sources"] if s["condition"] != "paused"]
+    assert summary["total"] == len(on)
+    assert summary["healthy"] == sum(1 for s in on if s["condition"] == "healthy")
+    assert [q["source_id"] for q in summary["quiet"]] == [
+        q["source_id"] for q in summary["quiet"] if by_id[q["source_id"]]["condition"] == "quiet"
+    ]
+    assert "server_events" not in [q["source_id"] for q in summary["quiet"]]
+    assert (summary["longest_wait"] or {}).get("source_id") != "server_events"
+    assert "reading_issue" not in refusals
+    listed = {s["source_id"]: s for s in lab["admin"].get("/api/sources").json()}
+    assert listed["server_events"]["built_in"] is True
+    assert listed["server_events"]["quiet_expected"] is True
+    assert not any(s["built_in"] for k, s in listed.items() if k != "server_events")

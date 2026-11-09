@@ -373,7 +373,8 @@ def test_refusals_become_events_and_the_built_in_detection_raises_one_item(
             "/api/query",
             json={
                 "sql": "SELECT message, actor_user_name, status_id, raw FROM events"
-                " WHERE source_id = 'server_events' ORDER BY time"
+                " WHERE source_id = 'server_events' AND message LIKE 'server.refused.%'"
+                " ORDER BY time"
             },
             headers=lab["h"],
         )

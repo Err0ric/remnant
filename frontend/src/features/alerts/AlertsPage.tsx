@@ -7,6 +7,7 @@ import { cn } from "@/lib/cn";
 import { navigate, pathFor, useSection, useSectionTab } from "@/lib/route";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { EntityLink } from "@/components/EntityLink";
+import { DevicePeople } from "./DevicePeople";
 import { DeviceRows } from "./DeviceRows";
 import { AroundEvent } from "@/features/search/AroundEvent";
 import { When } from "@/components/When";
@@ -15,11 +16,10 @@ import { KIND_LABEL } from "./kinds";
 import { openDrill } from "@/lib/drill";
 import {
   CATEGORY_LABEL,
-  GUIDE,
+  guideFor,
   bySeverityThenNewest,
   categoryOf,
   evidenceSql,
-  ruleOf,
   summarize,
   type Category,
   type Summary,
@@ -562,8 +562,7 @@ function AlertDetail({ item, canClose, isAdmin, reasons }: DetailProps) {
     mutationFn: (days: 7 | 30) => api.muteAlert(item.item_id, days),
     onSuccess: () => client.invalidateQueries({ queryKey: ["alerts"] }),
   });
-  const rule = ruleOf(item);
-  const guide = GUIDE[rule];
+  const guide = guideFor(item);
   const sql = evidenceSql(item);
   const changes = item.changes ?? [];
   return (
@@ -619,6 +618,7 @@ function AlertDetail({ item, canClose, isAdmin, reasons }: DetailProps) {
           </>
         ) : null}
         <DeviceRows devices={item.devices ?? []} />
+        <DevicePeople found={item.device_people ?? []} />
         <dt className="text-text-muted">When</dt>
         <dd>
           First <When iso={item.created_at} />

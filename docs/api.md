@@ -179,6 +179,8 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | `DELETE` | `/api/health-checks/devices/{device_id}` | Stop watching a device. Audited as device_watch.change. |  |  |
 | `GET` | `/api/health-checks/refreshes` | Background refreshes of the default views (D147) per hour over the last 24 hours, and how many views are kept fresh now. A view stops refreshing 10 minutes after its last load. Administrators. |  |  |
 | `GET` | `/api/health-checks/speed` | Page speed per route over the last 24 hours (since the server started, if later), from the Server-Timing of each request: requests, p50 and p95 total, DuckDB p50, slot wait p95, and page cache hits. Routes only, never values or callers. Administrators. |  |  |
+| `GET` | `/api/settings/backups` | Scheduled backups: on or off, the daily time (install time zone), how many are kept, and the folder. Administrators. |  |  |
+| `PUT` | `/api/settings/backups` | Change the backup schedule. Audited as settings.backup with the before and after. |  | `enabled`: boolean<br>`at_time`: string<br>`keep`: integer |
 
 ### Identities
 

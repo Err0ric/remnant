@@ -1118,6 +1118,29 @@ MIGRATIONS: tuple[Migration, ...] = (
     """
     ALTER TABLE install_settings ADD COLUMN auditor_sql INTEGER NOT NULL DEFAULT 0;
     """,
+    # 65: scheduled backups (handoff item 8): one settings row, on by default for new and
+    # existing installs (a low-disk check skips a run), and the last runs for Health.
+    """
+    CREATE TABLE backup_settings (
+        id         INTEGER PRIMARY KEY CHECK (id = 1),
+        enabled    INTEGER NOT NULL DEFAULT 1,
+        at_time    TEXT NOT NULL DEFAULT '02:15',
+        keep       INTEGER NOT NULL DEFAULT 14,
+        updated_at TEXT NOT NULL,
+        updated_by TEXT
+    );
+    CREATE TABLE backup_runs (
+        run_id      TEXT PRIMARY KEY,
+        slot        TEXT NOT NULL,
+        started_at  TEXT NOT NULL,
+        finished_at TEXT,
+        result      TEXT NOT NULL,
+        file        TEXT,
+        bytes       INTEGER,
+        error       TEXT
+    );
+    CREATE INDEX backup_runs_started ON backup_runs (started_at);
+    """,
 )
 
 

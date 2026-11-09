@@ -115,7 +115,7 @@ export const SOURCE = {
 };
 
 /** Switches for one test; reset them after it. */
-export const mockFlags = { aiWatchFailing: false };
+export const mockFlags = { aiWatchFailing: false, backupPuts: 0 };
 
 const FAILING = [
   {
@@ -1273,7 +1273,38 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
             reason: "4 closed days still to build",
           },
         ],
+        backup: {
+          enabled: true,
+          at_time: "02:15",
+          timezone: "UTC",
+          keep: 14,
+          kept: 3,
+          last: {
+            started_at: "2026-10-10T02:15:00+00:00",
+            finished_at: "2026-10-10T02:15:09+00:00",
+            result: "failed",
+            file: null,
+            bytes: null,
+            error: "OSError: read-only file system",
+          },
+          last_success_at: "2026-10-09T02:15:00+00:00",
+          next_at: "2026-10-11T02:15:00+00:00",
+          state: "unhealthy",
+          reason: "The last backup failed: OSError: read-only file system",
+        },
       });
+    if (url.endsWith("/api/settings/backups")) {
+      const body = method === "PUT" ? (JSON.parse(String(init?.body)) as object) : {};
+      mockFlags.backupPuts += method === "PUT" ? 1 : 0;
+      return json({
+        enabled: true,
+        at_time: "02:15",
+        keep: 14,
+        timezone: "UTC",
+        folder: "/srv/data/backups",
+        ...body,
+      });
+    }
     if (url.endsWith("/api/health-checks/devices") && method === "POST") {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       watched.push({
@@ -2720,6 +2751,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
             records_skipped: 0,
             error: null,
             rate_per_min: 2.4,
+            condition: "gap",
           },
           {
             source_id: "win_dc",
@@ -2730,8 +2762,17 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
             records_skipped: 0,
             error: "This source cannot be read right now. An administrator can see why.",
             quiet_since: "2026-10-10T11:00:00+00:00",
+            condition: "error",
           },
         ],
+        // What the server counts from the rows above (app.search.source_state).
+        source_summary: {
+          total: 2,
+          healthy: 0,
+          quiet: [],
+          gaps: 1,
+          longest_wait: { source_id: "linux_sshd", last_event_at: "2026-10-10T12:26:00+00:00" },
+        },
         detections: [
           {
             kind: "rule",
@@ -3221,6 +3262,38 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
             kind: "knowhow",
             by: "model",
             library: null,
+            filters: [],
+            params: {},
+            time: null,
+            reason: null,
+          },
+        });
+      // Matched to the library in code, with no model call (owner, 2026-11-08).
+      if (b.question === "who uses claude code")
+        return json({
+          ask_id: ((askQuestions[`a${n}`] = body.question), `a${n}`),
+          auto_run: true,
+          sql: "SELECT actor_user_name AS person FROM events -- turn 1",
+          explanation: "",
+          assumptions: [],
+          check: "library",
+          check_detail: null,
+          attempts: 0,
+          provider: {
+            provider_id: "p1",
+            name: "Local Ollama",
+            model: "llama3.1:8b",
+            locality: "local",
+          },
+          call_ids: [],
+          route: {
+            kind: "data",
+            by: "library",
+            library: {
+              ref: "ai_agents/agents_claude_code_users",
+              name: "Who uses Claude Code",
+              version: "1.1.0",
+            },
             filters: [],
             params: {},
             time: null,

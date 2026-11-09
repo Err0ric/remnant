@@ -99,3 +99,54 @@ def test_only_sources_the_suggestion_lists_can_be_added(lab: dict[str, Any]) -> 
     )
     assert res.status_code == 409  # no such suggestion
     assert lab["c"].get("/api/groups").json() == []
+
+
+def test_automatic_sources_are_suggested_by_the_templates_that_read_them(
+    lab: dict[str, Any], pin_now: Any
+) -> None:
+    from datetime import UTC, datetime
+
+    from app.core.schema import COLUMN_NAMES
+    from app.ingest.writer import LakeWriter
+
+    now = datetime(2026, 10, 9, 21, 0, tzinfo=UTC)
+    pin_now(now)
+    c = lab["c"]
+    edge = lab["tmp"] / "logs" / "edge"
+    edge.mkdir()
+    body = {"source_id": "edge", "format": "syslog", "path": str(edge), "template_id": "auto"}
+    assert c.post("/api/sources", json=body).status_code == 201
+    assert ("vendor", "paloalto") in _suggestions(lab)  # fw; edge has no lines yet
+    assert "edge" not in _suggestions(lab)[("category", "identity")]["source_ids"]
+    rows = []
+    for i, tid in enumerate(("paloalto_userid", "linux_sshd", "paloalto_userid")):
+        row: dict[str, Any] = dict.fromkeys(COLUMN_NAMES)
+        row.update(
+            event_id=f"0192f000-0000-7000-8000-00000000000{i}", source_id="edge",
+            template_id=tid, template_version="1", time=now, time_observed=now,
+            raw=f"line {i}", raw_bytes_invalid=False, parse_status="ok",
+            classification="local_only", owner_id="system",
+        )  # fmt: skip
+        rows.append(row)
+    LakeWriter(lab["app"].state.engine._lake).write(rows)
+    s = _suggestions(lab)
+    assert s[("category", "identity")]["source_ids"] == ["edge", "sshd", "sudo"]
+    assert s[("vendor", "paloalto")]["source_ids"] == ["edge", "fw"]
+    assert s[("vendor", "linux")]["source_ids"] == ["edge", "sshd", "sudo"]
+    res = c.post(
+        "/api/groups/suggestions/accept",
+        json={"kind": "vendor", "key": "paloalto", "source_ids": ["edge"]},
+    )
+    assert res.status_code == 200 and res.json()["user_ids"] == []
+
+
+def test_the_built_in_server_source_is_never_suggested() -> None:
+    from app.auth.suggestions import suggest
+    from app.ingest.sources import SourceConfig
+    from app.templates.registry import STARTER_DIR, TemplateRegistry
+
+    registry = TemplateRegistry(STARTER_DIR, Path("/nonexistent"))
+    built = SourceConfig(source_id="server_events", format="json", kind="otlp",
+                         template_id="server_events")  # fmt: skip
+    assert registry.get("server_events") is not None
+    assert suggest([built], registry.get, []) == []

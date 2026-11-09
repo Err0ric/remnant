@@ -10,7 +10,10 @@ from app.api.access import AdminUser, client_ip
 from app.auth.groups import Group, GroupStore
 from app.auth.service import AuthService
 from app.auth.suggestions import Kind, Suggestion, accept, suggest
+from app.core.ids import AUTO_PARSER
+from app.engine.duckdb import QueryEngine
 from app.ingest.sources import SourceStore
+from app.search.source_templates import templates_by_source
 from app.templates.registry import TemplateRegistry
 
 router = APIRouter(tags=["groups"])
@@ -128,7 +131,11 @@ class SuggestionAccept(BaseModel):
 def _suggestions(request: Request) -> list[Suggestion]:
     sources: SourceStore = request.app.state.sources
     registry: TemplateRegistry = request.app.state.templates
-    return suggest(sources.list(), registry.get, _store(request).all())
+    listed = sources.list()
+    engine: QueryEngine = request.app.state.engine
+    auto = [s.source_id for s in listed if s.template_id == AUTO_PARSER]
+    seen = templates_by_source(engine, auto)
+    return suggest(listed, registry.get, _store(request).all(), seen)
 
 
 @router.get("/groups/suggestions")

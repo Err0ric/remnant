@@ -4,18 +4,26 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { FormError } from "@/features/auth/FormError";
 import { since, stamp } from "@/features/overview/time";
-import { ApiError, api, type ClientErrorRow, type Source, type WatchedDevice } from "@/lib/api";
+import {
+  ApiError,
+  api,
+  type BackupHealth,
+  type ClientErrorRow,
+  type Source,
+  type WatchedDevice,
+} from "@/lib/api";
 import { navigate, useSection, useSectionTab, type PageId } from "@/lib/route";
 import { SpeedTable } from "./SpeedTable";
 import { BackgroundFailures } from "./BackgroundFailures";
 import { EntityLink } from "@/components/EntityLink";
-import { lag, openGaps } from "./flow";
+import { openGaps, quietWord } from "./flow";
 import { SourceFlow } from "./SourceFlow";
 import { StatusLine } from "./StatusLine";
 import { SystemStrip, type SourceTally } from "./SystemStrip";
 
 type Level = "unhealthy" | "attention" | "paused" | "healthy";
-type TabId = "sources" | "enrichment" | "agents" | "devices" | "alerts" | "rollups" | "speed";
+type TabId =
+  "sources" | "enrichment" | "agents" | "devices" | "alerts" | "backups" | "rollups" | "speed";
 
 interface Row {
   key: string;
@@ -32,6 +40,8 @@ interface Row {
   device?: WatchedDevice;
   /** Status in a word when the level alone would not say why (F55). */
   word?: string;
+  /** Hover text for the detail line (a UTC time). */
+  detailTitle?: string;
 }
 
 const LEVELS: { id: Level; label: string; color: string }[] = [
@@ -52,6 +62,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "agents", label: "Endpoint agents" },
   { id: "devices", label: "Watched devices" },
   { id: "alerts", label: "Delivery" },
+  { id: "backups", label: "Backups" },
   { id: "rollups", label: "Page rollups" },
   { id: "speed", label: "Speed" },
 ];
@@ -181,26 +192,32 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
 
   const now = new Date().toISOString();
   const list = sources.data ?? [];
-  // A source that is read without errors but sent nothing in 24 hours is not flowing (F55).
-  // So does one with a gap: the gap is written out under its row.
-  const totals = new Map((overview.data?.volume ?? []).map((v) => [v.source_id, v.total]));
-  const gapped = new Set(
-    (overview.data?.volume ?? []).filter((v) => v.gaps.length).map((v) => v.source_id),
-  );
-  // An open source gap alert (or a firing quiet watch) is a gap here too (review item 3).
-  const open = new Map(openGaps(overview.data).map((g) => [g.source_id, g]));
+  // Each source's level comes from the server's one condition (handoff item 4), the same
+  // one the Dashboard footer counts; the reading status above only gives the words.
+  const judged = new Map((overview.data?.sources ?? []).map((h) => [h.source_id, h]));
   const flowing = (r: Row): Row => {
-    if (!overview.data || r.level !== "healthy") return r;
-    const stopped = open.get(r.key);
-    if (stopped)
-      return {
-        ...r,
-        level: "attention",
-        word: stopped.quiet ? `Quiet ${stopped.quiet}` : "Stopped sending",
-      };
-    if (!totals.get(r.key)) return { ...r, level: "attention", word: "No events in 24 hours" };
-    if (gapped.has(r.key)) return { ...r, level: "attention", word: "Gap" };
-    return r;
+    const h = judged.get(r.key);
+    if (!h || !overview.data) return r; // the overview is still loading
+    switch (h.condition) {
+      case "paused":
+        return { ...r, level: "paused", reason: r.reason ?? "Turned off" };
+      case "error":
+        return { ...r, level: "unhealthy" };
+      case "quiet": {
+        const word = quietWord(h.last_event_at, overview.data.generated_at);
+        return {
+          ...r,
+          level: h.quiet_since ? "unhealthy" : "attention",
+          word: word.charAt(0).toUpperCase() + word.slice(1),
+        };
+      }
+      case "gap":
+        return { ...r, level: "attention", word: "Gap" };
+      case "attention":
+        return { ...r, level: "attention", reason: r.reason ?? "Needs a look" };
+      default:
+        return { ...r, level: "healthy", reason: null };
+    }
   };
   const rows: Record<TabId, Row[]> = {
     sources: [
@@ -308,6 +325,8 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
         page: "schedules",
       })),
     ],
+    // Scheduled backups (handoff item 8): last run, its age, size, and result.
+    backups: backupRows(checks.data?.backup),
     // The daily and today-so-far page rollups: whether they are keeping up (owner,
     // 2026-11-01). The time shown is the last today-so-far build, every 5 minutes.
     rollups: (checks.data?.rollups ?? []).map((ru): Row => ({
@@ -329,27 +348,9 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
     speed: [], // its own table (SpeedTable), not status rows
   };
   const o = overview.data;
-  const gapsOf = new Map((o?.volume ?? []).map((v) => [v.source_id, v.gaps.length]));
-  const lastOf = new Map((o?.sources ?? []).map((s) => [s.source_id, s.last_event_at]));
-  const sourceRows = rows.sources.filter((r) => r.key !== "lake-quarantine");
-  const enabled = list.filter((s) => s.enabled);
-  const waits = enabled
-    .map((s) => ({ id: s.source_id, last: lastOf.get(s.source_id) ?? s.status.last_event_at }))
-    .filter((w): w is { id: string; last: string } => Boolean(w.last))
-    .sort((a, b) => a.last.localeCompare(b.last));
-  const worst = waits[0];
-  const tally: SourceTally = {
-    total: sourceRows.length,
-    healthy: sourceRows.filter((r) => r.level === "healthy" && !gapsOf.get(r.key)).length,
-    // Gaps in 24 hours, plus each open gap the 24 hours do not already show.
-    gaps: list.reduce(
-      (n, s) => n + Math.max(gapsOf.get(s.source_id) ?? 0, open.has(s.source_id) ? 1 : 0),
-      0,
-    ),
-    openGaps: openGaps(overview.data).filter((g) => list.some((s) => s.source_id === g.source_id)),
-    worstLag: worst ? lag(worst.last, now) : null,
-    worstLagSource: worst?.id ?? null,
-  };
+  const tally: SourceTally | undefined = o?.source_summary
+    ? { summary: o.source_summary, openGaps: openGaps(o) }
+    : undefined;
   const count = (l: Level) => rows[tab].filter((r) => r.level === l).length;
   const shown = rows[tab].filter((r) => !filter || r.level === filter);
   const loading = sources.isLoading || checks.isLoading;
@@ -509,9 +510,11 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
                         <th className="hidden px-3 py-2 font-semibold md:table-cell">
                           {tab === "enrichment"
                             ? "Last updated"
-                            : tab === "rollups"
-                              ? "Today built"
-                              : "Last seen"}
+                            : tab === "backups"
+                              ? "Last backup"
+                              : tab === "rollups"
+                                ? "Today built"
+                                : "Last seen"}
                         </th>
                         {tab === "devices" ? (
                           <th className="hidden px-3 py-2 font-semibold md:table-cell">
@@ -563,7 +566,9 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
                               </div>
                             ) : null}
                             {r.detail ? (
-                              <div className="text-xs text-text-muted">{r.detail}</div>
+                              <div className="text-xs text-text-muted" title={r.detailTitle}>
+                                {r.detail}
+                              </div>
                             ) : null}
                             {r.reason ? (
                               <div
@@ -633,7 +638,47 @@ function RANK(r: Row): number {
   return { unhealthy: 0, attention: 2, paused: 3, healthy: 4 }[r.level];
 }
 
+const RESULT: Record<string, string> = {
+  success: "Succeeded",
+  failed: "Failed",
+  skipped: "Skipped",
+  running: "Running now",
+};
+
+function size(bytes: number): string {
+  return bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${(bytes / 1e6).toFixed(1)} MB`;
+}
+
+/** One row for scheduled backups: the last run in local time (UTC on hover), its size and
+ * result, and the schedule. */
+function backupRows(b: BackupHealth | null | undefined): Row[] {
+  if (!b) return [];
+  const last = b.last;
+  return [
+    {
+      key: "backup",
+      name: "Scheduled backup",
+      sub: b.enabled ? `Daily at ${b.at_time} ${b.timezone}, ${b.keep} kept` : "Turned off",
+      detail: [
+        last ? `Last run ${localStamp(last.started_at)}` : "No run yet",
+        last ? (RESULT[last.result] ?? last.result) : "",
+        last?.bytes ? size(last.bytes) : "",
+        `${b.kept} on disk`,
+        b.next_at ? `next ${localStamp(b.next_at)}` : "",
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      detailTitle: last ? `${stamp(last.started_at)} UTC` : undefined,
+      last: b.last_success_at,
+      level: b.state,
+      reason: b.reason,
+      page: "about",
+    },
+  ];
+}
+
 const EMPTY: Record<TabId, ReactNode> = {
+  backups: "Backups are not reported yet.",
   rollups: "No rollups reported yet.",
   sources:
     "No sources yet. Add files, a syslog listener, Loki, or Microsoft 365 under Settings, Sources and connectors.",

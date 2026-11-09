@@ -13,7 +13,8 @@ schema version, and a SHA-256 per file. It can be taken while the server runs:
 
 Restore checks every hash before writing anything, refuses unsafe paths, refuses a
 backup from a newer schema than this code knows, and never writes over a data folder
-that is not empty unless asked; then the old one is moved aside, not deleted.
+that is not empty unless asked; then the old one is moved aside, not deleted. The
+`backups/` folder stays in place either way.
 """
 
 from __future__ import annotations
@@ -43,6 +44,9 @@ MANIFEST = "manifest.json"
 TREES = ("lake", "templates", "tls", "enrichment")
 SKIP_SUFFIXES = (".tmp", ".lock")
 KEPT_PREFIX = ".before-restore-"
+# Scheduled backups live here by default; a restore leaves the folder where it is, so the
+# other backups are still beside the restored data.
+BACKUPS_DIR = "backups"
 
 
 class BackupError(Exception):
@@ -219,7 +223,11 @@ def restore(archive: Path, data_dir: Path, replace: bool = False) -> tuple[Backu
             f" this code knows {len(MIGRATIONS)}). Update the code first."
         )
     data_dir.mkdir(parents=True, exist_ok=True)
-    current = [p for p in data_dir.iterdir() if not p.name.startswith(KEPT_PREFIX)]
+    current = [
+        p
+        for p in data_dir.iterdir()
+        if not p.name.startswith(KEPT_PREFIX) and p.name != BACKUPS_DIR
+    ]
     if current and not replace:
         raise BackupError(
             f"{data_dir} is not empty. Stop the server, then run again with --replace;"

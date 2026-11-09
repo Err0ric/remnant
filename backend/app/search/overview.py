@@ -23,12 +23,13 @@ from app.auth.users import User
 from app.detect.runner import RuleRunner
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.engine.views import permitted_sources
-from app.ingest.sources import SourceStore
+from app.ingest.sources import SourceStore, quiet_expected
 from app.ingest.watcher import IngestService, source_state
 from app.meta.db import MetaDB
 from app.search.gaps import Gap, find_gaps
 from app.search.hour_marks import mark_hours, typical
 from app.search.schedules import ScheduleService
+from app.search.source_state import BEHIND_S
 
 HOURS = 24
 BASELINE_DAYS = 7  # earlier days compared hour by hour for unusual hours (D65)
@@ -67,6 +68,10 @@ class SourceHealth:
     records_skipped: int
     error: str | None
     rate_per_min: float = 0.0  # received over the last RATE_MINUTES
+    quiet_expected: bool = False  # server_events: quiet when nobody uses the server
+    # Warnings, retries, a time offset, or reading far behind: what /api/sources shows
+    # admins in words. Used for the source's condition (app.search.source_state) only.
+    reading_issue: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,6 +197,16 @@ class OverviewService:
                     records_skipped=st.records_skipped if st else 0,
                     error=error,
                     rate_per_min=rates.get(s.source_id, 0.0),
+                    quiet_expected=quiet_expected(s),
+                    reading_issue=bool(
+                        st
+                        and (
+                            st.warnings
+                            or st.retry_at
+                            or st.time_offset_h
+                            or (st.behind_s or 0) > BEHIND_S
+                        )
+                    ),
                 )
             )
         since = now - timedelta(hours=HOURS)

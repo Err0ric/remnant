@@ -6,6 +6,7 @@ model that answers wrongly scores 0 percent exact while staying executable.
 """
 
 import json
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -67,7 +68,7 @@ def _provider(lab: Any, answer_for: Any) -> str:
 
     lab.state.gate._factory = lambda r, _s, e: Fake(r, e)
     store: ProviderStore = lab.state.providers
-    rec = store.add(f"fake-{id(answer_for)}", "http://127.0.0.1:1/v1", "fake", None)
+    rec = store.add(f"fake-{uuid.uuid4().hex[:12]}", "http://127.0.0.1:1/v1", "fake", None)
     store.update(rec.provider_id, None, None, None, True, None, False)
     return rec.provider_id
 

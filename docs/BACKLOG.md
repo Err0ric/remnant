@@ -79,6 +79,7 @@ Checked in the code on 2026-11-08.
 
 | Item | Done by | Target slice | Noted |
 |---|---|---|---|
+| Flaky eval test: fake provider names repeat | Test-only fix (uuid names) | Tooling | Queue, 2026-11-08 |
 | Bump certifi past PYSEC-2026-4320 and drop its CI ignore | #448 (D223, with Dependabot security updates) | Maintenance | CI, 2026-10-20 |
 | Pin Docker base images by digest | Base images pinned by digest and enforced in `check-architecture.sh` (#177, Slice 6) | 6 | Slice 1 skeleton |
 | Read-only MCP server (SPEC 3.8, ADR-0003) | Read-only MCP server, `get_schema` and `run_query` (#176, Slice 7) | 7 | Roadmap, 2026-10-10 |

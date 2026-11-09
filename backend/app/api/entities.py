@@ -290,7 +290,8 @@ async def summary(
     _allowed, scope = await _scope(request, user, start, end)
     engine: QueryEngine = request.app.state.engine
     ident = await _identities(request, scope, user)
-    s = await run_in_threadpool(entity_summary, engine, scope, kind, value, ident)
+    names = {t.id: t.name for t in request.app.state.templates.all()}
+    s = await run_in_threadpool(entity_summary, engine, scope, kind, value, ident, names)
     geo = None
     if kind == "ip":
         geoip: GeoIP = request.app.state.geoip

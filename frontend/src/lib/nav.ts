@@ -153,6 +153,7 @@ export const AREAS: Area[] = [
       { label: "Endpoint agents", page: "health", tab: "agents" },
       { label: "Watched devices", page: "health", tab: "devices" },
       { label: "Delivery", page: "health", tab: "alerts", aliases: ["alert delivery"] },
+      { label: "Backups", page: "health", tab: "backups", aliases: ["backup status", "restore"] },
       { label: "Page rollups", page: "health", tab: "rollups", aliases: ["rollup status"] },
       {
         label: "Speed",

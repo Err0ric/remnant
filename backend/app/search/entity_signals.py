@@ -57,7 +57,9 @@ def seen_sql(internal: str = "is_internal(ip)") -> str:
     in one grouping pass over three columns, and the signals are read only from the rows
     that can carry one (sign-ins, hook events, consents), so DNS and firewall rows are
     never fanned out; "internal" is decided once per distinct address of a failed sign-in,
-    in SQL, not once per row."""
+    in SQL, not once per row. Hook fields are read in a scan of hook rows alone (owner
+    item 2, 2026-11-08): a Windows sign-in carries about 1.5 KB of `unmapped`, and reading
+    it for every sign-in to find the few hook rows was most of the page's time."""
     return f"""
 WITH n AS (
   {_PER_ENTITY} count(*) AS events
@@ -69,27 +71,29 @@ s AS (
          class_uid = 3002 AND status_id = 2 AS fail,
          CASE WHEN message ILIKE 'Consent to application%'
               THEN coalesce(metadata_correlation_uid, CAST(event_id AS VARCHAR)) END AS consent,
-         coalesce({FAILURE_WITH_ADDRESS}, false) AS addressed,
-         -- CASE, so the JSON is read on hook rows only
-         CASE WHEN template_id = 'claude_hooks' THEN
-           message = 'claude_hooks.post_tool_use_failure' AND {counted(_a("tool_name"))}
-         ELSE false END AS blocked,
-         CASE WHEN template_id = 'claude_hooks' THEN
-           len($org) > 0 AND {_EMAIL} IS NOT NULL
-           AND NOT list_contains($org, split_part({_EMAIL}, '@', 2))
-         ELSE false END AS personal
+         coalesce({FAILURE_WITH_ADDRESS}, false) AS addressed
   FROM events
-  WHERE class_uid = 3002 OR template_id = 'claude_hooks'
-     OR message ILIKE 'Consent to application%'
+  WHERE class_uid = 3002 OR message ILIKE 'Consent to application%'
 ),
 a AS (SELECT ip, {internal} AS inside FROM (SELECT DISTINCT ip FROM s WHERE addressed)),
 g AS (
   {_PER_ENTITY}
          count(*) FILTER (WHERE fail) AS failed,
-         count(*) FILTER (WHERE addressed AND NOT coalesce(a.inside, false)) AS attacks,
-         count(*) FILTER (WHERE blocked) AS blocked,
-         bool_or(personal) AS personal
+         count(*) FILTER (WHERE addressed AND NOT coalesce(a.inside, false)) AS attacks
   FROM s LEFT JOIN a USING (ip) GROUP BY GROUPING SETS ((u), (ip), (h))
+),
+-- Hook rows only, the one scan that reads `unmapped`: blocked calls and personal accounts
+-- count for users and hosts.
+k AS (
+  SELECT CASE WHEN grouping(u) = 0 THEN 'user' ELSE 'host' END AS kind,
+         coalesce(u, h) AS value,
+         count(*) FILTER (WHERE message = 'claude_hooks.post_tool_use_failure'
+                          AND {counted(_a("tool_name"))}) AS blocked,
+         bool_or(len($org) > 0 AND {_EMAIL} IS NOT NULL
+                 AND NOT list_contains($org, split_part({_EMAIL}, '@', 2))) AS personal
+  FROM (SELECT actor_user_name AS u, device_hostname AS h, message, unmapped FROM events
+        WHERE template_id = 'claude_hooks')
+  GROUP BY GROUPING SETS ((u), (h))
 ),
 -- Consents count for users only, each once (D150): a few rows, apart from the grouping.
 c AS (
@@ -100,9 +104,10 @@ SELECT kind, value, n.events,
        coalesce(g.failed, 0) AS failed,
        coalesce(c.consents, 0) AS consents,
        CASE WHEN kind = 'user' THEN 0 ELSE coalesce(g.attacks, 0) END AS attacks,
-       CASE WHEN kind = 'ip' THEN 0 ELSE coalesce(g.blocked, 0) END AS blocked,
-       CASE WHEN kind = 'ip' THEN false ELSE coalesce(g.personal, false) END AS personal
+       coalesce(k.blocked, 0) AS blocked,
+       coalesce(k.personal, false) AS personal
 FROM n LEFT JOIN g USING (kind, value) LEFT JOIN c USING (kind, value)
+LEFT JOIN k USING (kind, value)
 WHERE nullif(value, '') IS NOT NULL
 QUALIFY row_number() OVER (PARTITION BY kind ORDER BY n.events DESC, value) <= {SEEN_PER_KIND}
 """  # noqa: S608  # fixed SQL text; `internal` is built from parsed networks

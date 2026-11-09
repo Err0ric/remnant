@@ -15,7 +15,14 @@ from typing import Any, Literal
 from app.core.timing import in_context
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.engine.signin_classes import REAL_FAILURE_SQL, class_sql
-from app.search.entities import CLASS_NAMES, WHERE, quote, search_sql, user_filter_sql
+from app.search.entities import (
+    CLASS_NAMES,
+    RECORD_LIKE,
+    WHERE,
+    quote,
+    search_sql,
+    user_filter_sql,
+)
 from app.search.identity import IdentityMap, key_sql
 
 TIMEOUT_S = 20
@@ -92,6 +99,33 @@ EXAMPLE_NAMED = (
     " * 1e13 + epoch_ms(coalesce(time, time_observed)))"
 )
 EXAMPLE_NEWEST = "arg_max(message, coalesce(time, time_observed))"
+
+# An example line that is a whole delimited record (a vendor CSV payload standing in for a
+# message, as Palo Alto USERID lines stored before #425 have) reads instead as a summary of
+# its parsed fields: who, the address, and how a mapping was learned. Run only when needed.
+RECORD_FIELDS_SQL = """
+SELECT message, min(template_id), min(nullif(trim(actor_user_name), '')),
+       min(nullif(src_endpoint_ip, '')),
+       min(nullif(json_extract_string(unmapped, '$.data_source'), ''))
+FROM events
+WHERE {where} AND message IN (SELECT unnest($records)) AND {record_like}
+GROUP BY 1"""
+
+
+def is_record(message: str) -> bool:
+    """The Python side of `RECORD_LIKE` for a non-empty message."""
+    return len(message) - len(message.replace(",", "").replace("|", "")) >= 8
+
+
+def record_summary(name: str, who: Any, address: Any, learned: Any) -> str:
+    """'Palo Alto Networks User-ID: alice at 192.0.2.20, learned from globalprotect'."""
+    text = " at ".join(str(v) for v in (who, address) if v)
+    if learned:
+        text = f"{text}, learned from {learned}" if text else f"learned from {learned}"
+    if name:
+        text = f"{name}: {text}" if text else name
+    return text
+
 
 TARGETS_SQL = """
 SELECT 'host' AS kind, {target} AS value, count(*) AS n FROM events
@@ -175,7 +209,9 @@ def entity_summary(
     kind: Kind,
     value: str,
     ident: IdentityMap | None = None,
+    template_names: dict[str, str] | None = None,
 ) -> Summary:
+    """`template_names` (id to name) names a summary that stands in for a record line."""
     ident = ident or IdentityMap()
     params: dict[str, object]
     if kind == "user":
@@ -244,6 +280,22 @@ def entity_summary(
                 search_sql=search_sql(" AND ".join(cond)),
             )
         )
+    records = sorted({a.example for a in activities if a.example and is_record(a.example)})
+    if records:
+        found = engine.run(
+            RECORD_FIELDS_SQL.format(where=where, record_like=RECORD_LIKE),
+            scope,
+            {**params, "records": records},
+            timeout_s=TIMEOUT_S,
+            name="summary.records",
+            page=True,
+        )
+        plain = {
+            str(msg): record_summary((template_names or {}).get(str(tpl or ""), ""), w, a, ls)
+            for msg, tpl, w, a, ls in found.rows
+        }
+        for act in activities:
+            act.example = plain.get(act.example, act.example)
     # The entity itself is not its own target (a host's own name, a user's own name).
     own = {value.lower()}
     targets = [

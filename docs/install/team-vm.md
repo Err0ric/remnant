@@ -265,7 +265,7 @@ Rolling back changes the code only. The data folder (events, the settings databa
 - **Database changes.** Migrations only ever add tables and columns, and there are no downgrade steps. The older version starts on the newer database, finds every change it knows already applied, leaves the newer tables and columns alone, and logs `meta.schema_newer` with version numbers only.
 - **What the newer version added stays.** New settings, tables, and columns stay in the database unused, and are in use again after rolling forward. Events the newer version wrote stay in the lake and remain searchable.
 - **Sources of a kind the older version does not know** (a connector added by the newer version) are skipped with a `sources.unknown_kind_skipped` warning: not ingested, not shown on Sources, still kept with their retention. Versions from before the rollback command instead stop ingest for every source when they meet one, so before going back that far by hand, remove those sources first.
-- **Backups.** A backup made on the newer version is refused by the older version's restore ("This backup is from a newer version"). Restore it after rolling forward.
+- **Backups.** A backup made on the newer version is refused by the older version's restore ("This backup is from a newer version"). Restore it after rolling forward. Scheduled backups stay in the backup folder; a version without them makes and deletes none until you roll forward ([backup.md](backup.md#backups-and-rolling-back)).
 
 Lost the administrator password:
 
@@ -354,7 +354,16 @@ A baseline is only ever taken after a check you have seen, never silently. Repla
 | Optional: sign-in with Microsoft Entra ID or another OIDC provider | [sso-entra.md](sso-entra.md) |
 | Recommended: an alert when a source stops sending | [quiet-sources.md](quiet-sources.md) |
 
-Back up the data folder with `app-admin backup`, which works while the server runs: see [backup.md](backup.md). It holds the event lake, settings, users, the audit log, and `.key`, which encrypts stored passwords and tokens: without it those secrets cannot be read back.
+### Backups and restore
+
+The server backs up the data folder every day at 02:15 (install time zone) and keeps 14; change the time and count under **Settings > About and licenses > Backups**, and check **Health > Backups** for the last run. A backup holds the event lake, settings, users, the audit log, and `.key`, which encrypts stored passwords and tokens: without it those secrets cannot be read back. It does not hold the settings file or the code.
+
+| Install | Backups are in | Restore one (stop the server first) |
+|---|---|---|
+| systemd | `/var/lib/remnant/backups` | `systemctl stop remnant`, then `app-admin restore --replace /var/lib/remnant/backups/<file>` as the `remnant` user (full command in [backup.md](backup.md#restoring-a-scheduled-backup)), then `systemctl start remnant` |
+| Docker Compose | `/srv/data/backups` in the `app-data` volume | `docker compose stop app`, `docker compose run --rm --no-deps app app-admin restore --replace /srv/data/backups/<file>`, `docker compose start app` |
+
+The previous contents move to `.before-restore-<time>/` in the data folder; delete it once the server looks right. Copy the backup folder off this machine too (`APP__BACKUP__DIR` can point at a mounted share). A rollback (above) changes the code only and a restore changes the data only; after rolling back, restore only a backup made by that version or earlier. Details: [backup.md](backup.md).
 
 ### Power loss and the settings database
 

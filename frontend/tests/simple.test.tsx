@@ -137,6 +137,26 @@ describe("Simple search", () => {
     expect(window.location.pathname).toBe("/investigate/logs");
   });
 
+  it("opens on Filters unless SQL was chosen with a tab click", async () => {
+    // The former key was also written by opening a search in SQL: not a choice.
+    window.localStorage.setItem("search-tab", "sql");
+    const { view } = await renderAt("/investigate/logs");
+    expect(await screen.findByRole("tab", { name: "Filters", selected: true })).toBeVisible();
+    await screen.findByText("Failed password for invalid user oracle");
+    await userEvent.type(screen.getByLabelText("Search text"), "oracle{Enter}");
+    await userEvent.click(await screen.findByRole("button", { name: "Edit as SQL" }));
+    expect(screen.getByRole("tab", { name: "SQL", selected: true })).toBeVisible();
+    view.unmount();
+    window.history.replaceState(null, "", "/");
+    await renderAt("/investigate/logs");
+    expect(await screen.findByRole("tab", { name: "Filters", selected: true })).toBeVisible();
+  });
+
+  it("opens the tab a link names", async () => {
+    await renderAt("/investigate/logs#tab=sql&q=SELECT%201");
+    expect(await screen.findByRole("tab", { name: "SQL", selected: true })).toBeVisible();
+  });
+
   it("has exactly the Filters and SQL modes; Ask AI is its own page (D206)", async () => {
     const { view } = await renderAt("/investigate/logs");
     const modes = await screen.findByRole("tablist", { name: "Logs mode" });

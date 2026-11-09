@@ -225,6 +225,27 @@ describe("Ask routing (ADR-0042 slice 1b)", () => {
     ).toBeVisible();
   });
 
+  it("shows a library answer at once, with no wait on the model (owner, 2026-11-08)", async () => {
+    const seen: string[] = [];
+    const watch = new MutationObserver(() => {
+      for (const el of document.querySelectorAll('[role="status"]'))
+        seen.push(el.textContent ?? "");
+    });
+    watch.observe(document.body, { subtree: true, childList: true, characterData: true });
+    await renderAt("/ask-ai");
+    await askQuestion("who uses claude code");
+    const block = await screen.findByRole("region", { name: "Question: who uses claude code" });
+    expect(await within(block).findByRole("table", { name: "Results" })).toBeVisible();
+    watch.disconnect();
+    // The model wait ("Finding the right query", shown after 2 s) never appeared.
+    expect(seen.filter((t) => t.includes("Finding the right query"))).toEqual([]);
+    const how = within(block).getByText("How I got this").closest("details") as HTMLElement;
+    expect(within(how).getByText("ai_agents/agents_claude_code_users@1.1.0")).toBeInTheDocument();
+    expect(
+      within(how).getByText("A data question, matched to the library without the model"),
+    ).toBeInTheDocument();
+  });
+
   it("says when a question was treated as general guidance and switches on click", async () => {
     const spy = await renderAt("/ask-ai");
     await askQuestion("how should I harden sshd?");

@@ -1067,6 +1067,40 @@ export interface HealthChecks {
   background_failures?: FailingJob[];
   /** Page rollups: counts and times only. */
   rollups?: RollupHealth[];
+  /** Scheduled backups (handoff item 8). */
+  backup?: BackupHealth | null;
+}
+
+export interface BackupRun {
+  started_at: string;
+  finished_at: string | null;
+  /** running | success | failed | skipped */
+  result: string;
+  file: string | null;
+  bytes: number | null;
+  error: string | null;
+}
+
+export interface BackupHealth {
+  enabled: boolean;
+  at_time: string;
+  timezone: string;
+  keep: number;
+  kept: number;
+  last: BackupRun | null;
+  last_success_at: string | null;
+  next_at: string | null;
+  state: "healthy" | "attention" | "unhealthy";
+  reason: string | null;
+}
+
+export interface BackupSettings {
+  enabled: boolean;
+  /** HH:MM in the install's time zone. */
+  at_time: string;
+  keep: number;
+  timezone: string;
+  folder: string;
 }
 
 export interface RollupHealth {
@@ -1331,6 +1365,10 @@ export interface Source extends SourceInput {
   enabled: boolean;
   status: SourceStatus;
   quiet?: SourceQuiet | null;
+  /** Server-set: a source the server writes itself (server_events). */
+  built_in?: boolean;
+  /** Server-set: events only when someone uses or probes the server, so quiet is expected. */
+  quiet_expected?: boolean;
 }
 
 export interface ColumnInfo {
@@ -1789,7 +1827,7 @@ export interface AskRequest {
 /** How a question was routed (ADR-0042 slice 1b, condition 3). */
 export interface AskRoute {
   kind: "data" | "knowhow";
-  by: "model" | "forced" | "follow_up";
+  by: "model" | "forced" | "follow_up" | "library";
   library: { ref: string; name: string; version: string } | null;
   /** "user = dana@example.com (also dana)", for How I got this. */
   filters: string[];
@@ -1960,6 +1998,31 @@ export interface OverviewSourceHealth {
   gap_alert?: string | null;
   /** Events received in the last 15 minutes, per minute (F55). */
   rate_per_min: number;
+  /** server_events: events only when the server is used or probed; never quiet. */
+  quiet_expected?: boolean;
+  /** The one state Health and the Dashboard footer show (server-side, handoff item 4). */
+  condition: SourceCondition;
+}
+
+export type SourceCondition = "healthy" | "quiet" | "gap" | "attention" | "error" | "paused";
+
+/** A source and when it last sent; null when it never did. */
+export interface SourceWait {
+  source_id: string;
+  last_event_at: string | null;
+}
+
+/** "N of M healthy", counted once on the server for Health and the Dashboard. */
+export interface SourceSummary {
+  /** Every source; a paused one is in the total and never healthy, as Health counts. */
+  total: number;
+  healthy: number;
+  /** Longest quiet first. */
+  quiet: SourceWait[];
+  /** Gaps in 24 hours on sources that are not quiet. */
+  gaps: number;
+  /** Over sources that are not quiet, leaving out sources with events only on a refusal. */
+  longest_wait: SourceWait | null;
 }
 
 /** Hours with nothing from a source that normally sends every hour (F55). */
@@ -2018,6 +2081,7 @@ export interface Overview {
   events_usual_24h: number | null;
   /** Sources with under 7 days of data, left out of the comparison. */
   new_sources: string[];
+  source_summary: SourceSummary;
 }
 
 /** GET /api/audit/... (Slice 5): admins and auditors only; reading is itself audited. */
@@ -2176,6 +2240,21 @@ export interface AlertItem {
   last_seen?: string | null;
   changes?: string[];
   more_changes?: number;
+  /** AI service and MCP server alerts: the catalog status now; "unknown" for a service
+   * the catalog does not list. */
+  review_status?: AiStatus | "unknown" | null;
+  /** Who used a device the alert names, from the hooks plugin records the viewer reads. */
+  device_people?: DevicePerson[];
+}
+
+export interface DevicePerson {
+  device: string;
+  /** One person is attributed; several are possible, and none of them is picked. */
+  level: "attributed" | "possible";
+  people: string[];
+  count: number;
+  /** hooks_identities: two names on the host are one person in Identities. */
+  how: "hooks" | "hooks_identities";
 }
 
 export interface AlertList {
@@ -2883,6 +2962,9 @@ export const api = {
   auditorSql: () => request<{ enabled: boolean }>("/api/settings/auditor-sql"),
   setAuditorSql: (enabled: boolean) =>
     request<{ enabled: boolean }>("/api/settings/auditor-sql", put({ enabled })),
+  backupSettings: () => request<BackupSettings>("/api/settings/backups"),
+  setBackupSettings: (body: { enabled: boolean; at_time: string; keep: number }) =>
+    request<BackupSettings>("/api/settings/backups", put(body)),
   liveLimit: () => request<{ minutes: number }>("/api/settings/live"),
   setLiveLimit: (minutes: number) =>
     request<{ minutes: number }>("/api/settings/live", put({ minutes })),

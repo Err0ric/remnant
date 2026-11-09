@@ -19,6 +19,7 @@ import structlog
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import HTMLResponse, Response
 from starlette.types import Scope
@@ -171,6 +172,7 @@ from app.meta.audit import AuditReader
 from app.meta.db import MetaDB
 from app.meta.secrets import SecretBox
 from app.ops.integrity import IntegrityService
+from app.ops.scheduled_backup import BackupScheduler
 from app.search import m365 as m365_facts
 from app.search.ask_runs import AskRuns
 from app.search.dashboard import unplaced
@@ -308,6 +310,7 @@ async def _schedule_loop(
     ai_watch: AiWatch,
     health: HealthService,
     refusals: RefusalWatch,
+    backups: BackupScheduler,
 ) -> None:
     while True:
         try:
@@ -330,6 +333,10 @@ async def _schedule_loop(
             await asyncio.to_thread(refusals.tick)
         except Exception as exc:  # never fatal; retried next tick
             log.warning("refusal_watch.failed", **log_detail(exc))
+        try:  # starts a due backup on its own thread; returns at once
+            await asyncio.to_thread(backups.tick)
+        except Exception as exc:  # never fatal; retried next tick
+            log.warning("backup.tick_failed", **log_detail(exc))
         try:
             await asyncio.to_thread(alerts.tick)
         except Exception as exc:  # never fatal; retried next tick
@@ -359,6 +366,16 @@ async def _refresh_loop(refresher: Refresher) -> None:
             log.warning("page.refresh_loop_failed", **log_detail(exc))
 
 
+async def _server_events_loop(events: ServerEvents) -> None:
+    """Write queued sign-in and request records every second, off the event loop."""
+    while True:
+        await asyncio.sleep(1)
+        try:
+            await run_in_threadpool(events.flush)
+        except Exception as exc:  # never fatal; the next second tries again
+            log.warning("server_events.flush_failed", error=type(exc).__name__)
+
+
 def _lifespan(config: AppConfig) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -382,6 +399,7 @@ def _lifespan(config: AppConfig) -> Callable[[FastAPI], AbstractAsyncContextMana
                         app.state.ai_watch,
                         app.state.health,
                         app.state.refusal_watch,
+                        app.state.backups,
                     )
                 )
             )
@@ -390,6 +408,7 @@ def _lifespan(config: AppConfig) -> Callable[[FastAPI], AbstractAsyncContextMana
                 asyncio.create_task(_listener_loop(app.state.listeners, app.state.sources))
             )
         tasks.append(asyncio.create_task(_refresh_loop(app.state.refresher)))
+        tasks.append(asyncio.create_task(_server_events_loop(app.state.server_events)))
         try:
             yield
         finally:
@@ -399,6 +418,7 @@ def _lifespan(config: AppConfig) -> Callable[[FastAPI], AbstractAsyncContextMana
                 with suppress(asyncio.CancelledError):
                     await task
             await app.state.listeners.close()
+            await run_in_threadpool(app.state.server_events.flush)  # the last second's records
             app.state.engine.close_kept()
 
     return lifespan
@@ -496,7 +516,11 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     app.add_middleware(
         HostOriginMiddleware, loopback=loopback, extra_hosts=config.server.public_names
     )
-    app.add_middleware(SecurityMiddleware, https=not loopback)
+    app.add_middleware(
+        SecurityMiddleware,
+        https=not loopback,
+        recorder=lambda *a: app.state.server_events.request(*a),  # created below
+    )
     # Outermost: everything inside sees the resolved client address (ADR-0027).
     app.add_middleware(TrustedProxyMiddleware, trusted=parse_trusted(config.server.trusted_proxies))
     app.state.config = config
@@ -578,6 +602,18 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         )
 
     app.state.auth.audit.listener = on_refusal
+
+    def on_sign_in(user_id: str | None, ip: str | None, detail: dict[str, Any]) -> None:
+        user = app.state.auth.users.get(user_id) if user_id else None
+        events_.signed_in(
+            user_id,
+            user.username if user else None,
+            ip,
+            str(detail.get("method") or "password"),
+            str(detail.get("client") or ""),
+        )
+
+    app.state.auth.audit.sign_in_listener = on_sign_in
     app.state.sources.web_port = config.server.port
     app.state.mcp_settings = McpSettingsStore(meta)
     app.state.mcp = McpServer(app.state.engine, meta, app.state.auth.audit, app_version())
@@ -666,6 +702,15 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         items=app.state.alert_items,
         queue_stuck_days=config.agents.queue_stuck_days,
     )
+    app.state.backups = BackupScheduler(
+        meta,
+        config.paths.data_dir,
+        app.state.auth.audit,
+        app.state.alert_items,
+        folder=config.backup.dir,
+        tz=config.schedules.timezone,
+    )
+    app.state.backups.recover()
     app.state.ai_catalog = Catalog(meta)
     app.state.identities = IdentityStore(meta)
     app.state.ai_rollup = AiRollup(

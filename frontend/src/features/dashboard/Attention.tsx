@@ -3,7 +3,7 @@ import { LoadFailed } from "@/components/LoadFailed";
 import { api, type AlertItem, type AlertList, type Overview, type Source } from "@/lib/api";
 import { navigate, pathFor } from "@/lib/route";
 import { When } from "@/components/When";
-import { lag, openGaps, openGapsText } from "@/features/health/flow";
+import { openGaps, sourcesSummaryText } from "@/features/health/flow";
 
 interface SourceState {
   id: string;
@@ -235,50 +235,28 @@ export function attentionLines(list: AlertList | undefined, states: SourceState[
 /** Sources at the bottom (F62): one line linking to Health. Problems also show in the
  * attention banner at the top. */
 export function SourcesLine() {
-  const sources = useQuery({ queryKey: ["source-list"], queryFn: api.sources });
   const overview = useQuery({
     queryKey: ["overview"],
     queryFn: api.overview,
     refetchInterval: 60_000,
   });
-  const failed = [sources, overview].filter((q) => q.isError && !q.data);
-  if (failed.length)
+  if (overview.isError && !overview.data)
     return (
       <section aria-label="Sources" className="rounded-card border border-border bg-surface">
         <LoadFailed
           what="Sources"
-          error={failed[0]?.error}
-          onRetry={() => failed.forEach((q) => void q.refetch())}
-          retrying={failed.some((q) => q.isFetching)}
+          error={overview.error}
+          onRetry={() => void overview.refetch()}
+          retrying={overview.isFetching}
         />
       </section>
     );
-  if (!sources.data || !overview.data) return null;
-  const states = sourceStates(sources.data, overview.data);
-  if (!states.length) return null;
-  const now = overview.data.generated_at;
-  const flowing = states.filter((s) => !s.problem).length;
-  const gaps = states.reduce((n, s) => n + s.gaps, 0);
-  const newest = new Map(
-    listOf<Overview["sources"][number]>(overview.data.sources).map((s) => [
-      s.source_id,
-      s.last_event_at,
-    ]),
-  );
-  const worst = states
-    .map((s) => ({ id: s.id, last: newest.get(s.id) ?? null }))
-    .filter((w): w is { id: string; last: string } => Boolean(w.last))
-    .sort((a, b) => a.last.localeCompare(b.last))[0];
-  // Open gaps come from the same state as the source gap alerts (review item 3), so the
-  // line never says "no gaps" while a gap alert is open; it links to those alerts.
-  const enabled = new Set(states.map((s) => s.id));
-  const open = openGaps(overview.data).filter((g) => enabled.has(g.source_id));
-  const parts = [
-    `${flowing} of ${states.length} flowing`,
-    open.length ? openGapsText(open) : null,
-    !open.length && worst ? `longest wait ${lag(worst.last, now)} (${worst.id})` : null,
-    open.length ? null : gaps ? `${gaps} ${gaps === 1 ? "gap" : "gaps"} in 24 hours` : "no gaps",
-  ].filter(Boolean);
+  const summary = overview.data?.source_summary;
+  if (!overview.data || !summary?.total) return null;
+  // The same words as Health's Sources tile, from the same server summary (handoff item 4).
+  const text = sourcesSummaryText(summary, overview.data.generated_at);
+  const parts = [text.headline, ...text.details];
+  const open = openGaps(overview.data);
   // To the gap alerts when there are any (the one alert when there is one); a quiet watch
   // with no alert behind it opens Health, where the source is.
   const alerted = open.filter((g) => g.item_id);
@@ -296,7 +274,7 @@ export function SourcesLine() {
       }}
       aria-label={`Sources: ${parts.join(", ")}. Open ${area === "alerts" ? "Alerts" : "Health"}`}
       className={`block rounded-card border border-border bg-surface px-3 py-2 text-sm hover:bg-surface-head ${
-        flowing < states.length || open.length ? "text-warn" : "text-text-secondary"
+        summary.healthy < summary.total || open.length ? "text-warn" : "text-text-secondary"
       }`}
     >
       <span className="font-semibold text-text">Sources</span> {parts.join(", ")}

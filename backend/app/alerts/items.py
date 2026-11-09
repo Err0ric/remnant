@@ -652,6 +652,32 @@ class AlertItems:
             )
         return len(ids)
 
+    def close_resolved(self, kind: Kind, subject: str, note: str) -> int:
+        """The server closes every open item about one subject as Resolved, because the
+        condition it raised for ended (a backup succeeded). No user; audited as
+        `alert.close` like any close."""
+        with self._meta.connect() as con:
+            ids = [
+                r["item_id"]
+                for r in con.execute(
+                    "SELECT item_id FROM alert_items WHERE kind = ? AND subject = ?"
+                    " AND state = 'open'",
+                    (kind, subject),
+                )
+            ]
+            now = self._now()
+            for item_id in ids:
+                self._set_closed(con, item_id, None, "resolved", note, now)
+        for item_id in ids:
+            self._audit.write(
+                "alert.close",
+                "success",
+                None,
+                None,
+                {"item_id": item_id, "kind": kind, "subject": subject, "reason": "resolved"},
+            )
+        return len(ids)
+
     def reopen(self, item_id: str, user: User, ip: str | None) -> AlertItem:
         item = self.get(item_id, user)
         if item.state == "open":

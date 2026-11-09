@@ -1,4 +1,4 @@
-import type { Overview, SourceGap } from "@/lib/api";
+import type { Overview, SourceGap, SourceSummary } from "@/lib/api";
 
 /** "2:00 AM" in the viewer's zone (or `timeZone`, for tests). */
 export function localTime(iso: string, timeZone?: string): string {
@@ -88,14 +88,17 @@ export interface OpenGap {
  * Health, and Alerts agree. Longest quiet first. */
 export function openGaps(o: Overview | undefined): OpenGap[] {
   const rows = Array.isArray(o?.sources) ? o.sources : [];
-  return rows
-    .filter((s) => s.gap_alert || s.quiet_since)
-    .sort((a, b) => (a.last_event_at ?? "").localeCompare(b.last_event_at ?? ""))
-    .map((s) => ({
-      source_id: s.source_id,
-      item_id: s.gap_alert ?? null,
-      quiet: o ? lag(s.last_event_at, o.generated_at) : null,
-    }));
+  return (
+    rows
+      // server_events is quiet whenever nobody uses the server: expected (handoff items 4, 9).
+      .filter((s) => (s.gap_alert || s.quiet_since) && !s.quiet_expected)
+      .sort((a, b) => (a.last_event_at ?? "").localeCompare(b.last_event_at ?? ""))
+      .map((s) => ({
+        source_id: s.source_id,
+        item_id: s.gap_alert ?? null,
+        quiet: o ? lag(s.last_event_at, o.generated_at) : null,
+      }))
+  );
 }
 
 /** "2 gaps: server_events quiet 4 d, lin_auth quiet 3 h". */
@@ -105,4 +108,36 @@ export function openGapsText(gaps: OpenGap[], max = 3): string {
     .map((g) => (g.quiet ? `${g.source_id} quiet ${g.quiet}` : `${g.source_id} never sent`));
   const more = gaps.length > max ? `, and ${gaps.length - max} more` : "";
   return `${gaps.length} ${gaps.length === 1 ? "gap" : "gaps"}: ${named.join(", ")}${more}`;
+}
+
+/** "quiet 4 d" or "never sent": a quiet source in the words both pages use. */
+export function quietWord(last: string | null, now: string): string {
+  const q = lag(last, now);
+  return q ? `quiet ${q}` : "never sent";
+}
+
+/** The Sources summary in words, the same on Health and the Dashboard footer (handoff
+ * item 4): "4 of 6 healthy", then "2 quiet: win_dc 2 d, vpn 6 h", the gaps, and the
+ * longest wait when nothing is quiet. Counted once on the server (`source_summary`). */
+export function sourcesSummaryText(
+  s: SourceSummary,
+  now: string,
+  max = 3,
+): { headline: string; details: string[] } {
+  const named = s.quiet.slice(0, max).map((q) => {
+    const w = quietWord(q.last_event_at, now);
+    return `${q.source_id} ${w === "never sent" ? w : w.slice("quiet ".length)}`;
+  });
+  const more = s.quiet.length > max ? `, and ${s.quiet.length - max} more` : "";
+  const wait = s.longest_wait ? lag(s.longest_wait.last_event_at, now) : null;
+  return {
+    headline: `${s.healthy} of ${s.total} healthy`,
+    details: [
+      s.quiet.length ? `${s.quiet.length} quiet: ${named.join(", ")}${more}` : null,
+      s.gaps ? `${s.gaps} ${s.gaps === 1 ? "gap" : "gaps"} in 24 hours` : "no gaps in 24 hours",
+      !s.quiet.length && s.longest_wait && wait
+        ? `longest wait ${wait} (${s.longest_wait.source_id})`
+        : null,
+    ].filter((d): d is string => Boolean(d)),
+  };
 }

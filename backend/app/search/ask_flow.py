@@ -1,11 +1,14 @@
-"""Ask's path for one question (ADR-0042 slice 1b): code reads the question, the router
-picks a library query or none, and code builds what runs. The SQL-writing agent is the
-fallback. Nothing here runs the query: it is kept and run by its id (slice 1a)."""
+"""Ask's path for one question (ADR-0042 slice 1b): code reads the question and matches it
+to the library; only when no library query is a confident match does the router pick one
+or none (owner, 2026-11-08: a library hit never waits on the model). Code builds what
+runs. The SQL-writing agent is the fallback. Nothing here runs the query: it is kept and
+run by its id (slice 1a)."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from time import monotonic
 from typing import Literal
 
 from app.engine.duckdb import QueryEngine, QueryScope
@@ -16,6 +19,7 @@ from app.search.ask_route import (
     Entity,
     Plan,
     Span,
+    confident,
     find_entities,
     parse_time,
     plan,
@@ -31,7 +35,7 @@ DESCRIBE_TIMEOUT_S = 10.0
 @dataclass(slots=True)
 class Routed:
     kind: Literal["data", "knowhow"]
-    by: Literal["model", "forced"]
+    by: Literal["model", "forced", "library"]
     span: Span | None
     entities: list[Entity]
     candidates: list[Candidate]
@@ -41,6 +45,9 @@ class Routed:
     # Why the library was not used, in plain words, for How I got this.
     reason: str | None = None
     dropped: list[str] = field(default_factory=list)
+    # Which route answered, for the audit row: "library" (no model call) or "model".
+    via: Literal["library", "model"] = "model"
+    route_ms: int = 0  # time spent routing, matching included
 
 
 def read_question(
@@ -84,8 +91,18 @@ def route_question(
     scope: QueryScope,
     forced: Literal["auto", "data"] = "auto",
 ) -> Routed:
+    started = monotonic()
     span, entities = read_question(question, now, tz, ident)
     candidates = rank(question, library, seen)
+    sure = confident(question, candidates, entities)
+    if sure is not None:
+        p = _plan(engine, sure, {}, entities, span, scope, now, ident)
+        if not p.unused:  # otherwise the router decides, exactly as before
+            return Routed(
+                kind="data", by="forced" if forced == "data" else "library", span=span,
+                entities=entities, candidates=candidates, candidate=sure, plan=p,
+                via="library", route_ms=_ms(started),
+            )  # fmt: skip
     r: Route = route(gate, actor_id, provider_id, question, candidates, entities, span)
     out = Routed(
         kind="data" if forced == "data" else r.kind,
@@ -96,13 +113,38 @@ def route_question(
         call_id=r.call_id,
         dropped=r.dropped,
     )
-    if out.kind == "knowhow":
+    if out.kind == "knowhow" or r.candidate is None:
+        if out.kind != "knowhow":
+            out.reason = "No library query fits this question"
+        out.route_ms = _ms(started)
         return out
-    if r.candidate is None:
-        out.reason = "No library query fits this question"
+    p = _plan(engine, r.candidate, r.params, entities, span, scope, now, ident)
+    out.route_ms = _ms(started)
+    if p.unused:
+        names = ", ".join(e.value for e in p.unused)
+        out.reason = f"{r.candidate.query.name} cannot be narrowed to {names}"
         return out
-    q = r.candidate.query
-    params = {p.name: p.default for p in q.params if p.default is not None} | r.params
+    out.candidate, out.plan = r.candidate, p
+    return out
+
+
+def _ms(started: float) -> int:
+    return round((monotonic() - started) * 1000)
+
+
+def _plan(
+    engine: QueryEngine,
+    c: Candidate,
+    chosen: dict[str, str | int | float | bool],
+    entities: list[Entity],
+    span: Span | None,
+    scope: QueryScope,
+    now: datetime,
+    ident: IdentityMap | None,
+) -> Plan:
+    """The library query with the question's filters, from its output columns."""
+    q = c.query
+    params = {p.name: p.default for p in q.params if p.default is not None} | chosen
     when = scope if span is None else QueryScope(scope.sources, span.start, span.end)
     values = dict(params)
     values.setdefault("start", when.start or datetime(1970, 1, 1, tzinfo=now.tzinfo))
@@ -110,10 +152,4 @@ def route_question(
     if uses_identities(q.sql):  # a zero-row describe: the columns need no links (T70, D219)
         values |= IdentityMap().sql_values()
     columns = output_columns(engine, q.sql, when, values)
-    p = plan(q, columns, entities, params, ident)
-    if p.unused:
-        names = ", ".join(e.value for e in p.unused)
-        out.reason = f"{r.candidate.query.name} cannot be narrowed to {names}"
-        return out
-    out.candidate, out.plan = r.candidate, p
-    return out
+    return plan(q, columns, entities, params, ident)

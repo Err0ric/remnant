@@ -7,7 +7,7 @@ import { setSql } from "./sqlEditor";
 
 async function renderAt(path: string) {
   window.history.replaceState(null, "", path);
-  window.localStorage.setItem("search-tab", "sql");
+  window.localStorage.setItem("logs-tab", "sql");
   window.localStorage.removeItem("search-recent");
   const spy = mockApi("Codename", { mode: "login", signedIn: true, role: "analyst" });
   vi.resetModules();

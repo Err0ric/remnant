@@ -221,6 +221,14 @@ class MaintenanceConfig(_Strict):
     intel_check_s: float = Field(default=14400, ge=3600)
 
 
+class BackupConfig(_Strict):
+    """Scheduled backups (handoff item 8). Time, count, and on or off are Settings."""
+
+    # Where scheduled backups are written; None means `backups/` in the data folder,
+    # which backups themselves never include.
+    dir: Path | None = None
+
+
 class SchedulesConfig(_Strict):
     """Scheduled searches and rules (SPEC 5.5)."""
 
@@ -349,6 +357,7 @@ class AppConfig(_Strict):
     ingest: IngestConfig = Field(default_factory=IngestConfig)
     maintenance: MaintenanceConfig = Field(default_factory=MaintenanceConfig)
     schedules: SchedulesConfig = Field(default_factory=SchedulesConfig)
+    backup: BackupConfig = Field(default_factory=BackupConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     network: NetworkConfig = Field(default_factory=NetworkConfig)
     enrichment: EnrichmentConfig = Field(default_factory=EnrichmentConfig)

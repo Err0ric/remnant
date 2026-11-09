@@ -1,0 +1,7 @@
+### Plain User-ID lines on the person page, suggested groups for Automatic sources, Logs opens on Filters (2026-11-08)
+
+- Person page, What it did: a Palo Alto User-ID row stored before 2026-11-06 no longer shows the raw CSV line as its subtitle. Any line whose message is a whole delimited record now reads as a plain summary of its parsed fields, for example "Palo Alto Networks User-ID: alice at 192.0.2.20, learned from globalprotect". View in Logs still opens the same rows.
+- Settings, Users and access: suggested source groups now cover Automatic sources by the templates that read their lines in the last 30 days, so a firewall or server feed on Automatic is suggested under its category and vendor. The server's own built-in source of refusals is never suggested. Suggestions still grant nothing until an admin approves them.
+- Logs opens on the Filters tab. Only a click on a tab is remembered; opening a saved or library search in SQL, Edit as SQL, or a field click in SQL switches the tab for that visit only. A link that names a tab still opens it, and Auditors with SQL turned off still see no editor.
+- What you will notice: Logs opens on Filters, User-ID rows on a person page read as a plain sentence, and Users and access suggests groups for your Automatic sources.
+- What changes for existing installs: nothing to do. Each browser opens Logs on Filters once, then remembers the tab you click. No data, settings, or update steps change. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`).

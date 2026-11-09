@@ -6,6 +6,8 @@ Rules for every Claude Code session in this repo. Read fully before writing code
 |---|---|
 | `docs/SPEC.md` | What we build: architecture, schemas, threat model, roadmap, decisions log |
 | `docs/DESIGN.md` | How it looks: tokens, typography, density, component patterns |
+| `docs/handoff.md` | Where the last batch stopped: current main, open PRs, pending decisions |
+| `docs/history.md` | Completed slice checklists (slices 1 to 8) and background on past rules |
 | `CLAUDE.md` (this file) | How we build it: rules, conventions, tests, definition of done |
 
 If this file and `docs/SPEC.md` disagree on a product decision, the spec wins and this file gets fixed in the same PR.
@@ -16,286 +18,115 @@ If this file and `docs/SPEC.md` disagree on a product decision, the spec wins an
 
 ## 2. Architecture rules (non-negotiable)
 
-1. **Deterministic core.** Ingest, parse, query, and Sigma must work with zero LLM providers configured. Any feature that requires an LLM lives behind `llm/` and degrades to a manual path.
-2. **One gate.** Every provider call goes through `llm/gate.py`. No module may import a provider adapter directly except `llm/gate.py` and tests. CI greps for this.
-3. **LLM has two tools in Ask mode** (`get_schema`, `preview_query`) and **zero tools** in explain and parser-draft purposes. Do not add tools without a spec change.
-4. **Nothing the LLM returns is executed automatically, except an Ask query** that passes the guard and runs read-only on the caller's view (ADR-0042, setting `ask.auto_run`). SQL is displayed; parser drafts live in `drafts/` until approved; anything with side effects needs approval; free-text output is never parsed for commands.
-5. **Raw line is sacred.** `raw` column is stored exactly as decoded, never trimmed, never modified by transforms.
-6. **Classification is server-side.** `classification` is copied from the source at ingest. There is no API to change it on events.
-7. **Read-only query engine.** User and LLM SQL runs on a `read_only=True` DuckDB connection with `enable_external_access=false`, through the `sqlglot` allowlist in `engine/guard.py`. Never bypass the guard, including in "internal" endpoints.
-8. **Ingest is a pipeline of small interfaces**: `Reader -> Framer -> EnvelopeParser -> PayloadParser -> Normalizer -> Writer`. Each is one class with one public method. No class knows about the others' internals.
-9. **Flattened OCSF columns are the schema.** Column list lives in `core/schema.py` and nowhere else. Templates, DuckDB views, pySigma pipeline, and the UI column registry all import from it. Migrations are additive only; never rename a column.
-10. **Thin slices.** Build the smallest thing that works end to end, with tests, then stop. Do not start the next slice's features inside the current one.
-11. **Product name is a config constant.** The product name is a working codename. Keep it in a single config constant used for UI text, page titles, and CLI output. Do not use the product name in Python package or module names. Backend: `app.core.branding.PRODUCT_NAME`. Frontend: `lib/branding.ts` exporting `PRODUCT_NAME`, fed from the API at load so both sides read one value. Python package stays `app`, Docker service stays `app`, repo folder names stay generic.
-12. **Plain labels win.** Optional flavor names exist (Ask mode = Séance, saved searches = Grimoire, parser template library = Ossuary). They may appear in command palette aliases, docs, and release notes. They never appear in nav items, buttons, API paths, table or column names, error messages, or log output. When in doubt, use the plain label.
-13. **Access control is server-side and source-based.** Every query surface (UI, CLI, Ask, saved searches, Sigma, the LLM gate) reads from the per-session `events` view built in `engine/views.py` from the user's permitted sources. Never accept a source list from the client as the scope. Saved searches run with the caller's permissions.
-14. **Every action is attributable.** Queries, exports, logins, admin changes, and LLM calls write an audit row with the user id. No shared-login feature.
-15. **The CLI is an API client.** `app/cli/` talks HTTP to the server. It never imports `engine`, `ingest`, or `meta` and never opens the lake.
+1. **Deterministic core.** Ingest, parse, query, and Sigma work with zero LLM providers configured. Anything needing an LLM lives behind `llm/` and degrades to a manual path.
+2. **One gate.** Every provider call goes through `llm/gate.py`. Only `llm/gate.py` and tests import a provider adapter. CI greps for this.
+3. **LLM tools.** Ask mode has two (`get_schema`, `preview_query`); explain and parser-draft have none. No new tools without a spec change.
+4. **Nothing the LLM returns runs automatically, except an Ask query** that passes the guard and runs read-only on the caller's view (ADR-0042, `ask.auto_run`). SQL is displayed; parser drafts stay in `drafts/` until approved; side effects need approval; free text is never parsed for commands.
+5. **Raw line is sacred.** `raw` is stored exactly as decoded, never trimmed or transformed.
+6. **Classification is server-side.** Copied from the source at ingest; no API changes it on events.
+7. **Locked query engine.** User and LLM SQL runs through the `sqlglot` allowlist in `engine/guard.py`, then DuckDB's own one-SELECT check, on a connection limited to the exact files its views read, with external access off and the configuration locked (ADR-0047, D225). Never bypass the guard, including in "internal" endpoints.
+8. **Ingest pipeline of small interfaces**: `Reader -> Framer -> EnvelopeParser -> PayloadParser -> Normalizer -> Writer`. One class, one public method each; none knows another's internals.
+9. **Flattened OCSF columns are the schema.** The column list lives only in `core/schema.py`; templates, views, the pySigma pipeline, and the UI registry import it. Migrations are additive; never rename a column.
+10. **Thin slices.** Smallest end-to-end thing with tests, then stop. No next-slice features.
+11. **Product name is a config constant**: `app.core.branding.PRODUCT_NAME` and `frontend/src/lib/branding.ts` (fed from the API). Never in package, module, service, or folder names.
+12. **Plain labels win.** Flavor names (Ask mode = Séance, saved searches = Grimoire, template library = Ossuary) only in command palette aliases, docs, and release notes; never in nav, buttons, API paths, table or column names, errors, or logs.
+13. **Access control is server-side and source-based.** Every query surface reads the per-session `events` view from `engine/views.py`. Never take a source list from the client as the scope. Saved searches run with the caller's permissions. Only SQL a person typed or edited goes to the Logs SQL endpoint from the browser; app lists are server-built.
+14. **Every action is attributable.** Queries, exports, logins, admin changes, and LLM calls write an audit row with the user id. No shared logins.
+15. **The CLI is an API client.** `app/cli/` talks HTTP; it never imports `engine`, `ingest`, or `meta` or opens the lake.
 
 ## 3. Repository layout
 
-```
-.
-├── CLAUDE.md
-├── README.md
-├── LICENSE
-├── docker-compose.yml
-├── docs/
-│   ├── SPEC.md
-│   ├── DESIGN.md
-│   ├── ingest/            # rsyslog, syslog-ng, Vector pointing guides
-│   └── adr/               # one file per decision, ADR-NNNN-slug.md
-├── backend/
-│   ├── pyproject.toml     # uv managed
-│   ├── uv.lock
-│   ├── app/
-│   │   ├── main.py        # FastAPI app factory, bind + auth enforcement
-│   │   ├── api/           # routers only, no business logic
-│   │   ├── auth/          # users, roles, source groups, sessions, setup link, TLS bootstrap
-│   │   ├── cli/           # Typer CLI (API client only), tui/ in Slice 6
-│   │   ├── core/          # schema.py, config.py, errors.py, ids.py, branding.py (PRODUCT_NAME)
-│   │   ├── ingest/        # reader.py framer.py envelope.py payload/ normalizer.py writer.py compaction.py retention.py watcher.py
-│   │   ├── templates/     # loader.py validator.py tester.py registry.py
-│   │   ├── engine/        # duckdb.py guard.py views.py
-│   │   ├── detect/        # sigma_backend.py runner.py pipelines/compat.py (first) pipelines/ocsf.py (later)
-│   │   ├── llm/           # provider.py (protocol), providers/openai_compat.py providers/anthropic.py gate.py redact.py audit.py agent.py prompts/
-│   │   ├── search/        # saved.py (saved searches), params.py
-│   │   └── meta/          # sqlite models + migrations (alembic)
-│   └── tests/
-│       ├── unit/
-│       ├── integration/
-│       └── fixtures/
-│           ├── logs/      # one folder per template id, see section 6
-│           └── sigma/
-├── frontend/
-│   ├── package.json       # pnpm
-│   ├── src/
-│   │   ├── app/           # routes, layout, command palette
-│   │   ├── components/    # shadcn/ui primitives + project components
-│   │   ├── features/      # query/, ask/, sources/, templates/, detect/, settings/
-│   │   ├── lib/           # api client, schema registry, formatters, branding.ts
-│   │   └── styles/        # tokens.css (from DESIGN.md), globals.css
-│   └── tests/
-├── templates/
-│   └── starter/           # shipped YAML templates, one file per id
-└── scripts/               # dev helpers, fixture generators
-```
-
-Runtime data lives outside the repo at `./data/` (gitignored) or the compose volume.
+`backend/app/`: `main.py` (app factory, bind and auth), `api/` (routers only), `auth/`, `cli/`, `core/` (schema, config, errors, ids, branding; imports no siblings), `ingest/`, `templates/`, `engine/` (duckdb, guard, views), `detect/`, `llm/` (gate, providers, redact, audit, prompts), `search/`, `meta/` (sqlite and migrations). Tests in `backend/tests/{unit,integration,fixtures}`. `frontend/src/`: `app/`, `components/`, `features/`, `lib/`, `styles/` (tokens.css from DESIGN.md section 9). `templates/starter/` ships YAML templates; `scripts/` holds dev helpers. Runtime data lives in `./data/` (gitignored) or the compose volume.
 
 ## 4. Coding conventions
 
-### Python (backend)
+### Python
+- 3.12, `uv` for everything. `ruff` format and lint; `mypy --strict` on `app/`; no `# type: ignore` without a reason.
+- Pydantic v2 for API bodies, config, and templates; dataclasses for pipeline records.
+- Typed exceptions from `core/errors.py`, mapped to HTTP in the API layer; never ad hoc `{"error": ...}`.
+- `structlog` JSON. Never log raw event content at INFO or above, provider keys, prompt bodies, or data values.
+- Async handlers; DuckDB and file I/O in a thread pool. Absolute imports, no cycles.
+- UTC datetimes with tzinfo. `event_id` UUIDv7, other ids UUIDv4.
+- One `AppConfig` from `config/app.yaml` plus `APP__SECTION__KEY` env overrides; no other `os.environ` reads.
+- Provider keys from env or the settings store, encrypted with `data/.key` (0600); never in YAML, logs, or prompts.
 
-| Rule | Detail |
-|---|---|
-| Version | 3.12. Use `uv` for everything. `uv run pytest`, `uv run ruff`. |
-| Style | `ruff` with the repo config (format + lint). `mypy --strict` on `app/`. No `# type: ignore` without a comment saying why. |
-| Models | Pydantic v2 for every API body, config object, and template schema. Dataclasses for internal pipeline records. |
-| Errors | Raise typed exceptions from `core/errors.py`. API layer maps them to HTTP. Never return `{"error": ...}` ad hoc. |
-| Logging | `structlog`, JSON output. Never log raw event content at INFO or above. Never log provider keys or prompt bodies. |
-| Async | FastAPI handlers are `async`. DuckDB and file I/O run in a thread pool via `run_in_executor`. Ingest watcher is its own task. |
-| Imports | Absolute (`from app.ingest.envelope import ...`). No circular imports; `core/` imports nothing from siblings. |
-| Time | Everything UTC, `datetime` with tzinfo. Naive datetimes are a bug. |
-| IDs | `event_id` is UUIDv7 (time-sortable). Other ids are UUIDv4. |
-| Config | One `AppConfig` Pydantic model loaded from `config/app.yaml` + env overrides (`APP__SECTION__KEY`). No `os.environ` reads elsewhere. |
-| Secrets | Provider keys from env or the settings store, encrypted at rest with a key in `data/.key` (0600). Never in YAML, never in logs, never in prompts. |
-
-### TypeScript (frontend)
-
-| Rule | Detail |
-|---|---|
-| Stack | React 18, TypeScript strict, Vite, Tailwind, shadcn/ui, TanStack Table + Query, CodeMirror 6, Zustand (small stores only). |
-| Components | Function components, named exports, one component per file. Props typed with `interface`. |
-| Data | All server state via TanStack Query. No `useEffect` fetches. |
-| Styling | Tailwind utilities with tokens from `styles/tokens.css`, which is generated from `docs/DESIGN.md` section 9. No arbitrary hex in components; add a token in both places. |
-| Branding | Product name only via `PRODUCT_NAME` from `lib/branding.ts`. Never hardcode the string in JSX, `<title>`, or copy. |
-| Rendering log data | Always text nodes. `dangerouslySetInnerHTML` is banned (ESLint rule). |
-| Fonts | UI sans and data mono per `docs/DESIGN.md`. Monospace for every log field, event id, and SQL. |
-| Lint | `eslint` + `prettier`, enforced in CI. |
+### TypeScript
+- React 18, strict TS, Vite, Tailwind, shadcn/ui, TanStack Table and Query, CodeMirror 6, small Zustand stores.
+- Function components, named exports, one per file, `interface` props. Server state only via TanStack Query.
+- Tokens from `styles/tokens.css`; no arbitrary hex (add a token in DESIGN.md and tokens.css).
+- Product name only via `PRODUCT_NAME`. Log data always as text nodes (`dangerouslySetInnerHTML` banned). Mono for log fields, ids, and SQL. Times in the app's local format with UTC on hover; seconds only in log and event tables (DESIGN.md section 3).
+- `eslint` and `prettier` enforced in CI.
 
 ### Git
-
-- Conventional commits: `feat(ingest): ...`, `fix(engine): ...`, `docs: ...`, `test(templates): ...`
-- One slice per milestone, one PR per vertical feature inside a slice
-- Never commit `data/`, `.env`, or `*.key`
-- CI minutes are limited: CI runs once per PR. Open every PR as a draft (`-F draft=true`); draft runs skip every job, and the queue runs the local suites, then marks the PR ready just before it merges. The backend job runs only when `backend/`, `library/`, `templates/` or `scripts/` change, the frontend job only when `frontend/` changes. Docs-only PRs run no CI, superseded runs are cancelled, scale tests run only from the `scale` workflow, `slow` tests (over 8 s each) are skipped in a PR's CI run and run by the queue's local suite before every merge (D216; never add `not slow` to the queue), and `release-checks` runs by hand before a release and whenever an install guide's install or update commands change (not for wording)
-- Every PR description lists which Definition of Done items it satisfies
-- Two repositories, two remotes in every working checkout: `origin` is the private dev repository (fetch and push), and `public` is the public repository, publish-only, with its push URL set to `DISABLED` (`git remote set-url --push public DISABLED`) so a stray `git push public` fails. Branches and PRs go to `origin`, and `main` tracks `origin/main`. The public repository is written only by the publish step, after the leak scan and the name check pass, by pushing to its URL explicitly (`PUBLIC_URL` in `scripts/publish/publish.sh`), never through a remote.
-- The session environment can reset `origin` to the public repository with pushing enabled (it has, twice, once with `main` reset onto the public history). Two guards that do not depend on remembering (D207): `scripts/dev/session-check.sh`, run first in every session (section 8), puts the remotes back to this layout, points `main` at `origin/main`, warns when `main` holds commits that are not on `origin/main`, installs the pre-push guard, and prints `git remote -v`; the guard (`scripts/dev/pre-push`, installed into the checkout's hooks folder because git does not commit hooks) refuses any push whose URL is the public repository unless `REMNANT_PUBLISH=1`, which `publish.sh` sets only for its own two pushes, after the scans pass. `session-check.sh --verify` changes nothing and exits with one line naming the failed check when origin's fetch or push URL is not the dev repository, the public remote can push, local `main` does not track `origin/main`, or `origin/main` shares any commit with the public `main` (publishing never pushes dev commits, so the two histories share none); the queue runs it before every PR and every push, and `publish.sh` before it copies anything, and both stop on a failure. The check and the guard are export-ignored, like `scripts/publish`. Tests: `bash scripts/dev/test.sh` and `bash scripts/publish/test.sh`. The environment's unpushed-commits check compares branches against `origin`, so with this layout it sees merged and pushed work as pushed
-- Publishing: `scripts/publish/publish.sh` (with `scan.py` and `test.sh`) holds no names and is never published (`.gitattributes` export-ignore, as `scripts/dev` is). It stops with `NOT PUBLISHED` when the source checkout's layout check fails (`session-check.sh --verify`, above). It installs the push guard in its own clone of the public repository too. Before any publish, fetch the denylist from the Project doc `claude/publish-denylist.md` into a temporary file outside the repository and pass it with `--denylist` or `REMNANT_DENYLIST`; the script stops with `NOT PUBLISHED` if it is missing, unreadable, or empty. Never commit the denylist to either repository
-- Release notes and decisions are one file per change (ADR-0044); a PR never edits the Unreleased section of `docs/release-notes.md` or adds a row to SPEC section 9 by hand. Open the PR first, then add `docs/release-notes.d/<pr>-<slug>.md` (a `### Title (date)` heading, the bullets, one bullet starting "What you will notice:" (section 9), and a last line starting "What changes for existing installs:") and, for a decision, `docs/decisions.d/D<nnn>-<slug>.md` (one table row, the next number after main's highest). Run `python3 scripts/docs/assemble.py` to write both pages; CI, the queue, and `publish.sh` run `--check`. The hand-kept rows D1 to D208 are edited in place, and only for a status change. A note may be named `new-<slug>.md` before the PR exists
-- No stacked PRs: each PR branches from current `origin/main` and holds only its own work. Small related fixes that touch the same area go in one PR, not several
-- PRs merge through `scripts/dev/queue.sh <branch> <pr> ...` (run it directly; it runs from its own copy), one at a time, from a worktree kept for it: it stops if that worktree is not clean, rebases onto `origin/main` (a conflict outside the two assembled pages stops it), checks the layout (`session-check.sh --verify`), runs `assemble.py --prep` (numbers `new-` notes, gives the PR's decisions the next free numbers after main's highest and updates that PR's own citations, assembles, checks), commits that in the branch, runs the local suites for what changed, then, when the app changed (`backend/`, `frontend/`, `library/`, `templates/`), the speed check and the smoke test (section 9), marks the PR ready (a PR already ready gets its run from the queue's push), waits for the CI run of the exact commit it pushed, and squash-merges that commit. A flagged page stops it unless `REMNANT_SPEED_OK` lists the PR (the owner's OK; the queue records it on the PR with the table); a smoke failure always stops it. Nothing is pushed straight to `main`
-- PRs are squash-merged on GitHub, so the commits on `main` are made and signed by GitHub (committer `noreply@github.com`). That is expected: never rewrite or force-push `main` to change their author or committer. Keep `origin` fetched, so tools that look for unpushed commits see them as pushed
+- Conventional commits. One PR per vertical feature; no stacked PRs (branch from current `origin/main`); batch small related fixes in one PR. Every PR description lists the Definition of Done items it satisfies.
+- Never commit `data/`, `.env`, `*.key`, or the publish denylist.
+- **CI minutes are limited: one CI run per PR.** Open every PR as a draft (`-F draft=true`, REST API). Path filters: backend job for `backend/`, `library/`, `templates/`, `scripts/`; frontend job for `frontend/`; docs-only PRs run none. `slow` tests (over 8 s) are skipped in PR CI and run by the queue's local suite (D216; never add `not slow` to the queue). Scale tests run only from the `scale` workflow. `release-checks` runs by hand before a release and whenever an install guide's install or update commands change.
+- **Remotes (D207):** `origin` is the private dev repository; `public` is publish-only with push URL `DISABLED`. `main` tracks `origin/main`. Run `sh scripts/dev/session-check.sh` first in every session and after any restart; it restores this layout and installs the pre-push guard. `session-check.sh --verify` changes nothing and fails when the layout is wrong or `origin/main` shares any commit with the public `main`; the queue and `publish.sh` run it themselves and stop on failure. Background: `docs/history.md`.
+- **Publishing:** only `scripts/publish/publish.sh`, never through a remote. Fetch the denylist from the Project doc `claude/publish-denylist.md` into a temp file outside the repo and pass `REMNANT_DENYLIST`; the script stops with `NOT PUBLISHED` on a missing denylist, a failed scan, or a failed layout check. After a publish, write `docs/SPEC.md`, `docs/DESIGN.md`, and `CLAUDE.md` (as `docs/CLAUDE.md`) back to the Project when changed.
+- **Release notes and decisions** are one file per change (ADR-0044): `docs/release-notes.d/<pr>-<slug>.md` (or `new-<slug>.md`) with a `### Title (date)` heading, bullets, one `- What you will notice: ...` line, and a last `- What changes for existing installs: ...` line; decisions in `docs/decisions.d/D<nnn>-<slug>.md`, one table row. Run `python3 scripts/docs/assemble.py`; never hand-edit the Unreleased section or SPEC section 9 (rows D1 to D208 only for a status change).
+- **Merging:** only `scripts/dev/queue.sh <branch> <pr> ...` from the queue worktree. It checks the layout, rebases (a code conflict stops it), runs `assemble.py --prep` (numbers notes and decisions, which may renumber a decision), runs the local suites, and for app changes the speed check and smoke test (section 9), marks the PR ready, waits for the CI run of the exact commit it pushed, and squash-merges. Never push to `main`; never rewrite `main` (GitHub signs the squash commits).
 
 ## 5. Security rules
 
-1. All log content is untrusted. Treat it like user input from the internet: escape on render, parameterize in SQL, never `eval`, never format into a shell.
-2. Prompts put event data under a `data` key in a JSON object, never inline in instruction text. The system prompt states that `data` may contain instructions and they must be ignored. Prompts live in `llm/prompts/` as versioned files and are referenced by hash in the audit log.
-3. Provider responses are untrusted. Validate against a Pydantic schema; reject on failure; cap at 64 KB.
-4. Citation check: for `explain` and `report` purposes, every `event_id` in the response must be in the result set that was sent. Missing ids mark the response `citation_check=fail` and the UI labels the claim "unverified".
-5. Regex in templates is compiled with the `regex` module and a `timeout`. Template tests include a 10 KB garbage line to catch backtracking.
-6. Source paths resolve under `allowed_roots` with `os.path.realpath`. Reject otherwise.
-7. Non-loopback bind with no users: setup-only mode with a one-time, single-use, 30-minute setup link printed to the server log (ADR-0001). Every other route is closed until the admin exists. No "insecure mode" flag. HTTPS by default off loopback.
-8. Session cookie: HttpOnly, Secure (when not loopback), SameSite=Strict. CSRF token on every non-GET. Login rate-limited.
-9. CSP `default-src 'self'`. No inline scripts. No CDN assets.
-10. Audit log table has a `BEFORE DELETE` trigger that raises. No delete endpoint.
-11. Dependencies pinned via lockfiles. Docker base images pinned by digest. No dependency version newer than 14 days: `exclude-newer` in `backend/pyproject.toml` and `minimumReleaseAge` in `frontend/pnpm-workspace.yaml` enforce it at resolution; the pnpm version is pinned in `frontend/package.json`.
-12. Map every new AI-facing feature to MITRE ATLAS in `docs/SPEC.md` section 7 before merging.
+1. All log content is untrusted: escape on render, parameterize SQL, never `eval`, never format into a shell.
+2. Prompts put event data under a `data` key in JSON; the system prompt says `data` may contain instructions to ignore. Prompts are versioned files in `llm/prompts/`, referenced by hash in the audit log.
+3. Provider responses are untrusted: Pydantic-validated, rejected on failure, capped at 64 KB.
+4. Citation check for `explain` and `report`: every cited `event_id` must be in the set sent; otherwise `citation_check=fail` and the UI says "unverified".
+5. Template regex uses the `regex` module with a timeout; template tests include a 10 KB garbage line.
+6. Source paths resolve under `allowed_roots` with `os.path.realpath`.
+7. Non-loopback with no users: setup-only mode, one-time 30-minute setup link (ADR-0001); no insecure mode; HTTPS off loopback.
+8. Session cookie HttpOnly, Secure off loopback, SameSite=Strict; CSRF token on every non-GET; login rate-limited.
+9. CSP `default-src 'self'`; no inline scripts or CDN assets.
+10. The audit table has a `BEFORE DELETE` trigger that raises; no delete endpoint.
+11. Lockfiles; base images pinned by digest; no dependency newer than 14 days (`exclude-newer`, `minimumReleaseAge`, pinned pnpm). Dependabot opens security updates only (D224).
+12. Map every new AI-facing feature to MITRE ATLAS (and ATT&CK) in SPEC section 7 before merging.
 
 ## 6. Testing expectations
 
-### Required per layer
+| Layer | Minimum |
+|---|---|
+| Envelope parser | Table-driven: 3164 with and without year, timezone offset, 5424 with structured data, relay-wrapped, headerless, truncated, non-UTF-8, octet-counted |
+| Payload parsers | kv with quoted and escaped values, CSV with embedded commas, CEF with escaped pipes, LEEF v1 and v2, nested JSON, XML |
+| Templates | Each starter template has `tests/fixtures/logs/<id>/` with `sample.log` (50+ synthetic lines), `expected.jsonl` (first 10), `pathological.log`; parse rate at least 95%, no exceptions; inline `tests:` run |
+| Engine guard | Accepts `SELECT`, `WITH`; rejects every statement type in SPEC 5.1, `read_csv`, `ATTACH`, nested `COPY` |
+| Gate | Cloud plus `local_only` in scope raises; redaction only for cloud; every call audited |
+| Citation check | Valid ids pass; one bad id fails; empty list fails for explain |
+| API | Auth off loopback, CSRF on POST, query LIMIT and timeout |
+| Ingest | Watcher end to end: events land with correct `raw` and partition |
+| Frontend | Raw/parsed toggle; Ask runs only by id (and on click with auto-run off); Ctrl+K palette |
 
-| Layer | Test type | Minimum |
-|---|---|---|
-| Envelope parser | Unit, table-driven | 3164 with/without year, with timezone offset, 5424 with structured data, relay-wrapped, headerless, truncated, non-UTF-8, octet-counted |
-| Payload parsers | Unit per format | kv with quoted values and escaped quotes, CSV with embedded commas, CEF with escaped pipes, LEEF v1 and v2, JSON with nested root, XML |
-| Templates | Fixture-driven | Every template in `templates/starter/` has `tests/fixtures/logs/<template_id>/` containing `sample.log` (min 50 lines, real-shaped, synthetic values), `expected.jsonl` (parsed output for the first 10 lines), and `pathological.log` (long lines, garbage, multiline fragments). A single parametrized test loads all templates and asserts parse rate >= 95% on `sample.log` and no exceptions on `pathological.log`. Each template's inline `tests:` block also runs. |
-| Engine guard | Unit | Allowlist accepts `SELECT`, `WITH`; rejects every statement type in SPEC 5.1; rejects `read_csv`, `ATTACH`, nested `COPY` in CTE |
-| Gate | Unit | Cloud + local_only in scope raises; local + anything passes; redaction applied only for cloud; every call writes an audit row |
-| Citation check | Unit | Valid ids pass, one bad id fails, empty list fails for explain purpose |
-| API | Integration (httpx) | Auth enforcement on non-loopback, CSRF on POST, query endpoint respects LIMIT and timeout |
-| Ingest end to end | Integration | Write fixture to temp folder, start watcher, append lines, assert events appear in DuckDB with correct `raw` and partition |
-| Frontend | Vitest + Testing Library | Table renders raw/parsed toggle, Ask runs an answer only by its id and, with `ask.auto_run` off, only on click; command palette opens on Ctrl+K |
-
-### Fixtures
-
-- Synthetic only, everywhere that is published: fixtures, docs, examples, tests, comments, and commit messages. The public repository is for anyone to install in their own environment, so it names no real organization, person, or host. Use only reserved identifiers:
-  - Domains: `example.com`, `example.org`, `example.net` and their subdomains; names under `.example`, `.test`, `.invalid`, and `.internal` (internal hosts, for example `dc01.corp.internal`)
-  - IPv4: `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`; RFC 1918 ranges for "internal" examples. IPv6: `2001:db8::/32`
-  - People: fictional names only, from this list: alice, bob, carol, dave, erin, frank, grace, heidi, ivan, judy, mallory, ana, dana, jordan, j.doe (`alice@example.com`, `j.doe@example.org`)
-- Product names the app integrates with or detects (Palo Alto, Fortinet, Microsoft 365, Claude, and the AI service catalog) are fine. Real organizations, real people, real hostnames, vendors evaluated for a deployment, and comparisons to named commercial products are not.
-- `scripts/publish/allowlist.py` enforces the reserved identifiers before every publish: an email domain, a public IPv4 or IPv6 address, or a domain that is not reserved or listed in `scripts/publish/allowlist.txt` stops the publish. The allowlist holds only what the app genuinely needs (integration and documentation domains, a few generic public resolvers, real vendor ranges a test needs), each with a reason.
-- Each fixture folder has a `README.md` stating the source product, version, and collector used to shape it.
-- Generator scripts in `scripts/fixtures/` are preferred over hand-written files for anything over 50 lines.
-
-### Commands
+**Fixtures and everything published are synthetic.** Only reserved identifiers: `example.com/.org/.net`, names under `.example`, `.test`, `.invalid`, `.internal`; `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`, RFC 1918, `2001:db8::/32`; people alice, bob, carol, dave, erin, frank, grace, heidi, ivan, judy, mallory, ana, dana, jordan, j.doe. Integrated product names are fine; real organizations, people, hosts, evaluated vendors, and named commercial comparisons are not (`scripts/publish/allowlist.py` enforces it). Each fixture folder has a `README.md` (product, version, collector); prefer generators in `scripts/fixtures/` over 50 lines. Never use the real clock with fixed event dates (`app.core.clock`, `pin_now`).
 
 ```
-uv run pytest                      # all backend tests (add -n auto for one worker per vCPU)
-uv run pytest -m "not scale and not slow"  # a PR's CI run (a -m replaces the default "not scale")
-uv run pytest -m templates         # template fixture suite only
-pnpm test                          # frontend
-make ci                            # lint + type + test both sides, what CI runs
+uv run pytest -n auto                       # all backend tests
+uv run pytest -m "not scale and not slow"   # a PR's CI run (-m replaces the default "not scale")
+pnpm test                                   # frontend
+make ci                                     # what CI runs
 ```
 
-CI must be green before a slice is called done.
+## 7. Definition of Done
 
-## 7. Definition of Done per slice
-
-A slice is done when every box below is checked, demoed end to end from a fresh `docker compose up`, and tagged `slice-N`.
-
-### Slice 1: files to query, no AI
-- [x] Loopback bind with no users runs without login (single-user local convenience)
-- [x] Non-loopback bind with no users enters setup-only mode and prints a one-time setup link; the setup page says it is creating the administrator account; the link is single use and expires in 30 minutes
-- [x] After setup: login, logout, Argon2 hashes, secure session cookie, CSRF, login rate limit
-- [x] HTTPS by default off loopback with a generated self-signed cert; bring-your-own cert documented
-- [x] `docker compose up` on a VM reaches the setup link with no manual credential step (verified 2026-10-10 on a Debian 13 LXC on Proxmox, after #54)
-- [x] Source can be added pointing at a file or folder under `allowed_roots`, with tail/watch
-- [x] JSON lines, CSV (with header), and syslog files ingest; RFC 3164 and 5424 envelopes parsed; headerless lines stored with `parse_status=envelope_only`
-- [x] Relay headers stripped and counted; truncated and non-UTF-8 lines stored with flags
-- [x] Windows events via NXLog JSON, Winlogbeat JSON, and Snare CSV land with `raw` intact (generic parsers, no OCSF mapping yet beyond time and message)
-- [x] Parquet partitioned by `source/day`; compaction and retention jobs run and are tested
-- [x] Query mode: SQL editor, guard enforced, results table with raw/parsed toggle, export CSV
-- [x] Envelope test matrix and ingest integration test pass
-- [x] `docs/ingest/` has rsyslog, syslog-ng, and Vector guides that were actually tried once (rsyslog and syslog-ng on the homelab; Vector 0.59.0 on an Ubuntu 24.04 VM by `release-checks.yml`)
-- [x] CLI: `login` (keychain token), `tail -n/-f`, `query`, `--since`, `--where`, `--format table|json|csv|raw`, control sequences stripped
-
-### Slice 2: provider + Ask mode + saved searches + team access
-- [x] `Provider` protocol and OpenAI-compatible adapter; Ollama compose profile
-- [x] Locality computed from URL; UI shows local/cloud badge
-- [x] Ask mode returns SQL + explanation; SQL is visible; nothing runs without click
-- [x] Follow-up refinement works for 3 turns
-- [x] `preview_query` tool capped at 5 rows
-- [x] Saved searches: create from Query and Ask, params, tags, YAML import/export round-trips
-- [x] `llm_calls` audit rows written with hashes for every call
-- [x] Gate exists and is the only path (CI grep passes), even though classification UI is Slice 5
-- [x] Users: invite, disable, reset; Admin, Analyst, Auditor roles enforced on every route
-- [x] Source groups: admin grants groups to users; per-session `events` view includes only permitted sources; integration test proves a restricted source is invisible to Query, Ask, saved searches, CLI, and the gate scope
-- [x] Saved searches private or shared; shared searches run with the caller's permissions
-- [x] Audit log records user id for queries, exports, logins, admin changes, and LLM calls
-- [x] Per-user API tokens for the CLI, revocable
-- [x] CLI: `search`, `ask` (prints SQL, `Run? [y/N]`, never auto-runs)
-- [x] NL eval harness with at least 100 questions over fixture data; results reported per model in the PR (SPEC 5.7) (qwen3.5:9b, Thinking off, `ask.v4`: 99% executable, 87 to 88% exact over two runs, 2.0 s median; results in `backend/evals/nl_queries/README.md`)
-- [x] Semantic layer YAML loaded into Ask prompts; verified saved searches used as few-shot examples
-- [x] Self-check loop: guard plus preview, up to two automatic refinements, every attempt audited
-
-### Slice 3: templates + LLM parser flow + EVTX
-- [x] Source discovery over a folder: candidates grouped by host and pattern, sniffed, matched to templates
-- [x] Templates declare `category`; suggested groups shown as an approve-only checklist; nothing auto-granted; acceptances audited
-- [x] Template schema validator with clear error messages
-- [x] All payload formats implemented and unit tested
-- [x] Starter pack from SPEC 4.4 shipped, each with fixtures and >= 95% parse rate
-- [x] Shared Windows EventID to OCSF map used by NXLog, Snare, Winlogbeat, and EVTX paths
-- [x] Native EVTX ingestion via `evtx` library
-- [x] Parser draft flow: deterministic envelope and format sniff, LLM drafts payload block only, preview table, test run, approve moves file out of `drafts/`
-- [x] Manual path works with no provider configured
-
-### Slice 4: Sigma + explain with citations
-- [x] pySigma DuckDB backend with the compatibility pipeline (`detect/pipelines/compat.py`) compiles the SigmaHQ core rule set for `linux` and `windows` logsources; compile rate reported in the PR and recorded in `docs/SPEC.md`
-- [x] OCSF-native pipeline is not started; a stub file and a `docs/BACKLOG.md` entry are enough
-- [x] Rules run on demand over a time range and on a schedule; matches stored with rule id and event ids
-- [x] Saved searches can be scheduled (cron or presets); runs store count, duration, capped sample, and `sources_in_scope`; last 30 runs kept
-- [x] Schedules run as the owner with permissions re-checked each run; pause on loss of access; never re-ask the LLM
-- [x] Dashboard page: panel per schedule with last run, count, sparkline, threshold or change flag, top rows, click-through to Query; panels hidden from viewers lacking source access
-- [x] "Explain these events" accepts a selection, sends only those events (capped), returns claims with `event_ids[]`
-- [x] Citation verifier marks unverified claims in the UI and logs `citation_check`
-- [x] Report draft exports Markdown with inline event id references
-- [x] Alert routing: email (SMTP), Microsoft Teams, Slack, generic webhook; per-rule and per-schedule targets; test-send button; failures retried and shown
-
-### Slice 5: classification gate + redaction + full audit
-- [x] Source classification UI, default `local_only`
-- [x] Cloud provider blocked when any in-scope source is `local_only`; block is surfaced in UI and logged
-- [x] Redaction tokens stable per install; reverse map applied to responses (opt-in per provider, off by default per D36)
-- [x] Audit log viewer and export; delete trigger tested
-- [x] Anthropic adapter if not already landed (unit-tested against a fake server; not yet tried against the live API)
-
-### Slice 6: polish and release
-- [x] Light mode complete per `docs/DESIGN.md` (every page checked in light; all text tokens meet WCAG AA 4.5:1 in both themes)
-- [x] Command palette covers navigation, sources, saved searches, run, provider switch
-- [x] CLI `tui` (Textual): query box, results table, tail pane (baseline; optional `tui` extra)
-- [x] Install guides: team VM (Compose and systemd) and single user (Compose and single-user tried on the homelab; the systemd unit, copied from the guide, installed and run on an Ubuntu 24.04 VM by `release-checks.yml`: setup link, HTTPS health, restart, and a syslog message ingested and queried under the sandbox, `systemd-analyze security` 1.4 OK; the same unit, hardening included, ran unchanged in an unprivileged Proxmox LXC on Debian 13 on 2026-10-21 and survived a reboot)
-- [x] README states tested scale (ingest rate, lake size, query latency on named hardware) (2 vCPU cloud VM and 4 vCPU homelab container via `scripts/bench.py`)
-- [x] SBOM generated, images pinned, release tagged `v0.1.0` (SBOM from lockfiles in every CI run via `scripts/sbom.py`; base images, compose images, and workflow actions pinned by digest or commit and enforced by `check-architecture.sh`; tagged 2026-10-17 on the owner's go-ahead)
-
-### Slice 7 (v0.2): connectors
-- [x] `Connector` protocol, scheduler in the ingest worker, checkpoints, de-duplication, backoff, health on the Sources page
-- [x] Microsoft 365 connector per ADR-0002: Management Activity API content types and Graph sign-ins, directory audits, alerts; setup guide with exact permissions; templates mapping to OCSF (tested against fake endpoints; running against a live tenant on the test install since late October 2026)
-- [x] Native syslog listener (UDP, TCP with octet counting, TLS) per ADR-0021 (tested with real sockets in the suite and a live server; first device on the homelab pending)
-- [x] Read-only MCP server per ADR-0003: `get_schema` and `run_query` only, per-user tokens, `local_only` results withheld unless the endpoint is marked local, every call audited, off by default (tested in the suite and against the official MCP Python client; Claude Desktop and Claude Code against the homelab pending)
-- [x] AI usage visibility per ADR-0015: OTLP/HTTP JSON receiver with per-source tokens (content dropped by default); Claude Code telemetry template; AI service catalog and shadow-AI view; MCP inventory (telemetry and endpoint script) with allowlist; AI usage page; AI watch alerts; Anthropic usage, cost, Claude Code, analytics, and compliance activity connectors (connectors tested against a fake API; live key and the PowerShell script pending)
-- [x] Optional endpoint agent per ADR-0017: generated OpenTelemetry Collector configs per agent group, Windows XML and journald conversion at the receiver, install guide (configs tested by conversion of sample payloads; first run on real endpoints pending)
-- [x] Health page per ADR-0019: one view of sources, connectors, per-machine agents, watched devices (seen in events, never contacted), alert targets, and schedules; silence and volume-drop alerts for watched devices
-- [x] Investigation per ADR-0016: AI toggle in the Search bar, facet sidebar, Suspicious presets, entity risk, investigator graph with AI flow mode
-- [ ] Okta, Google Workspace, AWS CloudTrail connectors (deferred by the owner 2026-10-17; in `docs/BACKLOG.md`)
-
-### Slice 8 (v0.3): enrichment, integrity, tiering
-- [x] GeoIP/ASN and threat intel enrichment at query time, with feed freshness shown (per ADR-0023: DB-IP Lite, abuse.ch Feodo Tracker and ThreatFox, uploaded lists; local lookups only; automatic updates off until turned on; freshness on Settings > Enrichment and Health)
-- [x] Hash-chained partitions, scheduled verification, integrity report export (per ADR-0022: a ledger of every lake file plus an audit row chain, daily and on-demand checks, signed seals with optional off-server copies, signed JSON report)
-- [ ] Object-storage tier for older partitions, queried in place (deferred by the owner 2026-10-17; in `docs/BACKLOG.md`)
-- [x] Case handoff to TheHive / DFIR-IRIS / webhook (per ADR-0024: any alert target, webhook JSON or a short chat/email list; native TheHive and DFIR-IRIS not built, by the owner's choice)
+Slices 1 to 8 are done (checklists in `docs/history.md`). Deferred by the owner and in `docs/BACKLOG.md`: Okta, Google Workspace, and AWS CloudTrail connectors; the object-storage tier. The current slice is Slice 9 (v0.4), per SPEC section 8 (D218) and the ranked `docs/BACKLOG.md`; firewall user-to-IP attribution follows ADR-0048, slice 0 first.
 
 ## 8. How to work in a session
 
-1. Run `sh scripts/dev/session-check.sh` first, before any fetch, reset, or push (Git, D207). Then read `docs/SPEC.md` sections relevant to the task and the slice's DoD above. For any UI work also read `docs/DESIGN.md`.
-2. State the plan in 5 lines or fewer before editing.
-3. Write the test first for parsers, guards, and the gate.
-4. Keep PRs under ~400 lines of non-fixture diff.
-5. If a decision is needed that the spec does not cover, write `docs/adr/ADR-NNNN-slug.md` (context, decision, consequences, ATLAS/ATT&CK impact if AI-facing) and stop for review.
-6. No em dashes anywhere in code comments, docs, or UI copy.
-7. Do not add features from a later slice. Note them in `docs/BACKLOG.md` instead.
-8. Product decisions (name, license, pipeline order, and the like) are recorded in `docs/SPEC.md` section 9, a new one as its own file in `docs/decisions.d/` (Git, ADR-0044). Do not change one in code without a matching row there.
+1. Run `sh scripts/dev/session-check.sh` first, and again after any restart. Read `docs/handoff.md`, then the SPEC sections the task touches; for UI work, `docs/DESIGN.md`.
+2. One agent at a time unless the owner asks for parallel tracks.
+3. Start long runs (queue, suites, benchmarks) in the background and wait for completion; no polling or "waiting" messages.
+4. Reports: 15 lines at most. Lead with what merged, what failed, and what needs the owner's decision.
+5. Write the test first for parsers, guards, and the gate. Keep PRs under about 400 lines of non-fixture diff.
+6. A decision the spec does not cover gets `docs/adr/ADR-NNNN-slug.md` (with ATLAS/ATT&CK impact if AI-facing) and stops for review.
+7. No em dashes anywhere in code, docs, or UI copy. Later-slice ideas go to `docs/BACKLOG.md`.
+8. At the end of a batch, update `docs/handoff.md`; start the next batch in a new session from it.
 
 ## 9. Owner rules for every PR (2026-11-08)
 
 Users are internal and not technical: nothing breaks, nothing gets slower, and security changes are invisible to them.
 
-1. **Speed check.** Run `scripts/bench_compare.py` (this branch against `origin/main`, on the full-size synthetic lake it builds, about 481,000 events, kept at that size because costs like #445's grow with the lake: Dashboard, Logs, Ask library route, People & devices, person page, AI usage, Alerts, and the Identities searches) and put its before/after table in the PR. Measure at the page level. Flag a page only if it is more than 10% AND at least 100 ms slower, or more than 200 ms slower regardless. Sub-100 ms differences don't need the owner's OK. On the shared machine the script counts a page only when its median breaks the rule and its fastest round or the server's CPU time (10% more) confirms it, after timing a flagged page again for twice the rounds. A flagged page needs the owner's OK before merging (`REMNANT_SPEED_OK=<pr>` for the queue).
-2. **Smoke test.** Before a PR is marked ready, `scripts/smoke.py` opens every page in the route table on the demo install in headless Chromium as Admin, Analyst and Auditor (the three roles in parallel), and fails on any console error, blank panel, or 4xx/5xx response outside its short list of expected refusals. The queue runs both.
-3. **Plain release notes.** Each note has one bullet `- What you will notice: ...`: in one line, what a user will notice, or "nothing visible" (`assemble.py --check` enforces it for new notes).
-4. **Rollback.** A change to an install's data, config, or update steps says in its release note how to go back to the previous version, pointing to the steps in `docs/install/`.
-5. **Proportionate security.** Keep fixes that close real exposure, but for anything else that adds friction for normal users or speed cost, bring it to the owner as a choice instead of building it.
+1. **Speed check.** `scripts/bench_compare.py` compares clean exports of `origin/main` and the PR commit on the full-size synthetic lake (about 481,000 events): Dashboard, Logs, Ask library route, People & devices, person page, AI usage, Alerts, and the Identities searches. Put its table in the PR. Flag a page only if it is more than 10% AND at least 100 ms slower, or more than 200 ms slower regardless; a flag counts only when the fastest round or server CPU (10% more) confirms it, after re-timing for twice the rounds. A flagged page needs the owner's OK (`REMNANT_SPEED_OK=<pr>`). Standing rule: if a clean re-time at the maximum rounds comes back within the rule, the override may be applied and listed in the next report; otherwise stop and ask.
+2. **Smoke test.** `scripts/smoke.py` opens every route in headless Chromium as Admin, Analyst, and Auditor in parallel and fails on a console error, blank panel, or unexpected 4xx/5xx. Any failure stops the queue.
+3. **Plain release notes.** One `- What you will notice:` line: what a user will notice, or "nothing visible" (`assemble.py --check` enforces it).
+4. **Rollback.** A change to install data, config, or update steps says in its release note how to go back, pointing to `docs/install/` (`update-systemd.sh --rollback`, D226).
+5. **Proportionate security.** Keep fixes that close real exposure; anything else that adds friction for normal users or costs speed goes to the owner as a choice instead of being built.
 
-Run by hand: `cd backend && uv run python ../scripts/bench_compare.py --before origin/main --after HEAD` (both sides are clean exports of those commits, never a checkout's own files, so commit first; builds the lake once into `data/bench/lake`, reused for a day at the same size; `--rebuild` makes a new one), then `cd frontend && pnpm build` and `python3 scripts/smoke.py --lake data/bench/lake` (or `--url` for a running demo install from `make demo`).
+By hand: `cd backend && uv run python ../scripts/bench_compare.py --before origin/main --after HEAD` (commit first), then `cd frontend && pnpm build` and `python3 scripts/smoke.py --lake data/bench/lake`.

@@ -7,7 +7,7 @@ import { setSql } from "./sqlEditor";
 
 async function renderApp() {
   window.history.replaceState(null, "", "/search");
-  window.localStorage.setItem("search-tab", "sql"); // these tests drive the SQL editor
+  window.localStorage.setItem("logs-tab", "sql"); // these tests drive the SQL editor
   const fetchSpy = mockApi("Codename");
   vi.resetModules();
   const { loadBranding } = await import("@/lib/branding");

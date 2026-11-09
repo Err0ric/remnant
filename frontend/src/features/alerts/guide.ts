@@ -94,14 +94,14 @@ export const GUIDE: Record<Rule, { why: string; steps: string[] }> = {
     ],
   },
   service_review: {
-    why: "An AI service is in use that nobody has approved yet.",
+    why: "An AI service is in use that nobody has reviewed yet.",
     steps: [
       "Decide whether it is allowed: Approve or Not approved here or on AI usage.",
       "Close as Approved to approve it in one step (administrators).",
     ],
   },
   mcp_review: {
-    why: "An MCP server is in use that nobody has approved yet.",
+    why: "An MCP server is in use that nobody has reviewed yet.",
     steps: [
       "Check what the server can reach before deciding.",
       "Approve it, or mark it Not approved so its use stands out.",
@@ -143,6 +143,60 @@ export const GUIDE: Record<Rule, { why: string; steps: string[] }> = {
     ],
   },
 };
+
+type Status = NonNullable<AlertItem["review_status"]>;
+
+/** "Why it matters" and the next steps for an AI service or MCP server alert follow the
+ * catalog status now, not the one it had when the alert was raised (owner item 5). */
+const BY_STATUS: Record<"service_review" | "mcp_review", Partial<Record<Status, Guide>>> = {
+  service_review: {
+    not_approved: {
+      why: "This AI service is marked Not approved, and it is still being used.",
+      steps: [
+        "Find out who used it: open the person, or the device when no person is named.",
+        "Ask them to stop and use an approved service instead.",
+        "Close as Resolved with what was done, or Approve the service if it should be allowed (administrators).",
+      ],
+    },
+    unknown: {
+      why: "An AI service is in use that is not in the AI service catalog, so it has no review status.",
+      steps: [
+        "Check what the service is and who used it.",
+        "Close as Resolved with a note once it is dealt with.",
+      ],
+    },
+    approved: {
+      why: "This AI service was approved after the alert was raised.",
+      steps: ["Close as Approved; nothing else is needed."],
+    },
+  },
+  mcp_review: {
+    not_approved: {
+      why: "This MCP server is marked Not approved, and an agent is still using it.",
+      steps: [
+        "Open the person's AI use and see which sessions called it.",
+        "Ask them to remove it, then close as Resolved with what was done.",
+      ],
+    },
+    approved: {
+      why: "This MCP server was approved after the alert was raised.",
+      steps: ["Close as Approved; nothing else is needed."],
+    },
+  },
+};
+
+interface Guide {
+  why: string;
+  steps: string[];
+}
+
+/** The guide for one alert: its rule's, or for a service or MCP server its status's. */
+export function guideFor(i: AlertItem): Guide {
+  const rule = ruleOf(i);
+  if ((rule === "service_review" || rule === "mcp_review") && i.review_status)
+    return BY_STATUS[rule][i.review_status] ?? GUIDE[rule];
+  return GUIDE[rule];
+}
 
 const SEV_ORDER: Record<string, number> = { high: 0, medium: 1 };
 

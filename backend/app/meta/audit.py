@@ -19,6 +19,8 @@ Outcome = Literal["success", "failure", "denied"]
 # Refusals the server also records as events in the lake (ADR-0040): action -> event.
 REFUSALS = {"auth.login": "sign_in", "auth.sso_refused": "sso"}
 Listener = Callable[[str, str | None, dict[str, Any]], None]
+# A successful sign-in: user id, address, and the audit detail (handoff item 9).
+SignInListener = Callable[[str | None, str | None, dict[str, Any]], None]
 
 
 class AuditLog:
@@ -26,6 +28,7 @@ class AuditLog:
         self._meta = meta
         # Called for each refusal in REFUSALS (ADR-0040); never with a password or token.
         self.listener: Listener | None = None
+        self.sign_in_listener: SignInListener | None = None
 
     def notify(self, action: str, ip: str | None, detail: dict[str, Any]) -> None:
         """Tell the listener about a refusal that has no audit row of its own (a sign-in
@@ -69,6 +72,11 @@ class AuditLog:
             )
         if outcome == "failure":
             self.notify(action, ip, detail or {})
+        elif action == "auth.login" and self.sign_in_listener is not None:
+            try:
+                self.sign_in_listener(user_id, ip, detail or {})
+            except Exception:  # noqa: S110  # recording a sign-in never fails it
+                pass
 
 
 # --- reading (Slice 5 audit log viewer) -----------------------------------------------------

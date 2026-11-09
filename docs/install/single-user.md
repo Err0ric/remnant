@@ -42,6 +42,10 @@ Before a major update, take a snapshot of the VM or container if your platform s
 
 From source: `git pull`, then the build commands above again. Docker: the update command in [team-vm.md, Docker Compose](team-vm.md#a-docker-compose). To roll back, check out the earlier commit (`git checkout --detach <commit>`; `git reflog` lists where the checkout has been) and build the same way; `git checkout main` before the next update rolls forward. Your data stays; see [What rolling back does to your data](team-vm.md#what-rolling-back-does-to-your-data).
 
+## Backups
+
+The server backs up its data folder every day at 02:15 and keeps 14: `backend/data/backups/` from source, `/srv/data/backups` in the Docker volume. **Settings > About and licenses > Backups** changes the time and count; **Health > Backups** shows the last run. To restore one, stop the app, run `uv run app-admin restore --replace data/backups/<file>` in `backend/` (Docker: `docker compose run --rm --no-deps app app-admin restore --replace /srv/data/backups/<file>`), and start it again. A backup holds events, settings, and the key for stored secrets, not the code; rolling back the code never touches it. On a laptop the backups share its disk, so copy the folder somewhere else as well. Details: [backup.md](backup.md).
+
 ## Next steps
 
 - **Sources > Add source** for each log file or folder (the Automatic parser handles mixed syslog)

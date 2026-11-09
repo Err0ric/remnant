@@ -302,7 +302,9 @@ export function AskTurnBlock({
                 ? "Follow-up: refined from the last query"
                 : route?.by === "forced"
                   ? "A data question (you chose Check your data)"
-                  : "A data question"}
+                  : route?.by === "library"
+                    ? "A data question, matched to the library without the model"
+                    : "A data question"}
             </dd>
             <dt className="text-text-secondary">SQL</dt>
             <dd>

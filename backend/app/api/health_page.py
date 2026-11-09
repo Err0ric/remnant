@@ -17,6 +17,7 @@ from app.core import clock
 from app.core.client_errors import ClientErrors
 from app.engine.views import permitted_sources
 from app.ingest.durable import quarantined_count
+from app.ops.scheduled_backup import BackupScheduler
 from app.search.health import HealthService
 from app.search.rollup_status import status as rollup_status
 
@@ -74,6 +75,28 @@ class ClientErrorOut(BaseModel):
     stale: bool  # the tab ran an older build than the server serves
 
 
+class BackupRunOut(BaseModel):
+    started_at: str
+    finished_at: str | None
+    result: str  # running | success | failed | skipped
+    file: str | None
+    bytes: int | None
+    error: str | None
+
+
+class BackupHealthOut(BaseModel):
+    enabled: bool
+    at_time: str
+    timezone: str
+    keep: int
+    kept: int
+    last: BackupRunOut | None
+    last_success_at: str | None
+    next_at: str | None
+    state: str  # healthy | attention | unhealthy
+    reason: str | None
+
+
 class HealthOut(BaseModel):
     devices: list[DeviceOut]
     agents: list[AgentOut]
@@ -87,6 +110,8 @@ class HealthOut(BaseModel):
     # Background checks failing right now (owner 2026-11-03): AI Watch's steps and page
     # refreshes, when they started failing and why; for administrators only.
     background_failures: list[FailingOut] = []
+    # Scheduled backups (handoff item 8): the last run, its age, size, and result.
+    backup: BackupHealthOut | None = None
 
 
 class DeviceIn(BaseModel):
@@ -139,7 +164,65 @@ async def health_checks(request: Request, user: CurrentUser) -> HealthOut:
         rollups=await run_in_threadpool(_rollups, request),
         client_errors=_client_errors(request) if admin else [],
         background_failures=_failing(request) if admin else [],
+        backup=await run_in_threadpool(_backup, request),
     )
+
+
+def _backup(request: Request) -> BackupHealthOut:
+    h = _backups(request).health()
+    last = h.last
+    return BackupHealthOut(
+        enabled=h.enabled, at_time=h.at_time, timezone=h.timezone, keep=h.keep, kept=h.kept,
+        last=BackupRunOut(
+            started_at=last.started_at, finished_at=last.finished_at, result=last.result,
+            file=last.file, bytes=last.bytes, error=last.error,
+        ) if last else None,
+        last_success_at=h.last_success_at, next_at=h.next_at, state=h.state, reason=h.reason,
+    )  # fmt: skip
+
+
+def _backups(request: Request) -> BackupScheduler:
+    svc: BackupScheduler = request.app.state.backups
+    return svc
+
+
+class BackupSettingsIn(BaseModel):
+    enabled: bool
+    at_time: str = Field(min_length=5, max_length=5)
+    keep: int
+
+
+class BackupSettingsOut(BackupSettingsIn):
+    timezone: str
+    folder: str
+
+
+def _settings_out(request: Request) -> BackupSettingsOut:
+    svc = _backups(request)
+    s = svc.settings()
+    return BackupSettingsOut(
+        enabled=s.enabled, at_time=s.at_time, keep=s.keep, timezone=svc.tz_name,
+        folder=str(svc.folder),
+    )  # fmt: skip
+
+
+@router.get("/settings/backups")
+async def get_backup_settings(request: Request, _: AdminUser) -> BackupSettingsOut:
+    """Scheduled backups: on or off, the daily time (install time zone), how many are kept,
+    and the folder. Administrators."""
+    return await run_in_threadpool(_settings_out, request)
+
+
+@router.put("/settings/backups")
+async def put_backup_settings(
+    body: BackupSettingsIn, request: Request, user: AdminUser
+) -> BackupSettingsOut:
+    """Change the backup schedule. Audited as settings.backup with the before and after."""
+    await run_in_threadpool(
+        _backups(request).save, body.enabled, body.at_time, body.keep, user.user_id,
+        client_ip(request),
+    )  # fmt: skip
+    return await run_in_threadpool(_settings_out, request)
 
 
 def _failing(request: Request) -> list[FailingOut]:

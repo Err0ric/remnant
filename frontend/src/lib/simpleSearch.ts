@@ -3,10 +3,12 @@ import type { CompiledSearch } from "./api";
 /** Logs modes (D206): "simple" is Filters, "sql" is SQL. */
 export type SearchTab = "simple" | "sql";
 
-const TAB_KEY = "search-tab";
+// A new key (2026-11-08): the old one was also written when opening a saved search or
+// refining into SQL, so it often said SQL without the person choosing it.
+const TAB_KEY = "logs-tab";
 
-/** The mode last used in this browser; Filters the first time (ADR-0009 row 9). "ask",
- * kept by browsers from before Ask AI was its own page (D206), opens Filters. */
+/** The mode last chosen with a tab click in this browser; Filters the first time (ADR-0009
+ * row 9). Any other value opens Filters. */
 export function storedTab(): SearchTab {
   try {
     const v = window.localStorage.getItem(TAB_KEY);
