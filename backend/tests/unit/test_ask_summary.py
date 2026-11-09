@@ -94,3 +94,19 @@ def test_uncited_and_wrongly_cited_statements_are_removed() -> None:
 def test_at_most_five_statements() -> None:
     got = check_claims([(f"s{i}", [A]) for i in range(8)], frozenset({A}))
     assert len(got.claims) == 5 and got.removed == 0
+
+
+def test_headline_reads_iso_text_times_and_plain_column_names() -> None:
+    """Owner, 2026-11-08: the headline showed "time 2026-11-05T20:03:35+00:00,
+    actor_user_name frank@example.com": rows can carry times as ISO text."""
+    cols = ["event_id", "time", "actor_user_name", "src_endpoint_ip"]
+    row = [A, "2026-11-05T20:03:35+00:00", "frank@example.com", "203.0.113.59"]
+    got = headline(cols, [row] * 2, False, None, "America/Los_Angeles")
+    assert got == (
+        "2 rows. First row: time Nov 5, 12:03 PM PST, user frank@example.com,"
+        " source IP 203.0.113.59."
+    )
+    # Text that only looks like a date stays as it is.
+    assert headline(["note"], [["2026-11-05 maintenance"]], False) == (
+        "note: 2026-11-05 maintenance"
+    )

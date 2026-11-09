@@ -57,6 +57,10 @@ class ForbiddenError(AppError):
     """Signed in, but the role does not allow this action."""
 
 
+class AuditorSqlOffError(ForbiddenError):
+    """An Auditor tried to run SQL while the setting that grants it is off (D220)."""
+
+
 class CsrfError(AppError):
     """A cookie-authenticated write arrived without a matching CSRF token."""
 

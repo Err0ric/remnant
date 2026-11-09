@@ -89,3 +89,30 @@ describe("Audit log", () => {
     expect(screen.queryByRole("heading", { name: "Audit log" })).toBeNull();
   });
 });
+
+describe("Integrity with no lake files (owner, 2026-11-08)", () => {
+  it("says nothing is verified yet instead of Verified", async () => {
+    window.history.replaceState(null, "", "/audit#integrity");
+    const spy = mockApi("Codename", { mode: "login", signedIn: true, role: "auditor" });
+    const base = spy.getMockImplementation()!;
+    spy.mockImplementation(async (input, init) => {
+      const res = await base(input, init);
+      if (!/\/api\/integrity(\?|$)/.test(String(input))) return res;
+      const body = await res.json();
+      body.latest = { ...body.latest, status: "verified", files: 0, failures: 0, findings: [] };
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    render(<App initialTheme="dark" queryClient={new QueryClient()} />);
+    const status = await screen.findByRole("region", { name: "Integrity status" });
+    expect(await within(status).findByText("Nothing verified yet")).toBeVisible();
+    expect(within(status).queryByText("Verified")).toBeNull();
+    expect(status).toHaveTextContent("no lake files yet");
+  });
+});

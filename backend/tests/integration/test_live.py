@@ -140,6 +140,7 @@ def test_live_limit_is_an_audited_admin_setting(lab: dict[str, Any]) -> None:
     assert audit(lab, "settings.live_limit")[-1] == {"from": 30, "to": 45}
 
 
+@pytest.mark.slow  # over 8 s; skipped in PR CI, run by the queue before every merge (D216)
 def test_resume_sends_what_arrived_while_paused_up_to_1000(lab: dict[str, Any]) -> None:
     engine = lab["app"].state.engine
     _events(engine, 1_200)

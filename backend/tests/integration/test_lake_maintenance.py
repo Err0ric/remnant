@@ -5,6 +5,8 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from app.core import lake_files
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.ingest.compaction import MANIFEST_SUFFIX, Compactor
@@ -243,6 +245,7 @@ def test_maintenance_uses_source_retention_and_schedules(tmp_path: Path) -> None
     assert not (lake / "source=gone").exists()
 
 
+@pytest.mark.slow  # over 8 s; skipped in PR CI, run by the queue before every merge (D216)
 def test_compacted_files_group_templates_so_filters_skip_row_groups(tmp_path: Path) -> None:
     """Owner re-time, 2026-11-01: a filter on one template read every row of the day.
     Merged files are sorted by template then time, in row groups of ROW_GROUP_ROWS, so

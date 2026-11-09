@@ -13,7 +13,8 @@ import { TopBar } from "@/components/shell/TopBar";
 import { AccountPasswordPage } from "@/features/auth/AccountPasswordPage";
 import { HomeRedirect, ToHealth, ToLogs } from "@/features/dashboard/HomeRedirect";
 import { canonical, usePage, useSection, useTab } from "@/lib/route";
-import { ViewerContext } from "@/lib/viewer";
+import { SqlOnly, ViewerProvider } from "@/app/ViewerProvider";
+import { SqlOffNotice } from "@/features/search/SqlOffNotice";
 import { SETTINGS_IDS } from "@/lib/nav";
 import { cn } from "@/lib/cn";
 import { OfflineBanner } from "@/components/shell/OfflineBanner";
@@ -204,12 +205,7 @@ export function App({ initialTheme, queryClient }: AppProps) {
       ) : (
         <AuthGate>
           {(user, signOut) => (
-            <ViewerContext.Provider
-              value={{
-                isAdmin: !user || user.role === "admin",
-                canAsk: !user || user.role !== "auditor",
-              }}
-            >
+            <ViewerProvider user={user}>
               <div className="flex min-h-full flex-col">
                 <TopBar
                   theme={theme}
@@ -221,17 +217,16 @@ export function App({ initialTheme, queryClient }: AppProps) {
                   onToggleMenu={() => setMenu((open) => !open)}
                 />
                 <OfflineBanner />
-                {!user || user.role !== "auditor" ? (
+                <SqlOnly fallback={null}>
                   <ErrorBoundary label="Ask AI">
                     <AskSlideOver isAdmin={!user || user.role === "admin"} />
                   </ErrorBoundary>
-                ) : null}
+                </SqlOnly>
                 {palette ? (
                   <CommandPalette
                     page={page}
                     isAdmin={!user || user.role === "admin"}
                     canAudit={!user || user.role !== "analyst"}
-                    canAsk={!user || user.role !== "auditor"}
                     theme={theme}
                     onToggleTheme={toggleTheme}
                     onClose={() => setPalette(false)}
@@ -243,7 +238,6 @@ export function App({ initialTheme, queryClient }: AppProps) {
                     activeTab={tab}
                     isAdmin={!user || user.role === "admin"}
                     canAudit={!user || user.role !== "analyst"}
-                    canAsk={!user || user.role !== "auditor"}
                     open={menu}
                   />
                   <main
@@ -323,27 +317,27 @@ export function App({ initialTheme, queryClient }: AppProps) {
                         ) : page === "home" ? (
                           <HomeRedirect />
                         ) : page === "ask" ? (
-                          !user || user.role !== "auditor" ? (
+                          <SqlOnly fallback={<ToLogs />}>
                             <AskPage isAdmin={!user || user.role === "admin"} />
-                          ) : (
-                            <ToLogs />
-                          )
+                          </SqlOnly>
                         ) : page === "sources" ? (
                           // Open mode (no accounts) is the local admin.
                           <SourcesPage canManage={!user || user.role === "admin"} />
                         ) : (
                           // Logs (D206).
-                          <SearchPage
-                            key={`logs:${searchKey}:${searchNav}`}
-                            canSave={!user || user.role !== "auditor"}
-                          />
+                          <SqlOnly fallback={<SqlOffNotice />}>
+                            <SearchPage
+                              key={`logs:${searchKey}:${searchNav}`}
+                              canSave={!user || user.role !== "auditor"}
+                            />
+                          </SqlOnly>
                         )}
                       </Suspense>
                     </PageBoundary>
                   </main>
                 </div>
               </div>
-            </ViewerContext.Provider>
+            </ViewerProvider>
           )}
         </AuthGate>
       )}

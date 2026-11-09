@@ -12,6 +12,19 @@ on:
       - "docs/**"
       - "**/*.md"
   workflow_dispatch:
+    inputs:
+      runner:
+        description: Where the jobs run. ubuntu-latest is the fallback when the self-hosted runner is down.
+        type: choice
+        options: [ubuntu-latest, self-hosted]
+        default: ubuntu-latest
+
+# Runner selection (D217, docs/dev/self-hosted-runner.md). Every job's runs-on is the same
+# expression: the self-hosted runner (labels self-hosted, remnant-ci) only in the private
+# repo, never for a pull request from a fork, and only when the dispatch input or, for
+# pushes and pull requests, the repository variable CI_RUNNER says self-hosted. With the
+# variable unset, everything stays on ubuntu-latest. On a self-hosted runner each job puts
+# its tools and caches in the job's temp folder and cleans the checkout when it ends.
 
 # A newer run on the same PR or branch cancels the older one.
 concurrency:
@@ -25,11 +38,13 @@ jobs:
   # Private dev repo only (its minutes are limited): a PR runs the backend job only when
   # backend/, library/, templates/ or scripts/ changed, and the frontend job only when
   # frontend/ changed (a change to this file runs both). Scale tests never run here
-  # (`-m scale` is excluded by default; run them with the scale workflow, on demand).
+  # (`-m scale` is excluded by default; run them with the scale workflow, on demand), and
+  # a private-repo PR run skips `-m slow`, which the queue runs before every merge (D216).
   # The public repo always runs everything.
   changes:
     if: github.event_name == 'pull_request' && github.event.repository.private && !github.event.pull_request.draft
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(github.event.repository.private && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name == 'workflow_dispatch' && inputs.runner || vars.CI_RUNNER) == 'self-hosted' && '["self-hosted","remnant-ci"]' || '"ubuntu-latest"') }}
+    timeout-minutes: 5
     outputs:
       backend: ${{ steps.diff.outputs.backend }}
       frontend: ${{ steps.diff.outputs.frontend }}
@@ -37,6 +52,12 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           fetch-depth: 0
+          clean: true
+          persist-credentials: false
+      - name: Self-hosted runner, tools and caches in this job's temp folder
+        if: runner.environment == 'self-hosted'
+        working-directory: .
+        run: ./scripts/ci/self-hosted.sh prep
       - id: diff
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
@@ -45,13 +66,29 @@ jobs:
           echo "$files"
           echo "backend=$(echo "$files" | grep -qE '^(backend|library|templates|scripts)/|^\.github/workflows/ci\.yml$' && echo true || echo false)" >> "$GITHUB_OUTPUT"
           echo "frontend=$(echo "$files" | grep -qE '^frontend/|^\.github/workflows/ci\.yml$' && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - name: Self-hosted runner, leave nothing behind
+        if: always() && runner.environment == 'self-hosted'
+        working-directory: .
+        run: ./scripts/ci/self-hosted.sh clean
 
   architecture:
     if: (github.event_name != 'push' || !github.event.repository.private) && !github.event.pull_request.draft  # private dev repo: the PR run is the gate; public minutes are free
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(github.event.repository.private && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name == 'workflow_dispatch' && inputs.runner || vars.CI_RUNNER) == 'self-hosted' && '["self-hosted","remnant-ci"]' || '"ubuntu-latest"') }}
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          clean: true
+          persist-credentials: false
+      - name: Self-hosted runner, tools and caches in this job's temp folder
+        if: runner.environment == 'self-hosted'
+        working-directory: .
+        run: ./scripts/ci/self-hosted.sh prep
       - run: ./scripts/check-architecture.sh
+      - name: Self-hosted runner, leave nothing behind
+        if: always() && runner.environment == 'self-hosted'
+        working-directory: .
+        run: ./scripts/ci/self-hosted.sh clean
 
   backend:
     needs: changes
@@ -59,27 +96,44 @@ jobs:
       always() && (github.event_name != 'push' || !github.event.repository.private)
       && !github.event.pull_request.draft
       && (needs.changes.result == 'skipped' || needs.changes.outputs.backend == 'true')
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(github.event.repository.private && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name == 'workflow_dispatch' && inputs.runner || vars.CI_RUNNER) == 'self-hosted' && '["self-hosted","remnant-ci"]' || '"ubuntu-latest"') }}
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: backend
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          clean: true
+          persist-credentials: false
+      - name: Self-hosted runner, tools and caches in this job's temp folder
+        if: runner.environment == 'self-hosted'
+        working-directory: .
+        run: ./scripts/ci/self-hosted.sh prep
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6
         with:
+          version: "0.13.5"  # pinned (D217), at least 14 days old when set
           python-version: "3.12"
       - run: uv sync --frozen
       - run: uv run ruff format --check app tests evals
       - run: uv run ruff check app tests evals
       - run: uv run mypy
-      - run: uv run pytest -q --junitxml=/tmp/junit.xml
+      # D216: tests run in one worker per vCPU (pytest-xdist). A pull request in the private
+      # repo skips the `slow` tests (over 8 s each): the queue runs them, with the rest of
+      # the suite, before it marks the PR ready, so none reaches main unrun. Pushes, the
+      # public repo, and a manual run keep every test but scale.
+      - name: pytest
+        env:
+          MARKS: ${{ (github.event_name == 'pull_request' && github.event.repository.private) && 'not scale and not slow' || 'not scale' }}
+        run: uv run pytest -q -n auto -m "$MARKS" --junitxml="$RUNNER_TEMP/junit.xml"
       - name: Name failing tests in the check (readable without the raw log)
         if: failure()
         run: |
           python3 - <<'PY'
+          import os
           import xml.etree.ElementTree as ET
           from pathlib import Path
-          p = Path("/tmp/junit.xml")
+          p = Path(os.environ["RUNNER_TEMP"]) / "junit.xml"
           if not p.exists():
               raise SystemExit
           n = 0
@@ -93,16 +147,19 @@ jobs:
           PY
       - name: Known vulnerabilities in runtime packages (docs/security/dependencies.md)
         run: |
-          uv export --frozen --no-dev --no-hashes -q -o /tmp/requirements.txt
-          uvx --from pip-audit==2.9.0 pip-audit -r /tmp/requirements.txt --vulnerability-service pypi \
-            --ignore-vuln PYSEC-2026-2447 --ignore-vuln GHSA-w8v5-vhqr-4h9v \
-            --ignore-vuln PYSEC-2026-4320
+          uv export --frozen --no-dev --no-hashes -q -o "$RUNNER_TEMP/requirements.txt"
+          uvx --from pip-audit==2.9.0 pip-audit -r "$RUNNER_TEMP/requirements.txt" --vulnerability-service pypi \
+            --ignore-vuln PYSEC-2026-2447 --ignore-vuln GHSA-w8v5-vhqr-4h9v
       - name: SBOM (CycloneDX, runtime packages and base images)
         run: uv run python ../scripts/sbom.py --out ../sbom.cdx.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: sbom
           path: sbom.cdx.json
+      - name: Self-hosted runner, leave nothing behind
+        if: always() && runner.environment == 'self-hosted'
+        working-directory: .
+        run: ./scripts/ci/self-hosted.sh clean
 
   frontend:
     needs: changes
@@ -110,18 +167,27 @@ jobs:
       always() && (github.event_name != 'push' || !github.event.repository.private)
       && !github.event.pull_request.draft
       && (needs.changes.result == 'skipped' || needs.changes.outputs.frontend == 'true')
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(github.event.repository.private && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name == 'workflow_dispatch' && inputs.runner || vars.CI_RUNNER) == 'self-hosted' && '["self-hosted","remnant-ci"]' || '"ubuntu-latest"') }}
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: frontend
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          clean: true
+          persist-credentials: false
+      - name: Self-hosted runner, tools and caches in this job's temp folder
+        if: runner.environment == 'self-hosted'
+        working-directory: .
+        run: ./scripts/ci/self-hosted.sh prep
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1  # v4
         with:
           package_json_file: frontend/package.json  # pnpm version from packageManager
+          dest: ${{ runner.temp }}/setup-pnpm  # not the runner user's home
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
         with:
-          node-version: 22
+          node-version-file: frontend/package.json  # engines.node, exact (D217)
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
@@ -135,24 +201,30 @@ jobs:
       # F54: no page scrolls sideways at 1280px, against a server with the demo lab's data.
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6
         with:
+          version: "0.13.5"  # pinned (D217), at least 14 days old when set
           python-version: "3.12"
           prune-cache: false  # the backend job keeps the cache; pruning here failed after the check
       - name: No page scrolls sideways (scripts/check-layout.py)
         working-directory: backend
         run: |
           uv sync --frozen
-          mkdir -p /tmp/lab/logs /tmp/lab/rules /tmp/lab/data
+          lab="$RUNNER_TEMP/lab"  # this job's temp folder, not a /tmp every job on the host shares
+          mkdir -p "$lab/logs" "$lab/rules" "$lab/data"
           APP__SERVER__HOST=127.0.0.1 APP__SERVER__PORT=8080 \
             APP__SERVER__STATIC_DIR=$GITHUB_WORKSPACE/frontend/dist \
-            APP__PATHS__DATA_DIR=/tmp/lab/data APP__PATHS__ALLOWED_ROOTS=/tmp/lab/logs \
-            APP__PATHS__RULE_ROOTS=/tmp/lab/rules \
+            APP__PATHS__DATA_DIR="$lab/data" APP__PATHS__ALLOWED_ROOTS="$lab/logs" \
+            APP__PATHS__RULE_ROOTS="$lab/rules" \
             APP__PATHS__STARTER_TEMPLATES=$GITHUB_WORKSPACE/templates/starter \
-            uv run app-server > /tmp/lab/server.log 2>&1 &
+            uv run app-server > "$lab/server.log" 2>&1 &
           server=$!
           for i in $(seq 1 30); do curl -sf http://127.0.0.1:8080/api/health && break; sleep 1; done
-          uv run python ../scripts/demo_lab.py --url http://127.0.0.1:8080 --logs /tmp/lab/logs/demo --rules /tmp/lab/rules/demo > /dev/null
+          uv run python ../scripts/demo_lab.py --url http://127.0.0.1:8080 --logs "$lab/logs/demo" --rules "$lab/rules/demo" > /dev/null
           if command -v google-chrome >/dev/null; then channel="--channel chrome"; else uv run playwright install chromium; channel=""; fi
           status=0
           uv run python ../scripts/check-layout.py --url http://127.0.0.1:8080 --width 1280 $channel || status=$?
           kill "$server" 2>/dev/null || true
           exit $status
+      - name: Self-hosted runner, leave nothing behind
+        if: always() && runner.environment == 'self-hosted'
+        working-directory: .
+        run: ./scripts/ci/self-hosted.sh clean

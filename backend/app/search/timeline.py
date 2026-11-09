@@ -121,6 +121,29 @@ def _mine(ident: IdentityMap, keys: list[str]) -> str:
     return f"(({near or 'true'}) AND {cond.replace('$id_org', org)})"
 
 
+_OUTCOME = (
+    f"CASE WHEN status_id = 1 THEN 'Signed in' WHEN {INTERRUPTED} THEN 'Interrupted'"
+    f" WHEN {EXPIRED} THEN 'Expired' WHEN {FAILED} THEN 'Failed'"
+    " WHEN status_id = 2 THEN 'Other failure' ELSE 'Sign-in' END"
+)
+
+
+def _signins(mine: str) -> str:
+    return drill.events(
+        f"template_id = 'm365_signin' AND {mine}",
+        f"time, actor_user_name, coalesce(resource_name, message) AS app, {_OUTCOME} AS outcome,"
+        " src_endpoint_ip, device_hostname, event_id",
+    )
+
+
+def signins_sql(ident: IdentityMap, person: str) -> str:
+    """The person's Microsoft 365 sign-ins as a Search query template (`{from}`, `{to}`),
+    for the person page's Sign-ins list, which the server runs (#451 option A)."""
+    if not person.strip():
+        raise ParamInvalidError("Name a person")
+    return _signins(_mine(ident, ident.keys_for(person)))
+
+
 def timeline(
     engine: QueryEngine,
     allowed: list[str] | None,
@@ -145,16 +168,8 @@ def timeline(
     )  # fmt: skip
     sources: set[str] = set()
     lock = threading.Lock()
-    outcome = (
-        f"CASE WHEN status_id = 1 THEN 'Signed in' WHEN {INTERRUPTED} THEN 'Interrupted'"
-        f" WHEN {EXPIRED} THEN 'Expired' WHEN {FAILED} THEN 'Failed'"
-        " WHEN status_id = 2 THEN 'Other failure' ELSE 'Sign-in' END"
-    )
-    out.signins_sql = drill.events(
-        f"template_id = 'm365_signin' AND {mine}",
-        f"time, actor_user_name, coalesce(resource_name, message) AS app, {outcome} AS outcome,"
-        " src_endpoint_ip, device_hostname, event_id",
-    )
+    outcome = _OUTCOME
+    out.signins_sql = _signins(mine)
 
     def run(
         sql: str,

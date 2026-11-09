@@ -59,7 +59,33 @@ def _zone(tz: str | None) -> ZoneInfo | None:
         return None
 
 
+# A time the rows carry as ISO text with an offset ("2026-11-05T20:03:35+00:00").
+_ISO_TIME = re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})")
+
+# Plain names for common columns in a generic headline, as the results table labels them
+# (lib/search.ts LABELS), lower case inside a sentence.
+_LABELS = {
+    "time_observed": "received",
+    "severity_id": "severity",
+    "source_id": "source",
+    "device_hostname": "host",
+    "device_ip": "host IP",
+    "actor_process_name": "process",
+    "actor_user_name": "user",
+    "src_endpoint_ip": "source IP",
+    "src_endpoint_port": "source port",
+    "dst_endpoint_hostname": "destination host",
+    "dst_endpoint_ip": "destination IP",
+    "dst_endpoint_port": "destination port",
+}
+
+
 def _show(value: Any, tz: str | None = None) -> str:
+    if isinstance(value, str) and _ISO_TIME.fullmatch(value):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            pass
     if value is None:
         return "none"
     if isinstance(value, bool):
@@ -121,9 +147,9 @@ def headline(
             return text + (" (more rows than shown)" if truncated else "")
     shown = [(c, v) for c, v in first.items() if c != "event_id" and v is not None]
     if n == 1 and len(columns) <= 4:
-        return "; ".join(f"{c}: {_show(v, tz)}" for c, v in shown) or "1 row."
+        return "; ".join(f"{_LABELS.get(c, c)}: {_show(v, tz)}" for c, v in shown) or "1 row."
     count = f"More than {n:,} rows" if truncated else _rows(n)
-    lead = ", ".join(f"{c} {_show(v, tz)}" for c, v in shown[:FIRST_COLUMNS])
+    lead = ", ".join(f"{_LABELS.get(c, c)} {_show(v, tz)}" for c, v in shown[:FIRST_COLUMNS])
     return f"{count}. First row: {lead}." if lead else f"{count}."
 
 

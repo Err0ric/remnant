@@ -32,3 +32,19 @@ describe("Ask results times (owner, 2026-11-04)", () => {
     expect(isIsoTime(42)).toBe(false);
   });
 });
+
+describe("Logs and Microsoft 365 tables read times the same way (owner, 2026-11-08)", () => {
+  it("shows local time with UTC on hover by default, not the raw UTC stamp", async () => {
+    const { ResultsTable } = await import("@/features/search/ResultsTable");
+    const logs: QueryResult = {
+      ...result,
+      columns: ["time", "message", "event_id"],
+      rows: [["2026-10-21T09:05:01+00:00", "Accepted publickey", "e-1"]],
+    };
+    render(<ResultsTable result={logs} view="parsed" />);
+    expect(screen.queryByText(/2026-10-21 09:05:01/)).toBeNull();
+    const t = screen.getByText("Oct 21, 9:05:01 AM"); // seconds kept in log tables
+    expect(t.tagName).toBe("TIME");
+    expect(t).toHaveAttribute("title", expect.stringMatching(/UTC$/));
+  });
+});

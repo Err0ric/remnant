@@ -3,9 +3,12 @@ changes, apps named instead of ServicePrincipal_<id>, a readable status, an even
 the properties changed, and real admin changes ranked above routine ones. All names here
 are synthetic."""
 
+import copy
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 from app.engine.duckdb import QueryScope
 from app.ingest.writer import LakeWriter
@@ -107,8 +110,21 @@ def _rows(tmp_path: Path) -> list[dict[str, Any]]:
     return [dict(zip(res.columns, r, strict=True)) for r in res.rows]
 
 
-def test_cycles_are_provisioning_and_changes_are_apart(tmp_path: Path) -> None:
-    rows = _rows(tmp_path)
+_BUILT: list[list[dict[str, Any]]] = []
+
+
+@pytest.fixture
+def admin_rows(tmp_path: Path) -> list[dict[str, Any]]:
+    """The admin query over the same records, built once per test process (by the first
+    test that asks, inside its own tmp_path and fixtures) and handed to each test as its
+    own deep copy. The tests below only read these rows."""
+    if not _BUILT:
+        _BUILT.append(_rows(tmp_path))
+    return copy.deepcopy(_BUILT[0])
+
+
+def test_cycles_are_provisioning_and_changes_are_apart(admin_rows: list[dict[str, Any]]) -> None:
+    rows = admin_rows
     cycles = [r for r in rows if r["provisioning"]]
     changes = [r for r in rows if not r["provisioning"]]
     assert {r["service"] for r in cycles} == {"Example Directory Sync", "Example SCIM Connector"}
@@ -120,8 +136,8 @@ def test_cycles_are_provisioning_and_changes_are_apart(tmp_path: Path) -> None:
     assert len(changes) == 6
 
 
-def test_an_app_is_named_and_its_change_says_what_changed(tmp_path: Path) -> None:
-    rows = _rows(tmp_path)
+def test_an_app_is_named_and_its_change_says_what_changed(admin_rows: list[dict[str, Any]]) -> None:
+    rows = admin_rows
     hr = next(r for r in rows if r["app_id"] == HR_SP and not r["provisioning"])
     assert hr["actor"] == "Example HR Connector" and hr["app_id"] == HR_SP
     assert hr["operation"] == "update user" and hr["target"] == "pat@example.com"
@@ -133,8 +149,8 @@ def test_an_app_is_named_and_its_change_says_what_changed(tmp_path: Path) -> Non
     assert person["changed"] == "MobilePhone" and person["actor_kind"] == "person"
 
 
-def test_real_admin_changes_rank_above_routine(tmp_path: Path) -> None:
-    changes = [r for r in _rows(tmp_path) if not r["provisioning"]]
+def test_real_admin_changes_rank_above_routine(admin_rows: list[dict[str, Any]]) -> None:
+    changes = [r for r in admin_rows if not r["provisioning"]]
     assert changes[0]["operation"] == "add member to role" and changes[0]["rank"] > 0
     routine = sorted(r["operation"] for r in changes if r["rank"] == 0)
     assert routine == ["update service principal", "update user", "update user"]
@@ -144,15 +160,17 @@ def test_real_admin_changes_rank_above_routine(tmp_path: Path) -> None:
     assert areas["delete user"] == areas["update user"] == "Users"
 
 
-def test_the_events_open_in_search(tmp_path: Path) -> None:
-    rows = _rows(tmp_path)
+def test_the_events_open_in_search(admin_rows: list[dict[str, Any]]) -> None:
+    rows = admin_rows
     ids = rows[0]["event_ids"]
     sql = drill.events(f"list_contains({drill.lits([str(i) for i in ids])}, event_id)")
     assert "event_id" in sql
 
 
-def test_deleted_users_unnamed_apps_and_containers_read_plainly(tmp_path: Path) -> None:
-    rows = _rows(tmp_path)
+def test_deleted_users_unnamed_apps_and_containers_read_plainly(
+    admin_rows: list[dict[str, Any]],
+) -> None:
+    rows = admin_rows
     gone = next(r for r in rows if r["operation"] == "delete user")
     assert gone["target"] == "kim.lee@example.com" and gone["target_deleted"] is True
     assert gone["changed"] == "AccountEnabled"  # not "Included Updated Properties"

@@ -73,3 +73,17 @@ def test_rows_are_capped_and_the_range_is_at_most_90_days(
     assert out["row_count"] == 3 and out["truncated"] is True
     (run,) = _runs(lab)
     assert run["rows"] == 3
+
+
+def test_an_answer_naming_the_bound_identities_values_reads_nothing(lab: dict[str, Any]) -> None:  # noqa: F811
+    """T70, D219: a model's SQL that names the values {{org_domains}} and {{person:...}}
+    bind is refused when it runs, so an answer cannot carry the Identities map to the
+    asker (or into a summary prompt)."""
+    lab["app"].state.identities.set_domains(["example.com"], "admin")
+    lab["app"].state.identities.set_alias("dana@example.org", "dana", "admin")
+    lab["script"].replies = [answer("SELECT {{org_domains}} AS d, $id_from AS a, $id_to AS p")] * 3
+    ana = login(lab, "ana")
+    body = ask(ana).json()
+    res = ana.post(f"/api/ask/{body['ask_id']}/run")
+    assert res.status_code == 400, res.text
+    assert "dana@example.org" not in res.text and "example.com" not in res.text

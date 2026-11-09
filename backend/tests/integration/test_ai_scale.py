@@ -51,6 +51,7 @@ def _every_tab(c: TestClient, days: int) -> dict[str, Any]:
     return body
 
 
+@pytest.mark.slow  # over 8 s; skipped in PR CI, run by the queue before every merge (D216)
 def test_thirty_days_of_busy_dns_fit_a_small_share_without_spilling(tmp_path: Path) -> None:
     lake = tmp_path / "lake"
     rows = write_dns(lake, per_day=70_000, days=30, end=datetime.now(UTC))

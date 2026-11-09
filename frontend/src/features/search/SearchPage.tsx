@@ -1,4 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { localClock } from "@/lib/localTime";
 import { withChunkReload } from "@/lib/chunkReload";
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { Command, PageHeader } from "@/components/shell/PageHeader";
@@ -370,9 +371,13 @@ export function SearchPage({ canSave }: SearchPageProps) {
   const askQuestion =
     tab === "sql" && seed?.askQuestion && sql === seed.sql ? seed.askQuestion : undefined;
 
-  const meta = lastRun
-    ? `Last run ${lastRun.toISOString().slice(11, 19)} UTC${result ? ` · ${result.elapsed_ms} ms` : ""}`
-    : null;
+  // The viewer's clock, UTC on hover, as times read everywhere else (owner, 2026-11-08).
+  const meta = lastRun ? (
+    <span title={`${lastRun.toISOString().slice(0, 19).replace("T", " ")} UTC`}>
+      Last run {localClock(lastRun)}
+      {result ? ` · ${result.elapsed_ms} ms` : ""}
+    </span>
+  ) : null;
 
   return (
     <div className="flex min-w-0 flex-1 flex-col">

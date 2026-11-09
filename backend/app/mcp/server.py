@@ -340,15 +340,17 @@ class McpServer:
                 is_error=True,
             )  # fmt: skip
         values: dict[str, Any] | None = None
-        run_sql = sql
-        if names or uses_identities(sql):
-            values = identity_values(sql, IdentityStore(self._meta))
-            if "start" in names:
-                values["start"] = scope.start or datetime(1970, 1, 1, tzinfo=UTC)
-            if "end" in names:
-                values["end"] = scope.end or self._clock()
-            run_sql = compile_sql(sql)
         try:
+            run_sql = compile_sql(sql)  # refuses SQL naming the Identities values (T70)
+            if names or uses_identities(sql):
+                # The part of Identities this token owner's scope shows (D219).
+                values = identity_values(
+                    sql, IdentityStore(self._meta), self._engine, scope, role=user.role
+                )
+                if "start" in names:
+                    values["start"] = scope.start or datetime(1970, 1, 1, tzinfo=UTC)
+                if "end" in names:
+                    values["end"] = scope.end or self._clock()
             result = self._engine.run(
                 run_sql, scope, values, row_cap=limit, timeout_s=QUERY_TIMEOUT_S, intel=False
             )

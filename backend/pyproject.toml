@@ -49,6 +49,7 @@ dev = [
     "textual>=3",
     "mmdb-writer>=0.2.7",
     "playwright>=1.63.0",
+    "pytest-xdist>=3.6",
 ]
 
 [build-system]
@@ -66,11 +67,13 @@ packages = ["app"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # Scale tests write millions of rows; run them with `uv run pytest -m scale`.
+# Slow tests (over 8 s each) run by default here and in the queue; PR CI skips them (D216).
 addopts = ["-m", "not scale"]
 markers = [
     "templates: template fixture suite",
     "integration: integration tests",
     "scale: large synthetic data, run on demand (uv run pytest -m scale)",
+    "slow: over 8 s each; skipped in PR CI, always run by the queue before a merge (D216)",
 ]
 
 [tool.ruff]

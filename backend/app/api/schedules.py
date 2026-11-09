@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field, StringConstraints
 from starlette.concurrency import run_in_threadpool
 
 from app.alerts.dispatch import AlertDispatcher
-from app.api.access import CurrentUser, client_ip, require_role
+from app.api.access import CurrentUser, SqlUser, client_ip, require_role
 from app.auth.users import User
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError
 from app.engine.views import permitted_sources
@@ -349,7 +349,7 @@ async def delete_schedule(schedule_id: str, request: Request, user: CurrentUser)
 
 
 @router.post("/schedules/{schedule_id}/run")
-async def run_now(schedule_id: str, request: Request, user: CurrentUser) -> RunDetail:
+async def run_now(schedule_id: str, request: Request, user: SqlUser) -> RunDetail:
     svc, meta = _svc(request), request.app.state.meta
     s = await run_in_threadpool(_get_visible, svc, schedule_id, user)
     _manages(s, user)

@@ -1,8 +1,11 @@
 """Server-Timing on query endpoints, and rollup status on Health (owner, 2026-11-01)."""
 
 import re
+from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 
+from app.core import clock
 from app.main import _each_tick, _rollups
 from tests.integration.test_schedules import make_lab
 
@@ -91,16 +94,21 @@ def test_parallel_queries_report_wall_time_not_their_sum() -> None:
     )
 
 
-def test_ai_inventory_reuses_what_ai_usage_just_read(tmp_path: Path) -> None:
-    """Owner, 2026-11-01: /ai then /ai/inventory read the same 30 days twice."""
-    from datetime import UTC, datetime, timedelta
+def test_ai_inventory_reuses_what_ai_usage_just_read(
+    tmp_path: Path, pin_now: Callable[[datetime], None]
+) -> None:
+    """Owner, 2026-11-01: /ai then /ai/inventory read the same 30 days twice. "Now" is
+    pinned to the real time at the start, so the three requests cannot fall on two sides
+    of a minute boundary (that made this test fail now and then)."""
+    from datetime import UTC, timedelta
 
+    pin_now(datetime.now(UTC))
     lab = make_lab(tmp_path)
     c = lab["admin"]
     alone = c.get("/api/ai/inventory", params={"days": 30})
     n_alone = int(TIMING.fullmatch(alone.headers["Server-Timing"]).group(3))  # type: ignore[union-attr]  # matched above
     lab["app"].state.page_cache.clear()
-    start = (datetime.now(UTC) - timedelta(days=30)).isoformat()
+    start = (clock.now() - timedelta(days=30)).isoformat()
     assert c.get("/api/ai/usage", params={"start": start}).status_code == 200
     after = c.get("/api/ai/inventory", params={"days": 30})
     m = TIMING.fullmatch(after.headers["Server-Timing"])

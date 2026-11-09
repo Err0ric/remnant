@@ -63,6 +63,8 @@ export function SignIns({ m }: { m: M365Overview }) {
     <EventList
       title={title}
       sql={sql}
+      list="sign_ins"
+      filter={m.sign_in_lists?.[cls]?.[mode] ? { cls, mode } : undefined}
       m={m}
       controls={
         <>

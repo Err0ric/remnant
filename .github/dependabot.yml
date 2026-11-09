@@ -1,0 +1,48 @@
+# Dependabot: security updates only (D224). Version updates are off
+# (open-pull-requests-limit: 0); security updates still open, grouped per
+# ecosystem into one pull request a week.
+#
+# The 14-day minimum age (security rule 11) is held by the resolvers, not by
+# Dependabot: security updates skip Dependabot's cooldown, but its re-lock still
+# runs under `exclude-newer = "14 days"` (backend/pyproject.toml) and
+# `minimumReleaseAge` (frontend/pnpm-workspace.yaml), so a fix younger than 14
+# days does not lock and the update waits. The cooldown below covers version
+# updates if they are ever turned on.
+version: 2
+updates:
+  - package-ecosystem: uv
+    directory: /backend
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 0
+    cooldown: { default-days: 14 }
+    groups:
+      backend-security:
+        applies-to: security-updates
+        patterns: ["*"]
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 0
+    cooldown: { default-days: 14 }
+    groups:
+      frontend-security:
+        applies-to: security-updates
+        patterns: ["*"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 0
+    cooldown: { default-days: 14 }
+    groups:
+      actions-security:
+        applies-to: security-updates
+        patterns: ["*"]
+  - package-ecosystem: docker
+    directory: /
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 0
+    cooldown: { default-days: 14 }
+    groups:
+      images-security:
+        applies-to: security-updates
+        patterns: ["*"]

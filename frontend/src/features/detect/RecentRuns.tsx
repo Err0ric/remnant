@@ -1,3 +1,4 @@
+import { When } from "@/components/When";
 import type { RuleRun } from "@/lib/api";
 import { authorText } from "./rules";
 
@@ -19,8 +20,8 @@ export function RecentRuns({ runs, onOpen }: RecentRunsProps) {
           <tbody>
             {runs.map((r) => (
               <tr key={r.run_id} className="border-b border-border last:border-0">
-                <td className="whitespace-nowrap px-3 py-1 font-mono text-text-secondary">
-                  {r.started_at.slice(0, 19).replace("T", " ")}
+                <td className="whitespace-nowrap px-3 py-1 text-text-secondary">
+                  <When iso={r.started_at} />
                 </td>
                 <td className="px-3 py-1">
                   {r.title} <span className="text-text-muted">by {authorText(r.author)}</span>

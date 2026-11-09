@@ -66,6 +66,18 @@ cd /opt/remnant && git pull && GIT_COMMIT=$(git rev-parse HEAD) docker compose u
 
 Database changes are applied automatically at start and only ever add to what is there.
 
+Rolling back: Compose builds the image from the checkout, so going back is checking out the version before the update and rebuilding.
+
+```bash
+cd /opt/remnant
+git reflog -n 5        # where the checkout has been: the entry just below "pull: Fast-forward" is the version before the update
+git checkout --detach <commit>
+GIT_COMMIT=$(git rev-parse HEAD) docker compose up -d --build --force-recreate app
+docker compose logs app | tail -n 20      # look for "listening on"
+```
+
+The volume with your data is not touched; see [What rolling back does to your data](#what-rolling-back-does-to-your-data). To roll forward: `git checkout main`, then the update command above.
+
 Lost the administrator password: `docker compose exec app app-admin reset-password <username>`.
 
 ## B. systemd service
@@ -193,6 +205,8 @@ To run Ask with Ollama on this machine with no GPU (for example 4 vCPU and 8 GB)
 
 ### Updating
 
+Before a major update, take a snapshot of the VM or container if your platform supports it; the rollback command only covers versions installed after this one.
+
 Run the update script as root; never fetch or merge by hand first. It fetches `main` from `origin` and stops there if the fetch fails, or if the build the service last ran is already `origin/main` (it says which). It keeps that commit in `/var/lib/remnant/installed_commit`, written by root (root:root, 0644) only after the service came up, and ignored if anything else could have written it, so a checkout moved by hand, or an update that failed partway, is built on the next run even with nothing new to fetch. Otherwise it stops the service, moves to `origin/main` and checks HEAD matches it, rebuilds the web UI, syncs the Python packages, makes `/opt/remnant` readable by the service user, starts the service, and prints the startup lines. Database migrations run on start.
 
 ```bash
@@ -222,6 +236,36 @@ chown root:root /var/lib/remnant/installed_commit && chmod 0644 /var/lib/remnant
 | `status=203/EXEC` and `Permission denied` on `.venv/bin/app-server` | Same, on the program itself, so systemd cannot start it at all | Same fix |
 
 After an update, re-baseline any file integrity monitor that watches `/opt/remnant` (see below), or every updated file shows as changed.
+
+### Rolling back
+
+If an update breaks something, put the install back on the version it ran before that update:
+
+```bash
+sudo sh /opt/remnant/scripts/update-systemd.sh --rollback
+# With AIDE installed: check first, roll back, then re-baseline:
+sudo sh /opt/remnant/scripts/update-systemd.sh --rollback --aide
+```
+
+Every successful update keeps the commit it replaced in `/var/lib/remnant/previous_commit`, under the same rules as `installed_commit` (written by root, root:root 0644, ignored otherwise). The rollback stops the service, checks that commit out (detached) and checks HEAD matches it, rebuilds the web UI and the Python packages as an update does, starts the service, prints the startup lines, and ends with `Rolled back remnant from <newer> to <older>.` If the service does not come up, the records stay as they were and the same command can be run again.
+
+| What you see | Meaning |
+|---|---|
+| `No previous version is recorded` | No update has finished with this script yet. The update that installs this version runs the script it replaces, so the first rollback target is recorded by the update after that. Nothing was changed |
+| `has uncommitted changes` | Tracked files in `/opt/remnant` were edited by hand (`git -C /opt/remnant status`). Commit or discard them first. Nothing was changed |
+| `Already rolled back from <newer> to <older>` | It goes back one update only. A second rollback is refused rather than swapping back to the newer build without the update's fetch and checks. Nothing was changed |
+| `meta.schema_newer` warning in the startup lines | Expected after a rollback: the database has changes from the newer version (below) |
+
+To roll forward once a fix is on `main`, run the update script as usual. It moves the checkout back onto `main` and records the rolled-back version as the previous one again. To go back further than one update, use the steps by hand above with `git checkout --detach <commit>` in place of `git pull --ff-only`.
+
+### What rolling back does to your data
+
+Rolling back changes the code only. The data folder (events, the settings database, keys, certificates) stays as it is.
+
+- **Database changes.** Migrations only ever add tables and columns, and there are no downgrade steps. The older version starts on the newer database, finds every change it knows already applied, leaves the newer tables and columns alone, and logs `meta.schema_newer` with version numbers only.
+- **What the newer version added stays.** New settings, tables, and columns stay in the database unused, and are in use again after rolling forward. Events the newer version wrote stay in the lake and remain searchable.
+- **Sources of a kind the older version does not know** (a connector added by the newer version) are skipped with a `sources.unknown_kind_skipped` warning: not ingested, not shown on Sources, still kept with their retention. Versions from before the rollback command instead stop ingest for every source when they meet one, so before going back that far by hand, remove those sources first.
+- **Backups.** A backup made on the newer version is refused by the older version's restore ("This backup is from a newer version"). Restore it after rolling forward.
 
 Lost the administrator password:
 

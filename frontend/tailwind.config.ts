@@ -24,6 +24,7 @@ export default {
       text: v("text"),
       "text-secondary": v("text-secondary"),
       "text-muted": v("text-muted"),
+      "series-neutral": v("series-neutral"),
       accent: v("accent"),
       "accent-text": v("accent-text"),
       "accent-subtle": v("accent-subtle"),

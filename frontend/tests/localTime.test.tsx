@@ -40,3 +40,21 @@ describe("times around a clock change (owner, 2026-11-01)", () => {
     expect(screen.getByText("Nov 1, 3:15 AM")).toBeVisible();
   });
 });
+
+describe("a chart day opens the viewer's day, not the UTC day (owner, 2026-11-08)", () => {
+  it("returns the UTC bounds of a local day, 25 hours on the day clocks fall back", async () => {
+    const { localDayBounds } = await import("@/lib/localTime");
+    expect(localDayBounds("2026-11-04", LA)).toEqual({
+      start: "2026-11-04T08:00:00.000Z",
+      end: "2026-11-05T08:00:00.000Z",
+    });
+    expect(localDayBounds("2026-11-01", LA)).toEqual({
+      start: "2026-11-01T07:00:00.000Z",
+      end: "2026-11-02T08:00:00.000Z",
+    });
+    expect(localDayBounds("2026-11-04", "UTC")).toEqual({
+      start: "2026-11-04T00:00:00.000Z",
+      end: "2026-11-05T00:00:00.000Z",
+    });
+  });
+});

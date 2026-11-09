@@ -10,6 +10,10 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+import structlog
+
+log = structlog.get_logger(__name__)
+
 
 def _rebuild_kinds(
     old: tuple[str, ...], new: tuple[str, ...]
@@ -1110,6 +1114,10 @@ MIGRATIONS: tuple[Migration, ...] = (
         ("file", "loki", "otlp", "m365", "anthropic", "syslog"),
         ("file", "loki", "otlp", "m365", "anthropic", "syslog", "proxmox"),
     ),
+    # 64: whether Auditors may run SQL (D220); off on new and existing installs.
+    """
+    ALTER TABLE install_settings ADD COLUMN auditor_sql INTEGER NOT NULL DEFAULT 0;
+    """,
 )
 
 
@@ -1175,6 +1183,17 @@ class MetaDB:
                 "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY)"
             )
             done = {r[0] for r in con.execute("SELECT version FROM schema_migrations")}
+            # A newer version migrated this database and this one was started on it (a
+            # rollback). Migrations are additive, so the newer tables and columns are left
+            # alone and come back into use on roll-forward (docs/install/team-vm.md).
+            newer = [v for v in done if v > len(MIGRATIONS)]
+            if newer:
+                log.warning(
+                    "meta.schema_newer",
+                    known=len(MIGRATIONS),
+                    database=max(newer),
+                    newer=len(newer),
+                )
             for version, script in enumerate(MIGRATIONS, start=1):
                 if version in done:
                     continue

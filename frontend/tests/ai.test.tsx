@@ -33,6 +33,38 @@ async function openAiAt(auth: MockAuth = { mode: "open" }) {
 
 afterEach(() => vi.restoreAllMocks());
 
+describe("AI usage cost with no cost metrics (owner, 2026-11-08)", () => {
+  it("says there is no cost data instead of 0.00", async () => {
+    window.history.replaceState(null, "", "/ai");
+    const spy = mockApi("Codename", { mode: "open" });
+    const base = spy.getMockImplementation()!;
+    spy.mockImplementation(async (input, init) => {
+      const res = await base(input, init);
+      if (!String(input).includes("/api/ai/usage")) return res;
+      const body = await res.json();
+      for (const p of body.people ?? [])
+        if (p.person === "alice@example.com")
+          Object.assign(p, { cost_usd: 0, tokens: 0, cost_reported: false });
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<App initialTheme="dark" queryClient={client} />);
+    await screen.findByRole("heading", { level: 1 });
+    await goTo("AI usage", "People");
+    const people = await screen.findByRole("region", { name: "Claude Code by person" });
+    const row = within(people).getByText("alice@example.com").closest("tr") as HTMLElement;
+    expect(within(row).getAllByText("No cost data")).toHaveLength(2);
+    expect(within(row).queryByText("0.00")).toBeNull();
+  });
+});
+
 describe("AI usage (ADR-0015)", () => {
   it("shows services with review status and lets an admin change it", async () => {
     const spy = await openAi();
@@ -41,7 +73,7 @@ describe("AI usage (ADR-0015)", () => {
       "aria-current",
       "true",
     );
-    expect(await screen.findByText("1 not approved in use")).toBeVisible();
+    expect(await screen.findByText("1 service not approved in use")).toBeVisible();
     const table = screen.getByRole("region", { name: "AI services seen in network logs" });
     const row = within(table).getByText("ChatGPT").closest("tr") as HTMLElement;
     expect(within(row).getByText("Not approved")).toBeVisible();

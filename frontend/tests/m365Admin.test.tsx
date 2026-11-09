@@ -135,7 +135,7 @@ describe("Microsoft 365 > Admin (owner, 2026-11-01)", () => {
   });
 
   it("shows real changes, hides routine ones until asked, and names apps", async () => {
-    vi.spyOn(api, "query").mockResolvedValue(RESULT);
+    vi.spyOn(api, "m365List").mockResolvedValue(RESULT);
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
       <QueryClientProvider client={client}>

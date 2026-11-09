@@ -86,7 +86,8 @@ describe("Explain", () => {
   });
 
   it("is not offered to auditors", async () => {
-    await renderAt("/search", { mode: "login", signedIn: true, role: "auditor" });
+    // Allowed SQL (D220) still gives an Auditor no AI features.
+    await renderAt("/search", { mode: "login", signedIn: true, role: "auditor", auditorSql: true });
     const results = await screen.findByRole("region", { name: "Results" });
     await within(results).findAllByRole("row");
     expect(within(results).queryByRole("button", { name: /^Explain/ })).toBeNull();

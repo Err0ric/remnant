@@ -764,9 +764,18 @@ def _detections(
     shas = {m[0]: m[5] for m in matches}
     conds = rule_conditions(meta, set(shas.values()))
 
+    def on_sources(sha: str, ms: list[tuple[str, str, str, datetime | None, str, str]]) -> str:
+        """A rule's condition on the sources it matched on: the rows behind a count are
+        the rows it counted, never the rule re-run over every source (D221)."""
+        cond = conds.get(sha, "")
+        if not cond:
+            return ""
+        srcs = sorted({m[4] for m in ms if m[5] == sha})
+        return f"({cond}) AND list_contains({drill.lits(srcs)}, source_id)"
+
     def where(ms: list[tuple[str, str, str, datetime | None, str, str]]) -> str:
         """The matched rules' conditions; event ids when they do not fit in Search."""
-        joined = drill.any_of(conds.get(m[5], "") for m in ms)
+        joined = drill.any_of(on_sources(m[5], ms) for m in ms)
         if joined is not None:
             return joined
         newest = sorted(ms, key=lambda m: m[3] or start, reverse=True)[:300]
@@ -784,11 +793,12 @@ def _detections(
         )
 
     def on_rule(title: str) -> str | None:
-        cond = conds.get(shas.get(title, ""))
+        cond = on_sources(shas.get(title, ""), now)
         return drill.events(cond) if cond else None
 
+    # Distinct matched events first, rule matches (one per rule and event) second (D221).
     return Detections(
-        matches=matches_kpi(len(now), len(prior)),
+        matches=matches_kpi(len({m[2] for m in now}), len({m[2] for m in prior}), len(now)),
         rules_matched=matches_kpi(
             len({m[0] for m in now}), len({m[0] for m in prior}), extra=enabled
         ),

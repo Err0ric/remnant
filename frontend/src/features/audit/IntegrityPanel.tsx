@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { since, stamp } from "@/features/overview/time";
+import { When } from "@/components/When";
 import { ApiError, api, type IntegritySeal } from "@/lib/api";
 
 const STATUS: Record<IntegritySeal["status"], { label: string; badge: string; bar: string }> = {
@@ -110,7 +111,13 @@ export function IntegrityPanel({ isAdmin }: IntegrityPanelProps) {
         className="flex flex-col gap-3 rounded border border-border bg-surface p-3"
       >
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-          {latest ? (
+          {latest && latest.status === "verified" && latest.files === 0 ? (
+            // A clean check of an empty lake verified nothing: never "Verified" (owner,
+            // 2026-11-08).
+            <span className="rounded bg-surface-head px-2 py-0.5 text-sm text-text-secondary">
+              Nothing verified yet
+            </span>
+          ) : latest ? (
             <span
               className={`rounded px-2 py-0.5 text-sm font-semibold ${STATUS[latest.status].badge}`}
             >
@@ -122,11 +129,16 @@ export function IntegrityPanel({ isAdmin }: IntegrityPanelProps) {
             </span>
           )}
           <span className="text-sm text-text-secondary">
-            {latest
-              ? `Checked ${since(latest.at, now)} (${stamp(latest.at)} UTC)`
-              : status.isPending
-                ? "Loading…"
-                : "The first check runs shortly after start"}
+            {latest ? (
+              <>
+                Checked {since(latest.at, now)} (<When iso={latest.at} />)
+                {latest.files === 0 ? ": no lake files yet" : ""}
+              </>
+            ) : status.isPending ? (
+              "Loading…"
+            ) : (
+              "The first check runs shortly after start"
+            )}
             {data ? ` · runs ${every(data.interval_s)}` : ""}
           </span>
           <span className="ml-auto flex gap-1">

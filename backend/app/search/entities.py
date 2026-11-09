@@ -418,7 +418,10 @@ SELECT source_id, class_uid,
        coalesce(nullif(dst_endpoint_hostname, ''), nullif(dst_endpoint_ip, '')) AS target,
        count(*) AS n,
        count(*) FILTER (WHERE event_id IN (SELECT unnest($ids))) AS m,
-       max(coalesce(severity_id, 0)) AS sev
+       max(coalesce(severity_id, 0)) AS sev,
+       -- The line itself when it never varies: "Office 365 Exchange Online", never the
+       -- masked "Office # Exchange Online" (owner, 2026-11-08).
+       CASE WHEN count(DISTINCT message) = 1 THEN left(min(message), 60) END AS example
 FROM events
 WHERE {where}
 GROUP BY 1, 2, 3, 4, 5
@@ -548,7 +551,7 @@ def entity_graph(
         if names:
             b.cards[root].sublabel = f"IP address · {', '.join(names)}"
     b.cards[root].search_sql = search_sql(literal)
-    for source_id, class_uid, activity, tpl, target, n, m, sev in result.rows:
+    for source_id, class_uid, activity, tpl, target, n, m, sev, example in result.rows:
         n, m, sev = int(n), int(m), int(sev or 0)
         b.cards[root].events += n
         b.cards[root].matches += m
@@ -557,7 +560,7 @@ def entity_graph(
         b.cards[s].search_sql = search_sql(f"{literal} AND source_id = {quote(str(source_id))}")
         cls = CLASS_NAMES.get(int(class_uid or 0), f"Class {class_uid}")
         if activity:
-            a = b.card(2, f"{class_uid}|{activity}", str(activity), n, m, sev)
+            a = b.card(2, f"{class_uid}|{activity}", str(example or activity), n, m, sev)
             match = f"left({PATTERN}, 60) = {quote(str(activity))}"
         else:
             name = (template_names or {}).get(str(tpl or ""), "")

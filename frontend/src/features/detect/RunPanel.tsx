@@ -1,3 +1,4 @@
+import { When } from "@/components/When";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { ExplainPanel } from "@/features/explain/ExplainPanel";
@@ -53,8 +54,8 @@ export function RunPanel({ run, onClose, canExplain = false }: RunPanelProps) {
           {run.match_count} {run.match_count === 1 ? "match" : "matches"}
           {run.match_count > run.matches_stored ? ` (first ${run.matches_stored} kept)` : ""}
         </span>
-        <span className="font-mono">
-          {run.range_start.slice(0, 16)} to {run.range_end.slice(0, 16)} UTC
+        <span>
+          <When iso={run.range_start} /> to <When iso={run.range_end} />
         </span>
         <span>
           Sources read:{" "}

@@ -142,8 +142,8 @@ export function Kpi({ label, kpi, noun = "events", context, extra, empty, about 
   ) : null;
   return (
     <div data-kpi={label} className="flex min-w-0 flex-col gap-0.5 bg-surface px-3 py-2.5">
-      <span className="flex min-w-0 items-center gap-1.5">
-        <PanelTitle as="span" className="truncate" title={label}>
+      <span className="flex min-w-0 items-start gap-1.5">
+        <PanelTitle as="span" className="line-clamp-2 min-w-0" title={label}>
           {label}
         </PanelTitle>
         <About text={about} />
@@ -784,10 +784,15 @@ function Detections({ s }: { s: DashboardSections }) {
   const kpis = [
     <Kpi
       key="m"
-      label="Rule matches"
+      label="Matched events"
       kpi={d.matches}
       noun="matched events"
       about={COUNTED.ruleMatches}
+      context={
+        d.matches.extra !== null && d.matches.extra !== undefined
+          ? `${d.matches.extra.toLocaleString()} rule ${d.matches.extra === 1 ? "match" : "matches"}`
+          : undefined
+      }
     />,
     <Kpi
       key="r"

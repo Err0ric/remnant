@@ -89,6 +89,8 @@ export interface MockAuth {
   logoutFails?: boolean;
   /** Single sign-on turned on, with this button label. */
   sso?: string;
+  /** An admin has let Auditors run SQL (D220); off by default. */
+  auditorSql?: boolean;
 }
 
 export const SOURCE = {
@@ -2030,7 +2032,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
           history: { compared: false, since: "2026-10-21T09:00:00Z" },
         },
         detections: {
-          matches: k(20, 10),
+          matches: k(20, 10, 31),
           rules_matched: k(2, 1, 142),
           hosts: k(3, null),
           users: k(2, null),
@@ -2313,6 +2315,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
             person: "alice@example.com",
             cost_usd: 12.5,
             tokens: 400000,
+            cost_reported: true,
             sessions: 9,
             tool_calls: 120,
             errors: 2,
@@ -2412,6 +2415,10 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
           text: "severity:>=high",
         },
       ]);
+    if (url.endsWith("/api/settings/auditor-sql")) {
+      if (method === "PUT") return json(JSON.parse(String(init?.body ?? "{}")));
+      return json({ enabled: state.auditorSql ?? false });
+    }
     if (url.endsWith("/api/mcp/settings")) {
       if (method === "PUT") {
         const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, boolean>;
@@ -3519,6 +3526,24 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         ocsf_version: "1.3.0",
         schema_version: 1,
       });
+    // The app's own rows, with SQL the server builds (owner, 2026-11-08).
+    if (/\/api\/people\/[^/]+\/signins/.test(url))
+      return json(
+        result({
+          columns: ["time", "actor_user_name", "status_id"],
+          rows: [["2026-10-30T09:58:00+00:00", "alice@example.com", 2]],
+        }),
+      );
+    if (url.includes("/api/m365/list?")) return json(result(RESULTS));
+    if (url.endsWith("/api/sources/event-counts"))
+      return json(
+        result({
+          columns: ["source_id", "events", "last_event"],
+          rows: [["linux_sshd", 1234, "2026-10-10T17:59:01+00:00"]],
+        }),
+      );
+    if (url.endsWith("/api/sources/parser-mix"))
+      return json(result({ columns: ["source_id", "template_id", "count"], rows: [] }));
     if (url.endsWith("/api/query/export"))
       return new Response("time,message\r\n", {
         status: 200,
@@ -3533,20 +3558,6 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
             code: "query_rejected",
           },
           400,
-        );
-      if (body.sql.startsWith("SELECT time FROM events WHERE template_id = 'm365_signin'"))
-        return json(
-          result({
-            columns: ["time", "actor_user_name", "status_id"],
-            rows: [["2026-10-30T09:58:00+00:00", "alice@example.com", 2]],
-          }),
-        );
-      if (body.sql.includes("AS last_event"))
-        return json(
-          result({
-            columns: ["source_id", "events", "last_event"],
-            rows: [["linux_sshd", 1234, "2026-10-10T17:59:01+00:00"]],
-          }),
         );
       if (body.sql.includes("GROUP BY source_id"))
         return json(

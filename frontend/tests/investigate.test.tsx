@@ -256,7 +256,7 @@ describe("Person timeline (ADR-0038 section 9)", () => {
     // as Ask shows them, never the raw UTC string (review item 6).
     const signins = await screen.findByRole("region", { name: "Sign-ins" });
     expect(signins).toBeVisible();
-    const at = await within(signins).findByText("Oct 30, 9:58 AM"); // tests run in UTC
+    const at = await within(signins).findByText("Oct 30, 9:58:00 AM"); // tests run in UTC; log tables keep seconds
     expect(at.tagName).toBe("TIME");
     expect(at).toHaveAttribute("title", "2026-10-30 09:58 UTC");
     expect(within(signins).queryByText(/2026-10-30/)).toBeNull();

@@ -72,6 +72,7 @@ def _provider(lab: Any, answer_for: Any) -> str:
     return rec.provider_id
 
 
+@pytest.mark.slow  # over 8 s; skipped in PR CI, run by the queue before every merge (D216)
 def test_oracle_scores_100_percent_through_the_real_agent(lab: Any) -> None:
     pid = _provider(lab, lambda q: BY_QUESTION[q])
     sample = CASES[::10]  # every Ask runs profile queries; a sample keeps CI fast
@@ -82,6 +83,7 @@ def test_oracle_scores_100_percent_through_the_real_agent(lab: Any) -> None:
     assert summary["exact_rate"] == 1.0 and summary["executable_rate"] == 1.0
 
 
+@pytest.mark.slow  # over 8 s; skipped in PR CI, run by the queue before every merge (D216)
 def test_follow_ups_send_the_earlier_turns_and_the_oracle_passes(lab: Any) -> None:
     seen: list[str] = []
 
@@ -110,6 +112,7 @@ def test_follow_ups_send_the_earlier_turns_and_the_oracle_passes(lab: Any) -> No
     assert "Break that down by source IP." in f010 and "GROUP BY 1" in f010
 
 
+@pytest.mark.slow  # over 8 s; skipped in PR CI, run by the queue before every merge (D216)
 def test_a_wrong_model_scores_zero_but_runs(lab: Any) -> None:
     pid = _provider(lab, lambda q: "SELECT 'wrong' AS answer")
     sample = CASES[1::10]

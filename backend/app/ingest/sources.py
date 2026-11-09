@@ -8,8 +8,9 @@ import stat
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, BinaryIO, Literal
+from typing import Any, BinaryIO, Literal, get_args
 
+import structlog
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -41,6 +42,9 @@ CONNECTOR_LABELS = {
 # Kinds whose records the server receives and spools for ingest, with their file suffix.
 SPOOL_SUFFIX = {"otlp": ".jsonl", "syslog": ".syslog"}
 SourceKind = Literal["file", "loki", "otlp", "m365", "anthropic", "syslog", "proxmox"]
+KNOWN_KINDS: frozenset[str] = frozenset(get_args(SourceKind))
+
+log = structlog.get_logger(__name__)
 
 
 # Settings that can change after a source is added (F44). Tenant, app, cloud, key type, and
@@ -357,6 +361,12 @@ class SourceStore:
     def list(self) -> list[SourceConfig]:
         with self._meta.connect() as con:
             rows = con.execute("SELECT * FROM sources ORDER BY source_id").fetchall()
+        # A kind added by a newer version, after a rollback: skipped (kept in the database,
+        # back on roll-forward) instead of failing every caller, which stopped all ingest.
+        unknown = [r for r in rows if r["kind"] not in KNOWN_KINDS]
+        if unknown:
+            log.warning("sources.unknown_kind_skipped", count=len(unknown))
+            rows = [r for r in rows if r["kind"] in KNOWN_KINDS]
         return [
             SourceConfig(
                 source_id=r["source_id"],
@@ -378,6 +388,18 @@ class SourceStore:
             )
             for r in rows
         ]
+
+    def ids(self) -> set[str]:
+        """Every source id, including kinds this version cannot load (see list())."""
+        with self._meta.connect() as con:
+            return {r[0] for r in con.execute("SELECT source_id FROM sources")}
+
+    def retention_days(self) -> dict[str, int]:
+        """Retention per source id, including kinds this version cannot load, so a
+        rollback never ages their data out on the shorter orphan retention."""
+        with self._meta.connect() as con:
+            rows = con.execute("SELECT source_id, retention_days FROM sources").fetchall()
+        return {r[0]: r[1] for r in rows}
 
     # --- OTLP ingest tokens (ADR-0015 row 3) ------------------------------------------
 

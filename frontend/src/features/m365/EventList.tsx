@@ -1,25 +1,29 @@
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { api, type M365Overview, type QueryResult } from "@/lib/api";
-import { drillSql, openDrill } from "@/lib/drill";
+import { openDrill } from "@/lib/drill";
 import { LoadFailed } from "@/components/LoadFailed";
 import { SectionTitle } from "@/components/SectionTitle";
 import { ResultsTable } from "@/features/search/ResultsTable";
 
 interface EventListProps {
   title: string;
+  /** The Search query behind the list, for Open in Logs. */
   sql: string;
+  /** Which list the server runs (its SQL is built there, never sent from here). */
+  list: keyof M365Overview["lists"];
+  /** Sign-ins: the outcome class and kind picked. */
+  filter?: { cls: string; mode: string };
   m: M365Overview;
   /** Filters shown in the header, beside the count. */
   controls?: ReactNode;
 }
 
 /** One tab's events over the page window, in the Search table (ADR-0038 section 5). */
-export function EventList({ title, sql, m, controls }: EventListProps) {
-  const filled = drillSql({ sql, from: m.start, to: m.end });
+export function EventList({ title, sql, list, filter, m, controls }: EventListProps) {
   const q = useQuery<QueryResult>({
-    queryKey: ["m365-list", filled],
-    queryFn: () => api.query({ sql: filled, start: m.start, end: m.end }),
+    queryKey: ["m365-list", list, filter?.cls, filter?.mode, m.start, m.end],
+    queryFn: () => api.m365List(list, m.start, m.end, filter),
   });
   return (
     <section aria-label={title} className="rounded-card border border-border bg-surface">

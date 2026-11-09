@@ -3,10 +3,39 @@
 from collections.abc import Callable, Iterator
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import keyring
 import pytest
 from keyring.backends import fail
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _parse_each_yaml_text_once() -> Iterator[None]:
+    """Every app built in a test loads the same starter templates and saved-search library
+    (about 50 YAML files through the pure-Python safe loader, most of `create_app`'s time).
+    Within a test process, a text that parsed once returns a deep copy of that result
+    instead of parsing again. The first parse of every text, and every text that fails
+    (aliases, depth, bad YAML), still runs the real loader, so nothing it checks is skipped.
+    """
+    import copy
+
+    from app.core import safeyaml
+
+    real = safeyaml.load
+    parsed: dict[str, Any] = {}
+
+    def load(text: str) -> Any:
+        if text not in parsed:
+            result = real(text)  # raises before anything is cached
+            if len(parsed) < 4096 and len(text) <= 256 * 1024:
+                parsed[text] = result
+            return copy.deepcopy(result)
+        return copy.deepcopy(parsed[text])
+
+    safeyaml.load = load  # type: ignore[assignment]  # same signature, restored below
+    yield
+    safeyaml.load = real  # type: ignore[assignment]  # restore the real loader
 
 
 @pytest.fixture(autouse=True)

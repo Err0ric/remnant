@@ -4,7 +4,7 @@ import { LoadFailed } from "@/components/LoadFailed";
 import { When } from "@/components/When";
 import { api, type QueryResult } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { drillSql, openDrill } from "@/lib/drill";
+import { openDrill } from "@/lib/drill";
 import { navigate } from "@/lib/route";
 import { ResultsTable } from "@/features/search/ResultsTable";
 import { SectionTitle } from "@/components/SectionTitle";
@@ -42,11 +42,10 @@ export function PersonSignIns({ person }: { person: string }) {
     queryFn: () => api.personTimeline(person, 7),
   });
   const d = t.data;
-  const filled = d ? drillSql({ sql: d.signins_sql, from: d.start, to: d.end }) : "";
+  // The server builds and runs the sign-ins query (owner, 2026-11-08).
   const q = useQuery<QueryResult>({
-    queryKey: ["person-signins", filled],
-    queryFn: () => api.query({ sql: filled, start: d?.start, end: d?.end }),
-    enabled: !!d,
+    queryKey: ["person-signins", person, 7],
+    queryFn: () => api.personSignIns(person, 7),
   });
   const err = t.error ?? q.error;
   return (

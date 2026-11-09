@@ -276,6 +276,10 @@ describe("Dashboard sections (ADR-0038 edit 10)", () => {
     expect(within(attacks).getByRole("button", { name: "Update GeoIP" })).toBeVisible();
     const det = screen.getByRole("region", { name: "Detections" });
     expect(within(det).getByText("of 142 enabled")).toBeVisible();
+    // D221: distinct matched events first, rule matches second.
+    const matched = within(det).getByText("Matched events").closest("[data-kpi]") as HTMLElement;
+    expect(within(matched).getByText("20")).toBeVisible();
+    expect(within(matched).getByText("31 rule matches")).toBeVisible();
     expect(within(det).getByText("SSH failed password")).toBeVisible();
     const win = screen.getByRole("group", { name: "Time window" });
     await userEvent.click(within(win).getByRole("button", { name: "24 hours" }));

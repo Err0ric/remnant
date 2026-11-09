@@ -9,7 +9,7 @@ from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel, Field, StringConstraints
 from starlette.concurrency import run_in_threadpool
 
-from app.api.access import CurrentUser, client_ip
+from app.api.access import CurrentUser, SqlUser, client_ip
 from app.auth.service import AuthService
 from app.auth.users import User
 from app.core import clock
@@ -21,7 +21,7 @@ from app.enrich.geoip import GeoIP
 from app.enrich.intel import ThreatIntel
 from app.meta.db import MetaDB
 from app.search.identity import identity_values
-from app.search.params import IDENTITY_PARAMS, PERSON, RESERVED, compile_sql, placeholders
+from app.search.params import IDENTITY_PARAMS, RESERVED, compile_sql, placeholders
 from app.search.presets import presets
 from app.search.refine import refine_sql
 from app.search.simple import MAX_TEXT, compile_search
@@ -97,7 +97,7 @@ def _placeholders(
     client can never supply those values."""
     names = placeholders(sql)
     if not names and not identities:
-        return compile_sql(sql) if PERSON.search(sql) else sql, dict(given)
+        return compile_sql(sql), dict(given)  # compile_sql refuses the bound names (T70)
     values: dict[str, Any] = {
         k: v for k, v in given.items() if k not in RESERVED and k not in IDENTITY_PARAMS
     }
@@ -112,9 +112,13 @@ def _placeholders(
     return compile_sql(sql), values
 
 
-async def _identities(request: Request, sql: str) -> dict[str, Any]:
+async def _identities(request: Request, sql: str, scope: QueryScope, user: User) -> dict[str, Any]:
+    """Only the part of the Identities map the caller's own scope shows (T70, D219)."""
     store = getattr(request.app.state, "identities", None)
-    return await run_in_threadpool(identity_values, sql, store)
+    engine: QueryEngine = request.app.state.engine
+    return await run_in_threadpool(
+        identity_values, sql, store, engine, scope, user.user_id, user.role
+    )
 
 
 async def _run_audited(
@@ -139,7 +143,7 @@ async def _run_audited(
         "sources_in_scope": "all" if sources is None else sources,
         **(extra or {}),
     }
-    ids = await _identities(request, body.sql)
+    ids = await _identities(request, body.sql, scope, user)
     sql, values = _placeholders(body.sql, body.params, body.start, body.end, ids)
     try:
         result = await run_in_threadpool(
@@ -166,7 +170,7 @@ async def _run_audited(
 
 
 @router.post("/query")
-async def run_query(body: QueryRequest, request: Request, user: CurrentUser) -> QueryResponse:
+async def run_query(body: QueryRequest, request: Request, user: SqlUser) -> QueryResponse:
     result = await _run_audited(body, request, user, "query.run")
     return QueryResponse(
         columns=result.columns,
@@ -182,7 +186,7 @@ async def run_query(body: QueryRequest, request: Request, user: CurrentUser) -> 
 
 
 @router.post("/query/export")
-async def export_query(body: QueryRequest, request: Request, user: CurrentUser) -> Response:
+async def export_query(body: QueryRequest, request: Request, user: SqlUser) -> Response:
     """The same query as /query, returned as CSV and audited as an export (T18)."""
     result = await _run_audited(body, request, user, "query.export")
     return Response(
@@ -290,27 +294,27 @@ def facet_sql(sql: str, columns: list[str], intel: bool = False) -> str:
 
 
 @router.post("/search/facets")
-async def search_facets(body: FacetRequest, request: Request, user: CurrentUser) -> FacetResponse:
+async def search_facets(body: FacetRequest, request: Request, user: SqlUser) -> FacetResponse:
     """Counts of the top values of a few fixed fields for the search on screen, over the
     whole result (not just the page). Same scope, guard, and audit as /query."""
-    if body.text is not None:
-        compiled = compile_search(body.text, select="*")
-        query, params = compiled.sql, compiled.params
-        wanted = list(FACET_COLUMNS)
-    elif body.sql is not None:
-        ids = await _identities(request, body.sql)
-        query, params = _placeholders(body.sql, body.params, body.start, body.end, ids)
-        wanted = [c for c in FACET_COLUMNS if c in set(body.columns)]
-    else:
-        raise SearchInvalidError("Send the search text or the SQL")
-    if not wanted:
-        return FacetResponse(facets=[], elapsed_ms=0)
     engine: QueryEngine = request.app.state.engine
     auth: AuthService = request.app.state.auth
     meta: MetaDB = request.app.state.meta
     allowed = await run_in_threadpool(permitted_sources, meta, user)
     sources = scope_sources(allowed, body.sources)
     scope = QueryScope(sources=sources, start=body.start, end=body.end)
+    if body.text is not None:
+        compiled = compile_search(body.text, select="*")
+        query, params = compiled.sql, compiled.params
+        wanted = list(FACET_COLUMNS)
+    elif body.sql is not None:
+        ids = await _identities(request, body.sql, scope, user)
+        query, params = _placeholders(body.sql, body.params, body.start, body.end, ids)
+        wanted = [c for c in FACET_COLUMNS if c in set(body.columns)]
+    else:
+        raise SearchInvalidError("Send the search text or the SQL")
+    if not wanted:
+        return FacetResponse(facets=[], elapsed_ms=0)
     detail: dict[str, object] = {
         "sql": query[:4000],
         "params": params,

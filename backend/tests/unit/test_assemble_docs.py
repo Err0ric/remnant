@@ -23,6 +23,11 @@ NOTES = f"# Release notes\n\n## Unreleased\n\n{A.START}\n\n{A.END}\n\n## v0.3.0 
 
 
 def note(title: str) -> str:
+    return f"### {title} (2026-11-05)\n\n- Something changed.\n- {A.NOTICE} nothing visible.\n- {A.WHAT} nothing to do.\n"
+
+
+def old_note(title: str) -> str:
+    """A note from before the plain-notes rule: no "What you will notice" bullet."""
     return f"### {title} (2026-11-05)\n\n- Something changed.\n- {A.WHAT} nothing to do.\n"
 
 
@@ -96,6 +101,13 @@ def test_decision_problems(
     assert message in capsys.readouterr().err
 
 
+def test_older_notes_need_no_notice_line(root: Path) -> None:
+    add(
+        root, f"docs/release-notes.d/{A.PLAIN_FROM - 1}-a.md", old_note("Published before the rule")
+    )
+    assert A.main(["--root", str(root)]) == 0
+
+
 @pytest.mark.parametrize(
     ("name", "text", "message"),
     [
@@ -103,6 +115,11 @@ def test_decision_problems(
         ("413-a.md", "- No heading.\n- What changes for existing installs: none.\n", "start with"),
         ("pr413.md", note("A"), "name it <pr>-<slug>.md"),
         ("413-a.md", "## Big\n\n" + note("A"), "only '###' headings"),
+        # Plain notes (owner, 2026-11-08): new notes say what a user will notice.
+        ("new-a.md", old_note("A"), "one '- What you will notice: ...' bullet"),
+        (f"{A.PLAIN_FROM}-a.md", old_note("A"), "one '- What you will notice: ...' bullet"),
+        ("new-a.md", note("A").replace("nothing visible.", ""), "one '- What you will notice"),
+        ("new-a.md", note("A") + f"- {A.NOTICE} twice.\n", "one '- What you will notice"),
     ],
 )  # fmt: skip
 def test_note_problems(

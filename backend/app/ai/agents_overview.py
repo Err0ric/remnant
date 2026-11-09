@@ -1,8 +1,10 @@
-"""Agents > Overview and Tools (ADR-0038 section 6), from the hooks plugin's records on the
-caller's own view: sessions, people, tool calls, failed calls, MCP servers not approved
-that were used, devices whose records arrive late or stopped, and one row per tool with
-its status, people, devices, calls, failures, and first and last use. Deterministic SQL;
-no model is called. Every number carries its Search query (ADR-0039)."""
+"""Agents > Overview and Tools (ADR-0038 section 6), on the caller's own view. The numbers
+count every agent source (the hooks plugin, Claude Code telemetry, the MCP inventory;
+owner, 2026-11-08); the Tools table and late or silent devices are the plugin's. Sessions,
+people, tool calls, failed calls, MCP servers not approved that were used, devices whose
+records arrive late or stopped, and one row per tool with its status, people, devices,
+calls, failures, and first and last use. Deterministic SQL; no model is called. Every
+number carries its Search query (ADR-0039)."""
 
 from __future__ import annotations
 
@@ -29,19 +31,52 @@ _REAL = counted(_a("tool_name"))
 _CALL = f"message = 'claude_hooks.pre_tool_use' AND {_REAL}"
 _FAIL = f"message = 'claude_hooks.post_tool_use_failure' AND {_REAL}"
 
+# Every agent source the page is about (owner, 2026-11-08): the hooks plugin, Claude Code
+# telemetry, and the MCP inventory (people only). As on AI usage, a session telemetry saw
+# takes its calls from telemetry, so a session both report is counted once.
+TELEMETRY = "template_id = 'claude_code_otel'"
+INVENTORY = "template_id = 'mcp_inventory'"
+_TEL_CALL = "message = 'claude_code.tool_result'"
+_TEL_FAIL = f"{_TEL_CALL} AND {_a('success')} = 'false'"
 OVERVIEW_SQL = f"""
+WITH {_ONE_COPY},
+tel AS (SELECT * FROM events WHERE {TELEMETRY}),
+seen AS (SELECT DISTINCT {_a("session_id")} AS sid FROM tel WHERE {_a("session_id")} IS NOT NULL),
+a AS (
+  SELECT {_a("session_id")} AS sid, nullif(actor_user_name, '') AS who, {_TS} AS ts,
+         {_TEL_CALL} AS call, coalesce({_TEL_FAIL}, false) AS fail
+  FROM tel
+  UNION ALL
+  SELECT {_a("session_id")}, nullif(actor_user_name, ''), {_TS},
+         {_CALL} AND coalesce({_a("session_id")} NOT IN (SELECT sid FROM seen), true),
+         {_FAIL} AND coalesce({_a("session_id")} NOT IN (SELECT sid FROM seen), true)
+  FROM hooks
+  UNION ALL
+  SELECT NULL, nullif(actor_user_name, ''), {_TS}, false, false
+  FROM events WHERE {INVENTORY}
+)
+SELECT count(DISTINCT sid) FILTER (WHERE ts >= $start),
+       count(DISTINCT sid) FILTER (WHERE ts < $start),
+       count(DISTINCT who) FILTER (WHERE ts >= $start),
+       count(DISTINCT who) FILTER (WHERE ts < $start),
+       count(*) FILTER (WHERE ts >= $start AND call),
+       count(*) FILTER (WHERE ts < $start AND call),
+       count(*) FILTER (WHERE ts >= $start AND fail),
+       count(*) FILTER (WHERE ts < $start AND fail),
+       (SELECT count(DISTINCT device_hostname) FROM hooks
+        WHERE {_TS} >= $start AND epoch(time_observed) - epoch({_TS}) >= {LATE_S})
+FROM a"""  # noqa: S608  # fixed SQL text
+
+# MCP servers seen in the window by any of the three.
+_MCP_NAME = f"coalesce({_a('mcp_server_name')}, json_extract_string(unmapped, '$.mcp_server_name'))"
+MCP_SQL = f"""
 WITH {_ONE_COPY}
-SELECT count(DISTINCT {_a("session_id")}) FILTER (WHERE {_TS} >= $start),
-       count(DISTINCT {_a("session_id")}) FILTER (WHERE {_TS} < $start),
-       count(DISTINCT nullif(actor_user_name, '')) FILTER (WHERE {_TS} >= $start),
-       count(DISTINCT nullif(actor_user_name, '')) FILTER (WHERE {_TS} < $start),
-       count(*) FILTER (WHERE {_TS} >= $start AND {_CALL}),
-       count(*) FILTER (WHERE {_TS} < $start AND {_CALL}),
-       count(*) FILTER (WHERE {_TS} >= $start AND {_FAIL}),
-       count(*) FILTER (WHERE {_TS} < $start AND {_FAIL}),
-       count(DISTINCT device_hostname) FILTER (
-         WHERE {_TS} >= $start AND epoch(time_observed) - epoch({_TS}) >= {LATE_S})
-FROM hooks"""  # noqa: S608  # fixed SQL text
+SELECT DISTINCT name FROM (
+  SELECT {_a("mcp_server_name")} AS name, {_TS} AS ts FROM hooks
+  UNION ALL SELECT {_MCP_NAME}, {_TS} FROM events WHERE {TELEMETRY}
+  UNION ALL SELECT message, {_TS} FROM events WHERE {INVENTORY}
+) WHERE name IS NOT NULL AND ts >= $start
+LIMIT {MAX_TOOLS}"""  # noqa: S608  # fixed SQL text
 
 # Devices that sent before the window and nothing in it: stopped, or the plugin removed.
 MISSING_SQL = f"""
@@ -66,6 +101,15 @@ ORDER BY calls DESC, tool
 LIMIT {MAX_TOOLS}"""  # noqa: S608  # fixed SQL text
 
 HOOKS = HOOKS_USE
+ANY_AGENT = f"({HOOKS} OR {TELEMETRY} OR {INVENTORY})"
+_NOT_SEEN = (
+    f"coalesce({_a('session_id')} NOT IN (SELECT {_a('session_id')} FROM events"  # noqa: S608  # fixed SQL text
+    f" WHERE {TELEMETRY} AND {_a('session_id')} IS NOT NULL), true)"
+)
+# The rows behind calls and failures: telemetry's, and the plugin's for sessions telemetry
+# did not see, as OVERVIEW_SQL counts them.
+CALL_ROWS = f"(({TELEMETRY} AND {_TEL_CALL}) OR ({HOOKS} AND {_CALL} AND {_NOT_SEEN}))"
+FAIL_ROWS = f"(({TELEMETRY} AND {_TEL_FAIL}) OR ({HOOKS} AND {_FAIL} AND {_NOT_SEEN}))"
 COLUMNS = (
     "time, actor_user_name, device_hostname, message,"
     f" {_a('session_id')} AS session_id, {_TOOL} AS tool, event_id"
@@ -135,14 +179,17 @@ def overview(
         OVERVIEW_SQL, scope, params, timeout_s=TIMEOUT_S, name="agents.overview", page=True
     )
     s, s_b, p, p_b, c, c_b, f, f_b, late = (head.rows or [[0] * 9])[0]
-    out.sessions = Kpi(int(s), int(s_b), drill=drill.grouped(HOOKS, _a("session_id"), "session_id"))
+    sessions = f"({HOOKS} OR {TELEMETRY}) AND {_a('session_id')} IS NOT NULL"
+    out.sessions = Kpi(
+        int(s), int(s_b), drill=drill.grouped(sessions, _a("session_id"), "session_id")
+    )
     out.people = Kpi(
         int(p),
         int(p_b),
-        drill=drill.grouped(f"{HOOKS} AND actor_user_name <> ''", "actor_user_name", "person"),
+        drill=drill.grouped(f"{ANY_AGENT} AND actor_user_name <> ''", "actor_user_name", "person"),
     )
-    out.calls = Kpi(int(c), int(c_b), drill=drill.events(f"{HOOKS} AND {_CALL}", COLUMNS))
-    out.failed = Kpi(int(f), int(f_b), drill=drill.events(f"{HOOKS} AND {_FAIL}", COLUMNS))
+    out.calls = Kpi(int(c), int(c_b), drill=drill.events(CALL_ROWS, COLUMNS))
+    out.failed = Kpi(int(f), int(f_b), drill=drill.events(FAIL_ROWS, COLUMNS))
     out.late_devices = Kpi(
         int(late),
         None,
@@ -166,20 +213,22 @@ def overview(
                 drill.events(f"{HOOKS} AND {_TOOL} = {drill.lit(name)}", COLUMNS),
             )
         )  # fmt: skip
-    bad = [t for t in out.tools if t.mcp and t.status == "not_approved"]
-    names = drill.lits(sorted(t.tool for t in bad)) if bad else "['']"
+    mcps = engine.run(MCP_SQL, scope, params, timeout_s=TIMEOUT_S, name="agents.mcp", page=True)
+    bad = sorted(
+        str(n) for (n,) in mcps.rows if catalog.mcp_status(str(n), rules) == "not_approved"
+    )
+    names = drill.lits(bad) if bad else "['']"
+    server = f"coalesce({_MCP_NAME}, CASE WHEN {INVENTORY} THEN message END)"
     out.mcp_not_approved = Kpi(
         len(bad),
         None,
         drill=drill.grouped(
-            f"{HOOKS} AND list_contains({names}, {_a('mcp_server_name')})",
-            _a("mcp_server_name"),
-            "mcp_server",
+            f"{ANY_AGENT} AND list_contains({names}, {server})", server, "mcp_server"
         ),
     )
     missing = engine.run(
         MISSING_SQL, scope, params, timeout_s=TIMEOUT_S, name="agents.missing", page=True
     )
     out.missing_devices = sorted(str(r[0]) for r in missing.rows)[:50]
-    out.sources = sorted(set(head.sources) | set(tools.sources))
+    out.sources = sorted(set(head.sources) | set(tools.sources) | set(mcps.sources))
     return out

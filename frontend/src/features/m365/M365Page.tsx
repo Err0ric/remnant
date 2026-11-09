@@ -139,12 +139,17 @@ export function M365Page() {
             ) : tab === "mail" ? (
               <>
                 <MailRules m={m} />
-                <EventList title="DLP matches" sql={m.lists.dlp} m={m} />
+                <EventList title="DLP matches" list="dlp" sql={m.lists.dlp} m={m} />
               </>
             ) : tab === "apps" ? (
               <>
-                <EventList title="App consents" sql={m.lists.consents} m={m} />
-                <EventList title="App registrations" sql={m.lists.registrations} m={m} />
+                <EventList title="App consents" list="consents" sql={m.lists.consents} m={m} />
+                <EventList
+                  title="App registrations"
+                  list="registrations"
+                  sql={m.lists.registrations}
+                  m={m}
+                />
               </>
             ) : tab === "admin" ? (
               <AdminChanges m={m} />
@@ -384,7 +389,7 @@ function Outcome({ m }: { m: M365Overview }) {
     {
       label: "Expired",
       n: sum(o.expired ?? []),
-      color: "border-strong",
+      color: "series-neutral",
       sql: o.drill_expired ?? o.drill_failed,
     },
     {
@@ -448,7 +453,7 @@ function Outcome({ m }: { m: M365Overview }) {
           stacked
           series={[
             { key: "o", label: "Other", values: o.other ?? [], color: "text-secondary" },
-            { key: "e", label: "Expired", values: o.expired ?? [], color: "border-strong" },
+            { key: "e", label: "Expired", values: o.expired ?? [], color: "series-neutral" },
             { key: "i", label: "Interrupted", values: o.interrupted, color: "text-muted" },
             { key: "f", label: "Failed", values: o.failed, color: "warn" },
           ]}
@@ -470,7 +475,7 @@ function Outcome({ m }: { m: M365Overview }) {
               items={[
                 { label: "Failed", color: "warn" },
                 { label: "Interrupted", color: "text-muted" },
-                { label: "Expired", color: "border-strong" },
+                { label: "Expired", color: "series-neutral" },
                 { label: "Other", color: "text-secondary" },
               ]}
             />

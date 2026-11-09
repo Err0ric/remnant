@@ -267,6 +267,8 @@ export interface AiPerson {
   /** Null only if stored data was bad; the page shows "·" then. */
   cost_usd: number | null;
   tokens: number;
+  /** False: telemetry sent no cost or token metric, so both are unknown, not 0. */
+  cost_reported?: boolean;
   sessions: number;
   tool_calls: number;
   errors: number;
@@ -2877,6 +2879,10 @@ export const api = {
     ),
   stopLiveStream: (id: string) =>
     request<void>(`/api/search/live/streams/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  /** D220: whether Auditors may run SQL (off by default; admins change it). */
+  auditorSql: () => request<{ enabled: boolean }>("/api/settings/auditor-sql"),
+  setAuditorSql: (enabled: boolean) =>
+    request<{ enabled: boolean }>("/api/settings/auditor-sql", put({ enabled })),
   liveLimit: () => request<{ minutes: number }>("/api/settings/live"),
   setLiveLimit: (minutes: number) =>
     request<{ minutes: number }>("/api/settings/live", put({ minutes })),
@@ -2935,6 +2941,20 @@ export const api = {
     request<CompiledSearch>("/api/search/compile", post({ text, top })),
   query: (body: QueryRequest) =>
     request<QueryResult>("/api/query", { method: "POST", body: JSON.stringify(body) }),
+  // The app's own rows, with SQL the server builds (owner, 2026-11-08).
+  personSignIns: (person: string, days = 7) =>
+    request<QueryResult>(`/api/people/${encodeURIComponent(person)}/signins?days=${days}`),
+  m365List: (
+    name: keyof M365Overview["lists"],
+    start: string,
+    end: string,
+    filter?: { cls: string; mode: string },
+  ) => {
+    const p = new URLSearchParams({ name, start, end, ...(filter ?? {}) });
+    return request<QueryResult>(`/api/m365/list?${p.toString()}`);
+  },
+  sourceEventCounts: () => request<QueryResult>("/api/sources/event-counts"),
+  sourceParserMix: () => request<QueryResult>("/api/sources/parser-mix"),
 };
 
 // --- Response shapes the Dashboard maps over (owner, 2026-11-03; D194) ------------------

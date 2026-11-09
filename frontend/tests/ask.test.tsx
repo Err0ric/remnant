@@ -219,6 +219,10 @@ describe("Ask routing (ADR-0042 slice 1b)", () => {
     expect(within(how).getByText("user = dana@example.com (also dana)")).toBeInTheDocument();
     const [sent] = posts(spy, "/api/ask") as { tz?: string }[];
     expect(sent?.tz).toBeTruthy(); // "today" is the asker's day
+    // The question's own time wins over the picker, and the line says so (owner, 2026-11-08).
+    expect(
+      within(block).getByText(/today \(named in the question, not the time range above\)/),
+    ).toBeVisible();
   });
 
   it("says when a question was treated as general guidance and switches on click", async () => {
@@ -348,7 +352,8 @@ describe("Ask's example questions (D182)", () => {
 
   it("are not shown to auditors, who have no Ask", async () => {
     await renderAt("/ask-ai", { mode: "login", signedIn: true, role: "auditor" });
-    expect(await screen.findByRole("tab", { name: "Filters", selected: true })).toBeVisible();
+    // Logs explains that Auditors run no SQL until an admin allows it (D220).
+    expect(await screen.findByRole("region", { name: "SQL not available" })).toBeVisible();
     expect(screen.queryByRole("region", { name: "Example questions" })).toBeNull();
   });
 });

@@ -37,6 +37,7 @@ from app.api.addresses import router as addresses_router
 from app.api.ai import router as ai_router
 from app.api.alert_items import router as alert_items_router
 from app.api.alerts import router as alerts_router
+from app.api.app_rows import router as app_rows_router
 from app.api.around import router as around_router
 from app.api.ask import router as ask_router
 from app.api.audit import router as audit_router
@@ -86,6 +87,7 @@ from app.core.client_errors import ClientErrors
 from app.core.config import AppConfig, is_loopback_host, load_config
 from app.core.errors import (
     AnswerShapeError,
+    AuditorSqlOffError,
     AuthRequiredError,
     CallCancelledError,
     ClassificationBlockedError,
@@ -202,6 +204,7 @@ _ERROR_STATUS: dict[type[Exception], tuple[int, str]] = {
     AuthRequiredError: (401, "auth_required"),
     LoginFailedError: (401, "login_failed"),
     ForbiddenError: (403, "forbidden"),
+    AuditorSqlOffError: (403, "auditor_sql_off"),
     CsrfError: (403, "csrf_failed"),
     SetupRequiredError: (403, "setup_required"),
     SetupInvalidError: (403, "setup_invalid"),
@@ -636,7 +639,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     app.state.quiet = QuietWatch(
         meta,
         received=lambda: {sid: st.last_event_at for sid, st in app.state.ingest.status().items()},
-        source_ids=lambda: {s.source_id for s in app.state.sources.list()},
+        source_ids=lambda: app.state.sources.ids(),
         dispatcher=app.state.alert_dispatcher,
         audit=app.state.auth.audit,
         link=app.state.public_url,
@@ -814,6 +817,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     app.include_router(alert_items_router, prefix="/api")
     app.include_router(auth_router, prefix="/api")
     app.include_router(query_router, prefix="/api")
+    app.include_router(app_rows_router, prefix="/api")
     app.include_router(sources_router, prefix="/api")
     app.include_router(plugins_router, prefix="/api")
     app.include_router(sso_settings_router, prefix="/api")

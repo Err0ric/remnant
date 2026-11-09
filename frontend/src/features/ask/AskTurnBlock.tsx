@@ -151,7 +151,8 @@ export function AskTurnBlock({
           ) : (
             "Treated as a question about your data"
           )}
-          {route.time ? `, ${route.time}` : ""}
+          {/* The question's own time wins over the picker: say so (owner, 2026-11-08). */}
+          {route.time ? `, ${route.time} (named in the question, not the time range above)` : ""}
           {route.filters.length
             ? `, ${route.filters.length === 1 ? "1 filter" : `${route.filters.length} filters`}`
             : ""}

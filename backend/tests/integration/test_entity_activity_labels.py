@@ -109,7 +109,7 @@ def test_activities_have_plain_names_and_searches_that_find_them(tmp_path: Path)
         "User-ID logout",
         "Palo Alto Networks traffic",
         "Other event",
-        "session opened for alice by (uid=#)",
+        "session opened for alice by (uid=0)",  # every line identical: shown as is (#452)
     }, set(acts)
     assert not any("#,#" in label for label in acts)  # no masked record anywhere
     assert acts["User-ID login"].events == 2 and acts["User-ID login"].sublabel == "Authentication"

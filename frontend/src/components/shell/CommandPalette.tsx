@@ -20,12 +20,14 @@ import { openSavedSearch } from "@/lib/savedSeed";
 import { RUN_SEARCH_EVENT, seedSearch } from "@/lib/searchSeed";
 import type { Theme } from "@/lib/theme";
 import { cn } from "@/lib/cn";
+import { useViewer } from "@/lib/viewer";
 
 interface CommandPaletteProps {
   page: PageId;
   isAdmin: boolean;
   canAudit: boolean;
-  canAsk: boolean;
+  /** Defaults to the viewer's (Ask follows the Auditor SQL setting, D220). */
+  canAsk?: boolean;
   theme: Theme;
   onToggleTheme: () => void;
   onClose: () => void;
@@ -89,11 +91,13 @@ export function CommandPalette({
   page,
   isAdmin,
   canAudit,
-  canAsk,
+  canAsk: canAskProp,
   theme,
   onToggleTheme,
   onClose,
 }: CommandPaletteProps) {
+  const viewer = useViewer();
+  const canAsk = canAskProp ?? viewer.canAsk ?? true;
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const [recent] = useState(readRecent);

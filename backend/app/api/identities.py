@@ -9,11 +9,23 @@ from starlette.concurrency import run_in_threadpool
 
 from app.api.access import AdminUser, client_ip
 from app.auth.service import AuthService
+from app.auth.users import User
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.search.entities import to_json
-from app.search.identity import IdentityStore, suggestions
+from app.search.identity import IdentityMap, IdentityStore, suggestions
 
 router = APIRouter(tags=["identities"])
+
+
+async def caller_identities(request: Request, user: User, scope: QueryScope) -> IdentityMap:
+    """Identities as the caller may use them (T70, D219, D223): the whole map for an
+    administrator, otherwise the part `scope` shows in `actor_user_name`, kept a minute
+    per caller and scope so a page's calls share one scan."""
+    store: IdentityStore = request.app.state.identities
+    engine: QueryEngine = request.app.state.engine
+    return await run_in_threadpool(
+        store.scoped, engine, scope, ["actor_user_name"], user.user_id, user.role
+    )
 
 
 class AliasOut(BaseModel):

@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { localClock } from "@/lib/localTime";
 import { useEffect, useRef, useState } from "react";
 import { ApiError, api, type Cell, type QueryResult } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -177,7 +178,7 @@ export function LivePanel({ sql, sources, fillMinutes = 0, onClose }: LivePanelP
     executed_sql: sql,
     sources,
   };
-  const sinceText = since ? `${since.slice(11, 16)} UTC` : "now";
+  const sinceText = since ? localClock(new Date(since)) : "now";
   const cadence = cadenceLine(lag, arrivals);
   const showHeld = () => {
     setRows((old) => [...held, ...old].slice(0, KEEP));

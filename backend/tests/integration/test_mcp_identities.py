@@ -122,3 +122,57 @@ def test_local_only_withholds_the_people_and_accounts(lab: dict[str, Any]) -> No
     assert out["rows"] == [] and "claude" in out["withheld_sources"]
     text = json.dumps(out)
     assert "dana@example.org" not in text and "(personal)" not in text
+
+
+# What #418 never asked (T70, D219): whether the values the server binds for the lookup can
+# be read on their own. They could: `$id_from`, `$id_to`, and `$id_org` are named
+# parameters, and SQL that names them got the whole Identities map, whoever sent it.
+LEAKS = (
+    "SELECT {{org_domains}} AS d, $id_from AS a, $id_to AS p",
+    "SELECT {{person:actor_user_name}} AS q, $ID_FROM AS a FROM events",
+    'SELECT {{org_domains}} AS d, $"id_to" AS p',
+    "SELECT {{org_domains}} AS d, $/* a comment */id_from AS a",
+    "SELECT {{org_domains}} AS d, $ id_to AS p",
+    "WITH u AS (SELECT {{person:actor_user_name}} AS p FROM events)"
+    " SELECT $id_from AS aliases, $id_to AS people, $id_org AS org FROM events LIMIT 1",
+)
+
+
+def _shows_the_map(out: Any) -> bool:
+    text = json.dumps(out)
+    return "dana@example.org" in text or '"example.com"' in text
+
+
+def test_the_bound_identities_values_cannot_be_selected(lab: dict[str, Any]) -> None:  # noqa: F811
+    """ana may not read the claude source. No SQL she writes reads the alias map or the
+    organization domains by naming the parameters the lookup binds; nor does the
+    administrator's: the only way in is the {{person:...}} expansion."""
+    admin = _setup(lab)
+    settings(lab, True, True)
+    for who in (lab["ana"], admin):
+        for sql in LEAKS:
+            err, out = tool(who, "run_query", {"sql": sql, **SINCE})
+            assert err and not _shows_the_map(out), (sql, out)
+
+
+def test_the_lookup_holds_only_accounts_the_caller_can_read(lab: dict[str, Any]) -> None:  # noqa: F811
+    """The yes/no trick: {{person:...}} over a value ana chose, not over her events, would
+    tell her whether that account is linked (and to whom) if the whole map were bound.
+    Only the links of accounts in her own events are bound, so a guess is its own person;
+    the organization domains she gets are the ones her events show (none here)."""
+    admin = _setup(lab)
+    settings(lab, True, True)
+    guess = (
+        "SELECT {{person:u}} AS p, {{org_domains}} AS d"
+        " FROM (VALUES ('dana@example.org'), ('dana@example.com')) AS t(u)"
+    )
+    err, out = tool(lab["ana"], "run_query", {"sql": guess, **SINCE})
+    assert not err, out
+    assert [r[0] for r in out["rows"]] == ["dana@example.org", "dana@example.com"]
+    assert all(r[1] == "['']" for r in out["rows"])  # MCP sends a list as its text
+    # The administrator reads the claude source, where both accounts are: the same
+    # question gets the link, so this is scope, not the lookup switched off.
+    err, out = tool(admin, "run_query", {"sql": guess, **SINCE})
+    assert not err, out
+    assert [r[0] for r in out["rows"]] == ["dana", "dana"]
+    assert all(r[1] == "['example.com']" for r in out["rows"])

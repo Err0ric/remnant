@@ -24,12 +24,6 @@ import { ConnectorSettingsButton } from "./ConnectorSettingsEditor";
 import { since } from "@/features/overview/time";
 import { SectionTitle } from "@/components/SectionTitle";
 
-const COUNTS_SQL =
-  "SELECT source_id, count(*) AS events, max(coalesce(time, time_observed)) AS last_event " +
-  "FROM events GROUP BY source_id";
-// Which template read each line, for Automatic sources (ADR-0012).
-const MIX_SQL = "SELECT source_id, template_id, count(*) FROM events GROUP BY 1, 2";
-
 interface SourcesPageProps {
   canManage: boolean;
 }
@@ -92,7 +86,7 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
   // query is audited; refreshed on demand.
   const counts = useQuery({
     queryKey: ["source-list", "counts"],
-    queryFn: () => api.query({ sql: COUNTS_SQL }),
+    queryFn: api.sourceEventCounts,
   });
   const templates = useQuery({
     queryKey: ["templates"],
@@ -103,11 +97,7 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
   const autoIds = list.filter((s) => s.template_id === AUTO_PARSER).map((s) => s.source_id);
   const mix = useQuery({
     queryKey: ["source-list", "mix", autoIds.join(",")],
-    queryFn: () =>
-      api.query({
-        sql: MIX_SQL,
-        sources: autoIds,
-      }),
+    queryFn: api.sourceParserMix,
     enabled: autoIds.length > 0,
   });
   const mixFor = new Map<string, Map<string, number>>();

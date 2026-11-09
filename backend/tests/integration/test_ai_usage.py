@@ -601,3 +601,57 @@ def test_closing_an_ai_watch_alert_can_set_its_review_status(lab: dict[str, Any]
         json={"reason": "expected", "review_status": "approved"},
     )
     assert ana.status_code in (403, 404)
+
+
+def test_ai_watch_24_hours_is_rolling_not_since_midnight(lab: dict[str, Any]) -> None:
+    """D221: "24 hours" ends now and starts 24 hours before, not at local midnight. The
+    use is at 11:00 to 11:30 UTC; at 08:00 the next day midnight has passed, the use has not
+    left the last 24 hours."""
+    app, a = lab["app"], lab["admin"]
+    app.state.ai_watch._clock = lambda: NOW + timedelta(hours=20)
+    s = a.get("/api/ai/watch/summary?days=1&tz=UTC").json()
+    cards = {c["key"]: c for c in s["cards"]}
+    assert cards["services"]["value"] >= 3 and cards["services"]["previous"] == 0
+    assert s["start"] == (NOW - timedelta(hours=4)).isoformat()
+    assert s["before"] == (NOW - timedelta(hours=28)).isoformat()
+    # A week keeps whole days in the viewer's zone.
+    week = a.get("/api/ai/watch/summary?days=7&tz=UTC").json()
+    assert week["start"].endswith("T00:00:00+00:00")
+
+
+def test_new_agents_card_counts_first_seen_not_alerts(lab: dict[str, Any]) -> None:
+    """Owner, 2026-11-08: the card counts agents and MCP servers first seen in the window,
+    with or without an alert raised for them (no hourly check has run here)."""
+    app, a = lab["app"], lab["admin"]
+    app.state.ai_watch._clock = lambda: NOW + timedelta(hours=1)
+    s = a.get("/api/ai/watch/summary?days=1&tz=UTC").json()
+    card = next(c for c in s["cards"] if c["key"] == "agents")
+    new = [n for n in s["new"] if n["kind"] in ("agent", "mcp")]
+    assert {n["name"] for n in new} >= {"github", "paste-share"}
+    assert card["value"] == len(new) and card["previous"] == 0
+    # A day later they are not new any more, and count in the period before.
+    app.state.ai_watch._clock = lambda: NOW + timedelta(hours=25)
+    app.state.page_cache.clear()
+    later = a.get("/api/ai/watch/summary?days=1&tz=UTC").json()
+    card = next(c for c in later["cards"] if c["key"] == "agents")
+    assert card["value"] == 0 and card["previous"] == len(new)
+
+
+def test_people_without_cost_metrics_say_so(lab: dict[str, Any]) -> None:
+    """Owner, 2026-11-08: a telemetry user with no cost or token metrics is not $0.00."""
+    from ai_telemetry import logs_payload
+
+    a = lab["admin"]
+    token = a.post("/api/sources/claude/otlp-token", headers=lab["h"]).json()["token"]
+    t0 = NOW - timedelta(minutes=20)
+    logs = logs_payload(
+        [(t0, {"user.email": "bob@example.com", "session.id": "s-2", "event.name": "user_prompt"})],
+        "ws-0043",
+    )
+    hdr = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    r = a.post("/api/otlp/v1/logs", content=json.dumps(logs).encode(), headers=hdr)
+    assert r.status_code == 200, r.text
+    lab["app"].state.ingest.run_once()
+    people = {p["person"]: p for p in usage(a)["people"]}
+    assert people["alice@example.com"]["cost_reported"] is True
+    assert people["bob@example.com"]["cost_reported"] is False

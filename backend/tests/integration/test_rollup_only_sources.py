@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import duckdb
+import pytest
 
 from app.core.schema import duckdb_create_table_sql
 from app.engine.duckdb import AUTH_ROLLUP_COLUMNS
@@ -28,6 +29,7 @@ def _no_today(rows: list[dict[str, Any]], now: datetime) -> list[dict[str, Any]]
     return [r for r in rows if (r["time"] or r["time_observed"]) < start]
 
 
+@pytest.mark.slow  # over 8 s; skipped in PR CI, run by the queue before every merge (D216)
 def test_m365_overview_and_dashboard_identity_count_rollup_only_sources(tmp_path: Path) -> None:
     engine, rollup = m365._lab(tmp_path)
     now = m365.NOW

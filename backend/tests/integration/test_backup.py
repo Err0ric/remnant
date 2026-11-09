@@ -163,6 +163,9 @@ def test_maintenance_waits_while_a_backup_holds_the_lake(tmp_path: Path) -> None
         def list(self) -> list[object]:
             return []
 
+        def retention_days(self) -> dict[str, int]:
+            return {}
+
     m = LakeMaintenance(tmp_path / "lake", Sources(), 30, 0, 0)  # type: ignore[arg-type]  # stub
     m.compact = lambda: calls.append("compact")  # type: ignore[method-assign,assignment,return-value]  # spy
     with lake_lock(tmp_path / "lake"):

@@ -42,6 +42,12 @@ NOTES = "docs/release-notes.md"
 SPEC = "docs/SPEC.md"
 START, END = "<!-- unreleased:start -->", "<!-- unreleased:end -->"
 WHAT = "What changes for existing installs:"
+# Plain release notes (owner, 2026-11-08): a note from this PR number on, and every `new-`
+# note, has one bullet saying in one line what a user will notice, or "nothing visible".
+# Older published notes are left as they are.
+NOTICE = "What you will notice:"
+PLAIN_FROM = 455
+NOTICE_LINE = re.compile(rf"^- {re.escape(NOTICE)}(.*)$", re.M)
 NOTE_NAME = re.compile(r"^(?:(\d+)|new)-[a-z0-9][a-z0-9-]{0,80}\.md$")
 DECISION_NAME = re.compile(r"^D(\d+)-[a-z0-9][a-z0-9-]{0,80}\.md$")
 ROW = re.compile(r"^\| D(\d+) \|.*\|$")
@@ -76,6 +82,11 @@ class Docs:
             if re.search(r"^#{1,2} ", text, re.M):
                 self.problems.append(f"{p.name}: only '###' headings belong in a note")
             pr = int(m.group(1)) if m.group(1) else 10**9  # unnumbered notes first
+            said = [x.strip() for x in NOTICE_LINE.findall(text)]
+            if pr >= PLAIN_FROM and (len(said) != 1 or not said[0]):
+                self.problems.append(
+                    f"{p.name}: one '- {NOTICE} ...' bullet, a plain line or 'nothing visible'"
+                )
             out.append((pr, p.name, p, text))
         out.sort(key=lambda t: (-t[0], t[1]))
         return [(p, text) for _, _, p, text in out]

@@ -38,6 +38,10 @@ Scripts and other tools can call the same JSON API with a personal token: see [d
 `app-admin ingest` does a one-off load; for continuous tailing add a source on the **Sources** page. The CLI only talks to the server API, with the same SQL guard as the web UI. Output formats: `table`, `json` (one object per line), `csv`, `raw`.
 
 
+## CI on a self-hosted runner
+
+The `ci` workflow can run on a self-hosted runner once the repository variable `CI_RUNNER` is set to `self-hosted`; with it unset, jobs run on GitHub's hosted runners. Setup, hardening, and the fallback: [docs/dev/self-hosted-runner.md](dev/self-hosted-runner.md).
+
 ## Software bill of materials
 
 Every CI run publishes `sbom.cdx.json` (CycloneDX 1.5) as a build artifact: the Python packages and web UI packages that ship in the image, with hashes, plus the container base images. Development tools are left out. To make one locally:

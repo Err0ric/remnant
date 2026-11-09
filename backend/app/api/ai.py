@@ -21,7 +21,7 @@ from app.ai.inventory import Exclusions, inventory
 from app.ai.inventory import export as inventory_export
 from app.ai.person_ai import activity as person_activity
 from app.ai.sessions import sessions, timeline
-from app.ai.usage import ServiceUse, Usage, seen_through
+from app.ai.usage import ServiceUse, Usage, merge_people, seen_through
 from app.ai.watch import AiWatch, describe
 from app.ai.watch_summary import source_classes
 from app.ai.watch_summary import summary as watch_summary
@@ -30,6 +30,7 @@ from app.api.access import AdminUser, CurrentUser, client_ip, require_role
 from app.api.access import now as app_now
 from app.api.cache import STALE_MAX_S, PageCache, Refresher, scope_key
 from app.api.dashboard_sections import HistoryOut, KpiOut
+from app.api.identities import caller_identities
 from app.auth.service import AuthService
 from app.auth.users import User
 from app.core.errors import NotFoundError
@@ -91,6 +92,8 @@ class PersonOut(BaseModel):
     person: str
     cost_usd: float
     tokens: int
+    # False: no cost or token metric arrived, so cost and tokens are unknown, not 0.
+    cost_reported: bool = False
     sessions: int
     tool_calls: int
     errors: int
@@ -177,7 +180,9 @@ async def ai_usage(
     end = end.replace(second=0, microsecond=0) if end else None
     scope = await _scope(request, user, start, end)
     cache: PageCache = request.app.state.page_cache
-    key = ("ai_usage", scope_key(scope.sources), start, end)
+    # Admin or not is part of the key: people are shown with the whole map or the part
+    # the page's names show (D223).
+    key = ("ai_usage", scope_key(scope.sources), start, end, user.role == "admin")
     hit = cache.get(key)
     if hit is not None:
         out, read = hit
@@ -186,16 +191,24 @@ async def ai_usage(
             {"sources_in_scope": read, "cached": True},
         )  # fmt: skip
         return out  # type: ignore[no-any-return]  # a UsageOut this route stored
-    ident = await run_in_threadpool(request.app.state.identities.load)
+    full = await run_in_threadpool(request.app.state.identities.load)
     # The independent reads at once: a page load waits for the slowest, not the sum.
-    (found, sources), mcp, people, (pending, of), network = await asyncio.gather(
+    # MCP people are counted with `full`: a count over names the caller's rows show
+    # adds up only names those rows link (T70); nothing from the map is shown.
+    (found, sources), mcp, rows, (pending, of), network = await asyncio.gather(
         run_in_threadpool(usage.all_services, scope),
-        run_in_threadpool(usage.mcp, scope, ident),
-        run_in_threadpool(usage.people, scope, ident),
+        run_in_threadpool(usage.mcp, scope, full),
+        run_in_threadpool(usage.people, scope),
         run_in_threadpool(usage.people_pending, scope),
         run_in_threadpool(usage.claude_network_people, scope),
     )
-    people, claude_seen = seen_through(people, network, ident)
+    # The shown names: the whole map for an administrator (D223); for anyone else only
+    # the links and organization domains the page's own names show (T70, D219), so a
+    # person is never given a domain the caller's events do not show. No scan.
+    ident = full if user.role == "admin" else full.seen_in(
+        [r.person for r in rows] + [n.who for n in network]
+    )  # fmt: skip
+    people, claude_seen = seen_through(merge_people(rows, ident), network, ident)
     services = [u for u in found if u.service.kind != NON_USAGE]
     other = [u for u in found if u.service.kind == NON_USAGE]
     changes, compared_from = None, None
@@ -751,7 +764,12 @@ async def ai_sessions(
     idle = request.app.state.config.agents.session_idle_minutes
     rows = await run_in_threadpool(sessions, engine, allowed, app_now(request), days, idle)
     if person:
-        ident = await run_in_threadpool(request.app.state.identities.load)
+        # As the rest of the person page: the part the caller's scope shows (T70, D219,
+        # D223), the same kept set for the same days.
+        at = app_now(request)
+        ident = await caller_identities(
+            request, user, QueryScope(allowed, at - timedelta(days=days), at)
+        )
         keys = set(ident.keys_for(person))
         rows = [s for s in rows if s.person and ident.key(s.person) in keys]
     await run_in_threadpool(
@@ -1150,11 +1168,17 @@ async def ai_person_activity(
     def mine(ids: list[str]) -> list[str]:
         return ids if allowed is None else [s for s in ids if s in set(allowed)]
 
-    ident = await run_in_threadpool(request.app.state.identities.load)
     at = app_now(request)
+    # The person's other forms, as far as the caller's scope shows them (T70, D219, D223);
+    # the same window as person_activity reads.
+    ident = await caller_identities(
+        request, user, QueryScope(allowed, at - timedelta(days=days), at)
+    )
+    # Each account's tier says only whether its own domain is an organization domain.
+    domains = (await run_in_threadpool(request.app.state.identities.load)).domains
     accts = await run_in_threadpool(
         accounts, request.app.state.engine, allowed, mine(kinds.get("telemetry", [])),
-        mine(kinds.get("m365", [])), ident.domains, at, max(days, 30),
+        mine(kinds.get("m365", [])), domains, at, max(days, 30),
     )  # fmt: skip
     catalog = _catalog(request)
     out = await run_in_threadpool(

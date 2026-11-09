@@ -13,6 +13,7 @@ from typing import Annotated
 import anyio
 from fastapi import Depends, Request
 
+from app.auth import auditor_sql
 from app.auth.service import AuthService
 from app.auth.sessions import SessionInfo, csrf_matches
 from app.auth.users import LOCAL_USER, Role, User
@@ -146,6 +147,29 @@ def require_role(*roles: Role) -> Callable[[Request], Awaitable[User]]:
     return check
 
 
+def _sql_user(request: Request) -> User:
+    user = _current_user(request)
+    try:
+        auditor_sql.check(request.app.state.meta, user)
+    except ForbiddenError:
+        auth: AuthService = request.app.state.auth
+        auth.audit.write(
+            "access.denied",
+            "denied",
+            user.user_id,
+            client_ip(request),
+            {"method": request.method, "path": request.url.path, "reason": "auditor_sql_off"},
+        )
+        raise
+    return user
+
+
+async def sql_user(request: Request) -> User:
+    """Someone who may run SQL: anyone but an Auditor, and an Auditor only while an admin
+    has turned on the setting that grants it (D220). Scope is still the caller's own."""
+    return await _off_pool(_sql_user, request)
+
+
 def now(request: Request) -> datetime:
     """The app's "now" for read endpoints (`app.core.clock`), so a test can pin it next to
     its event dates and give the same result on any day."""
@@ -159,3 +183,4 @@ def client_ip(request: Request) -> str | None:
 CurrentUser = Annotated[User, Depends(current_user)]
 InteractiveUser = Annotated[User, Depends(interactive_user)]
 AdminUser = Annotated[User, Depends(require_role("admin"))]
+SqlUser = Annotated[User, Depends(sql_user)]

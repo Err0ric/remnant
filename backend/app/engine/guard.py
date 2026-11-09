@@ -1,8 +1,8 @@
 """SQL allowlist for user and LLM queries (SPEC 5.1, CLAUDE.md rule 7).
 
-Layer 1 of 2. The engine's DuckDB sandbox (enable_external_access=false,
-allowed_directories, locked configuration) is layer 2, so a guard gap alone
-cannot read files or other sources.
+Layer 1. The engine adds two more (ADR-0047): DuckDB's own parser must see one SELECT
+statement, and the connection may open only the files its views read, with external
+access off and the configuration locked. A guard gap alone cannot read or write files.
 """
 
 import functools
@@ -20,11 +20,14 @@ from app.core.errors import QueryRejectedError
 DEFAULT_LIMIT = 10_000
 MAX_LIMIT = 100_000
 
-# Functions that touch files, the network, settings, or the catalog.
+# Functions that touch files, the network, settings, or the catalog, run SQL of their own
+# (json_execute_serialized_sql and the serializers that feed it), read a file's footer
+# (parquet_kv_metadata and the other parquet_* functions), or load keys (T2, 2026-11-08).
 _DENIED_FUNCTION = re.compile(
     r"^(read_\w*|\w*_scan|scan_\w*|glob|sniff_csv|getenv|current_setting|duckdb_\w*|pragma_\w*"
     r"|query|query_table|sqlite_\w*|postgres_\w*|mysql_\w*|iceberg_\w*|delta_\w*|http\w*"
-    r"|load_extension|install_extension|which_secret|set_\w*)$",
+    r"|load_extension|install_extension|\w*secret\w*|set_\w*"
+    r"|json_\w*serializ\w*|json_execute\w*|parquet_\w*|\w*_credentials)$",
     re.IGNORECASE,
 )
 _FORBIDDEN_NODES = (

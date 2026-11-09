@@ -324,7 +324,9 @@ def _aide(box: dict[str, Path], rc: int, paths: list[str] = ()) -> dict[str, str
     return {"AIDE_REPORT": str(report), "AIDE_RC": str(rc)}
 
 
-def _run_aide(box: dict[str, Path], flag: str, **extra: str) -> subprocess.CompletedProcess[str]:
+def _run_aide(
+    box: dict[str, Path], flag: str, *more: str, **extra: str
+) -> subprocess.CompletedProcess[str]:
     env = {
         "PATH": f"{box['bin']}:{os.environ['PATH']}", "INSTALL_DIR": str(box["install"]),
         "CALLS": str(box["calls"]), "HOME": str(box["install"].parent),
@@ -333,7 +335,7 @@ def _run_aide(box: dict[str, Path], flag: str, **extra: str) -> subprocess.Compl
         "STATE_FILE": str(_installed(box)),
         "STATE_OWNER": f"{os.getuid()}:{os.getgid()}", **extra,
     }  # fmt: skip
-    return subprocess.run(["sh", str(SCRIPT), flag], capture_output=True, text=True, env=env)
+    return subprocess.run(["sh", str(SCRIPT), flag, *more], capture_output=True, text=True, env=env)
 
 
 def _new_commit(box: dict[str, Path]) -> str:
@@ -501,3 +503,136 @@ def test_a_new_file_in_the_aide_rules_folder_stops_the_run(box: dict[str, Path])
         assert str(path) in res.stdout and "not made by this update" in res.stderr
         assert "systemctl" not in _calls(box) and "aideinit" not in _calls(box)
     assert _git(box["install"], "rev-parse", "HEAD") == head
+
+
+# --- Rollback (owner, 2026-11-08: one command back to the previous version) -------------
+
+
+def _previous(box: dict[str, Path]) -> Path:
+    return box["install"].parent / "previous_commit"
+
+
+def _from(box: dict[str, Path]) -> Path:
+    return box["install"].parent / "rolled_back_from"
+
+
+def _updated_once(box: dict[str, Path]) -> tuple[str, str]:
+    """An install updated once by the script: (old, new) full commits."""
+    old = _git(box["install"], "rev-parse", "HEAD")
+    _record(box, old)
+    _commit(box["work"], "two")
+    _git(box["work"], "push", "-q", "origin", "main")
+    res = _run(box)
+    assert res.returncode == 0, res.stderr
+    return old, _git(box["install"], "rev-parse", "HEAD")
+
+
+def _rollback(box: dict[str, Path], *flags: str, **extra: str) -> subprocess.CompletedProcess[str]:
+    box["calls"].unlink(missing_ok=True)
+    return _run_aide(box, "--rollback", *flags, **extra)
+
+
+def test_an_update_records_the_commit_it_replaced(box: dict[str, Path]) -> None:
+    old, new = _updated_once(box)
+    assert _previous(box).read_text().strip() == old
+    assert oct(_previous(box).stat().st_mode & 0o777) == "0o644"
+    assert _installed(box).read_text().strip() == new
+    assert not list(box["install"].parent.glob("previous_commit.*"))  # no temp left
+
+
+def test_rollback_checks_out_the_previous_commit_and_rebuilds(box: dict[str, Path]) -> None:
+    old, new = _updated_once(box)
+    res = _rollback(box)
+    assert res.returncode == 0, res.stderr
+    assert _git(box["install"], "rev-parse", "HEAD") == old
+    assert _git(box["install"], "rev-parse", "--abbrev-ref", "HEAD") == "HEAD"  # detached
+    calls = _calls(box).splitlines()
+    assert calls[0] == "systemctl stop remnant"
+    build = [calls.index(c) for c in ("pnpm install --frozen-lockfile", "pnpm build",
+                                      "uv sync --frozen --no-dev", "systemctl start remnant")]  # fmt: skip
+    assert build == sorted(build)  # the same build as an update, then the start
+    assert "Startup lines" in res.stdout and "listening on" in res.stdout
+    assert f"Rolled back remnant from {new[:7]} to {old[:7]}." in res.stdout
+    assert _installed(box).read_text().strip() == old
+    assert _from(box).read_text().strip() == new
+    assert not _previous(box).exists()
+
+
+def test_a_second_rollback_is_refused_and_an_update_rolls_forward(box: dict[str, Path]) -> None:
+    """One step back only: a second rollback would otherwise swap back to the newer build
+    without the update's fetch and checks."""
+    old, new = _updated_once(box)
+    assert _rollback(box).returncode == 0
+    res = _rollback(box)
+    assert res.returncode == 1
+    assert f"Already rolled back from {new[:7]} to {old[:7]}" in res.stderr
+    assert "Nothing was changed" in res.stderr and _calls(box) == ""
+    box["calls"].unlink(missing_ok=True)
+    fwd = _run(box)  # roll forward: the ordinary update
+    assert fwd.returncode == 0, fwd.stderr
+    assert _git(box["install"], "rev-parse", "HEAD") == new
+    assert _git(box["install"], "rev-parse", "--abbrev-ref", "HEAD") == "main"  # attached
+    assert _previous(box).read_text().strip() == old and not _from(box).exists()
+
+
+def test_rollback_without_a_previous_commit_is_refused(box: dict[str, Path]) -> None:
+    head = _git(box["install"], "rev-parse", "HEAD")
+    _record(box, head)
+    res = _rollback(box)
+    assert res.returncode == 1
+    assert "No previous version is recorded" in res.stderr and "Nothing was changed" in res.stderr
+    assert _calls(box) == "" and _git(box["install"], "rev-parse", "HEAD") == head
+
+
+def test_rollback_refuses_a_dirty_checkout(box: dict[str, Path]) -> None:
+    _old, new = _updated_once(box)
+    (box["install"] / "two").write_text("edited by hand")
+    res = _rollback(box)
+    assert res.returncode == 1 and "uncommitted changes" in res.stderr
+    assert _calls(box) == "" and _git(box["install"], "rev-parse", "HEAD") == new
+    assert _previous(box).exists()  # still there for when it is clean
+
+
+def test_rollback_ignores_a_previous_commit_the_service_could_write(box: dict[str, Path]) -> None:
+    """Same rule as installed_commit: a record not written by root is never a target."""
+    _updated_once(box)
+    _previous(box).chmod(0o666)
+    res = _rollback(box)
+    assert res.returncode == 1 and "Ignoring" in res.stderr
+    assert "No previous version is recorded" in res.stderr and _calls(box) == ""
+
+
+def test_rollback_refuses_a_commit_that_is_not_behind_the_checkout(box: dict[str, Path]) -> None:
+    _updated_once(box)
+    (box["install"] / "side").write_text("x")
+    _git(box["install"], "checkout", "-q", "-b", "side")
+    side = _commit(box["install"], "side")
+    _git(box["install"], "checkout", "-q", "main")
+    _previous(box).write_text(_git(box["install"], "rev-parse", side) + "\n")
+    res = _rollback(box)
+    assert res.returncode == 1 and "not an ancestor" in res.stderr and _calls(box) == ""
+
+
+def test_a_failed_start_after_rollback_keeps_the_target_for_a_retry(box: dict[str, Path]) -> None:
+    old, new = _updated_once(box)
+    res = _rollback(box, NOT_UP="1")
+    assert res.returncode != 0 and "is not up" in res.stderr
+    assert _installed(box).read_text().strip() == new and _previous(box).exists()
+    again = _rollback(box)
+    assert again.returncode == 0, again.stderr
+    assert _installed(box).read_text().strip() == old
+
+
+def test_rollback_with_aide_checks_first_and_re_baselines_after(box: dict[str, Path]) -> None:
+    """The records rollback writes are this script's own, like installed_commit."""
+    old, _new = _updated_once(box)
+    paths = [str(_installed(box)), str(_previous(box)), str(_from(box))]
+    res = _rollback(box, "--aide", **_aide(box, 4, paths))
+    assert res.returncode == 0, res.stdout + res.stderr
+    calls = _calls(box).splitlines()
+    assert calls[0].startswith("aide --config") and "--check" in calls[0]
+    assert calls.index("systemctl start remnant") < calls.index("aideinit -y -f")
+    assert _git(box["install"], "rev-parse", "HEAD") == old
+    box["calls"].unlink()
+    bad = _run_aide(box, "--rollback", **_aide(box, 4, ["/etc/passwd"]))
+    assert bad.returncode == 1  # refused anyway: nothing to roll back to now

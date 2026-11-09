@@ -394,10 +394,10 @@ describe("Results table controls", () => {
     await userEvent.click(within(timeHeader).getByRole("button"));
     expect(timeHeader).toHaveAttribute("aria-sort", "ascending");
     const firstRow = () => within(table).getAllByRole("row")[1] as HTMLElement;
-    expect(firstRow()).toHaveTextContent("22:54:36"); // the earlier event first
+    expect(firstRow()).toHaveTextContent("10:54:36 PM"); // the earlier event first, local time
     await userEvent.click(within(timeHeader).getByRole("button"));
     expect(timeHeader).toHaveAttribute("aria-sort", "descending");
-    expect(firstRow()).toHaveTextContent("23:04:36");
+    expect(firstRow()).toHaveTextContent("11:04:36 PM");
 
     await userEvent.click(screen.getByRole("button", { name: "Columns" }));
     const chooser = screen.getByRole("group", { name: "Columns" });

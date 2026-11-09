@@ -14,6 +14,7 @@ from starlette.concurrency import run_in_threadpool
 from app.ai.catalog import Catalog
 from app.api.access import CurrentUser, client_ip
 from app.auth.service import AuthService
+from app.auth.users import User
 from app.core import clock
 from app.core.errors import SearchInvalidError
 from app.core.timing import phase
@@ -175,9 +176,15 @@ async def _scope(
     return allowed, QueryScope(sources=allowed, start=start, end=end)
 
 
-async def _identities(request: Request) -> IdentityMap:
+async def _identities(request: Request, scope: QueryScope, user: User) -> IdentityMap:
+    """The part of Identities the caller's scope shows (T70, D219): a person's other
+    accounts, from sources the caller cannot read, never reach a page or its search.
+    Kept for a minute per caller and scope, so a page's calls share one scan."""
     store: IdentityStore = request.app.state.identities
-    return await run_in_threadpool(store.load)
+    engine: QueryEngine = request.app.state.engine
+    return await run_in_threadpool(
+        store.scoped, engine, scope, ["actor_user_name"], user.user_id, user.role
+    )
 
 
 async def _audit(
@@ -205,7 +212,7 @@ async def risk(
     engine: QueryEngine = request.app.state.engine
     meta: MetaDB = request.app.state.meta
     with phase("identities"):
-        ident = await _identities(request)
+        ident = await _identities(request, scope, user)
     ranked, considered, read, spl = await run_in_threadpool(
         entity_risk, engine, meta, allowed, scope, ident, request.app.state.ai_usage
     )
@@ -247,7 +254,7 @@ async def graph(
         if kind not in ("user", "ip", "host") or not value:
             raise SearchInvalidError("Pick a user, IP address, or host to investigate")
         meta: MetaDB = request.app.state.meta
-        ident = await _identities(request)
+        ident = await _identities(request, scope, user)
         names = {t.id: t.name for t in request.app.state.templates.all()}
         g = await run_in_threadpool(
             entity_graph, engine, meta, allowed, scope, kind, value, ident, names
@@ -256,7 +263,7 @@ async def graph(
         if kind not in (None, "user", "mcp", "service") or (kind and not value):
             raise SearchInvalidError("AI flow is for a person, an MCP server, or an AI service")
         catalog: Catalog = request.app.state.ai_catalog
-        ident = await _identities(request)
+        ident = await _identities(request, scope, user)
         g = await run_in_threadpool(
             ai_graph, engine, catalog, scope, kind, value, ident, request.app.state.ai_rollup
         )
@@ -282,7 +289,7 @@ async def summary(
     first and last seen, and activities by outcome with a real example line."""
     _allowed, scope = await _scope(request, user, start, end)
     engine: QueryEngine = request.app.state.engine
-    ident = await _identities(request)
+    ident = await _identities(request, scope, user)
     s = await run_in_threadpool(entity_summary, engine, scope, kind, value, ident)
     geo = None
     if kind == "ip":
@@ -327,7 +334,7 @@ async def entity_lookup(
     engine: QueryEngine = request.app.state.engine
     catalog: Catalog = request.app.state.ai_catalog
     services = await run_in_threadpool(catalog.services)
-    ident = await run_in_threadpool(request.app.state.identities.load)
+    ident = await _identities(request, scope, user)
     found = await run_in_threadpool(lookup, engine, scope, q, services, ident)
     geoip: GeoIP = request.app.state.geoip
     ips = [h.value for h in found.hits if h.kind == "ip"]

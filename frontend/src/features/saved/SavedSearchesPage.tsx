@@ -8,6 +8,8 @@ import { seedSearch } from "@/lib/searchSeed";
 import { takeSavedSeed } from "@/lib/savedSeed";
 import { AddToDashboardPanel } from "@/features/dashboard/AddToDashboard";
 import { SearchRunner } from "./SearchRunner";
+import { AUDITOR_SQL_OFF } from "@/lib/sqlAccess";
+import { useViewer } from "@/lib/viewer";
 
 interface SavedSearchesPageProps {
   me: User | null;
@@ -35,6 +37,8 @@ export function SavedSearchesPage({ me }: SavedSearchesPageProps) {
   const myId = me?.user_id ?? "local";
   const isAdmin = !me || me.role === "admin";
   const canAuthor = !me || me.role !== "auditor";
+  // D220: an Auditor runs saved searches only while an admin allows Auditors SQL.
+  const { canRunSql = true } = useViewer();
   const refresh = () => client.invalidateQueries({ queryKey: ["searches"] });
 
   const remove = useMutation({
@@ -60,7 +64,9 @@ export function SavedSearchesPage({ me }: SavedSearchesPageProps) {
   });
 
   const list = searches.data ?? [];
-  const running = chosen ?? (seeded ? (list.find((s) => s.id === seeded) ?? null) : null);
+  const running = !canRunSql
+    ? null
+    : (chosen ?? (seeded ? (list.find((s) => s.id === seeded) ?? null) : null));
   const error = [remove.error, importer.error, exporter.error, verifier.error].find(Boolean);
 
   return (
@@ -88,6 +94,11 @@ export function SavedSearchesPage({ me }: SavedSearchesPageProps) {
         }}
       />
       <div className="flex flex-col gap-3 px-5 py-3">
+        {!canRunSql ? (
+          <p role="note" className="text-sm text-text-secondary">
+            {AUDITOR_SQL_OFF}
+          </p>
+        ) : null}
         {notice ? (
           <p role="status" className="text-sm text-text-secondary">
             {notice}
@@ -202,7 +213,9 @@ export function SavedSearchesPage({ me }: SavedSearchesPageProps) {
                               type="button"
                               aria-label={`Run ${s.name}`}
                               onClick={() => setRunning(s)}
-                              className="px-2 py-0.5 font-semibold text-accent-text"
+                              disabled={!canRunSql}
+                              title={canRunSql ? undefined : AUDITOR_SQL_OFF}
+                              className="px-2 py-0.5 font-semibold text-accent-text disabled:text-text-muted"
                             >
                               Run
                             </button>

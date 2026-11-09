@@ -218,6 +218,11 @@ def test_only_the_owner_edits_admins_may_delete(lab: dict[str, object]) -> None:
 def test_auditor_runs_shared_searches_but_cannot_create(lab: dict[str, object]) -> None:
     as_user(lab, "ana").post("/api/searches", json=FAILED)
     aud = as_user(lab, "aud")
+    off = run(aud, "failed_by_user")  # type: ignore[union-attr]
+    assert off.status_code == 403 and off.json()["code"] == "auditor_sql_off"  # D220
+    lab["admin"].put(  # type: ignore[attr-defined]  # TestClient in the lab dict
+        "/api/settings/auditor-sql", json={"enabled": True}, headers=lab["h"]
+    )
     assert run(aud, "failed_by_user").status_code == 200  # type: ignore[union-attr]
     assert aud.post("/api/searches", json=dict(FAILED, id="aud1")).status_code == 403
 

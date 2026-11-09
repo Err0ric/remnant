@@ -124,7 +124,15 @@ def test_analyst_sees_only_granted_sources(lab: dict[str, object]) -> None:
     assert seen_sources(lab, bearer(lab, "ana")) == {"linux_auth", "fw_edge"}
 
 
+def allow_auditor_sql(lab: dict[str, object]) -> None:
+    res = lab["admin"].put(  # type: ignore[attr-defined]  # TestClient in the lab dict
+        "/api/settings/auditor-sql", json={"enabled": True}, headers=lab["h"]
+    )
+    assert res.status_code == 200
+
+
 def test_auditor_scoped_the_same_way(lab: dict[str, object]) -> None:
+    allow_auditor_sql(lab)  # Auditors run no SQL until an admin allows it (D220)
     assert seen_sources(lab, bearer(lab, "aud")) == {"linux_auth", "fw_edge"}
 
 
@@ -204,6 +212,7 @@ def test_access_comes_from_the_union_of_groups(lab: dict[str, object]) -> None:
     admin.put(f"/api/groups/{hr}/sources", json={"source_ids": ["hr_payroll"]}, headers=h)  # type: ignore[union-attr]
     admin.put(f"/api/groups/{hr}/members", json={"user_ids": [users["ana"]]}, headers=h)  # type: ignore[union-attr, index]
     assert seen_sources(lab, bearer(lab, "ana")) == set(SOURCES)
+    allow_auditor_sql(lab)
     assert seen_sources(lab, bearer(lab, "aud")) == {"linux_auth", "fw_edge"}
 
 

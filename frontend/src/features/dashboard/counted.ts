@@ -25,17 +25,17 @@ export const COUNTED = {
   vpnOutside: `Successful VPN logins (GlobalProtect, OpenVPN) whose address GeoIP places outside the approved countries. Addresses GeoIP cannot place are not counted. ${WINDOW}`,
 
   // Dashboard > Detections (Sigma rules).
-  ruleMatches: `Detection rule matches on sources you may read, one per rule and event: an event two rules matched counts twice. ${WINDOW}`,
+  ruleMatches: `Distinct events a detection rule matched on sources you may read: an event two rules matched counts once. Rule matches, one per rule and event, are shown below the number. The events open with each rule limited to the sources it matched on. ${WINDOW}`,
   rulesMatched: `Detection rules with at least one match in the window, shown against how many rules are enabled. ${WINDOW}`,
   hostsInvolved: `Distinct host names on the matched events. Events with no host are left out. ${WINDOW}`,
   usersInvolved: `Distinct user names on the matched events. Events with no user are left out. ${WINDOW}`,
 
-  // Agents > Overview (the Claude hooks plugin's records).
-  sessions: `Claude Code and Cowork sessions (distinct session ids) with at least one hooks plugin record in the window. ${WINDOW}`,
-  agentPeople: `Distinct people on hooks plugin records: the Claude account email, else the computer's user name. ${WINDOW}`,
-  toolCalls: `Tool calls the hooks plugin recorded (one per "before tool use" record), built-in tools and MCP tools alike. A copy sent twice from the offline queue counts once. ${WINDOW}`,
-  failedCalls: `Tool calls the hooks plugin recorded as failed. ${WINDOW}`,
-  mcpNotApproved: `Distinct MCP servers called through the hooks plugin marked not approved on AI usage (unreviewed ones are not counted here). ${WINDOW}`,
+  // Agents > Overview (the hooks plugin, Claude Code telemetry, and the MCP inventory).
+  sessions: `Claude Code and Cowork sessions (distinct session ids) seen by the hooks plugin or Claude Code telemetry in the window; a session both report counts once. ${WINDOW}`,
+  agentPeople: `Distinct people on hooks plugin, Claude Code telemetry, and MCP inventory records: the Claude account email, else the computer's user name. ${WINDOW}`,
+  toolCalls: `Tool calls, built-in and MCP alike: from Claude Code telemetry (one per tool result) for sessions it saw, otherwise from the hooks plugin (one per "before tool use" record), so no call counts twice. A copy sent twice from the offline queue counts once. ${WINDOW}`,
+  failedCalls: `Tool calls that failed, from telemetry (a tool result marked unsuccessful) or, for sessions telemetry did not see, the hooks plugin. ${WINDOW}`,
+  mcpNotApproved: `Distinct MCP servers seen by the hooks plugin, Claude Code telemetry, or the MCP inventory and marked not approved on AI usage (unreviewed ones are not counted here). ${WINDOW}`,
   lateDevices: `Machines whose hooks plugin records arrived an hour or more after they happened (sent later from the plugin's offline queue). ${WINDOW}`,
 
   // Health.

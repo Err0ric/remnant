@@ -46,8 +46,11 @@ class Routed:
 def read_question(
     question: str, now: datetime, tz: str | None, ident: IdentityMap | None
 ) -> tuple[Span | None, list[Entity]]:
-    people = set(ident.aliases) | set(ident.aliases.values()) if ident else set()
-    return parse_time(question, now, tz), find_entities(question, people)
+    return parse_time(question, now, tz), find_entities(question, read_people(ident))
+
+
+def read_people(ident: IdentityMap | None) -> set[str]:
+    return set(ident.aliases) | set(ident.aliases.values()) if ident else set()
 
 
 def output_columns(
@@ -104,8 +107,8 @@ def route_question(
     values = dict(params)
     values.setdefault("start", when.start or datetime(1970, 1, 1, tzinfo=now.tzinfo))
     values.setdefault("end", when.end or now)
-    if uses_identities(q.sql):  # {{person:...}}: the Identities links as they are now (D205)
-        values |= (ident or IdentityMap()).sql_values()
+    if uses_identities(q.sql):  # a zero-row describe: the columns need no links (T70, D219)
+        values |= IdentityMap().sql_values()
     columns = output_columns(engine, q.sql, when, values)
     p = plan(q, columns, entities, params, ident)
     if p.unused:

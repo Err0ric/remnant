@@ -39,8 +39,8 @@ interface ResultsTableProps {
   fresh?: Set<string>;
   /** Told when a row opens or closes (Live holds new rows while one is open). */
   onOpenChange?: (open: boolean) => void;
-  /** Times in the viewer's zone with UTC on hover, as Ask shows them, instead of the
-   * UTC stamps Logs shows (a person's sign-ins, review item 6). */
+  /** Times in the viewer's zone with UTC on hover, as Ask shows them (on by default since
+   * 2026-11-08: Logs and Microsoft 365 tables showed raw UTC). False keeps UTC stamps. */
   localTimes?: boolean;
 }
 
@@ -54,7 +54,7 @@ export function ResultsTable({
   geo,
   fresh,
   onOpenChange,
-  localTimes = false,
+  localTimes = true,
 }: ResultsTableProps) {
   const geoOf = (v: unknown) => (geo && typeof v === "string" ? geo[v] : undefined);
   const intelOf = (v: unknown) =>
@@ -228,7 +228,7 @@ export function ResultsTable({
                             />
                           ) : null}
                           {localTimes && isIsoTime(row[i] ?? null) ? (
-                            <When iso={row[i] as string} />
+                            <When iso={row[i] as string} seconds />
                           ) : kindForColumn(c) ? (
                             <EntityLink
                               kind={kindForColumn(c) as EntityKind}

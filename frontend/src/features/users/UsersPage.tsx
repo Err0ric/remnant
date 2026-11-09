@@ -4,6 +4,7 @@ import { Command, PageHeader } from "@/components/shell/PageHeader";
 import { navigate } from "@/lib/route";
 import { ApiError, api, type User } from "@/lib/api";
 import { accountLink } from "@/lib/links";
+import { AuditorSqlSection } from "./AuditorSqlSection";
 import { GroupsSection } from "./GroupsSection";
 import { InviteForm } from "./InviteForm";
 import { OneTimeLink } from "./OneTimeLink";
@@ -123,6 +124,7 @@ export function UsersPage({ me }: UsersPageProps) {
             </p>
           ) : null}
         </section>
+        <AuditorSqlSection />
         <GroupsSection />
       </div>
     </div>

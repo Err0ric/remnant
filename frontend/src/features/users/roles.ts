@@ -10,5 +10,6 @@ export const ROLE_LABEL: Record<Role, string> = {
 export const ROLE_HELP: Record<Role, string> = {
   admin: "Manages users, groups, sources, and settings. Sees every source.",
   analyst: "Searches and investigates the sources their groups grant.",
-  auditor: "Read-only: searches granted sources and reviews the audit log. No edits.",
+  auditor:
+    "Read-only: reviews the audit log, dashboards, and reports. Runs no SQL unless an admin allows it below.",
 };

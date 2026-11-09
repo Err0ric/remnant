@@ -3,7 +3,7 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { Fragment, useState } from "react";
 import { api, type Cell, type M365Overview, type QueryResult } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { drillSql, openDrill } from "@/lib/drill";
+import { openDrill } from "@/lib/drill";
 import { LoadFailed } from "@/components/LoadFailed";
 import { When } from "@/components/When";
 import { SectionTitle } from "@/components/SectionTitle";
@@ -262,10 +262,9 @@ function ChangeTable({
  * grouped per service and day underneath. */
 export function AdminChanges({ m, timeZone }: { m: M365Overview; timeZone?: string }) {
   const sql = m.lists.admin;
-  const filled = drillSql({ sql, from: m.start, to: m.end });
   const q = useQuery<QueryResult>({
-    queryKey: ["m365-list", filled],
-    queryFn: () => api.query({ sql: filled, start: m.start, end: m.end }),
+    queryKey: ["m365-list", "admin", m.start, m.end],
+    queryFn: () => api.m365List("admin", m.start, m.end),
   });
   const [hideRoutine, setHideRoutine] = useState(true);
   const [open, setOpen] = useState<Set<string>>(new Set());

@@ -15,7 +15,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from app.api.access import AdminUser, CurrentUser, client_ip
+from app.api.access import AdminUser, CurrentUser, SqlUser, client_ip
 from app.auth.service import AuthService
 from app.auth.users import User
 from app.core import clock
@@ -67,7 +67,7 @@ def _narrowed(start: list[str] | None, now: list[str] | None) -> bool:
 @router.get("/search/live")
 async def live(
     request: Request,
-    user: CurrentUser,
+    user: SqlUser,
     q: Annotated[str, Query(min_length=1, max_length=MAX_SQL)],
     client: lv.Client = "browser",
     sources: Annotated[list[str] | None, Query(max_length=200)] = None,

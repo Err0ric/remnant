@@ -1,4 +1,5 @@
-"""/api/users (admin) and /api/account/password (link holders). Router only."""
+"""/api/users (admin), /api/account/password (link holders), and the setting that grants
+Auditors SQL (D220). Router only."""
 
 from typing import Literal
 
@@ -6,8 +7,9 @@ from fastapi import APIRouter, Request, Response, status
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from app.api.access import AdminUser, client_ip
+from app.api.access import AdminUser, CurrentUser, client_ip
 from app.api.auth import USERNAME
+from app.auth import auditor_sql
 from app.auth.admin import UserAdmin, UserRecord
 from app.auth.passwords import MAX_LENGTH, MIN_LENGTH
 from app.auth.service import AuthService
@@ -107,3 +109,31 @@ async def reset_user(user_id: str, request: Request, actor: AdminUser) -> ResetR
 async def set_password_from_link(body: PasswordFromLink, request: Request) -> Response:
     await run_in_threadpool(_admin(request).redeem, body.token, body.password, client_ip(request))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+class AuditorSql(BaseModel):
+    enabled: bool
+
+
+@router.get("/settings/auditor-sql")
+async def get_auditor_sql(request: Request, _: CurrentUser) -> AuditorSql:
+    """Whether Auditors may run SQL (D220). Anyone signed in may read it, for the UI."""
+    return AuditorSql(enabled=await run_in_threadpool(auditor_sql.enabled, request.app.state.meta))
+
+
+@router.put("/settings/auditor-sql")
+async def put_auditor_sql(body: AuditorSql, request: Request, user: AdminUser) -> AuditorSql:
+    """Grant or take back SQL for Auditors (off by default). Audited `settings.auditor_sql`."""
+    meta = request.app.state.meta
+    before = await run_in_threadpool(auditor_sql.enabled, meta)
+    after = await run_in_threadpool(auditor_sql.save, meta, body.enabled, user.user_id)
+    auth: AuthService = request.app.state.auth
+    await run_in_threadpool(
+        auth.audit.write,
+        "settings.auditor_sql",
+        "success",
+        user.user_id,
+        client_ip(request),
+        {"from": before, "to": after},
+    )
+    return AuditorSql(enabled=after)

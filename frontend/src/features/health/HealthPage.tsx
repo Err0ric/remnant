@@ -1,3 +1,4 @@
+import { localStamp } from "@/lib/localTime";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent, type ReactNode } from "react";
 import { PageHeader } from "@/components/shell/PageHeader";
@@ -108,7 +109,7 @@ function sourceRow(s: Source): Row {
     };
   if (st.warnings?.length) return { ...base, level: "attention", reason: st.warnings.join("; ") };
   if (st.retry_at)
-    return { ...base, level: "attention", reason: `Retrying at ${stamp(st.retry_at)} UTC` };
+    return { ...base, level: "attention", reason: `Retrying at ${localStamp(st.retry_at)}` };
   if (st.time_offset_text) return { ...base, level: "attention", reason: st.time_offset_text };
   if ((st.behind_s ?? 0) > 3600)
     return { ...base, level: "attention", reason: `Reading is ${human(st.behind_s ?? 0)} behind` };
@@ -317,7 +318,7 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
         `${ru.days_built.toLocaleString()} days built`,
         ru.pending === null ? "still to build: not checked yet" : `${ru.pending} still to build`,
         ru.last_built ? `last day built ${since(ru.last_built, now)}` : "no day built yet",
-        ru.today_cutoff ? `today up to ${stamp(ru.today_cutoff)} UTC` : "",
+        ru.today_cutoff ? `today up to ${localStamp(ru.today_cutoff)}` : "",
       ]
         .filter(Boolean)
         .join(" · "),

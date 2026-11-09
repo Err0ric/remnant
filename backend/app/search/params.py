@@ -11,7 +11,8 @@ from the client: `{{person:<column>}}` is the person a name in that column belon
 organization address reduced to its login, then the aliases an administrator set), and
 `{{org_domains}}` is the list of organization email domains. The lookup tables are bound
 as parameters, so a placeholder adds no text the guard has not seen; a name with no alias
-is its own person, never guessed.
+is its own person, never guessed. Those parameters are the server's: SQL a person or a
+model writes may not name them (T70, D219), so the expansion is the only way to them.
 """
 
 import re
@@ -20,13 +21,16 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
-from app.core.errors import ParamInvalidError, SearchInvalidError
+from app.core.errors import ParamInvalidError, QueryRejectedError, SearchInvalidError
 
 PLACEHOLDER = re.compile(r"\{\{\s*([a-z_][a-z0-9_]{0,31})\s*\}\}")
 PERSON = re.compile(r"\{\{\s*person:([a-z_][a-z0-9_]{0,63})\s*\}\}")
 RESERVED = frozenset({"start", "end", "org_domains"})
 # Bound by the server from Identities when a query uses {{person:...}} or {{org_domains}}.
 IDENTITY_PARAMS = ("id_org", "id_from", "id_to")
+# `$` then what DuckDB still reads as the same parameter: spaces, a comment (refused
+# outright, since block comments nest), or a quoted name. Case does not matter to DuckDB.
+_BOUND_REF = re.compile(r"\$\s*(?:/\*|--|\"?id_)", re.IGNORECASE)
 MAX_STRING = 500
 
 ParamType = Literal["int", "float", "string", "bool", "timestamp"]
@@ -73,10 +77,22 @@ def person_sql(column: str) -> str:
     return f"nullif(coalesce(list_extract($id_to, list_position($id_from, {k})), {k}), '')"
 
 
+def refuse_bound(sql: str) -> None:
+    """Refuse caller-written SQL that names a value the server binds for Identities: the
+    alias map and the organization domains are admin settings, readable only through
+    the {{person:...}} and {{org_domains}} expansions (T70, D219)."""
+    if _BOUND_REF.search(sql) or placeholders(sql) & set(IDENTITY_PARAMS):
+        raise QueryRejectedError(
+            "Queries cannot name the Identities values ($id_... or {{id_org}}, {{id_from}},"
+            " {{id_to}}); use {{person:<column>}} or {{org_domains}}"
+        )
+
+
 def compile_sql(sql: str) -> str:
     """Replace {{name}} with $name, {{person:col}} with the person key of that column, and
     {{org_domains}} with the bound domain list. Only names and columns that passed the
-    patterns are ever emitted."""
+    patterns are ever emitted. The caller's own text is checked first (refuse_bound)."""
+    refuse_bound(sql)
     sql = PERSON.sub(lambda m: person_sql(m.group(1)), sql)
     return PLACEHOLDER.sub(
         lambda m: "$id_org" if m.group(1) == "org_domains" else f"${m.group(1)}", sql
@@ -84,6 +100,7 @@ def compile_sql(sql: str) -> str:
 
 
 def check_definition(sql: str, params: list[ParamDef]) -> None:
+    refuse_bound(sql)
     defined = {p.name for p in params}
     if len(defined) != len(params):
         raise SearchInvalidError("Parameter names must be unique")

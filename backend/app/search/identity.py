@@ -9,11 +9,16 @@ changes: this is applied when Investigations and AI usage read events.
 from __future__ import annotations
 
 import re
+import threading
+import time
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Any
 
 from app.core import clock
 from app.core.errors import ParamInvalidError
+from app.core.schema import COLUMNS_BY_NAME
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.meta.db import MetaDB
 
@@ -41,15 +46,53 @@ def key_of(name: str, domains: list[str]) -> str:
     return local if at and domain in domains else s
 
 
-def identity_values(sql: str, store: IdentityStore | None) -> dict[str, Any]:
+def identity_values(
+    sql: str,
+    store: IdentityStore | None,
+    engine: QueryEngine | None = None,
+    scope: QueryScope | None = None,
+    viewer: str | None = None,
+    role: str | None = None,
+) -> dict[str, Any]:
     """The Identities values a query needs at run time, or none when it uses neither
-    placeholder. Without a store (a test app) the map is empty: every name is its own
-    person and no domain is the organization's."""
-    from app.search.params import uses_identities
+    placeholder. Only the part of the map the caller's own events show is bound (T70,
+    D219): an alias whose account is in the scanned columns of `scope`, and an
+    organization domain one of those accounts is in. A guess at an account the caller
+    cannot read is its own person. An administrator (`role`) gets the whole map, with no
+    scan: the Identities page shows it to them anyway (D223). Without a store (a test
+    app), or without the engine and scope to check against, nothing is bound: every name
+    is its own person. Only the
+    values the SQL reads are returned: `{{org_domains}}` alone binds `id_org`, not the
+    alias lists (DuckDB refuses a parameter the statement does not use)."""
+    from app.search.params import PERSON, uses_identities
 
     if not uses_identities(sql):
         return {}
-    return (store.load() if store is not None else IdentityMap()).sql_values()
+    people = PERSON.findall(sql)
+    if store is not None and role == "admin":
+        found = store.load()
+    elif store is None or engine is None or scope is None:
+        found = IdentityMap()
+    else:
+        columns = {"actor_user_name"} | {c for c in people if c in COLUMNS_BY_NAME}
+        found = store.scoped(engine, scope, sorted(columns), viewer, role)
+    values = found.sql_values()
+    return values if people else {"id_org": values["id_org"]}
+
+
+SEEN_NAME = "SELECT DISTINCT CAST({c} AS VARCHAR) AS raw FROM events WHERE {c} IS NOT NULL"
+SEEN_SQL = """
+WITH r AS ({names}),
+n AS (SELECT DISTINCT regexp_replace(lower(trim(raw)), '^[^\\\\@]*\\\\', '') AS u FROM r),
+k AS (
+  SELECT split_part(u, '@', 2) AS d, position('@' IN u) > 0 AS mail,
+         CASE WHEN list_contains($seen_org, split_part(u, '@', 2))
+              THEN split_part(u, '@', 1) ELSE u END AS k
+  FROM n
+)
+SELECT DISTINCT 'd' AS kind, d AS v FROM k WHERE mail AND list_contains($seen_org, d)
+UNION
+SELECT DISTINCT 'k', k FROM k WHERE k IN (SELECT unnest($seen_keys))"""
 
 
 def key_sql(col: str) -> str:
@@ -88,6 +131,67 @@ class IdentityMap:
             "id_to": [p for _, p in pairs] or [""],
         }
 
+    def within(self, engine: QueryEngine, scope: QueryScope, columns: list[str]) -> IdentityMap:
+        """The part of this map that `scope` shows in `columns` (fixed schema names): the
+        aliases whose account is there and the organization domains of accounts there.
+        One scan per run of a query that uses Identities; none when the map is empty."""
+        if not self.domains and not self.aliases:
+            return self
+        names = "\nUNION\n".join(SEEN_NAME.format(c=c) for c in columns)
+        res = engine.run(
+            SEEN_SQL.format(names=names),
+            scope,
+            {"seen_org": self.domains or [""], "seen_keys": sorted(self.aliases) or [""]},
+            row_cap=MAX_ALIASES + MAX_DOMAINS,
+            timeout_s=20,
+            intel=False,
+            name="identities.scope",
+        )
+        seen = {(str(kind), str(v)) for kind, v in res.rows}
+        domains = [d for d in self.domains if ("d", d) in seen]
+        return IdentityMap(
+            domains=domains,
+            aliases={a: p for a, p in self.aliases.items() if ("k", a) in seen},
+            email_people=self._email_people_for(domains),
+        )
+
+    def seen_in(self, names: Iterable[str]) -> IdentityMap:
+        """The part of this map that `names` show: names read from the caller's own rows
+        (the events view), never a name the caller typed. The aliases whose account is
+        one of them and the organization domains one of them is in, as `within` keeps
+        from a scan; for a page that already holds the rows, so no scan is needed."""
+        if not self.domains and not self.aliases:
+            return self.copy()
+        doms: set[str] = set()
+        keys: set[str] = set()
+        for n in names:
+            if self.org_email(n):
+                doms.add(_strip(n).partition("@")[2])
+            keys.add(key_of(n, self.domains))
+        kept = [d for d in self.domains if d in doms]
+        return IdentityMap(
+            domains=kept,
+            aliases={a: p for a, p in self.aliases.items() if a in keys},
+            email_people=self._email_people_for(kept),
+        )
+
+    def _email_people_for(self, domains: list[str]) -> set[str]:
+        """People given as an organization address are shown in the first domain
+        (`display`); kept only while that domain is still the first one, else such a
+        person would be shown in a domain they were not given in."""
+        same = bool(domains) and bool(self.domains) and domains[0] == self.domains[0]
+        return set(self.email_people) if same else set()
+
+    def fingerprint(self) -> tuple[Any, ...]:
+        """The map's content, so a kept scoped set is never used after Identities change."""
+        return (
+            tuple(self.domains), tuple(sorted(self.aliases.items())),
+            tuple(sorted(self.email_people)),
+        )  # fmt: skip
+
+    def copy(self) -> IdentityMap:
+        return IdentityMap(list(self.domains), dict(self.aliases), set(self.email_people))
+
     def key(self, name: str) -> str:
         k = key_of(name, self.domains)
         return self.aliases.get(k, k)
@@ -112,9 +216,136 @@ class IdentityMap:
         return bool(at) and domain in self.domains
 
 
+SCOPED_TTL_S = 60.0  # as the page cache
+SCOPED_MAX = 256
+
+
+@dataclass(frozen=True, slots=True)
+class _Kept:
+    start: datetime | None
+    end: datetime | None
+    at: float
+    found: IdentityMap
+
+
+def _inside(scope: QueryScope) -> QueryScope:
+    """The range scanned for a kept set: the asked range with its ends moved inward to
+    whole minutes, so calls seconds apart (the top bar lookup's moving 30 days, a search
+    run again) find the same kept set. Narrower, so never an alias the asked range does
+    not show; an account seen only in an end's partial minute stays its own person."""
+    start, end = scope.start, scope.end
+    if start is not None and (start.second or start.microsecond):
+        start = start.replace(second=0, microsecond=0) + timedelta(minutes=1)
+    if end is not None:
+        end = end.replace(second=0, microsecond=0)
+    if start is not None and end is not None and start >= end:
+        return scope
+    return QueryScope(scope.sources, start, end)
+
+
+def _contains(scope: QueryScope, kept: _Kept) -> bool:
+    """The requested range holds the kept one (None is open). The kept set then read
+    fewer events than a fresh scan would, so it is the same or smaller: never an alias the
+    requested range does not show."""
+    starts = scope.start is None or (kept.start is not None and scope.start <= kept.start)
+    ends = scope.end is None or (kept.end is not None and kept.end <= scope.end)
+    return starts and ends
+
+
+class ScopedIdentities:
+    """The part of Identities a caller's scope shows (T70, D219), kept for a minute so a
+    page's calls (the person page asks for summary, risk, and graph at once) share one
+    scan. Kept per viewer and role, per exact source list (a grant change is a new
+    list), per columns, and per Identities content (any change is a new entry); reused only for a
+    range that contains the one scanned. Concurrent callers with the same key wait for
+    the one scan in flight."""
+
+    def __init__(
+        self, ttl_s: float = SCOPED_TTL_S, clock: Callable[[], float] = time.monotonic
+    ) -> None:
+        self._ttl = ttl_s
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._kept: dict[tuple[Any, ...], list[_Kept]] = {}
+        self._flight: dict[tuple[Any, ...], threading.Lock] = {}
+
+    def get(
+        self,
+        m: IdentityMap,
+        engine: QueryEngine,
+        scope: QueryScope,
+        columns: list[str],
+        viewer: str | None,
+        role: str | None = None,
+    ) -> IdentityMap:
+        if not m.domains and not m.aliases:
+            return m.copy()
+        if viewer is None:  # no one to keep it for
+            return m.within(engine, scope, columns)
+        sources = None if scope.sources is None else tuple(sorted(scope.sources))
+        # The role is part of the key: a role change is a new entry (D223).
+        key = (viewer, role, sources, tuple(sorted(columns)), m.fingerprint())
+        hit = self._find(key, scope)
+        if hit is not None:
+            return hit
+        scope = _inside(scope)  # what is scanned: never wider than asked
+        hit = self._find(key, scope)
+        if hit is not None:
+            return hit
+        with self._lock:
+            flight = self._flight.setdefault(key, threading.Lock())
+        with flight:
+            hit = self._find(key, scope)
+            if hit is not None:
+                return hit
+            found = m.within(engine, scope, columns)
+            with self._lock:
+                if len(self._kept) >= SCOPED_MAX and key not in self._kept:
+                    self._prune()
+                entries = self._kept.setdefault(key, [])
+                entries.append(_Kept(scope.start, scope.end, self._clock(), found.copy()))
+                del entries[:-4]
+            return found
+
+    def _find(self, key: tuple[Any, ...], scope: QueryScope) -> IdentityMap | None:
+        now = self._clock()
+        with self._lock:
+            for kept in reversed(self._kept.get(key, [])):
+                if now - kept.at < self._ttl and _contains(scope, kept):
+                    return kept.found.copy()
+        return None
+
+    def _prune(self) -> None:
+        now = self._clock()
+        for k in [k for k, v in self._kept.items() if all(now - e.at >= self._ttl for e in v)]:
+            del self._kept[k]
+            self._flight.pop(k, None)
+        while len(self._kept) >= SCOPED_MAX:
+            k = next(iter(self._kept))
+            del self._kept[k]
+            self._flight.pop(k, None)
+
+
 class IdentityStore:
     def __init__(self, meta: MetaDB) -> None:
         self._meta = meta
+        self._scoped = ScopedIdentities()
+
+    def scoped(
+        self,
+        engine: QueryEngine,
+        scope: QueryScope,
+        columns: list[str],
+        viewer: str | None,
+        role: str | None = None,
+    ) -> IdentityMap:
+        """The part of the map `viewer`'s scope shows in `columns` (T70, D219). An
+        administrator gets the whole map with no scan, since the Identities page shows it
+        to them (D223); every other role is scoped, holding every source group or not."""
+        m = self.load()
+        if role == "admin":
+            return m
+        return self._scoped.get(m, engine, scope, columns, viewer, role)
 
     def load(self) -> IdentityMap:
         with self._meta.connect() as con:

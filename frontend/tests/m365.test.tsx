@@ -44,12 +44,17 @@ describe("Microsoft 365 area (ADR-0038 section 5)", () => {
   it("lists a tab's events over the page window", async () => {
     const spy = await renderAt("/m365/sign-ins");
     await screen.findByRole("region", { name: "Sign-ins: Real failures" });
+    // The server builds and runs the list; the page sends its name and window, never SQL
+    // (owner, 2026-11-08).
     await waitFor(() => {
-      const bodies = spy.mock.calls
-        .filter(([u, i]) => String(u).endsWith("/api/query") && i?.method === "POST")
-        .map(([, i]) => JSON.parse(String(i?.body)) as { sql: string; start?: string });
-      expect(bodies.some((b) => b.sql.includes("2026-10-24T00:00:00+00:00") && b.start)).toBe(true);
+      const urls = spy.mock.calls
+        .map(([u]) => String(u))
+        .filter((u) => u.includes("/api/m365/list?"));
+      expect(urls.some((u) => u.includes("name=sign_ins") && u.includes("start=2026-10-24"))).toBe(
+        true,
+      );
     });
+    expect(spy.mock.calls.some(([u]) => String(u).endsWith("/api/query"))).toBe(false);
   });
 
   it("names the top user and app of each spike in the tooltip (owner 2026-10-31)", async () => {
@@ -91,10 +96,10 @@ describe("Failed sign-ins by class (D158)", () => {
     const spy = await renderAt("/m365/sign-ins");
     const list = await screen.findByRole("region", { name: "Sign-ins: Real failures" });
     const sent = () =>
-      spy.mock.calls
-        .filter(([u, i]) => String(u).endsWith("/api/query") && i?.method === "POST")
-        .map(([, i]) => (JSON.parse(String(i?.body)) as { sql: string }).sql);
-    await waitFor(() => expect(sent().some((q) => q.includes("'failed/all'"))).toBe(true));
+      spy.mock.calls.map(([u]) => String(u)).filter((u) => u.includes("/api/m365/list?"));
+    await waitFor(() =>
+      expect(sent().some((q) => q.includes("cls=failed") && q.includes("mode=all"))).toBe(true),
+    );
     await userEvent.click(within(list).getByRole("button", { name: "Expired" }));
     await userEvent.click(
       within(screen.getByRole("region", { name: "Sign-ins: Expired" })).getByRole("button", {
@@ -102,7 +107,9 @@ describe("Failed sign-ins by class (D158)", () => {
       }),
     );
     await waitFor(() =>
-      expect(sent().some((q) => q.includes("'expired/noninteractive'"))).toBe(true),
+      expect(
+        sent().some((q) => q.includes("cls=expired") && q.includes("mode=noninteractive")),
+      ).toBe(true),
     );
     await userEvent.click(screen.getByRole("button", { name: "All" }));
     expect(await screen.findByRole("region", { name: "Sign-ins" })).toBeVisible();

@@ -9,11 +9,13 @@ from starlette.concurrency import run_in_threadpool
 
 from app.api.access import CurrentUser, client_ip
 from app.api.alert_items import _readable
+from app.api.identities import caller_identities
 from app.auth.service import AuthService
 from app.auth.users import User
 from app.core import clock
 from app.engine.duckdb import QueryScope
 from app.engine.views import permitted_sources
+from app.search.identity import IdentityMap
 from app.search.person_hosts import person_hosts
 from app.search.timeline import Row, timeline, window
 
@@ -61,15 +63,16 @@ async def person_timeline(
     """One row per action by this person across the sources the caller may read, newest
     first, with the forms of the name that matched. Audited `search.timeline`."""
     allowed = await run_in_threadpool(permitted_sources, request.app.state.meta, user)
-    ident = await run_in_threadpool(request.app.state.identities.load)
     start, end = window(days, clock.now())
+    # The person's other forms, as far as the caller's scope shows them (T70, D219, D223).
+    ident = await caller_identities(request, user, QueryScope(allowed, start, end))
     out = await run_in_threadpool(
         timeline, request.app.state.engine, allowed, ident,
         request.app.state.ai_catalog.domain_table(), person[:256], start, end,
         request.app.state.ai_rollup,
     )  # fmt: skip
     out.rows = await run_in_threadpool(
-        _with_alerts, request, user, out.rows, person[:256], start, end
+        _with_alerts, request, user, out.rows, person[:256], start, end, ident
     )
     auth: AuthService = request.app.state.auth
     await run_in_threadpool(
@@ -115,10 +118,11 @@ async def person_hosts_route(
     """The hosts and source addresses on this person's own records, busiest first, with
     failed sign-ins and first and last seen (D197). Audited `search.person_hosts`."""
     allowed = await run_in_threadpool(permitted_sources, request.app.state.meta, user)
-    ident = await run_in_threadpool(request.app.state.identities.load)
     start, end = window(days, clock.now())
+    scope = QueryScope(allowed, start, end)
+    ident = await caller_identities(request, user, scope)  # T70, D219, D223
     out = await run_in_threadpool(
-        person_hosts, request.app.state.engine, QueryScope(allowed, start, end), ident,
+        person_hosts, request.app.state.engine, scope, ident,
         person[:256],
     )  # fmt: skip
     auth: AuthService = request.app.state.auth
@@ -135,11 +139,16 @@ async def person_hosts_route(
 
 
 def _with_alerts(
-    request: Request, user: User, rows: list[Row], person: str, start: datetime, end: datetime
+    request: Request,
+    user: User,
+    rows: list[Row],
+    person: str,
+    start: datetime,
+    end: datetime,
+    ident: IdentityMap,
 ) -> list[Row]:
     """Alerts about the person in the window (ADR-0038 row 28), the ones the caller may
-    read, as rows that open the alert."""
-    ident = request.app.state.identities.load()
+    read, as rows that open the alert. `ident` is the timeline's own (T70, D219)."""
     keys = set(ident.keys_for(person))
     readable = _readable(request, user)
     lo, hi = start.isoformat(), end.isoformat()

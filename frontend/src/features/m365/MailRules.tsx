@@ -3,7 +3,7 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { useState } from "react";
 import { api, type Cell, type M365Overview, type QueryResult } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { drillSql, openDrill } from "@/lib/drill";
+import { openDrill } from "@/lib/drill";
 import { LoadFailed } from "@/components/LoadFailed";
 import { ResultsTable } from "@/features/search/ResultsTable";
 import { SectionTitle } from "@/components/SectionTitle";
@@ -95,10 +95,9 @@ export function bursts(result: QueryResult): Burst[] {
  * external forwarding are risky. */
 export function MailRules({ m }: { m: M365Overview }) {
   const sql = m.lists.mail;
-  const filled = drillSql({ sql, from: m.start, to: m.end });
   const q = useQuery<QueryResult>({
-    queryKey: ["m365-list", filled],
-    queryFn: () => api.query({ sql: filled, start: m.start, end: m.end }),
+    queryKey: ["m365-list", "mail", m.start, m.end],
+    queryFn: () => api.m365List("mail", m.start, m.end),
   });
   const [open, setOpen] = useState<Set<string>>(new Set());
   const groups = q.data ? bursts(q.data) : [];

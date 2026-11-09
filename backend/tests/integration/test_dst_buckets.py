@@ -95,6 +95,7 @@ def _signins() -> list[dict[str, Any]]:
     return out
 
 
+@pytest.mark.slow  # over 8 s; skipped in PR CI, run by the queue before every merge (D216)
 def test_m365_hourly_chart_across_fall_back_from_events_and_rollup(tmp_path: Path) -> None:
     engine, rollup = _lab(tmp_path)
     rollup._clock = lambda: NOW

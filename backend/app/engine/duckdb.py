@@ -2,8 +2,11 @@
 
 Every query gets a fresh in-memory DuckDB connection whose `events` view covers
 only the sources in scope and the requested time range. The connection is then
-sandboxed: file access limited to those sources' folders, external access off,
-configuration locked. The guard runs before any of this.
+locked (ADR-0047): it may open only the exact files its views read, so no new file can
+be written anywhere; external access, extension loading, and persistent secrets are
+off; the configuration is locked. The guard runs before any of this, and DuckDB's own
+parser must then see one SELECT statement, so a COPY that would overwrite a listed file
+never runs either.
 """
 
 import glob
@@ -32,6 +35,7 @@ from app.core.errors import (
     QueryBusyError,
     QueryFailedError,
     QueryMemoryError,
+    QueryRejectedError,
     QueryTimeoutError,
 )
 from app.core.schema import COLUMN_NAMES, COLUMNS_BY_NAME, duckdb_create_table_sql
@@ -452,6 +456,7 @@ class QueryEngine:
         started = time.perf_counter()
         healthy = False
         try:
+            _select_only(con, guarded.sql)  # before the timer: a refusal closes the connection
             # Inside the try: if no thread can start, the connection is still closed.
             timer.start()
             cursor = con.execute(guarded.sql, dict(params)) if params else con.execute(guarded.sql)
@@ -850,10 +855,10 @@ class QueryEngine:
         spill_mb: int | None = None,
     ) -> duckdb.DuckDBPyConnection:
         con = self._open(background, memory_mb, spill_mb)
-        readable = self._define(con, scope, intel, rollup, skip, after, upto, temp=False)
+        files = self._define(con, scope, intel, rollup, skip, after, upto, temp=False)
         if self._lookups is not None:
             register(con, self._lookups)
-        self._lock(con, readable)
+        self._lock(con, paths=files)
         return con
 
     def _kept_key(self) -> tuple[Any, ...]:
@@ -892,7 +897,10 @@ class QueryEngine:
         fresh: Callable[[], None] = (
             register(con, self._lookups) if self._lookups is not None else (lambda: None)
         )
-        self._lock(con, self._roots())
+        # The app's own page SQL only (D146): files change between queries, so the kept
+        # instance may read the folders. The statement check still refuses anything but
+        # one SELECT (ADR-0047).
+        self._lock(con, dirs=self._roots())
         return key, con, fresh
 
     def _give_kept(
@@ -919,7 +927,14 @@ class QueryEngine:
         # Threads and memory at creation: connecting with the defaults first starts one
         # thread per core the host reports (inside a container, the host's cores), then
         # SET threads starts more (D79).
-        config: dict[str, str | bool | int | float | list[str]] = {}
+        # No extension is installed or loaded on demand, none from the community, and no
+        # secret is written to disk: a query can use only what is built in (ADR-0047).
+        config: dict[str, str | bool | int | float | list[str]] = {
+            "autoinstall_known_extensions": False,
+            "autoload_known_extensions": False,
+            "allow_community_extensions": False,
+            "allow_persistent_secrets": False,
+        }
         if background:
             config["threads"] = 1
         elif self._threads:
@@ -940,9 +955,21 @@ class QueryEngine:
             con.execute(f"SET custom_profiling_settings = '{_TRACE if self.trace else _PEAKS}'")
         return con
 
-    def _lock(self, con: duckdb.DuckDBPyConnection, readable: list[Path]) -> None:
-        allowed = ", ".join(_sql_str(str(d)) for d in readable)
-        con.execute(f"SET allowed_directories = [{allowed}]")
+    def _lock(
+        self,
+        con: duckdb.DuckDBPyConnection,
+        paths: Collection[str] = (),
+        dirs: Collection[Path] = (),
+    ) -> None:
+        """`paths`: the exact files the views read. DuckDB has no read-only switch per path
+        and a listed folder is writable, so a query connection lists files, never folders:
+        a file not listed cannot be created, read, or listed (ADR-0047). `dirs`: kept page
+        instances only."""
+        if paths:
+            con.execute(f"SET allowed_paths = [{', '.join(_sql_str(p) for p in paths)}]")
+        if dirs:
+            allowed = ", ".join(_sql_str(str(d)) for d in dirs)
+            con.execute(f"SET allowed_directories = [{allowed}]")
         con.execute("SET enable_external_access = false")
         con.execute("SET lock_configuration = true")
 
@@ -956,10 +983,11 @@ class QueryEngine:
         after: tuple[Collection[str], datetime] | None,
         upto: datetime | None,
         temp: bool,
-    ) -> list[Path]:
+    ) -> list[str]:
         """The query's views: `events` from the scope's files, and the rollup and intel
         tables. `temp` (a kept instance): connection-local objects, dropped before the next
-        query defines its own. Returns the folders they read."""
+        query defines its own. Returns the files they read, each listed by name (never a
+        glob, which the connection lock could not allow without allowing its folder)."""
         dirs = self._source_dirs(scope)
         view = "CREATE TEMP VIEW" if temp else "CREATE VIEW"
         # How a failed Entra sign-in is counted, from the classes in force (D158).
@@ -1008,11 +1036,12 @@ class QueryEngine:
             cut = f"time_observed <= {_ts(upto)}"
             where = f"{where} AND {cut}" if where else f" WHERE {cut}"
         con.execute(f"{view} events AS SELECT * FROM {base}{where}")  # noqa: S608  # built from escaped server paths and datetime literals only
-        readable = [d.resolve() for d in dirs]
+        readable = files + cut_files
         if rollup:
             rdirs = self.rollup_dirs(scope)
-            if rdirs:
-                globs = ", ".join(_sql_str(str(d / ROLLUP_FILES)) for d in rdirs)
+            rfiles = [str(f) for d in rdirs for f in sorted(d.glob(ROLLUP_FILES))]
+            if rfiles:
+                globs = ", ".join(_sql_str(f) for f in rfiles)
                 hours = []
                 if scope.start is not None:
                     hours.append(f"t >= date_trunc('hour', {_ts(scope.start)})")
@@ -1023,7 +1052,7 @@ class QueryEngine:
                     f"{view} ai_rollup AS SELECT * FROM"  # noqa: S608  # escaped server paths and datetime literals only
                     f" read_parquet([{globs}], hive_partitioning = false){where}"
                 )
-                readable += [d.resolve() for d in rdirs]
+                readable += rfiles
             else:
                 con.execute(table(f"CREATE TABLE ai_rollup ({ROLLUP_COLUMNS})"))
             # Days in the range, and the one before (a span may start the day before).
@@ -1049,7 +1078,7 @@ class QueryEngine:
                     f"{view} ai_today AS SELECT * FROM"  # noqa: S608  # escaped server paths only
                     f" read_parquet([{listed}], hive_partitioning = false, union_by_name = true)"
                 )
-                readable += [d.resolve() for d in tdirs]
+                readable += today
             else:
                 con.execute(table(f"CREATE TABLE ai_today ({ROLLUP_COLUMNS}, label VARCHAR)"))
             mcps = [
@@ -1064,6 +1093,7 @@ class QueryEngine:
                     f"{view} ai_mcp AS SELECT * FROM"  # noqa: S608  # escaped server paths only
                     f" read_parquet([{listed}], hive_partitioning = false)"
                 )
+                readable += mcps
             else:
                 con.execute(table(f"CREATE TABLE ai_mcp ({MCP_COLUMNS})"))
             if idents:
@@ -1072,17 +1102,19 @@ class QueryEngine:
                     f"{view} ai_ident AS SELECT * FROM"  # noqa: S608  # escaped server paths only
                     f" read_parquet([{listed}], hive_partitioning = false)"
                 )
+                readable += idents
             else:
                 con.execute(table(f"CREATE TABLE ai_ident ({IDENT_COLUMNS})"))
             for name, (_folder, columns) in self._facts.items():
                 mdirs = self.rollup_dirs(scope, table=name)
-                if mdirs:
-                    globs = ", ".join(_sql_str(str(d / ROLLUP_FILES)) for d in mdirs)
+                mfiles = [str(f) for d in mdirs for f in sorted(d.glob(ROLLUP_FILES))]
+                if mfiles:
+                    globs = ", ".join(_sql_str(f) for f in mfiles)
                     con.execute(
                         f"{view} {name} AS SELECT * FROM"  # noqa: S608  # fixed table names, escaped server paths
                         f" read_parquet([{globs}], hive_partitioning = false)"
                     )
-                    readable += [d.resolve() for d in mdirs]
+                    readable += mfiles
                 else:
                     con.execute(table(f"CREATE TABLE {name} ({columns})"))
         if intel:
@@ -1091,10 +1123,24 @@ class QueryEngine:
                     f"{view} threat_intel AS SELECT indicator, type, feed, threat,"  # noqa: S608  # escaped server path only
                     f" first_seen, last_seen FROM read_parquet({_sql_str(str(self._intel))})"
                 )
-                readable.append(self._intel.parent.resolve())
+                readable.append(str(self._intel))
             else:
                 con.execute(table(f"CREATE TABLE threat_intel ({INTEL_COLUMNS})"))
         return readable
+
+
+def _select_only(con: duckdb.DuckDBPyConnection, sql: str) -> None:
+    """DuckDB's own parser must see exactly one SELECT (WITH, UNION, FROM-first, and
+    DESCRIBE or SUMMARIZE of a query parse as SELECT). The guard already refused
+    everything else with sqlglot; this is the check with the parser that runs the query,
+    so a parser difference cannot carry a COPY, CREATE, ATTACH, SET, or PRAGMA through
+    (T2, ADR-0047)."""
+    try:
+        statements = con.extract_statements(sql)
+    except duckdb.Error as exc:
+        raise QueryRejectedError("Could not parse SQL as a single SELECT statement") from exc
+    if len(statements) != 1 or statements[0].type != duckdb.StatementType.SELECT:
+        raise QueryRejectedError("Statement not allowed: only SELECT or WITH ... SELECT can run")
 
 
 def _rows_read(con: duckdb.DuckDBPyConnection) -> int | None:

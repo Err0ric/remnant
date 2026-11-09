@@ -210,8 +210,12 @@ def _list(
     if unreviewed:
         found = [i for i in found if _unreviewed(request, i)]
     if person:
-        # One person under every form of the name (ADR-0018), as the person page shows it.
+        # One person under every form of the name (ADR-0018), as the person page shows it:
+        # the whole map for an administrator (D223), otherwise only the links the names on
+        # the caller's own alerts show (T70, D219), never a form typed in `person`.
         ident = request.app.state.identities.load()
+        if user.role != "admin":
+            ident = ident.seen_in(n for i in found if readable(i) for n in i.people)
         keys = set(ident.keys_for(person))
         found = [i for i in found if any(ident.key(p) in keys for p in i.people)]
     opened = found if state == "open" else store.items(user, "open")

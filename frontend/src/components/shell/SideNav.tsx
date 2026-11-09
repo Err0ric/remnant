@@ -28,6 +28,7 @@ import {
   type AreaTab,
 } from "@/lib/nav";
 import { navigate, pathFor, type PageId } from "@/lib/route";
+import { useViewer } from "@/lib/viewer";
 
 interface SideNavProps {
   active: string;
@@ -35,7 +36,7 @@ interface SideNavProps {
   activeTab: string;
   isAdmin: boolean;
   canAudit: boolean;
-  /** Admins and analysts; auditors have no Ask. */
+  /** Defaults to the viewer's: Auditors have no Ask unless the Auditor SQL setting is on (D220). */
   canAsk?: boolean;
   /** Narrow screens only: shown when the top bar's Menu button is pressed. */
   open?: boolean;
@@ -197,9 +198,11 @@ export function SideNav({
   activeTab,
   isAdmin,
   canAudit,
-  canAsk = true,
+  canAsk: canAskProp,
   open = false,
 }: SideNavProps) {
+  const viewer = useViewer();
+  const canAsk = canAskProp ?? viewer.canAsk ?? true;
   const [collapsed, setCollapsed] = useState(readCollapsed);
   const settings = visibleSettings(isAdmin, canAudit);
   // Settings opens on Sources, the page used most; the checklist is first in its list.

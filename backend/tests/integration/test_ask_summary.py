@@ -100,7 +100,7 @@ def test_a_bad_reply_leaves_the_rows_without_a_summary(lab: dict[str, Any]) -> N
 def test_rows_without_event_ids_get_only_the_headline(lab: dict[str, Any]) -> None:  # noqa: F811
     calls = len(lab["script"].seen)
     ana, ask_id, out = _ran(lab, "SELECT source_id, count(*) AS events FROM events GROUP BY 1")
-    assert out["headline"] == "source_id: fw_edge; events: 8"
+    assert out["headline"] == "source: fw_edge; events: 8"  # plain column names (#452)
     assert out["summarize"] is False
     assert out["summary_note"] == "No summary: these rows have no event ids to cite."
     after_run = len(lab["script"].seen)

@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Request, Response, status
 from pydantic import BaseModel, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 
-from app.api.access import AdminUser, CurrentUser, client_ip, require_role
+from app.api.access import AdminUser, CurrentUser, SqlUser, client_ip, require_role
 from app.api.query import QueryResponse
 from app.auth.service import AuthService
 from app.auth.users import User
@@ -109,15 +109,12 @@ async def delete_search(search_id: str, request: Request, user: CurrentUser) -> 
 
 @router.post("/searches/{search_id}/run")
 async def run_search(
-    search_id: str, body: RunRequest, request: Request, user: CurrentUser
+    search_id: str, body: RunRequest, request: Request, user: SqlUser
 ) -> QueryResponse:
     search = await run_in_threadpool(_store(request).get, search_id, user)
     end = body.end or clock.now()
     start = body.start or end - timedelta(hours=24)
     values = bind(search.params, body.params, start, end, search.sql)
-    values |= await run_in_threadpool(
-        identity_values, search.sql, getattr(request.app.state, "identities", None)
-    )  # {{person:...}}: Identities as they are now (D205)
 
     meta: MetaDB = request.app.state.meta
     allowed = await run_in_threadpool(permitted_sources, meta, user)
@@ -127,6 +124,17 @@ async def run_search(
     sources = scope_sources(allowed, requested)  # the caller's grants, narrowed only
 
     engine: QueryEngine = request.app.state.engine
+    # {{person:...}}: Identities as they are now (D205), the part this caller's scope
+    # shows (T70, D219).
+    values |= await run_in_threadpool(
+        identity_values,
+        search.sql,
+        getattr(request.app.state, "identities", None),
+        engine,
+        QueryScope(sources, start, end),
+        user.user_id,
+        user.role,
+    )
     detail: dict[str, Any] = {
         "search_id": search_id,
         "params": {k: v for k, v in values.items() if k not in ("start", "end")},

@@ -131,6 +131,9 @@ class PersonUse:
     # hooks plugin), "network" (DNS, firewall, or proxy to a Claude service), or "both".
     seen_through: str = "plugin"
     via: list[str] = field(default_factory=list)  # telemetry, hooks
+    # Any cost or token metric arrived: without one, cost and tokens are not 0 but unknown
+    # (owner, 2026-11-08: "$0.00" read as free use).
+    cost_reported: bool = False
     # What the network saw for this person (network and both rows), and for a network
     # name no plugin person matches, the plugin person it may be (D190).
     network: NetUse | None = None
@@ -302,13 +305,16 @@ LIMIT 500"""  # noqa: S608  # fixed SQL text; domains checked against DOMAIN in 
 def daily_sql(pairs: list[tuple[str, str]], rollup: bool = False) -> str:
     """Use per service, person, machine, and UTC day: what AI Watch's cards and 30-day
     chart are counted from (ADR-0035 rows 10, 12). Person and machine stay apart, so a
-    count never adds people and devices together (owner, 2026-10-22)."""
+    count never adds people and devices together (owner, 2026-10-22). `period` says which
+    window the hour falls in: 2 from `$cur`, 1 from `$prev`, else 0, so the cards can count
+    a rolling 24 hours that does not start at midnight (D221)."""
     return f"""
 WITH {_use_ctes(pairs, rollup)}
 SELECT service_id, who, machine, CAST(timezone($tz, t) AS DATE) AS day,
-       sum(n)::BIGINT AS events, max(last_t) AS last_seen, min(first_t) AS first_seen
+       sum(n)::BIGINT AS events, max(last_t) AS last_seen, min(first_t) AS first_seen,
+       CASE WHEN last_t >= $cur THEN 2 WHEN last_t >= $prev THEN 1 ELSE 0 END AS period
 FROM r
-GROUP BY 1, 2, 3, 4
+GROUP BY 1, 2, 3, 4, 8
 LIMIT 500000"""  # noqa: S608  # fixed SQL text; domains checked against DOMAIN in _values
 
 
@@ -477,7 +483,8 @@ tel AS (
          count(*) FILTER (WHERE message = 'claude_code.tool_result') AS tools,
          count(*) FILTER (WHERE message = 'claude_code.api_error') AS errors,
          coalesce(sum(sens), 0) AS sensitive,
-         list(DISTINCT model) FILTER (WHERE model IS NOT NULL) AS models
+         list(DISTINCT model) FILTER (WHERE model IS NOT NULL) AS models,
+         bool_or(message IN ('claude_code.cost.usage', 'claude_code.token.usage')) AS metered
   FROM c WHERE person IS NOT NULL GROUP BY 1
 )
 SELECT coalesce(tel.person, hk.person) AS person,
@@ -487,7 +494,8 @@ SELECT coalesce(tel.person, hk.person) AS person,
        coalesce(tel.errors, 0) + coalesce(hk.errors, 0),
        coalesce(tel.sensitive, 0), coalesce(tel.models, []),
        list_filter(['telemetry', 'hooks'], x -> (x = 'telemetry' AND tel.person IS NOT NULL)
-                                               OR (x = 'hooks' AND hk.person IS NOT NULL)) AS via
+                                               OR (x = 'hooks' AND hk.person IS NOT NULL)) AS via,
+       coalesce(tel.metered, false)
 FROM tel FULL OUTER JOIN hk ON tel.person = hk.person
 ORDER BY 2 DESC, 3 DESC, 4 DESC
 LIMIT 1000"""  # noqa: S608  # fixed SQL text
@@ -635,10 +643,14 @@ class Usage:
         """(server name, sources, people, devices without a person, devices with one)."""
         return list(self._engine.run(REVIEW_MCP_SQL, scope, timeout_s=TIMEOUT_S, page=True).rows)
 
-    def daily(self, scope: QueryScope, tz: str = "UTC") -> tuple[list[list[Any]], list[str]]:
-        """(service id, person, machine, day, events, last seen, first seen) rows, and the
-        sources read. Days are the viewer's (`tz`)."""
-        result = self._run_use(daily_sql, scope, "ai_use.daily", {"tz": tz})
+    def daily(
+        self, scope: QueryScope, tz: str, cur: datetime, prev: datetime
+    ) -> tuple[list[list[Any]], list[str]]:
+        """(service id, person, machine, day, events, last seen, first seen, period) rows,
+        and the sources read. Days are the viewer's (`tz`); period 2 is from `cur`, 1 from
+        `prev` (hours, so a rolling window counts by the hour)."""
+        params = {"tz": tz, "cur": cur, "prev": prev}
+        result = self._run_use(daily_sql, scope, "ai_use.daily", params)
         return result.rows, result.sources
 
     def changes(
@@ -796,30 +808,7 @@ class Usage:
         """Claude usage per person; names that are one person are added up (ADR-0018).
         Sessions add up too, since one session is reported under one name."""
         rows = self._people(scope)
-        if ident is None:
-            return rows
-        merged: dict[str, PersonUse] = {}
-        email: dict[str, bool] = {}
-        for r in rows:
-            key = ident.key(r.person)
-            email[key] = email.get(key, False) or ident.org_email(r.person)
-            cur = merged.get(key)
-            if cur is None:
-                merged[key] = PersonUse(key, r.cost_usd, r.tokens, r.sessions, r.tool_calls,
-                                        r.errors, r.sensitive, list(r.models),
-                                        via=list(r.via))  # fmt: skip
-                continue
-            cur.via = sorted(set(cur.via) | set(r.via))
-            cur.cost_usd = round(cur.cost_usd + r.cost_usd, 4)
-            cur.tokens += r.tokens
-            cur.sessions += r.sessions
-            cur.tool_calls += r.tool_calls
-            cur.errors += r.errors
-            cur.sensitive += r.sensitive
-            cur.models = sorted(set(cur.models) | set(r.models))
-        for key, p in merged.items():
-            p.person = ident.display(key, email[key])
-        return sorted(merged.values(), key=lambda p: (-p.cost_usd, -p.tokens))
+        return rows if ident is None else merge_people(rows, ident)
 
     def _people(self, scope: QueryScope) -> list[PersonUse]:
         return [
@@ -833,11 +822,41 @@ class Usage:
                 sensitive=int(sens or 0),
                 models=sorted(str(m) for m in (models or [])),
                 via=[str(v) for v in (via or [])],
+                cost_reported=bool(metered),
             )
-            for p, usd, tokens, sessions, tools, errors, sens, models, via in self._rows(
+            for p, usd, tokens, sessions, tools, errors, sens, models, via, metered in self._rows(
                 PEOPLE_SQL, scope
             )
         ]
+
+
+def merge_people(rows: list[PersonUse], ident: IdentityMap) -> list[PersonUse]:
+    """Names that are one person, added up (ADR-0018), shown in the email form `ident`
+    gives them. The caller passes the part of Identities it may use (T70, D219, D223)."""
+    merged: dict[str, PersonUse] = {}
+    email: dict[str, bool] = {}
+    for r in rows:
+        key = ident.key(r.person)
+        email[key] = email.get(key, False) or ident.org_email(r.person)
+        cur = merged.get(key)
+        if cur is None:
+            merged[key] = PersonUse(key, r.cost_usd, r.tokens, r.sessions, r.tool_calls,
+                                    r.errors, r.sensitive, list(r.models),
+                                    via=list(r.via),
+                                    cost_reported=r.cost_reported)  # fmt: skip
+            continue
+        cur.via = sorted(set(cur.via) | set(r.via))
+        cur.cost_reported = cur.cost_reported or r.cost_reported
+        cur.cost_usd = round(cur.cost_usd + r.cost_usd, 4)
+        cur.tokens += r.tokens
+        cur.sessions += r.sessions
+        cur.tool_calls += r.tool_calls
+        cur.errors += r.errors
+        cur.sensitive += r.sensitive
+        cur.models = sorted(set(cur.models) | set(r.models))
+    for key, p in merged.items():
+        p.person = ident.display(key, email[key])
+    return sorted(merged.values(), key=lambda p: (-p.cost_usd, -p.tokens))
 
 
 def seen_through(

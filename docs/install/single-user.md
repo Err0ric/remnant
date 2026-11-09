@@ -36,6 +36,12 @@ docker compose logs app | grep "SHA-256"
 
 Open the link (it is single-use and expires in 30 minutes) and compare the certificate fingerprint in the browser warning with the log line before continuing. The folder in `LOGS_DIR` appears inside the app as `/logs`.
 
+## Updating and rolling back
+
+Before a major update, take a snapshot of the VM or container if your platform supports it; the rollback command only covers versions installed after this one.
+
+From source: `git pull`, then the build commands above again. Docker: the update command in [team-vm.md, Docker Compose](team-vm.md#a-docker-compose). To roll back, check out the earlier commit (`git checkout --detach <commit>`; `git reflog` lists where the checkout has been) and build the same way; `git checkout main` before the next update rolls forward. Your data stays; see [What rolling back does to your data](team-vm.md#what-rolling-back-does-to-your-data).
+
 ## Next steps
 
 - **Sources > Add source** for each log file or folder (the Automatic parser handles mixed syslog)

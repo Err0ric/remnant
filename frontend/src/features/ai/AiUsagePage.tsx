@@ -153,9 +153,16 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
         : ["services", "people", "inventory"];
   const [tab] = useSectionTab<Tab>(tabs);
   const data = tooBig ? fallback.data : usage.data;
-  const notApproved =
-    (data?.services.filter((s) => s.service.status === "not_approved").length ?? 0) +
-    (data?.mcp.filter((m) => m.status === "not_approved").length ?? 0);
+  // Services and MCP servers are said apart (owner, 2026-11-08): "2 not approved" read as
+  // two services when one was an MCP server.
+  const svcRefused = data?.services.filter((s) => s.service.status === "not_approved").length ?? 0;
+  const mcpRefused = data?.mcp.filter((m) => m.status === "not_approved").length ?? 0;
+  const notApproved = [
+    svcRefused ? `${svcRefused} ${svcRefused === 1 ? "service" : "services"}` : "",
+    mcpRefused ? `${mcpRefused} ${mcpRefused === 1 ? "MCP server" : "MCP servers"}` : "",
+  ]
+    .filter(Boolean)
+    .join(" and ");
   const sensitive = data?.people.reduce((n, p) => n + p.sensitive, 0) ?? 0;
   // Claude Code users are people the plugin (telemetry or hooks) saw; network-only rows are
   // people who reached Claude on the network with no plugin record (owner 2026-11-02).
@@ -567,6 +574,8 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
                           <td className={`${TD} text-right font-mono tabular-nums`}>
                             {!reportsCost(p) ? (
                               <NotReported />
+                            ) : p.cost_reported === false ? (
+                              <NoCostData />
                             ) : typeof p.cost_usd === "number" && Number.isFinite(p.cost_usd) ? (
                               p.cost_usd.toFixed(2)
                             ) : (
@@ -574,7 +583,13 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
                             )}
                           </td>
                           <td className={`${TD} text-right font-mono tabular-nums`}>
-                            {reportsCost(p) ? p.tokens.toLocaleString() : <NotReported />}
+                            {!reportsCost(p) ? (
+                              <NotReported />
+                            ) : p.cost_reported === false ? (
+                              <NoCostData />
+                            ) : (
+                              p.tokens.toLocaleString()
+                            )}
                           </td>
                           <td className={`${TD} text-right font-mono tabular-nums`}>
                             {p.sessions}
@@ -637,6 +652,19 @@ function NotReported() {
       title="Only Claude Code telemetry reports cost and tokens"
     >
       Not reported
+    </span>
+  );
+}
+
+/** Telemetry arrived but no cost or token metric did: unknown, never "0.00" (owner,
+ * 2026-11-08). Usually the metrics exporter is not turned on. */
+function NoCostData() {
+  return (
+    <span
+      className="font-sans text-text-muted"
+      title="No cost or token metrics arrived from Claude Code telemetry for this person. Check that the metrics exporter is turned on."
+    >
+      No cost data
     </span>
   );
 }

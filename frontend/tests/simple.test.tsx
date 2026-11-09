@@ -160,7 +160,7 @@ describe("Simple search", () => {
     view.unmount();
     // Auditors have no Ask AI: no rail row, no header tab, and /ask-ai lands on Logs.
     await renderAt("/ask-ai", { mode: "login", signedIn: true, role: "auditor" });
-    expect(await screen.findByRole("tab", { name: "Filters", selected: true })).toBeVisible();
+    expect(await screen.findByRole("region", { name: "SQL not available" })).toBeVisible(); // D220
     await vi.waitFor(() => expect(window.location.pathname).toBe("/investigate/logs"));
     const audNav = screen.getByRole("navigation", { name: "Primary" });
     expect(within(audNav).queryByRole("link", { name: "Ask AI" })).toBeNull();

@@ -216,8 +216,11 @@ def summary(
 
     cur_from = today - timedelta(days=days - 1)  # whole days in the viewer's zone, today too
     prev_from = cur_from - timedelta(days=days)
-    window_from = min(prev_from, today - timedelta(days=CHART_DAYS - 1))
-    start = midnight(window_from)
+    if days == 1:  # "24 hours" is a rolling 24 hours ending now, not since midnight (D221)
+        cur_start, prev_start = now - ROLLING, now - 2 * ROLLING
+    else:
+        cur_start, prev_start = midnight(cur_from), midnight(prev_from)
+    start = min(prev_start, midnight(today - timedelta(days=CHART_DAYS - 1)))
     services = {s.id: s for s in catalog.services()}
     # The signal cards read other sources: run them beside the daily use, not after it.
     pool = ThreadPoolExecutor(max_workers=1)
@@ -226,12 +229,12 @@ def summary(
         engine,
         allowed,
         kinds,
-        midnight(cur_from),
-        midnight(prev_from),
+        cur_start,
+        prev_start,
         now,
     )
     try:
-        rows, read = usage.daily(QueryScope(allowed, start, now), where.key)
+        rows, read = usage.daily(QueryScope(allowed, start, now), where.key, cur_start, prev_start)
         signals, read_signals = signals_job.result()
     finally:
         pool.shutdown(wait=False)
@@ -257,7 +260,7 @@ def summary(
     use: dict[str, _Use] = {}
     first_in_rows: dict[str, datetime] = {}
     chart_svcs: set[str] = set()
-    for sid, who, machine, day_v, events, last, first in rows:
+    for sid, who, machine, day_v, events, last, first, period in rows:
         if not is_use(sid):
             continue
         d = _day(day_v)
@@ -265,19 +268,19 @@ def summary(
         f = _ts(first)
         if f is not None and (sid not in first_in_rows or f < first_in_rows[sid]):
             first_in_rows[sid] = f
-        if d >= cur_from:
+        if period == 2:
             use.setdefault(sid, _Use()).add(who, machine, events, f, _ts(last))
         if d >= today - timedelta(days=CHART_DAYS - 1):
             chart[d][st] += int(events)
             chart_svcs.add(sid)
         unapproved = st != "approved"
-        if d >= cur_from:
+        if period == 2:
             if unapproved:
                 cur_svcs.add(sid)
                 cur.add(who, machine)
                 if who:
                     people_by_status[st].add(str(who))
-        elif d >= prev_from and unapproved:
+        elif period == 1 and unapproved:
             prev_svcs.add(sid)
             prev.add(who, machine)
 
@@ -316,7 +319,6 @@ def summary(
             drill=use_drill(unapproved_ids, "people"),
             devices_drill=use_drill(unapproved_ids, "devices"),
         ),
-        _agents_card(items, readable, cur_from, prev_from, kinds, allowed),
     ]
     cards.extend(signals)
 
@@ -332,6 +334,10 @@ def summary(
     # First seen is the earliest event ever: the window's rows or, earlier, the rollup's
     # first-seen index (owner 2026-10-29), never just the start of the window.
     index = usage.first_seen(allowed)
+    firsts = _firsts(
+        usage, engine, allowed, items, readable, now, prev_start, first_in_rows, services, index
+    )
+    cards.insert(2, _agents_card(firsts, items, readable, cur_start, prev_start, kinds, allowed))
 
     def first_ever(sid: str, seen: datetime | None) -> datetime | None:
         found = [t for t in (seen, first_in_rows.get(sid), index.get(f"service:{sid}")) if t]
@@ -353,8 +359,6 @@ def summary(
         )
         for sid, u in ranked[:TOP]
     ]
-    prev_start = midnight(prev_from)
-    cur_start = midnight(cur_from)
     oldest = min(first_in_rows.values(), default=None)
     compared = oldest is None or (cur_start - max(prev_start, oldest)) >= 0.9 * (
         cur_start - prev_start
@@ -367,7 +371,7 @@ def summary(
         chart_days,
         top,
         sorted(set(read) | set(read_signals)),
-        _new(usage, engine, allowed, items, readable, now, first_in_rows, services, index),
+        [n for n in firsts if n.first_seen >= (now - NEW_WINDOW).isoformat()],
         compared=compared,
         since=oldest.isoformat() if oldest is not None and oldest > prev_start else None,
         before=prev_start.isoformat(),
@@ -376,6 +380,7 @@ def summary(
 
 
 NEW_WINDOW = timedelta(hours=24)
+ROLLING = timedelta(hours=24)
 HISTORY = timedelta(days=30)  # telemetry read for MCP servers and agents; older days: index
 
 
@@ -386,23 +391,25 @@ def _ts(v: Any) -> datetime | None:
     return d if d.tzinfo else d.replace(tzinfo=UTC)
 
 
-def _new(
+def _firsts(
     usage: Usage,
     engine: QueryEngine,
     allowed: list[str] | None,
     items: list[AlertItem],
     readable: Callable[[AlertItem], bool],
     now: datetime,
+    since: datetime,
     services_first: dict[str, datetime],
     known: dict[str, Service],
     index: dict[str, datetime],
 ) -> list[NewThing]:
-    """First seen in the last 24 hours: never seen before in the rows of the summary's
-    window, nor in any closed day the rollup's first-seen index has (D116, F63). MCP
-    servers and agents are read from telemetry, which is small; services come from the
-    summary's own rows, so this reads no further events for them."""
-    cutoff = now - NEW_WINDOW
-    scope = QueryScope(allowed, now - HISTORY, now)
+    """Services, MCP servers, and agents first seen from `since` on: never seen before in
+    the rows of the summary's window, nor in any closed day the rollup's first-seen index
+    has (D116, F63). MCP servers and agents are read from telemetry, which is small;
+    services come from the summary's own rows, so this reads no further events for them.
+    "New in 24 hours" and the new agents card are both cut from this list."""
+    cutoff = since
+    scope = QueryScope(allowed, min(now - HISTORY, since), now)
     item_of: dict[str, str] = {}
     for i in sorted(items, key=lambda i: i.created_at):
         if readable(i):
@@ -470,29 +477,34 @@ def _readable_kind(
 
 
 def _agents_card(
+    firsts: list[NewThing],
     items: list[AlertItem],
     readable: Callable[[AlertItem], bool],
-    cur_from: date,
-    prev_from: date,
+    cur_start: datetime,
+    prev_start: datetime,
     kinds: dict[str, list[str]],
     allowed: list[str] | None,
 ) -> Card:
+    """Agents and MCP servers first seen in the window and in the one before, never the
+    alerts raised for them (owner, 2026-11-08; D116)."""
     mine, have = _readable_kind(kinds, allowed, {"telemetry"})
     label = "New agents and MCP servers"
     if not have:
         return Card("agents", label, None, None, needs="Claude Code telemetry or the MCP inventory")
     if not mine:
         return Card("agents", label, None, None, restricted=True)
-    cur = prev = 0
-    unapproved = 0
-    for i in items:
-        if not (i.subject.startswith(("agent:", "mcp:")) and readable(i)):
+    refused = {i.subject for i in items if readable(i) and i.why == "Not approved"}
+    cur = prev = unapproved = 0
+    for n in firsts:
+        if n.kind == "service":
             continue
-        made = _day(i.created_at)
-        if made >= cur_from:
+        seen = _ts(n.first_seen)
+        if seen is None:
+            continue
+        if seen >= cur_start:
             cur += 1
-            unapproved += i.why == "Not approved"
-        elif made >= prev_from:
+            unapproved += f"{n.kind}:{n.id}" in refused
+        elif seen >= prev_start:
             prev += 1
     return Card("agents", label, cur, prev, f"{unapproved} not approved" if cur else "None new")
 

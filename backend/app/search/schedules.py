@@ -645,11 +645,18 @@ class ScheduleService:
             if sched.kind == "search":
                 search = self._searches.get(sched.target_id, owner)
                 values = bind(search.params, sched.params, start, last, search.sql)
-                # {{person:...}}: Identities as they are at this run (D205).
-                values |= identity_values(search.sql, IdentityStore(self._meta))
                 allowed = permitted_sources(self._meta, owner)
                 sources = scope_sources(allowed, search.sources)
                 scope = QueryScope(sources, start, last)
+                # {{person:...}}: Identities as they are at this run (D205), the part the
+                # owner's scope shows (T70, D219).
+                values |= identity_values(
+                    search.sql,
+                    IdentityStore(self._meta),
+                    self._engine,
+                    scope,
+                    role=owner.role,
+                )
                 sql = compile_sql(search.sql).strip().rstrip(";")
                 search_sql = sql
                 # The full count, not just the rows a result can hold.

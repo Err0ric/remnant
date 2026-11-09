@@ -1,0 +1,1 @@
+| D221 | How Detections and AI Watch count (owner, 2026-11-08): the Detections headline counts distinct matched events, with rule matches second ("466 events (747 rule matches)"), and its click-through to Logs carries the same source filter the count used. AI Watch "24 hours" is a rolling 24 hours ending now, not since local midnight | Accepted 2026-11-08 (owner) |

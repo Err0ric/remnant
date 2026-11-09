@@ -5,6 +5,7 @@
 #   sudo sh /opt/remnant/scripts/update-systemd.sh --aide     # check AIDE, update, re-baseline
 #   sudo sh /opt/remnant/scripts/update-systemd.sh --aide-accept  # accept reviewed AIDE changes
 #   sudo sh /opt/remnant/scripts/update-systemd.sh --no-pull  # code already in place
+#   sudo sh /opt/remnant/scripts/update-systemd.sh --rollback # back to the version before the last update
 #   sh /opt/remnant/scripts/update-systemd.sh --print-aide-rules  # show the AIDE rules
 #
 # With AIDE installed, every run writes this install's AIDE rules to
@@ -21,6 +22,14 @@
 # readable by the service user, starts the service, and checks it came up. Migrations run
 # on start. Files are written with umask 022 whatever the shell had (F50: an update run
 # with umask 077 left root-only files and the service failed with "Permission denied").
+#
+# Each successful update also records the commit it replaced (previous_commit, next to
+# installed_commit, same rules). --rollback stops the service, checks that commit out
+# (detached, verified), rebuilds as an update does, starts the service, and records it as
+# installed. It goes back one update only: a second --rollback is refused until the next
+# update (which also rolls forward). It refuses, changing nothing, without a recorded
+# previous commit or with uncommitted changes to tracked files. The database keeps what the
+# newer version added (migrations are additive; docs/install/team-vm.md, Roll back).
 #
 # Settings (environment): INSTALL_DIR (default /opt/remnant), SERVICE (default remnant),
 # REMOTE (default origin), BRANCH (default main), STATE_FILE (default
@@ -48,13 +57,15 @@ AIDE=0
 ACCEPT=0
 PULL=1
 PRINT_RULES=0
+ROLLBACK=0
 for arg in "$@"; do
   case $arg in
     --aide) AIDE=1 ;;
     --aide-accept) AIDE=1; ACCEPT=1 ;;
     --no-pull) PULL=0 ;;
     --print-aide-rules) PRINT_RULES=1 ;;
-    -h|--help) sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --rollback) ROLLBACK=1; PULL=0 ;;
+    -h|--help) sed -n '2,/^set -eu/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $arg (see --help)" >&2; exit 2 ;;
   esac
 done
@@ -66,6 +77,10 @@ if [ -r "$ENV_FILE" ]; then
   if [ -n "$found" ]; then DATA_DIR=${found%/}; fi
 fi
 STATE_FILE=${STATE_FILE:-$DATA_DIR/installed_commit}
+# Next to it, under the same rules: the commit the last update replaced (the rollback
+# target), and after a rollback, the commit rolled back from (for the refusal message).
+PREV_FILE=$(dirname "$STATE_FILE")/previous_commit
+FROM_FILE=$(dirname "$STATE_FILE")/rolled_back_from
 
 # AIDE rules (docs/install/team-vm.md, File integrity): skip data that changes on its own
 # and node_modules. Everything else stays under the distribution's rules, including tls/,
@@ -164,7 +179,8 @@ aide_check() {
                /^[a-zA-Z!][^:]*: \// { sub(/^[^:]*: /, ""); print }' "$report" | sort -u)
   inst=$(re_escape "$INSTALL_DIR")
   outside=$(printf '%s\n' "$paths" | grep -vE "^$inst(/|\$)" \
-    | grep -vxF -e "$STATE_FILE" -e "$AIDE_CONF_D/90_aide_remnant" | grep . || true)
+    | grep -vxF -e "$STATE_FILE" -e "$PREV_FILE" -e "$FROM_FILE" -e "$AIDE_CONF_D/90_aide_remnant" \
+    | grep . || true)
   rm -f "$report"
   if [ -n "$outside" ]; then
     AIDE_STATE=outside
@@ -232,10 +248,11 @@ make_readable() {
 }
 
 stopped=0
+ACTION=Update; [ "$ROLLBACK" -eq 1 ] && ACTION=Rollback
 restart_on_error() {
   status=$?
   if [ "$status" -ne 0 ] && [ "$stopped" -eq 1 ]; then
-    echo "Update failed (exit $status). Starting the service on whatever is installed." >&2
+    echo "$ACTION failed (exit $status). Starting the service on whatever is installed." >&2
     make_readable "$INSTALL_DIR" || true
     systemctl start "$SERVICE" || true
   fi
@@ -249,17 +266,56 @@ before=$(git_ rev-parse --short HEAD)
 # Trusted only when root wrote it (root:root, 0644, not a link): the data folder belongs
 # to the service user, so a file the service could have written is ignored, and the
 # update then builds instead of being talked into "up to date" (owner, 2026-11-01).
-installed=""
-if [ -e "$STATE_FILE" ] || [ -L "$STATE_FILE" ]; then
-  if [ ! -L "$STATE_FILE" ] && [ -f "$STATE_FILE" ] \
-    && [ "$(stat -c '%u:%g %a' "$STATE_FILE")" = "$STATE_OWNER 644" ]; then
-    installed=$(head -n 1 "$STATE_FILE" | tr -dc '0-9a-f')
-  else
-    echo "Ignoring $STATE_FILE: not a root:root 0644 file. The update will build." >&2
+read_record() {  # $1 file, $2 what ignoring it means
+  if [ -e "$1" ] || [ -L "$1" ]; then
+    if [ ! -L "$1" ] && [ -f "$1" ] && [ "$(stat -c '%u:%g %a' "$1")" = "$STATE_OWNER 644" ]; then
+      head -n 1 "$1" | tr -dc '0-9a-f'
+    else
+      echo "Ignoring $1: not a root:root 0644 file. $2" >&2
+    fi
   fi
-fi
-shown_installed=${installed:+$(printf '%.7s' "$installed")}
+}
+write_record() {  # $1 file, $2 commit: root-owned 0644, replaced in one step
+  mkdir -p "$(dirname "$1")"
+  record_tmp=$(mktemp "$1.XXXXXX")
+  printf '%s\n' "$2" > "$record_tmp"
+  chown "$STATE_OWNER" "$record_tmp"
+  chmod 0644 "$record_tmp"
+  mv -f "$record_tmp" "$1"
+}
+short() { printf '%.7s' "$1"; }
+installed=$(read_record "$STATE_FILE" "The update will build.")
+shown_installed=${installed:+$(short "$installed")}
 shown_installed=${shown_installed:-unknown}
+before_full=$(git_ rev-parse HEAD)
+
+if [ "$ROLLBACK" -eq 1 ]; then
+  prev=$(read_record "$PREV_FILE" "Rolling back needs a record written by the update script.")
+  if [ -z "$prev" ]; then
+    from=$(read_record "$FROM_FILE" "")
+    if [ -n "$from" ]; then
+      echo "Already rolled back from $(short "$from") to $shown_installed. A second rollback is refused: it goes back one update only. To roll forward: sudo sh $INSTALL_DIR/scripts/update-systemd.sh. Nothing was changed." >&2
+    else
+      echo "No previous version is recorded in $PREV_FILE, so there is nothing to roll back to (one is recorded by every successful update). Nothing was changed." >&2
+    fi
+    exit 1
+  fi
+  if ! prev_full=$(git_ rev-parse -q --verify "$prev^{commit}"); then
+    echo "The previous version $(short "$prev") is not in $INSTALL_DIR. Nothing was changed." >&2
+    exit 1
+  fi
+  if ! git_ merge-base --is-ancestor "$prev_full" HEAD; then
+    echo "The previous version $(short "$prev") is not an ancestor of the checkout ($before). Nothing was changed." >&2
+    exit 1
+  fi
+  if [ -n "$(git_ status --porcelain --untracked-files=no)" ]; then
+    echo "$INSTALL_DIR has uncommitted changes (git -C $INSTALL_DIR status). Rolling back would mix them in; commit or discard them first. Nothing was changed." >&2
+    exit 1
+  fi
+  rolled_from=${installed:-$before_full}
+  step "Rolling back $SERVICE"
+  echo "$(short "$rolled_from") -> $(short "$prev_full") (the version before the last update)"
+fi
 
 if [ "$PULL" -eq 1 ]; then
   # The fetch runs here, with the service still up: it never depends on the branch's
@@ -294,6 +350,17 @@ if [ "$PULL" -eq 1 ]; then
   else
     echo "$before -> $target (installed: $shown_installed)"
   fi
+  # Detached after a rollback: the move puts $BRANCH back at $REMOTE/$BRANCH, but only
+  # when that loses no local commit on it.
+  attach=0
+  if ! git_ symbolic-ref -q HEAD >/dev/null; then
+    attach=1
+    if git_ rev-parse -q --verify "refs/heads/$BRANCH" >/dev/null \
+      && ! git_ merge-base --is-ancestor "refs/heads/$BRANCH" "refs/remotes/$REMOTE/$BRANCH"; then
+      echo "Local $BRANCH has commits that are not on $REMOTE/$BRANCH. Nothing was changed." >&2
+      exit 1
+    fi
+  fi
 fi
 
 step "Stopping $SERVICE"
@@ -302,9 +369,21 @@ stopped=1
 
 if [ "$PULL" -eq 1 ]; then
   step "Moving to $REMOTE/$BRANCH"
-  git_ merge --ff-only "refs/remotes/$REMOTE/$BRANCH"
+  if [ "$attach" -eq 1 ]; then
+    git_ checkout -q -B "$BRANCH" "refs/remotes/$REMOTE/$BRANCH"
+  else
+    git_ merge --ff-only "refs/remotes/$REMOTE/$BRANCH"
+  fi
   if [ "$(git_ rev-parse HEAD)" != "$(git_ rev-parse "refs/remotes/$REMOTE/$BRANCH")" ]; then
     echo "HEAD is $(git_ rev-parse --short HEAD), not $REMOTE/$BRANCH ($target)." >&2
+    exit 1
+  fi
+fi
+if [ "$ROLLBACK" -eq 1 ]; then
+  step "Checking out $(short "$prev_full") (detached)"
+  git_ checkout -q --detach "$prev_full"
+  if [ "$(git_ rev-parse HEAD)" != "$prev_full" ]; then
+    echo "HEAD is $(git_ rev-parse --short HEAD), not $(short "$prev_full")." >&2
     exit 1
   fi
 fi
@@ -350,14 +429,27 @@ fi
 # Up on the new build: record it, so the next run compares origin/main against what the
 # service runs, not against the checkout.
 # Root-owned 0644, so the service user cannot edit it in place (see the check above).
-mkdir -p "$(dirname "$STATE_FILE")"
-state_tmp=$(mktemp "$STATE_FILE.XXXXXX")
-git_ rev-parse HEAD > "$state_tmp"
-chown "$STATE_OWNER" "$state_tmp"
-chmod 0644 "$state_tmp"
-mv -f "$state_tmp" "$STATE_FILE"
+now_full=$(git_ rev-parse HEAD)
+if [ "$ROLLBACK" -eq 1 ]; then
+  # One step back only: the target is used up, so a second rollback is refused rather
+  # than swapping back to the newer build without the update's fetch and checks.
+  write_record "$FROM_FILE" "$rolled_from"
+  write_record "$STATE_FILE" "$now_full"
+  rm -f "$PREV_FILE"
+else
+  replaced=${installed:-$before_full}  # what the service ran, or else the old checkout
+  if [ "$replaced" != "$now_full" ]; then write_record "$PREV_FILE" "$replaced"; fi
+  write_record "$STATE_FILE" "$now_full"
+  rm -f "$FROM_FILE"
+fi
 
 if [ "$AIDE" -eq 1 ] && [ "$BASELINE_OK" -eq 1 ]; then aide_baseline; fi
 
-printf '\nUpdated %s to %s. Re-baseline any file integrity monitor that watches %s.\n' \
-  "$SERVICE" "$after" "$INSTALL_DIR"
+if [ "$ROLLBACK" -eq 1 ]; then
+  printf '\nRolled back %s from %s to %s. The database keeps what the newer version added; it is used again after the next update.\n' \
+    "$SERVICE" "$(short "$rolled_from")" "$after"
+  printf 'Re-baseline any file integrity monitor that watches %s.\n' "$INSTALL_DIR"
+else
+  printf '\nUpdated %s to %s. Re-baseline any file integrity monitor that watches %s.\n' \
+    "$SERVICE" "$after" "$INSTALL_DIR"
+fi

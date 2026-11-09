@@ -10,6 +10,7 @@ import {
 import { cn } from "@/lib/cn";
 import { navigate, pathFor } from "@/lib/route";
 import { openDrill } from "@/lib/drill";
+import { localDayBounds } from "@/lib/localTime";
 import { EntityLink } from "@/components/EntityLink";
 import { PeoplePending } from "@/components/PeoplePending";
 import { AiWatchFailing } from "./AiWatchFailing";
@@ -168,12 +169,12 @@ export function AiWatch({ days = 7, isAdmin = false }: { days?: number; isAdmin?
           onOpenDay={
             s.chart_drill
               ? (day) => {
-                  const from = `${day}T00:00:00Z`;
-                  const to = new Date(Date.parse(from) + 86_400_000).toISOString();
+                  // The bar counts the viewer's day: open that day, not the UTC one.
+                  const { start, end } = localDayBounds(day);
                   opener(s.chart_drill, `AI use, ${dayLabel(day)}`, {
-                    start: from,
-                    end: to,
-                    before: from,
+                    start,
+                    end,
+                    before: start,
                   })?.();
                 }
               : undefined
@@ -323,8 +324,8 @@ function Card({ card, days, odd, history, bounds }: CardProps) {
         odd && "last:col-span-2 lg:last:col-span-1",
       )}
     >
-      <span className="flex min-w-0 items-center gap-1.5">
-        <PanelTitle as="span" className="truncate" title={card.label}>
+      <span className="flex min-w-0 items-start gap-1.5">
+        <PanelTitle as="span" className="line-clamp-2 min-w-0" title={card.label}>
           {card.label}
         </PanelTitle>
         <span

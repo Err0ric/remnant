@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-from app.api.access import AdminUser, CurrentUser, client_ip
+from app.api.access import AdminUser, CurrentUser, SqlUser, client_ip
 from app.auth.service import AuthService
 from app.core.errors import ForbiddenError, ParamInvalidError
 from app.mcp.server import McpServer
@@ -30,7 +30,7 @@ def _origin_ok(request: Request) -> bool:
 
 
 @router.post("/mcp", include_in_schema=False)
-async def mcp_post(request: Request, user: CurrentUser) -> Response:
+async def mcp_post(request: Request, user: SqlUser) -> Response:
     """JSON-RPC over MCP Streamable HTTP, answered as JSON. Needs a per-user API token
     (or the loopback single-user mode); a browser session cannot call it."""
     if getattr(request.state, "via", None) == "cookie":

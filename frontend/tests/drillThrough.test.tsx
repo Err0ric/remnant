@@ -81,7 +81,7 @@ describe("Dashboard drill-through (ADR-0039)", () => {
     await waitFor(() => expect(window.location.pathname).toBe("/investigate/logs"));
     expect(
       await screen.findByText(
-        /^From Dashboard > Detections > Rule matches \(the previous 7 days\), Oct 17/,
+        /^From Dashboard > Detections > Matched events \(the previous 7 days\), Oct 17/,
       ),
     ).toBeVisible();
   });

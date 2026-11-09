@@ -4,7 +4,7 @@ Returns the SQL with an `ask_id`; `POST /api/ask/{ask_id}/run` runs exactly that
 the person who asked, through the guard on their own view, audited like any query with
 purpose `ask` (ADR-0042 slice 1a). With `ask.auto_run` on, the panel calls it at once.
 Scope comes from the caller's grants exactly as in /api/query. Auditors have no Ask
-(SPEC 3.6).
+unless an admin has turned on the setting that grants Auditors SQL (D220).
 """
 
 import threading
@@ -13,11 +13,11 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field, StringConstraints
 from starlette.concurrency import run_in_threadpool
 
-from app.api.access import client_ip, require_role
+from app.api.access import SqlUser, client_ip
 from app.api.cancel import watch_disconnect
 from app.api.query import QueryRequest, QueryResponse, _geo, _intel, _run_audited
 from app.auth.service import AuthService
@@ -44,7 +44,7 @@ from app.search.saved import SavedSearchStore
 
 router = APIRouter(tags=["ask"])
 
-AskUser = Annotated[User, Depends(require_role("admin", "analyst"))]
+AskUser = SqlUser
 Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2_000)]
 
 
@@ -295,7 +295,12 @@ def _route(
     state = request.app.state
     library: Library = state.library
     seen = library.templates_seen(state.engine, allowed)
-    ident = state.identities.load()
+    # Only the links the asker's scope shows reach the plan's filters (T70, D219).
+    # Kept for a minute per asker and scope. Always computed, never only when the question
+    # names someone the whole map knows: that would time whether a word is in the map.
+    ident = state.identities.scoped(
+        state.engine, scope, ["actor_user_name"], user.user_id, user.role
+    )
     return route_question(
         state.gate, state.engine, library, seen, user.user_id, provider_id, body.question,
         now, body.tz, ident, scope, body.route,

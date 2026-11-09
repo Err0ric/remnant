@@ -52,7 +52,7 @@ class LakeMaintenance:
     def apply_retention(self) -> RetentionReport:
         # Sources removed from config fall back to orphan_retention_days, so their
         # data ages out instead of living forever.
-        days = {s.source_id: s.retention_days for s in self._sources.list()}
+        days = self._sources.retention_days()
         return RetentionJob(
             self._lake, days, default_days=self._orphan_days, events=self._events
         ).run()

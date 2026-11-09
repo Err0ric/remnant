@@ -7,6 +7,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from app.engine.duckdb import M365_ROLLUP_COLUMNS, QueryScope
 from app.enrich.networks import Places
 from app.ingest.writer import LakeWriter
@@ -121,6 +123,7 @@ def _same(a: Any, b: Any) -> None:
     assert da == db
 
 
+@pytest.mark.slow  # over 8 s; skipped in PR CI, run by the queue before every merge (D216)
 def test_rollup_gives_the_same_overview_as_events(tmp_path: Path) -> None:
     engine, rollup = _lab(tmp_path)
     LakeWriter(engine._lake).write(_rows(40) + _consent_across_midnight())

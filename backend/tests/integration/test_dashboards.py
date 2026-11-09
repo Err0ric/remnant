@@ -87,6 +87,7 @@ def test_a_panel_needs_a_schedule_you_can_see(lab: dict[str, Any]) -> None:
     assert res.status_code == 404
 
 
+@pytest.mark.slow  # over 8 s; skipped in PR CI, run by the queue before every merge (D216)
 def test_headline_values_over_the_whole_result(lab: dict[str, Any]) -> None:
     lab["ana"].post(
         "/api/searches",

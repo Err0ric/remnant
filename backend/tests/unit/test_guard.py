@@ -133,3 +133,26 @@ def test_ordinary_ctes_still_work() -> None:
         "SELECT * FROM by_ip ORDER BY n DESC"
     )
     assert "by_ip" in guard(sql, frozenset({"events"}), 100, 1000).sql
+
+
+# --- T2 connection lock (2026-11-08): functions that run SQL, read files, or load keys --
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT json_execute_serialized_sql(json_serialize_sql('SELECT 1'))",
+        "SELECT * FROM events WHERE raw = json_execute_serialized_sql('{}')::VARCHAR",
+        "SELECT JSON_EXECUTE_SERIALIZED_SQL('{}')",
+        "SELECT json_serialize_sql('SELECT 1')",
+        "SELECT json_deserialize_sql('{}')",
+        "SELECT * FROM parquet_kv_metadata('lake/source=hr/day=2026-10-09/part-1.parquet')",
+        "SELECT parquet_kv_metadata('x.parquet')",
+        "SELECT * FROM parquet_metadata('x.parquet')",
+        "SELECT load_aws_credentials()",
+        "SELECT * FROM events WHERE 1 = (SELECT count(*) FROM load_aws_credentials('p'))",
+    ],
+)
+def test_sql_running_and_file_functions_rejected(sql: str) -> None:
+    with pytest.raises(QueryRejectedError):
+        ok(sql)

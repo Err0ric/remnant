@@ -1,0 +1,1 @@
+| D222 | Firewall user-to-IP attribution for AI usage (owner, 2026-11-08): in scope as the next slice of work. An ADR comes first (sources such as firewall User-ID logs, time-bounded IP-to-user mapping, conflicts and confidence, and how attributed rows are labeled); no code until the ADR is accepted | Accepted 2026-11-08 (owner) |

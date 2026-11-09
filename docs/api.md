@@ -322,13 +322,17 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | `POST` | `/api/library/{pack_id}/dashboard` | Add a pack (ADR-0033 row 5): each ticked query becomes the user's private saved search (their copy if they have one), a private schedule with the query's suggested interval and flag, and a panel in a section named after the query's group. Every object is ordinary and editable; each is audited as if made by hand. |  | `query_ids`: list of string<br>`dashboard_id`?: string |
 | `POST` | `/api/library/{pack_id}/{query_id}/copy` | Save as my own (row 4): a private saved search the user owns. Audited search.create with the library entry. |  |  |
 | `POST` | `/api/library/{pack_id}/{query_id}/replace` | Replace my copy (row 7): the user's copy takes the pack's current SQL and version. Audited search.update; the user's schedules of it take the change as an edit does. |  |  |
+| `GET` | `/api/m365/list` | One Microsoft 365 tab's list over the page window (ADR-0038 section 5): `name` is a list, and for sign-ins `cls` and `mode` pick the filtered one. | `?name`: string<br>`?start`: date-time<br>`?end`: date-time<br>`?cls` (optional): string<br>`?mode` (optional): string |  |
 | `GET` | `/api/people/{person}/hosts` | The hosts and source addresses on this person's own records, busiest first, with failed sign-ins and first and last seen (D197). Audited `search.person_hosts`. | `?days` (optional): integer |  |
+| `GET` | `/api/people/{person}/signins` | The person page's Microsoft 365 sign-ins (ADR-0038 row 27). | `?days` (optional): integer |  |
 | `GET` | `/api/people/{person}/timeline` | One row per action by this person across the sources the caller may read, newest first, with the forms of the name that matched. Audited `search.timeline`. | `?days` (optional): integer |  |
 | `GET` | `/api/search/live` | Follow new rows of `q` (row queries only). With `since` (Resume), first sends what arrived after it, up to 1,000 rows, newest kept; without it, `fill_minutes` starts that many minutes back so the table is not empty while slow sources catch up. Audited `search.live_start` and `search.live_stop`. | `?q`: string<br>`?client` (optional): `browser` &#124; `cli` &#124; `tui`<br>`?sources` (optional): list of string<br>`?since` (optional): date-time<br>`?after` (optional): list of string<br>`?fill_minutes` (optional): integer |  |
 | `GET` | `/api/search/live/streams` | The caller's open live streams, browser, CLI, and TUI together (row 5). |  |  |
 | `DELETE` | `/api/search/live/streams/{stream_id}` | Stop one of the caller's streams; it ends at its next poll. |  |  |
 | `GET` | `/api/settings/live` | Get Limit |  |  |
 | `PUT` | `/api/settings/live` | The live time limit for every role (row 5). Audited `settings.live_limit`. |  | `minutes`: integer |
+| `GET` | `/api/sources/event-counts` | Events and the newest event per source, for the Sources page. |  |  |
+| `GET` | `/api/sources/parser-mix` | Lines per template for each Automatic source (ADR-0012). |  |  |
 
 ### Searches
 
@@ -404,6 +408,8 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | Method | Path | What it does | Query | JSON body (`?` optional) |
 |---|---|---|---|---|
 | `POST` | `/api/account/password` | Set Password From Link |  | `token`: string<br>`password`: string |
+| `GET` | `/api/settings/auditor-sql` | Whether Auditors may run SQL (D220). Anyone signed in may read it, for the UI. |  |  |
+| `PUT` | `/api/settings/auditor-sql` | Grant or take back SQL for Auditors (off by default). Audited `settings.auditor_sql`. |  | `enabled`: boolean |
 | `GET` | `/api/users` | List Users |  |  |
 | `POST` | `/api/users` | Invite User |  | `username`: string<br>`role`: `admin` &#124; `analyst` &#124; `auditor` |
 | `PATCH` | `/api/users/{user_id}` | Update User |  | `role`?: `admin` &#124; `analyst` &#124; `auditor`<br>`disabled`?: boolean |
