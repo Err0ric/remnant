@@ -32,13 +32,21 @@ SIZE = {"width": 1600, "height": 1000}
 PROVIDER = "Scripted demo model (not an LLM)"
 MODEL_PORT = 8091
 sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE.parent))
+import devauth  # noqa: E402  # sibling script, standard library only
 from stand_in_model import QUESTION  # noqa: E402
+
+# The demo's administrator (made by scripts/demo/load.py through the setup link).
+DATA = ROOT / "data" / "demo" / "state"
+SESSION: dict[str, str] = {}
 
 
 def call(url: str, method: str, path: str, body: object = None) -> object:
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url + path, data=data, method=method)  # noqa: S310  # loopback demo URL
     req.add_header("Content-Type", "application/json")
+    for name, value in SESSION.items():
+        req.add_header(name, value)
     with urllib.request.urlopen(req, timeout=60) as res:  # noqa: S310  # same
         raw = res.read()
     return json.loads(raw) if raw else None
@@ -74,6 +82,9 @@ def capture(url: str, out: Path) -> None:
         for theme in ("dark", "light"):
             ctx = browser.new_context(viewport=SIZE, color_scheme=theme, timezone_id="UTC")  # type: ignore[arg-type]
             ctx.add_init_script(f"localStorage.setItem('app.theme', '{theme}')")
+            signed = ctx.request.post(url + "/api/auth/login", data=devauth.account(DATA))
+            if not signed.ok:
+                sys.exit(f"could not sign in to the demo ({signed.status}); run `make demo` again")
             page = ctx.new_page()
             if theme == "light":
                 shot(page, url, "/dashboard", out, "dashboard-light.png")
@@ -140,6 +151,9 @@ def main() -> None:
         call(url, "GET", "/api/auth/state")
     except (urllib.error.URLError, ConnectionError):
         sys.exit(f"no demo server at {url}: run `make demo` first")
+    session = devauth.sign_in(url, DATA)
+    if session is not None:
+        SESSION.update(session.headers())
     model = add_model(url)
     try:
         capture(url, args.out)

@@ -56,12 +56,33 @@ server {
     location / {
         proxy_pass http://127.0.0.1:8080;
         proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_read_timeout 120s;   # longer than the 30 s query timeout
     }
 }
 ```
+
+### First setup through a proxy
+
+With no accounts the app lets nobody in, also on loopback: behind the proxy every request comes from `127.0.0.1`, so the app cannot tell the network from you. The first administrator is created with the one-time setup link. Two ways to open it:
+
+- Set the public name and the public URL **before the first start** (Docker: `APP_PUBLIC_NAME` and `APP_PUBLIC_URL`; systemd: `APP__SERVER__PUBLIC_NAMES=siem.corp.example` and `APP__SERVER__PUBLIC_URL=https://siem.corp.example`), and the link in the server log goes through the proxy. Both are needed: the app answers only to names it has been told, so with the URL alone the link ends in "bad host".
+- Or leave the proxy out of it and open the link through an SSH tunnel to the server. On your own computer:
+
+```bash
+ssh -L 8080:127.0.0.1:8080 alice@siem.corp.example
+```
+
+Then, on the server, print a fresh link (it works once and expires in 30 minutes):
+
+```bash
+# systemd install
+sudo -u remnant sh -c 'set -a; . /etc/remnant/remnant.env; set +a; exec /opt/remnant/backend/.venv/bin/app-admin "$@"' app-admin setup-link
+# Docker
+docker compose exec app app-admin setup-link
+```
+
+On an install bound to loopback the link is `http://127.0.0.1:8080/setup#...`: open it in the browser on your own computer, and the tunnel carries it to the server. Create the account, close the tunnel, and sign in at the public address. A Docker install listens on the network, so its link names the server (`https://<name>:8080/setup#...`) and opens without a tunnel from any computer that reaches that port.
 
 ### Proxy on a different host (SSL offload on an existing nginx)
 

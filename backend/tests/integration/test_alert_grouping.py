@@ -173,7 +173,7 @@ def test_personal_account_is_medium_once_and_blocked_burst_is_high(
     class Engine:
         def run(self, sql: str, *a: Any, **k: Any) -> Any:
             if "post_tool_use_failure" in sql:
-                rows = [("cc|dana@example.com", 12)]
+                rows = [("cc|dana@example.com", 12, False)]
             elif "claude_account_email" in sql:
                 rows = [("dana@example.org", "ws-alpha"), ("erin@example.com", "ws-zulu")]
             else:
@@ -194,6 +194,57 @@ def test_personal_account_is_medium_once_and_blocked_burst_is_high(
     assert "account:erin@example.com" not in rows  # a company account
     burst = rows["agent:cc|dana@example.com"]
     assert (burst["severity"], burst["rule"], burst["count"]) == ("high", "blocked_calls", 24)
+
+
+def test_items_keyed_by_a_machine_list_it_as_a_device(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D242: blocked-calls and sensitive-data items keyed by a machine (no person seen)
+    list it in devices, not people, so Alerts can show the machine; a bare user name stays
+    a person."""
+    meta, clock = MetaDB(tmp_path / "m.sqlite"), Clock()
+    items = AlertItems(meta, AuditLog(meta), clock=clock)
+    day = NOW.date()
+
+    class Engine:
+        def run(self, sql: str, *a: Any, **k: Any) -> Any:
+            if "post_tool_use_failure" in sql:
+                rows = [("cc|ws-0042", 12, True), ("cc|bob", 11, False)]
+            elif "sensitive_total" in sql:
+                rows = [("claude", "ws-0042", day, '{"secret": 1}', True),
+                        ("claude", "bob", day, '{"secret": 2}', False)]  # fmt: skip
+            else:
+                rows = []
+            return type("R", (), {"rows": rows, "sources": []})()
+
+    class Fake:
+        def services(self) -> list[Any]:
+            return []
+
+        def review(self, *a: Any) -> list[Any]:
+            return []
+
+        review_mcp = mcp_rules = review
+
+    w = watch_mod.AiWatch(
+        meta, Engine(), Fake(), None, AuditLog(meta), None,  # type: ignore[arg-type]  # fakes with only what is used
+        clock=clock, items=items, usage=Fake(), blocked_burst=10,  # type: ignore[arg-type]  # a fake
+    )  # fmt: skip
+    monkeypatch.setattr(watch_mod, "agents", lambda *a, **k: [])
+    w._account_and_blocked(NOW)
+    w._reconcile(NOW)
+    with meta.connect() as con:
+        got = {
+            r["subject"]: (
+                r["people"] and json.loads(r["people"]),
+                json.loads(r["devices"] or "[]"),
+            )
+            for r in con.execute("SELECT subject, people, devices FROM alert_items")
+        }
+    assert got == {
+        "agent:cc|ws-0042": (None, ["ws-0042"]), "agent:cc|bob": (None, []),
+        "sensitive:ws-0042": (None, ["ws-0042"]), "sensitive:bob": (["bob"], []),
+    }  # fmt: skip
 
 
 def test_a_flapping_source_notifies_at_most_three_times_a_day(store: Any) -> None:

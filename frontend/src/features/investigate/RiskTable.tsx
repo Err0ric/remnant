@@ -11,6 +11,8 @@ interface RiskTableProps {
   onPick: (row: EntityRisk) => void;
   /** The range's start, for the Proxmox inventory lines on address and host rows. */
   start?: string;
+  /** People's AI watch flags are withheld from this viewer (View people in AI usage, D242). */
+  aiPeopleHidden?: boolean;
 }
 
 const LEVELS = [
@@ -62,7 +64,14 @@ export function scoreTitle(r: EntityRisk): string {
   );
 }
 
-function Cell({ r, col }: { r: EntityRisk; col: Column }) {
+function Cell({ r, col, hidden }: { r: EntityRisk; col: Column; hidden: boolean }) {
+  if (col === "ai_flags" && hidden) {
+    return (
+      <span className="font-sans text-text-muted" title="Needs View people in AI usage">
+        Hidden
+      </span>
+    );
+  }
   if (col === "ai_flags") {
     const flags = r.ai_flags ?? [];
     return (
@@ -80,7 +89,7 @@ function Cell({ r, col }: { r: EntityRisk; col: Column }) {
 
 /** People and devices, ranked by a score whose parts each have a column and show on
  * hover (ADR-0016 row 4, D195), then by events. A row opens the person or host page. */
-export function RiskTable({ label, kind, rows, onPick, start }: RiskTableProps) {
+export function RiskTable({ label, kind, rows, onPick, start, aiPeopleHidden }: RiskTableProps) {
   // Which Proxmox guest each address or host is (ADR-0045 A5): exact matches only.
   const values = kind === "user" ? [] : rows.slice(0, 50).map((r) => r.value);
   const inventory = useQuery({
@@ -168,7 +177,7 @@ export function RiskTable({ label, kind, rows, onPick, start }: RiskTableProps) 
               </td>
               {cols.map((c) => (
                 <td key={c} className={NUM}>
-                  <Cell r={r} col={c} />
+                  <Cell r={r} col={c} hidden={kind === "user" && !!aiPeopleHidden} />
                 </td>
               ))}
               <td className={`${NUM} text-text-secondary`}>{r.events.toLocaleString()}</td>

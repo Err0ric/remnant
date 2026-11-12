@@ -3,9 +3,10 @@ import { EntityLink } from "@/components/EntityLink";
 import { LoadFailed } from "@/components/LoadFailed";
 import { When } from "@/components/When";
 import { TierBadge } from "@/features/ai/AccountsCard";
-import { api, type PersonAiCount } from "@/lib/api";
+import { ApiError, api, type PersonAiCount } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { navigateTab } from "@/lib/route";
+import { useViewer } from "@/lib/viewer";
 import { Box } from "./PersonLists";
 
 const TH = "px-3 py-2 font-semibold";
@@ -48,10 +49,15 @@ function Counts({
  * devices, AI services on the network, sessions newest first, and rollups for the range.
  * Metadata only: what was touched, never what was said. */
 export function PersonAiActivity({ person, days }: { person: string; days: number }) {
+  const { canViewPeople = true } = useViewer();
   const q = useQuery({
     queryKey: ["person-ai", person, days],
     queryFn: () => api.personAi(person, days),
+    enabled: canViewPeople,
   });
+  // D242: the server refuses a person's AI activity without View people in AI usage.
+  if (!canViewPeople || (q.error instanceof ApiError && q.error.status === 403))
+    return <p className="py-4 text-sm text-text-secondary">Needs View people in AI usage</p>;
   if (q.isLoading) return <div aria-busy="true" className="h-40 animate-pulse" />;
   if (q.isError || !q.data)
     return (

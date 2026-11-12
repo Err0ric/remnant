@@ -65,6 +65,55 @@ describe("AI usage cost with no cost metrics (owner, 2026-11-08)", () => {
   });
 });
 
+describe("AI usage without View people in AI usage (D242)", () => {
+  it("shows machines as text, with no person link, and says names are hidden", async () => {
+    window.history.replaceState(null, "", "/ai");
+    const spy = mockApi("Codename", { mode: "open" });
+    const base = spy.getMockImplementation()!;
+    spy.mockImplementation(async (input, init) => {
+      const res = await base(input, init);
+      if (!String(input).includes("/api/ai/usage")) return res;
+      // What the server sends a viewer without the permission: two people on one machine.
+      const body = await res.json();
+      body.masked = true;
+      for (const u of body.services) u.top_people = [];
+      body.people.forEach((p: Record<string, unknown>, i: number) => {
+        Object.assign(p, { person: i < 2 ? "ws-0042" : "Hidden", key: `row-${i}`, maybe: null });
+        if (p.network) Object.assign(p.network, { who: "Hidden" });
+      });
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<App initialTheme="dark" queryClient={client} />);
+    await screen.findByRole("heading", { level: 1 });
+    const services = await screen.findByRole("region", {
+      name: "AI services seen in network logs",
+    });
+    expect(within(services).queryByText("alice")).toBeNull();
+    await goTo("AI usage", "People");
+    const people = await screen.findByRole("region", { name: "Claude Code by person" });
+    expect(
+      within(people).getByText(
+        "Names are hidden. An admin can turn on View people in AI usage for you.",
+      ),
+    ).toBeVisible();
+    const rows = within(people).getAllByText("ws-0042");
+    expect(rows).toHaveLength(2); // two people on one machine stay two rows
+    for (const cell of rows) expect(cell.closest("a")).toBeNull();
+    expect(within(people).queryByRole("link", { name: /ws-0042|Hidden/ })).toBeNull();
+    expect(within(people).queryByText(/example\.com/)).toBeNull();
+    expect(within(people).getByText(/Unmatched: not linked to a person/)).toBeVisible();
+    expect(within(rows[0]!.closest("tr") as HTMLElement).getByText("12.50")).toBeVisible();
+  });
+});
+
 describe("AI usage (ADR-0015)", () => {
   it("shows services with review status and lets an admin change it", async () => {
     const spy = await openAi();
@@ -394,6 +443,59 @@ describe("Agent sessions from the hooks plugin (ADR-0026)", () => {
     );
     expect(within(card).getByText("No sessions match these filters.")).toBeVisible();
   });
+
+  it("shows machines as text without View people in AI usage (D242)", async () => {
+    window.history.replaceState(null, "", "/ai#agents");
+    const spy = mockApi("Codename", { mode: "open" });
+    const base = spy.getMockImplementation()!;
+    // What the server sends a viewer without the permission.
+    spy.mockImplementation(async (input, init) => {
+      const res = await base(input, init);
+      const url = String(input);
+      if (!url.includes("/api/ai/sessions") && !url.includes("/api/agents/accounts")) return res;
+      const body = await res.json();
+      const mask = (s: Record<string, unknown>) =>
+        Object.assign(s, {
+          person: s.person ? (s.machine ?? "Hidden") : null,
+          account: s.account ? (s.machine ?? "Hidden") : null,
+          masked: true,
+        });
+      if (Array.isArray(body)) body.forEach(mask);
+      else if (body.rows) {
+        body.masked = true;
+        body.rows.forEach((r: Record<string, unknown>, i: number) =>
+          Object.assign(r, { email: "ws-0418", os_users: [], key: `row-${i}` }),
+        );
+      } else mask(body);
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    render(
+      <App
+        initialTheme="dark"
+        queryClient={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      />,
+    );
+    const card = await screen.findByRole("region", { name: "Agent sessions" });
+    const list = await within(card).findByRole("list", { name: "Sessions" });
+    expect(within(card).getByText(/Names are hidden\. An admin can turn on/)).toBeVisible();
+    // No person filter: it would list machines as people.
+    const filters = within(card).getByRole("group", { name: "Filter sessions" });
+    expect(within(filters).queryByRole("combobox", { name: "Person" })).toBeNull();
+    expect(within(filters).getByRole("combobox", { name: "Machine" })).toBeVisible();
+    expect(within(list).queryByText(/example\.com/)).toBeNull();
+    await userEvent.click(within(list).getAllByRole("button", { name: /^ws-0042/ })[0]!);
+    const detail = await within(card).findByRole("region", { name: "Session detail" });
+    expect(within(detail).queryByRole("link", { name: /dana|Hidden/ })).toBeNull();
+    // A machine is not looked up as an account: no other account's tier.
+    expect(within(detail).getByText("Hidden")).toBeVisible();
+  });
 });
 
 describe("AI inventory (ADR-0038 section 7)", () => {
@@ -497,5 +599,117 @@ describe("Claude accounts (ADR-0030 amendment)", () => {
       "title",
       "Personal Claude account",
     );
+  });
+
+  it("shows devices as text without View people in AI usage (D242)", async () => {
+    window.history.replaceState(null, "", "/agents/accounts");
+    const spy = mockApi("Codename", { mode: "open" });
+    const base = spy.getMockImplementation()!;
+    spy.mockImplementation(async (input, init) => {
+      const res = await base(input, init);
+      if (!String(input).includes("/api/agents/accounts")) return res;
+      const body = await res.json();
+      body.masked = true;
+      body.rows.forEach((r: Record<string, unknown>, i: number) =>
+        Object.assign(r, { email: "ws-0418", os_users: [], key: `row-${i}` }),
+      );
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    render(
+      <App
+        initialTheme="dark"
+        queryClient={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      />,
+    );
+    const card = await screen.findByRole("region", { name: "Claude accounts" });
+    expect(await within(card).findByText(/Names are hidden\. An admin can turn on/)).toBeVisible();
+    const rows = within(card).getAllByRole("row").slice(1);
+    expect(rows.length).toBeGreaterThan(1); // two accounts on one device stay two rows
+    for (const row of rows) {
+      const cell = within(row).getAllByRole("cell")[0]!;
+      expect(cell).toHaveTextContent(/^ws-0418/);
+      expect(within(cell).queryByRole("link")).toBeNull();
+    }
+    expect(within(card).queryByText(/dana/)).toBeNull();
+    expect(within(card).getByRole("list", { name: "Accounts by tier" })).toHaveTextContent(
+      "Personal1",
+    );
+  });
+});
+
+describe("Agents and the inventory without View people in AI usage (D242)", () => {
+  /** What the server sends a viewer without the permission. */
+  function masked(spy: ReturnType<typeof mockApi>) {
+    const base = spy.getMockImplementation()!;
+    spy.mockImplementation(async (input, init) => {
+      const res = await base(input, init);
+      const url = String(input);
+      const agents = url.endsWith("/api/ai/agents");
+      if (!agents && !/\/api\/ai\/inventory\?/.test(url)) return res;
+      const body = await res.json();
+      if (agents)
+        body.forEach((a: Record<string, unknown>, i: number) =>
+          Object.assign(
+            a,
+            { owners: [], masked: true },
+            a.kind === "Claude Code" ? { agent: `cc|row-${i}`, label: "Claude Code: ws-0042" } : {},
+          ),
+        );
+      else body.masked = true;
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+  }
+
+  it("shows agents by machine with no owner links", async () => {
+    window.history.replaceState(null, "", "/ai");
+    const spy = mockApi("Codename", { mode: "open" });
+    masked(spy);
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    render(
+      <App
+        initialTheme="dark"
+        queryClient={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      />,
+    );
+    await screen.findByRole("heading", { level: 1 });
+    await goTo("Agents", "Sessions");
+    const table = await screen.findByRole("table", { name: "Agents" });
+    expect(within(table).getByText("Claude Code: ws-0042")).toBeVisible();
+    expect(within(table).queryByText(/alice/)).toBeNull();
+    expect(within(table).queryByRole("link", { name: /example\.com/ })).toBeNull();
+    const card = screen.getByRole("region", { name: "Agents" });
+    expect(within(card).getByText(/Names are hidden\. An admin can turn on/)).toBeVisible();
+  });
+
+  it("says names are hidden on the inventory", async () => {
+    window.history.replaceState(null, "", "/ai/inventory");
+    const spy = mockApi("Codename", { mode: "open" });
+    masked(spy);
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    render(
+      <App
+        initialTheme="dark"
+        queryClient={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      />,
+    );
+    const card = await screen.findByRole("region", { name: "AI inventory" });
+    await within(card).findByText("ChatGPT");
+    expect(within(card).getByText(/Names are hidden\. An admin can turn on/)).toBeVisible();
   });
 });

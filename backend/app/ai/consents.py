@@ -118,12 +118,13 @@ def drill_sql(blocked: bool) -> str:
     )
 
 
-def describe(latest: Any) -> str:
-    """'Lab Notes App (User.Read, Mail.Read) by sam@example.com'."""
+def describe(latest: Any, named: bool = True) -> str:
+    """'Lab Notes App (User.Read, Mail.Read) by sam@example.com'. Without `named` (a viewer
+    without View people in AI usage, D242) the person is left out."""
     if not isinstance(latest, dict):
         return ""
     app = latest.get("app") or "an app with no name"
     scopes = str(latest.get("scopes") or "").split()
     shown = ", ".join(scopes[:3]) + (f" +{len(scopes) - 3}" if len(scopes) > 3 else "")
-    who = latest.get("who")
+    who = latest.get("who") if named else None
     return f"{app}{f' ({shown})' if shown else ''}{f' by {who}' if who else ''}"

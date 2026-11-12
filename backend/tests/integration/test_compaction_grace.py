@@ -130,3 +130,38 @@ def test_reads_running_alongside_compaction_never_fail(tmp_path: Path) -> None:
         t.join()
     assert not errors, errors[:1]
     assert counts and all(n == distinct for n, distinct in counts)  # never a row twice
+
+
+def test_a_whole_merge_between_the_two_manifest_checks_is_not_counted_twice(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The race behind a full-suite failure of the test above (2026-11-11): a read takes
+    the manifests and the retired list, then a whole merge publishes, retires its inputs
+    and drops its manifest, then the read lists the files. The manifests read the same
+    before and after, so the listing held the inputs and the merged file both."""
+    lake = _lake(tmp_path)
+    folder = next(lake.glob("source=*/day=*"))
+    comp = Compactor(lake, today=lambda: TODAY)
+    real = lake_files.retired
+    state = {"merged": False, "inside": False}
+
+    def retired_then_merge(day_dir: Path) -> dict[str, dict[str, str]]:
+        out = real(day_dir)
+        if not state["merged"] and not state["inside"]:
+            state["merged"] = state["inside"] = True
+            try:
+                comp.run()  # the whole merge happens between the reader's two looks
+            finally:
+                state["inside"] = False
+        return out
+
+    monkeypatch.setattr(lake_files, "retired", retired_then_merge)
+    seen = lake_files.visible(folder)
+    assert state["merged"]
+    count, distinct = QueryEngine(lake).run(SQL, QueryScope(None)).rows[0]
+    monkeypatch.setattr(lake_files, "retired", real)
+    import pyarrow.parquet as pq
+
+    ids = [i for p in seen for i in pq.read_table(p, columns=["event_id"]).column(0).to_pylist()]
+    assert len(ids) == len(set(ids)) == FILES * PER_FILE
+    assert count == distinct == FILES * PER_FILE

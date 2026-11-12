@@ -52,44 +52,52 @@ export function BackupSettings() {
           Folder <span className="font-mono">{c.folder}</span>. Copy it off this server too.
         </p>
       ) : null}
-      <form onSubmit={submit} className="flex flex-wrap items-center gap-2">
-        <label className="flex items-center gap-1.5">
+      {/* The form waits for the saved settings: an edit made before they load would save
+          an empty time (and Save would stay disabled). */}
+      {!c ? (
+        <p className="text-text-muted">
+          {current.isError ? "Could not load the settings." : "Loading…"}
+        </p>
+      ) : (
+        <form onSubmit={submit} className="flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-1.5">
+            <input
+              type="checkbox"
+              checked={value.enabled}
+              onChange={(e) => setDraft({ ...value, enabled: e.target.checked })}
+            />
+            Back up daily at
+          </label>
           <input
-            type="checkbox"
-            checked={value.enabled}
-            onChange={(e) => setDraft({ ...value, enabled: e.target.checked })}
+            aria-label="Time of day"
+            type="time"
+            value={value.at_time}
+            onChange={(e) => setDraft({ ...value, at_time: e.target.value })}
+            className="h-8 rounded border border-border-strong bg-surface px-2 font-mono tabular-nums"
           />
-          Back up daily at
-        </label>
-        <input
-          aria-label="Time of day"
-          type="time"
-          value={value.at_time}
-          onChange={(e) => setDraft({ ...value, at_time: e.target.value })}
-          className="h-8 rounded border border-border-strong bg-surface px-2 font-mono tabular-nums"
-        />
-        <span className="text-text-secondary">{c ? c.timezone : ""}, keep</span>
-        <input
-          aria-label="Backups kept"
-          inputMode="numeric"
-          value={value.keep}
-          onChange={(e) => setDraft({ ...value, keep: e.target.value })}
-          className="h-8 w-14 rounded border border-border-strong bg-surface px-2 tabular-nums"
-        />
-        <span className="text-text-secondary">(1 to 90)</span>
-        <button
-          type="submit"
-          disabled={save.isPending || draft === null || !valid}
-          className="h-8 rounded bg-accent px-3 font-semibold text-white disabled:opacity-50"
-        >
-          Save
-        </button>
-        {save.isError ? (
-          <span role="alert" className="text-danger">
-            {save.error instanceof ApiError ? save.error.message : "Could not save."}
-          </span>
-        ) : null}
-      </form>
+          <span className="text-text-secondary">{c.timezone}, keep</span>
+          <input
+            aria-label="Backups kept"
+            inputMode="numeric"
+            value={value.keep}
+            onChange={(e) => setDraft({ ...value, keep: e.target.value })}
+            className="h-8 w-14 rounded border border-border-strong bg-surface px-2 tabular-nums"
+          />
+          <span className="text-text-secondary">(1 to 90)</span>
+          <button
+            type="submit"
+            disabled={save.isPending || draft === null || !valid}
+            className="h-8 rounded bg-accent px-3 font-semibold text-white disabled:opacity-50"
+          >
+            Save
+          </button>
+          {save.isError ? (
+            <span role="alert" className="text-danger">
+              {save.error instanceof ApiError ? save.error.message : "Could not save."}
+            </span>
+          ) : null}
+        </form>
+      )}
     </section>
   );
 }

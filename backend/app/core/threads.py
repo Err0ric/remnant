@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 import os
+import sys
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -43,10 +44,12 @@ def _cgroup_cpus(root: Path) -> float | None:
 
 def usable_cpus(root: Path = Path("/")) -> int:
     """CPUs this process may run on: affinity, then any cgroup quota. Never below 1."""
-    try:
-        cpus = len(os.sched_getaffinity(0))
-    except (AttributeError, OSError):
-        cpus = os.cpu_count() or 1
+    cpus = os.cpu_count() or 1
+    if sys.platform == "linux":  # affinity is Linux only (macOS has no sched_getaffinity)
+        try:
+            cpus = len(os.sched_getaffinity(0))
+        except OSError:
+            pass
     quota = _cgroup_cpus(root)
     if quota is not None:
         cpus = min(cpus, max(1, math.ceil(quota)))

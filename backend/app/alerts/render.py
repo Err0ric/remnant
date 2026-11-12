@@ -29,6 +29,15 @@ AlertKind = Literal[
     "integrity_failed",
     "integrity_seal",
     "handoff",
+    "vendor_alert",
+    "vendor_paused",
+    "vendor_resumed",
+    "stopped",
+    "stopped_cleared",
+    "stopped_flapping",
+    "source_fallback",
+    "source_fallback_cleared",
+    "late_detection",
 ]
 _LABEL = {
     "flag": "Flagged",
@@ -45,6 +54,15 @@ _LABEL = {
     "integrity_failed": "Log integrity check failed",
     "integrity_seal": "Daily integrity seal",
     "handoff": "Events handed off",
+    "vendor_alert": "Vendor alert",
+    "vendor_paused": "Vendor alerts paused",
+    "vendor_resumed": "Vendor alerts resumed",
+    "stopped": "Detection stopped",
+    "stopped_cleared": "Detection running again",
+    "stopped_flapping": "Detection flapping",
+    "source_fallback": "Source without its parser",
+    "source_fallback_cleared": "Source parser back",
+    "late_detection": "Late detection from reparse",
 }
 
 _SEVERITY = {"high": "High", "medium": "Medium"}
@@ -80,7 +98,7 @@ def _summary(a: Alert) -> str:
     if a.count is not None:
         parts.append(
             f"{a.count} {'match' if a.count == 1 else 'matches'}"
-            if a.kind == "match"
+            if a.kind in ("match", "late_detection")
             else f"count {a.count}"
         )
     if a.reason:

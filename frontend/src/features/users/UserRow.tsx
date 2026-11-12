@@ -25,7 +25,8 @@ export function UserRow({ user, groupNames, isSelf, onResetLink }: UserRowProps)
   const [confirming, setConfirming] = useState(false);
   const refresh = () => client.invalidateQueries({ queryKey: ["users"] });
   const update = useMutation({
-    mutationFn: (body: { role?: Role; disabled?: boolean }) => api.updateUser(user.user_id, body),
+    mutationFn: (body: { role?: Role; disabled?: boolean; view_ai_people?: boolean }) =>
+      api.updateUser(user.user_id, body),
     onSuccess: async () => {
       setConfirming(false);
       await refresh();
@@ -71,6 +72,22 @@ export function UserRow({ user, groupNames, isSelf, onResetLink }: UserRowProps)
               </option>
             ))}
           </select>
+          <label
+            className="mt-1.5 flex items-center gap-1.5 text-sm text-text-secondary"
+            title={
+              user.role === "admin"
+                ? "Administrators always see people in AI usage"
+                : "Names on AI pages; without it they show the machine or address. Each change is recorded in the audit log"
+            }
+          >
+            <input
+              type="checkbox"
+              checked={user.role === "admin" || user.view_ai_people === true}
+              disabled={user.role === "admin" || update.isPending}
+              onChange={(e) => update.mutate({ view_ai_people: e.target.checked })}
+            />
+            View people in AI usage
+          </label>
         </td>
         <td className="whitespace-nowrap px-3 py-2.5">
           <span className="flex items-center gap-1.5">

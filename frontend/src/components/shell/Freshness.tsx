@@ -59,7 +59,7 @@ export function Freshness() {
 
 /** Open alerts the viewer may read; the same number as the rail, for a collapsed rail. */
 export function AlertsButton() {
-  const q = useQuery({ queryKey: ["alerts", "open"], queryFn: () => api.alerts("open") });
+  const q = useQuery({ queryKey: ["alerts", "count"], queryFn: api.alertCount });
   const n = q.data?.open ?? 0;
   return (
     <a

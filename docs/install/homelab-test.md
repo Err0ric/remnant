@@ -258,11 +258,12 @@ docker compose down -v                  # remove everything, including the admin
 
 ## Demo lab: every source type at once
 
-To see every page with data (risk, the investigator, AI usage, Microsoft 365, Anthropic), load the synthetic fixtures into a fresh loopback install with no accounts:
+To see every page with data (risk, the investigator, AI usage, Microsoft 365, Anthropic), load the synthetic fixtures into a fresh install with no accounts yet. Run it on the server, from the install's `backend/` folder with its own Python (`uv run`), as a user that can write the data folder, and with the same `APP__` variables the server runs with. It makes the first administrator `admin` through the one-time setup link and writes the generated password to `dev-account.json` in the data folder (`--data`, the server's `APP__PATHS__DATA_DIR`):
 
 ```bash
-python3 scripts/demo_lab.py --url http://127.0.0.1:8080 \
-  --logs /srv/logs/demo --rules /srv/rules/demo
+cd backend
+uv run python ../scripts/demo_lab.py --url http://127.0.0.1:8080 \
+  --logs /srv/logs/demo --rules /srv/rules/demo --data ./data
 ```
 
 `--logs` must be inside `allowed_roots` and `--rules` inside `rule_roots`. It adds one file source per starter template (29), imports and runs five Sigma rules, and sets a few AI review statuses. Everything is synthetic (example.com users, RFC 5737 addresses). Use a separate install for it, not the one holding real logs.

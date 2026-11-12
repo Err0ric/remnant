@@ -54,7 +54,7 @@ interface SystemStripProps {
   /** Not yet loaded: the tile shows a dot. */
   tally: SourceTally | undefined;
   /** Open alerts the viewer may read (ADR-0037). */
-  alerts: AlertList | undefined;
+  alerts: Pick<AlertList, "items" | "open"> | undefined;
   isAdmin: boolean;
   now: string;
   onEvents: () => void;

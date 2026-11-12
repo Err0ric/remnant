@@ -212,13 +212,16 @@ def collect(
     return out, list(seen.sources)
 
 
-def alert_names(meta: MetaDB, allowed: list[str] | None, scope: QueryScope) -> list[set[str]]:
+def alert_names(
+    meta: MetaDB, allowed: list[str] | None, scope: QueryScope, ai_people: bool = True
+) -> list[set[str]]:
     """Per alert item in the range, the names it is about (its people and devices, from
     the rows that fired, and its subject), lower case. Only items whose sources the caller
-    may read count."""
+    may read count. Without `ai_people` (View people in AI usage, D242), an AI Watch item
+    counts for its devices only, never for a person."""
     with meta.connect() as con:
         rows = con.execute(
-            "SELECT subject, people, devices, sources, created_at FROM alert_items"
+            "SELECT kind, subject, people, devices, sources, created_at FROM alert_items"
             " ORDER BY created_at DESC LIMIT ?",
             (MAX_ALERTS,),
         ).fetchall()
@@ -232,12 +235,41 @@ def alert_names(meta: MetaDB, allowed: list[str] | None, scope: QueryScope) -> l
             continue
         try:
             sources = set(json.loads(r["sources"] or "[]"))
-            names = [*json.loads(r["people"] or "[]"), *json.loads(r["devices"] or "[]")]
+            people, devices = json.loads(r["people"] or "[]"), json.loads(r["devices"] or "[]")
         except ValueError:
             continue
         if permitted is not None and not sources <= permitted:
             continue
-        out.append({str(n).lower() for n in [*names, r["subject"]] if n})
+        names = [*people, *devices, r["subject"]]
+        if r["kind"] == "ai_watch" and not ai_people:
+            names = devices  # its people and its subject (a person's key) name someone
+        out.append({str(n).lower() for n in names if n})
+    return out
+
+
+def ai_alert_people(meta: MetaDB, allowed: list[str] | None, scope: QueryScope) -> set[str]:
+    """The people AI Watch items in the range are about, lower case, from items whose
+    sources the caller may read: who an answer names when it counts those alerts (G3)."""
+    with meta.connect() as con:
+        rows = con.execute(
+            "SELECT people, sources, created_at FROM alert_items WHERE kind = 'ai_watch'"
+            " ORDER BY created_at DESC LIMIT ?",
+            (MAX_ALERTS,),
+        ).fetchall()
+    permitted = None if allowed is None else set(allowed)
+    out: set[str] = set()
+    for r in rows:
+        at = str(r["created_at"])
+        if (scope.start and at < scope.start.isoformat()) or (
+            scope.end and at >= scope.end.isoformat()
+        ):
+            continue
+        try:
+            sources, people = set(json.loads(r["sources"] or "[]")), json.loads(r["people"] or "[]")
+        except ValueError:
+            continue
+        if permitted is None or sources <= permitted:
+            out.update(str(n).lower() for n in people if n)
     return out
 
 

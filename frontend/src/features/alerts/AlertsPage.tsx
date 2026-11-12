@@ -9,10 +9,14 @@ import { PageHeader } from "@/components/shell/PageHeader";
 import { EntityLink } from "@/components/EntityLink";
 import { DevicePeople } from "./DevicePeople";
 import { DeviceRows } from "./DeviceRows";
+import { FollowsRow } from "./FollowsRow";
+import { LateBadge } from "./LateBadge";
+import { LateRow } from "./LateRow";
 import { AroundEvent } from "@/features/search/AroundEvent";
 import { When } from "@/components/When";
 import { CloseForm } from "./CloseForm";
-import { KIND_LABEL } from "./kinds";
+import { VendorAlerts } from "./VendorAlerts";
+import { KIND_LABEL, NAMES_HIDDEN, RESTRICTED_NOTE } from "./kinds";
 import { openDrill } from "@/lib/drill";
 import {
   CATEGORY_LABEL,
@@ -120,7 +124,7 @@ export function AlertsPage({ canClose, isAdmin }: AlertsPageProps) {
             {tab === "open" && !reviewing ? (
               <SummaryStrip
                 summary={summary}
-                restricted={data?.restricted ?? 0}
+                restricted={data?.restricted ?? false}
                 muted={data?.muted ?? 0}
                 onSeverity={(v) => setSev(sev === v ? "" : v)}
                 onCategory={(v) => setCat(cat === v ? "" : v)}
@@ -251,7 +255,7 @@ function SevBadge({ value }: { value: AlertItem["severity"] }) {
 
 interface SummaryStripProps {
   summary: Summary;
-  restricted: number;
+  restricted: boolean;
   muted: number;
   onSeverity: (v: SevFilter) => void;
   onCategory: (v: Category) => void;
@@ -331,10 +335,10 @@ function SummaryStrip({ summary: s, restricted, muted, ...on }: SummaryStripProp
             </button>
           ))}
         </div>
-        {restricted > 0 || muted > 0 ? (
+        {restricted || muted > 0 ? (
           <span className="text-xs text-text-muted">
-            {restricted > 0 ? `${restricted} restricted (a source you cannot see)` : ""}
-            {restricted > 0 && muted > 0 ? ", " : ""}
+            {restricted ? RESTRICTED_NOTE : ""}
+            {restricted && muted > 0 ? " " : ""}
             {muted > 0 ? (
               <button
                 type="button"
@@ -382,6 +386,7 @@ function ListRow({ item, current, onPick, selectable, checked, onCheck }: ListRo
       >
         <span className="flex min-w-0 items-center gap-2">
           <SevBadge value={item.severity} />
+          <LateBadge late={item.late} start={item.late_start} end={item.late_end} />
           <span className={cn("truncate font-semibold", !open && "text-text-secondary")}>
             {item.title}
           </span>
@@ -570,6 +575,7 @@ function AlertDetail({ item, canClose, isAdmin, reasons }: DetailProps) {
       <header className="grid gap-1">
         <div className="flex flex-wrap items-center gap-2">
           <SevBadge value={item.severity} />
+          <LateBadge late={item.late} start={item.late_start} end={item.late_end} />
           <span className="text-text-secondary">{KIND_LABEL[item.kind]}</span>
           <span className="text-text-muted">
             {item.state === "open" ? "Open" : `Closed: ${item.close_reason_label ?? ""}`}
@@ -598,6 +604,8 @@ function AlertDetail({ item, canClose, isAdmin, reasons }: DetailProps) {
             </a>
           ) : null}
         </dd>
+        <FollowsRow follows={item.follows} />
+        <LateRow late={item.late} start={item.late_start} end={item.late_end} />
         <dt className="text-text-muted">Why it matters</dt>
         <dd className="text-text-secondary">{guide.why}</dd>
         {item.people?.length ? (
@@ -616,9 +624,14 @@ function AlertDetail({ item, canClose, isAdmin, reasons }: DetailProps) {
               ))}
             </dd>
           </>
+        ) : item.masked && item.people_hidden ? (
+          <>
+            <dt className="text-text-muted">People</dt>
+            <dd className="text-text-secondary">{NAMES_HIDDEN}</dd>
+          </>
         ) : null}
         <DeviceRows devices={item.devices ?? []} />
-        <DevicePeople found={item.device_people ?? []} />
+        <DevicePeople found={item.device_people ?? []} masked={item.masked} />
         <dt className="text-text-muted">When</dt>
         <dd>
           First <When iso={item.created_at} />
@@ -708,6 +721,8 @@ function AlertDetail({ item, canClose, isAdmin, reasons }: DetailProps) {
         ) : null}
         {item.schedule_id && item.ref_id ? (
           <RunRows scheduleId={item.schedule_id} runId={item.ref_id} />
+        ) : item.kind === "rule" && item.subject.startsWith("ext:") ? (
+          <VendorAlerts itemId={item.item_id} />
         ) : !sql ? (
           <p className="text-text-muted">No events to show for this alert.</p>
         ) : null}

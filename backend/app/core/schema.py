@@ -170,7 +170,13 @@ COLUMNS: Final[tuple[Column, ...]] = (
         nullable=False,
     ),
     # Parse status
-    Column("parse_status", _S, _G.PARSE, "ok | partial | envelope_only | failed", nullable=False),
+    Column(
+        "parse_status",
+        _S,
+        _G.PARSE,
+        "ok | partial | envelope_only | failed | template_missing",
+        nullable=False,
+    ),
     Column("parse_errors", _S, _G.PARSE, "Short reason when parse_status is not ok."),
     # Governance
     Column(
@@ -186,7 +192,9 @@ COLUMNS: Final[tuple[Column, ...]] = (
 COLUMN_NAMES: Final[tuple[str, ...]] = tuple(c.name for c in COLUMNS)
 COLUMNS_BY_NAME: Final[dict[str, Column]] = {c.name: c for c in COLUMNS}
 
-PARSE_STATUSES: Final[frozenset[str]] = frozenset({"ok", "partial", "envelope_only", "failed"})
+PARSE_STATUSES: Final[frozenset[str]] = frozenset(
+    {"ok", "partial", "envelope_only", "failed", "template_missing"}
+)
 CLASSIFICATIONS: Final[frozenset[str]] = frozenset({"local_only", "cloud_allowed"})
 
 

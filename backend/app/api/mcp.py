@@ -31,8 +31,8 @@ def _origin_ok(request: Request) -> bool:
 
 @router.post("/mcp", include_in_schema=False)
 async def mcp_post(request: Request, user: SqlUser) -> Response:
-    """JSON-RPC over MCP Streamable HTTP, answered as JSON. Needs a per-user API token
-    (or the loopback single-user mode); a browser session cannot call it."""
+    """JSON-RPC over MCP Streamable HTTP, answered as JSON. Needs a per-user API token;
+    a browser session cannot call it."""
     if getattr(request.state, "via", None) == "cookie":
         raise ForbiddenError("Use a personal API token for MCP clients, not a browser session")
     if not _origin_ok(request):

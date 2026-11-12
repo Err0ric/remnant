@@ -79,15 +79,37 @@ def test_unknown_template_is_refused(lab: dict[str, Any]) -> None:
     assert res.status_code == 400 and "no_such_template" in res.json()["detail"]
 
 
-def test_missing_template_shows_as_a_source_error_not_a_silent_fallback(
-    lab: dict[str, Any],
-) -> None:
+def test_missing_template_keeps_storing_marked_and_shows_an_error(lab: dict[str, Any]) -> None:
+    """ADR-0050 rows 1 to 3: the source keeps storing (envelope parse, raw kept), every row
+    is marked template_missing under the configured template_id, the source shows an error
+    naming the template, and a template that loads again is used from the next pass."""
     add(lab, template_id="linux_sshd")
-    lab["app"].state.templates._templates.pop("linux_sshd")
-    assert lab["app"].state.ingest.run_once() == 0
+    registry = lab["app"].state.templates
+    template = registry._templates.pop("linux_sshd")
+    lines = FIXTURE.read_text().splitlines()
+    assert lab["app"].state.ingest.run_once() == len(lines)
+    rows = query(
+        lab,
+        "SELECT template_id, parse_status, count(*), min(parse_errors) FROM events GROUP BY 1, 2",
+    )
+    assert rows == [
+        ["linux_sshd", "template_missing", len(lines), "Template linux_sshd was not available"]
+    ]
+    assert sorted(r[0] for r in query(lab, "SELECT raw FROM events")) == sorted(lines)
+    assert query(lab, "SELECT count(*) FROM events WHERE device_hostname IS NULL") == [[0]]
     (src,) = lab["c"].get("/api/sources").json()
     assert src["status"]["state"] == "error"
+    assert "without its parser" in src["status"]["error"]
     assert "linux_sshd is not available" in src["status"]["error"]
+
+    registry._templates["linux_sshd"] = template  # the template is back
+    with (lab["logs"] / "auth.log").open("a") as fh:
+        fh.write(lines[0] + "\n")
+    assert lab["app"].state.ingest.run_once() == 1
+    newest = query(lab, "SELECT parse_status FROM events WHERE parse_status <> 'template_missing'")
+    assert newest == [["ok"]]
+    (src,) = lab["c"].get("/api/sources").json()
+    assert src["status"]["error"] is None
 
 
 def test_templates_api(lab: dict[str, Any]) -> None:
@@ -148,3 +170,26 @@ def test_parser_change_refuses_what_does_not_fit(lab: dict[str, Any]) -> None:
     assert res.status_code == 400
     assert c.patch("/api/sources/csvs", json={}).status_code == 422
     assert c.patch("/api/sources/csvs", json={"template_id": None}).status_code == 200
+
+
+def test_a_csv_source_with_its_template_missing_drops_no_line(lab: dict[str, Any]) -> None:
+    """Review finding on #494: the generic CSV parser took the first line of every pass as a
+    header and dropped it. With the template missing no line is a header; cells are kept by
+    position, so every line of every pass is stored."""
+    folder = lab["logs"].parent / "fw"
+    folder.mkdir()
+    log = folder / "fw.csv"
+    first = ["1,2026/10/10 12:00:01,SYSTEM,general", "1,2026/10/10 12:00:02,SYSTEM,general"]
+    log.write_text("\n".join(first) + "\n")
+    body = {"source_id": "fw_csv", "format": "csv", "path": str(folder),
+            "template_id": "paloalto_system"}  # fmt: skip
+    assert lab["c"].post("/api/sources", json=body).status_code == 201
+    lab["app"].state.templates._templates.pop("paloalto_system")
+    assert lab["app"].state.ingest.run_once() == 2
+    with log.open("a") as fh:
+        fh.write("1,2026/10/10 12:00:03,SYSTEM,general\n")
+    assert lab["app"].state.ingest.run_once() == 1  # a pass of one line keeps that line
+    got = query(lab, "SELECT raw, parse_status, unmapped FROM events ORDER BY raw")
+    assert [r[0] for r in got] == [*first, "1,2026/10/10 12:00:03,SYSTEM,general"]
+    assert {r[1] for r in got} == {"template_missing"}
+    assert '"3":"SYSTEM"' in got[0][2].replace(" ", "")

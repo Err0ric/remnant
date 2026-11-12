@@ -1,6 +1,8 @@
 #!/bin/bash
 # The demo install: synthetic logs for a fictional company, loaded into a throwaway server
-# on http://127.0.0.1:8090 (loopback, no accounts). `make demo` runs this.
+# on http://127.0.0.1:8090 (loopback). `make demo` runs this. The loader makes the demo's
+# administrator through the one-time setup link; sign in as "admin" with the password in
+# data/demo/state/dev-account.json (generated on every run).
 #
 #   bash scripts/demo/run.sh            generate, start, load, keep serving (Ctrl+C stops)
 #   DEMO_DETACH=1 bash scripts/demo/run.sh   leave the server running and return
@@ -36,6 +38,7 @@ if ! uv run python "$ROOT/scripts/demo/load.py" --url "$URL" --logs "$DEMO/logs"
   exit 1
 fi
 echo "demo ready: $URL  (server log: $DEMO/server.log)"
+echo "sign in as admin; the password for this run is in $DEMO/state/dev-account.json"
 if [ "${DEMO_DETACH:-0}" = 1 ]; then
   exit 0
 fi

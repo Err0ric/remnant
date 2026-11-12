@@ -31,7 +31,7 @@ spec is served at `GET /api/openapi.json`; import it into Postman, Insomnia, or 
 | | |
 |---|---|
 | Authentication | `Authorization: Bearer <token>`. Create a token on your account page (**CLI and API tokens**); it carries your role and source access and can be revoked there. Browsers use the session cookie plus an `X-CSRF-Token` header on every non-GET request instead |
-| Loopback installs with no accounts | No token needed |
+| Installs with no accounts | Every route except setup answers `403 setup_required` until the first administrator is created with the one-time link |
 | Errors | Non-2xx responses are `{"detail": "...", "code": "..."}`; `code` is stable, `detail` is for people |
 | Rate limits | Sign-in, link redemption, and single sign-on starts are limited per address; `429` carries `Retry-After` |
 | Audit | Every query, export, sign-in, admin change, and AI call is written to the audit log under the caller |

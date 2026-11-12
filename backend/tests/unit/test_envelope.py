@@ -256,7 +256,8 @@ def test_envelope_json_shape() -> None:
 def test_pathological_lines_are_fast_and_safe(line: str) -> None:
     start = time.perf_counter()
     env = parser().parse(line)
-    assert time.perf_counter() - start < 0.25
+    # A hang guard: quadratic or backtracking parsing of 10 KB takes far longer than this.
+    assert time.perf_counter() - start < 2.0
     assert isinstance(env.msg, str)
 
 

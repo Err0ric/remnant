@@ -115,12 +115,10 @@ def login(
         except UntrustedCertificateError:
             _trust_on_first_use(target)
             state = Api(Credentials(target, None), client_factory).auth_state()
-        if state["mode"] == "open":
-            typer.echo(f"{target} runs without accounts (local only). No sign-in needed.")
-            return
         if state["mode"] == "setup":
             typer.secho(
-                "No administrator exists yet. Open the one-time setup link from the server log.",
+                "No administrator exists yet. Open the one-time setup link from the server log,"
+                " or run app-admin setup-link on the server for a new one.",
                 err=True,
             )
             raise typer.Exit(1)

@@ -65,6 +65,9 @@ export function AccountsCard() {
         <span className="text-sm text-text-muted">
           Reported by the hooks plugin on each device, last 30 days. A company email is confirmed by
           an Entra sign-in to Claude by the same person.
+          {d?.masked
+            ? " Names are hidden. An admin can turn on View people in AI usage for you."
+            : null}
         </span>
       </div>
       {q.isLoading ? (
@@ -120,14 +123,17 @@ export function AccountsCard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {d.rows.map((r) => (
+                  {d.rows.map((r, i) => (
                     <tr
-                      key={`${r.email ?? ""}:${r.devices.join(",")}`}
+                      key={r.key ?? `${r.email ?? ""}:${i}`}
                       data-row={r.email ?? "none"}
                       className="border-b border-border last:border-0"
                     >
                       <td className="px-3 py-2 font-mono">
-                        {r.email ? (
+                        {r.email && d.masked ? (
+                          // A device (or "Hidden"), not a person: plain text, no person link.
+                          r.email
+                        ) : r.email ? (
                           <EntityLink kind="user" value={r.email} tab="ai" />
                         ) : (
                           <span className="text-text-muted">No account reported</span>

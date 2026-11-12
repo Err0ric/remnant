@@ -2,10 +2,13 @@
  * The code is still shown next to it and is what filters and exports use. */
 const ACTIONS: Record<string, string> = {
   "access.denied": "Was refused access",
+  "admin.change": "Changed a user's permission",
   "address.lookup": "Looked up an address",
   "ai.mcp_change": "Changed an MCP server's review",
   "ai.service_change": "Changed an AI service's review",
   "ai.view": "Viewed AI usage",
+  "ai.view_people": "Viewed people in AI usage",
+  "ai.export_people": "Exported people in AI usage",
   "ai.watch_check": "Ran the AI Watch check",
   "ai.watch_change": "Changed AI watch settings",
   "alert_target.create": "Added an alert target",
@@ -84,6 +87,9 @@ const ACTIONS: Record<string, string> = {
   "source.parser_change": "Changed a source's parser",
   "source.quiet": "Source went quiet",
   "source.quiet_alert_change": "Changed a quiet-source alert",
+  "source.vendor_alert_change": "Changed vendor alert messages",
+  "source.vendor_alerts_paused": "Vendor alerts paused at the hourly cap",
+  "source.vendor_alerts_resumed": "Vendor alerts resumed after the cap",
   "source.resumed": "Source sent again",
   "template.ai_draft": "Drafted a parser with AI",
   "template.approve": "Approved a parser",

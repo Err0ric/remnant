@@ -50,10 +50,14 @@ def test_a_flagged_run_is_an_item_restricted_for_viewers_without_its_sources(
     assert (item["kind"], item["subject"], item["ref_id"]) == ("rule", WIN_ID, run["run_id"])
     assert item["sources"] == ["win_dc"] and item["state"] == "open"
     assert item["schedule_id"] == sid  # the run's schedule, for its rows
-    assert got["open"] == 1 and got["restricted"] == 0
-    # Ana (Linux only) sees the count, never the item.
+    assert got["open"] == 1 and got["restricted"] is False  # an admin reads every source
+    # Ana (Linux only) learns only that something is there: no item, and no count of them
+    # on any summary (owner, 2026-11-12).
     ana = alerts(lab["ana"])
-    assert (ana["items"], ana["open"], ana["restricted"]) == ([], 0, 1)
+    assert (ana["items"], ana["open"]) == ([], 0) and ana["restricted"] is True
+    for url in ("/api/alerts/count", "/api/alerts/lines"):
+        assert lab["ana"].get(url).json()["restricted"] is True, url
+        assert lab["admin"].get(url).json()["restricted"] is False, url
     assert lab["ana"].get(f"/api/alerts/{item['item_id']}").status_code == 403
     # One item per run: running the check again for the same run adds nothing.
     lab["app"].state.schedules._notify(
@@ -330,3 +334,21 @@ def test_approved_on_an_agent_alert_marks_the_agent_reviewed(lab: dict[str, Any]
     assert state[other.item_id]["state"] == "open"
     (rev,) = audit(lab, "ai.review")
     assert rev["agent"] == "cc|dana@example.com" and rev["closed"] == 1
+
+
+def test_the_person_filter_never_tells_whether_a_hidden_alert_names_that_person(
+    lab: dict[str, Any],
+) -> None:
+    """D243: `restricted` says only that some open alert is in a source the caller cannot
+    read. With `?person=`, it comes from every open alert, so asking for a name that a
+    hidden alert carries answers the same as asking for any other name."""
+    lab["app"].state.alert_items.raise_item(
+        "rule", "rule:hidden", "Rule: hidden", ref_id="h1", sources=["win_dc"],
+        people=["bob@example.com"],
+    )  # fmt: skip
+    ana = lab["ana"]
+    named = ana.get("/api/alerts", params={"person": "bob@example.com"}).json()
+    other = ana.get("/api/alerts", params={"person": "nobody@example.com"}).json()
+    assert named["items"] == other["items"] == []
+    assert named["restricted"] is other["restricted"] is True
+    assert named["open"] == other["open"] == 0

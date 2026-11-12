@@ -14,11 +14,14 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from app.ai.accounts import accounts
+from app.ai.agents import BASELINE_DAYS as AGENT_DAYS
 from app.ai.agents import agents
+from app.ai.agents import masked as masked_agents
 from app.ai.agents_overview import overview as agents_overview
 from app.ai.catalog import NON_USAGE, Catalog, DataLevel, Service, ServiceDef
 from app.ai.inventory import Exclusions, inventory
 from app.ai.inventory import export as inventory_export
+from app.ai.people_view import HIDDEN, audit_ai_view, can_view_people, mask_person, tie
 from app.ai.person_ai import activity as person_activity
 from app.ai.sessions import sessions, timeline
 from app.ai.usage import ServiceUse, Usage, merge_people, seen_through
@@ -26,7 +29,7 @@ from app.ai.watch import AiWatch, describe
 from app.ai.watch_summary import source_classes
 from app.ai.watch_summary import summary as watch_summary
 from app.alerts.items import AlertItem, AlertItems
-from app.api.access import AdminUser, CurrentUser, client_ip, require_role
+from app.api.access import AdminUser, CurrentUser, client_ip, require_ai_people, require_role
 from app.api.access import now as app_now
 from app.api.cache import STALE_MAX_S, PageCache, Refresher, scope_key
 from app.api.dashboard_sections import HistoryOut, KpiOut
@@ -89,7 +92,12 @@ class NetUseOut(BaseModel):
 
 
 class PersonOut(BaseModel):
+    # The name, or for a viewer without View people in AI usage the machine (or "Hidden",
+    # D242): `UsageOut.masked` says which.
     person: str
+    # A stable row key that is never a name: the name when names are shown, else the row's
+    # place, so two people on one machine stay two rows.
+    key: str = ""
     cost_usd: float
     tokens: int
     # False: no cost or token metric arrived, so cost and tokens are unknown, not 0.
@@ -132,6 +140,9 @@ class UsageOut(BaseModel):
     people_days: int = 0
     # Claude users by how they were seen: plugin only, network only (no plugin), and both.
     claude_seen: dict[str, int] = {}
+    # True: person cells show machines (or "Hidden"), and top people and the "may be" hint
+    # are left out, for a viewer without View people in AI usage (D242). Counts are the same.
+    masked: bool = False
 
 
 def _catalog(request: Request) -> Catalog:
@@ -172,7 +183,8 @@ async def ai_usage(
 ) -> UsageOut:
     """Services, MCP servers, and Claude usage per person, from the sources the caller
     may read; with a start, also what is new and what is no longer seen against the
-    period of the same length before it. Audited ai.view."""
+    period of the same length before it. Without View people in AI usage, machines stand in
+    for names (D242). Audited ai.view_people when names are shown, else ai.view."""
     usage: Usage = request.app.state.ai_usage
     # Down to the minute, so a reload within a minute is the same question: kept 60 s,
     # cleared by any change in the app (owner, 2026-10-31).
@@ -181,14 +193,17 @@ async def ai_usage(
     scope = await _scope(request, user, start, end)
     cache: PageCache = request.app.state.page_cache
     # Admin or not is part of the key: people are shown with the whole map or the part
-    # the page's names show (D223).
-    key = ("ai_usage", scope_key(scope.sources), start, end, user.role == "admin")
+    # the page's names show (D223). So is the permission: a named answer is never served
+    # to a caller without it (D242).
+    named_ok = can_view_people(user)
+    key = ("ai_usage", scope_key(scope.sources), start, end, user.role == "admin", named_ok)
+    audit, ip = _audit(request).audit, client_ip(request)
     hit = cache.get(key)
     if hit is not None:
         out, read = hit
         await run_in_threadpool(
-            _audit(request).audit.write, "ai.view", "success", user.user_id, client_ip(request),
-            {"sources_in_scope": read, "cached": True},
+            audit_ai_view, audit, user, ip, "ai.usage", start, end, read,
+            named_ok and _has_names(out), cached=True,
         )  # fmt: skip
         return out  # type: ignore[no-any-return]  # a UsageOut this route stored
     full = await run_in_threadpool(request.app.state.identities.load)
@@ -223,14 +238,6 @@ async def ai_usage(
             compared_from = earlier.isoformat()
         else:  # nothing at all before: every row would be "New" (QA F10), so no comparison
             changes = None
-    await run_in_threadpool(
-        _audit(request).audit.write,
-        "ai.view",
-        "success",
-        user.user_id,
-        client_ip(request),
-        {"sources_in_scope": sources},
-    )
     result = UsageOut(
         services=[_use_out(u) for u in services],
         non_usage=[_use_out(u) for u in other],
@@ -248,8 +255,63 @@ async def ai_usage(
         people_days=of,
         claude_seen=claude_seen,
     )
+    if not named_ok:
+        # The plugin's machine, else the one the network names (G2: the machine when known).
+        result = _masked(
+            result,
+            {p.person: p.machine or (p.network.machine if p.network else None) for p in people},
+        )
+    for p in result.people:
+        p.key = p.key or p.person
+    await run_in_threadpool(
+        audit_ai_view, audit, user, ip, "ai.usage", start, end, sources,
+        named_ok and _has_names(result),
+    )  # fmt: skip
     cache.put(key, (result, sources))
     return result
+
+
+def _masked(out: UsageOut, machines: dict[str, str | None]) -> UsageOut:
+    """The answer for a viewer without View people in AI usage (D242): each person as the
+    machine they used most (or "Hidden"), no top people (the machines are already listed),
+    no "may be" hint, and the network name as its machine. Counts are untouched, and rows
+    are never merged: two people on one machine stay two rows, keyed by place."""
+
+    def person(p: PersonOut) -> PersonOut:
+        machine = machines.get(p.person)
+        network = p.network
+        if network is not None:
+            shown = mask_person(network.who, machine) or HIDDEN
+            network = network.model_copy(update={"who": shown})
+        return p.model_copy(
+            update={"person": mask_person(p.person, machine) or HIDDEN, "network": network,
+                    "maybe": None},
+        )  # fmt: skip
+
+    shown = [(person(p), p.person) for p in out.people]
+    shown.sort(
+        key=lambda r: (
+            r[0].seen_through == "network", -r[0].cost_usd, -r[0].tokens, -r[0].sessions,
+            -r[0].tool_calls, -r[0].errors, -r[0].sensitive,
+            -(r[0].network.lookups if r[0].network else 0), r[0].person, tie(r[1]),
+        )
+    )  # fmt: skip
+    people = [p.model_copy(update={"key": f"row-{i}"}) for i, (p, _) in enumerate(shown)]
+    return out.model_copy(
+        update={
+            "services": [u.model_copy(update={"top_people": []}) for u in out.services],
+            "non_usage": [u.model_copy(update={"top_people": []}) for u in out.non_usage],
+            "people": people,
+            "masked": True,
+        }
+    )
+
+
+def _has_names(out: UsageOut) -> bool:
+    """Whether the answer shows anyone by name: the audit row says so (G3)."""
+    if out.masked:
+        return False
+    return bool(out.people) or any(u.top_people for u in [*out.services, *out.non_usage])
 
 
 def _use_out(u: ServiceUse) -> ServiceUseOut:
@@ -345,18 +407,22 @@ async def ai_watch_summary(
 ) -> Response:
     """AI Watch (ADR-0035 rows 10, 12, 13): five cards against the period before, AI use
     over 30 days by review status, and the top services, all on the caller's view.
-    Audited ai.view."""
+    Without View people in AI usage, card text and new agents show machines, never names
+    (D242). Audited ai.view_people when names are shown, else ai.view."""
     app = request.app
     meta: MetaDB = app.state.meta
     allowed = await run_in_threadpool(permitted_sources, meta, user)
     # Kept per viewer, window, and zone; any change made in the app (a review, a closed
     # alert) clears it, so a decision shows at once (owner, 2026-10-31). The 7-day view is
-    # refreshed in the background and served at once (D147).
+    # refreshed in the background and served at once (D147). The permission is part of the
+    # key, and each computation masks for the viewer as they are then, so a named answer
+    # is never served to a caller without it (D242).
     cache: PageCache = app.state.page_cache
-    key = ("ai_watch", user.user_id, scope_key(allowed), days, tz)
+    named_ok = can_view_people(user)
+    key = ("ai_watch", user.user_id, scope_key(allowed), days, tz, named_ok)
     default = days == 7
 
-    def compute(viewer: User, scope: list[str] | None) -> tuple[bytes, list[str]]:
+    def compute(viewer: User, scope: list[str] | None) -> tuple[bytes, list[str], bool]:
         items_store: AlertItems = app.state.alert_items
         ai_items = [i for i in items_store.items(viewer, "all", 5000) if i.kind == "ai_watch"]
         kinds = source_classes(
@@ -370,6 +436,9 @@ async def ai_watch_summary(
         s = watch_summary(
             app.state.ai_usage, app.state.ai_catalog, app.state.engine, scope, ai_items,
             readable, kinds, now, days, tz,
+            # Named only when the key and the viewer as they are now both allow it: a
+            # background refresh never puts names under a key without the permission.
+            named_ok and can_view_people(viewer),
         )  # fmt: skip
         pending, of = app.state.ai_usage.people_pending(
             QueryScope(scope, now - timedelta(days=30), now)
@@ -391,29 +460,27 @@ async def ai_watch_summary(
             people_days=of,
             updated_at=app_now(request),
         )
-        return result.model_dump_json().encode(), list(s.sources)
+        return result.model_dump_json().encode(), list(s.sources), s.names
 
-    hit = cache.peek(key, STALE_MAX_S) if default else cache.get(key)
+    audit, ip = _audit(request).audit, client_ip(request)
+    peeked = cache.peek(key, STALE_MAX_S) if default else None
+    hit = (peeked[0] if peeked is not None else None) if default else cache.get(key)
     if hit is not None:
-        body, read = hit[0] if default else hit
+        body, read, names = hit
         await run_in_threadpool(
-            _audit(request).audit.write, "ai.view", "success", user.user_id, client_ip(request),
-            {"sources_in_scope": read, "view": "watch", "cached": True},
+            audit_ai_view, audit, user, ip, "ai.watch.summary", None, None, read, names,
+            days=days, tz=tz, cached=True,
         )  # fmt: skip
         if default:  # seen now: refreshed while viewed, again after a lapse (D147)
             app.state.refresher.watch(key, user.user_id, scope_key(allowed), compute)
         return Response(body, media_type="application/json")
 
-    body, read = await run_in_threadpool(compute, user, allowed)
+    body, read, names = await run_in_threadpool(compute, user, allowed)
     await run_in_threadpool(
-        _audit(request).audit.write,
-        "ai.view",
-        "success",
-        user.user_id,
-        client_ip(request),
-        {"sources_in_scope": read, "view": "watch"},
-    )
-    cache.put(key, (body, read))
+        audit_ai_view, audit, user, ip, "ai.watch.summary", None, None, read, names,
+        days=days, tz=tz,
+    )  # fmt: skip
+    cache.put(key, (body, read, names))
     if default:
         app.state.refresher.watch(key, user.user_id, scope_key(allowed), compute)
     return Response(body, media_type="application/json")
@@ -682,26 +749,40 @@ class AgentOut(BaseModel):
     new_items: list[AgentItemOut]
     usual_peak: int | None
     recent_peak: int | None
+    # True: no owners, the label by machine, and a key by place, for a viewer without View
+    # people in AI usage (D242).
+    masked: bool = False
+    owners_hidden: int = 0  # owners left out of a masked row
 
 
 @router.get("/ai/agents")
 async def ai_agents(request: Request, user: CurrentUser) -> list[AgentOut]:
     """AI agents (Claude Code per machine and person, MCP clients per machine, API keys)
     and what changed in the last 24 hours against the 30 days before, from the sources
-    the caller may read. Audited ai.view."""
+    the caller may read. Without View people in AI usage, no owners and labels by machine
+    (D242). Audited ai.view_people when owners are shown, else ai.view."""
     meta: MetaDB = request.app.state.meta
     allowed = await run_in_threadpool(permitted_sources, meta, user)
     engine: QueryEngine = request.app.state.engine
-    rows = await run_in_threadpool(agents, engine, allowed, app_now(request))
+    at = app_now(request)
+    rows = await run_in_threadpool(agents, engine, allowed, at)
+    named_ok = can_view_people(user)
+    # How many owners each shown row hides, so a masked Owner cell says "Hidden" where an
+    # agent had owners and stays empty where it had none, as for every viewer (D242).
+    pairs = masked_agents(rows) if not named_ok else [(a, None) for a in rows]
     await run_in_threadpool(
-        _audit(request).audit.write,
-        "ai.view",
-        "success",
-        user.user_id,
-        client_ip(request),
-        {"sources_in_scope": allowed, "view": "agents"},
-    )
-    return [AgentOut(**{**_slots(a), "machines": [_slots(m) for m in a.machines]}) for a in rows]
+        audit_ai_view, _audit(request).audit, user, client_ip(request), "ai.agents",
+        at - timedelta(days=AGENT_DAYS), at, allowed,
+        named_ok and any(a.owners for a, _ in pairs),
+    )  # fmt: skip
+    return [
+        AgentOut(
+            **{**_slots(a), "machines": [_slots(m) for m in a.machines]},
+            masked=not named_ok,
+            owners_hidden=len(o.owners) if o is not None else 0,
+        )
+        for a, o in pairs
+    ]
 
 
 class SessionOut(BaseModel):
@@ -722,6 +803,18 @@ class SessionOut(BaseModel):
     unanswered: int = 0  # tool calls with no result (blocked, interrupted, or still running)
     new_mcp: list[str] = []  # MCP servers first used in this session (in the range)
     account: str | None = None  # the Claude account the plugin reported
+    # True: `person` and `account` show the machine (or "Hidden"), for a viewer without View
+    # people in AI usage (D242).
+    masked: bool = False
+
+
+def _masked_session(s: SessionOut) -> SessionOut:
+    """A session for a viewer without View people in AI usage (D242): the person and the
+    Claude account as the session's machine, or "Hidden"."""
+    return s.model_copy(
+        update={"person": mask_person(s.person, s.machine),
+                "account": mask_person(s.account, s.machine), "masked": True}
+    )  # fmt: skip
 
 
 class StepOut(BaseModel):
@@ -746,6 +839,7 @@ class TimelineOut(BaseModel):
     person: str | None
     machine: str | None
     steps: list[StepOut]
+    masked: bool = False  # `person` is the machine (or "Hidden"), D242
 
 
 @router.get("/ai/sessions")
@@ -757,30 +851,37 @@ async def ai_sessions(
 ) -> list[SessionOut]:
     """Recent Claude Code and Cowork sessions from the hooks plugin (ADR-0026), newest
     first, from the sources the caller may read; with `person`, only that person's under
-    any form of the name (ADR-0038 row 27). Audited ai.view."""
+    any form of the name (ADR-0038 row 27). Without View people in AI usage, machines stand
+    in for names and `person` is refused (D242). Audited ai.view_people when names are
+    shown, else ai.view."""
+    if person:
+        await run_in_threadpool(require_ai_people, request, user)
     meta: MetaDB = request.app.state.meta
     allowed = await run_in_threadpool(permitted_sources, meta, user)
     engine: QueryEngine = request.app.state.engine
     idle = request.app.state.config.agents.session_idle_minutes
-    rows = await run_in_threadpool(sessions, engine, allowed, app_now(request), days, idle)
+    at = app_now(request)
+    rows = await run_in_threadpool(sessions, engine, allowed, at, days, idle)
     if person:
         # As the rest of the person page: the part the caller's scope shows (T70, D219,
         # D223), the same kept set for the same days.
-        at = app_now(request)
         ident = await caller_identities(
             request, user, QueryScope(allowed, at - timedelta(days=days), at)
         )
         keys = set(ident.keys_for(person))
         rows = [s for s in rows if s.person and ident.key(s.person) in keys]
+    out = [SessionOut(**_slots(s)) for s in rows]
+    named_ok = can_view_people(user)
+    if not named_ok:
+        # Newest first as computed, never reordered by a hidden name.
+        out = [_masked_session(s) for s in out]
     await run_in_threadpool(
-        _audit(request).audit.write,
-        "ai.view",
-        "success",
-        user.user_id,
-        client_ip(request),
-        {"sources_in_scope": allowed, "view": "sessions"},
-    )
-    return [SessionOut(**_slots(s)) for s in rows]
+        audit_ai_view, _audit(request).audit, user, client_ip(request), "ai.sessions",
+        at - timedelta(days=days), at, allowed,
+        named_ok and any(s.person or s.account for s in out),
+        **({"person": person[:256]} if person else {}),
+    )  # fmt: skip
+    return out
 
 
 @router.get("/ai/sessions/{session_id}")
@@ -790,30 +891,35 @@ async def ai_session(
     user: CurrentUser,
     days: Annotated[int, Query(ge=1, le=90)] = 30,
 ) -> TimelineOut:
-    """One session in order: start, prompts, each tool call and its result, stop. Audited
-    ai.view with the session id."""
+    """One session in order: start, prompts, each tool call and its result, stop. Without
+    View people in AI usage, the machine stands in for the person (D242); step paths are
+    left as they are (a residual in D242). Audited ai.view_people when the person is shown,
+    else ai.view, with the session id."""
     meta: MetaDB = request.app.state.meta
     allowed = await run_in_threadpool(permitted_sources, meta, user)
     engine: QueryEngine = request.app.state.engine
-    t = await run_in_threadpool(timeline, engine, allowed, session_id, app_now(request), days)
+    at = app_now(request)
+    t = await run_in_threadpool(timeline, engine, allowed, session_id, at, days)
+    named_ok = can_view_people(user)
     await run_in_threadpool(
-        _audit(request).audit.write,
-        "ai.view",
-        "success",
-        user.user_id,
-        client_ip(request),
-        {"sources_in_scope": allowed, "view": "session", "session_id": session_id[:200]},
-    )
+        audit_ai_view, _audit(request).audit, user, client_ip(request), "ai.session",
+        at - timedelta(days=days), at, allowed, named_ok and t.person is not None,
+        session_id=session_id[:200],
+    )  # fmt: skip
     return TimelineOut(
         session_id=t.session_id,
-        person=t.person,
+        person=t.person if named_ok else mask_person(t.person, t.machine),
         machine=t.machine,
         steps=[StepOut(**_slots(x)) for x in t.steps],
+        masked=not named_ok,
     )
 
 
 class AccountRowOut(BaseModel):
+    # The account, or for a viewer without View people in AI usage its first device (or
+    # "Hidden"), with `os_users` left empty (D242): `AccountsOut.masked` says which.
     email: str | None
+    key: str = ""  # a stable row key that is never a hidden name
     tier: str
     account_from: str | None
     devices: list[str]
@@ -830,6 +936,7 @@ class AccountsOut(BaseModel):
     has_signins: bool
     rows: list[AccountRowOut]
     counts: dict[str, int]
+    masked: bool = False
 
 
 @router.get("/agents/accounts")
@@ -838,7 +945,9 @@ async def agents_accounts(
 ) -> AccountsOut:
     """Claude accounts the hooks plugin reported, by tier (ADR-0030 amendment): company
     confirmed by an Entra sign-in, company reported, company not confirmed, personal, or not
-    checked; each with its evidence. Audited ai.view."""
+    checked; each with its evidence. Without View people in AI usage, each account shows
+    its first device instead and no OS users (D242). Audited ai.view_people when names are
+    shown, else ai.view."""
     meta: MetaDB = request.app.state.meta
     allowed = await run_in_threadpool(permitted_sources, meta, user)
     srcs = [
@@ -850,6 +959,7 @@ async def agents_accounts(
         return ids if allowed is None else [s for s in ids if s in set(allowed)]
 
     domains = (await run_in_threadpool(request.app.state.identities.load)).domains
+    at = app_now(request)
     out = await run_in_threadpool(
         accounts,
         request.app.state.engine,
@@ -857,24 +967,41 @@ async def agents_accounts(
         mine(kinds.get("telemetry", [])),
         mine(kinds.get("m365", [])),
         domains,
-        app_now(request),
+        at,
         days,
     )
+    named_ok = can_view_people(user)
+    rows = []
+    for i, r in enumerate(out.rows):
+        row = AccountRowOut(**_slots(r), key=r.email or f"row-{i}")
+        if not named_ok:
+            row = _masked_account(row, i)
+        rows.append(row)
     await run_in_threadpool(
-        _audit(request).audit.write,
-        "ai.view",
-        "success",
-        user.user_id,
-        client_ip(request),
-        {"sources_in_scope": out.sources, "view": "accounts"},
-    )
+        audit_ai_view, _audit(request).audit, user, client_ip(request), "agents.accounts",
+        at - timedelta(days=days), at, out.sources,
+        named_ok and any(r.email or r.os_users for r in rows),
+    )  # fmt: skip
     return AccountsOut(
         days=out.days,
         domains_set=out.domains_set,
         has_signins=out.has_signins,
-        rows=[AccountRowOut(**_slots(r)) for r in out.rows],
+        rows=rows,
         counts=out.counts,
+        masked=not named_ok,
     )
+
+
+def _masked_account(row: AccountRowOut, i: int) -> AccountRowOut:
+    """An account row for a viewer without View people in AI usage (D242): the first device
+    for the email, no OS users, a key by place. Counts stay, rows keep their order. A
+    personal domain can be a name (carol-family.example), so its evidence drops it too."""
+    first = row.devices[0] if row.devices else None
+    evidence = "Not an organization domain" if row.tier == "personal" else row.evidence
+    return row.model_copy(
+        update={"email": mask_person(row.email, first), "os_users": [], "key": f"row-{i}",
+                "evidence": evidence}
+    )  # fmt: skip
 
 
 class ToolRowOut(BaseModel):
@@ -990,6 +1117,8 @@ class InventoryOut(BaseModel):
     days: int
     items: list[InventoryItemOut]
     sources_in_scope: list[str]
+    # True: agents show machines, never their owners' names (D242).
+    masked: bool = False
 
 
 class ExcludeIn(BaseModel):
@@ -1013,6 +1142,7 @@ async def _inventory(request: Request, user: User, days: int) -> tuple[list[Any]
         excluded,
         app_now(request),
         days,
+        can_view_people(user),
     )
 
 
@@ -1027,14 +1157,22 @@ async def ai_inventory(
     request: Request, user: CurrentUser, days: Annotated[int, Query(ge=1, le=90)] = 30
 ) -> InventoryOut:
     """Everything AI seen (ADR-0038 section 7): services, agents, MCP servers, and
-    Microsoft 365 apps with a granted consent, each with its exclusion if any. Audited
-    ai.view."""
+    Microsoft 365 apps with a granted consent, each with its exclusion if any. Without
+    View people in AI usage, agents show machines instead of owners (D242). Audited
+    ai.view_people when an agent with an owner is listed with names, else ai.view."""
     items, sources = await _inventory(request, user, days)
+    named_ok, at = can_view_people(user), app_now(request)
     await run_in_threadpool(
-        _audit(request).audit.write, "ai.view", "success", user.user_id, client_ip(request),
-        {"sources_in_scope": sources, "view": "inventory"},
+        audit_ai_view, _audit(request).audit, user, client_ip(request), "ai.inventory",
+        at - timedelta(days=days), at, sources,
+        named_ok and any(i.type == "agent" and i.people for i in items),
     )  # fmt: skip
-    return InventoryOut(days=days, items=[_item_out(i) for i in items], sources_in_scope=sources)
+    return InventoryOut(
+        days=days,
+        items=[_item_out(i) for i in items],
+        sources_in_scope=sources,
+        masked=not named_ok,
+    )
 
 
 @router.get("/ai/inventory/export")
@@ -1047,19 +1185,26 @@ async def ai_inventory_export(
     excluded: bool = False,
 ) -> Response:
     """The current view as a file (row 22): admins and analysts only, every export
-    audited `ai.inventory_export` with its filters and row count."""
+    audited `ai.inventory_export` with its filters and row count. Without View people in
+    AI usage, agents show machines, as on the page (D242)."""
     items, sources = await _inventory(request, user, days)
     rows = [
         i for i in items
         if (type is None or i.type == type) and (i.excluded is not None) == excluded
     ]  # fmt: skip
     body = inventory_export(rows, format)
+    detail = {"format": format, "days": days, "type": type, "excluded": excluded,
+              "rows": len(rows), "sources_in_scope": sources}  # fmt: skip
     await run_in_threadpool(
         _audit(request).audit.write, "ai.inventory_export", "success", user.user_id,
-        client_ip(request),
-        {"format": format, "days": days, "type": type, "excluded": excluded,
-         "rows": len(rows), "sources_in_scope": sources},
+        client_ip(request), detail,
     )  # fmt: skip
+    if can_view_people(user) and any(i.type == "agent" for i in rows):
+        # Agent names carry their owners for this caller: a named export (ADR-0029 G3, G4).
+        await run_in_threadpool(
+            _audit(request).audit.write, "ai.export_people", "success", user.user_id,
+            client_ip(request), {**detail, "surface": "ai.inventory_export"},
+        )  # fmt: skip
     stamp = app_now(request).strftime("%Y%m%d-%H%M")
     return Response(
         body,
@@ -1157,7 +1302,9 @@ async def ai_person_activity(
     """One person's AI activity (D189): accounts and devices, AI services the network saw,
     Claude Code sessions with a one-line summary, rollups (tools, files written or edited,
     commands, web domains, MCP servers), and flags. Metadata only, from the sources the
-    caller may read. Audited ai.view."""
+    caller may read. Refused without View people in AI usage (D242). Audited
+    ai.view_people."""
+    await run_in_threadpool(require_ai_people, request, user)
     meta: MetaDB = request.app.state.meta
     allowed = await run_in_threadpool(permitted_sources, meta, user)
     srcs = [
@@ -1187,8 +1334,8 @@ async def ai_person_activity(
         request.app.state.ai_rollup,
     )  # fmt: skip
     await run_in_threadpool(
-        _audit(request).audit.write, "ai.view", "success", user.user_id, client_ip(request),
-        {"sources_in_scope": out.sources, "view": "person", "person": out.person[:256]},
+        audit_ai_view, _audit(request).audit, user, client_ip(request), "ai.person_activity",
+        at - timedelta(days=days), at, out.sources, True, person=out.person[:256],
     )  # fmt: skip
     return PersonAiOut(
         person=out.person, start=out.start, end=out.end,

@@ -20,10 +20,16 @@ class User:
     username: str
     role: Role
     disabled: bool = False
+    # View people in AI usage (ADR-0029 G1, D242), as stored. Admins always have it:
+    # read it through `app.ai.people_view.can_view_people`, never on its own.
+    view_ai_people: bool = False
 
 
 # Loopback install with no accounts: one implicit local admin (ADR-0001 item 1).
 LOCAL_USER = User(user_id="local", username="local", role="admin")
+# Tables whose rows the implicit user of the old no-sign-in mode could own. History
+# (audit rows, LLM calls, created_by columns) keeps saying "local".
+LOCAL_OWNED = ("saved_searches", "schedules", "dashboards", "alert_items")
 
 
 class UserStore:
@@ -55,8 +61,12 @@ class UserStore:
                 raise ConflictError(f"A user named {username} already exists") from exc
         return user
 
-    def create_first_admin(self, username: str, password: str) -> User:
-        """Create the admin only if no user exists, atomically."""
+    def create_first_admin(
+        self, username: str, password: str, adopted: dict[str, int] | None = None
+    ) -> User:
+        """Create the admin only if no user exists, atomically. What the old no-sign-in
+        mode's implicit user owned becomes this admin's in the same transaction (D245), so
+        its schedules keep running; `adopted` receives the counts per table."""
         user = User(new_id(), username, "admin")
         with self._meta.connect() as con:
             cur = con.execute(
@@ -74,12 +84,21 @@ class UserStore:
             )
             if cur.rowcount != 1:
                 raise SetupClosedError("Setup is closed: an administrator already exists")
+            for table in LOCAL_OWNED:
+                moved = con.execute(
+                    f"UPDATE {table} SET owner_id = ? WHERE owner_id = ?",  # noqa: S608  # fixed names
+                    (user.user_id, LOCAL_USER.user_id),
+                ).rowcount
+                if moved and adopted is not None:
+                    adopted[table] = moved
         return user
 
     def get(self, user_id: str) -> User | None:
         with self._meta.connect() as con:
             row = con.execute(
-                "SELECT user_id, username, role, disabled FROM users WHERE user_id = ?", (user_id,)
+                "SELECT user_id, username, role, disabled, view_ai_people FROM users"
+                " WHERE user_id = ?",
+                (user_id,),
             ).fetchone()
         return _user(row) if row else None
 
@@ -90,7 +109,7 @@ class UserStore:
         still returned (so the caller can say why) but nothing is recorded as a sign-in."""
         with self._meta.connect() as con:
             row = con.execute(
-                "SELECT user_id, username, role, disabled, password_hash FROM users"
+                "SELECT user_id, username, role, disabled, view_ai_people, password_hash FROM users"
                 " WHERE username = ?",
                 (username,),
             ).fetchone()
@@ -129,4 +148,10 @@ class UserStore:
 
 
 def _user(row: sqlite3.Row) -> User:
-    return User(row["user_id"], row["username"], row["role"], bool(row["disabled"]))
+    return User(
+        row["user_id"],
+        row["username"],
+        row["role"],
+        bool(row["disabled"]),
+        bool(row["view_ai_people"]),
+    )

@@ -108,7 +108,8 @@ class HealthOut(BaseModel):
     # administrators only.
     client_errors: list[ClientErrorOut] = []
     # Background checks failing right now (owner 2026-11-03): AI Watch's steps and page
-    # refreshes, when they started failing and why; for administrators only.
+    # refreshes, and a step at start that waits for the next start (the backup before the
+    # alert rewrite): when they started failing and why; for administrators only.
     background_failures: list[FailingOut] = []
     # Scheduled backups (handoff item 8): the last run, its age, size, and result.
     backup: BackupHealthOut | None = None
@@ -227,7 +228,9 @@ async def put_backup_settings(
 
 def _failing(request: Request) -> list[FailingOut]:
     state = request.app.state
-    return failing_out(state.ai_watch.jobs.failing() + state.refresher.jobs.failing(), admin=True)
+    jobs = state.startup_jobs.failing() + state.ai_watch.jobs.failing()
+    jobs += state.maintenance.jobs.failing()  # lake maintenance (retention, compaction, ...)
+    return failing_out(jobs + state.refresher.jobs.failing(), admin=True)
 
 
 def _client_errors(request: Request) -> list[ClientErrorOut]:

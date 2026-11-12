@@ -1,4 +1,5 @@
 import { Fragment, useState } from "react";
+import { NAMES_HIDDEN } from "@/features/alerts/kinds";
 import type { AuditEvent } from "@/lib/api";
 import { describeAction } from "./actions";
 import { OutcomeBadge } from "./OutcomeBadge";
@@ -13,6 +14,10 @@ export function ActivityTable({ rows, onUser }: ActivityTableProps) {
   const [open, setOpen] = useState<number | null>(null);
   return (
     <div className="overflow-x-auto">
+      {rows.some((r) => r.masked) ? (
+        // D242: the server replaced AI Watch names with "a person"; one note per page.
+        <p className="border-b border-border px-3 py-2 text-sm text-text-muted">{NAMES_HIDDEN}</p>
+      ) : null}
       <table aria-label="Activity" className="w-full text-sm">
         <thead>
           <tr className="border-b border-border bg-surface-head text-left text-text-secondary">

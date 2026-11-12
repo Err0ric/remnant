@@ -17,6 +17,7 @@ import { SpeedTable } from "./SpeedTable";
 import { BackgroundFailures } from "./BackgroundFailures";
 import { EntityLink } from "@/components/EntityLink";
 import { openGaps, quietWord } from "./flow";
+import { heldText } from "@/features/sources/VendorAlertNotify";
 import { SourceFlow } from "./SourceFlow";
 import { StatusLine } from "./StatusLine";
 import { SystemStrip, type SourceTally } from "./SystemStrip";
@@ -118,6 +119,12 @@ function sourceRow(s: Source): Row {
       level: "unhealthy",
       reason: `No events for over ${human(s.quiet.quiet_after_s)}`,
     };
+  if (s.alert_pause)
+    return {
+      ...base,
+      level: "attention",
+      reason: `Over 100 new alerts an hour: below High stored, not raised (${heldText(s.alert_pause)})`,
+    };
   if (st.warnings?.length) return { ...base, level: "attention", reason: st.warnings.join("; ") };
   if (st.retry_at)
     return { ...base, level: "attention", reason: `Retrying at ${localStamp(st.retry_at)}` };
@@ -178,7 +185,11 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
     queryFn: api.overview,
     refetchInterval: 60_000,
   });
-  const alerts = useQuery({ queryKey: ["alerts", "open"], queryFn: () => api.alerts("open") });
+  // The newest open alert only (owner, 2026-11-11: the audit log records access, not loads).
+  const alerts = useQuery({
+    queryKey: ["alerts", "lines", 1, "newest"],
+    queryFn: () => api.alertLines(1, "newest"),
+  });
   const enrichment = useQuery({ queryKey: ["enrichment"], queryFn: api.enrichment });
   const targets = useQuery({
     queryKey: ["alert-targets"],

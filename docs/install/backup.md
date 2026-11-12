@@ -75,7 +75,7 @@ The server makes a backup every day by itself, on new and existing installs. Not
 - With no successful backup for 48 hours, one alert opens on **Alerts** ("No successful backup in 48 hours"). It stays the only one until a backup succeeds, which closes it as Resolved.
 - Backups never include the backup folder, and a restore leaves it where it is.
 
-The backups sit on the same disk as the data unless `APP__BACKUP__DIR` points elsewhere. They protect against a bad change or a damaged database, not a lost disk: copy the folder off the host with whatever you already use (a NAS share, restic, borg, your backup agent), and run `verify-backup` on a copy now and then. A backup nobody has ever restored is a hope, not a backup.
+Scheduled backups include `.key`, so a share that `APP__BACKUP__DIR` points at must be readable by admins and the service user only, never a general file share (D227). The backups sit on the same disk as the data unless `APP__BACKUP__DIR` points elsewhere. They protect against a bad change or a damaged database, not a lost disk: copy the folder off the host with whatever you already use (a NAS share, restic, borg, your backup agent), and run `verify-backup` on a copy now and then. A backup nobody has ever restored is a hope, not a backup.
 
 ## Restoring a scheduled backup
 

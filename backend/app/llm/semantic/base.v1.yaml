@@ -79,8 +79,8 @@ terms:
       '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)')
   - term: unparsed
     aliases: [could not parse, parse failure, raw only]
-    sql: "parse_status IN ('envelope_only', 'failed')"
-    note: Only the raw line and envelope fields are available for these events
+    sql: "parse_status IN ('envelope_only', 'failed', 'template_missing')"
+    note: These events lack their template's fields. Syslog ones have the raw line and envelope fields; JSON and CSV ones also have time, message, and the record in unmapped (template_missing means the source's parser was not available when they arrived)
   - term: ssh
     aliases: [sshd, secure shell]
     sql: "actor_process_name = 'sshd'"

@@ -112,10 +112,10 @@ def test_bad_since(runner: CliRunner) -> None:
     assert "30m" in err
 
 
-def test_login_on_open_server_needs_no_password(runner: CliRunner) -> None:
-    code, out, _ = run(runner, "login")
-    assert code == 0
-    assert "No sign-in needed" in out
+def test_login_on_a_server_with_no_accounts_points_to_the_setup_link(runner: CliRunner) -> None:
+    code, _, err = run(runner, "login")
+    assert code == 1
+    assert "app-admin setup-link" in err
 
 
 @pytest.mark.parametrize(

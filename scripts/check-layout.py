@@ -4,7 +4,7 @@ that the page is no wider than the window and that no card or table scrolls side
 inside it. Only elements marked `data-scroll-x` (the search results grid, whose columns are
 the user's choice) may scroll.
 
-    python3 scripts/check-layout.py --url http://127.0.0.1:8080 [--width 1280] [--shots DIR]
+    python3 scripts/check-layout.py --url http://127.0.0.1:8080 --data DIR [--width 1280]
 
 Pages and tabs come from frontend/src/lib/route.ts and nav.ts, so a new page is checked
 without editing this file. Run against a server with data (scripts/demo_lab.py), since most
@@ -21,6 +21,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+import devauth  # noqa: E402  # sibling script, standard library only
+
 SRC = ROOT / "frontend" / "src" / "lib"
 SKIP = {"account", "setup", "home"}  # sign-in links, first-run setup, and a redirect
 
@@ -47,6 +50,12 @@ def main() -> int:
     ap.add_argument("--url", default="http://127.0.0.1:8080")
     ap.add_argument("--width", type=int, default=1280)
     ap.add_argument("--channel", default=None, help="browser channel, e.g. chrome")
+    ap.add_argument(
+        "--data",
+        type=Path,
+        required=True,
+        help="the server's data folder, for the account demo_lab.py made (dev-account.json)",
+    )
     ap.add_argument("--shots", type=Path, default=None, help="save a screenshot per failure")
     args = ap.parse_args()
 
@@ -56,9 +65,17 @@ def main() -> int:
     with sync_playwright() as p:
         browser = p.chromium.launch(channel=args.channel) if args.channel else p.chromium.launch()
         for theme in ("dark",):
-            page = browser.new_page(
+            ctx = browser.new_context(
                 viewport={"width": args.width, "height": 900}, color_scheme=theme
             )
+            # Signed in, or every path would show the sign-in page and measure nothing.
+            url = args.url.rstrip("/")
+            signed = ctx.request.post(url + "/api/auth/login", data=devauth.account(args.data))
+            who = ctx.request.get(url + "/api/auth/state").json().get("user")
+            if not signed.ok or not who:
+                print(f"could not sign in to {url} with {args.data / devauth.ACCOUNT_FILE}")
+                return 2
+            page = ctx.new_page()
             for path in pages():
                 page.goto(args.url.rstrip("/") + path, wait_until="networkidle")
                 page.wait_for_timeout(400)
@@ -97,7 +114,7 @@ def main() -> int:
                         args.shots.mkdir(parents=True, exist_ok=True)
                         name = path.strip("/").replace("/", "_").replace("#", "-") or "root"
                         page.screenshot(path=str(args.shots / f"{name}.png"), full_page=True)
-            page.close()
+            ctx.close()
         browser.close()
     if failures:
         print(f"\n{len(failures)} page(s) scroll sideways at {args.width}px: {', '.join(failures)}")

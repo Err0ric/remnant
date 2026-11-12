@@ -1,8 +1,8 @@
 """Who is calling, and may they? (ADR-0001, CLAUDE.md rules 13 and 14)
 
-Modes: `open` (loopback, no accounts yet: implicit local admin), `setup` (network
-bind, no accounts: everything but setup is closed), `login` (accounts exist:
-a session cookie or a CLI bearer token is required on every protected route).
+Modes: `setup` (no accounts yet, on any bind: everything but setup is closed, D245),
+`login` (accounts exist: a session cookie or a CLI bearer token is required on every
+protected route). There is no mode without sign-in.
 Cookie-authenticated writes also need the session's CSRF token in X-CSRF-Token.
 """
 
@@ -13,10 +13,11 @@ from typing import Annotated
 import anyio
 from fastapi import Depends, Request
 
+from app.ai.people_view import can_view_people
 from app.auth import auditor_sql
 from app.auth.service import AuthService
 from app.auth.sessions import SessionInfo, csrf_matches
-from app.auth.users import LOCAL_USER, Role, User
+from app.auth.users import Role, User
 from app.core import clock
 from app.core.errors import (
     AuthRequiredError,
@@ -76,12 +77,11 @@ async def _off_pool(fn: Callable[[Request], User], request: Request) -> User:
 def _current_user(request: Request) -> User:
     auth: AuthService = request.app.state.auth
     mode = auth.mode()
-    if mode == "open":
-        request.state.user = LOCAL_USER
-        request.state.via = "open"
-        return LOCAL_USER
     if mode == "setup":
-        raise SetupRequiredError("Finish setup first: open the one-time link from the server log")
+        raise SetupRequiredError(
+            "Finish setup first: open the one-time link from the server log,"
+            " or run app-admin setup-link on the server for a new one"
+        )
 
     resolved = resolve_session(request)
     if resolved is None:
@@ -145,6 +145,26 @@ def require_role(*roles: Role) -> Callable[[Request], Awaitable[User]]:
         return await _off_pool(_check, request)
 
     return check
+
+
+NEEDS_AI_PEOPLE = "Needs View people in AI usage"
+
+
+def require_ai_people(request: Request, user: User) -> None:
+    """A person asked for on an AI surface (a person's AI activity, a `person` filter) by a
+    caller without View people in AI usage: 403, audited `access.denied`, before any query,
+    so names cannot be probed (D242). Blocking: call it through the thread pool."""
+    if can_view_people(user):
+        return
+    auth: AuthService = request.app.state.auth
+    auth.audit.write(
+        "access.denied",
+        "denied",
+        user.user_id,
+        client_ip(request),
+        {"method": request.method, "path": request.url.path, "reason": "view_ai_people"},
+    )
+    raise ForbiddenError(NEEDS_AI_PEOPLE)
 
 
 def _sql_user(request: Request) -> User:

@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Overview, OverviewSourceHealth } from "@/lib/api";
-import { SourcesLine } from "@/features/dashboard/Attention";
+import { HealthBanner, SourcesLine } from "@/features/dashboard/Attention";
 import { SystemStrip } from "@/features/health/SystemStrip";
 import { sourcesSummaryText } from "@/features/health/flow";
 
@@ -69,6 +69,7 @@ describe("one healthy count on Health and the Dashboard (handoff item 4)", () =>
     client.setQueryData(["overview"], OVERVIEW);
     render(
       <QueryClientProvider client={client}>
+        <HealthBanner />
         <SourcesLine />
         <SystemStrip
           overview={OVERVIEW}
@@ -83,14 +84,16 @@ describe("one healthy count on Health and the Dashboard (handoff item 4)", () =>
         />
       </QueryClientProvider>,
     );
-    const footer = screen.getByRole("link", { name: /^Sources:/ });
-    expect(footer).toHaveTextContent(
+    // Not all healthy: the banner at the top says it, and the bottom line steps aside.
+    const top = await screen.findByRole("region", { name: "Health needs attention" });
+    expect(top).toHaveTextContent(
       "Sources 4 of 6 healthy, 2 quiet: win_dc 2 d, vpn 6 h, no gaps in 24 hours",
     );
+    expect(screen.queryByRole("link", { name: /^Sources:/ })).toBeNull();
     const tile = screen.getByRole("button", { name: /^Sources/ });
     expect(tile).toHaveTextContent("4 of 6 healthy");
     expect(tile).toHaveTextContent("2 quiet: win_dc 2 d, vpn 6 h");
-    for (const el of [footer, tile]) expect(el).not.toHaveTextContent("server_events");
+    for (const el of [top, tile]) expect(el).not.toHaveTextContent("server_events");
   });
 
   it("names the longest wait only when nothing is quiet, never a refusal-only source", () => {

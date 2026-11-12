@@ -4,7 +4,7 @@ For one person, on one machine, reading log files on that machine. Nothing is re
 
 | | From source (no Docker) | Docker |
 |---|---|---|
-| Sign-in | None: loopback only, so the app treats you as the local administrator | One administrator account, created from a one-time link |
+| Sign-in | One administrator account, created from a one-time link | One administrator account, created from a one-time link |
 | Address | `http://127.0.0.1:8080` | `https://127.0.0.1:8080` (self-signed certificate) |
 | Needs | Python 3.12 with [uv](https://docs.astral.sh/uv/), Node 22 | Docker with Compose |
 | Best for | Trying it quickly, development | Keeping it separate from the rest of the machine |
@@ -20,7 +20,9 @@ APP__PATHS__ALLOWED_ROOTS=/var/log \
 uv run app-server
 ```
 
-Open `http://127.0.0.1:8080`. `APP__PATHS__ALLOWED_ROOTS` lists the folders the app may read (comma-separated); sources can only point inside them. Data goes to `backend/data/` unless `APP__PATHS__DATA_DIR` says otherwise.
+The first start prints a one-time link (valid 30 minutes) that creates your administrator account; open it in a browser on the same machine, then sign in at `http://127.0.0.1:8080`. For a new link, run `uv run app-admin setup-link` in `backend/` with the same environment. There is no mode without sign-in: a local address alone does not prove who is asking (a reverse proxy on the same machine looks the same).
+
+`APP__PATHS__ALLOWED_ROOTS` lists the folders the app may read (comma-separated); sources can only point inside them. Data goes to `backend/data/` unless `APP__PATHS__DATA_DIR` says otherwise.
 
 The server listens on `127.0.0.1` only. Setting `APP__SERVER__HOST=0.0.0.0` turns on HTTPS and the administrator setup link, as on a team VM ([team-vm.md](team-vm.md)).
 

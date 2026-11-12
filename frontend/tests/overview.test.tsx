@@ -176,19 +176,55 @@ describe("Landing page (ADR-0031)", () => {
     expect(window.location.pathname).toBe("/dashboard");
     const banner = await screen.findByRole("region", { name: "Needs you" });
     expect(await within(banner).findByRole("link", { name: /has errors/ })).toBeVisible();
+    // Alerts in sources the viewer cannot read: the note, never how many (owner, 2026-11-12).
+    expect(banner).toHaveTextContent(
+      "Some alerts are in sources you can't read. Ask an admin for access.",
+    );
+    expect(banner).not.toHaveTextContent(/restricted/i);
     // win_dc has errors and linux_sshd had a gap: neither is healthy, as Health counts
     // them (handoff item 4: one summary from the server for both pages).
-    const sources = screen.getByRole("link", {
-      name: /^Sources: 0 of 2 healthy, 1 gap in 24 hours, longest wait 4 min \(linux_sshd\)\. Open Health$/,
-    });
-    await userEvent.click(sources);
+    // Problems show once, in the banner at the top; the bottom Sources line steps aside.
+    const top = screen.getByRole("region", { name: "Health needs attention" });
+    expect(top).toHaveTextContent(
+      "Sources 0 of 2 healthy, 1 gap in 24 hours, longest wait 4 min (linux_sshd)",
+    );
+    expect(screen.queryByRole("link", { name: /^Sources:/ })).toBeNull();
+    await userEvent.click(within(top).getByRole("link", { name: "Open Health" }));
     expect(await screen.findByRole("heading", { name: "Health", level: 1 })).toBeVisible();
   });
 
-  it("opens Health when there are no panels", async () => {
-    await renderAt("/", undefined, noSchedules);
+  it("opens the Dashboard, never Health, even with no panels and health problems", async () => {
+    // win_dc has errors (owner, 2026-11-12: Health problems are a banner on the Dashboard).
+    await renderAt("/", { mode: "login", signedIn: true, role: "analyst" }, noSchedules);
+    expect(await screen.findByRole("heading", { name: "Dashboard", level: 1 })).toBeVisible();
+    expect(window.location.pathname).toBe("/dashboard");
+    const health = await screen.findByRole("region", { name: "Health needs attention" });
+    expect(health).toHaveTextContent("Sources 0 of 2 healthy, 1 gap in 24 hours");
+    const open = within(health).getByRole("link", { name: "Open Health" });
+    expect(open).toHaveAttribute("href", "/health#sources");
+    await userEvent.click(open);
     expect(await screen.findByRole("heading", { name: "Health", level: 1 })).toBeVisible();
     expect(window.location.pathname).toBe("/health");
+  });
+
+  it("shows no Health banner when every source is healthy", async () => {
+    await renderAt("/", undefined, (spy) => {
+      const real = spy.getMockImplementation() as typeof fetch;
+      spy.mockImplementation(async (url, init) => {
+        const res = await real(url, init);
+        if (!String(url).endsWith("/api/overview")) return res;
+        const body = await res.json();
+        body.sources = [];
+        body.volume = [];
+        body.source_summary = { total: 2, healthy: 2, quiet: [], gaps: 0, longest_wait: null };
+        return new Response(JSON.stringify(body), {
+          headers: { "Content-Type": "application/json" },
+        });
+      });
+    });
+    expect(await screen.findByRole("heading", { name: "My dashboard", level: 1 })).toBeVisible();
+    expect(await screen.findByRole("link", { name: /^Sources: 2 of 2 healthy/ })).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Health needs attention" })).toBeNull();
   });
 
   it("lists Dashboard first in the nav, once", async () => {

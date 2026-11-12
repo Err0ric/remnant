@@ -481,7 +481,9 @@ def test_a_hostile_or_hung_receiver_changes_nothing_and_records_wait_in_the_queu
     (plugin / "config").write_text((plugin / "config").read_text().replace(hostile.url, hung.url))
     started = time.monotonic()
     assert quiet(run(plugin, SESSION[2], home, platform))
-    assert time.monotonic() - started < 8  # 2 s for the send, plus starting the interpreter
+    # Well under the hung receiver's 30 s: the hook gave up on it (2 s send timeout), with
+    # room for a slow interpreter start on a loaded runner.
+    assert time.monotonic() - started < 20
     spool = home / "plugin-data" / "spool"
     queued = sorted(spool.glob("*.rec"))
     assert len(queued) == 3
@@ -632,7 +634,7 @@ def test_only_the_named_certificate_is_trusted(
     assert quiet(run(plugin, SESSION[0], home, platform))
     # This record, then the one that waited: the queue goes out after the live record, so
     # a slow runner may still be sending it when the hook returns.
-    deadline = time.monotonic() + 5
+    deadline = time.monotonic() + 20  # stops as soon as both arrive
     while len(server.bodies) < 2 and time.monotonic() < deadline:
         time.sleep(0.05)
     data = home / "plugin-data"

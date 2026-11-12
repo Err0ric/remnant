@@ -9,6 +9,7 @@ parser must then see one SELECT statement, so a COPY that would overwrite a list
 never runs either.
 """
 
+import atexit
 import glob
 import json
 import os
@@ -16,6 +17,7 @@ import re
 import shutil
 import threading
 import time
+import weakref
 from collections.abc import Callable, Collection, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
@@ -32,6 +34,7 @@ import structlog
 
 from app.core import lake_files, timing
 from app.core.errors import (
+    QueryBlockedError,
     QueryBusyError,
     QueryFailedError,
     QueryMemoryError,
@@ -100,6 +103,7 @@ INTEL_COLUMNS = (
 
 
 log = structlog.get_logger()
+INTERRUPT_EVERY_S = 0.1  # shutdown re-sends the interrupt this often until queries stop
 
 
 class UnsafeSpillDirError(RuntimeError):
@@ -296,6 +300,14 @@ class QueryEngine:
         self.pool = False
         self._idle: list[tuple[tuple[Any, ...], duckdb.DuckDBPyConnection, Callable[[], None]]] = []
         self._pool_lock = threading.Lock()
+        # Connections with a query running, so shutdown can stop them and wait: a thread
+        # still closing a DuckDB connection while the interpreter exits makes the C++
+        # runtime abort the process (owner, 2026-11-10; seen after an out-of-memory query
+        # whose sibling queries were still running).
+        self._running: set[duckdb.DuckDBPyConnection] = set()
+        self._running_cv = threading.Condition()
+        self._closing = False
+        atexit.register(_shutdown_at_exit, weakref.ref(self))
 
     def set_lookups(self, lookups: Lookups) -> None:
         """The local lookups behind ip_country, ip_asn, ip_org, and is_internal (ADR-0039)."""
@@ -452,6 +464,12 @@ class QueryEngine:
                 scope, intel=intel, rollup=rollup, skip=skip, after=after, upto=upto,
                 background=background, memory_mb=limit_mb, spill_mb=spill_mb,
             )  # fmt: skip
+        if not self._track(con):  # shutting down: no new query starts
+            if kept is not None:
+                self._give_kept(kept, False)
+            else:
+                con.close()
+            raise QueryBusyError("The server is shutting down")
         timer = threading.Timer(limit_s, con.interrupt)
         started = time.perf_counter()
         healthy = False
@@ -496,12 +514,15 @@ class QueryEngine:
                 self._report(con, name, kind, limit_mb, spill_mb, grant)
                 if self.trace:
                     self._trace(con, name, kind, scope, skip, after, started, waited, grant)
-            if kept is not None:
-                # A kept instance goes back only after a clean run: one stopped for time or
-                # memory, or that failed, is closed (a fresh one replaces it).
-                self._give_kept(kept, healthy)
-            else:
-                con.close()
+            try:
+                if kept is not None:
+                    # A kept instance goes back only after a clean run: one stopped for time
+                    # or memory, or that failed, is closed (a fresh one replaces it).
+                    self._give_kept(kept, healthy and not self._closing)
+                else:
+                    con.close()
+            finally:
+                self._untrack(con)
 
         truncated = False
         if guarded.applied_limit is not None and len(rows) >= guarded.applied_limit:
@@ -914,6 +935,42 @@ class QueryEngine:
                 return
         kept[1].close()
 
+    def _track(self, con: duckdb.DuckDBPyConnection) -> bool:
+        """Count a connection as running; False once shutdown has begun (not counted)."""
+        with self._running_cv:
+            if self._closing:
+                return False
+            self._running.add(con)
+            return True
+
+    def _untrack(self, con: duckdb.DuckDBPyConnection) -> None:
+        with self._running_cv:
+            self._running.discard(con)
+            self._running_cv.notify_all()
+
+    def shutdown(self, wait_s: float = 10.0) -> int:
+        """Stop running queries and wait until their threads have closed their
+        connections, then close every kept instance. Run before the interpreter exits
+        (app shutdown, and at exit). Returns how many were still running after `wait_s`."""
+        with self._running_cv:
+            self._closing = True
+        deadline = time.monotonic() + wait_s
+        with self._running_cv:
+            while self._running and (left := deadline - time.monotonic()) > 0:
+                # Interrupt again on every round: DuckDB clears the flag when a query
+                # starts, so an interrupt sent between `_track` and `execute` is lost.
+                for con in list(self._running):
+                    try:
+                        con.interrupt()
+                    except duckdb.Error:
+                        pass  # closed in the meantime
+                self._running_cv.wait(min(left, INTERRUPT_EVERY_S))
+            still = len(self._running)
+        self.close_kept()
+        if still:
+            log.warning("engine.shutdown_wait", still_running=still, wait_s=wait_s)
+        return still
+
     def close_kept(self) -> None:
         """Close every kept instance (shutdown, or settings changed)."""
         with self._pool_lock:
@@ -1140,7 +1197,7 @@ def _select_only(con: duckdb.DuckDBPyConnection, sql: str) -> None:
     except duckdb.Error as exc:
         raise QueryRejectedError("Could not parse SQL as a single SELECT statement") from exc
     if len(statements) != 1 or statements[0].type != duckdb.StatementType.SELECT:
-        raise QueryRejectedError("Statement not allowed: only SELECT or WITH ... SELECT can run")
+        raise QueryBlockedError("Statement not allowed: only SELECT or WITH ... SELECT can run")
 
 
 def _rows_read(con: duckdb.DuckDBPyConnection) -> int | None:
@@ -1232,3 +1289,12 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, dict):
         return {str(k): _json_safe(v) for k, v in value.items()}
     return value
+
+
+def _shutdown_at_exit(ref: weakref.ReferenceType[QueryEngine]) -> None:
+    """atexit: the same clean stop when the process ends without the app's shutdown (a
+    script, a test process, a crash of the event loop). Python runs this before it
+    finalizes threads."""
+    engine = ref()
+    if engine is not None:
+        engine.shutdown(wait_s=5.0)

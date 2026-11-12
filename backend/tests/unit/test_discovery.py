@@ -12,6 +12,7 @@ from app.ingest import discovery
 from app.ingest.discovery import _pattern, _rotations, discover
 from app.ingest.sources import SourceConfig, files_for
 from app.templates.registry import STARTER_DIR, TemplateRegistry
+from tests.host_os import mkdir_bytes_name, open_bytes_name
 
 LOGS = Path(__file__).parent.parent / "fixtures" / "logs"
 REGISTRY = TemplateRegistry(STARTER_DIR, Path("/nonexistent"))
@@ -288,10 +289,10 @@ def test_names_that_are_not_utf8_are_skipped_and_counted(tmp_path: Path) -> None
     root = tmp_path / "r"
     root.mkdir()
     (root / "good.log").write_text("hello\n")
-    os.mkdir(os.fsencode(root) + b"/host\xff")
-    with open(os.fsencode(root) + b"/host\xff/x.log", "w") as fh:
+    mkdir_bytes_name(os.fsencode(root) + b"/host\xff")
+    with open_bytes_name(os.fsencode(root) + b"/host\xff/x.log") as fh:
         fh.write("a\n")
-    with open(os.fsencode(root) + b"/fw\xfe.log", "w") as fh:
+    with open_bytes_name(os.fsencode(root) + b"/fw\xfe.log") as fh:
         fh.write("a\n")
     report = discover(str(root), [root], REGISTRY.all())
     assert [c.glob for c in report.candidates] == ["good.log"]

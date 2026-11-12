@@ -1,0 +1,60 @@
+<132>1 2026-10-09T20:00:51Z sensor01 edgesensor - - - CEF:0|ExampleCorp|EdgeSensor|2.1|sig-1|Credential dumping detected|8|externalId=A-1000 src=10.20.1.5 suser=alice shost=ws-0000 dst=203.0.113.9
+<132>Oct  9 20:01:09 sensor01 CEF:0|ExampleCorp|EdgeSensor|2.1|sig-2|Beacon \| periodic callout|3|externalId=A-1001 src=10.20.1.6 suser=bob shost=ws-0001
+<132>Oct  9 20:01:39 sensor01 CEF:0|ExampleCorp|EdgeSensor|2.1|sig-3|Suspicious script run|9|externalId=A-1002 src=10.20.2.14 suser=carol shost=ws-0002
+<132>Oct  9 20:01:44 sensor01 CEF:0|ExampleCorp|EdgeSensor|2.1|sig-4|Impossible travel sign-in|5|externalId=A-1003 src=10.20.3.30 suser=dave shost=ws-0003
+<132>Oct  9 20:02:53 sensor01 CEF:0|ExampleCorp|EdgeSensor|2.1|sig-5|Ransomware behavior blocked|5|externalId=A-1004 src=10.20.1.5 suser=alice shost=ws-0004 dst=198.51.100.4
+<132>1 2026-10-09T20:03:20Z ndr01 netwatch - - - CEF:0|ExampleSec|NetWatch|4.0|sig-5|Ransomware behavior blocked|8|externalId=A-1004 src=10.20.1.5 suser=alice shost=ws-0004
+<132>Oct  9 20:03:23 sensor01 CEF:0|ExampleCorp|EdgeSensor|2.1|sig-7|Beacon \| periodic callout|3|externalId=A-1006 src=10.20.2.14 suser=carol shost=ws-0006
+<132>Oct  9 20:03:49 ndr01 CEF:0|ExampleSec|NetWatch|4.0|sig-8|Suspicious script run|7|externalId=A-1007 src=10.20.3.30 suser=dave shost=ws-0007
+<132>Oct  9 20:04:36 sensor01 CEF:0|ExampleCorp|EdgeSensor|2.1|sig-0|Impossible travel sign-in|7|externalId=A-1008 src=10.20.1.5 suser=alice shost=ws-0008 dst=192.0.2.10
+<132>Oct  9 20:05:04 sensor01 CEF:0|ExampleCorp|EdgeSensor|2.1|sig-1|Ransomware behavior blocked|5|externalId=A-1009 src=10.20.1.6 suser=bob shost=ws-0009
+<132>1 2026-10-09T20:06:29Z ndr01 netwatch - - - CEF:0|ExampleSec|NetWatch|4.0|sig-2|Credential dumping detected|9|externalId=A-1010 src=10.20.2.14 suser=carol shost=ws-0010
+<132>Oct  9 20:07:15 sensor01 CEF:0|ExampleCorp|EdgeSensor|2.1|sig-1|Credential dumping detected|8|externalId=A-1000 src=10.20.1.5 suser=alice shost=ws-0000
+<132>Oct  9 20:08:04 sensor01 CEF:0|ExampleCorp|EdgeSensor|2.1|sig-4|Suspicious script run|5|externalId=A-1012 src=10.20.1.5 suser=alice shost=ws-0012 dst=198.51.100.4
+<132>Oct  9 20:09:12 sensor01 CEF:0|ExampleCorp|EdgeSensor|2.1|sig-5|Impossible travel sign-in|3|externalId=A-1013 src=10.20.1.6 suser=bob shost=ws-0013
+<132>Oct  9 20:09:39 ndr01 CEF:0|ExampleSec|NetWatch|4.0|sig-6|Ransomware behavior blocked|5|externalId=A-1014 src=10.20.2.14 suser=carol shost=ws-0014
+<132>1 2026-10-09T20:10:04Z ndr01 netwatch - - - CEF:0|ExampleSec|NetWatch|4.0|sig-7|Credential dumping detected|7|externalId=A-1015 src=10.20.3.30 suser=dave shost=ws-0015
+<132>Oct  9 20:10:10 ndr01 CEF:0|ExampleSec|NetWatch|4.0|sig-8|Beacon \| periodic callout|5|externalId=A-1016 src=10.20.1.5 suser=alice shost=ws-0016 dst=192.0.2.10
+<132>Oct  9 20:10:53 ndr01 CEF:0|ExampleSec|NetWatch|4.0|sig-7|Beacon \| periodic callout|6|externalId=A-1006 src=10.20.2.14 suser=carol shost=ws-0006
+<132>Oct  9 20:12:16 ndr01 CEF:0|ExampleSec|NetWatch|4.0|sig-1|Impossible travel sign-in|8|externalId=A-1018 src=10.20.2.14 suser=carol shost=ws-0018
+<132>Oct  9 20:12:29 ndr01 CEF:0|ExampleSec|NetWatch|4.0|sig-2|Ransomware behavior blocked|5|externalId=A-1019 src=10.20.3.30 suser=dave shost=ws-0019
+<132>1 2026-10-09T20:12:41Z ndr01 netwatch - - - CEF:0|ExampleSec|NetWatch|4.0|sig-3|Credential dumping detected|5|externalId=A-1020 src=10.20.1.5 suser=alice shost=ws-0020 dst=203.0.113.77
+<132>Oct  9 20:12:45 sensor01 CEF:0|ExampleCorp|EdgeSensor|2.1|sig-4|Beacon \| periodic callout|5|externalId=A-1021 src=10.20.1.6 suser=bob shost=ws-0021
+<132>Oct  9 20:14:11 ndr01 CEF:0|ExampleSec|NetWatch|4.0|sig-5|Suspicious script run|3|externalId=A-1022 src=10.20.2.14 suser=carol shost=ws-0022
+<132>Oct  9 20:15:35 ndr01 CEF:0|ExampleSec|NetWatch|4.0|sig-2|Credential dumping detected|10|externalId=A-1010 src=10.20.2.14 suser=carol shost=ws-0010
+<132>Oct  9 20:16:01 sensor01 CEF:0|ExampleCorp|EdgeSensor|2.1|sig-7|Ransomware behavior blocked|3|externalId=A-1024 src=10.20.1.5 suser=alice shost=ws-0024 dst=192.0.2.10
+<132>1 2026-10-09T20:16:53Z ndr01 netwatch - - - CEF:0|ExampleSec|NetWatch|4.0|sig-8|Credential dumping detected|8|externalId=A-1025 src=10.20.1.6 suser=bob shost=ws-0025
+<132>Oct  9 20:17:09 sensor01 CEF:0|ExampleCorp|EdgeSensor|2.1|sig-0|Beacon \| periodic callout|9|externalId=A-1026 src=10.20.2.14 suser=carol shost=ws-0026
+<132>Oct  9 20:18:31 ndr01 CEF:0|ExampleSec|NetWatch|4.0|sig-1|Suspicious script run|3|externalId=A-1027 src=10.20.3.30 suser=dave shost=ws-0027
+<132>Oct  9 20:19:14 sensor01 CEF:0|ExampleCorp|EdgeSensor|2.1|sig-2|Impossible travel sign-in|5|externalId=A-1028 src=10.20.1.5 suser=alice shost=ws-0028 dst=198.51.100.4
+<132>Oct  9 20:20:15 sensor01 CEF:0|ExampleCorp|EdgeSensor|2.1|sig-0|Beacon \| periodic callout|9|externalId=A-1026 src=10.20.2.14 suser=carol shost=ws-0026
+<132>1 2026-10-09T20:21:34Z sensor01 edgesensor - - - CEF:0|ExampleCorp|EdgeSensor|2.1|sig-4|Credential dumping detected|8|externalId=A-1030 src=10.20.2.14 suser=carol shost=ws-0030
+<132>Oct  9 20:22:53 ndr01 CEF:0|ExampleSec|NetWatch|4.0|sig-5|Beacon \| periodic callout|7|externalId=A-1031 src=10.20.3.30 suser=dave shost=ws-0031
+<132>Oct  9 20:23:08 ndr01 CEF:0|ExampleSec|NetWatch|4.0|sig-6|Suspicious script run|9|externalId=A-1032 src=10.20.1.5 suser=alice shost=ws-0032 dst=203.0.113.9
+<132>Oct  9 20:24:26 ndr01 CEF:0|ExampleSec|NetWatch|4.0|sig-7|Impossible travel sign-in|5|externalId=A-1033 src=10.20.1.6 suser=bob shost=ws-0033
+<132>Oct  9 20:24:59 ndr01 CEF:0|ExampleSec|NetWatch|4.0|sig-8|Ransomware behavior blocked|3|externalId=A-1034 src=10.20.2.14 suser=carol shost=ws-0034
+<132>1 2026-10-09T20:25:44Z ndr01 netwatch - - - CEF:0|ExampleSec|NetWatch|4.0|sig-2|Impossible travel sign-in|8|externalId=A-1028 src=10.20.1.5 suser=alice shost=ws-0028
+<132>Oct  9 20:26:33 sensor01 CEF:0|ExampleCorp|EdgeSensor|2.1|sig-1|Beacon \| periodic callout|3|externalId=A-1036 src=10.20.1.5 suser=alice shost=ws-0036 dst=203.0.113.9
+<132>Oct  9 20:26:56 ndr01 CEF:0|ExampleSec|NetWatch|4.0|sig-2|Suspicious script run|8|externalId=A-1037 src=10.20.1.6 suser=bob shost=ws-0037
+<132>Oct  9 20:27:12 sensor01 CEF:0|ExampleCorp|EdgeSensor|2.1|sig-3|Impossible travel sign-in|5|externalId=A-1038 src=10.20.2.14 suser=carol shost=ws-0038
+<132>Oct  9 20:27:39 sensor01 CEF:0|ExampleCorp|EdgeSensor|2.1|sig-4|Ransomware behavior blocked|9|externalId=A-1039 src=10.20.3.30 suser=dave shost=ws-0039
+<132>1 2026-10-09T20:28:50Z sensor01 edgesensor - - - CEF:0|ExampleCorp|EdgeSensor|2.1|sig-5|Credential dumping detected|7|externalId=A-1040 src=10.20.1.5 suser=alice shost=ws-0000 dst=198.51.100.4
+<132>Oct  9 20:29:20 ndr01 CEF:0|ExampleSec|NetWatch|4.0|sig-3|Impossible travel sign-in|8|externalId=A-1038 src=10.20.2.14 suser=carol shost=ws-0038
+<132>Oct  9 20:30:20 sensor01 CEF:0|ExampleCorp|EdgeSensor|2.1|sig-7|Suspicious script run|9|externalId=A-1042 src=10.20.2.14 suser=carol shost=ws-0002
+<132>Oct  9 20:31:02 ndr01 CEF:0|ExampleSec|NetWatch|4.0|sig-8|Impossible travel sign-in|8|externalId=A-1043 src=10.20.3.30 suser=dave shost=ws-0003
+<132>Oct  9 20:32:09 sensor01 CEF:0|ExampleCorp|EdgeSensor|2.1|sig-0|Ransomware behavior blocked|7|externalId=A-1044 src=10.20.1.5 suser=alice shost=ws-0004 dst=203.0.113.9
+<132>1 2026-10-09T20:32:47Z ndr01 netwatch - - - CEF:0|ExampleSec|NetWatch|4.0|sig-1|Credential dumping detected|5|externalId=A-1045 src=10.20.1.6 suser=bob shost=ws-0005
+<132>Oct  9 20:33:09 ndr01 CEF:0|ExampleSec|NetWatch|4.0|sig-2|Beacon \| periodic callout|9|externalId=A-1046 src=10.20.2.14 suser=carol shost=ws-0006
+<132>Oct  9 20:33:36 sensor01 CEF:0|ExampleCorp|EdgeSensor|2.1|sig-0|Impossible travel sign-in|10|externalId=A-1008 src=10.20.1.5 suser=alice shost=ws-0008
+<132>Oct  9 20:34:16 sensor01 CEF:0|ExampleCorp|EdgeSensor|2.1|sig-4|Impossible travel sign-in|5|externalId=A-1048 src=10.20.1.5 suser=alice shost=ws-0008 dst=192.0.2.10
+<132>Oct  9 20:34:56 sensor01 CEF:0|ExampleCorp|EdgeSensor|2.1|sig-5|Ransomware behavior blocked|8|externalId=A-1049 src=10.20.1.6 suser=bob shost=ws-0009
+<132>1 2026-10-09T20:35:01Z sensor01 edgesensor - - - CEF:0|ExampleCorp|EdgeSensor|2.1|sig-6|Credential dumping detected|7|externalId=A-1050 src=10.20.2.14 suser=carol shost=ws-0010
+<132>Oct  9 20:36:20 sensor01 CEF:0|ExampleCorp|EdgeSensor|2.1|sig-7|Beacon \| periodic callout|8|externalId=A-1051 src=10.20.3.30 suser=dave shost=ws-0011
+<132>Oct  9 20:37:16 ndr01 CEF:0|ExampleSec|NetWatch|4.0|sig-8|Suspicious script run|7|externalId=A-1052 src=10.20.1.5 suser=alice shost=ws-0012 dst=198.51.100.4
+<132>Oct  9 20:37:21 ndr01 CEF:0|ExampleSec|NetWatch|4.0|sig-7|Credential dumping detected|10|externalId=A-1015 src=10.20.3.30 suser=dave shost=ws-0015
+<132>Oct  9 20:37:47 ndr01 CEF:0|ExampleSec|NetWatch|4.0|sig-1|Ransomware behavior blocked|8|externalId=A-1054 src=10.20.2.14 suser=carol shost=ws-0014
+<132>1 2026-10-09T20:38:29Z sensor01 edgesensor - - - CEF:0|ExampleCorp|EdgeSensor|2.1|sig-2|Credential dumping detected|5|externalId=A-1055 src=10.20.3.30 suser=dave shost=ws-0015
+<132>Oct  9 20:38:44 ndr01 CEF:0|ExampleSec|NetWatch|4.0|sig-3|Beacon \| periodic callout|7|externalId=A-1056 src=10.20.1.5 suser=alice shost=ws-0016 dst=203.0.113.77
+<132>Oct  9 20:39:16 sensor01 CEF:0|ExampleCorp|EdgeSensor|2.1|sig-4|Suspicious script run|3|externalId=A-1057 src=10.20.1.6 suser=bob shost=ws-0017
+<132>Oct  9 20:40:14 ndr01 CEF:0|ExampleSec|NetWatch|4.0|sig-5|Impossible travel sign-in|8|externalId=A-1058 src=10.20.2.14 suser=carol shost=ws-0018
+<132>Oct  9 20:41:08 ndr01 CEF:0|ExampleSec|NetWatch|4.0|sig-6|Credential dumping detected|7|externalId=A-1050 src=10.20.2.14 suser=carol shost=ws-0010

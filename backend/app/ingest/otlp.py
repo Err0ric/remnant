@@ -22,6 +22,7 @@ import math
 import os
 import re
 import threading
+import time
 import zlib
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
@@ -44,6 +45,16 @@ MAX_FUTURE = timedelta(days=1)  # later timestamps fall back to the time observe
 MAX_COST_USD = 1_000_000.0  # one cost point above this, or below 0, is not real
 MAX_DEPTH = 8
 SPOOL_CAP = 512 * 1024 * 1024  # bytes waiting per source before the receiver refuses
+FULL_FOR_S = 300.0  # a refusal this recent makes the source's spool count as full
+_full_at: dict[str, float] = {}  # source id -> monotonic time of its last refusal
+
+
+def spool_full(source_id: str) -> bool:
+    """True while this source's spool is refusing new messages (it self-clears once the
+    ingest worker has drained it and messages are accepted again, or FULL_FOR_S later)."""
+    at = _full_at.get(source_id)
+    return at is not None and time.monotonic() - at < FULL_FOR_S
+
 
 # Dropped unless the source keeps content (ADR-0015 row 4).
 CONTENT_KEYS = frozenset(
@@ -517,7 +528,9 @@ class Spool:
         folder = self._root / source_id
         with self._lock(source_id):
             if self.waiting(source_id) > SPOOL_CAP:
+                _full_at[source_id] = time.monotonic()
                 raise SpoolFullError(source_id)
+            _full_at.pop(source_id, None)
             folder.mkdir(parents=True, exist_ok=True, mode=0o700)
             path = folder / spool_name(now, self._kind)
             fd = _open_append(path)

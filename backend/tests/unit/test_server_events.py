@@ -34,23 +34,37 @@ def writer() -> tuple[se.ServerEvents, FakeSpool]:
 
 
 @pytest.mark.parametrize(
-    ("method", "path", "want"),
+    ("method", "path", "status", "want"),
     [
-        ("POST", "/api/query", True),
-        ("DELETE", "/api/tokens/{token_id}", True),
-        ("GET", "/api/audit/{log}/export", True),
-        ("GET", "/api/overview", False),
-        ("GET", "/api/health", False),
-        ("HEAD", "/api/health", False),
-        ("OPTIONS", "/api/query", False),
-        ("POST", "/api/otlp/v1/logs", False),
-        ("POST", "/api/client-errors", False),
-        ("GET", "/assets/index-AbCdEf12.js", False),
-        ("POST", "/login", False),
+        ("POST", "/api/auth/login", 200, True),
+        ("DELETE", "/api/tokens/{token_id}", 204, True),
+        ("PUT", "/api/settings/backups", 200, True),
+        ("GET", "/api/audit/{log}/export", 200, True),
+        ("POST", "/api/query/export", 200, True),
+        ("POST", "/api/users", 400, True),  # a failed change is still a change
+        # Reads sent as POST (owner, 2026-11-10): only when denied.
+        ("POST", "/api/query", 200, False),
+        ("POST", "/api/query", 400, False),
+        ("POST", "/api/search/facets", 200, False),
+        ("POST", "/api/ask", 200, False),
+        ("POST", "/api/query", 403, True),
+        ("GET", "/api/users", 401, True),
+        ("POST", "/api/auth/login", 429, True),
+        ("GET", "/api/overview", 200, False),
+        ("GET", "/api/health", 200, False),
+        ("HEAD", "/api/health", 200, False),
+        ("OPTIONS", "/api/query", 200, False),
+        ("POST", "/api/otlp/v1/logs", 401, False),  # its refusal has its own record
+        ("POST", "/api/client-errors", 200, False),
+        ("GET", "/assets/index-AbCdEf12.js", 200, False),
+        ("POST", "/login", 200, False),
+        ("POST", "/api/not-a-route", 200, False),  # unlisted: never recorded by default
     ],
 )
-def test_only_changes_and_exports_are_recorded(method: str, path: str, want: bool) -> None:
-    assert se.wanted(method, path) is want
+def test_only_listed_changes_exports_and_denials_are_recorded(
+    method: str, path: str, status: int, want: bool
+) -> None:
+    assert se.wanted(method, path, status) is want
 
 
 def test_a_request_record_is_metadata_only(tmp_path: Path) -> None:
@@ -74,6 +88,7 @@ def test_a_request_flood_is_capped_and_never_crowds_out_a_refusal(
 ) -> None:
     monkeypatch.setattr(se, "MAX_PER_MINUTE", 5)
     monkeypatch.setattr(se, "QUEUE_MAX", 8)
+    monkeypatch.setattr(se.time, "monotonic", lambda: 600.0)  # one minute, never crossed
     w, spool = writer()
     for _ in range(50):
         w.request("POST", "/api/query", 200, 1.0, None, None, "198.51.100.9")

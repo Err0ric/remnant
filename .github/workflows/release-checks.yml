@@ -155,18 +155,28 @@ jobs:
           tail -20 /tmp/update.log
           systemctl is-active remnant || fail "not active after the update"
           sudo rm /opt/remnant/backend/app/zz_root_only.py
-      - name: Ingest and query under the sandbox (loopback, single-user mode)
+      - name: Ingest and query under the sandbox (loopback, first administrator from the setup link)
         run: |
           sudo sed -i 's/^APP__SERVER__HOST=.*/APP__SERVER__HOST=127.0.0.1/' /etc/remnant/remnant.env
           sudo systemctl restart remnant
           for i in $(seq 1 30); do curl -sf http://127.0.0.1:8080/api/health && break; sleep 2; done
-          curl -sf -H 'content-type: application/json' -d \
+          # No account, no access, also on loopback (D245): the link from the command the
+          # install guide gives (docs/install/tls.md) creates the administrator.
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/sources)" = 403
+          token=$(sudo -u remnant sh -c 'set -a; . /etc/remnant/remnant.env; set +a; exec /opt/remnant/backend/.venv/bin/app-admin "$@"' app-admin setup-link \
+            | grep -o 'http://127.0.0.1:8080/setup#[^ ]*' | cut -d'#' -f2)
+          test -n "$token"
+          password=$(openssl rand -hex 16)
+          csrf=$(curl -sf -c /tmp/jar -H 'content-type: application/json' \
+            -d "{\"token\":\"$token\",\"username\":\"alice\",\"password\":\"$password\"}" \
+            http://127.0.0.1:8080/api/setup | jq -r .csrf_token)
+          curl -sf -b /tmp/jar -H "x-csrf-token: $csrf" -H 'content-type: application/json' -d \
             '{"source_id":"ci_syslog","kind":"syslog","format":"syslog","template_id":"auto","syslog":{"protocol":"udp","port":5514}}' \
             http://127.0.0.1:8080/api/sources
           sleep 8
           logger -n 127.0.0.1 -P 5514 -d "<38>Oct 17 10:00:00 ci sshd[1]: Failed password for root from 203.0.113.9 port 2222 ssh2"
           for i in $(seq 1 30); do
-            n=$(curl -sf -H 'content-type: application/json' \
+            n=$(curl -sf -b /tmp/jar -H "x-csrf-token: $csrf" -H 'content-type: application/json' \
               -d '{"sql":"SELECT count(*) FROM events WHERE source_id = '"'"'ci_syslog'"'"'"}' \
               http://127.0.0.1:8080/api/query | jq '.rows[0][0]')
             [ "$n" = "1" ] && break; sleep 3; done

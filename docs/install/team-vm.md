@@ -247,7 +247,9 @@ sudo sh /opt/remnant/scripts/update-systemd.sh --rollback
 sudo sh /opt/remnant/scripts/update-systemd.sh --rollback --aide
 ```
 
-Every successful update keeps the commit it replaced in `/var/lib/remnant/previous_commit`, under the same rules as `installed_commit` (written by root, root:root 0644, ignored otherwise). The rollback stops the service, checks that commit out (detached) and checks HEAD matches it, rebuilds the web UI and the Python packages as an update does, starts the service, prints the startup lines, and ends with `Rolled back remnant from <newer> to <older>.` If the service does not come up, the records stay as they were and the same command can be run again.
+An update that fails part way leaves a known state. If the build fails (of an update, or of a rollback), the script goes back to the version the service last ran, rebuilds it, and starts it; nothing else is needed. If the new version was built but did not start, the script says so and `--rollback` returns to the version that was running before that update.
+
+Every successful update, and an update whose new version was built but did not start, keeps the commit it replaced in `/var/lib/remnant/previous_commit`, under the same rules as `installed_commit` (written by root, root:root 0644, ignored otherwise). The rollback stops the service, checks that commit out (detached) and checks HEAD matches it, rebuilds the web UI and the Python packages as an update does, starts the service, prints the startup lines, and ends with `Rolled back remnant from <newer> to <older>.` If the service does not come up, the records stay as they were and the same command can be run again.
 
 | What you see | Meaning |
 |---|---|
@@ -300,6 +302,9 @@ With AIDE installed (`/etc/aide/aide.conf.d` present), every run of `update-syst
 !/var/lib/remnant/enrichment(/|$)
 !/var/lib/remnant/spool(/|$)
 !/var/lib/remnant/meta\.sqlite
+!/var/lib/remnant/backups/.*
+=/var/lib/remnant/backups$ p+u+g
+=/var/lib/remnant$ p+u+g
 !/opt/remnant/frontend/node_modules(/|$)
 ```
 
@@ -309,6 +314,7 @@ With AIDE installed (`/etc/aide/aide.conf.d` present), every run of `update-syst
 | `tmp/` | Skipped | Query overflow, emptied at start |
 | `enrichment/` | Skipped | GeoIP and threat intel files that update on their own |
 | `spool/` | Skipped | Messages from the syslog listener and the OpenTelemetry receiver, waiting to be ingested; written and emptied all day |
+| `backups/` contents | Skipped | Scheduled backups ([backup.md](backup.md)) write a new archive every night and prune old ones. The `backups/` folder and the data folder themselves stay watched for owner, group, and mode. If you added your own file for this (for example `/etc/aide/aide.conf.d/90_remnant`), you can delete it |
 | `frontend/node_modules` | Skipped | About 16,000 files, rebuilt from the lockfile by every update; most of the AIDE database |
 | `tls/` | Watched | The server's key and certificate |
 | `backend/.venv`, `.python`, `backend/app`, `frontend/dist` | Watched | The code and runtime the service runs |

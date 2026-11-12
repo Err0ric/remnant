@@ -166,6 +166,43 @@ def cef_generic(out: Path) -> None:
     ])
 
 
+def cef_alerts(out: Path) -> None:
+    """Security alerts from other products: resends of the same ID, some at a higher severity."""
+    s = Sample(31)
+    products = (("ExampleCorp", "EdgeSensor", "2.1", "sensor01"), ("ExampleSec", "NetWatch", "4.0", "ndr01"))
+    titles = ("Credential dumping detected", "Beacon | periodic callout", "Suspicious script run",
+              "Impossible travel sign-in", "Ransomware behavior blocked")
+    sent: list[tuple[int, int]] = []
+    for i in range(60):
+        vendor, product, version, host = s.rng.choice(products)
+        if sent and i % 6 == 5:  # a resend of an earlier alert, sometimes more severe
+            n, sev = s.rng.choice(sent)
+            sev = min(10, sev + s.rng.choice((0, 3)))
+        else:
+            n, sev = 1000 + i, s.rng.choice((3, 5, 7, 8, 9))
+            sent.append((n, sev))
+        title = titles[n % len(titles)]
+        user, src = USERS[n % len(USERS)], INTERNAL[n % len(INTERNAL)]
+        esc = lambda v: v.replace("\\", "\\\\").replace("|", "\\|")  # noqa: E731
+        ext = f"externalId=A-{n} src={src} suser={user} shost=ws-{n % 40:04d}"
+        if i % 4 == 0:
+            ext += f" dst={s.rng.choice(EXTERNAL)}"
+        line = f"CEF:0|{vendor}|{product}|{version}|sig-{n % 9}|{esc(title)}|{sev}|{ext}"
+        exp = {"message": title, "actor_user_name": user, "src_endpoint_ip": src, "parse_status": "ok",
+               "severity_id": {3: 2, 5: 3, 6: 3, 7: 4, 8: 4, 9: 5, 10: 5, 11: 5}[sev]}
+        if i % 5 == 0:
+            s.ietf(132, host, product.lower(), line, exp)
+        else:
+            s.bsd_untagged(132, host, line, exp)
+    s.write(out, [
+        "<132>Nov  9 20:41:12 sensor01 CEF:0|" + "\\|" * 4000,
+        "<132>Nov  9 20:41:12 sensor01 CEF:0|V|P|1|s|n|9|externalId=" + "x" * 10_240 + " src=10.20.1.5",
+        "<132>Nov  9 20:41:12 sensor01 CEF:0|V|P|1|s|n|Unknown|externalId=A-1 suser=alice",
+        "<132>Nov  9 20:41:12 sensor01 CEF:0|V|P|1|s|n|9|externalId=A-2",
+        "<132>Nov  9 20:41:12 sensor01 CEF:0|V|P",
+    ])
+
+
 def leef_generic(out: Path) -> None:
     s = Sample(24)
     for i in range(60):
@@ -952,6 +989,7 @@ GENERATORS: dict[str, Callable[[Path], None]] = {
     "linux_sudo": linux_sudo,
     "linux_pam": linux_pam,
     "cef_generic": cef_generic,
+    "cef_alerts": cef_alerts,
     "leef_generic": leef_generic,
     "json_over_syslog": json_over_syslog,
     "fortinet_fortigate": fortinet_fortigate,

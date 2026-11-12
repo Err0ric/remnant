@@ -16,6 +16,7 @@ caller may read now; matches are filtered by the caller's sources the same way.
 import json
 import sqlite3
 import time
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -46,6 +47,8 @@ MAX_RANGE = timedelta(days=366)
 RUN_TIMEOUT_S = 60.0
 AUTO_SEEN_WINDOW = timedelta(days=30)
 AUTO_SEEN_TTL_S = 60.0
+# Told inside the transaction that stores a run: (connection, run_id, status, error).
+SaveHook = Callable[[sqlite3.Connection, str, str, str | None], None]
 _LEVEL_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "informational": 4}
 
 
@@ -130,6 +133,14 @@ class RuleRunner:
         """Configured sources whose template declares a logsource this rule applies to."""
         return [sid for sid, declared in self._declared() if applies(logsource, declared)]
 
+    def rules_for_source(self, rows: list[RuleRow], source_id: str) -> list[RuleRow]:
+        """The rules among `rows` whose logsource applies to this source's template; the
+        rest would read nothing from it (as a scheduled run would skip it)."""
+        declared = next((d for sid, d in self._declared() if sid == source_id), None)
+        if declared is None:
+            return []
+        return [r for r in rows if applies(LogSource(r.product, r.service, r.category), declared)]
+
     def sources_by_logsource(
         self, logsources: set[LogSource], user: User
     ) -> dict[LogSource, list[str]]:
@@ -207,8 +218,20 @@ class RuleRunner:
         return seen
 
     def run(
-        self, rule_id: str, user: User, start: datetime, end: datetime, ip: str | None
+        self,
+        rule_id: str,
+        user: User,
+        start: datetime,
+        end: datetime,
+        ip: str | None,
+        only_source: str | None = None,
+        only_events: Iterable[list[str]] | None = None,
+        on_save: SaveHook | None = None,
     ) -> RunRow:
+        """`only_source` narrows the run to one source (a reparse job's, set by the server
+        from the job, never from a request); the caller's permitted sources still apply.
+        `only_events` narrows it further to those event ids, one query per list (each bound
+        as one parameter). `on_save` runs in the transaction that stores the run."""
         if start.tzinfo is None or end.tzinfo is None:
             raise ParamInvalidError("Start and end need a time zone")
         if not start < end or end - start > MAX_RANGE:
@@ -236,44 +259,63 @@ class RuleRunner:
             if allowed is not None:
                 permitted = set(allowed)
                 candidates = [s for s in candidates if s in permitted]
+            if only_source is not None:
+                candidates = [s for s in candidates if s == only_source]
             scope = QueryScope(sources=candidates, start=start, end=end)
             where = f"({compiled.condition}){self._auto_rows(compiled.logsource, candidates)}"
             read = self._engine.sources_in(scope) if candidates else []
             if not read:
                 status = "no_data"
             else:
-                total = self._engine.run(
-                    f"SELECT count(*) FROM events WHERE {where}",  # noqa: S608  # compiled, guard-checked condition
-                    scope,
-                    timeout_s=RUN_TIMEOUT_S,
-                )
-                count = int(total.rows[0][0]) if total.rows else 0
-                if count:
-                    columns = (
-                        "CAST(event_id AS VARCHAR), CAST(coalesce(time, time_observed)"
-                        " AS VARCHAR) AS t, source_id"
-                    )
-                    sql = f"SELECT {columns} FROM events WHERE {where} ORDER BY t, 1"  # noqa: S608  # as above
-                    found = self._engine.run(
-                        sql,
-                        scope,
-                        row_cap=MAX_STORED_MATCHES,
-                        timeout_s=RUN_TIMEOUT_S,
-                    )
-                    matches = [MatchRow(str(r[0]), r[1], str(r[2])) for r in found.rows]
-                    elapsed += found.elapsed_ms
-                elapsed += total.elapsed_ms
+                count, matches, elapsed = self._find(where, scope, only_events)
         except AppError as exc:
             status, error = "failed", f"{type(exc).__name__}: {exc}"[:500]
         self._save(
             run_id, row.rule_id, row.sha256, user, started, start, end,
-            status, count, matches, elapsed, read, error,
+            status, count, matches, elapsed, read, error, on_save,
         )  # fmt: skip
         detail |= {"status": status, "matches": count, "sources_in_scope": read}
         if error:
             detail["error"] = error
         self._audit.write("rule.run", "failure" if error else "success", user.user_id, ip, detail)
         return self.get_run(run_id, user)
+
+    def _find(
+        self, where: str, scope: QueryScope, only_events: Iterable[list[str]] | None
+    ) -> tuple[int, list[MatchRow], int]:
+        """The match count, the first `MAX_STORED_MATCHES` matches, and the time taken."""
+        parts: Iterable[list[str] | None] = [None] if only_events is None else only_events
+        count, matches, elapsed = 0, [], 0
+        for ids in parts:
+            if ids is not None and not ids:
+                continue
+            cond = where if ids is None else f"{where} AND event_id IN (SELECT unnest($ids))"
+            params = None if ids is None else {"ids": ids}
+            total = self._engine.run(
+                f"SELECT count(*) FROM events WHERE {cond}",  # noqa: S608  # compiled, guard-checked condition
+                scope,
+                params,
+                timeout_s=RUN_TIMEOUT_S,
+            )
+            n = int(total.rows[0][0]) if total.rows else 0
+            elapsed += total.elapsed_ms
+            if not n:
+                continue
+            count += n
+            columns = (
+                "CAST(event_id AS VARCHAR), CAST(coalesce(time, time_observed)"
+                " AS VARCHAR) AS t, source_id"
+            )
+            sql = f"SELECT {columns} FROM events WHERE {cond} ORDER BY t, 1"  # noqa: S608  # as above
+            found = self._engine.run(
+                sql, scope, params, row_cap=MAX_STORED_MATCHES, timeout_s=RUN_TIMEOUT_S
+            )
+            matches += [MatchRow(str(r[0]), r[1], str(r[2])) for r in found.rows]
+            elapsed += found.elapsed_ms
+        if only_events is not None:  # several queries: earliest first across them
+            matches.sort(key=lambda m: (m.event_time or "", m.event_id))
+            matches = matches[:MAX_STORED_MATCHES]
+        return count, matches, elapsed
 
     def _save(
         self,
@@ -290,6 +332,7 @@ class RuleRunner:
         elapsed: int,
         read: list[str],
         error: str | None,
+        on_save: SaveHook | None = None,
     ) -> None:
         with self._meta.connect() as con:
             con.execute(
@@ -317,6 +360,8 @@ class RuleRunner:
                 " VALUES (?, ?, ?, ?)",
                 [(run_id, m.event_id, m.event_time, m.source_id) for m in matches],
             )
+            if on_save is not None:
+                on_save(con, run_id, status, error)
 
     # --- reading runs and matches -----------------------------------------------------------
 

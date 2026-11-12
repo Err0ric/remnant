@@ -303,3 +303,27 @@ def test_label_map_can_be_changed_and_is_audited(lab: dict[str, Any]) -> None:
     with sqlite3.connect(lab["db"]) as con:
         actions = [r[0] for r in con.execute("SELECT action FROM audit_log")]
     assert "source.loki_label_map" in actions
+
+
+def test_a_missing_template_keeps_a_loki_source_storing_and_shows_why(lab: dict[str, Any]) -> None:
+    """ADR-0050 on a Loki source: lines stored marked template_missing, the error shown on
+    every pass, and cleared once the template loads again."""
+    res = lab["admin"].patch(
+        "/api/sources/loki_auth", json={"template_id": "linux_sshd"}, headers=lab["h"]
+    )
+    assert res.status_code == 200, res.text
+    template = lab["app"].state.templates._templates.pop("linux_sshd")
+    assert lab["app"].state.ingest.run_once() == 2
+    assert rows(lab, "SELECT DISTINCT template_id, parse_status FROM events") == [
+        ["linux_sshd", "template_missing"]
+    ]
+
+    def error() -> Any:
+        (src,) = lab["admin"].get("/api/sources", headers=lab["h"]).json()
+        return src["status"]["error"]
+
+    assert "without its parser: template linux_sshd" in error()
+    lab["app"].state.templates._templates["linux_sshd"] = template
+    lab["clock"].now = lab["clock"].now + timedelta(seconds=31)
+    lab["app"].state.ingest.run_once()
+    assert error() is None

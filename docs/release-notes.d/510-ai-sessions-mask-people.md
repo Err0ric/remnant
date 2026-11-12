@@ -1,0 +1,7 @@
+### Agent sessions and Claude accounts hide names without View people in AI usage (2026-11-11)
+
+- On Agents, a viewer without the **View people in AI usage** permission sees each session's person and Claude account as the session's machine (or "Hidden"), and each Claude account as its first device with no OS users, as plain text with no person link. The person filter on Sessions is left out, and a machine is never matched to another account's tier. Counts stay the same (ADR-0029 G2, D242).
+- A person's AI activity (`/api/ai/people/{person}/activity`) and the `person` filter on sessions and alerts answer 403 "Needs View people in AI usage" without the permission, before anything is read, audited `access.denied`. The person page's AI use and Alerts tabs say so instead of asking.
+- Each sessions, session, accounts, and AI activity view is audited `ai.view_people` when it showed names and `ai.view` when it did not, with the surface, the time range, and the sources (G3). Session step paths can still contain user names (a residual in D242).
+- What you will notice: without View people in AI usage, AI sessions and accounts show machines instead of names, and a person's AI activity says "Needs View people in AI usage". Administrators, and anyone an administrator gave the permission, see no change.
+- What changes for existing installs: nothing to do and nothing stored changes. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`).

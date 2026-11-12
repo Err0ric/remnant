@@ -1141,6 +1141,174 @@ MIGRATIONS: tuple[Migration, ...] = (
     );
     CREATE INDEX backup_runs_started ON backup_runs (started_at);
     """,
+    # 66: external alerts seen (ADR-0049 3.1): one row per product and vendor alert ID, so
+    # a resent alert updates its item instead of raising another.
+    """
+    CREATE TABLE external_alert_keys (
+        product    TEXT NOT NULL,
+        alert_id   TEXT NOT NULL,
+        item_id    TEXT NOT NULL,
+        severity   TEXT,
+        first_seen TEXT NOT NULL,
+        last_seen  TEXT NOT NULL,
+        PRIMARY KEY (product, alert_id)
+    );
+    """,
+    # 67: an item's vendor alerts, listed and searched by item (0b): thousands per item
+    # must not scan the whole table.
+    """
+    CREATE INDEX external_alert_keys_item ON external_alert_keys (item_id, first_seen);
+    """,
+    # 68: vendor alert limits and messages per source (ADR-0049 0b, D231): who hears about
+    # new vendor alerts, the items each source created in the last hour (the cap), a pause
+    # while a source is over it, and the alerts held (stored, not raised) during one.
+    """
+    CREATE TABLE external_alert_settings (
+        source_id    TEXT PRIMARY KEY,
+        notify       INTEGER NOT NULL DEFAULT 0 CHECK (notify IN (0, 1)),
+        target_ids   TEXT NOT NULL DEFAULT '[]',
+        min_severity TEXT NOT NULL DEFAULT 'high'
+            CHECK (min_severity IN ('critical', 'high', 'medium', 'low', 'info')),
+        updated_at   TEXT NOT NULL,
+        updated_by   TEXT
+    );
+    CREATE TABLE external_alert_created (source_id TEXT NOT NULL, at TEXT NOT NULL);
+    CREATE INDEX external_alert_created_source ON external_alert_created (source_id, at);
+    CREATE TABLE external_alert_pauses (
+        source_id    TEXT PRIMARY KEY,
+        paused_since TEXT NOT NULL
+    );
+    CREATE TABLE external_alert_held (
+        product    TEXT NOT NULL,
+        alert_id   TEXT NOT NULL,
+        source_id  TEXT NOT NULL,
+        severity   TEXT NOT NULL,
+        held_at    TEXT NOT NULL,
+        PRIMARY KEY (product, alert_id)
+    );
+    CREATE INDEX external_alert_held_source ON external_alert_held (source_id, held_at);
+    """,
+    # 69: a vendor alert that rises after its item was closed opens a new item linked to the
+    # closed one (ADR-0049 0c): the closed item's id, so the close and its reason stay intact.
+    """
+    ALTER TABLE alert_items ADD COLUMN follows TEXT;
+    """,
+    # 70: a pause or failure that stops detection is never silent (D33 amended): one row per
+    # stopped thing while it lasts, so the stopped and running-again messages go once each
+    """
+    CREATE TABLE detection_stops (
+        key      TEXT PRIMARY KEY,
+        title    TEXT NOT NULL,
+        since    TEXT NOT NULL,
+        sent_at  TEXT
+    );
+    CREATE TABLE detection_flaps (
+        key            TEXT PRIMARY KEY,
+        title          TEXT NOT NULL DEFAULT '',
+        last_pair_at   TEXT,
+        flapping_since TEXT,
+        stable_since   TEXT
+    );
+    CREATE TABLE detection_starts (
+        key TEXT NOT NULL,
+        at  TEXT NOT NULL
+    );
+    CREATE INDEX detection_starts_key ON detection_starts (key, at);
+    """,
+    # 71: a source storing events without its parser (ADR-0050 row 5): one row while it
+    # lasts, so the start and cleared messages go once each, across restarts, with the count
+    """
+    CREATE TABLE source_fallbacks (
+        source_id   TEXT PRIMARY KEY,
+        template_id TEXT NOT NULL,
+        since       TEXT NOT NULL,
+        events      INTEGER NOT NULL DEFAULT 0
+    );
+    """,
+    # 72: reparse jobs (ADR-0050 rows 7 and 8): a source's template_missing rows rewritten
+    # with its template once it loads again; the reparsed time range is kept for the rule
+    # re-run over it. A job left running by a restart is marked interrupted at start.
+    # A source_fallbacks row is kept once cleared (cleared_at), until a reparse is done, so
+    # Sources can offer the reparse without reading the lake.
+    """
+    ALTER TABLE source_fallbacks ADD COLUMN cleared_at TEXT;
+    CREATE TABLE reparse_jobs (
+        job_id          TEXT PRIMARY KEY,
+        source_id       TEXT NOT NULL,
+        template_id     TEXT NOT NULL,
+        user_id         TEXT,
+        state           TEXT NOT NULL
+                        CHECK (state IN ('running', 'done', 'failed', 'interrupted')),
+        started_at      TEXT NOT NULL,
+        finished_at     TEXT,
+        rows_found      INTEGER NOT NULL DEFAULT 0,
+        rows_rewritten  INTEGER NOT NULL DEFAULT 0,
+        files_rewritten INTEGER NOT NULL DEFAULT 0,
+        time_min        TEXT,
+        time_max        TEXT,
+        error           TEXT
+    );
+    CREATE INDEX reparse_jobs_source ON reparse_jobs (source_id, started_at);
+    """,
+    # 73: the rule re-run over a done reparse job's rows (ADR-0050 row 7, slice 3b): its
+    # state and counts on the job; the event ids each job rewrote, in chunks of at most
+    # 10,000 (a JSON list per row), so the re-run reads only those rows, recorded before
+    # their file is published (`published` 0 until it is); and each rule's progress for a
+    # job: `stored` (its run and matches are saved, in the same transaction), `done` (its
+    # item raised or grown, in the same transaction), or `failed` (retried by the next
+    # start), with its match count and whether its late-detection message is queued
+    # (D241). Alert items a re-run raised or grew are marked late, with the event range.
+    """
+    ALTER TABLE reparse_jobs ADD COLUMN rules_state TEXT
+        CHECK (rules_state IN ('running', 'done', 'partial', 'failed', 'interrupted'));
+    ALTER TABLE reparse_jobs ADD COLUMN rules_run_at TEXT;
+    ALTER TABLE reparse_jobs ADD COLUMN rules_finished_at TEXT;
+    ALTER TABLE reparse_jobs ADD COLUMN rules_count INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE reparse_jobs ADD COLUMN rules_matched INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE reparse_jobs ADD COLUMN rules_items INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE reparse_jobs ADD COLUMN rules_error TEXT;
+    CREATE TABLE reparse_job_events (
+        job_id    TEXT NOT NULL,
+        seq       INTEGER NOT NULL,
+        event_ids TEXT NOT NULL,
+        published INTEGER NOT NULL DEFAULT 1 CHECK (published IN (0, 1)),
+        PRIMARY KEY (job_id, seq)
+    );
+    CREATE TABLE reparse_rule_runs (
+        job_id   TEXT NOT NULL,
+        rule_id  TEXT NOT NULL,
+        run_id   TEXT,
+        state    TEXT NOT NULL CHECK (state IN ('stored', 'done', 'failed')),
+        title    TEXT,
+        error    TEXT,
+        matched  INTEGER NOT NULL DEFAULT 0,
+        notified INTEGER NOT NULL DEFAULT 0 CHECK (notified IN (0, 1)),
+        PRIMARY KEY (job_id, rule_id)
+    );
+    ALTER TABLE alert_items ADD COLUMN late INTEGER NOT NULL DEFAULT 0 CHECK (late IN (0, 1));
+    ALTER TABLE alert_items ADD COLUMN late_start TEXT;
+    ALTER TABLE alert_items ADD COLUMN late_end TEXT;
+    """,
+    # 74: View people in AI usage (ADR-0029 G1, D242): a per-user permission, off for
+    # every existing analyst and auditor. Admins always have it; their flag is ignored.
+    """
+    ALTER TABLE users ADD COLUMN view_ai_people INTEGER NOT NULL DEFAULT 0
+        CHECK (view_ai_people IN (0, 1));
+    """,
+    # 75: a value a one-time fix keeps with its row (D242: the key check of
+    # `alerts.person_codes`, which scripts/restore_alert_text.py compares with its key).
+    """
+    ALTER TABLE one_time_fixes ADD COLUMN value TEXT;
+    """,
+    # 76: the one-time setup link's hash and expiry (D245), so `app-admin setup-link` on
+    # the server and the running server share it. One row; removed when used.
+    """
+    CREATE TABLE setup_link (
+        id         INTEGER PRIMARY KEY CHECK (id = 1),
+        digest     TEXT NOT NULL,
+        expires_at TEXT NOT NULL
+    );
+    """,
 )
 
 

@@ -23,7 +23,8 @@
 # on start. Files are written with umask 022 whatever the shell had (F50: an update run
 # with umask 077 left root-only files and the service failed with "Permission denied").
 #
-# Each successful update also records the commit it replaced (previous_commit, next to
+# Each successful update, and an update whose new build did not start, also records the
+# commit it replaced (previous_commit, next to
 # installed_commit, same rules). --rollback stops the service, checks that commit out
 # (detached, verified), rebuilds as an update does, starts the service, and records it as
 # installed. It goes back one update only: a second --rollback is refused until the next
@@ -86,6 +87,9 @@ FROM_FILE=$(dirname "$STATE_FILE")/rolled_back_from
 # and node_modules. Everything else stays under the distribution's rules, including tls/,
 # .venv, .python, backend/app, frontend/dist, and .git (this script runs git as root, so a
 # changed hook would run on the next update).
+# stat with GNU (-c) or BSD (-f) format strings, so the script and its tests run on Linux
+# and macOS: $1 GNU format, $2 BSD format, $3 file.
+file_stat() { stat -c "$1" "$3" 2>/dev/null || stat -f "$2" "$3"; }
 re_escape() { printf '%s' "$1" | sed 's/[][\.^$*+?(){}|]/\\&/g'; }
 aide_rules() {
   d=$(re_escape "$DATA_DIR")
@@ -96,6 +100,10 @@ aide_rules() {
     printf '!%s/%s(/|$)\n' "$d" "$sub"
   done
   printf '!%s/meta\\.sqlite\n' "$d"
+  echo "# Scheduled backups: a new archive every night. The folders keep their owner and mode."
+  printf '!%s/backups/.*\n' "$d"
+  printf '=%s/backups$ p+u+g\n' "$d"
+  printf '=%s$ p+u+g\n' "$d"
   echo "# JavaScript packages, rebuilt from the lockfile by every update."
   printf '!%s/frontend/node_modules(/|$)\n' "$i"
 }
@@ -115,7 +123,7 @@ if ! err=$(git -C "$INSTALL_DIR" rev-parse --git-dir 2>&1 >/dev/null); then
   echo "git cannot read $INSTALL_DIR: $err" >&2
   case $err in
     *"dubious ownership"*)
-      echo "It is owned by $(stat -c %U "$INSTALL_DIR"). Either: chown -R root:root $INSTALL_DIR, or: git config --global --add safe.directory $INSTALL_DIR" >&2 ;;
+      echo "It is owned by $(file_stat %U %Su "$INSTALL_DIR"). Either: chown -R root:root $INSTALL_DIR, or: git config --global --add safe.directory $INSTALL_DIR" >&2 ;;
   esac
   echo "Nothing was changed." >&2
   exit 1
@@ -244,15 +252,36 @@ fi
 # already right, and AIDE then reports every file (owner, 2026-11-01).
 make_readable() {
   find "$1" \( \( -type d ! -perm -0555 \) -o \( -type f ! -perm -0444 \) \
-    -o \( -type f -perm /0111 ! -perm -0111 \) \) -exec chmod a+rX {} +
+    -o \( -type f \( -perm -0100 -o -perm -0010 -o -perm -0001 \) ! -perm -0111 \) \) -exec chmod a+rX {} +
 }
 
 stopped=0
 ACTION=Update; [ "$ROLLBACK" -eq 1 ] && ACTION=Rollback
+# Set once an update has moved the checkout to the new commit (audit 2026-11 H4).
+moved=0
 restart_on_error() {
   status=$?
   if [ "$status" -ne 0 ] && [ "$stopped" -eq 1 ]; then
-    echo "$ACTION failed (exit $status). Starting the service on whatever is installed." >&2
+    if [ "$moved" -eq 1 ]; then
+      # The new commit is checked out but not built: the service must not start on new
+      # code with the old packages. Go back to the commit that was running and rebuild it,
+      # so what runs, the checkout, and the records agree again.
+      # The target is what the service last ran (the installed record), not the checkout
+      # this run started from: that can be a build that never came up, or a checkout
+      # moved by hand. The same for a rollback whose build fails.
+      back_full=${installed:-$before_full}
+      back=$(short "$back_full")
+      echo "$ACTION failed (exit $status) after the checkout moved. Going back to $back and rebuilding it." >&2
+      if git_ checkout -q --detach "$back_full"; then
+        ( cd "$INSTALL_DIR/frontend" && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 pnpm install --frozen-lockfile && pnpm build \
+          && cd "$INSTALL_DIR/backend" && UV_PYTHON_INSTALL_DIR="$INSTALL_DIR/.python" uv sync --frozen --no-dev ) \
+          || echo "Rebuilding $back failed too: $SERVICE starts on what is there. Fix the build and run the update again." >&2
+      else
+        echo "Could not go back to $back: the checkout is at $(git_ rev-parse --short HEAD), not built." >&2
+      fi
+    else
+      echo "$ACTION failed (exit $status). Starting the service on whatever is installed." >&2
+    fi
     make_readable "$INSTALL_DIR" || true
     systemctl start "$SERVICE" || true
   fi
@@ -268,7 +297,7 @@ before=$(git_ rev-parse --short HEAD)
 # update then builds instead of being talked into "up to date" (owner, 2026-11-01).
 read_record() {  # $1 file, $2 what ignoring it means
   if [ -e "$1" ] || [ -L "$1" ]; then
-    if [ ! -L "$1" ] && [ -f "$1" ] && [ "$(stat -c '%u:%g %a' "$1")" = "$STATE_OWNER 644" ]; then
+    if [ ! -L "$1" ] && [ -f "$1" ] && [ "$(file_stat '%u:%g %a' '%u:%g %Lp' "$1")" = "$STATE_OWNER 644" ]; then
       head -n 1 "$1" | tr -dc '0-9a-f'
     else
       echo "Ignoring $1: not a root:root 0644 file. $2" >&2
@@ -313,6 +342,9 @@ if [ "$ROLLBACK" -eq 1 ]; then
     exit 1
   fi
   rolled_from=${installed:-$before_full}
+  # After an update that was built but did not start, the installed record already names
+  # the rollback target: what is being left is the checkout (the build that did not start).
+  [ "$rolled_from" != "$prev_full" ] || rolled_from=$before_full
   step "Rolling back $SERVICE"
   echo "$(short "$rolled_from") -> $(short "$prev_full") (the version before the last update)"
 fi
@@ -378,6 +410,7 @@ if [ "$PULL" -eq 1 ]; then
     echo "HEAD is $(git_ rev-parse --short HEAD), not $REMOTE/$BRANCH ($target)." >&2
     exit 1
   fi
+  [ "$(git_ rev-parse HEAD)" = "$before_full" ] || moved=1
 fi
 if [ "$ROLLBACK" -eq 1 ]; then
   step "Checking out $(short "$prev_full") (detached)"
@@ -386,6 +419,7 @@ if [ "$ROLLBACK" -eq 1 ]; then
     echo "HEAD is $(git_ rev-parse --short HEAD), not $(short "$prev_full")." >&2
     exit 1
   fi
+  [ "$(git_ rev-parse HEAD)" = "${installed:-$before_full}" ] || moved=1
 fi
 after=$(git_ rev-parse --short HEAD)
 
@@ -423,6 +457,17 @@ journalctl -u "$SERVICE" --since "$started" --no-pager -q -o cat | head -n 20
 if ! systemctl is-active --quiet "$SERVICE" \
   || ! journalctl -u "$SERVICE" --since "$started" --no-pager -q | grep -q "listening on"; then
   printf "\n%s is not up. See: journalctl -u %s -n 50\n" "$SERVICE" "$SERVICE" >&2
+  if [ "$ROLLBACK" -eq 0 ]; then
+    # The new build is in place but did not come up. Record what it replaced now, so
+    # --rollback returns to the version that was running, not to the one before it
+    # (D226; audit 2026-11 H4). The installed record still names what last ran. A stale
+    # rolled_back_from record is left: the next successful update or rollback clears it.
+    replaced=${installed:-$before_full}
+    if [ "$replaced" != "$(git_ rev-parse HEAD)" ]; then
+      write_record "$PREV_FILE" "$replaced"
+      echo "To go back: sudo sh $0 --rollback returns to $(short "$replaced"), the version that was running." >&2
+    fi
+  fi
   exit 1
 fi
 

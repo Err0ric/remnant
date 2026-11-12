@@ -9,8 +9,7 @@ from starlette.concurrency import run_in_threadpool
 from app.api.access import AdminUser, CurrentUser, InteractiveUser, client_ip
 from app.auth.service import AuthService
 from app.auth.sessions import TokenInfo
-from app.auth.users import LOCAL_USER
-from app.core.errors import ConflictError, NotFoundError
+from app.core.errors import NotFoundError
 
 router = APIRouter(tags=["tokens"])
 
@@ -58,8 +57,6 @@ async def list_tokens(request: Request, user: CurrentUser) -> list[TokenOut]:
 
 @router.post("/tokens", status_code=status.HTTP_201_CREATED)
 async def create_token(body: TokenCreate, request: Request, user: InteractiveUser) -> TokenCreated:
-    if user.user_id == LOCAL_USER.user_id:
-        raise ConflictError("This install runs without sign-in, so it needs no tokens")
     auth = _auth(request)
     token, _, token_id = await run_in_threadpool(
         auth.sessions.issue,

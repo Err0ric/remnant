@@ -239,12 +239,16 @@ def test_the_ai_flow_gives_the_same_answer_from_the_rollup(lab: dict[str, Any]) 
     app = lab["app"]
     engine, catalog = app.state.engine, app.state.ai_catalog
 
-    def flow(rollup: AiRollup | None) -> set[tuple[str, int]]:
-        g = ai_graph(engine, catalog, week(), None, None, None, rollup)
+    def flow(rollup: AiRollup | None, names: bool = True) -> set[tuple[str, int]]:
+        g = ai_graph(engine, catalog, week(), None, None, None, rollup, names)
         return {(c.id, c.events) for c in g.cards}
 
-    live = flow(None)
+    live, masked = flow(None), flow(None, names=False)  # masked: machines for people (D242)
     assert ("3:svc:chatgpt", 3 * 6 + 4) in live and ("3:svc:claude", 5) in live
+    assert {c for c in masked if not c[0].startswith("0:")} == {
+        c for c in live if not c[0].startswith("0:")
+    }
     lab["rollup"].run()
     assert lab["rollup"].plan(week())[0]  # closed days now come from the rollup
     assert flow(lab["rollup"]) == live
+    assert flow(lab["rollup"], names=False) == masked

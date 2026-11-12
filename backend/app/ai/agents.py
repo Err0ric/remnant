@@ -17,11 +17,12 @@ as a change. Deterministic SQL over the caller's events view.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.ai.internal_tools import counted
+from app.ai.people_view import tie
 from app.ai.test_records import HOOKS
 from app.ai.usage import MCP_EXPR, NO_MCP_NAMES, WHO_EXPR
 from app.engine.duckdb import QueryEngine, QueryScope
@@ -177,15 +178,7 @@ def agents(engine: QueryEngine, allowed: list[str] | None, now: datetime) -> lis
     for kind, agent, label, owners, machine_rows, first, last, n24, all_items, old_items in rows:
         machines = [AgentMachine(str(m), str(t), int(n or 0)) for m, t, n in (machine_rows or [])]
         machine = machines[0].name if machines else None
-        names = ", ".join(m.name for m in machines) or "unknown machine"
-        if kind == "Claude Code" and owners:  # one per person, on every machine it ran on
-            label = f"Claude Code, {', '.join(sorted(str(o) for o in owners))}: {names}"
-        elif kind == "Claude Code":  # no person: one per machine
-            label = f"Claude Code on {names}"
-        elif kind == "MCP client":
-            client = str(agent).split("|", 2)[-1]
-            name = CLIENT_NAMES.get(client, client)
-            label = f"{name} MCP setup on {machine or 'unknown machine'}"
+        label = _label(str(kind), str(agent), str(label), sorted(map(str, owners or [])), machines)
         first_t = first if isinstance(first, datetime) else datetime.fromisoformat(str(first))
         is_new = first_t.astimezone(UTC) >= recent
         old = {(str(k), str(v)) for k, v in (old_items or [])}
@@ -216,5 +209,46 @@ def agents(engine: QueryEngine, allowed: list[str] | None, now: datetime) -> lis
                 machines=machines,
             )
         )
-    order = {"changed": 0, "new": 1, "usual": 2}
-    return sorted(out, key=lambda a: (order[a.state], a.label))
+    return sorted(out, key=lambda a: (ORDER[a.state], a.label))
+
+
+ORDER = {"changed": 0, "new": 1, "usual": 2}
+
+
+def _label(
+    kind: str,
+    agent: str,
+    label: str,
+    owners: list[str],
+    machines: list[AgentMachine],
+    hidden: bool = False,
+) -> str:
+    """`hidden`: the agent has owners the viewer may not see (D242)."""
+    machine = machines[0].name if machines else "unknown machine"
+    names = ", ".join(m.name for m in machines) or "unknown machine"
+    if kind == "Claude Code" and owners:  # one per person, on every machine it ran on
+        return f"Claude Code, {', '.join(owners)}: {names}"
+    if kind == "Claude Code" and hidden:
+        return f"Claude Code: {names}"
+    if kind == "Claude Code":  # no person: one per machine
+        return f"Claude Code on {names}"
+    if kind == "MCP client":
+        client = agent.split("|", 2)[-1]
+        return f"{CLIENT_NAMES.get(client, client)} MCP setup on {machine}"
+    return label
+
+
+def masked(rows: list[AgentStatus]) -> list[tuple[AgentStatus, AgentStatus]]:
+    """Agents for a viewer without View people in AI usage (D242), each with the agent it
+    came from: no owners, a Claude Code label by its machines only ("Claude Code: WS-1"),
+    and a Claude Code key by place, since the key holds the person's name. Counts stay.
+    Ordered by what is shown, then by a keyed hash, never by the hidden name."""
+    shown = []
+    for a in rows:
+        label = _label(a.kind, a.agent, a.label, [], a.machines, hidden=bool(a.owners))
+        shown.append((replace(a, owners=[], label=label), a))
+    shown.sort(key=lambda r: (ORDER[r[0].state], r[0].label, tie(r[1].agent)))
+    return [
+        (replace(a, agent=f"cc|row-{i}") if a.kind == "Claude Code" else a, orig)
+        for i, (a, orig) in enumerate(shown)
+    ]

@@ -7,6 +7,7 @@ target's own health counters move with it.
 """
 
 import json
+import sqlite3
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
@@ -69,26 +70,31 @@ class AlertDispatcher:
         schedule_id: str | None,
         run_id: str | None,
         source_id: str | None = None,
+        con: sqlite3.Connection | None = None,
     ) -> list[str]:
+        """Queue one delivery per target. With `con`, in the caller's transaction, so its
+        own record of the send commits or rolls back with the deliveries."""
+        if con is None:
+            with self._meta.connect() as own:
+                return self.enqueue(alert, target_ids, schedule_id, run_id, source_id, own)
         now = self._clock().astimezone(UTC).isoformat()
         ids = []
-        with self._meta.connect() as con:
-            for tid in sorted(set(target_ids)):
-                did = new_id()
-                con.execute(
-                    "INSERT INTO alert_deliveries (delivery_id, target_id, schedule_id, run_id,"
-                    " source_id, alert, status, attempts, next_attempt_at, created_at)"
-                    " VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)",
-                    (did, tid, schedule_id, run_id, source_id, json.dumps(asdict(alert)), now, now),
-                )
-                ids.append(did)
-            if schedule_id is not None:
-                con.execute(
-                    "DELETE FROM alert_deliveries WHERE schedule_id = ? AND status != 'pending'"
-                    " AND delivery_id NOT IN (SELECT delivery_id FROM alert_deliveries"
-                    " WHERE schedule_id = ? ORDER BY created_at DESC LIMIT ?)",
-                    (schedule_id, schedule_id, KEEP_PER_SCHEDULE),
-                )
+        for tid in sorted(set(target_ids)):
+            did = new_id()
+            con.execute(
+                "INSERT INTO alert_deliveries (delivery_id, target_id, schedule_id, run_id,"
+                " source_id, alert, status, attempts, next_attempt_at, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)",
+                (did, tid, schedule_id, run_id, source_id, json.dumps(asdict(alert)), now, now),
+            )
+            ids.append(did)
+        if schedule_id is not None:
+            con.execute(
+                "DELETE FROM alert_deliveries WHERE schedule_id = ? AND status != 'pending'"
+                " AND delivery_id NOT IN (SELECT delivery_id FROM alert_deliveries"
+                " WHERE schedule_id = ? ORDER BY created_at DESC LIMIT ?)",
+                (schedule_id, schedule_id, KEEP_PER_SCHEDULE),
+            )
         return ids
 
     def tick(self) -> int:

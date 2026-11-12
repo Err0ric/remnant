@@ -3,12 +3,14 @@
 `app-admin ingest` loads log files into the lake with the watcher's pipeline.
 `app-admin reset-password` is the lost-admin recovery path (ADR-0001): it needs
 shell access to the server, never a web route.
+`app-admin setup-link` prints a fresh one-time link for the first administrator (D245).
 `app-admin backup`, `verify-backup`, and `restore` handle the data folder
 (docs/install/backup.md).
 """
 
 import os
 import shutil
+import socket
 import sys
 import tempfile
 from datetime import UTC, datetime
@@ -18,8 +20,9 @@ from typing import Annotated
 import typer
 
 from app.auth.passwords import MIN_LENGTH
+from app.auth.setup import SetupLink, link_host, link_url, notice
 from app.auth.users import UserStore
-from app.core.config import load_config
+from app.core.config import is_loopback_host, load_config
 from app.core.errors import NotFoundError
 from app.ingest.envelope import SyslogEnvelopeConfig
 from app.ingest.framer import Framer
@@ -27,6 +30,7 @@ from app.ingest.integrity import IntegrityLedger
 from app.ingest.normalizer import Normalizer, SourceFormat, SourceSpec
 from app.ingest.records import decode_frame
 from app.ingest.writer import LakeWriter
+from app.meta.audit import AuditLog
 from app.meta.db import MetaDB
 from app.ops.backup import BackupError, BackupInfo, create, restore, verify
 
@@ -103,6 +107,27 @@ def reset_password(
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
     typer.echo(f"Password reset for {username}. Existing sessions were signed out.")
+
+
+@app.command("setup-link")
+def setup_link() -> None:
+    """Print a fresh one-time link that creates the first administrator account."""
+    config = load_config()
+    meta = MetaDB(config.paths.data_dir / "meta.sqlite")
+    if UserStore(meta).count() > 0:
+        typer.echo(
+            "An administrator already exists, so there is no setup link. Sign in, or use"
+            " app-admin reset-password <username> to recover an account.",
+            err=True,
+        )
+        raise typer.Exit(1)
+    server = config.server
+    token = SetupLink(meta).issue(datetime.now(UTC))
+    host = link_host(config, socket.gethostname())
+    url = link_url(token, host, server.port, server.public_url, is_loopback_host(server.host))
+    AuditLog(meta).write("setup.link_issued", "success", None, None, {"by": "app-admin"})
+    for line in notice(config, url):
+        typer.echo(line)
 
 
 def _describe(info: BackupInfo) -> str:

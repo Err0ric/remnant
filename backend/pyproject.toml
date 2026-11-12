@@ -10,7 +10,7 @@ dependencies = [
     "pydantic>=2.8",
     "pyyaml>=6.0",
     "pyarrow>=21",
-    "duckdb>=1.4",
+    "duckdb>=1.4,<2",  # 2.0 changes lambda syntax and settings (owner, 2026-11-10: not yet)
     "sqlglot>=30",
     "pytz>=2025.2",
     "typer>=0.16",
@@ -74,6 +74,7 @@ markers = [
     "integration: integration tests",
     "scale: large synthetic data, run on demand (uv run pytest -m scale)",
     "slow: over 8 s each; skipped in PR CI, always run by the queue before a merge (D216)",
+    "real_auth: the app as it ships, without the tests' stand-in administrator (conftest)",
 ]
 
 [tool.ruff]

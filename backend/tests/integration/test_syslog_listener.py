@@ -3,13 +3,14 @@
 import asyncio
 import socket
 import ssl
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from app.auth.tls import ensure_self_signed
-from app.ingest.listener import FLUSH_EVERY_S, SyslogListeners
+from app.ingest.listener import SyslogListeners
 from tests.integration.test_schedules import make_lab
 
 LINE = "<34>Oct 11 22:14:15 fw-edge sshd[42]: Failed password for root from 203.0.113.9"
@@ -55,8 +56,12 @@ def listeners(lab: dict[str, Any], tmp_path: Path) -> SyslogListeners:
     return SyslogListeners(tmp_path / "data" / "spool", "127.0.0.1", lambda: (tls.cert, tls.key))
 
 
-async def settle() -> None:
-    await asyncio.sleep(FLUSH_EVERY_S * 3)
+async def until(done: Callable[[], bool], ceiling_s: float = 10.0) -> None:
+    """Wait for a condition, not a fixed time; the ceiling is for a hang only. The
+    assertions after it say what was missing."""
+    deadline = asyncio.get_running_loop().time() + ceiling_s
+    while not done() and asyncio.get_running_loop().time() < deadline:
+        await asyncio.sleep(0.05)
 
 
 def test_udp_tcp_and_tls_land_with_raw_intact(lab: dict[str, Any], tmp_path: Path) -> None:
@@ -87,7 +92,8 @@ def test_udp_tcp_and_tls_land_with_raw_intact(lab: dict[str, Any], tmp_path: Pat
         tw.write(LINE.encode() + b"\n")
         await tw.drain()
         tw.close()
-        await settle()
+        want = {"net_udp": 1, "net_tcp": 2, "net_tls": 1}
+        await until(lambda: all(owner.status()[k].received >= n for k, n in want.items()))
         await owner.close()
 
     asyncio.run(scenario())
@@ -113,7 +119,7 @@ def test_senders_outside_the_allowed_networks_are_dropped_and_counted(
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             for _ in range(3):
                 s.sendto(LINE.encode(), ("127.0.0.1", port))
-        await settle()
+        await until(lambda: owner.status()["dmz"].dropped_not_allowed >= 3)
         st = owner.status()["dmz"]
         assert (st.received, st.dropped_not_allowed) == (0, 3)
         assert st.senders["127.0.0.1"].allowed is False
@@ -224,17 +230,52 @@ def test_refused_senders_get_no_tls_handshake_and_memory_is_capped(
     async def scenario() -> None:
         await owner.reconcile(lab["app"].state.sources.list())
         ctx = ssl.create_default_context(cafile=str(tmp_path / "tls" / "server.crt"))
-        with pytest.raises((ssl.SSLError, ConnectionError, OSError)):
+        with pytest.raises((ssl.SSLError, ConnectionError, OSError)) as refused:
             await asyncio.wait_for(
-                asyncio.open_connection("127.0.0.1", tls_port, ssl=ctx), timeout=5
+                asyncio.open_connection("127.0.0.1", tls_port, ssl=ctx), timeout=10
             )
+        # TimeoutError is an OSError too: a hung handshake must not pass as a refusal.
+        assert not isinstance(refused.value, TimeoutError)
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             for _ in range(30):
                 s.sendto(b"x" * 200, ("127.0.0.1", udp))
-        await asyncio.sleep(0.3)
+        await until(
+            lambda: (
+                owner.status()["dmz_tls"].dropped_not_allowed >= 1
+                and owner.status()["busy"].dropped_full > 0
+            )
+        )
         st = owner.status()
         assert st["dmz_tls"].dropped_not_allowed == 1 and st["dmz_tls"].received == 0
         assert st["busy"].dropped_full > 0 and st["busy"].received < 30
         await owner.close()
 
     asyncio.run(scenario())
+
+
+def test_a_missing_template_keeps_the_listener_spool_draining(
+    lab: dict[str, Any], tmp_path: Path
+) -> None:
+    """ADR-0050: a listener whose template is gone keeps storing (envelope parse, marked
+    template_missing), so its spool drains instead of growing to the refusal cap."""
+    udp = free_port(socket.SOCK_DGRAM)
+    res = lab["admin"].post(
+        "/api/sources",
+        json={"source_id": "net_tm", "kind": "syslog", "format": "syslog",
+              "template_id": "linux_sshd", "syslog": {"protocol": "udp", "port": udp}},
+        headers=lab["h"],
+    )  # fmt: skip
+    assert res.status_code == 201, res.text
+    lab["app"].state.templates._templates.pop("linux_sshd")
+    owner = listeners(lab, tmp_path)
+
+    async def scenario() -> None:
+        await owner.reconcile(lab["app"].state.sources.list())
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.sendto(LINE.encode() + b"\n", ("127.0.0.1", udp))
+        await until(lambda: owner.status()["net_tm"].received >= 1)
+        await owner.close()
+
+    asyncio.run(scenario())
+    assert rows(lab, "net_tm") == [[LINE, "127.0.0.1", "fw-edge", "template_missing"]]
+    assert lab["app"].state.ingest.run_once() == 0  # read once, checkpointed: nothing waits

@@ -69,6 +69,26 @@ describe("Users and access", () => {
     );
   });
 
+  it("grants View people in AI usage per user; admins always have it", async () => {
+    const spy = await renderAt("/users");
+    const usersTable = await screen.findByRole("table", { name: "Users" });
+    const admin = (await within(usersTable).findByText("jordan")).closest("tr") as HTMLElement;
+    const own = within(admin).getByRole("checkbox", { name: "View people in AI usage" });
+    expect(own).toBeChecked();
+    expect(own).toBeDisabled();
+    const row = within(usersTable).getByText("kelly").closest("tr") as HTMLElement;
+    const box = within(row).getByRole("checkbox", { name: "View people in AI usage" });
+    expect(box).not.toBeChecked();
+    await userEvent.click(box);
+    await waitFor(() => expect(box).toBeChecked());
+    const patched = spy.mock.calls.filter(
+      ([u, init]) => String(u).endsWith("/api/users/u2") && init?.method === "PATCH",
+    );
+    expect(patched.map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
+      { view_ai_people: true },
+    ]);
+  });
+
   it("is not offered to analysts, even by URL", async () => {
     await renderAt("/users", { mode: "login", signedIn: true, role: "analyst" });
     const nav = await screen.findByRole("navigation", { name: "Primary" });

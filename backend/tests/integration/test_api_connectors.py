@@ -577,3 +577,36 @@ def test_settings_tied_to_the_credential_cannot_change(lab: dict[str, Any]) -> N
     same = patch(lab, {"connector": {"backfill_hours": 24}})
     assert same.status_code == 400 and "Nothing to change" in same.json()["detail"]
     assert audit_rows(lab, "source.settings_change") == []
+
+
+def test_a_missing_template_error_on_an_api_source_does_not_wait_for_a_poll(
+    lab: dict[str, Any],
+) -> None:
+    """Review finding on #494: between polls the missing-template error is still set and
+    cleared on every pass, so Sources and D236 do not wait for the next poll."""
+    body = {
+        "source_id": "claude",
+        "format": "json",
+        "kind": "anthropic",
+        "template_id": "anthropic_reports",
+        "anthropic": {"feeds": ["usage"]},
+        "credentials": {"api_key": lab["fake"].api_key},
+    }
+    lab["fake"].anthropic["/v1/organizations/usage_report/messages"] = [{"data": []}]
+    assert add(lab, body).status_code == 201
+    ingest = lab["app"].state.ingest
+    ingest.run_once()  # polled once with the template present
+
+    def error() -> Any:
+        src = next(s for s in lab["admin"].get("/api/sources").json() if s["source_id"] == "claude")
+        return src["status"]["error"]
+
+    assert error() is None
+    template = lab["app"].state.templates._templates.pop("anthropic_reports")
+    calls = len(lab["fake"].requests)
+    ingest.run_once()  # not yet time to poll
+    assert len(lab["fake"].requests) == calls
+    assert "without its parser: template anthropic_reports" in error()
+    lab["app"].state.templates._templates["anthropic_reports"] = template
+    ingest.run_once()
+    assert len(lab["fake"].requests) == calls and error() is None

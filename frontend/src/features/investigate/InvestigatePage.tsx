@@ -117,7 +117,9 @@ export function InvestigatePage() {
     if (mode === "entity" && card.lane === 3)
       return () =>
         investigate({ kind: kindOf(card.label) === "ip" ? "ip" : "host", value: card.label });
-    if (mode === "ai" && card.lane === 0) return () => focusAi({ kind: "user", value: card.label });
+    // D242: a masked card is a machine, never a person to follow.
+    if (mode === "ai" && card.lane === 0)
+      return graph.data?.masked ? null : () => focusAi({ kind: "user", value: card.label });
     if (mode === "ai" && card.lane === 2) return () => focusAi({ kind: "mcp", value: card.label });
     if (mode === "ai" && card.lane === 3 && key.startsWith("svc:"))
       return () => {
@@ -177,18 +179,26 @@ export function InvestigatePage() {
         : "No AI activity in this range, in the sources you may read. Claude Code telemetry, the MCP inventory, and DNS or firewall logs feed this view."}
     </p>
   ) : g ? (
-    <div className="flex flex-col lg:flex-row">
-      <LaneGraph graph={g} selected={selected?.id ?? null} onSelect={setSelected} />
-      {selected ? (
-        <CardDetail
-          lane={g.lanes[selected.lane] ?? ""}
-          card={selected}
-          canFollow={followFn !== null}
-          onFollow={() => followFn?.()}
-          onOpenSearch={openSearch}
-          onClose={() => setSelected(null)}
-        />
+    <div className="flex flex-col">
+      {g.masked ? (
+        // D242: the server sent machines in place of names.
+        <p className="px-3 py-2 text-sm text-text-muted">
+          Names are hidden. An admin can turn on View people in AI usage for you.
+        </p>
       ) : null}
+      <div className="flex flex-col lg:flex-row">
+        <LaneGraph graph={g} selected={selected?.id ?? null} onSelect={setSelected} />
+        {selected ? (
+          <CardDetail
+            lane={g.lanes[selected.lane] ?? ""}
+            card={selected}
+            canFollow={followFn !== null}
+            onFollow={() => followFn?.()}
+            onOpenSearch={openSearch}
+            onClose={() => setSelected(null)}
+          />
+        ) : null}
+      </div>
     </div>
   ) : null;
 
@@ -280,6 +290,7 @@ export function InvestigatePage() {
                   rows={lists[riskTab]}
                   onPick={pick}
                   start={start}
+                  aiPeopleHidden={risk.data?.ai_people_hidden}
                 />
               )}
               <p className="border-t border-border px-4 py-2 text-xs text-text-muted">

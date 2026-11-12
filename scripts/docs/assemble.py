@@ -19,6 +19,8 @@ them into the two shared pages, so no two PRs edit the same lines:
       # the merge queue, in the PR branch after its rebase: number `new-` notes, renumber
       # a decision whose number main already has (citations in the PR's own changed
       # files follow), assemble, then check
+      # and stop when a threat number this PR adds already exists on base (SPEC 7.1 or
+      # another ADR)
   python3 scripts/docs/assemble.py --release v0.4.0 [--date 2026-11-20]
       # freeze the Unreleased notes into a dated section and delete their files
 
@@ -169,6 +171,9 @@ class Docs:
         return True
 
     def check(self) -> bool:
+        for n, owners in sorted(threat_owners(adr_texts(self.root)).items()):
+            if len(owners) > 1:
+                self.problems.append(f"T{n} is claimed by {' and '.join(sorted(owners))}")
         for name, page in self.pages().items():
             if (self.root / name).read_text() != page:
                 self.problems.append(
@@ -176,6 +181,69 @@ class Docs:
                     " run python3 scripts/docs/assemble.py"
                 )
         return not self.problems
+
+
+# --- threat numbers (SPEC 7.1) ---------------------------------------------------------
+
+ADR_DIR = "docs/adr"
+THREAT_ROW = re.compile(r"^\| T(\d+) \|")
+THREAT_RANGE = re.compile(r"\bT(\d+) (?:to|and) T(\d+)\b")
+
+
+def threat_rows(text: str) -> set[int]:
+    """Threat numbers defined as rows of a table whose header has a Threat column."""
+    out: set[int] = set()
+    lines = text.splitlines()
+    header = ""
+    for i, line in enumerate(lines):
+        if line.startswith("|") and i + 1 < len(lines) and lines[i + 1].startswith("|---"):
+            header = line
+        elif not line.startswith("|"):
+            header = ""
+        elif "threat" in header.lower() and (m := THREAT_ROW.match(line)):
+            out.add(int(m.group(1)))
+    return out
+
+
+def threat_owners(adrs: dict[str, str]) -> dict[int, set[str]]:
+    """Which ADR defines each threat number: its threat table rows, plus a range its
+    Status line claims ("Threats T79 to T86 are in SPEC 7.1")."""
+    owners: dict[int, set[str]] = {}
+    for name, text in adrs.items():
+        mine = threat_rows(text)
+        status = next((x for x in text.splitlines() if x.startswith("Status:")), "")
+        for a, b in THREAT_RANGE.findall(status):
+            lo, hi = int(a), int(b)
+            mine |= set(range(lo, hi + 1)) if hi - lo < 50 else set()
+        for n in mine:
+            owners.setdefault(n, set()).add(name)
+    return owners
+
+
+def spec_threats(spec: str) -> set[int]:
+    part = spec.split("### 7.1", 1)[-1].split("### 7.2", 1)[0]
+    return threat_rows(part)
+
+
+def adr_texts(root: Path) -> dict[str, str]:
+    return {p.name: p.read_text() for p in sorted((root / ADR_DIR).glob("ADR-*.md"))}
+
+
+def new_threat_clashes(root: Path, base: str) -> list[str]:
+    """A threat number an ADR defines that base did not have an owner for must not
+    already be in base's SPEC 7.1 (D234)."""
+    names = [
+        x
+        for x in _git(root, "ls-tree", "--name-only", base, f"{ADR_DIR}/").splitlines()
+        if Path(x).name.startswith("ADR-")
+    ]
+    before = threat_owners({Path(x).name: _git(root, "show", f"{base}:{x}") for x in names})
+    in_spec = spec_threats(_git(root, "show", f"{base}:{SPEC}"))
+    out = []
+    for n, owners in sorted(threat_owners(adr_texts(root)).items()):
+        if n not in before and n in in_spec:
+            out.append(f"T{n} ({', '.join(sorted(owners))}) is already in SPEC 7.1 on {base}")
+    return out
 
 
 # --- the merge queue ------------------------------------------------------------------
@@ -311,6 +379,9 @@ def main(argv: list[str] | None = None) -> int:
     ok = docs.check() if a.check else docs.write()
     if a.prep and ok:
         ok = Docs(a.root).check()
+    if a.prep:
+        docs.problems += new_threat_clashes(a.root, a.base)
+        ok = ok and not docs.problems
     for p in docs.problems:
         print(p, file=sys.stderr)
     return 0 if ok else 1

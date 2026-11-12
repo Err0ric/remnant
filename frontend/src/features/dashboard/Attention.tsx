@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { LoadFailed } from "@/components/LoadFailed";
-import { api, type AlertItem, type AlertList, type Overview, type Source } from "@/lib/api";
+import { api, type AlertItem, type AlertLines, type Overview, type Source } from "@/lib/api";
 import { navigate, pathFor } from "@/lib/route";
 import { When } from "@/components/When";
 import { openGaps, sourcesSummaryText } from "@/features/health/flow";
+import { RESTRICTED_NOTE } from "@/features/alerts/kinds";
 
 interface SourceState {
   id: string;
@@ -62,12 +63,18 @@ interface Line {
 
 const RANK = { high: 0, medium: 1, none: 2 } as const;
 const SEV_LABEL = { high: "High", medium: "Medium", none: "" } as const;
+/** Lines the banner shows. */
+const SHOWN = 5;
 
 /** What needs me, one line each, severity first (F62). Open alerts (runs of one search,
  * rule, or source as one line) and sources with errors or that stopped and no alert says
  * so. Hidden entirely when nothing needs me. */
 export function AttentionBanner() {
-  const alerts = useQuery({ queryKey: ["alerts", "open"], queryFn: () => api.alerts("open") });
+  // Only the lines shown (owner, 2026-11-11: the audit log records access, not page loads).
+  const alerts = useQuery({
+    queryKey: ["alerts", "lines", SHOWN, "severity"],
+    queryFn: () => api.alertLines(SHOWN),
+  });
   const sources = useQuery({ queryKey: ["source-list"], queryFn: api.sources });
   const overview = useQuery({
     queryKey: ["overview"],
@@ -91,9 +98,12 @@ export function AttentionBanner() {
     );
   const states = sourceStates(sources.data ?? [], overview.data);
   const lines = attentionLines(alerts.data, states);
-  const restricted = alerts.data?.restricted ?? 0;
-  if (!lines.length && !restricted) return null;
-  const shown = lines.slice(0, 5);
+  const restricted = alerts.data?.restricted === true;
+  // Alert lines the server left out are counted, not sent.
+  const total =
+    lines.length + Math.max(0, (alerts.data?.groups ?? 0) - (alerts.data?.items.length ?? 0));
+  if (!total && !restricted) return null;
+  const shown = lines.slice(0, SHOWN);
   return (
     <section
       aria-label="Needs you"
@@ -149,37 +159,42 @@ export function AttentionBanner() {
           ))}
         </tbody>
       </table>
-      {lines.length > shown.length || restricted ? (
+      {total > shown.length || restricted ? (
         <p className="mt-1 text-sm text-text-secondary">
-          {lines.length > shown.length ? (
+          {total > shown.length ? (
             <button
               type="button"
               onClick={() => navigate("alerts")}
               className="text-accent-text hover:underline"
             >
-              {lines.length - shown.length} more on Alerts
+              {total - shown.length} more on Alerts
             </button>
           ) : null}
-          {lines.length > shown.length && restricted ? ". " : ""}
-          {restricted ? `${restricted} restricted: read a source you cannot see.` : ""}
+          {total > shown.length && restricted ? ". " : ""}
+          {restricted ? RESTRICTED_NOTE : ""}
         </p>
       ) : null}
     </section>
   );
 }
 
-/** The banner's lines, most severe first, newest first within a severity. */
-export function attentionLines(list: AlertList | undefined, states: SourceState[]): Line[] {
+/** The banner's lines, most severe first, newest first within a severity. `list` is the
+ * server's lines (one per kind and subject, with their runs), or a plain list grouped here. */
+export function attentionLines(
+  list: (Pick<AlertLines, "items"> & Partial<Pick<AlertLines, "runs" | "gap_sources">>) | undefined,
+  states: SourceState[],
+): Line[] {
   const groups = new Map<string, { item: AlertItem; runs: number }>();
   for (const i of list?.items ?? []) {
     const key = `${i.kind}:${i.subject}`;
     const g = groups.get(key);
     if (g) g.runs += 1;
-    else groups.set(key, { item: i, runs: 1 });
+    else groups.set(key, { item: i, runs: list?.runs?.[i.item_id] ?? 1 });
   }
-  const covered = new Set(
-    (list?.items ?? []).filter((i) => i.kind === "gap").map((i) => i.subject),
-  );
+  const covered = new Set([
+    ...(list?.gap_sources ?? []),
+    ...(list?.items ?? []).filter((i) => i.kind === "gap").map((i) => i.subject),
+  ]);
   const lines: Line[] = [...groups.values()].map(({ item: i, runs }) => {
     // The severity stored on the alert, as the Alerts page shows it; never re-derived
     // here from the kind (review item 2: gaps showed High here and Medium on Alerts).
@@ -232,8 +247,64 @@ export function attentionLines(list: AlertList | undefined, states: SourceState[
   );
 }
 
-/** Sources at the bottom (F62): one line linking to Health. Problems also show in the
- * attention banner at the top. */
+/** Whether Health needs attention: a source not healthy or an open gap. The top banner
+ * shows then and the bottom Sources line steps aside (owner, 2026-11-12: no duplicate). */
+function needsHealth(o: Overview): boolean {
+  const summary = o.source_summary;
+  if (!summary?.total) return false;
+  return summary.healthy < summary.total || openGaps(o).length > 0;
+}
+
+/** Where the bottom Sources line links: the gap alerts when there are any (the one alert
+ * when there is one); otherwise Health. The Health banner always opens Health (D243). */
+function sourcesTarget(o: Overview): readonly ["alerts" | "health", string] {
+  const alerted = openGaps(o).filter((g) => g.item_id);
+  const one = alerted.length === 1 ? alerted[0]?.item_id : null;
+  return alerted.length
+    ? (["alerts", one ? `item=${one}` : ""] as const)
+    : (["health", "sources"] as const);
+}
+
+/** Health problems at the top of the Dashboard, one line linking to Health (owner,
+ * 2026-11-12: "/" always opens the Dashboard). The Sources line's own data and words, so it
+ * adds no query; hidden when every source is healthy and no gap is open. */
+export function HealthBanner() {
+  const overview = useQuery({
+    queryKey: ["overview"],
+    queryFn: api.overview,
+    refetchInterval: 60_000,
+  });
+  const summary = overview.data?.source_summary;
+  if (!overview.data || !summary?.total || !needsHealth(overview.data)) return null;
+  const text = sourcesSummaryText(summary, overview.data.generated_at);
+  const said = [text.headline, ...text.details].join(", ");
+  return (
+    <section
+      aria-label="Health needs attention"
+      className="flex min-w-0 items-center gap-2 rounded-card border border-border border-l-4 border-l-warn bg-surface px-3 py-2 text-sm"
+    >
+      <span className="font-semibold">Health</span>
+      <span className="min-w-0 flex-1 truncate text-text-secondary" title={`Sources ${said}`}>
+        Sources {said}
+      </span>
+      <a
+        href={`${pathFor("health")}#sources`}
+        onClick={(e) => {
+          if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+          e.preventDefault();
+          navigate("health", "sources");
+        }}
+        className="shrink-0 text-accent-text hover:underline"
+      >
+        Open Health
+      </a>
+    </section>
+  );
+}
+
+/** Sources at the bottom (F62): one line linking to Health, shown when every source is
+ * healthy. When Health needs attention the banner at the top says it instead, so this line
+ * is not shown twice (owner, 2026-11-12). */
 export function SourcesLine() {
   const overview = useQuery({
     queryKey: ["overview"],
@@ -252,18 +323,12 @@ export function SourcesLine() {
       </section>
     );
   const summary = overview.data?.source_summary;
-  if (!overview.data || !summary?.total) return null;
+  if (!overview.data || !summary?.total || needsHealth(overview.data)) return null;
   // The same words as Health's Sources tile, from the same server summary (handoff item 4).
   const text = sourcesSummaryText(summary, overview.data.generated_at);
   const parts = [text.headline, ...text.details];
   const open = openGaps(overview.data);
-  // To the gap alerts when there are any (the one alert when there is one); a quiet watch
-  // with no alert behind it opens Health, where the source is.
-  const alerted = open.filter((g) => g.item_id);
-  const one = alerted.length === 1 ? alerted[0]?.item_id : null;
-  const [area, section] = alerted.length
-    ? (["alerts", one ? `item=${one}` : ""] as const)
-    : (["health", "sources"] as const);
+  const [area, section] = sourcesTarget(overview.data);
   return (
     <a
       href={`${pathFor(area)}${section ? `#${section}` : ""}`}

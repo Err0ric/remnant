@@ -52,6 +52,7 @@ SERVER_COLUMNS = frozenset(
 # Class comes from mapping.class_uid / class_by so category_uid always follows it.
 CLASS_COLUMNS = frozenset({"class_uid", "category_uid"})
 OcsfId = Annotated[int, Field(ge=0, le=999_999)]
+DETECTION_FINDING = 2004  # OCSF Detection Finding, the class of every alert source
 Scalar = str | int | float | bool | None
 ENVELOPE_FIELDS = frozenset(
     {"timestamp", "hostname", "app_name", "procid", "msgid", "msg", "pri", "facility", "severity"}
@@ -334,6 +335,29 @@ class FieldMap(_Strict):
         return [self.from_] if isinstance(self.from_, str) else list(self.from_)
 
 
+class AlertSpec(_Strict):
+    """Where an alert source's own key is (ADR-0049 3.1): the vendor's alert ID and the
+    product that raised it. Each is a field or a list of fields: `id` takes the first one
+    with a value; `product` joins every one with a value (vendor, then product)."""
+
+    id: FieldRef | list[FieldRef]
+    product: FieldRef | list[FieldRef]
+
+    @model_validator(mode="after")
+    def _refs(self) -> "AlertSpec":
+        for ref in [*self.ids, *self.products]:
+            _check_ref(ref)
+        return self
+
+    @property
+    def ids(self) -> list[str]:
+        return [self.id] if isinstance(self.id, str) else list(self.id)
+
+    @property
+    def products(self) -> list[str]:
+        return [self.product] if isinstance(self.product, str) else list(self.product)
+
+
 class ActorRefs(_Strict):
     """Where the acting user is, by the table entry's `actor` role. Windows logon events
     name the user logging on in Target*; account, group, and process events name the
@@ -490,6 +514,21 @@ class Template(_Strict):
     tests: list[TemplateTest] = Field(min_length=3, max_length=100)
     # Newest first; only versions that change what stored events mean or show (F66).
     changes: list[TemplateChange] = Field(default_factory=list, max_length=50)
+    # An alert source (ADR-0049 3.1): its events raise alert items. Active only once an
+    # admin approves the template (ADR-0005); the starter pack is reviewed in the repo.
+    emits: Literal["", "alerts"] = ""
+    alert: AlertSpec | None = None
+
+    @model_validator(mode="after")
+    def _alert_source(self) -> "Template":
+        if self.emits == "alerts":
+            if self.alert is None:
+                raise ValueError("emits: alerts needs alert.id and alert.product")
+            if self.mapping.class_uid != DETECTION_FINDING or self.mapping.class_by:
+                raise ValueError("emits: alerts maps to Detection Finding: class_uid 2004")
+        elif self.alert is not None:
+            raise ValueError("alert is only for a template with emits: alerts")
+        return self
 
     @field_validator("id")
     @classmethod

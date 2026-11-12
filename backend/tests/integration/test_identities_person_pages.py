@@ -56,6 +56,13 @@ def _lab(lab: dict[str, Any]) -> dict[str, Any]:  # noqa: F811
     return lab
 
 
+def _grant(lab: dict[str, Any]) -> None:  # noqa: F811
+    """View people in AI usage for ana: person filters are refused without it (D242)."""
+    grant = {"view_ai_people": True}
+    res = lab["admin"].patch(f"/api/users/{lab['ids']['ana']}", json=grant, headers=lab["h"])
+    assert res.status_code == 200, res.text
+
+
 def _clean(text: str) -> None:
     assert ALIAS not in text and "example.com" not in text, text
 
@@ -68,6 +75,10 @@ def _get(client: Any, path: str, **params: Any) -> Any:
 
 def test_person_timeline(lab: dict[str, Any]) -> None:  # noqa: F811
     ana = _lab(lab)["ana"]
+    # Without View people in AI usage the AI rows and AI Watch alerts are left out (D242).
+    rows = _get(ana, "/api/people/dana/timeline", days=1).json()["rows"]
+    assert not [r for r in rows if r["kind"] in ("alert", "session", "ai_first")]
+    _grant(lab)
     got = _get(ana, "/api/people/dana/timeline", days=1)
     _clean(got.text)
     assert got.json()["forms"] == ["dana"]
@@ -89,6 +100,7 @@ def test_person_hosts(lab: dict[str, Any]) -> None:  # noqa: F811
 
 def test_person_ai_activity(lab: dict[str, Any]) -> None:  # noqa: F811
     ana = _lab(lab)["ana"]
+    _grant(lab)
     _clean(_get(ana, "/api/ai/people/dana/activity", days=1).text)
     got = _get(ana, f"/api/ai/people/{ALIAS}/activity", days=1).json()
     assert got["person"] == ALIAS and got["sessions"] == [] and got["accounts"] == []
@@ -96,12 +108,14 @@ def test_person_ai_activity(lab: dict[str, Any]) -> None:  # noqa: F811
 
 def test_sessions_by_person(lab: dict[str, Any]) -> None:  # noqa: F811
     ana = _lab(lab)["ana"]
+    _grant(lab)
     assert len(_get(ana, "/api/ai/sessions", days=1, person="dana").json()) == 1
     assert _get(ana, "/api/ai/sessions", days=1, person=ALIAS).json() == []
 
 
 def test_alerts_by_person(lab: dict[str, Any]) -> None:  # noqa: F811
     ana = _lab(lab)["ana"]
+    _grant(lab)
     assert len(_get(ana, "/api/alerts", state="all", person="dana").json()["items"]) == 1
     assert _get(ana, "/api/alerts", state="all", person=ALIAS).json()["items"] == []
 
@@ -111,6 +125,9 @@ def test_ai_usage_people_get_no_unseen_domain(lab: dict[str, Any]) -> None:  # n
     frank@example.com: the first organization domain, which ana's events never show."""
     ana = _lab(lab)["ana"]
     start = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 86400))
+    got = _get(ana, "/api/ai/usage", start=start)  # without the permission: machines (D242)
+    assert sorted(p["person"] for p in got.json()["people"]) == ["ws-alpha", "ws-beta"]
+    _grant(lab)
     got = _get(ana, "/api/ai/usage", start=start)
     _clean(got.text)
     assert sorted(p["person"] for p in got.json()["people"]) == ["dana", "frank@example.net"]
@@ -119,6 +136,8 @@ def test_ai_usage_people_get_no_unseen_domain(lab: dict[str, Any]) -> None:  # n
 def test_inventory_and_accounts(lab: dict[str, Any]) -> None:  # noqa: F811
     ana = _lab(lab)["ana"]
     _clean(_get(ana, "/api/ai/inventory", days=1).text)
+    _clean(_get(ana, "/api/agents/accounts", days=1).text)
+    _grant(lab)
     _clean(_get(ana, "/api/agents/accounts", days=1).text)
 
 

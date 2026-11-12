@@ -25,15 +25,20 @@ def parse_json_object(text: str) -> dict[str, Any] | None:
 
 
 class CsvRowParser:
-    """Stateful CSV parser: the first line is the header."""
+    """Stateful CSV parser: the first line is the header. With `header=False` no line is a
+    header and cells are keyed by position ("1", "2", ...), for files whose header is not
+    known (a source whose template is missing, ADR-0050: nothing is dropped)."""
 
-    def __init__(self, delimiter: str = ",") -> None:
+    def __init__(self, delimiter: str = ",", header: bool = True) -> None:
         self._delimiter = delimiter
         self._columns: list[str] | None = None
+        self._header = header
 
     def parse(self, text: str) -> tuple[dict[str, Any], bool] | None:
         """Return (row, column_count_ok), or None when the line was the header."""
         cells = next(csv.reader([text], delimiter=self._delimiter), [])
+        if not self._header:
+            return {str(i + 1): c for i, c in enumerate(cells)}, True
         if self._columns is None:
             self._columns = [c.strip() for c in cells]
             return None

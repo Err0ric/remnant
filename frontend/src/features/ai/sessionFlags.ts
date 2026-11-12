@@ -17,7 +17,8 @@ export function sessionFlags(
   // A call with no result in a session still running may simply not have returned yet.
   const closed = (s.state ?? (s.stopped ? "ended" : "open")) !== "open";
   if ((s.failed ?? 0) > 0 || (closed && (s.unanswered ?? 0) > 0)) out.push("failed");
-  if (account(s.account ?? s.person)?.tier === "personal") out.push("personal");
+  // Masked (D242): the account is a machine, so it is not looked up.
+  if (!s.masked && account(s.account ?? s.person)?.tier === "personal") out.push("personal");
   if ((s.new_mcp ?? []).length > 0) out.push("new_mcp");
   return out;
 }

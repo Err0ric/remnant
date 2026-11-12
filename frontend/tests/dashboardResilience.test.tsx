@@ -1,5 +1,5 @@
 import { QueryClient } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { mockApi } from "./mockApi";
@@ -60,9 +60,26 @@ async function openDashboard(shape: Shape, path = "/dashboard") {
   return client;
 }
 
+const SECTIONS = ["/api/dashboard/sections", "/api/ai/watch/summary", "/api/overview"];
+
+/** Every section request answered, then React's updates flushed: an event, not a fixed
+ * sleep, so a slow runner cannot pass the check before the sections have rendered. */
 async function settled() {
   await screen.findByRole("heading", { level: 1, name: /Dashboard/ });
-  await new Promise((r) => setTimeout(r, 300));
+  await vi.waitFor(
+    () => {
+      const urls = vi.mocked(globalThis.fetch).mock.calls.map((c) => String(c[0]));
+      for (const p of SECTIONS) expect(urls.some((u) => u.includes(p))).toBe(true);
+    },
+    { timeout: 10_000 },
+  );
+  await act(async () => {
+    await Promise.all(vi.mocked(globalThis.fetch).mock.results.map((r) => r.value));
+    // TanStack Query hands results to the page in a setTimeout(0) batch: let it run, so
+    // the sections have rendered what they got before the checks below.
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+  });
   expect(screen.queryByText(/could not be shown/)).toBeNull();
   expect(screen.queryByText(/Something went wrong on this page/)).toBeNull();
 }
@@ -78,7 +95,10 @@ describe("Dashboard sections whatever the response (D194)", () => {
   it("opens after Logs without mixing up their source lists", async () => {
     await openDashboard("empty", "/investigate/logs");
     await screen.findByRole("heading", { level: 1, name: "Investigate" });
-    await new Promise((r) => setTimeout(r, 300)); // Search's source filter has loaded
+    await act(async () => {
+      // Search's own requests (its source filter) answered before leaving the page
+      await Promise.all(vi.mocked(globalThis.fetch).mock.results.map((r) => r.value));
+    });
     window.history.pushState(null, "", "/dashboard");
     window.dispatchEvent(new Event("app:navigate"));
     await settled();

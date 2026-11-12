@@ -23,6 +23,7 @@ from typing import Any
 
 import structlog
 
+from app.ai import alert_codes
 from app.ai.agents import AgentStatus, agents
 from app.ai.catalog import NON_USAGE, Catalog
 from app.ai.internal_tools import counted
@@ -31,6 +32,7 @@ from app.ai.usage import HOST_EXPR, MACHINE_EXPR, MCP_EXPR, NO_MCP_NAMES, WHO_EX
 from app.alerts.dispatch import AlertDispatcher
 from app.alerts.items import AlertItem, AlertItems
 from app.alerts.render import Alert
+from app.alerts.stops import DetectionStops
 from app.core import clock
 from app.core.branding import PRODUCT_NAME
 from app.core.errors import ParamInvalidError, log_detail
@@ -45,6 +47,7 @@ MAX_TARGETS = 10
 BATCH = 20_000  # rows read per check; the cursor moves past what was read
 LOOKBACK_FIRST_RUN = timedelta(hours=1)
 AGENT_CHECK_EVERY = timedelta(hours=1)
+BLOCKED_LINE = " blocked or failed tool calls in an hour "  # in the line, for its severity
 
 
 def is_mcp_item(kind: str, name: str) -> bool:
@@ -147,6 +150,7 @@ class AiWatch:
         self._clock = clock
         # Which steps are failing, for Health and the AI Watch panel (owner, 2026-11-03).
         self.jobs = JobStatus()
+        self.stops: DetectionStops | None = None  # set by the app (D33 as amended)
 
     def now(self) -> datetime:
         """The watch's clock, which AI Watch's summary uses too (settable in tests)."""
@@ -236,10 +240,18 @@ class AiWatch:
             try:
                 sent += run()
             except Exception as exc:  # one step failing must not stop the others
-                self.jobs.failed(f"ai_watch.{step}", exc, self._clock().astimezone(UTC))
+                f = self.jobs.failed(f"ai_watch.{step}", exc, self._clock().astimezone(UTC))
                 log.warning("ai_watch.step_failed", step=step, **log_detail(exc))
+                if self.stops is not None:
+                    self.stops.failing(
+                        f"ai_watch:{step}", f"AI Watch: {step}",
+                        describe(f.error, f.engine_error, f.detail), "health#ai-watch",
+                        self.settings().target_ids,
+                    )  # fmt: skip
             else:
                 self.jobs.ok(f"ai_watch.{step}")
+                if self.stops is not None:
+                    self.stops.working(f"ai_watch:{step}", "health#ai-watch")
         return sent
 
     def check_now(self) -> list[tuple[str, str | None]]:
@@ -304,7 +316,10 @@ class AiWatch:
                 # Items are per person and the day the signal was received.
                 if sensitive_ok:
                     day = (seen or now).date().isoformat()
-                    self._raise_sensitive(subject, _cats(sens), [str(src)], since, now, day=day)
+                    self._raise_sensitive(
+                        subject, _cats(sens), [str(src)], since, now, day=day,
+                        machine=not who and bool(machine),
+                    )  # fmt: skip
                 continue
             if kind == "service":
                 svc = services.get(str(name))
@@ -339,14 +354,15 @@ class AiWatch:
             sensitive = {}
         sent = 0
         if s.enabled and fresh_ai:
-            self._alert("ai_new", fresh_ai, s.target_ids, since, now)
+            high = any(line.endswith(" (not approved)") for line in fresh_ai)
+            self._alert("ai_new", fresh_ai, s.target_ids, since, now, "high" if high else "medium")
             sent += 1
         if s.enabled and sensitive and s.sensitive:
             lines = [
                 f"{who}: " + ", ".join(f"{c} x{n}" for c, n in sorted(cats.items()))
                 for who, cats in sorted(sensitive.items())
             ]
-            self._alert("ai_sensitive", lines, s.target_ids, since, now)
+            self._alert("ai_sensitive", lines, s.target_ids, since, now, "high")
             sent += 1
         with self._meta.connect() as con:
             con.execute("UPDATE ai_watch SET cursor = ? WHERE id = 1", (newest.isoformat(),))
@@ -393,19 +409,23 @@ class AiWatch:
             r.sources = {str(x) for x in sources or []}
             self._raise_use("mcp", str(name), r, since, now, refresh=True)
         # Sensitive data: every person and day with signals in the window has an item.
-        days: dict[tuple[str, str], tuple[dict[str, int], set[str]]] = {}
+        days: dict[tuple[str, str], tuple[dict[str, int], set[str], set[bool]]] = {}
         sens_rows = self._engine.run(
             SENSITIVE_SQL, QueryScope(None, since, now), timeout_s=30.0
         ).rows
-        for src, who, day, sens in sens_rows:
-            cats, srcs = days.setdefault((str(who), str(day)[:10]), ({}, set()))
+        for src, who, day, sens, by_machine in sens_rows:
+            cats, srcs, how = days.setdefault((str(who), str(day)[:10]), ({}, set(), set()))
             for cat, n in _cats(sens).items():
                 cats[cat] = cats.get(cat, 0) + n
             srcs.add(str(src))
+            how.add(bool(by_machine))
         api = self._catalog_service("anthropic_api")
         if not (api is not None and api.data_level == "confidential"):
-            for (who, day), (cats, srcs) in sorted(days.items()):
-                self._raise_sensitive(who, cats, sorted(srcs), since, now, day=day, refresh=True)
+            for (who, day), (cats, srcs, how) in sorted(days.items()):
+                self._raise_sensitive(
+                    who, cats, sorted(srcs), since, now, day=day, refresh=True,
+                    machine=how == {True} and who != "unknown",
+                )  # fmt: skip
         # Agents have no approval status: Close on their item is the decision.
         for a in agents(self._engine, None, now):
             seen = _parse(a.last_seen)
@@ -456,8 +476,7 @@ class AiWatch:
         named = sorted(
             {d for d in devices[:20]} | {ip for d in devices[:20] for ip in r.seen.get(d, set())}
         )
-        self._items.raise_item(
-            "ai_watch",
+        self._raise(
             f"{kind}:{name}",
             # Waiting for a decision, not necessarily new: the title says which decision.
             (
@@ -490,16 +509,18 @@ class AiWatch:
         now: datetime,
         day: str,
         refresh: bool = False,
+        machine: bool = False,
     ) -> None:
+        """`machine`: `who` is the machine's host name, no person was seen (D242)."""
         if self._items is None:
             return
-        self._items.raise_item(
-            "ai_watch",
+        self._raise(
             f"sensitive:{who}",
             f"Sensitive data to AI: {who}",
             # One item per person and day the signals were received.
             ref_id=f"sensitive:{who}:{day}",
-            people=[who],
+            people=None if machine else [who],
+            devices=[who] if machine else None,
             why=", ".join(f"{c} x{n}" for c, n in sorted(cats.items())),
             count=sum(cats.values()),
             sources=sources,
@@ -553,14 +574,20 @@ class AiWatch:
                 )
                 lines.append(line)
                 self._raise_agent(a.agent, f"busy:{now.date()}", a.label, line, now)
-        lines += self._account_and_blocked(now)
+        extra = self._account_and_blocked(now)
+        lines += extra
+        # A burst of blocked or failed calls is high (ADR-0043 row 12); the rest medium.
+        high = any(BLOCKED_LINE in line for line in extra)
         with self._meta.connect() as con:
             con.execute(
                 "UPDATE ai_watch SET agents_checked_at = ? WHERE id = 1", (now.isoformat(),)
             )
         if not lines or not (s.enabled and s.agents):
             return 0
-        self._alert("ai_agent", lines, s.target_ids, now - AGENT_CHECK_EVERY, now)
+        self._alert(
+            "ai_agent", lines, s.target_ids, now - AGENT_CHECK_EVERY, now,
+            "high" if high else "medium",
+        )  # fmt: skip
         return 1
 
     def _account_and_blocked(self, now: datetime) -> list[str]:
@@ -578,8 +605,8 @@ class AiWatch:
                 if not device or at in domains:
                     continue
                 line = f"Personal Claude account {email} on {device}"
-                item = self._items.raise_item(
-                    "ai_watch", f"account:{email}", line, ref_id=f"personal:{email}:{device}",
+                item = self._raise(
+                    f"account:{email}", line, ref_id=f"personal:{email}:{device}",
                     why=line, people=[str(email)], devices=[str(device)], severity="medium",
                     sources=self._agent_sources(), range_end=now.isoformat(),
                 )  # fmt: skip
@@ -588,13 +615,15 @@ class AiWatch:
         rows = self._engine.run(
             BLOCKED_SQL, scope, {"burst": self._blocked_burst}, timeout_s=30.0
         ).rows
-        for agent, n in rows:
+        for agent, n, by_machine in rows:
             who = str(agent)[3:]
-            line = f"{n} blocked or failed tool calls in an hour by Claude Code for {who}"
-            item = self._items.raise_item(
-                "ai_watch", f"agent:{agent}", f"AI agent: blocked or failed calls, {who}",
+            line = f"{n}{BLOCKED_LINE}by Claude Code for {who}"
+            item = self._raise(
+                f"agent:{agent}", f"AI agent: blocked or failed calls, {who}",
                 why=line, count=int(n), severity="high", sources=self._agent_sources(),
                 people=[who] if "@" in who else None, range_end=now.isoformat(),
+                # Keyed by its machine when no person was seen (D242: shown as one).
+                devices=[who] if by_machine and who != "?" else None,
                 group=(f"agent:{agent}", "blocked_calls"), change=line,
             )  # fmt: skip
             if item.fresh or item.rose:
@@ -636,8 +665,7 @@ class AiWatch:
             if what.startswith("busy:")
             else "agent_change"
         )
-        return self._items.raise_item(
-            "ai_watch",
+        return self._raise(
             f"agent:{agent}",
             f"AI agent changed: {label}" if what != "agent" else f"AI agent not reviewed: {label}",
             ref_id=f"agent:{agent}:{what}",
@@ -652,6 +680,28 @@ class AiWatch:
             group=(f"agent:{agent}", rule) if rule else None,
             change=line,
         )
+
+    def _raise(self, subject: str, title: str, **kw: Any) -> AlertItem:
+        """Raise an AI Watch item that stores no name (D242, app.ai.alert_codes): each
+        person in its keys and lines is a reference, and every person it codes is kept in
+        its people, so reading it names them again for a viewer who may see them. Until
+        the start rewrite has completed, items are stored as before."""
+        assert self._items is not None
+        if not alert_codes.codes_on(self._meta):
+            return self._items.raise_item("ai_watch", subject, title, **kw)
+        texts = [title, *(kw.get(k) for k in ("detail", "why", "change"))]
+        c = alert_codes.Coder(self._items.refs, subject, kw.pop("people", None) or [], texts,
+                  kw.get("devices") or [])  # fmt: skip
+        for k in ("detail", "why", "change"):
+            if kw.get(k) is not None:
+                kw[k] = c.text(kw[k])
+        kw["ref_id"] = c.key(kw.get("ref_id"))
+        if kw.get("group") is not None:
+            kw["group"] = (c.key(kw["group"][0]), kw["group"][1])
+        return self._items.raise_item(
+            "ai_watch", c.key(subject) or "", c.text(title) or "",
+            people=c.all_people() or None, **kw,
+        )  # fmt: skip
 
     def _agent_first(self, agent: str, kind: str, item: str, now: datetime) -> bool:
         with self._meta.connect() as con:
@@ -672,9 +722,18 @@ class AiWatch:
             return cur.rowcount == 1
 
     def _alert(
-        self, kind: str, lines: list[str], targets: list[str], since: datetime, now: datetime
+        self,
+        kind: str,
+        lines: list[str],
+        targets: list[str],
+        since: datetime,
+        now: datetime,
+        severity: str = "medium",
     ) -> None:
-        detail = "; ".join(lines[:5]) + (f"; and {len(lines) - 5} more" if len(lines) > 5 else "")
+        """Messages to alert targets carry only a reference and a link (D242, replaces
+        ADR-0029 G5's per-target checkbox): the kind, the severity, how many items are new
+        or changed, and a link to Alerts. No line, person, machine, service, or MCP name
+        leaves. The audit row keeps the lines as the watch saw them."""
         self._audit.write(
             {"ai_new": "ai.sighting", "ai_agent": "ai.agent_change"}.get(kind, "ai.sensitive"),
             "success",
@@ -684,20 +743,22 @@ class AiWatch:
         )
         if not targets:
             return
+        n = len(lines)
         alert = Alert(
             kind="ai_new"
             if kind == "ai_new"
             else "ai_agent"
             if kind == "ai_agent"
             else "ai_sensitive",
-            title="AI watch",
-            detail=detail,
-            count=len(lines),
+            title="AI watch alert",
+            detail=f"{n} new or changed {'item' if n == 1 else 'items'}; open Alerts to see them",
+            count=n,
             reason=None,
             range_start=since.isoformat(),
             range_end=now.isoformat(),
-            link=f"{self._link}/ai" if self._link else None,
+            link=f"{self._link}/alerts" if self._link else None,
             product=PRODUCT_NAME,
+            severity=severity,
         )
         self._dispatcher.enqueue(alert, targets, None, None)
 
@@ -749,7 +810,8 @@ GROUP BY 1, 2"""  # noqa: S608  # fixed SQL text
 
 # Agents with at least $burst blocked or failed tool calls in the hour (bookkeeping left out).
 BLOCKED_SQL = f"""
-SELECT 'cc|' || coalesce(nullif(actor_user_name, ''), device_hostname, '?') AS agent, count(*)
+SELECT 'cc|' || coalesce(nullif(actor_user_name, ''), device_hostname, '?') AS agent, count(*),
+       count(nullif(actor_user_name, '')) = 0 AS by_machine
 FROM events
 WHERE {HOOKS} AND message = 'claude_hooks.post_tool_use_failure'
   AND {counted("json_extract_string(unmapped, '$.attr.tool_name')")}
@@ -759,7 +821,8 @@ HAVING count(*) >= $burst"""  # noqa: S608  # fixed SQL text
 SENSITIVE_SQL = f"""
 SELECT source_id, coalesce({WHO_EXPR}, device_hostname, 'unknown') AS who,
        CAST(time_observed AS DATE) AS day,
-       json_extract(unmapped, '$.attr.sensitive')::VARCHAR AS sens
+       json_extract(unmapped, '$.attr.sensitive')::VARCHAR AS sens,
+       {WHO_EXPR} IS NULL AS by_machine
 FROM events
 WHERE template_id = 'claude_code_otel'
   AND TRY_CAST(json_extract_string(unmapped, '$.attr.sensitive_total') AS BIGINT) > 0

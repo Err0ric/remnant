@@ -83,8 +83,9 @@ def scope_key(allowed: list[str] | None) -> tuple[str, ...] | None:
     return None if allowed is None else tuple(sorted(allowed))
 
 
-# compute(user, permitted sources) -> (JSON body, sources read)
-Compute = Callable[[User, list[str] | None], tuple[bytes, list[str]]]
+# compute(user, permitted sources) -> (JSON body, sources read, and anything else the view
+# keeps with them, such as whether it named people)
+Compute = Callable[[User, list[str] | None], tuple[Any, ...]]
 
 
 @dataclass

@@ -9,6 +9,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
+from app.ai.people_view import can_view_people
 from app.api.access import (
     SESSION_COOKIE,
     CurrentUser,
@@ -30,6 +31,8 @@ class UserOut(BaseModel):
     user_id: str
     username: str
     role: str
+    # View people in AI usage (ADR-0029 G1, D242), effective: always true for an admin.
+    view_ai_people: bool = False
 
 
 class SsoState(BaseModel):
@@ -77,7 +80,12 @@ class SignedIn(BaseModel):
 
 
 def _out(user: User) -> UserOut:
-    return UserOut(user_id=user.user_id, username=user.username, role=user.role)
+    return UserOut(
+        user_id=user.user_id,
+        username=user.username,
+        role=user.role,
+        view_ai_people=can_view_people(user),
+    )
 
 
 def _auth(request: Request) -> AuthService:

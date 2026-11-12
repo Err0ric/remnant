@@ -46,7 +46,7 @@ Per-person AI usage is sensitive: it says what a named employee did and when. A 
 | G2 | Without it, every person-level field on AI surfaces (AI usage Who column, the People tab, the investigator's AI flow person cards, AI watch alert text, possible personal-account rows from ADR-0030) shows the machine or address instead, or "Hidden" where there is none. Counts stay (for example "3 people"), names do not. Enforced in the API responses, never only in the UI |
 | G3 | Every response that includes person-level AI data writes an audit row `ai.view_people` with the user, the surface, the time range, and `sources_in_scope`. The existing `ai.view` row stays for views without names |
 | G4 | Exports and report drafts that include names from AI surfaces are audited `ai.export_people`, with the row count. Without the permission, exports carry the same masking as the screen |
-| G5 | Alerts: AI watch alerts name a person only when every target is marked as going to people with the permission (an admin checkbox on the alert target); otherwise the alert names the machine and links to the page |
+| G5 | Alerts: AI watch alerts name a person only when every target is marked as going to people with the permission (an admin checkbox on the alert target); otherwise the alert names the machine and links to the page. Amended by D242 (owner, 2026-11-11): messages to alert targets never carry names, only a reference and a link; there is no per-target checkbox |
 | G6 | The address lookup panel (row 8) follows the same rule: spans show the hostname and source, and the person only with the permission |
 
 ## Since this was written (2026-10-22)

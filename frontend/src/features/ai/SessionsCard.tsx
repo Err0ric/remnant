@@ -69,8 +69,11 @@ export function SessionsCard() {
   // Test or empty sessions (a start and nothing else) clutter the list (owner 2026-11-02).
   const shown = hideEmpty ? all.filter((r) => r.tool_calls > 0 || r.prompts > 0) : all;
   const hidden = all.length - shown.length;
+  // Without View people in AI usage (D242) the server sends machines, not accounts: no
+  // lookup, so a machine is never matched to another account's tier.
+  const masked = all.some((r) => r.masked) || accounts.data?.masked === true;
   const account = (email: string | null) =>
-    email ? accounts.data?.rows.find((a) => a.email === email.toLowerCase()) : undefined;
+    email && !masked ? accounts.data?.rows.find((a) => a.email === email.toLowerCase()) : undefined;
   // Filters (owner, 2026-11-03; D188): person, machine, tool, and has flags.
   const [person, setPerson] = useState("");
   const [machine, setMachine] = useState("");
@@ -98,6 +101,9 @@ export function SessionsCard() {
         <span className="text-sm text-text-muted">
           Claude Code and Cowork sessions from the hooks plugin, last 7 days. Browser chat is not
           covered.
+          {masked
+            ? " Names are hidden. An admin can turn on View people in AI usage for you."
+            : null}
         </span>
         <label className="ml-auto flex items-center gap-1.5 text-sm text-text-secondary">
           <input
@@ -117,7 +123,14 @@ export function SessionsCard() {
           aria-label="Filter sessions"
           className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 text-sm"
         >
-          <Pick label="Person" value={person} set={setPerson} values={options((r) => [r.person])} />
+          {masked ? null : (
+            <Pick
+              label="Person"
+              value={person}
+              set={setPerson}
+              values={options((r) => [r.person])}
+            />
+          )}
           <Pick
             label="Machine"
             value={machine}
@@ -215,6 +228,7 @@ export function SessionsCard() {
                 id={timeline.data.session_id}
                 steps={timeline.data.steps}
                 account={account(timeline.data.person)}
+                masked={timeline.data.masked === true}
               />
             ) : null}
           </div>
@@ -231,15 +245,23 @@ interface DetailProps {
   session: AgentSession | null;
   steps: SessionStep[];
   account: AgentAccount | undefined;
+  /** `person` is the machine (or "Hidden"), D242: plain text, no person link. */
+  masked: boolean;
 }
 
-function Detail({ id, person, machine, session, steps, account }: DetailProps) {
+function Detail({ id, person, machine, session, steps, account, masked }: DetailProps) {
   const [around, setAround] = useState<SessionStep | null>(null);
   const late_ = steps.reduce((m, st) => Math.max(m, st.late_s ?? 0), 0);
   return (
     <div aria-label="Session detail" role="region">
       <PanelTitle>
-        {person ? <EntityLink kind="user" value={person} tab="ai" /> : "No user parsed"}
+        {person && masked ? (
+          person
+        ) : person ? (
+          <EntityLink kind="user" value={person} tab="ai" />
+        ) : (
+          "No user parsed"
+        )}
         {machine ? (
           <span className="ml-2 font-mono font-normal">
             <EntityLink kind="host" value={machine} />
@@ -251,7 +273,9 @@ function Detail({ id, person, machine, session, steps, account }: DetailProps) {
         <dd className="font-mono">{id}</dd>
         <dt className="text-text-secondary">Claude account</dt>
         <dd>
-          {account ? (
+          {masked && person ? (
+            <span className="text-text-secondary">Hidden</span>
+          ) : account ? (
             <>
               <TierBadge tier={account.tier} />{" "}
               <span className="text-text-secondary">{account.evidence}</span>

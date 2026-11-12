@@ -24,6 +24,7 @@ export function AgentsCard() {
   const q = useQuery({ queryKey: ["ai-agents"], queryFn: api.aiAgents, staleTime: 60_000 });
   const rows = q.data ?? [];
   const changed = rows.filter((a) => a.state === "changed").length;
+  const masked = rows.some((a) => a.masked);
   return (
     <section
       aria-label="Agents"
@@ -34,6 +35,9 @@ export function AgentsCard() {
         <span className="text-sm text-text-muted">
           Claude Code per person, MCP setups per machine and client, and API keys. Changes are
           against the 30 days before the last 24 hours.
+          {masked
+            ? " Names are hidden. An admin can turn on View people in AI usage for you."
+            : null}
         </span>
         {changed ? (
           <span className="ml-auto rounded-badge bg-sev-high-bg px-2 py-0.5 text-sm text-sev-high-text">
@@ -85,7 +89,11 @@ export function AgentsCard() {
                       ) : null}
                     </td>
                     <td className="px-3 py-2 font-mono text-text-secondary">
-                      <EntityList people={a.owners} tab="ai" />
+                      {a.masked && (a.owners_hidden ?? 0) > 0 ? (
+                        "Hidden"
+                      ) : (
+                        <EntityList people={a.owners} tab="ai" />
+                      )}
                     </td>
                     <td className="px-3 py-2 text-right font-mono tabular-nums">
                       {a.events_24h.toLocaleString()}

@@ -71,6 +71,52 @@ def _local_test_host(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(testclient.TestClient, "__init__", init)
 
 
+_STAND_IN = {"on": True}
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _first_admin_stand_in() -> Iterator[None]:
+    """Many older tests drive a loopback app that has no accounts and expect to act as an
+    administrator without signing in (the no-sign-in mode D245 removed). For those, and only
+    in tests, a loopback app with no accounts answers as the stand-in `local` administrator.
+    The app has no such path any more: tests of sign-in and setup are marked `real_auth` and
+    get the app as it ships (tests/integration/test_always_setup.py). Session-wide, because
+    module-scoped fixtures build their app before any test runs. BACKLOG A32: move the
+    older files to a real sign-in and drop this."""
+    from app.api import access
+    from app.auth.admin import UserAdmin
+    from app.auth.users import LOCAL_USER
+
+    signed_in = access._current_user
+    assert_admin = UserAdmin._assert_admin
+
+    def current_user(req: Any) -> Any:
+        auth = req.app.state.auth
+        if _STAND_IN["on"] and auth.loopback and auth.mode() == "setup":
+            req.state.user = LOCAL_USER
+            req.state.via = "open"
+            return LOCAL_USER
+        return signed_in(req)
+
+    def admin_or_stand_in(con: Any, actor: Any) -> None:
+        none_yet = con.execute("SELECT 1 FROM users LIMIT 1").fetchone() is None
+        if not (_STAND_IN["on"] and actor.user_id == LOCAL_USER.user_id and none_yet):
+            assert_admin(con, actor)
+
+    patch = pytest.MonkeyPatch()
+    patch.setattr(access, "_current_user", current_user)
+    patch.setattr(UserAdmin, "_assert_admin", staticmethod(admin_or_stand_in))
+    yield
+    patch.undo()
+
+
+@pytest.fixture(autouse=True)
+def _real_auth_when_marked(request: pytest.FixtureRequest) -> Iterator[None]:
+    _STAND_IN["on"] = request.node.get_closest_marker("real_auth") is None
+    yield
+    _STAND_IN["on"] = True
+
+
 @pytest.fixture(autouse=True)
 def _fast_password_hashing(monkeypatch: pytest.MonkeyPatch) -> None:
     """Argon2 with minimal cost in tests only; production keeps argon2-cffi's defaults."""

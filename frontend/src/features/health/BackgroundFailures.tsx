@@ -6,6 +6,8 @@ const NAMES: Record<string, string> = {
   "ai_watch.events": "AI Watch: new AI use",
   "ai_watch.agents": "AI Watch: agent changes",
   "ai_watch.review": "AI Watch: hourly review",
+  "alerts.rewrite_backup":
+    "AI watch alerts still store names: the backup before the rewrite failed. They stay hidden when read; the next start tries again.",
 };
 
 function jobName(job: string): string {

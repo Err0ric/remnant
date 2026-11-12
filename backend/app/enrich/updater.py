@@ -10,13 +10,14 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 
 import httpx
 import structlog
 
 from app.alerts.net import egress
+from app.alerts.stops import DetectionStops
 from app.core.errors import AppError
 from app.enrich import intel
 from app.enrich.feeds import (
@@ -38,6 +39,9 @@ ClientFactory = Callable[[], httpx.Client]
 
 class FeedDownloadError(Exception):
     """A download that cannot be used; recorded on the feed, never raised to callers."""
+
+
+INTEL_GRACE = timedelta(days=1)  # intel lists update hourly; a day stale is a real gap
 
 
 def default_client() -> httpx.Client:
@@ -69,6 +73,7 @@ class FeedUpdater:
         self._key = key  # the feed's key, decrypted when needed; never logged
         self._intel_every = intel_every_s
         self._lock = threading.Lock()  # one update at a time (scheduler and Update now)
+        self.stops: DetectionStops | None = None  # set by the app (D33 as amended)
 
     def run_due(self) -> list[FeedState]:
         """Called every few minutes; does nothing unless automatic updates are on."""
@@ -112,6 +117,8 @@ class FeedUpdater:
             else:
                 new = self._geoip(st)
             if new is None:
+                if self.stops is not None and spec.is_intel:
+                    self.stops.working(f"feed:{feed_id}", "health#enrichment")
                 return self._store.state(feed_id)
         except (httpx.HTTPError, AppError, OSError, FeedDownloadError) as exc:
             reason = _reason(exc)
@@ -119,7 +126,15 @@ class FeedUpdater:
             self._audit.write(
                 "enrichment.update", "failure", user_id, None, {"feed": feed_id, "error": reason}
             )
+            if self.stops is not None and spec.is_intel:
+                # A stale threat list misses new indicators; tell people after a day.
+                self.stops.failing(
+                    f"feed:{feed_id}", f"Threat feed {spec.label}", reason,
+                    "health#enrichment", grace=INTEL_GRACE,
+                )  # fmt: skip
             return self._store.record_check(feed_id, reason)
+        if self.stops is not None and spec.is_intel:
+            self.stops.working(f"feed:{feed_id}", "health#enrichment")
         self._audit.write(
             "enrichment.update",
             "success",

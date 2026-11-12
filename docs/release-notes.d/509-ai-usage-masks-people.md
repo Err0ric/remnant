@@ -1,0 +1,6 @@
+### AI usage page hides names without View people in AI usage (2026-11-11)
+
+- On the AI usage page, a viewer without the **View people in AI usage** permission sees each person on the People tab as the machine they used most (or "Hidden" when no record names one), as plain text with no person link. Services list their machines instead of people, and the "may be" hint on network rows is left out. Two people on one machine stay two rows (ADR-0029 G2, D242).
+- The server removes the names from its answer, kept apart in the 60-second page cache, so a named answer is never served to a viewer without the permission. Each view is audited `ai.view_people` when it showed names and `ai.view` when it did not, with the surface, the time range, and the sources read (G3).
+- What you will notice: analysts and auditors without View people in AI usage see machines instead of names on the AI usage page, with a short note that names are hidden; every count stays the same. Administrators, and anyone an administrator gave the permission, see no change.
+- What changes for existing installs: nothing to do and nothing stored changes. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`).

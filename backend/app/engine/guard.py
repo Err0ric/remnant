@@ -15,7 +15,7 @@ from sqlglot import exp
 from sqlglot.errors import SqlglotError
 from sqlglot.optimizer.scope import traverse_scope
 
-from app.core.errors import QueryRejectedError
+from app.core.errors import QueryBlockedError, QueryRejectedError
 
 DEFAULT_LIMIT = 10_000
 MAX_LIMIT = 100_000
@@ -90,16 +90,16 @@ def _guard(
             f"Could not parse SQL as a single SELECT statement: {_first_line(exc)}"
         ) from exc
     if len(statements) != 1:
-        raise QueryRejectedError("Only one statement is allowed per query")
+        raise QueryBlockedError("Only one statement is allowed per query")
     tree = statements[0]
     if not isinstance(tree, exp.Select | exp.SetOperation):
-        raise QueryRejectedError(
+        raise QueryBlockedError(
             "Statement not allowed: only SELECT or WITH ... SELECT can run "
             f"(could not parse a SELECT, got {type(tree).__name__.upper()})"
         )
     for node in tree.walk():
         if isinstance(node, _FORBIDDEN_NODES):
-            raise QueryRejectedError(f"Statement not allowed inside a query: {type(node).__name__}")
+            raise QueryBlockedError(f"Statement not allowed inside a query: {type(node).__name__}")
 
     _check_tables(tree, allowed_tables)
     _check_functions(tree)
@@ -133,6 +133,8 @@ def _check_tables(tree: exp.Expression, allowed: frozenset[str]) -> None:
         raise QueryRejectedError("Query structure could not be analysed") from exc
     for scope in scopes:
         for source in scope.sources.values():
+            if isinstance(source, exp.Table):
+                _check_table_shape(source)
             if isinstance(source, exp.Table) and source.name.lower() not in allowed_lower:
                 raise QueryRejectedError(
                     f"Unknown table: {source.name[:60]}. Query the events table"
@@ -140,22 +142,31 @@ def _check_tables(tree: exp.Expression, allowed: frozenset[str]) -> None:
     ctes = {cte.alias_or_name.lower() for cte in tree.find_all(exp.CTE)}
     permitted = allowed_lower | ctes
     for table in tree.find_all(exp.Table):
-        if not isinstance(table.this, exp.Identifier):
-            raise QueryRejectedError(
-                "Table functions are not allowed; query the events table "
-                f"(found {table.this.sql(dialect='duckdb')[:60]})"
-            )
-        if table.args.get("db") or table.args.get("catalog"):
-            raise QueryRejectedError(f"Qualified table names are not allowed: {table.sql()[:60]}")
+        _check_table_shape(table)
         if table.name.lower() not in permitted:
             raise QueryRejectedError(f"Unknown table: {table.name[:60]}. Query the events table")
+
+
+def _check_table_shape(table: exp.Table) -> None:
+    """A table function, a qualified name, or a file path is a block, not a typo (D237)."""
+    if not isinstance(table.this, exp.Identifier):
+        raise QueryBlockedError(
+            "Table functions are not allowed; query the events table "
+            f"(found {table.this.sql(dialect='duckdb')[:60]})"
+        )
+    if table.args.get("db") or table.args.get("catalog"):
+        raise QueryBlockedError(f"Qualified table names are not allowed: {table.sql()[:60]}")
+    if not _PLAIN_NAME.match(table.name):
+        raise QueryBlockedError(
+            f"File paths and quoted table names are not allowed: {table.name[:60]}"
+        )
 
 
 def _check_functions(tree: exp.Expression) -> None:
     for func in tree.find_all(exp.Func):
         name = func.name if isinstance(func, exp.Anonymous) else func.sql_name()
         if _DENIED_FUNCTION.match(name or ""):
-            raise QueryRejectedError(f"Function not allowed: {name.lower()}")
+            raise QueryBlockedError(f"Function not allowed: {name.lower()}")
         _check_size(func, (name or "").lower())
 
 

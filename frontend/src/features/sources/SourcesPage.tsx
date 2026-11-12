@@ -17,6 +17,9 @@ import { LokiSummary } from "./LokiSummary";
 import { OtlpControls } from "./OtlpSetup";
 import { MappingChanges } from "./MappingChanges";
 import { QuietAlert } from "./QuietAlert";
+import { VendorAlertNotify } from "./VendorAlertNotify";
+import { ReparseControl } from "./ReparseControl";
+import { ReparseRulesControl } from "./ReparseRulesControl";
 import { SourceState } from "./SourceState";
 import { TimeZoneEditor } from "./TimeZoneEditor";
 import { RetentionEditor } from "./RetentionEditor";
@@ -295,6 +298,24 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
                               sourceId={s.source_id}
                               quiet={s.quiet}
                               canManage={canManage}
+                            />
+                            {s.emits_alerts || s.alert_pause ? (
+                              <VendorAlertNotify
+                                sourceId={s.source_id}
+                                pause={s.alert_pause}
+                                canManage={canManage}
+                              />
+                            ) : null}
+                            <ReparseControl
+                              sourceId={s.source_id}
+                              templateId={s.template_id ?? null}
+                              canManage={canManage}
+                              pending={s.reparse_pending === true}
+                            />
+                            <ReparseRulesControl
+                              sourceId={s.source_id}
+                              canManage={canManage}
+                              last={s.reparse_last ?? null}
                             />
                             <GapNote
                               sourceId={s.source_id}

@@ -15,6 +15,13 @@ class QueryRejectedError(AppError):
     """The guard refused a query (statement type, table, function, or parse)."""
 
 
+class QueryBlockedError(QueryRejectedError):
+    """A policy block, not a mistake: a statement other than SELECT, more than one
+    statement, a table function, a qualified table, or a denied function (ATTACH,
+    read_csv, COPY). Recorded in server_events (D237); a parse error or unknown table
+    is a plain QueryRejectedError and is not."""
+
+
 class QueryFailedError(AppError):
     """The query was allowed but failed while running (bad column, type error).
     `engine_error`: DuckDB's own error class, for the server log."""

@@ -11,8 +11,9 @@ in the integrity ledger then (ADR-0022), not before.
 While a merge is being published, its manifest (`<output>.compact.json`) names the output
 and its inputs. Once the output file is in the folder, the inputs are left out even before
 they are retired, so no read counts both. A read takes the folder's state as manifests,
-then the retired list, then the file listing, then the manifests again, and starts over if
-they changed in between, so it never sees a step of a merge half done.
+then the retired list, then the file listing, then the manifests and the retired list
+again, and starts over if either changed in between, so it never sees a step of a merge
+half done, nor a whole merge that ran while it looked.
 
 Every reader of lake part files that must not double count (the engine's `events`, the
 rollup builds' file lists, compaction itself) lists them through `visible`.
@@ -58,7 +59,8 @@ def manifests(day_dir: Path) -> dict[str, list[str]]:
 
 
 def retired(day_dir: Path) -> dict[str, dict[str, str]]:
-    """Retired files: name -> {"at": ISO time, "into": the merged file}."""
+    """Retired files: name -> {"at": ISO time, "into": the file that replaced it, and
+    "why": "compacted" or "reparsed" (ADR-0050 row 7); older entries have no "why"}."""
     try:
         data = json.loads((day_dir / RETIRED).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -79,7 +81,10 @@ def visible(day_dir: Path) -> list[Path]:
         before = manifests(day_dir)
         gone = set(retired(day_dir))
         files = sorted(p for p in day_dir.glob(PART_GLOB) if p.is_file())
-        if manifests(day_dir) != before:
+        # A whole merge can start and finish between the two looks at the manifests,
+        # leaving them equal while the listing holds its inputs and its output both. Every
+        # merge retires its inputs before it drops its manifest, so the retired list moves.
+        if manifests(day_dir) != before or set(retired(day_dir)) != gone:
             continue  # a merge moved on while we looked: look again
         names = {p.name for p in files}
         for output, inputs in before.items():
@@ -106,13 +111,19 @@ def _write(day_dir: Path, entries: dict[str, dict[str, str]]) -> None:
     os.replace(tmp, path)
 
 
-def retire(day_dir: Path, names: Iterable[str], into: str, now: datetime | None = None) -> None:
+def retire(
+    day_dir: Path,
+    names: Iterable[str],
+    into: str,
+    now: datetime | None = None,
+    why: str = "compacted",
+) -> None:
     """Leave these files in place for reads already running; new reads skip them."""
     at = (now or datetime.now(UTC)).isoformat()
     entries = retired(day_dir)
     for n in names:
         if _NAME.fullmatch(n) and n != into:
-            entries.setdefault(n, {"at": at, "into": into})
+            entries.setdefault(n, {"at": at, "into": into, "why": why})
     _write(day_dir, entries)
 
 

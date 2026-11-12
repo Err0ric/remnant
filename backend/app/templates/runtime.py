@@ -28,6 +28,7 @@ from app.ingest.payload.leef import LeefParser
 from app.ingest.payload.regexpayload import PlainParser, RegexParser
 from app.ingest.payload.xmlpayload import XmlParser
 from app.ingest.records import DecodedLine
+from app.templates.alerts import ALERT_KEY, alert_key
 from app.templates.tables import LookupTable
 from app.templates.transforms import MISSING, TransformRunner, get_path
 from app.templates.validator import PayloadSpec, Template
@@ -173,6 +174,17 @@ class TemplateNormalizer:
             if status in ("ok", "envelope_only"):
                 status = "partial"
         leftover = {k: v for k, v in fields.items() if k not in self._used and k not in consumed}
+        if self._t.alert is not None and result.ok:
+            # ADR-0049 3.1: the line is kept either way (rule 5); only a complete alert
+            # carries the key the alert watch reads, and a short one says what it lacks.
+            key, missing = alert_key(
+                self._t.alert, fields, row, "device_hostname" in self._t.mapping.fields
+            )
+            if missing:
+                errors.append("alert_missing:" + "+".join(missing))
+                status = "partial"
+            else:
+                leftover[ALERT_KEY] = key
         if leftover:
             row["unmapped"] = _json(leftover)
         self._stamp(row, line, status, errors)

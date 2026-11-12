@@ -3,6 +3,13 @@
 Admins and auditors read the activity log and the AI call log (SPEC 3.6). Reading is
 itself recorded (`audit.view`, `audit.export`) with the filters used, so who looked at
 the trail is on the trail. Prompt and response bodies are never returned.
+
+Rows that store a person from an AI surface (AI Watch rows, AI views with a person,
+inventory exclusions by person) keep the names they recorded; for a viewer without View
+people in AI usage the list and the export return them with "a person" in each name's
+place (D242, app.ai.audit_mask lists the actions). The filters match only the action, the
+actor's id, the outcome, and the time, never the detail, so no filter can find a row by a
+name it hides.
 """
 
 import json
@@ -14,11 +21,13 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
+from app.ai.audit_mask import has_names, mask_detail
+from app.ai.people_view import can_view_people
 from app.api.access import client_ip, require_role
 from app.auth.users import User
 from app.core.errors import ParamInvalidError
 from app.engine.export import to_csv
-from app.meta.audit import MAX_PAGE, AuditFilter, AuditReader
+from app.meta.audit import MAX_PAGE, AuditFilter, AuditReader, AuditRow
 
 router = APIRouter(tags=["audit"])
 Reader = Annotated[User, Depends(require_role("admin", "auditor"))]
@@ -34,6 +43,7 @@ class AuditRowOut(BaseModel):
     outcome: str
     ip: str | None
     detail: dict[str, Any]
+    masked: bool = False  # names in the detail replaced by "a person" (D242)
 
 
 class LlmCallOut(BaseModel):
@@ -113,7 +123,12 @@ async def events(
 ) -> list[AuditRowOut]:
     rows = await run_in_threadpool(_reader(request).events, f.value, before, limit)
     await _record(request, user, "audit.view", {"log": "activity", **f.detail()})
-    return [AuditRowOut(**asdict(r)) for r in rows]
+    return [_row_out(r, can_view_people(user)) for r in rows]
+
+
+def _row_out(r: AuditRow, named: bool) -> AuditRowOut:
+    detail, masked = (r.detail, False) if named else mask_detail(r.action, r.detail)
+    return AuditRowOut(**{**asdict(r), "detail": detail}, masked=masked)
 
 
 @router.get("/audit/llm-calls")
@@ -131,28 +146,34 @@ async def llm_calls(
     return [LlmCallOut(**asdict(r)) for r in rows]
 
 
-def _all_events(reader: AuditReader, f: AuditFilter) -> tuple[list[str], list[list[Any]]]:
+def _all_events(
+    reader: AuditReader, f: AuditFilter, named: bool
+) -> tuple[list[str], list[list[Any]], int]:
+    """The rows, and how many of them carry names (only ever when `named`)."""
     out: list[list[Any]] = []
+    with_names = 0
     before: int | None = None
     while len(out) < EXPORT_ROWS:
         page = reader.events(f, before, MAX_PAGE)
         if not page:
             break
-        out.extend(
-            [
-                r.audit_id,
-                r.ts,
-                r.username or r.user_id,
-                r.action,
-                r.outcome,
-                r.ip,
-                json.dumps(r.detail, sort_keys=True),
-            ]
-            for r in page
-        )
+        for r in page[: EXPORT_ROWS - len(out)]:
+            detail = r.detail if named else mask_detail(r.action, r.detail)[0]
+            with_names += named and has_names(r.action, r.detail)
+            out.append(
+                [
+                    r.audit_id,
+                    r.ts,
+                    r.username or r.user_id,
+                    r.action,
+                    r.outcome,
+                    r.ip,
+                    json.dumps(detail, sort_keys=True),
+                ]
+            )
         before = page[-1].audit_id
     cols = ["audit_id", "time", "user", "action", "outcome", "ip", "detail"]
-    return cols, out[:EXPORT_ROWS]
+    return cols, out, with_names
 
 
 def _all_calls(reader: AuditReader, f: AuditFilter) -> tuple[list[str], list[list[Any]]]:
@@ -172,11 +193,23 @@ def _all_calls(reader: AuditReader, f: AuditFilter) -> tuple[list[str], list[lis
 async def export(
     log: Literal["events", "llm-calls"], request: Request, user: Reader, f: Filtered
 ) -> Response:
-    """CSV of everything matching the filters, newest first, at most 50,000 rows."""
+    """CSV of everything matching the filters, newest first, at most 50,000 rows. An
+    export that carries names from AI surfaces also writes `ai.export_people` (ADR-0029 G3, G4)."""
     reader = _reader(request)
-    builder = _all_events if log == "events" else _all_calls
-    columns, rows = await run_in_threadpool(builder, reader, f.value)
-    await _record(request, user, "audit.export", {"log": log, "rows": len(rows), **f.detail()})
+    with_names = 0
+    if log == "events":
+        columns, rows, with_names = await run_in_threadpool(
+            _all_events, reader, f.value, can_view_people(user)
+        )
+    else:
+        columns, rows = await run_in_threadpool(_all_calls, reader, f.value)
+    detail = {"log": log, "rows": len(rows), **f.detail()}
+    await _record(request, user, "audit.export", detail)
+    if with_names:
+        await _record(
+            request, user, "ai.export_people",
+            {**detail, "named_rows": with_names, "surface": "audit.export"},
+        )  # fmt: skip
     name = "audit-activity.csv" if log == "events" else "audit-ai-calls.csv"
     return Response(
         content=to_csv(columns, rows),

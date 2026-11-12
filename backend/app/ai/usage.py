@@ -13,6 +13,7 @@ from typing import Any, Literal
 
 from app.ai.catalog import DOMAIN, NON_USAGE, Catalog, Service, Status
 from app.ai.internal_tools import counted
+from app.ai.sessions import _ONE_COPY
 from app.ai.test_records import HOOKS
 from app.core import clock
 from app.engine.duckdb import QueryEngine, QueryScope
@@ -22,18 +23,26 @@ from app.search.identity import IdentityMap
 TIMEOUT_S = 20.0
 NO_MCP_NAMES = ("", "custom", "mcp_tool", "third-party")
 
-_CANDIDATES = (
-    "dst_endpoint_hostname",
-    "json_extract_string(unmapped, '$.query')",
-    "json_extract_string(unmapped, '$.qname')",
-    "json_extract_string(unmapped, '$.url')",
-    "json_extract_string(unmapped, '$.url_filename')",
-    "json_extract_string(unmapped, '$.hostname')",
-    "json_extract_string(unmapped, '$.dstname')",
+# The JSON fields DNS, proxy, and firewall templates leave a destination host in. The
+# JSON is parsed only when `unmapped` holds one of the keys as text (a parsed key is
+# always written as "key"), so most rows never parse it.
+_JSON_KEYS = ("query", "qname", "url", "url_filename", "hostname", "dstname")
+_JSON_HOST = (
+    "(CASE WHEN "
+    + " OR ".join(f"contains(unmapped, '\"{k}\"')" for k in _JSON_KEYS)
+    + " THEN coalesce("
+    + ", ".join(f"json_extract_string(unmapped, '$.{k}')" for k in _JSON_KEYS)
+    + ") END)"
 )
+# DNS Activity rows whose question name is not in `unmapped`: Windows DNS, Unbound, and
+# PowerDNS map it to `message`, and a mapped field leaves `unmapped`. Read after the JSON,
+# so a resolver shape that keeps the name in `unmapped` and other text in `message` still
+# gives the name.
+DNS_NAME = "(CASE WHEN class_uid = 4003 THEN nullif(message, '') END)"
+_CANDIDATES = ("nullif(dst_endpoint_hostname, '')", _JSON_HOST, DNS_NAME)
 # The destination host of an event, from the column or the fields DNS, proxy, and
 # firewall templates leave in unmapped, with any URL scheme, path, and port removed. A
-# plain host name in the column (the usual case) skips the JSON and regex work.
+# plain host name in the column (the usual case) or a plain DNS name skips the regex.
 _SLOW_HOST = (
     "rtrim(lower(regexp_extract(coalesce(" + ", ".join(_CANDIDATES) + "),"
     " '^(?:[A-Za-z][A-Za-z0-9+.-]*://)?([^/:?#\\s]+)', 1)), '.')"
@@ -41,7 +50,13 @@ _SLOW_HOST = (
 HOST_EXPR = (
     "(CASE WHEN nullif(dst_endpoint_hostname, '') IS NOT NULL"
     " AND strpos(dst_endpoint_hostname, '/') = 0 AND strpos(dst_endpoint_hostname, ':') = 0"
-    " THEN rtrim(lower(dst_endpoint_hostname), '.') ELSE " + _SLOW_HOST + " END)"
+    " THEN rtrim(lower(dst_endpoint_hostname), '.')"
+    # A plain DNS question name in `message`, with no host in the JSON: no regex.
+    " WHEN nullif(dst_endpoint_hostname, '') IS NULL AND class_uid = 4003"
+    " AND nullif(message, '') IS NOT NULL AND strpos(message, '/') = 0"
+    " AND strpos(message, ':') = 0 AND strpos(message, ' ') = 0"
+    " AND " + _JSON_HOST + " IS NULL THEN rtrim(lower(message), '.')"
+    " ELSE " + _SLOW_HOST + " END)"
 )
 # Hosts are matched to catalog domains once per distinct host (longest domain wins), then
 # events join that small table by exact host: far cheaper than matching every event.
@@ -115,6 +130,7 @@ class NetUse:
     lookups: int = 0
     devices: int = 0
     last_seen: str | None = None
+    machine: str | None = None  # the machine with the most lookups, shown when names are hidden
 
 
 @dataclass(slots=True)
@@ -138,6 +154,9 @@ class PersonUse:
     # name no plugin person matches, the plugin person it may be (D190).
     network: NetUse | None = None
     maybe: str | None = None
+    # The machine this person used most, shown instead of the name to a viewer without
+    # View people in AI usage (D242). None when no record names one.
+    machine: str | None = None
 
 
 def _values(pairs: list[tuple[str, str]]) -> str:
@@ -153,7 +172,15 @@ def _values(pairs: list[tuple[str, str]]) -> str:
 catalog_values = _values
 
 
-_ANY_HOST = "coalesce(" + ", ".join(_CANDIDATES) + ") IS NOT NULL"
+# Rows that can name a host, cheap columns first. `unmapped` is read only outside Identity
+# and Access Management events (class 3xxx: sign-ins, whose `unmapped` is large and never
+# holds a web, DNS, or firewall destination); a sign-in with a destination host in its
+# column is still read.
+_NOT_IAM = "coalesce(class_uid NOT BETWEEN 3000 AND 3999, true)"
+_ANY_HOST = (
+    "(nullif(dst_endpoint_hostname, '') IS NOT NULL OR " + DNS_NAME + " IS NOT NULL"
+    " OR (" + _NOT_IAM + " AND " + _JSON_HOST + " IS NOT NULL))"
+)
 # Events reduced to one row per service, person, machine, address, and hour (F46). The
 # daily AI rollup (ADR-0035 Part 1) stores exactly these rows per source and closed day.
 _HOUR_ROWS = f"""{WHO_EXPR} AS who0, nullif(src_endpoint_hostname, '') AS shost,
@@ -444,24 +471,26 @@ LIMIT 500"""  # noqa: S608  # fixed SQL text
 # seen only through hooks is a Claude Code user too). Sessions, tool calls, and errors come
 # from one source per session: telemetry when it saw the session, else the hook records
 # (as D151 counts MCP calls), so a session both report is counted once. Cost, tokens, and
-# models come from telemetry only. `via` says which sent anything.
+# models come from telemetry only. `via` says which sent anything. A hook record sent twice
+# (an answer lost, the plugin resent it) is counted once, as on Agents and Sessions.
 PEOPLE_SQL = f"""
-WITH c AS (
+WITH {_ONE_COPY},
+c AS (
   SELECT nullif(actor_user_name, '') AS person, message,
          TRY_CAST(json_extract_string(unmapped, '$.value') AS DOUBLE) AS value,
          json_extract_string(unmapped, '$.attr.session_id') AS session,
          json_extract_string(unmapped, '$.attr.model') AS model,
          TRY_CAST(json_extract_string(unmapped, '$.attr.sensitive_total') AS BIGINT) AS sens,
-         status_id
+         status_id, nullif(device_hostname, '') AS machine
   FROM events WHERE template_id = 'claude_code_otel'
 ),
 seen AS (SELECT DISTINCT session FROM c WHERE session IS NOT NULL),
 h AS (
   SELECT nullif(actor_user_name, '') AS person, message,
          json_extract_string(unmapped, '$.attr.session_id') AS session
-  FROM events WHERE {HOOKS}
-    -- Claude Code's own bookkeeping is not a tool call (D186).
-    AND {counted("json_extract_string(unmapped, '$.attr.tool_name')")}
+  FROM hooks
+  -- Claude Code's own bookkeeping is not a tool call (D186).
+  WHERE {counted("json_extract_string(unmapped, '$.attr.tool_name')")}
 ),
 hk AS (
   SELECT person,
@@ -486,6 +515,16 @@ tel AS (
          list(DISTINCT model) FILTER (WHERE model IS NOT NULL) AS models,
          bool_or(message IN ('claude_code.cost.usage', 'claude_code.token.usage')) AS metered
   FROM c WHERE person IS NOT NULL GROUP BY 1
+),
+-- Each person's machine with the most records, the name on ties (shown when names are
+-- hidden, D242).
+pm AS (
+  SELECT person, (list(machine ORDER BY k DESC, machine))[1] AS machine FROM (
+    SELECT person, machine, count(*) AS k
+    FROM (SELECT person, machine FROM c
+          UNION ALL SELECT nullif(actor_user_name, ''), nullif(device_hostname, '') FROM hooks)
+    WHERE person IS NOT NULL AND machine IS NOT NULL GROUP BY 1, 2)
+  GROUP BY 1
 )
 SELECT coalesce(tel.person, hk.person) AS person,
        coalesce(tel.usd, 0), coalesce(tel.tokens, 0),
@@ -495,9 +534,10 @@ SELECT coalesce(tel.person, hk.person) AS person,
        coalesce(tel.sensitive, 0), coalesce(tel.models, []),
        list_filter(['telemetry', 'hooks'], x -> (x = 'telemetry' AND tel.person IS NOT NULL)
                                                OR (x = 'hooks' AND hk.person IS NOT NULL)) AS via,
-       coalesce(tel.metered, false)
+       coalesce(tel.metered, false), pm.machine
 FROM tel FULL OUTER JOIN hk ON tel.person = hk.person
-ORDER BY 2 DESC, 3 DESC, 4 DESC
+LEFT JOIN pm ON pm.person = coalesce(tel.person, hk.person)
+ORDER BY 2 DESC, 3 DESC, 4 DESC, 1
 LIMIT 1000"""  # noqa: S608  # fixed SQL text
 
 
@@ -698,11 +738,17 @@ class Usage:
 
         def build(pairs: list[tuple[str, str]], rollup: bool = False) -> str:
             return (
-                f"WITH {_use_ctes(pairs, rollup)}\n"
-                "SELECT who, list(DISTINCT service_id ORDER BY service_id), sum(n),"
-                " count(DISTINCT machine), max(last_t)"
-                f" FROM r WHERE who IS NOT NULL AND list_contains({wanted}, service_id)"
-                " GROUP BY 1 LIMIT 100000"
+                # The machine with the most lookups, the name on ties, for when names are
+                # hidden (D242).
+                f"""WITH {_use_ctes(pairs, rollup)},
+m AS (
+  SELECT who, machine, list(DISTINCT service_id) AS sids, sum(n) AS k, max(last_t) AS last_t
+  FROM r WHERE who IS NOT NULL AND list_contains({wanted}, service_id) GROUP BY 1, 2
+)
+SELECT who, list_sort(list_distinct(flatten(list(sids)))), sum(k), count(DISTINCT machine),
+       max(last_t),
+       (list(machine ORDER BY k DESC, machine) FILTER (WHERE machine IS NOT NULL))[1]
+FROM m GROUP BY 1 LIMIT 100000"""  # noqa: S608  # fixed SQL text; ids quoted
             )
 
         result = self._run_use(build, scope, "ai_use.claude_people")
@@ -711,9 +757,9 @@ class Usage:
             NetUse(
                 str(who), [names.get(str(s), str(s)) for s in sids or []], int(n or 0),
                 int(devs or 0), last.isoformat() if isinstance(last, datetime) else (
-                    str(last) if last else None),
+                    str(last) if last else None), None if top is None else str(top),
             )
-            for who, sids, n, devs, last in result.rows
+            for who, sids, n, devs, last, top in result.rows
         ]  # fmt: skip
 
     def unreviewed_use(self, scope: QueryScope) -> list[tuple[str | None, str | None]]:
@@ -823,9 +869,10 @@ class Usage:
                 models=sorted(str(m) for m in (models or [])),
                 via=[str(v) for v in (via or [])],
                 cost_reported=bool(metered),
+                machine=None if machine is None else str(machine),
             )
-            for p, usd, tokens, sessions, tools, errors, sens, models, via, metered in self._rows(
-                PEOPLE_SQL, scope
+            for p, usd, tokens, sessions, tools, errors, sens, models, via, metered, machine in (
+                self._rows(PEOPLE_SQL, scope)
             )
         ]
 
@@ -835,6 +882,7 @@ def merge_people(rows: list[PersonUse], ident: IdentityMap) -> list[PersonUse]:
     gives them. The caller passes the part of Identities it may use (T70, D219, D223)."""
     merged: dict[str, PersonUse] = {}
     email: dict[str, bool] = {}
+    weight: dict[str, int] = {}  # activity behind each merged person's machine
     for r in rows:
         key = ident.key(r.person)
         email[key] = email.get(key, False) or ident.org_email(r.person)
@@ -843,8 +891,13 @@ def merge_people(rows: list[PersonUse], ident: IdentityMap) -> list[PersonUse]:
             merged[key] = PersonUse(key, r.cost_usd, r.tokens, r.sessions, r.tool_calls,
                                     r.errors, r.sensitive, list(r.models),
                                     via=list(r.via),
-                                    cost_reported=r.cost_reported)  # fmt: skip
+                                    cost_reported=r.cost_reported,
+                                    machine=r.machine)  # fmt: skip
+            weight[key] = r.sessions + r.tool_calls if r.machine else -1
             continue
+        if r.machine and r.sessions + r.tool_calls > weight[key]:
+            # Merged aliases show the machine of the busiest alias that names one.
+            cur.machine, weight[key] = r.machine, r.sessions + r.tool_calls
         cur.via = sorted(set(cur.via) | set(r.via))
         cur.cost_reported = cur.cost_reported or r.cost_reported
         cur.cost_usd = round(cur.cost_usd + r.cost_usd, 4)
@@ -874,12 +927,19 @@ def seen_through(
     from app.search.timeline import related  # timeline imports this module
 
     net: dict[str, NetUse] = {}
+    net_weight: dict[str, int] = {}
     for n in network:
         u = n if isinstance(n, NetUse) else NetUse(n)
         cur = net.get(key(u.who))
         if cur is None:
-            net[key(u.who)] = NetUse(u.who, list(u.services), u.lookups, u.devices, u.last_seen)
+            net[key(u.who)] = NetUse(
+                u.who, list(u.services), u.lookups, u.devices, u.last_seen, u.machine
+            )
+            net_weight[key(u.who)] = u.lookups if u.machine else -1
             continue
+        if u.machine and u.lookups > net_weight[key(u.who)]:
+            # Merged names show the machine of the name with the most lookups.
+            cur.machine, net_weight[key(u.who)] = u.machine, u.lookups
         cur.services = sorted(set(cur.services) | set(u.services))
         cur.lookups += u.lookups
         cur.devices += u.devices
@@ -900,7 +960,20 @@ def seen_through(
         # "dana.lee@example.com"): the hint offers the alias in Identities.
         maybe = next((p.person for p in people if related(k, key(p.person))), None)
         out.append(
-            PersonUse(shown, 0.0, 0, 0, 0, 0, 0, [], seen_through="network", network=u, maybe=maybe)
+            PersonUse(
+                shown,
+                0.0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                [],
+                seen_through="network",
+                network=u,
+                maybe=maybe,
+                machine=u.machine,
+            )
         )
     counts = {c: sum(1 for p in out if p.seen_through == c) for c in ("both", "plugin", "network")}
     return out, counts

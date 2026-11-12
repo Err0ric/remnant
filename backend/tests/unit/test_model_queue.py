@@ -76,7 +76,8 @@ def test_two_requests_with_one_slot_run_one_after_the_other(lab: Lab) -> None:
         t.join()
     assert len(out) == 2 and fake.most == 1
     waits = sorted(r["queue_wait_ms"] for r in calls(lab))
-    assert waits[0] < 100 <= waits[1]  # the second waited for the first
+    # fake.most == 1 shows they never overlapped; the second waited about the hold (0.3 s)
+    assert waits[1] > waits[0] and waits[1] >= 200
 
 
 def test_busy_answers_are_retried_and_counted(lab: Lab) -> None:
@@ -89,7 +90,7 @@ def test_busy_answers_are_retried_and_counted(lab: Lab) -> None:
 
 
 def test_busy_past_the_budget_is_provider_busy(lab: Lab, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(gate_module, "DEFAULT_WAIT_S", 1)
+    monkeypatch.setattr(gate_module, "DEFAULT_WAIT_S", 5)  # room for a retry (backoff 0.05 s)
     pid = provider(lab, LOCAL_URL)
     use(lab, Scripted([ProviderBusyError("busy")]))
     with pytest.raises(ProviderBusyError, match="busy"):

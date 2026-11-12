@@ -1,5 +1,6 @@
 """Queries are sized from usable CPUs and capped in number (D79)."""
 
+import sys
 import threading
 from pathlib import Path
 
@@ -94,6 +95,10 @@ def test_operator_arena_setting_is_left_alone(monkeypatch: pytest.MonkeyPatch) -
     assert cap_allocator_arenas() == "2 (MALLOC_ARENA_MAX)"
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="per-thread priority is Linux only; elsewhere run_low keeps normal priority",
+)
 def test_run_low_lowers_only_its_own_thread() -> None:
     import os
 

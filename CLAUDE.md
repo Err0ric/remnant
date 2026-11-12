@@ -74,7 +74,7 @@ If this file and `docs/SPEC.md` disagree on a product decision, the spec wins an
 4. Citation check for `explain` and `report`: every cited `event_id` must be in the set sent; otherwise `citation_check=fail` and the UI says "unverified".
 5. Template regex uses the `regex` module with a timeout; template tests include a 10 KB garbage line.
 6. Source paths resolve under `allowed_roots` with `os.path.realpath`.
-7. Non-loopback with no users: setup-only mode, one-time 30-minute setup link (ADR-0001); no insecure mode; HTTPS off loopback.
+7. No users: setup-only mode on every bind, one-time 30-minute setup link (ADR-0001, D245); no insecure mode and no mode without sign-in; HTTPS off loopback.
 8. Session cookie HttpOnly, Secure off loopback, SameSite=Strict; CSRF token on every non-GET; login rate-limited.
 9. CSP `default-src 'self'`; no inline scripts or CDN assets.
 10. The audit table has a `BEFORE DELETE` trigger that raises; no delete endpoint.
@@ -129,4 +129,8 @@ Users are internal and not technical: nothing breaks, nothing gets slower, and s
 4. **Rollback.** A change to install data, config, or update steps says in its release note how to go back, pointing to `docs/install/` (`update-systemd.sh --rollback`, D226).
 5. **Proportionate security.** Keep fixes that close real exposure; anything else that adds friction for normal users or costs speed goes to the owner as a choice instead of being built.
 
-By hand: `cd backend && uv run python ../scripts/bench_compare.py --before origin/main --after HEAD` (commit first), then `cd frontend && pnpm build` and `python3 scripts/smoke.py --lake data/bench/lake`.
+By hand: `cd backend && uv run python ../scripts/bench_compare.py --before origin/main --after HEAD` (commit first), then `cd frontend && pnpm build` and `cd backend && uv run python ../scripts/smoke.py --lake ../data/bench/lake` (once per machine: `uv run playwright install chromium`).
+
+## 10. Local development workflow
+
+Roles and standing orders for development sessions, when present: @.claude/factory.md

@@ -8,7 +8,7 @@ from app.auth.admin import UserAdmin
 from app.auth.oidc import OidcClient
 from app.auth.ratelimit import LoginLimiter
 from app.auth.sessions import SessionKind, SessionStore
-from app.auth.setup import SetupLink
+from app.auth.setup import SetupLink, link_url
 from app.auth.sso import SsoAccounts
 from app.auth.users import Role, User, UserStore
 from app.core.config import AppConfig, is_loopback_host
@@ -21,7 +21,7 @@ from app.core.errors import (
 from app.meta.audit import AuditLog
 from app.meta.db import MetaDB
 
-Mode = Literal["open", "setup", "login"]
+Mode = Literal["setup", "login"]
 
 
 ACCOUNT_FACTOR = 10
@@ -41,7 +41,7 @@ class AuthService:
         self._account_limiter = LoginLimiter(
             config.auth.login_max_failures * ACCOUNT_FACTOR, config.auth.login_window_s
         )
-        self._setup = SetupLink()
+        self._setup = SetupLink(meta)
         # Own limiter for link redemption, so link guessing and login guessing are counted apart.
         self.admin = UserAdmin(
             meta,
@@ -85,16 +85,15 @@ class AuthService:
             self._has_users = self.users.count() > 0
         if self._has_users:
             return "login"
-        return "open" if self.loopback else "setup"
+        # No account, no access, on every bind (D245 amends ADR-0001 item 1): a loopback
+        # bind behind a same-host proxy cannot tell the network from the person at the
+        # machine (audit 2026-11 H1).
+        return "setup"
 
     def setup_url(self, public_host: str, port: int, base: str | None = None) -> str:
-        """Issue a fresh one-time link. The token sits in the fragment, never in a request line.
-        `base` (server.public_url) wins when set, so the link works through a reverse proxy."""
+        """Issue a fresh one-time link (it replaces any earlier one)."""
         token = self._setup.issue(self.clock())
-        if base:
-            return f"{base.rstrip('/')}/setup#{token}"
-        scheme = "http" if self.loopback else "https"
-        return f"{scheme}://{public_host}:{port}/setup#{token}"
+        return link_url(token, public_host, port, base, self.loopback)
 
     def complete_setup(
         self, token: str, username: str, password: str, ip: str | None
@@ -107,10 +106,15 @@ class AuthService:
         if not self._setup.consume(token, self.clock()):
             self.audit.write("setup.admin_created", "failure", None, ip, {"reason": "bad_link"})
             raise SetupInvalidError("This setup link is invalid, expired, or already used")
-        user = self.users.create_first_admin(username, password)
+        adopted: dict[str, int] = {}
+        user = self.users.create_first_admin(username, password, adopted)
         self._limiter.success(keys)
         self._has_users = True
-        self.audit.write("setup.admin_created", "success", user.user_id, ip, {"username": username})
+        detail: dict[str, object] = {"username": username}
+        if adopted:
+            # Made before accounts existed (the old no-sign-in mode): now this admin's.
+            detail["taken_over"] = adopted
+        self.audit.write("setup.admin_created", "success", user.user_id, ip, detail)
         token_, csrf = self._start(user, "browser")
         return user, token_, csrf
 

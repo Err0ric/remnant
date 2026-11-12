@@ -4,10 +4,27 @@ Never log raw event content at INFO or above, provider keys, prompt bodies,
 passwords, tokens, or query strings.
 """
 
+import io
 import logging
 import sys
+from typing import TextIO, cast
 
 import structlog
+
+
+class _Stderr(io.TextIOBase):
+    """`sys.stderr` as it is at each write, not as it was at configure time. A server's
+    stderr never changes; under a test runner it is swapped per test, and a stream kept
+    from an earlier test is closed ("I/O operation on closed file")."""
+
+    def write(self, text: str) -> int:
+        return sys.stderr.write(text)
+
+    def flush(self) -> None:
+        sys.stderr.flush()
+
+
+_STDERR = cast(TextIO, _Stderr())  # write and flush are all PrintLogger uses
 
 
 def configure_logging(level: str = "INFO") -> None:
@@ -25,6 +42,6 @@ def configure_logging(level: str = "INFO") -> None:
             structlog.processors.JSONRenderer(),
         ],
         wrapper_class=structlog.make_filtering_bound_logger(logging.getLevelName(level)),
-        logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
+        logger_factory=structlog.PrintLoggerFactory(file=_STDERR),
         cache_logger_on_first_use=False,  # lets tests capture; negligible cost here
     )

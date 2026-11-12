@@ -59,6 +59,7 @@ Ranked 2026-11-08 by value to one security person running this at a company of a
 | 51 | Person page load time under 2 s | The person page takes about 7.3 s on main on the 481k-event bench lake (scripts/bench_compare.py); it is the slowest page a solo operator opens during an investigation | M | Owner, 2026-11-08: after the current batch, profile it (summary, timeline, risk, graph, lookups) and propose a fix with a target under 2 s on the bench lake, measured with the bench | 9 | Owner, 2026-11-08 |
 | 52 | Per-file account record for Identities scoping | #445 (T70, D219) checks which alias accounts the caller's scope shows with one scan per minute per range; the first call costs about 100 to 250 ms on the bench lake for Identities-using queries, the top bar lookup, and People & devices (admins skip it, D226). A record of the accounts each lake file holds, written with the file, lets the check read a few small files instead | M | Owner, 2026-11-08: after the current batch; measure with scripts/bench_compare.py, target first calls at main's level | 9 | Owner, 2026-11-08 |
 | 53 | Speed check rounds sized from measured spread | On a 3 s page the 200 ms line is about 7%, close to the shared machine's noise (main against main showed Dashboard +306 ms, unflagged only by the CPU guard). Pages whose median is over 2 s (Dashboard, person page, People & devices today) get extra rounds, the count computed from the measured spread so the noise sits well under the 200 ms line, not a fixed number | S | Owner, 2026-11-08: next tooling batch, not a blocker; prove with a main-against-main run | Tooling | Owner, 2026-11-08 |
+| 54 | DuckDB out-of-memory segfault: retest on 2.0.1, report upstream | A query that runs out of memory can crash the whole server process mid-query (SIGSEGV in DuckDB's hash join build). systemd and compose restart it, but every running query and page load is lost | S | 200-run loop at 16 MB (local Docker, linux/arm64): 20.5% of runs crashed on 1.5.5, 12% on 1.5.6 (shipped, #489), 25% on 2.0.0; 819 MB: none in 40; 256 MB: 1 in 20. Ruled out as triggers (plain-DuckDB replay of the same SQL and views, no crash in 240 runs): memory and spill settings, profiling and its reads after a failed query, external access and configuration locks, the registered lookup UDFs (the app also crashes with them unregistered). Remaining suspects: the interrupt timer, the anyio thread pool, extension settings at connect. Triggers: (1) when DuckDB 2.0.1 is released and passes the 14-day rule, rerun the 200-run loop on it; (2) post upstream only if 2.0.1 still crashes, after reducing the repro to plain DuckDB, with the owner's OK. Scripts and draft in the dev repository (not published) | 9 | Owner, 2026-11-10 |
 
 ## Morning answer: admin grants and app consents in "New in 24 hours"
 
@@ -72,6 +73,46 @@ ADR-0037 row 6 lists new admin or role grants and app consents in the New column
 ## Today so far: build only the new files (owner, 2026-11-03)
 
 - **Incremental today build** (D136, D178): today the build reads every source's whole day so far every 5 minutes, except a source whose files are unchanged since the last build and hold nothing observed after its cutoff (D178, shipped). The next step would add only what changed: rows from new files, and rows observed between the two cutoffs, merged into the last build's groups (sums and counts add; first and last seen take the min and max; people found through DHCP and sign-ins need the identity rows rebuilt or merged the same way). Deferred by the owner: accuracy over speed. It needs a test that a merged build equals a full one on the same lake, including compaction replacing files mid-day (then the source builds in full), late rows stamped before the last cutoff, and a catalog change.
+
+## Audit 2026-11: other findings (owner, 2026-11-12; none built)
+
+From `docs/proposals/audit-2026-11.md` (the id is that file's). Read from code, not reproduced: each needs a failing test or repro first. Ranked by exposure on a real install first, then data loss, then cost. The High findings and M1 to M6 are handoff items; L15 is already handoff item 2.
+
+| Rank | Id | Item | Why | Size |
+|---|---|---|---|---|
+| A1 | M8 | Live search re-checks the session, the user, and Auditor SQL on every poll | A stolen token or a demoted admin keeps streaming rows for up to the live limit after sign-out | S |
+| A2 | M7 | Secure cookie and HSTS from `public_url` behind a same-host proxy | The session cookie can travel over plain http; goes with handoff item A2 | S |
+| A3 | M12 | `--aide` stops on earlier changes under the install folder; root git calls ignore hooks | A changed hook runs as root and the new baseline accepts it | M |
+| A4 | M13 | Update records in a root-owned folder | The service account can redirect a root write or block rollback | S |
+| A5 | M9 | Retention is logged and audited, retires before deleting, and warns on events filed past retention | Backfilled or wrong-clock events are deleted with no trace; a running query fails | M |
+| A6 | M10 | Backup copies the database last, verifies before pruning, and covers or documents the spool | A restore repeats lines; maintenance stops for the whole archive; unread syslog is lost | M |
+| A7 | M11 | The syslog flusher restarts and reports when it stops | Messages are dropped with no Health error (needs a trigger first) | S |
+| A8 | M16 | Prompt files run CI; the queue decides docs-only from its own diff | A prompt change or a large mixed PR merges with no CI job | S |
+| A9 | M14 | Draft guard, timeouts, and concurrency on the Windows and release-check workflows | Minutes spent on drafts (Windows at 2x); a job can run for 6 hours | S |
+| A10 | M15 | A stopped queue run puts the PR back to draft | More than one CI run per PR | S |
+| A11 | M17 | Meta database: readers outside the process lock; verify in chunks | The daily verify stalls sign-ins, audit writes, and ingest (measure first) | M |
+| A12 | M18 | Cache the per-folder file listing; skip `union_by_name` when no column is missing; default start bound | Every search lists and opens every file in range | M |
+| A13 | M19 | Time filter DuckDB can push into the scan | A last-15-minutes search reads all of today (check with EXPLAIN first) | S |
+| A14 | M20 | Compaction and reparse stream row groups | A large batch can exhaust server memory outside DuckDB's limit (measure first) | M |
+| A15 | L3 | `reset-password` keeps a disabled account disabled | Offboarded accounts come back | S |
+| A16 | L2 | Login limiter: IPv6 by /64, no eviction at the limit, no clear on success | Password guessing limits can be sidestepped | S |
+| A17 | L1 | SSO start: per-address cap on pending sign-ins | A few addresses can block SSO for everyone | S |
+| A18 | L7 | Prune and document the start-up rewrite copies of `meta.sqlite` | Full copies with unmasked alert text stay on disk for good | S |
+| A19 | L13 | Session check warns on a detached or stale checkout; prune agent worktrees | A session read an old CLAUDE.md and handoff without notice | S |
+| A20 | L12 | Queue: `--force-with-lease`, refuse `main`, numeric PR check, bounded rebase loop, fail fast on a failed push | Half an hour lost on a failed push; a wrong argument could push to main | S |
+| A21 | L4 | Live search SQL out of the URL | Proxy logs record searches with names in them | S |
+| A22 | L5 | `/api/openapi.json` behind sign-in | Route list visible before setup | S |
+| A23 | L10 | Push guard matches other SSH forms; verify looks at every remote | Narrow gaps in the publish guard | S |
+| A24 | L14 | Pinned installers and `setup-uv`, pnpm hash, signed publish commit | Supply chain trust is TLS only | M |
+| A25 | L16 | Spool unlink window; `_retired.json` errors; `.damaged` spools reported | Narrow loss windows (need verification) | S |
+| A26 | L17 | CI smoke step: free port, fail when the server never answers | A leftover server on the runner could be tested | S |
+| A27 | L11 | Bench set covers Health, Sources, Agents and Sessions, Audit | Slow pages outside the speed check | M |
+| A28 | L8 | Guard keeps `USING SAMPLE` before `LIMIT` | Sampled searches may fail to parse (verify first) | S |
+| A29 | L6 | T35 wording: ingest tokens are sealed, not only hashed | Spec and code disagree | S |
+| A30 | L9 | SPEC 7.3: verified examples go to a cloud provider unclassified | Spec gap; or leave examples out for cloud | S |
+| A31 | L15 | Backup before migrations | Already handoff item 2 | S |
+| A32 | H1 follow-up | Move the older test files to a real sign-in and drop the stand-in administrator in `backend/tests/conftest.py` (D245) | About 35 test files drive a loopback app with no accounts; the stand-in keeps them running on a path the app no longer has | M |
+| A33 | H1 follow-up | Remove the web UI's code for the old mode without sign-in (`AuthMode` "open", the first-admin link panel, the Users page empty state) | Unreachable since D245; dead code in the sign-in flow | S |
 
 ## Done, kept for reference
 

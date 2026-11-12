@@ -115,7 +115,7 @@ export const SOURCE = {
 };
 
 /** Switches for one test; reset them after it. */
-export const mockFlags = { aiWatchFailing: false, backupPuts: 0 };
+export const mockFlags = { aiWatchFailing: false, backupPuts: 0, rewriteBackupFailed: false };
 
 const FAILING = [
   {
@@ -126,6 +126,13 @@ const FAILING = [
     detail: "ConversionException: Conversion Error: Could not convert string [values not logged]",
   },
 ];
+const REWRITE_BACKUP_FAILED = {
+  job: "alerts.rewrite_backup",
+  since: "2026-11-03T12:55:00Z",
+  last_at: "2026-11-03T12:55:00Z",
+  count: 1,
+  detail: "OSError: [Errno 28] No space left on device",
+};
 
 export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "open" }) {
   const state = { ...auth };
@@ -154,6 +161,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       pending: false,
       created_at: "2026-10-10T18:00:00Z",
       last_login_at: "2026-10-10T19:00:00Z",
+      view_ai_people: true,
     },
     {
       user_id: "u2",
@@ -163,6 +171,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       pending: false,
       created_at: "2026-10-10T18:10:00Z",
       last_login_at: null,
+      view_ai_people: false,
     },
   ];
   if (auth.noAccounts) users.length = 0;
@@ -846,7 +855,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       return json({
         items,
         open: alertItems.filter((i) => i.state === "open").length,
-        restricted: 1,
+        restricted: true,
         muted: alertMutes.length,
         reasons: {
           expected: "Expected",
@@ -854,6 +863,30 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
           false_positive: "False positive",
           resolved: "Resolved",
         },
+      });
+    }
+    if (/\/api\/alerts\/lines\?/.test(url) && method === "GET") {
+      const params = new URL(url, "http://x").searchParams;
+      const open = alertItems.filter((i) => i.state === "open");
+      const items = open.slice(0, Number(params.get("limit") ?? 5));
+      const sev = (s: string) => open.filter((i) => (i.severity ?? "other") === s).length;
+      return json({
+        items,
+        runs: Object.fromEntries(items.map((i) => [i.item_id, 1])),
+        groups: open.length,
+        gap_sources: open.filter((i) => i.kind === "gap").map((i) => i.subject),
+        open: open.length,
+        restricted: true,
+        by_severity: { high: sev("high"), medium: sev("medium"), other: sev("other") },
+      });
+    }
+    if (url.endsWith("/api/alerts/count") && method === "GET") {
+      const open = alertItems.filter((i) => i.state === "open");
+      const sev = (s: string) => open.filter((i) => (i.severity ?? "other") === s).length;
+      return json({
+        open: open.length,
+        restricted: true,
+        by_severity: { high: sev("high"), medium: sev("medium"), other: sev("other") },
       });
     }
     if (url.endsWith("/api/alerts/mutes") && method === "GET") return json(alertMutes);
@@ -1234,7 +1267,10 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       ]);
     if (url.endsWith("/api/health-checks") && method === "GET")
       return json({
-        background_failures: mockFlags.aiWatchFailing ? FAILING : [],
+        background_failures: [
+          ...(mockFlags.aiWatchFailing ? FAILING : []),
+          ...(mockFlags.rewriteBackupFailed ? [REWRITE_BACKUP_FAILED] : []),
+        ],
         devices: watched,
         agents: [
           {
@@ -2344,6 +2380,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         people: [
           {
             person: "alice@example.com",
+            key: "alice@example.com",
             cost_usd: 12.5,
             tokens: 400000,
             cost_reported: true,
@@ -2357,6 +2394,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
           },
           {
             person: "erin@example.com",
+            key: "erin@example.com",
             cost_usd: 0,
             tokens: 0,
             sessions: 1,
@@ -2369,6 +2407,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
           },
           {
             person: "dana@example.com",
+            key: "dana@example.com",
             cost_usd: 0,
             tokens: 0,
             sessions: 0,

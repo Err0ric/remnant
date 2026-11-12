@@ -13,13 +13,14 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from app.ai import consents
 from app.ai import usage as usage_mod
 from app.ai.agents import agents
+from app.ai.agents import masked as masked_agents
 from app.ai.catalog import NON_USAGE, Catalog, Service
 from app.ai.usage import Usage
 from app.alerts.items import AlertItem
@@ -36,14 +37,16 @@ TIMEOUT_S = 20.0
 SIGNALS_SQL = """
 WITH e AS (
   SELECT coalesce(time, time_observed) AS ts, nullif(actor_user_name, '') AS who,
-         TRY_CAST(json_extract_string(unmapped, '$.attr.sensitive_total') AS BIGINT) AS sens
+         TRY_CAST(json_extract_string(unmapped, '$.attr.sensitive_total') AS BIGINT) AS sens,
+         nullif(device_hostname, '') AS machine
   FROM events
   WHERE template_id = 'claude_code_otel'
 )
 SELECT
   coalesce(sum(sens) FILTER (WHERE ts >= $start), 0),
   coalesce(sum(sens) FILTER (WHERE ts < $start), 0),
-  arg_max(who, sens) FILTER (WHERE sens > 0 AND ts >= $start)
+  arg_max(struct_pack(who := who, machine := machine), sens)
+    FILTER (WHERE sens > 0 AND ts >= $start AND who IS NOT NULL)
 FROM e"""
 
 
@@ -169,6 +172,7 @@ class Summary:
     since: str | None = None
     before: str = ""  # start of the period before
     chart_drill: str | None = None  # AI use per service for one chart day (`{from}`, `{to}`)
+    names: bool = False  # whether any text names a person: audited as such (G3)
 
 
 @dataclass(slots=True)
@@ -202,10 +206,12 @@ def summary(
     now: datetime,
     days: int,
     tz: str = "UTC",
+    named: bool = True,
 ) -> Summary:
     """`allowed` is the viewer's sources (None: all); `items` the AI Watch items they may
     see (readable or not); `kinds` the install's sources by class (`source_classes`),
-    to tell "needs a source" from "restricted"."""
+    to tell "needs a source" from "restricted". Without `named` (no View people in AI
+    usage, D242) the cards' text and the new agents show machines, never names."""
     now = now.astimezone(UTC)
     where = zone(tz)
     today = now.astimezone(where).date()
@@ -232,10 +238,11 @@ def summary(
         cur_start,
         prev_start,
         now,
+        named,
     )
     try:
         rows, read = usage.daily(QueryScope(allowed, start, now), where.key, cur_start, prev_start)
-        signals, read_signals = signals_job.result()
+        signals, read_signals, signal_names = signals_job.result()
     finally:
         pool.shutdown(wait=False)
 
@@ -334,9 +341,10 @@ def summary(
     # First seen is the earliest event ever: the window's rows or, earlier, the rollup's
     # first-seen index (owner 2026-10-29), never just the start of the window.
     index = usage.first_seen(allowed)
-    firsts = _firsts(
-        usage, engine, allowed, items, readable, now, prev_start, first_in_rows, services, index
-    )
+    firsts, shown_ids, owned = _firsts(
+        usage, engine, allowed, items, readable, now, prev_start, first_in_rows, services, index,
+        named,
+    )  # fmt: skip
     cards.insert(2, _agents_card(firsts, items, readable, cur_start, prev_start, kinds, allowed))
 
     def first_ever(sid: str, seen: datetime | None) -> datetime | None:
@@ -359,6 +367,7 @@ def summary(
         )
         for sid, u in ranked[:TOP]
     ]
+    new = [n for n in firsts if n.first_seen >= (now - NEW_WINDOW).isoformat()]
     oldest = min(first_in_rows.values(), default=None)
     compared = oldest is None or (cur_start - max(prev_start, oldest)) >= 0.9 * (
         cur_start - prev_start
@@ -371,11 +380,12 @@ def summary(
         chart_days,
         top,
         sorted(set(read) | set(read_signals)),
-        [n for n in firsts if n.first_seen >= (now - NEW_WINDOW).isoformat()],
+        [replace(n, id=shown_ids[n.id]) if n.id in shown_ids else n for n in new],
         compared=compared,
         since=oldest.isoformat() if oldest is not None and oldest > prev_start else None,
         before=prev_start.isoformat(),
         chart_drill=use_drill(set(use) | chart_svcs, "services"),
+        names=signal_names or any(n.kind == "agent" and n.id in owned for n in new),
     )
 
 
@@ -402,12 +412,16 @@ def _firsts(
     services_first: dict[str, datetime],
     known: dict[str, Service],
     index: dict[str, datetime],
-) -> list[NewThing]:
+    named: bool = True,
+) -> tuple[list[NewThing], dict[str, str], set[str]]:
     """Services, MCP servers, and agents first seen from `since` on: never seen before in
     the rows of the summary's window, nor in any closed day the rollup's first-seen index
     has (D116, F63). MCP servers and agents are read from telemetry, which is small;
     services come from the summary's own rows, so this reads no further events for them.
-    "New in 24 hours" and the new agents card are both cut from this list."""
+    "New in 24 hours" and the new agents card are both cut from this list. Without `named`,
+    agents carry their masked label, and the masked key of each agent is returned apart
+    (by its own key, which can hold a name), so the items still match by the real key; and
+    the agents whose label names their owners."""
     cutoff = since
     scope = QueryScope(allowed, min(now - HISTORY, since), now)
     item_of: dict[str, str] = {}
@@ -440,15 +454,23 @@ def _firsts(
             out.append(
                 NewThing("mcp", m.name, m.name, first.isoformat(), item_of.get(f"mcp:{m.name}"))
             )
-    for a in agents(engine, allowed, now):
+    found = agents(engine, allowed, now)
+    pairs = [(a, a) for a in found] if named else masked_agents(found)
+    shown_ids = {} if named else {orig.agent: a.agent for a, orig in pairs}
+    owned = {a.agent for shown, a in pairs if shown.owners}
+    for shown, a in pairs:
         first = first_of(f"agent:{a.agent}", _ts(a.first_seen))
         if first is not None and first >= cutoff:
             out.append(
                 NewThing(
-                    "agent", a.agent, a.label, first.isoformat(), item_of.get(f"agent:{a.agent}")
+                    "agent",
+                    a.agent,
+                    shown.label,
+                    first.isoformat(),
+                    item_of.get(f"agent:{a.agent}"),
                 )
             )
-    return sorted(out, key=lambda n: n.first_seen, reverse=True)
+    return sorted(out, key=lambda n: n.first_seen, reverse=True), shown_ids, owned
 
 
 TELEMETRY_TEMPLATES = frozenset({"claude_code_otel", "mcp_inventory"})
@@ -516,11 +538,15 @@ def _signal_cards(
     start: datetime,
     before: datetime,
     now: datetime,
-) -> tuple[list[Card], list[str]]:
+    named: bool = True,
+) -> tuple[list[Card], list[str], bool]:
+    """The consent and sensitive data cards, the sources read, and whether their text names
+    a person."""
     m365, have_m365 = _readable_kind(kinds, allowed, {"m365"})
     tel, have_tel = _readable_kind(kinds, allowed, {"telemetry"})
     consent_label, sens_label = "App consent grants", "Sensitive data to AI"
     sources: set[str] = set()
+    names = False
     if not have_m365:
         consent = Card("consent", consent_label, None, None, needs="a Microsoft 365 source")
     elif not m365:
@@ -534,14 +560,20 @@ def _signal_cards(
         granted, prev, blocked, latest, latest_blocked = (
             res.rows[0] if res.rows else (0, 0, 0, None, None)
         )
+        names = named and any(
+            isinstance(x, dict) and x.get("who")
+            for x in (latest if granted else None, latest_blocked if blocked else None)
+        )
         consent = Card(
             "consent",
             consent_label,
             int(granted or 0),
             int(prev or 0),
-            f"Latest: {consents.describe(latest)}" if granted else "None granted",
+            f"Latest: {consents.describe(latest, named)}" if granted else "None granted",
             blocked=int(blocked or 0),
-            blocked_context=f"Blocked: {consents.describe(latest_blocked)}" if blocked else "",
+            blocked_context=f"Blocked: {consents.describe(latest_blocked, named)}"
+            if blocked
+            else "",
             rows_sql=consents.rows_sql(False, start),
             blocked_sql=consents.rows_sql(True, start),
             drill=consents.drill_sql(blocked=False),
@@ -560,13 +592,18 @@ def _signal_cards(
             page=True,
         )
         sources.update(res.sources)
-        s_cur, s_prev, s_who = res.rows[0] if res.rows else (0, 0, None)
+        s_cur, s_prev, s_top = res.rows[0] if res.rows else (0, 0, None)
+        top = s_top if isinstance(s_top, dict) else {}
+        # The person who sent the most, or without `named` their machine (D242), else
+        # the clause is left out.
+        most = top.get("who") if named else top.get("machine")
+        names = names or (named and bool(most))
         sens = Card(
             "sensitive",
             sens_label,
             int(s_cur or 0),
             int(s_prev or 0),
-            f"Most from {s_who}" if s_who else "None in Claude Code",
+            f"Most from {most}" if most else "" if top else "None in Claude Code",
             drill=SENSITIVE_DRILL,
         )
-    return [consent, sens], sorted(sources)
+    return [consent, sens], sorted(sources), names

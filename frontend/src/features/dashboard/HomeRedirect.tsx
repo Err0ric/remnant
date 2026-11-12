@@ -1,18 +1,11 @@
-import { useQuery } from "@tanstack/react-query";
 import { useEffect } from "react";
-import { api } from "@/lib/api";
 import { redirect } from "@/lib/route";
 
-/** The root address (ADR-0031, ADR-0034): the Dashboard when a dashboard the viewer sees
- * has at least one panel, Health otherwise, including when the list cannot load. */
+/** The root address: always the Dashboard for a signed-in viewer, never Health (owner,
+ * 2026-11-12; replaces ADR-0031's "Health without a panel"). Health problems show as a
+ * banner on the Dashboard instead. */
 export function HomeRedirect() {
-  const boards = useQuery({ queryKey: ["dashboards"], queryFn: api.dashboards });
-  useEffect(() => {
-    if (boards.isSuccess)
-      if (boards.data.some((d) => d.panels.length > 0)) redirect("dashboard");
-      else redirect("health", "sources");
-    else if (boards.isError) redirect("health", "sources");
-  }, [boards.isSuccess, boards.isError, boards.data]);
+  useEffect(() => redirect("dashboard"), []);
   return <div aria-busy="true" className="flex-1" />;
 }
 

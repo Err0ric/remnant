@@ -636,3 +636,110 @@ def test_rollback_with_aide_checks_first_and_re_baselines_after(box: dict[str, P
     box["calls"].unlink()
     bad = _run_aide(box, "--rollback", **_aide(box, 4, ["/etc/passwd"]))
     assert bad.returncode == 1  # refused anyway: nothing to roll back to now
+
+
+# --- audit 2026-11 H4: a failed update leaves a known version, and rollback goes one back --
+
+
+def test_a_failed_build_goes_back_to_the_version_that_was_running(box: dict[str, Path]) -> None:
+    """The build of the new commit fails after the checkout moved: the checkout returns to
+    the commit that was running and is rebuilt, so the service never starts on new code
+    with the old packages, and the records still describe what runs."""
+    old, new = _updated_once(box)
+    _commit(box["work"], "three")
+    _git(box["work"], "push", "-q", "origin", "main")
+    box["calls"].unlink(missing_ok=True)
+    once = box["install"].parent / "pnpm-failed-once"
+    (box["bin"] / "pnpm").write_text(
+        f'#!/bin/sh\necho "pnpm $*" >> "$CALLS"\n[ -e "{once}" ] || {{ : > "{once}"; exit 1; }}\n'
+    )
+    res = _run(box)
+    assert res.returncode != 0
+    assert _git(box["install"], "rev-parse", "HEAD") == new  # back on what was running
+    assert f"back to {new[:7]}" in res.stderr
+    calls = _calls(box).splitlines()
+    assert calls[-1] == "systemctl start remnant"
+    assert calls.count("pnpm build") == 1  # the rebuild of the old version
+    assert _installed(box).read_text().strip() == new
+    assert _previous(box).read_text().strip() == old  # --rollback still means: one back
+
+
+def test_after_a_failed_start_rollback_returns_to_the_version_that_was_running(
+    box: dict[str, Path],
+) -> None:
+    """The new version was built but did not come up. `--rollback` must return to the
+    commit that was running before this update, not to the one before that (D226)."""
+    old, new = _updated_once(box)
+    newest = _commit(box["work"], "three")
+    _git(box["work"], "push", "-q", "origin", "main")
+    res = _run(box, NOT_UP="1")
+    assert res.returncode != 0 and "is not up" in res.stderr
+    assert f"--rollback returns to {new[:7]}" in res.stderr
+    assert _installed(box).read_text().strip() == new  # what last ran, as before
+    back = _rollback(box)
+    assert back.returncode == 0, back.stderr
+    assert _git(box["install"], "rev-parse", "HEAD") == new
+    assert _git(box["install"], "rev-parse", "--short", "HEAD") != newest
+    assert _git(box["install"], "rev-parse", "HEAD") != old
+
+
+def test_the_aide_rules_skip_scheduled_backups_and_pin_the_folders(box: dict[str, Path]) -> None:
+    """Scheduled backups (#468) write a new archive every night: without a rule each one
+    was an AIDE change at the next update. The folders themselves stay watched for their
+    owner and mode (owner, 2026-11-12)."""
+    res = _run_aide(box, "--print-aide-rules")
+    rules = res.stdout.splitlines()
+    assert "!/var/lib/remnant/backups/.*" in rules
+    assert "=/var/lib/remnant/backups$ p+u+g" in rules
+    assert "=/var/lib/remnant$ p+u+g" in rules
+
+
+def _fail_first_build(box: dict[str, Path]) -> None:
+    once = box["install"].parent / "pnpm-failed-once"
+    once.unlink(missing_ok=True)
+    (box["bin"] / "pnpm").write_text(
+        f'#!/bin/sh\necho "pnpm $*" >> "$CALLS"\n[ -e "{once}" ] || {{ : > "{once}"; exit 1; }}\n'
+    )
+
+
+def test_rollback_after_a_failed_start_names_what_it_left(box: dict[str, Path]) -> None:
+    _old, new = _updated_once(box)
+    _commit(box["work"], "three")
+    _git(box["work"], "push", "-q", "origin", "main")
+    assert _run(box, NOT_UP="1").returncode != 0
+    newest = _git(box["install"], "rev-parse", "HEAD")
+    back = _rollback(box)
+    assert back.returncode == 0, back.stderr
+    assert f"Rolled back remnant from {newest[:7]} to {new[:7]}." in back.stdout
+    assert _from(box).read_text().strip() == newest
+    again = _rollback(box)
+    assert again.returncode == 1
+    assert f"Already rolled back from {newest[:7]} to {new[:7]}" in again.stderr
+
+
+def test_a_failed_build_goes_back_to_what_last_ran_not_to_a_build_that_never_started(
+    box: dict[str, Path],
+) -> None:
+    _old, new = _updated_once(box)
+    _commit(box["work"], "three")
+    _git(box["work"], "push", "-q", "origin", "main")
+    assert _run(box, NOT_UP="1").returncode != 0  # three is checked out, never came up
+    _commit(box["work"], "four")
+    _git(box["work"], "push", "-q", "origin", "main")
+    _fail_first_build(box)
+    res = _run(box)
+    assert res.returncode != 0 and f"Going back to {new[:7]}" in res.stderr
+    assert _git(box["install"], "rev-parse", "HEAD") == new
+    assert _installed(box).read_text().strip() == new
+
+
+def test_a_rollback_whose_build_fails_goes_back_to_what_last_ran(box: dict[str, Path]) -> None:
+    old, new = _updated_once(box)
+    box["calls"].unlink(missing_ok=True)
+    _fail_first_build(box)
+    res = _run_aide(box, "--rollback")
+    assert res.returncode != 0 and f"Going back to {new[:7]}" in res.stderr
+    assert _git(box["install"], "rev-parse", "HEAD") == new  # code and packages agree again
+    assert _calls(box).splitlines()[-1] == "systemctl start remnant"
+    assert _installed(box).read_text().strip() == new
+    assert _previous(box).read_text().strip() == old  # the rollback can be tried again

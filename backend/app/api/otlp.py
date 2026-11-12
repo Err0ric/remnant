@@ -24,7 +24,6 @@ from app.core.errors import (
     AuthRequiredError,
     PayloadTooLargeError,
     RateLimitedError,
-    SetupRequiredError,
     UnsupportedMediaError,
 )
 from app.ingest.otlp import (
@@ -66,9 +65,6 @@ _limiter = _Limiter()
 
 
 def _source(request: Request) -> tuple[SourceConfig, Match]:
-    auth: AuthService = request.app.state.auth
-    if auth.mode() == "setup":
-        raise SetupRequiredError("Finish setup first")
     scheme, _, token = request.headers.get("authorization", "").partition(" ")
     token = token.strip()
     store: SourceStore = request.app.state.sources

@@ -1,0 +1,7 @@
+### A source whose parser is missing keeps storing its events (2026-11-10)
+
+- Before, a source whose template could not load (a rollback to an older release, a broken edit, a missing file) stopped. A syslog listener or agent source then filled its waiting space and refused new messages, which were lost.
+- Now the source keeps storing every event with the basic parser for its format: the original line is kept exactly, time, host, and message are filled where the format allows, and each event is marked `template_missing`, so a search on the template still finds it. CSV files are read without taking any line as a header, so no line is lost; the cells are kept by position. When the template loads again, new events are parsed with it from the next pass (ADR-0050, D233).
+- Sources still shows the source as an error ("Storing events without its parser: template ... is not available"), and the "Detection stopped" message still goes out, until the template is back. A clearer Health message and alerts follow in the next part.
+- What you will notice: a source with a missing template keeps receiving events instead of stopping; its error on Sources reads "Storing events without its parser".
+- What changes for existing installs: nothing to do; no settings change. Events stored while a template was missing keep the `template_missing` mark. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`).

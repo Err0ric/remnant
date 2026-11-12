@@ -49,9 +49,10 @@ export function count(
   return n ? { key, count: n, text: plural(n, one, many), page, tab } : null;
 }
 
-/** Open alerts the viewer may read, as an attention item. Shares the Alerts page's query. */
+/** Open alerts the viewer may read, as an attention item: the count only, with the alert
+ * badge, so a page load records no AI view (D242). */
 export function useOpenAlertsItem(): AttentionItem | null {
-  const q = useQuery({ queryKey: ["alerts", "open"], queryFn: () => api.alerts("open") });
+  const q = useQuery({ queryKey: ["alerts", "count"], queryFn: api.alertCount });
   return count("alerts", q.data?.open, "open alert", "open alerts", "alerts");
 }
 

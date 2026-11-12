@@ -7,7 +7,7 @@ import pytest
 
 from app.core.schema import COLUMN_NAMES
 from app.ingest.envelope import SyslogEnvelopeConfig
-from app.ingest.normalizer import Normalizer, SourceSpec
+from app.ingest.normalizer import Normalizer, SourceSpec, TemplateMissingNormalizer
 from app.ingest.records import DecodedLine
 
 NOW = datetime(2026, 10, 10, 12, 0, tzinfo=UTC)
@@ -233,3 +233,60 @@ def test_rows_without_a_message_field_get_a_short_summary() -> None:
         DecodedLine(text='{"msg": "hello", "a": 1}', bytes_invalid=False, truncated=False)
     )
     assert kept is not None and kept["message"] == "hello"  # a real message wins
+
+
+# --- ADR-0050 row 1 and 2: a source whose template is not available ---------------
+
+
+def missing(fmt: str, **kw: object) -> TemplateMissingNormalizer:
+    spec = SourceSpec.model_validate({"source_id": "test_src", "format": fmt, **kw})
+    return TemplateMissingNormalizer(spec, "paloalto_csv", clock=lambda: NOW)
+
+
+@pytest.mark.parametrize(
+    ("fmt", "text", "field", "value"),
+    [
+        ("syslog", "<38>Oct  9 20:41:12 bastion sshd[1]: hello", "device_hostname", "bastion"),
+        ("json", '{"msg": "hi", "user": "alice"}', "message", None),
+        ("csv", "a,b,c", "message", None),
+    ],
+)
+def test_template_missing_keeps_raw_and_marks_the_row(
+    fmt: str, text: str, field: str, value: object
+) -> None:
+    g, m = norm(fmt), missing(fmt)
+    if fmt == "csv":  # the generic parser takes the first line as its header
+        assert g.normalize(line("h1,h2,h3")) is None
+    generic, out = g.normalize(line(text)), m.normalize(line(text))
+    assert out is not None and generic is not None
+    assert out["raw"] == text
+    assert out["template_id"] == "paloalto_csv"  # a search on the template still finds it
+    assert out["parse_status"] == "template_missing"
+    assert str(out["parse_errors"]).startswith("Template paloalto_csv was not available")
+    assert out["classification"] == "local_only"
+    for col in COLUMN_NAMES:  # every parsed field is the generic parser's
+        skip = {"event_id", "template_id", "parse_status", "parse_errors"}
+        if fmt == "csv":  # the fallback keys cells by position, the generic by its header
+            skip |= {"unmapped", "message"}
+        if col not in skip:
+            assert out[col] == generic[col], col
+    if value is not None:
+        assert out[field] == value
+
+
+def test_template_missing_keeps_parser_errors_and_invalid_bytes() -> None:
+    out = missing("syslog").normalize(line("x" * 10, invalid=True, truncated=True))
+    assert out is not None
+    assert out["raw_bytes_invalid"] is True
+    assert (
+        out["parse_errors"] == "Template paloalto_csv was not available,truncated,no_syslog_header"
+    )
+    assert out["parse_status"] == "template_missing"
+
+
+def test_template_missing_csv_takes_no_header_and_keeps_every_line() -> None:
+    m = missing("csv")
+    first, second = m.normalize(line("a,b,c")), m.normalize(line("d,e"))
+    assert first is not None and second is not None
+    assert json.loads(str(first["unmapped"])) == {"1": "a", "2": "b", "3": "c"}
+    assert json.loads(str(second["unmapped"])) == {"1": "d", "2": "e"}

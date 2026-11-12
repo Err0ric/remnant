@@ -263,7 +263,10 @@ export interface AiMcpUse {
 }
 
 export interface AiPerson {
+  /** The name, or with `AiUsage.masked` the machine used most (or "Hidden"), D242. */
   person: string;
+  /** A stable row key that is never a shown name: two people on one machine stay apart. */
+  key: string;
   /** Null only if stored data was bad; the page shows "·" then. */
   cost_usd: number | null;
   tokens: number;
@@ -286,7 +289,7 @@ export interface AiPerson {
     devices: number;
     last_seen: string | null;
   } | null;
-  /** A network name no plugin person matches: the plugin person it may be. */
+  /** A network name no plugin person matches: the plugin person it may be; left out when masked. */
   maybe?: string | null;
 }
 
@@ -316,6 +319,9 @@ export interface AiUsage {
   people_days?: number;
   /** People seen reaching Claude, by how: both, plugin (only), network (only, no plugin). */
   claude_seen?: Partial<Record<"both" | "plugin" | "network", number>>;
+  /** No View people in AI usage (D242): people show machines; top people and hints are left
+   * out. Counts are the same as with names. */
+  masked?: boolean;
 }
 
 export interface AiMcpRule {
@@ -608,6 +614,8 @@ export interface User {
   user_id: string;
   username: string;
   role: "admin" | "analyst" | "auditor";
+  /** View people in AI usage (D242), effective: always true for an admin. */
+  view_ai_people?: boolean;
 }
 
 /** Single sign-on, when the server has it turned on (ADR-0013). */
@@ -761,6 +769,8 @@ export interface RiskResponse {
   targeted_total?: number;
   matches_considered: number;
   sources: string[];
+  /** People carry no AI watch flags or AI Watch alerts for this viewer (D242). */
+  ai_people_hidden?: boolean;
 }
 
 export interface GraphCard {
@@ -905,6 +915,8 @@ export interface EntityGraph {
   edges: { source: string; target: string; events: number }[];
   more: number[];
   sources: string[];
+  /** AI flow without View people in AI usage: people are cards by machine (D242). */
+  masked?: boolean;
 }
 
 /** An AI agent and what changed (ADR-0020 rows 2 and 3). */
@@ -924,6 +936,9 @@ export interface AiAgent {
   new_items: { kind: string; name: string }[];
   usual_peak: number | null;
   recent_peak: number | null;
+  /** No View people in AI usage (D242): no owners, the label by machine, a key by place. */
+  masked?: boolean;
+  owners_hidden?: number;
 }
 
 export type DataLevel = "public" | "internal" | "confidential";
@@ -1369,6 +1384,96 @@ export interface Source extends SourceInput {
   built_in?: boolean;
   /** Server-set: events only when someone uses or probes the server, so quiet is expected. */
   quiet_expected?: boolean;
+  /** Server-set: the source's template sends vendor alerts (ADR-0049). */
+  emits_alerts?: boolean;
+  /** Server-set: over its hourly vendor alert cap; alerts below High are held (D231). */
+  alert_pause?: AlertPause | null;
+  /** Server-set, admins only: events stored without the template wait for a reparse and
+   * the template loads now (ADR-0050 row 7). Only then is the exact count fetched. */
+  reparse_pending?: boolean;
+  /** Server-set, admins only: the latest reparse job, for the rule re-run over its range. */
+  reparse_last?: ReparseLast | null;
+}
+
+export interface AlertPause {
+  paused_since: string;
+  /** Held alerts so far, by severity name. */
+  held: Record<string, number>;
+}
+
+export type VendorSeverity = "critical" | "high" | "medium" | "low" | "info";
+
+/** Who hears about a source's vendor alerts (D231); off by default. */
+export interface AlertNotify {
+  notify: boolean;
+  target_ids: string[];
+  min_severity: VendorSeverity;
+}
+
+/** A reparse of a source's events stored without its template (ADR-0050 row 7). */
+export interface ReparseJob {
+  job_id: string;
+  template_id: string;
+  state: "running" | "done" | "failed" | "interrupted";
+  started_at: string;
+  finished_at: string | null;
+  rows_found: number;
+  rows_rewritten: number;
+  files_rewritten: number;
+  time_min: string | null;
+  time_max: string | null;
+  error: string | null;
+  /** The rule re-run over the rewritten rows; null until started. */
+  rules_state?: ReparseRulesState | null;
+  rules_run_at?: string | null;
+  rules_finished_at?: string | null;
+  rules_count?: number;
+  rules_matched?: number;
+  /** Alert items raised or grown. */
+  rules_items?: number;
+  rules_error?: string | null;
+}
+
+export type ReparseState = "running" | "done" | "failed" | "interrupted";
+/** `partial`: some rules could not run; a start runs only those again. */
+export type ReparseRulesState = ReparseState | "partial";
+
+/** A rule a partial re-run could not run, and why. */
+export interface ReparseRuleFailed {
+  rule_id: string;
+  title: string;
+  error: string;
+}
+
+/** A source's latest reparse job, on the source list (admins only). */
+export interface ReparseLast {
+  job_id: string;
+  state: ReparseState;
+  finished_at: string | null;
+  rows_rewritten: number;
+  time_min: string | null;
+  time_max: string | null;
+  rules_state: ReparseRulesState | null;
+  rules_run_at: string | null;
+  rules_finished_at: string | null;
+  rules_count: number;
+  rules_matched: number;
+  rules_items: number;
+  rules_error: string | null;
+  /** When partial: the rules to run again. */
+  rules_failed: ReparseRuleFailed[];
+  /** The rule re-run is offered or was started: a done job, or a stopped one that rewrote
+   * the last waiting events (no later reparse would take them over). */
+  rules_ready: boolean;
+}
+
+export interface ReparseStatus {
+  source_id: string;
+  template_id: string | null;
+  template_available: boolean;
+  /** Events stored without the template, inside the source's retention. */
+  pending: number;
+  job: ReparseJob | null;
 }
 
 export interface ColumnInfo {
@@ -1391,6 +1496,8 @@ export interface ManagedUser {
   last_login_at: string | null;
   /** Signs in with single sign-on. */
   sso?: boolean;
+  /** View people in AI usage (D242), effective: always true for an admin. */
+  view_ai_people?: boolean;
 }
 
 /** A group suggested from template categories or vendors (SPEC 3.6). Never applied on its own. */
@@ -1525,8 +1632,10 @@ export interface AgentSession {
   unanswered?: number;
   /** MCP servers first used in this session (within the range). */
   new_mcp?: string[];
-  /** The Claude account the plugin reported. */
+  /** The Claude account the plugin reported; with `masked` the machine (or "Hidden"). */
   account?: string | null;
+  /** No View people in AI usage (D242): `person` and `account` show the machine. */
+  masked?: boolean;
 }
 
 /** ADR-0030 amendment: a Claude account the hooks plugin reported, and its tier. */
@@ -1534,7 +1643,10 @@ export type AccountTier =
   "company_confirmed" | "company_reported" | "company_unconfirmed" | "personal" | "not_checked";
 
 export interface AgentAccount {
+  /** With `AgentAccounts.masked`, the first device (or "Hidden"), and `os_users` is empty. */
   email: string | null;
+  /** A stable row key that is never a hidden name. */
+  key?: string;
   tier: AccountTier;
   account_from: string | null;
   devices: string[];
@@ -1551,6 +1663,8 @@ export interface AgentAccounts {
   has_signins: boolean;
   rows: AgentAccount[];
   counts: Record<AccountTier, number>;
+  /** No View people in AI usage (D242): accounts show devices. Counts are the same. */
+  masked?: boolean;
 }
 
 export interface TimelineRow {
@@ -1650,6 +1764,8 @@ export interface AiInventory {
   days: number;
   items: InventoryItem[];
   sources_in_scope: string[];
+  /** No View people in AI usage (D242): agents show machines, never owners' names. */
+  masked?: boolean;
 }
 
 export interface AgentTool {
@@ -1740,9 +1856,11 @@ export interface PersonAi {
 
 export interface SessionTimeline {
   session_id: string;
+  /** With `masked`, the machine (or "Hidden"), D242. */
   person: string | null;
   machine: string | null;
   steps: SessionStep[];
+  masked?: boolean;
 }
 
 export interface AskProvider {
@@ -2102,6 +2220,8 @@ export interface AuditEvent {
   outcome: "success" | "failure" | "denied";
   ip: string | null;
   detail: Record<string, unknown>;
+  /** AI Watch names in the detail were replaced by "a person" (D242). */
+  masked?: boolean;
 }
 
 export interface AuditLlmCall {
@@ -2187,6 +2307,17 @@ export interface DashboardPanel {
 /** One thing that fired and needs a decision (ADR-0037): a flagged schedule run, a rule run
  * with matches, an AI Watch item, or a gap on a source with Alert if quiet on. */
 export type AlertKind = "schedule" | "rule" | "ai_watch" | "gap";
+
+export interface AlertIds {
+  count: number;
+  ids: { product: string; alert_id: string }[];
+}
+
+export interface AlertEvents {
+  columns: string[];
+  rows: unknown[][];
+  elapsed_ms: number;
+}
 /** ADR-0043 row 16. Stored reasons from before keep their value; `close_reason_label`
  * says how they read now. */
 export type CloseReason = "expected" | "approved" | "false_positive" | "resolved";
@@ -2231,6 +2362,10 @@ export interface AlertItem {
   /** Who and which devices the rows that fired are about (ADR-0038 row 28). */
   people?: string[];
   devices?: string[];
+  /** An AI Watch alert for a viewer without View people in AI usage (D242): its text
+   * names no one, `people` is empty, and `people_hidden` is how many it is about. */
+  masked?: boolean;
+  people_hidden?: number;
   muted_until: string | null;
   history: AlertEvent[];
   /** The group (ADR-0043): one open alert per entity, rule, and day, with its repeats. */
@@ -2240,6 +2375,12 @@ export interface AlertItem {
   last_seen?: string | null;
   changes?: string[];
   more_changes?: number;
+  /** The closed alert this one follows: a vendor alert that rose after it was closed. */
+  follows?: string | null;
+  /** Raised or grown by a rule re-run over reparsed events (D241), with their time range. */
+  late?: boolean;
+  late_start?: string | null;
+  late_end?: string | null;
   /** AI service and MCP server alerts: the catalog status now; "unknown" for a service
    * the catalog does not list. */
   review_status?: AiStatus | "unknown" | null;
@@ -2251,6 +2392,7 @@ export interface DevicePerson {
   device: string;
   /** One person is attributed; several are possible, and none of them is picked. */
   level: "attributed" | "possible";
+  /** Empty without View people in AI usage (D242); `count` stays. */
   people: string[];
   count: number;
   /** hooks_identities: two names on the host are one person in Identities. */
@@ -2260,12 +2402,29 @@ export interface DevicePerson {
 export interface AlertList {
   items: AlertItem[];
   open: number;
-  /** Open items the viewer may not read: counted, never described. */
-  restricted: number;
+  /** Some open item read a source the viewer may not read: never counted or described
+   * (owner, 2026-11-12). Always false for an admin. */
+  restricted: boolean;
   muted: number;
   reasons: Record<CloseReason, string>;
   /** Open readable items by their stored severity; what the strip shows. */
   by_severity?: { high: number; medium: number; other: number };
+}
+
+/** Open alerts as numbers only (the alert badge, the Dashboard's count). */
+export type AlertCount = Pick<AlertList, "open" | "restricted" | "by_severity">;
+
+/** The few open alerts a summary shows (Dashboard "Needs you", Health's newest): one item
+ * per kind and subject, its newest. Only these lines are read, so only a line that names
+ * someone is recorded as an AI view (owner, 2026-11-11). */
+export interface AlertLines extends AlertCount {
+  items: AlertItem[];
+  /** item_id: open items of its kind and subject. */
+  runs: Record<string, number>;
+  /** Every kind and subject open and readable, shown or not. */
+  groups: number;
+  /** Sources with an open gap alert. */
+  gap_sources: string[];
 }
 
 export interface AlertMute {
@@ -2494,9 +2653,24 @@ export interface AlertDelivery {
 export const api = {
   alerts: (state: "open" | "closed" | "all" = "open") =>
     request<AlertList>(`/api/alerts?state=${state}`),
+  /** Open alerts as numbers only, for counts: no item, so no AI view is recorded (D242). */
+  alertCount: () => request<AlertCount>("/api/alerts/count"),
+  /** Only the open alert lines a summary shows, most severe or newest first. */
+  alertLines: (limit: number, by: "severity" | "newest" = "severity") =>
+    request<AlertLines>(`/api/alerts/lines?limit=${limit}&by=${by}`),
   /** AI Watch alerts whose service or MCP server is still not reviewed, closed included. */
   unreviewedAlerts: () => request<AlertList>("/api/alerts?state=all&unreviewed=true"),
   alert: (id: string) => request<AlertItem>(`/api/alerts/${encodeURIComponent(id)}`),
+  /** An external alert item's vendor alert IDs, oldest first, a page at a time (D228). */
+  alertIds: (id: string, offset = 0, limit = 50) =>
+    request<AlertIds>(
+      `/api/alerts/${encodeURIComponent(id)}/alert-ids?offset=${offset}&limit=${limit}`,
+    ),
+  /** An external alert item's own events, newest first: a server-built query (rule 13). */
+  alertEvents: (id: string, offset = 0, limit = 100) =>
+    request<AlertEvents>(
+      `/api/alerts/${encodeURIComponent(id)}/events?offset=${offset}&limit=${limit}`,
+    ),
   closeAlert: (
     id: string,
     reason: CloseReason,
@@ -2683,7 +2857,7 @@ export const api = {
   users: () => request<ManagedUser[]>("/api/users"),
   inviteUser: (body: { username: string; role: Role }) =>
     request<{ user: ManagedUser; invite_token: string }>("/api/users", post(body)),
-  updateUser: (id: string, body: { role?: Role; disabled?: boolean }) =>
+  updateUser: (id: string, body: { role?: Role; disabled?: boolean; view_ai_people?: boolean }) =>
     request<ManagedUser>(`/api/users/${encodeURIComponent(id)}`, patch(body)),
   resetUser: (id: string) =>
     request<{ reset_token: string }>(`/api/users/${encodeURIComponent(id)}/reset`, {
@@ -2815,6 +2989,24 @@ export const api = {
     request<SourceWatch | null>(
       `/api/sources/${encodeURIComponent(id)}/watch`,
       put({ quiet_after_s: quietAfterS, target_ids: targetIds }),
+    ),
+  alertNotify: (id: string) =>
+    request<AlertNotify>(`/api/sources/${encodeURIComponent(id)}/alert-notify`),
+  /** Admins only; audited. */
+  setAlertNotify: (id: string, body: AlertNotify) =>
+    request<AlertNotify>(`/api/sources/${encodeURIComponent(id)}/alert-notify`, put(body)),
+  /** Admins only. */
+  reparseStatus: (id: string) =>
+    request<ReparseStatus>(`/api/sources/${encodeURIComponent(id)}/reparse`),
+  /** Admins only; audited. Runs in the background. */
+  startReparse: (id: string) =>
+    request<ReparseJob>(`/api/sources/${encodeURIComponent(id)}/reparse`, { method: "POST" }),
+  /** Admins only; audited. Runs the enabled rules over a done job's rewritten rows, once;
+   * after a partial run, only the rules that did not complete. */
+  runReparseRules: (id: string, jobId: string) =>
+    request<ReparseJob>(
+      `/api/sources/${encodeURIComponent(id)}/reparse/${encodeURIComponent(jobId)}/rules`,
+      { method: "POST" },
     ),
   deleteSource: (id: string) =>
     request<void>(`/api/sources/${encodeURIComponent(id)}`, { method: "DELETE" }),

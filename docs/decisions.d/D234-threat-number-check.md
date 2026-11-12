@@ -1,0 +1,1 @@
+| D234 | Threat numbers are checked (owner, 2026-11-10, after ADR-0050 first reused ADR-0049's T83 and T84): `scripts/docs/assemble.py --check` fails when two ADRs claim one threat number (a threat table row, or a range on the Status line); `--prep` in the merge queue fails when a threat number a PR adds is already in SPEC 7.1 on main | Accepted 2026-11-10 (owner) |

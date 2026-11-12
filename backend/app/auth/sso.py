@@ -108,7 +108,7 @@ class SsoAccounts:
     def _find(self, identity: Identity) -> User:
         with self._meta.connect() as con:
             row = con.execute(
-                "SELECT user_id, username, role, disabled FROM users"
+                "SELECT user_id, username, role, disabled, view_ai_people FROM users"
                 " WHERE sso_issuer = ? AND sso_subject = ?",
                 (identity.issuer, identity.subject),
             ).fetchone()
@@ -116,7 +116,9 @@ class SsoAccounts:
             raise SsoRefusedError("not_invited", "no account is bound to this identity")
         if row["disabled"]:
             raise SsoRefusedError("disabled", f"account {row['user_id']} is disabled")
-        return User(row["user_id"], row["username"], row["role"])
+        return User(
+            row["user_id"], row["username"], row["role"], view_ai_people=bool(row["view_ai_people"])
+        )
 
     def _link_user(self, token: str) -> str | None:
         with self._meta.connect() as con:
@@ -175,6 +177,9 @@ class SsoAccounts:
             con.execute("DELETE FROM user_tokens WHERE user_id = ?", (user_id,))
             con.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
             row = con.execute(
-                "SELECT user_id, username, role FROM users WHERE user_id = ?", (user_id,)
+                "SELECT user_id, username, role, view_ai_people FROM users WHERE user_id = ?",
+                (user_id,),
             ).fetchone()
-        return User(row["user_id"], row["username"], row["role"])
+        return User(
+            row["user_id"], row["username"], row["role"], view_ai_people=bool(row["view_ai_people"])
+        )

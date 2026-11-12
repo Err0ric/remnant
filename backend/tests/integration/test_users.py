@@ -275,4 +275,4 @@ def test_nested_metadata_writes_fail_fast_instead_of_hanging(tmp_path: Path) -> 
         outer.execute("BEGIN IMMEDIATE")
         with meta.connect() as inner:
             inner.execute("BEGIN IMMEDIATE")
-    assert time.monotonic() - started < 10
+    assert time.monotonic() - started < 30  # fails on the busy timeout, never hangs

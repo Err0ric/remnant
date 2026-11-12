@@ -23,6 +23,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from app.alerts.person_refs import PersonRefs
 from app.auth.users import User
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError, ParamInvalidError
 from app.meta.audit import AuditLog
@@ -110,6 +111,12 @@ class AlertItem:
     last_seen: str | None = None
     changes: list[str] = field(default_factory=list)
     more: int = 0  # changes beyond MAX_CHANGES
+    follows: str | None = None  # the closed item this one follows (ADR-0049 3.1)
+    # Raised or grown by a rule re-run over reparsed events (D241): late, with the range of
+    # those events' times.
+    late: bool = False
+    late_start: str | None = None
+    late_end: str | None = None
     # What this raise did: created the item, or raised its severity. Only these notify
     # (row 4); a repeat that only adds to the count does not.
     fresh: bool = False
@@ -136,7 +143,10 @@ class AlertItems:
         tz: str = "UTC",
         gap_min_back: timedelta = timedelta(minutes=15),
         gap_max_notify: int = 3,
+        install_key: Callable[[], bytes] | None = None,
     ) -> None:
+        # AI Watch items store references, not names (D242): see app.alerts.person_refs.
+        self.refs = PersonRefs(install_key)
         # Flap guard for gaps (owner, 2026-11-03): see SourcesConfig.
         self._gap_min_back = gap_min_back
         self._gap_max_notify = gap_max_notify
@@ -181,13 +191,25 @@ class AlertItems:
         devices: list[str] | None = None,
         group: tuple[str, str] | None = None,
         change: str | None = None,
+        follows: str | None = None,
+        also: Callable[[sqlite3.Connection], None] | None = None,
+        late: tuple[str, str] | None = None,
     ) -> AlertItem:
         """Write an item (once per kind and ref id). A muted subject closes it at once.
         With `refresh`, an existing open item takes the new wording and counts.
 
         With `group` (entity, rule), at most one item per kind, entity, rule, and day is
         open (ADR-0043): a repeat adds its count and `change` line to that item instead of
-        writing a new one, and raises its severity when the repeat is more severe."""
+        writing a new one, and raises its severity when the repeat is more severe.
+
+        With `follows` (a closed item's id), a new item is linked to that closed one
+        (ADR-0049 3.1): the closed item, its close, and its reason stay as they were.
+
+        `also` runs in the same transaction as the write (or the read of an existing item),
+        so a caller's own record of the raise commits or rolls back with it.
+
+        With `late` (the event range of a rule re-run over reparsed events, D241), the item
+        it writes or grows is marked late, its range widened to cover this one."""
         now = self._now()
         item_id = str(uuid.uuid4())
         who = _names(people)
@@ -222,6 +244,9 @@ class AlertItems:
                         ),
                     )
                 if had:
+                    _mark_late(con, had["item_id"], late)
+                    if also is not None:
+                        also(con)
                     return self._load(con, had["item_id"])
             if group is not None:
                 grown = self._grow(
@@ -229,10 +254,27 @@ class AlertItems:
                     range_end,
                 )  # fmt: skip
                 if grown is not None:
+                    if late is not None:
+                        _mark_late(con, grown.item_id, late)
+                        rose = grown.rose
+                        grown = self._load(con, grown.item_id)
+                        grown.rose = rose
+                    if also is not None:
+                        also(con)
                     return grown
             entity, rule = group if group is not None else (None, None)
             group_day = self.day_of(now) if group is not None else None
-            if group is not None:
+            before = (
+                con.execute(
+                    "SELECT close_reason FROM alert_items WHERE item_id = ?", (follows,)
+                ).fetchone()
+                if follows is not None
+                else None
+            )
+            if before is not None:
+                said = label(before["close_reason"]) or "closed"
+                detail = f"Follows an earlier alert closed as {said}. {detail}".strip()
+            elif group is not None:
                 earlier = con.execute(
                     "SELECT close_reason FROM alert_items WHERE kind = ? AND entity = ?"
                     " AND rule = ? AND day = ? AND state = 'closed' ORDER BY closed_at DESC",
@@ -244,8 +286,8 @@ class AlertItems:
             con.execute(
                 "INSERT INTO alert_items (item_id, kind, subject, ref_id, title, detail, why,"
                 " count, sources, owner_id, shared, range_start, range_end, created_at, severity,"
-                " people, devices, entity, rule, day, last_seen, changes)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " people, devices, entity, rule, day, last_seen, changes, follows)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     item_id,
                     kind,
@@ -269,6 +311,7 @@ class AlertItems:
                     group_day,
                     now if group is not None else None,
                     json.dumps({"lines": [line], "more": 0}) if group is not None else None,
+                    follows if before is not None else None,
                 ),
             )
             mute = con.execute(
@@ -279,6 +322,9 @@ class AlertItems:
             if mute:
                 note = f"Muted until {mute['until'][:10]}"
                 self._set_closed(con, item_id, None, "muted", note, now)
+            _mark_late(con, item_id, late)
+            if also is not None:
+                also(con)
         if mute:
             self._audit.write(
                 "alert.close",
@@ -521,14 +567,42 @@ class AlertItems:
                     base + " WHERE a.state = ? ORDER BY a.created_at DESC LIMIT ?",
                     (state, limit),
                 ).fetchall()
-        return [i for i in (_item(r) for r in rows) if self.sees(i, user)]
+        return [self.render(i) for i in (_item(r) for r in rows) if self.sees(i, user)]
 
     def get(self, item_id: str, user: User) -> AlertItem:
+        return self.render(self._stored(item_id, user))
+
+    def _stored(self, item_id: str, user: User) -> AlertItem:
         with self._meta.connect() as con:
             item = self._load(con, item_id)
         if not self.sees(item, user):
             raise NotFoundError("No such alert")
         return item
+
+    def render(self, item: AlertItem) -> AlertItem:
+        """An AI Watch item as read: each person reference back as the name in its people
+        (D242). What a viewer without View people in AI usage sees is masked after this."""
+        if item.kind != "ai_watch":
+            return item
+        known = self.refs.known(item.people)
+        r = self.refs.render
+        item.subject = r(item.subject, known) or ""
+        item.title = r(item.title, known) or ""
+        item.detail = r(item.detail, known) or ""
+        item.ref_id, item.why = r(item.ref_id, known), r(item.why, known)
+        item.entity = r(item.entity, known)
+        item.changes = [r(c, known) or "" for c in item.changes]
+        return item
+
+    def subject_of(self, item_id: str) -> str:
+        """The subject as stored: what dedup, groups, and mutes match (D242)."""
+        with self._meta.connect() as con:
+            row = con.execute(
+                "SELECT subject FROM alert_items WHERE item_id = ?", (item_id,)
+            ).fetchone()
+        if row is None:
+            raise NotFoundError("No such alert")
+        return str(row["subject"])
 
     def _load(self, con: sqlite3.Connection, item_id: str) -> AlertItem:
         r = con.execute(
@@ -571,7 +645,7 @@ class AlertItems:
             raise ConflictError("This alert is already closed")
         with self._meta.connect() as con:
             self._set_closed(con, item_id, user.user_id, reason, note, self._now())
-            item = self._load(con, item_id)
+            item = self._load(con, item_id)  # as stored: the audit row names no one
         self._audit.write(
             "alert.close",
             "success",
@@ -586,7 +660,7 @@ class AlertItems:
                 **({"bulk": True} if bulk else {}),
             },
         )
-        return item
+        return self.render(item)
 
     def _set_closed(
         self,
@@ -702,28 +776,35 @@ class AlertItems:
             ip,
             {"item_id": item_id, "kind": item.kind, "subject": item.subject},
         )
-        return item
+        return self.render(item)
 
     # --- muting (admins only; checked here as well as on the route) ---------------------
 
     def mutes(self) -> list[Mute]:
+        """Active mutes as read: an AI Watch mute's names are those of the newest item
+        about its subject (D242)."""
+        out: list[Mute] = []
         with self._meta.connect() as con:
             rows = con.execute(
                 "SELECT * FROM alert_mutes WHERE ended_at IS NULL AND until > ? ORDER BY until",
                 (self._now(),),
             ).fetchall()
-        return [
-            Mute(
-                r["mute_id"],
-                r["kind"],
-                r["subject"],
-                r["title"],
-                r["until"],
-                r["created_by"],
-                r["created_at"],
-            )
-            for r in rows
-        ]
+            for r in rows:
+                subject, title = r["subject"], r["title"]
+                if r["kind"] == "ai_watch" and "{p:" in subject + title:
+                    had = con.execute(
+                        "SELECT people FROM alert_items WHERE kind = ? AND subject = ?"
+                        " ORDER BY created_at DESC LIMIT 1",
+                        (r["kind"], subject),
+                    ).fetchone()
+                    known = self.refs.known(json.loads(had["people"] or "[]") if had else [])
+                    subject = self.refs.render(subject, known) or ""
+                    title = self.refs.render(title, known) or ""
+                out.append(
+                    Mute(r["mute_id"], r["kind"], subject, title, r["until"],
+                         r["created_by"], r["created_at"])
+                )  # fmt: skip
+        return out
 
     def mute(self, item_id: str, days: int, user: User, ip: str | None) -> Mute:
         """Mute new items like this one (same kind and subject) for `days`."""
@@ -731,7 +812,7 @@ class AlertItems:
             raise ForbiddenError("Only administrators can mute alerts")
         if days not in MUTE_DAYS:
             raise ParamInvalidError("Mute for 7 or 30 days")
-        item = self.get(item_id, user)
+        item = self._stored(item_id, user)  # its subject as stored matches new items
         now = self._clock().astimezone(UTC)
         until = (now + timedelta(days=days)).isoformat()
         mute_id = str(uuid.uuid4())
@@ -819,6 +900,24 @@ def _item(r: sqlite3.Row) -> AlertItem:
         last_seen=r["last_seen"],
         changes=_changes(r["changes"])[0],
         more=_changes(r["changes"])[1],
+        follows=r["follows"],
+        late=bool(r["late"]),
+        late_start=r["late_start"],
+        late_end=r["late_end"],
+    )
+
+
+def _mark_late(con: sqlite3.Connection, item_id: str, late: tuple[str, str] | None) -> None:
+    """Mark an item late (D241), its range widened to cover `late` (ISO times in UTC, as a
+    reparse job records them, so they compare as text)."""
+    if late is None:
+        return
+    con.execute(
+        "UPDATE alert_items SET late = 1,"
+        " late_start = CASE WHEN late_start IS NULL OR late_start > ? THEN ? ELSE late_start END,"
+        " late_end = CASE WHEN late_end IS NULL OR late_end < ? THEN ? ELSE late_end END"
+        " WHERE item_id = ?",
+        (late[0], late[0], late[1], late[1], item_id),
     )
 
 

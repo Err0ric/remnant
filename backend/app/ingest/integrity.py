@@ -34,7 +34,7 @@ Op = Literal["add", "remove", "baseline", "adopt"]
 class LakeEvents(Protocol):
     """What the writer, compaction, retention, and quarantine report (ADR-0022 row 2)."""
 
-    def added(self, paths: Sequence[Path]) -> None: ...
+    def added(self, paths: Sequence[Path], reason: str = "") -> None: ...
 
     def removed(self, paths: Sequence[Path], reason: str) -> list[Path]:
         """Record the removal and return the paths that may go. A file whose content no
@@ -47,7 +47,7 @@ class LakeEvents(Protocol):
 
 
 class NoEvents:
-    def added(self, paths: Sequence[Path]) -> None:
+    def added(self, paths: Sequence[Path], reason: str = "") -> None:
         return None
 
     def removed(self, paths: Sequence[Path], reason: str) -> list[Path]:
@@ -109,8 +109,9 @@ class IntegrityLedger:
 
     # --- recording ------------------------------------------------------------------------
 
-    def added(self, paths: Sequence[Path]) -> None:
-        self._record("add", [(p, "") for p in paths])
+    def added(self, paths: Sequence[Path], reason: str = "") -> None:
+        """A new file; `reason` says why when it replaces another (a reparse)."""
+        self._record("add", [(p, reason[:200]) for p in paths])
 
     def removed(self, paths: Sequence[Path], reason: str) -> list[Path]:
         ok = self.unchanged(paths)
@@ -442,6 +443,25 @@ class IntegrityLedger:
 
     def busy(self) -> bool:
         return self._verify_lock.locked()
+
+    def reparsed_since(self, since: str) -> tuple[int, int]:
+        """(files rewritten, rows reparsed) by reparse jobs since `since` (ISO time), from
+        the ledger's own entries: "reparsed N rows from <file>" on the new file's add."""
+        with self._meta.connect() as con:
+            reasons = [
+                str(r[0])
+                for r in con.execute(
+                    "SELECT reason FROM lake_ledger WHERE op = 'add' AND at >= ?"
+                    " AND reason LIKE 'reparsed % rows from %'",
+                    (since,),
+                )
+            ]
+        rows = 0
+        for reason in reasons:
+            parts = reason.split()
+            if len(parts) > 1 and parts[1].isdigit():
+                rows += int(parts[1])
+        return len(reasons), rows
 
     def head(self) -> tuple[str, int]:
         with self._meta.connect() as con:

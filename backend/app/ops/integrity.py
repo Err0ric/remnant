@@ -17,6 +17,7 @@ from typing import Any
 
 from app.alerts.dispatch import AlertDispatcher
 from app.alerts.render import Alert
+from app.alerts.stops import DetectionStops
 from app.core.branding import PRODUCT_NAME
 from app.ingest.integrity import Finding, IntegrityLedger, Verification
 from app.meta.audit import AuditLog
@@ -47,6 +48,7 @@ class IntegrityService:
         self._subkey: bytes | None = None
         self._dispatcher = dispatcher
         self._link = link
+        self.stops: DetectionStops | None = None  # set by the app (D33 as amended)
         self._clock = clock
 
     @property
@@ -190,7 +192,7 @@ class IntegrityService:
     def _notify(self, result: Verification, seal_id: int, signature: str) -> None:
         settings = self.settings()
         targets = settings["target_ids"]
-        if self._dispatcher is None or not targets:
+        if self._dispatcher is None:
             return
         if result.status == "failed":
             first = result.failures[0]
@@ -205,6 +207,10 @@ class IntegrityService:
                 link=f"{self._link}/health#integrity" if self._link else None,
                 product=PRODUCT_NAME,
             )
+            # A failed check is never silent: every alert target when none is chosen (D33).
+            if self.stops is not None:
+                self.stops.notify(alert, targets)
+                return
         elif settings["send_seals"] and self._due_daily(seal_id):
             alert = Alert(
                 kind="integrity_seal",
@@ -225,7 +231,8 @@ class IntegrityService:
             )
         else:
             return
-        self._dispatcher.enqueue(alert, targets, None, None)
+        if targets:
+            self._dispatcher.enqueue(alert, targets, None, None)
 
     def _due_daily(self, seal_id: int) -> bool:
         """One seal message per UTC day, whatever the verification interval."""
@@ -316,12 +323,17 @@ class IntegrityService:
         """Everything a third party needs, signed (ADR-0022 row 7)."""
         seals = self.seals(days)
         head, seq = self._ledger.head()
+        since = (self._clock() - timedelta(days=days)).isoformat()
+        files, rows = self._ledger.reparsed_since(since)
         body = {
             "product": PRODUCT_NAME,
             "generated_at": self._clock().isoformat(),
             "period_days": days,
             "lake_head": head,
             "lake_entries": seq,
+            # Reparse (ADR-0050, owner 2026-11-11): rewrites recorded as add and remove with
+            # "reparsed" reasons, like compaction; counted here for the period.
+            "reparsed": {"files": files, "rows": rows},
             "seals": seals,
             "how_to_check": (
                 "lake_head, audit_head, and llm_head in each seal are SHA-256 chain heads: "

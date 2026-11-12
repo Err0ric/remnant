@@ -24,6 +24,8 @@ from app.ai.claude_plugin import VERSION as PLUGIN_VERSION
 from app.ai.claude_plugin import build_managed as build_plugin_bundle
 from app.ai.claude_plugin import build_zip as build_plugin_zip
 from app.alerts.dispatch import AlertDispatcher
+from app.alerts.external_cap import ExternalAlertSettings, Level, Notify, Pause
+from app.alerts.fallback import SourceFallbacks
 from app.api.access import AdminUser, CurrentUser, client_ip
 from app.api.schedules import DeliveryOut
 from app.auth.service import AuthService
@@ -38,6 +40,7 @@ from app.core.errors import (
     SourceRejectedError,
 )
 from app.core.ids import AUTO_PARSER
+from app.detect.reparse_rules import ReparseRules, RuleFailure
 from app.engine.views import permitted_sources
 from app.ingest.agent import AgentOs
 from app.ingest.agent import render as render_agent
@@ -51,6 +54,7 @@ from app.ingest.connectors.registry import API_KINDS, check_on_save, probe, secr
 from app.ingest.discovery import DiscoveryReport, discover
 from app.ingest.listener import ListenerStatus, SyslogListeners
 from app.ingest.quiet import MAX_QUIET_S, MIN_QUIET_S, QuietWatch, Watch, default_quiet_s
+from app.ingest.reparse import ReparseJob, ReparseJobs
 from app.ingest.skew import skew_text
 from app.ingest.sources import (
     SourceConfig,
@@ -126,13 +130,62 @@ class QuietOut(BaseModel):
     last_seen: str | None
 
 
+class AlertPauseOut(BaseModel):
+    """A vendor alert source over its hourly cap (D231): alerts below High are held."""
+
+    paused_since: str
+    held: dict[str, int]
+
+
+JobState = Literal["running", "done", "failed", "interrupted"]
+RulesState = Literal["running", "done", "partial", "failed", "interrupted"]
+
+
+class ReparseRuleFailedOut(BaseModel):
+    rule_id: str
+    title: str
+    error: str
+
+
+class ReparseLastOut(BaseModel):
+    """A source's latest reparse job, on the source list (administrators only)."""
+
+    job_id: str
+    state: JobState
+    finished_at: str | None
+    rows_rewritten: int
+    time_min: str | None
+    time_max: str | None
+    rules_state: RulesState | None
+    rules_run_at: str | None
+    rules_finished_at: str | None
+    rules_count: int
+    rules_matched: int
+    rules_items: int
+    rules_error: str | None
+    rules_failed: list[ReparseRuleFailedOut]  # when partial: the rules to run again
+    # The rule re-run is offered or was started: a done job, or a stopped one that rewrote
+    # the last waiting rows (no later reparse would take its events over).
+    rules_ready: bool = False
+
+
 class SourceOut(SourceConfig):
     status: StatusOut
     quiet: QuietOut | None = None
+    # Server-set: the source's template sends vendor alerts (ADR-0049), and its cap pause.
+    emits_alerts: bool = False
+    alert_pause: AlertPauseOut | None = None
     # Server-set, never accepted on input: a built-in source, and one with events only when
     # someone uses or probes the server, so its quiet is expected (handoff items 4 and 9).
     built_in: bool = False
     quiet_expected: bool = False
+    # Server-set, administrators only: events stored while the template was missing wait
+    # for a reparse and the template loads now (ADR-0050 row 7). From the fallback table,
+    # without reading the lake; the exact count is GET /sources/{id}/reparse.
+    reparse_pending: bool = False
+    # Server-set, administrators only: the source's latest reparse job, from reparse_jobs
+    # only, so the rule re-run over its range stays reachable once the fallback row is gone.
+    reparse_last: ReparseLastOut | None = None
 
     @model_validator(mode="after")
     def _kind_fields(self) -> "SourceOut":
@@ -194,15 +247,25 @@ async def list_sources(request: Request, user: CurrentUser) -> list[SourceOut]:
     ingest: IngestService = request.app.state.ingest
     statuses = ingest.status()
     watches = {w.source_id: w for w in await run_in_threadpool(_quiet(request).all)}
+    pauses = await run_in_threadpool(_vendor(request).pauses)
+    alerting = {t.id for t in request.app.state.templates.all() if t.emits == "alerts"}
     listeners: SyslogListeners = request.app.state.listeners
     sockets = listeners.status()
+    offers = await run_in_threadpool(_reparse_offers, request) if admin else {}
+    jobs, failed, ready = (
+        await run_in_threadpool(_latest_jobs, request, sources) if admin else ({}, {}, set())
+    )
     out = [
         SourceOut(
             **s.model_dump(),
             status=_status_out(s, statuses.get(s.source_id)),
             quiet=_quiet_out(watches.get(s.source_id)),
+            emits_alerts=s.template_id in alerting,
+            alert_pause=_pause_out(pauses.get(s.source_id)),
             built_in=built_in(s),
             quiet_expected=quiet_expected(s),
+            reparse_pending=s.template_id is not None and offers.get(s.source_id) == s.template_id,
+            reparse_last=_last_out(jobs.get(s.source_id), failed, ready),
         )
         for s in sources
     ]
@@ -952,6 +1015,60 @@ async def set_watch(
     return _watch_out(w) if w else None
 
 
+# --- vendor alert messages (ADR-0049 0b, D231) ---------------------------------------------
+
+
+def _vendor(request: Request) -> ExternalAlertSettings:
+    settings: ExternalAlertSettings = request.app.state.external_alert_settings
+    return settings
+
+
+def _pause_out(p: Pause | None) -> AlertPauseOut | None:
+    return None if p is None else AlertPauseOut(paused_since=p.paused_since, held=p.held)
+
+
+class AlertNotifyIO(BaseModel):
+    """Send this source's new vendor alerts to alert targets (off by default)."""
+
+    notify: bool = False
+    target_ids: list[str] = Field(default_factory=list, max_length=10)
+    min_severity: Level = "high"
+
+
+def _notify_out(n: Notify) -> AlertNotifyIO:
+    return AlertNotifyIO(
+        notify=n.notify,
+        target_ids=n.target_ids,
+        min_severity=n.min_severity,
+    )
+
+
+@router.get("/sources/{source_id}/alert-notify")
+async def get_alert_notify(source_id: str, request: Request, _: AdminUser) -> AlertNotifyIO:
+    """Who hears about this source's vendor alerts. The cap's pause notice goes to the
+    same targets, whether or not notify is on."""
+    if source_id not in await run_in_threadpool(_store(request).ids):
+        raise NotFoundError("No such source")
+    return _notify_out(await run_in_threadpool(_vendor(request).get, source_id))
+
+
+@router.put("/sources/{source_id}/alert-notify")
+async def set_alert_notify(
+    source_id: str, body: AlertNotifyIO, request: Request, user: AdminUser
+) -> AlertNotifyIO:
+    """Audited as source.vendor_alert_change with the old and new setting."""
+    n = await run_in_threadpool(
+        _vendor(request).set,
+        source_id,
+        body.notify,
+        body.target_ids,
+        body.min_severity,
+        user,
+        client_ip(request),
+    )
+    return _notify_out(n)
+
+
 @router.get("/sources/{source_id}/deliveries")
 async def watch_deliveries(source_id: str, request: Request, _: AdminUser) -> list[DeliveryOut]:
     """Quiet and resumed alerts sent for this source, newest first (no message content)."""
@@ -971,3 +1088,161 @@ async def watch_deliveries(source_id: str, request: Request, _: AdminUser) -> li
         )
         for d in rows
     ]
+
+
+class ReparseJobOut(BaseModel):
+    job_id: str
+    template_id: str
+    state: JobState
+    started_at: str
+    finished_at: str | None
+    rows_found: int
+    rows_rewritten: int
+    files_rewritten: int
+    time_min: str | None  # the reparsed rows' time range, for the rule re-run over it
+    time_max: str | None
+    error: str | None
+    # The rule re-run over the rewritten rows (ADR-0050 row 7, slice 3b); None until started.
+    rules_state: RulesState | None = None
+    rules_run_at: str | None = None
+    rules_finished_at: str | None = None
+    rules_count: int = 0  # rules that ran
+    rules_matched: int = 0
+    rules_items: int = 0  # alert items raised or grown
+    rules_error: str | None = None
+
+
+class ReparseOut(BaseModel):
+    source_id: str
+    template_id: str | None
+    template_available: bool
+    pending: int  # template_missing rows in the source's retention window
+    job: ReparseJobOut | None
+
+
+def _reparse_offers(request: Request) -> dict[str, str]:
+    """Sources with a cleared fallback whose template loads now: {source: template}."""
+    fallbacks: SourceFallbacks | None = request.app.state.ingest.fallbacks
+    if fallbacks is None:
+        return {}
+    templates: TemplateRegistry = request.app.state.templates
+    return {
+        sid: tid
+        for sid, tid in fallbacks.reparse_offers().items()
+        if templates.get(tid) is not None
+    }
+
+
+def _reparse(request: Request) -> ReparseJobs:
+    jobs: ReparseJobs = request.app.state.reparse
+    return jobs
+
+
+def _latest_jobs(
+    request: Request, sources: list[SourceConfig]
+) -> tuple[dict[str, ReparseJob], dict[str, list[RuleFailure]], set[str]]:
+    """Each listed source's latest reparse job (one indexed read), the rules a partial
+    rule re-run could not run, and the jobs whose rule re-run is offered. Metadata only:
+    the lake is never read here (the start checks it)."""
+    jobs = _reparse(request).latest_for([s.source_id for s in sources])
+    partial = [j.job_id for j in jobs.values() if j.rules_state == "partial"]
+    reruns: ReparseRules = request.app.state.reparse_rules
+    failed = reruns.failures(partial) if partial else {}
+    return jobs, failed, reruns.ready(list(jobs.values()))
+
+
+def _job_out(job: ReparseJob | None) -> ReparseJobOut | None:
+    if job is None:
+        return None
+    return ReparseJobOut(
+        job_id=job.job_id,
+        template_id=job.template_id,
+        state=job.state,
+        started_at=job.started_at,
+        finished_at=job.finished_at,
+        rows_found=job.rows_found,
+        rows_rewritten=job.rows_rewritten,
+        files_rewritten=job.files_rewritten,
+        time_min=job.time_min,
+        time_max=job.time_max,
+        error=job.error,
+        rules_state=job.rules_state,
+        rules_run_at=job.rules_run_at,
+        rules_finished_at=job.rules_finished_at,
+        rules_count=job.rules_count,
+        rules_matched=job.rules_matched,
+        rules_items=job.rules_items,
+        rules_error=job.rules_error,
+    )
+
+
+def _last_out(
+    job: ReparseJob | None, failed: dict[str, list[RuleFailure]], ready: set[str]
+) -> ReparseLastOut | None:
+    if job is None:
+        return None
+    return ReparseLastOut(
+        job_id=job.job_id,
+        state=job.state,
+        finished_at=job.finished_at,
+        rows_rewritten=job.rows_rewritten,
+        time_min=job.time_min,
+        time_max=job.time_max,
+        rules_state=job.rules_state,
+        rules_run_at=job.rules_run_at,
+        rules_finished_at=job.rules_finished_at,
+        rules_count=job.rules_count,
+        rules_matched=job.rules_matched,
+        rules_items=job.rules_items,
+        rules_error=job.rules_error,
+        rules_failed=[
+            ReparseRuleFailedOut(rule_id=f.rule_id, title=f.title, error=f.error)
+            for f in failed.get(job.job_id, [])
+        ],
+        rules_ready=job.job_id in ready,
+    )
+
+
+@router.get("/sources/{source_id}/reparse")
+async def reparse_status(source_id: str, request: Request, _: AdminUser) -> ReparseOut:
+    """Rows stored without the source's template, whether it loads now, and the latest
+    reparse job (ADR-0050 row 7)."""
+    st = await run_in_threadpool(_reparse(request).status, source_id)
+    return ReparseOut(
+        source_id=st.source_id,
+        template_id=st.template_id,
+        template_available=st.template_available,
+        pending=st.pending,
+        job=_job_out(st.job),
+    )
+
+
+@router.post("/sources/{source_id}/reparse", status_code=status.HTTP_202_ACCEPTED)
+async def start_reparse(source_id: str, request: Request, user: AdminUser) -> ReparseJobOut:
+    """Start reparsing the source's template_missing rows with its template, in the
+    background. Audited as source.reparse at start (with the count) and at the end."""
+    job = await run_in_threadpool(
+        _reparse(request).start, source_id, user.user_id, client_ip(request)
+    )
+    out = _job_out(job)
+    assert out is not None
+    return out
+
+
+@router.post("/sources/{source_id}/reparse/{job_id}/rules", status_code=status.HTTP_202_ACCEPTED)
+async def run_reparse_rules(
+    source_id: str, job_id: str, request: Request, user: AdminUser
+) -> ReparseJobOut:
+    """Run the enabled rules over the rows a reparse job rewrote, on that source only, in
+    the background (ADR-0050 row 7): a done job, or a stopped one once nothing is left to
+    reparse (409 "Reparse the remaining N events first" until then). Matches are normal
+    rule matches and raise alert items under D200, marked late; each target of a schedule
+    whose scheduled run would have alerted on them (not paused, its owner may read the
+    source, its threshold met) gets one late-detection message (D241). Once per job; after
+    a partial run or a stop, a start runs only the rules that did not complete. Audited as
+    source.reparse_rules at start and end."""
+    reruns: ReparseRules = request.app.state.reparse_rules
+    job = await run_in_threadpool(reruns.start, source_id, job_id, user, client_ip(request))
+    out = _job_out(job)
+    assert out is not None
+    return out

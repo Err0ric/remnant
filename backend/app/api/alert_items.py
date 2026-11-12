@@ -2,20 +2,23 @@
 Router only; the rules live in `app.alerts.items`.
 
 Everyone may read the alerts they can see; Admins and Analysts close and reopen; only Admins
-mute. Items whose run read a source the viewer may not read are counted as restricted and
-never described.
+mute. Items whose run read a source the viewer may not read are never described, and never
+counted: the viewer only learns that some exist (`restricted`, owner 2026-11-12).
 """
 
 import ipaddress
 from collections.abc import Callable
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Query, Request, Response, status
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
+from app.ai.alert_mask import has_names, mask_item, mask_mute
 from app.ai.host_people import Asked, DevicePerson, for_alerts
+from app.ai.people_view import audit_ai_view, can_view_people
+from app.alerts.external import MAX_PAGE, SHOWN_IDS, alert_ids, is_external, item_events
 from app.alerts.items import MAX_NOTE, REASONS, AlertItem, AlertItems, Mute, label
 from app.api.access import AdminUser, CurrentUser, client_ip, require_role
 from app.auth.users import User
@@ -43,9 +46,25 @@ class DevicePersonOut(BaseModel):
 
     device: str
     level: Literal["attributed", "possible"]
-    people: list[str]  # up to 3
+    people: list[str]  # up to 3; none without View people in AI usage (D242)
     count: int
     how: Literal["hooks", "hooks_identities"]
+
+
+class AlertIdOut(BaseModel):
+    product: str
+    alert_id: str
+
+
+class AlertIdsOut(BaseModel):
+    count: int
+    ids: list[AlertIdOut]
+
+
+class AlertEventsOut(BaseModel):
+    columns: list[str]
+    rows: list[list[Any]]
+    elapsed_ms: int
 
 
 class ItemOut(BaseModel):
@@ -72,6 +91,10 @@ class ItemOut(BaseModel):
     severity: str | None  # high | medium as stored on the item; the only severity it has
     people: list[str] = []
     devices: list[str] = []
+    # An AI Watch item for a viewer without View people in AI usage (D242): no names in
+    # any text and no people listed; `people_hidden` is how many it is about.
+    masked: bool = False
+    people_hidden: int = 0
     muted_until: str | None
     history: list[EventOut]
     # The group (ADR-0043): one open item per entity, rule, and day, with its repeats.
@@ -85,6 +108,15 @@ class ItemOut(BaseModel):
     # follows; "unknown" for a service the catalog does not list; None for other items.
     review_status: Review | None = None
     device_people: list[DevicePersonOut] = []
+    # An external alert item's vendor alerts (D228): the count and the first SHOWN_IDS on
+    # the item's own page; the rest page through /alerts/{id}/alert-ids. Never on the list.
+    alert_ids: AlertIdsOut | None = None
+    # The closed item this one follows: a vendor alert that rose after it was closed.
+    follows: str | None = None
+    # Raised or grown by a rule re-run over reparsed events (D241), with their time range.
+    late: bool = False
+    late_start: str | None = None
+    late_end: str | None = None
 
 
 class MuteOut(BaseModel):
@@ -100,11 +132,34 @@ class MuteOut(BaseModel):
 class ListOut(BaseModel):
     items: list[ItemOut]
     open: int  # open items the viewer may read
-    restricted: int  # open items the viewer may not read: counted, not described
+    # True when an open item read a source the viewer may not read: no count, no item (owner,
+    # 2026-11-12). Always false for an admin, who reads every source.
+    restricted: bool
     muted: int  # active mutes
     reasons: dict[str, str]
     # Open items the viewer may read, by their stored severity ("other" when none): the
     # Alerts strip shows these, so it can never disagree with the badges in the list.
+    by_severity: dict[str, int] = {}
+
+
+class CountOut(BaseModel):
+    """Open alerts as numbers only (the alert badge, the Dashboard's count): no item."""
+
+    open: int
+    restricted: bool  # as ListOut.restricted: a flag, never a count
+    by_severity: dict[str, int] = {}
+
+
+class LinesOut(BaseModel):
+    """The few open alerts a summary shows (the Dashboard's "Needs you", Health's newest):
+    one item per kind and subject, its newest, with how many open items it stands for."""
+
+    items: list[ItemOut]
+    runs: dict[str, int] = {}  # item_id: open items of its kind and subject
+    groups: int  # every kind and subject open and readable, shown or not
+    gap_sources: list[str] = []  # sources with an open gap alert (no extra source line)
+    open: int
+    restricted: bool  # as ListOut.restricted: a flag, never a count
     by_severity: dict[str, int] = {}
 
 
@@ -212,8 +267,16 @@ def _out(
     i: AlertItem,
     mutes: list[Mute],
     people: dict[str, list[DevicePerson]] | None = None,
+    named_ok: bool = True,
 ) -> ItemOut:
     until = next((m.until for m in mutes if m.kind == i.kind and m.subject == i.subject), None)
+    review = _review_status(request, i)  # from the stored subject
+    masked = not named_ok and i.kind == "ai_watch"
+    # Older items keep their names only in the text: at least one is hidden, so the
+    # People row still says names are hidden (D242).
+    hidden = (len(i.people) or int(has_names(i))) if masked else 0
+    if masked:
+        i = mask_item(i)
     return ItemOut(
         item_id=i.item_id,
         kind=i.kind,
@@ -238,6 +301,8 @@ def _out(
         severity=i.severity,
         people=i.people,
         devices=i.devices,
+        masked=masked,
+        people_hidden=hidden,
         muted_until=until,
         entity=i.entity,
         rule=i.rule,
@@ -245,10 +310,18 @@ def _out(
         last_seen=i.last_seen,
         changes=i.changes,
         more_changes=i.more,
-        review_status=_review_status(request, i),
+        follows=i.follows,
+        late=i.late,
+        late_start=i.late_start,
+        late_end=i.late_end,
+        review_status=review,
         device_people=[
             DevicePersonOut(
-                device=d.device, level=d.level, people=d.people, count=d.count, how=d.how
+                device=d.device,
+                level=d.level,
+                people=d.people if named_ok else [],
+                count=d.count,
+                how=d.how,
             )
             for d in (people or {}).get(i.item_id, [])
         ],
@@ -293,6 +366,10 @@ def _list(
     found = store.items(user, state)
     if unreviewed:
         found = [i for i in found if _unreviewed(request, i)]
+    if person and not can_view_people(user):
+        # AI Watch items name people in AI usage: left out before any name is matched, so
+        # they can neither be listed nor link a form of the name (D242, amended 2026-11-11).
+        found = [i for i in found if i.kind != "ai_watch"]
     if person:
         # One person under every form of the name (ADR-0018), as the person page shows it:
         # the whole map for an administrator (D223), otherwise only the links the names on
@@ -304,21 +381,34 @@ def _list(
         found = [i for i in found if any(ident.key(p) in keys for p in i.people)]
     opened = found if state == "open" else store.items(user, "open")
     mutes = store.mutes()
+    tally = _tally(opened, readable)
+    if person:
+        # Whether any open alert is in a source the caller cannot read, never whether one
+        # names this person: the flag comes from every open alert, not the filtered ones
+        # (D243; the person filter also matches alerts the caller cannot read).
+        every = _tally(store.items(user, "open"), readable)
+        tally = tally.model_copy(update={"restricted": every.restricted})
+    shown = [i for i in found if readable(i)]
+    people = _device_people(request, user, shown)
+    named_ok = can_view_people(user)
+    _audit_view(request, user, "alerts", shown, people, named_ok, state=state)
+    return ListOut(
+        items=[_out(request, i, mutes, people, named_ok) for i in shown],
+        open=tally.open,
+        restricted=tally.restricted,
+        muted=len(mutes),
+        reasons=dict(REASONS),
+        by_severity=tally.by_severity,
+    )
+
+
+def _tally(opened: list[AlertItem], readable: Callable[[AlertItem], bool]) -> CountOut:
     sev = {"high": 0, "medium": 0, "other": 0}
     for i in opened:
         if readable(i):
-            key = i.severity if i.severity in ("high", "medium") else "other"
-            sev[key] += 1
-    shown = [i for i in found if readable(i)]
-    people = _device_people(request, user, shown)
-    return ListOut(
-        items=[_out(request, i, mutes, people) for i in shown],
-        open=sum(1 for i in opened if readable(i)),
-        restricted=sum(1 for i in opened if not readable(i)),
-        muted=len(mutes),
-        reasons=dict(REASONS),
-        by_severity=sev,
-    )
+            sev[i.severity if i.severity in ("high", "medium") else "other"] += 1
+    n = sum(sev.values())
+    return CountOut(open=n, restricted=len(opened) > n, by_severity=sev)
 
 
 @router.get("/alerts")
@@ -332,23 +422,131 @@ async def list_alerts(
     """The viewer's alerts, newest first: open by default, or closed, or all. With
     `unreviewed`, only AI Watch items whose service or MCP server is still not reviewed,
     closed ones included: what AI Watch's "not reviewed" line links to. With `person`, only
-    items about that person under any form of the name (ADR-0038 row 27)."""
+    items about that person under any form of the name (ADR-0038 row 27); without View
+    people in AI usage, AI Watch items are left out of it (D242). Without it, AI Watch
+    items name no one: "a person" stands in place of each name."""
     return await run_in_threadpool(_list, request, user, state, unreviewed, person)
 
 
-def _one(request: Request, user: User, item_id: str, people: bool = True) -> ItemOut:
+@router.get("/alerts/count")
+async def count_alerts(request: Request, user: CurrentUser) -> CountOut:
+    """Open alerts as numbers only, for the alert badge and the Dashboard's count. It
+    returns no item, so it is not an AI view and writes no audit row (D242); every answer
+    with an item's text is audited."""
+
+    def run() -> CountOut:
+        return _tally(_store(request).items(user, "open"), _readable(request, user))
+
+    return await run_in_threadpool(run)
+
+
+_RANK = {"high": 0, "medium": 1}
+
+
+def _lines(request: Request, user: User, limit: int, by: str) -> LinesOut:
     store = _store(request)
-    item = store.get(item_id, user)
+    readable = _readable(request, user)
+    opened = store.items(user, "open")
+    shown = [i for i in opened if readable(i)]  # newest first
+    groups: dict[tuple[str, str], tuple[AlertItem, int]] = {}
+    for i in shown:
+        first, runs = groups.get((i.kind, i.subject), (i, 0))
+        groups[(i.kind, i.subject)] = (first, runs + 1)
+    top = list(groups.values())
+    if by == "severity":  # stable: newest first within a severity, as the banner sorts
+        top.sort(key=lambda g: _RANK.get(g[0].severity or "", 2))
+    top = top[:limit]
+    named_ok = can_view_people(user)
+    # Access, not page loads (owner, 2026-11-11): a row only when a line shows a name.
+    if named_ok and any(has_names(i) for i, _ in top):
+        audit_ai_view(
+            request.app.state.auth.audit, user, client_ip(request), "alert_lines", None, None,
+            permitted_sources(request.app.state.meta, user), True,
+        )  # fmt: skip
+    mutes = store.mutes()
+    tally = _tally(opened, readable)
+    return LinesOut(
+        items=[_out(request, i, mutes, {}, named_ok) for i, _ in top],
+        runs={i.item_id: n for i, n in top},
+        groups=len(groups),
+        gap_sources=sorted({i.subject for i in shown if i.kind == "gap"}),
+        open=tally.open,
+        restricted=tally.restricted,
+        by_severity=tally.by_severity,
+    )
+
+
+@router.get("/alerts/lines")
+async def alert_lines(
+    request: Request,
+    user: CurrentUser,
+    limit: Annotated[int, Query(ge=1, le=20)] = 5,
+    by: Annotated[Literal["severity", "newest"], Query()] = "severity",
+) -> LinesOut:
+    """The first `limit` open alerts a summary shows, one per kind and subject: most
+    severe first (the Dashboard's "Needs you"), or newest first (Health). Only those lines,
+    so the audit log records what was shown: `ai.view_people` when a line names someone to
+    a viewer with View people in AI usage, else no row (owner, 2026-11-11; D242). Without
+    the permission AI Watch lines name no one, as on Alerts."""
+    return await run_in_threadpool(_lines, request, user, limit, by)
+
+
+def _readable_item(request: Request, user: User, item_id: str) -> AlertItem:
+    item = _store(request).get(item_id, user)
     if not _readable(request, user)(item):
         raise ForbiddenError("This alert read a source you cannot read")
-    found = _device_people(request, user, [item]) if people else None
-    return _out(request, item, store.mutes(), found)
+    return item
+
+
+def _ids(request: Request, item: AlertItem, offset: int, limit: int) -> AlertIdsOut | None:
+    if not is_external(item):
+        return None
+    n, page = alert_ids(request.app.state.meta, item.item_id, offset, limit)
+    return AlertIdsOut(count=n, ids=[AlertIdOut(product=p, alert_id=a) for p, a in page])
+
+
+def _one(request: Request, user: User, item_id: str) -> ItemOut:
+    """One item as this caller sees it, audited as an AI view when it is an AI Watch item:
+    every answer with one (read, close, reopen, mute) is a view (ADR-0029 G3)."""
+    store = _store(request)
+    item = _readable_item(request, user, item_id)
+    found = _device_people(request, user, [item])
+    named_ok = can_view_people(user)
+    _audit_view(request, user, "alert", [item], found, named_ok, item_id=item_id)
+    out = _out(request, item, store.mutes(), found, named_ok)
+    out.alert_ids = _ids(request, item, 0, SHOWN_IDS)
+    return out
+
+
+def _audit_view(
+    request: Request,
+    user: User,
+    surface: str,
+    shown: list[AlertItem],
+    people: dict[str, list[DevicePerson]],
+    named_ok: bool,
+    **extra: Any,
+) -> None:
+    """One audit row per answer with AI Watch items (ADR-0029 G3): `ai.view_people` when
+    it named someone, else `ai.view`. Answers without them are not AI views."""
+    ai = [i for i in shown if i.kind == "ai_watch"]
+    if not ai:
+        return
+    named = named_ok and (
+        any(has_names(i) for i in ai) or any(d.people for ds in people.values() for d in ds)
+    )
+    audit_ai_view(
+        request.app.state.auth.audit, user, client_ip(request), surface, None, None,
+        permitted_sources(request.app.state.meta, user), named, **extra,
+    )  # fmt: skip
 
 
 @router.get("/alerts/mutes")
 async def list_mutes(request: Request, user: CurrentUser) -> list[MuteOut]:
     """Active mutes, soonest to expire first. Everyone may see what is muted."""
     mutes = await run_in_threadpool(_store(request).mutes)
+    if not can_view_people(user):
+        mutes = [mask_mute(m) for m in mutes]
     return [
         MuteOut(
             mute_id=m.mute_id,
@@ -365,7 +563,54 @@ async def list_mutes(request: Request, user: CurrentUser) -> list[MuteOut]:
 
 @router.get("/alerts/{item_id}")
 async def get_alert(item_id: str, request: Request, user: CurrentUser) -> ItemOut:
+    """One alert. Without View people in AI usage, an AI Watch alert names no one (D242)."""
     return await run_in_threadpool(_one, request, user, item_id)
+
+
+@router.get("/alerts/{item_id}/alert-ids")
+async def get_alert_ids(
+    item_id: str,
+    request: Request,
+    user: CurrentUser,
+    offset: Annotated[int, Query(ge=0, le=1_000_000)] = 0,
+    limit: Annotated[int, Query(ge=1, le=MAX_PAGE)] = SHOWN_IDS,
+) -> AlertIdsOut:
+    """A page of an external alert item's vendor alert IDs, oldest first (Show all)."""
+
+    def run() -> AlertIdsOut:
+        item = _readable_item(request, user, item_id)
+        return _ids(request, item, offset, limit) or AlertIdsOut(count=0, ids=[])
+
+    return await run_in_threadpool(run)
+
+
+@router.get("/alerts/{item_id}/events")
+async def get_alert_events(
+    item_id: str,
+    request: Request,
+    user: CurrentUser,
+    offset: Annotated[int, Query(ge=0, le=1_000_000)] = 0,
+    limit: Annotated[int, Query(ge=1, le=MAX_PAGE)] = 100,
+) -> AlertEventsOut:
+    """An external alert item's own events, newest first: a server-built query over the
+    item's stored keys, on the item's sources only, which the viewer must be able to read
+    (rule 13). Audited like any query (rule 14)."""
+
+    def run() -> AlertEventsOut:
+        item = _readable_item(request, user, item_id)
+        if not is_external(item):
+            raise NotFoundError("This alert has no vendor alerts")
+        res = item_events(
+            request.app.state.engine, request.app.state.meta, item.item_id, item.sources,
+            item.range_start, item.range_end, offset, limit,
+        )  # fmt: skip
+        request.app.state.auth.audit.write(
+            "alert.events", "success", user.user_id, client_ip(request),
+            {"item_id": item.item_id, "sources_in_scope": item.sources, "rows": len(res.rows)},
+        )  # fmt: skip
+        return AlertEventsOut(columns=res.columns, rows=res.rows, elapsed_ms=res.elapsed_ms)
+
+    return await run_in_threadpool(run)
 
 
 @router.post("/alerts/close")
@@ -403,7 +648,8 @@ async def _close_one(
     review_status: str | None,
     bulk: bool = False,
 ) -> None:
-    item = await run_in_threadpool(_one, request, user, item_id, False)
+    # The stored item: its subject decides the review, whatever the caller is shown.
+    item = await run_in_threadpool(_readable_item, request, user, item_id)
     review = "approved" if reason == "approved" else review_status
     target = _review_target(item) if review else None
     if review and target is not None and user.role != "admin":
@@ -419,12 +665,13 @@ async def _close_one(
         await run_in_threadpool(_approve_agent, request, user, item)
 
 
-def _approve_agent(request: Request, user: User, item: ItemOut) -> None:
+def _approve_agent(request: Request, user: User, item: AlertItem) -> None:
     """Approved on an agent's alert marks the agent reviewed: its other open alerts (the
     standing review item among them) close as Approved, audited, and ai.review records it."""
-    n = _store(request).close_subject(
-        "ai_watch", item.subject, user, "approved", f"Approved with alert {item.item_id}",
-        client_ip(request),
+    store = _store(request)
+    n = store.close_subject(  # the subject as stored, which names no one (D242)
+        "ai_watch", store.subject_of(item.item_id), user, "approved",
+        f"Approved with alert {item.item_id}", client_ip(request),
     )  # fmt: skip
     request.app.state.auth.audit.write(
         "ai.review", "success", user.user_id, client_ip(request),
@@ -433,7 +680,7 @@ def _approve_agent(request: Request, user: User, item: ItemOut) -> None:
     )  # fmt: skip
 
 
-def _review_target(item: ItemOut) -> tuple[str, str] | None:
+def _review_target(item: AlertItem) -> tuple[str, str] | None:
     if item.kind != "ai_watch":
         return None
     for kind in ("service", "mcp"):
@@ -464,7 +711,7 @@ def _set_review(request: Request, user: User, target: tuple[str, str], status: s
 @router.post("/alerts/{item_id}/reopen")
 async def reopen_alert(item_id: str, request: Request, user: Decider) -> ItemOut:
     """Audited as alert.reopen."""
-    await run_in_threadpool(_one, request, user, item_id)
+    await run_in_threadpool(_readable_item, request, user, item_id)
     await run_in_threadpool(_store(request).reopen, item_id, user, client_ip(request))
     return await run_in_threadpool(_one, request, user, item_id)
 
@@ -473,7 +720,7 @@ async def reopen_alert(item_id: str, request: Request, user: Decider) -> ItemOut
 async def mute_alert(item_id: str, body: MuteIn, request: Request, user: AdminUser) -> ItemOut:
     """Close new alerts like this one (same kind and subject) for 7 or 30 days; the mute
     expires on its own. Admins only; audited as alert.mute."""
-    await run_in_threadpool(_one, request, user, item_id)
+    await run_in_threadpool(_readable_item, request, user, item_id)
     await run_in_threadpool(_store(request).mute, item_id, body.days, user, client_ip(request))
     return await run_in_threadpool(_one, request, user, item_id)
 

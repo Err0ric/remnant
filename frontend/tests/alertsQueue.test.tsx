@@ -40,7 +40,11 @@ describe("Alerts (ADR-0037, ADR-0043)", () => {
   it("sums up open alerts, filters the list, and opens one in the pane beside it", async () => {
     await renderAt("/alerts");
     const strip = await screen.findByRole("region", { name: "Open alerts summary" });
-    expect(strip).toHaveTextContent("1 restricted (a source you cannot see)");
+    // Alerts in sources the viewer cannot read: one note, never a count (owner, 2026-11-12).
+    expect(strip).toHaveTextContent(
+      "Some alerts are in sources you can't read. Ask an admin for access.",
+    );
+    expect(strip).not.toHaveTextContent(/\d+\s*restricted/i);
     expect(within(strip).getByText("New today")).toBeVisible();
     expect(strip).toHaveTextContent("New AI service: DeepSeek"); // the oldest open
     // High first, then by time: DeepSeek opens in the pane on load.

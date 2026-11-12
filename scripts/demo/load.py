@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import random
 import sys
 import tempfile
@@ -30,6 +31,10 @@ import urllib.request
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts"))
+import devauth  # sibling script, standard library only
 
 FORMATS = {
     "m365_signin": "json",
@@ -46,13 +51,11 @@ MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]
 
 
 class Client:
-    def __init__(self, url: str) -> None:
+    def __init__(self, url: str, data: Path) -> None:
         self.url = url.rstrip("/")
-        self.csrf: str | None = None
-        state = self.call("GET", "/api/auth/state")
-        if state.get("mode") != "open":
-            sys.exit("The demo loads into a loopback install with no accounts (open mode).")
-        self.csrf = state.get("csrf_token")
+        self.session: devauth.Session | None = None
+        # The first administrator, made through the one-time setup link (scripts/devauth.py).
+        self.session = devauth.sign_in(self.url, data)
 
     def call(self, method: str, path: str, body: Any = None, raw: bytes | None = None, token: str | None = None) -> Any:  # fmt: skip
         data = raw if raw is not None else json.dumps(body).encode() if body is not None else None
@@ -62,8 +65,9 @@ class Client:
         )
         if token:
             req.add_header("Authorization", f"Bearer {token}")
-        elif self.csrf:
-            req.add_header("X-CSRF-Token", self.csrf)
+        elif self.session:
+            for name, value in self.session.headers().items():
+                req.add_header(name, value)
         try:
             with urllib.request.urlopen(req, timeout=120) as res:  # noqa: S310  # same
                 out = res.read()
@@ -227,9 +231,15 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--url", default="http://127.0.0.1:8090")
     ap.add_argument("--logs", type=Path, required=True, help="the folder generate.py wrote")
+    ap.add_argument(
+        "--data",
+        type=Path,
+        default=Path(os.environ.get("APP__PATHS__DATA_DIR", ROOT / "data" / "demo" / "state")),
+        help="the demo server's data folder (the first administrator is made there)",
+    )
     args = ap.parse_args()
     wait_for(args.url.rstrip("/"))
-    api = Client(args.url)
+    api = Client(args.url, args.data)
 
     with tempfile.TemporaryDirectory() as tmp:
         country, asn = geoip_files(Path(tmp))

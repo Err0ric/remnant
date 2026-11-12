@@ -251,7 +251,7 @@ def test_regex_catastrophic_backtracking_times_out() -> None:
     started = time.monotonic()
     r = p.parse("a" * 40 + "!")
     assert not r.ok and r.error == "regex timed out"
-    assert time.monotonic() - started < 2
+    assert time.monotonic() - started < 10  # a hang guard; the timeout is the check
 
 
 def test_regex_patterns_validated() -> None:

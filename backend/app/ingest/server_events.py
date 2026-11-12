@@ -8,9 +8,13 @@ Logs, not only in the journal:
   failed): refused ingest tokens, sign-ins (passwords, rate limits, single sign-on), and
   API tokens. A built-in detection reads them (`app.search.refusals`).
 - sign-ins that succeeded (`server.sign_in`, OCSF Authentication, success).
-- requests that change something or export data (`server.request`, OCSF API Activity):
-  every non-GET API request plus exports, never health polling, reads, static assets, or
-  machine pushes to the ingest endpoints.
+- requests that change something, send data out, or are refused (`server.request`, OCSF
+  API Activity): the routes in RECORDED (sign-in and setup, users and tokens, exports and
+  hand-offs, admin and settings changes), and any API request answered 401, 403, or 429.
+  Never reads, even reads sent as POST (READ_ONLY: queries, counts, facets, search compile,
+  Ask, Explain, previews; they stay in the audit log, rule 14), health polling, static
+  assets, or machine pushes to the ingest endpoints (owner, 2026-11-10; #469 recorded every
+  non-GET, so each search became an event).
 
 Metadata only: time, user id and name, client address (as resolved through trusted
 proxies), method, route template, status, and duration. Never a query string, a body, a
@@ -44,18 +48,159 @@ SERVICE = "app-server"
 MAX_PER_MINUTE = 300
 QUEUE_MAX = 2 * MAX_PER_MINUTE
 MAX_PATH = 200
-# Requests recorded besides every non-GET: exports read data out of the server.
-EXPORT_SUFFIX = "/export"
 # Never recorded: machine pushes (their refusals are) and the browser's own error reports.
 SKIP_PREFIXES = ("/api/otlp/", "/api/client-errors")
-READS = frozenset({"GET", "HEAD", "OPTIONS"})
+# Denied or throttled: recorded on any API route, reads included.
+DENIED = frozenset({401, 403, 429})
+
+# What a request record is for, by (method, route template). A test lists every non-GET
+# route and fails until a new one is on this list or on READ_ONLY.
+RECORDED: frozenset[tuple[str, str]] = frozenset(
+    {
+        # Sign-in and setup
+        ("POST", "/api/account/password"),
+        ("POST", "/api/auth/login"),
+        ("POST", "/api/auth/logout"),
+        ("POST", "/api/auth/sso/start"),
+        ("POST", "/api/settings/sso/test"),
+        ("POST", "/api/setup"),
+        # Users and tokens
+        ("PUT", "/api/sources/{source_id}/credentials"),
+        ("POST", "/api/sources/{source_id}/otlp-token"),
+        ("POST", "/api/sources/{source_id}/otlp-tokens"),
+        ("DELETE", "/api/sources/{source_id}/otlp-tokens/{token_id}"),
+        ("POST", "/api/sources/{source_id}/otlp-tokens/{token_id}/test"),
+        ("POST", "/api/tokens"),
+        ("DELETE", "/api/tokens/{token_id}"),
+        ("POST", "/api/users"),
+        ("PATCH", "/api/users/{user_id}"),
+        ("POST", "/api/users/{user_id}/reset"),
+        ("POST", "/api/users/{user_id}/signout"),
+        # Exports and data sent out
+        ("POST", "/api/handoff"),
+        ("POST", "/api/query/export"),
+        ("GET", "/api/ai/inventory/export"),
+        ("GET", "/api/audit/{log}/export"),
+        ("GET", "/api/searches/{search_id}/export"),
+        # Admin and settings changes
+        ("DELETE", "/api/ai/inventory/exclusions"),
+        ("PUT", "/api/ai/inventory/exclusions"),
+        ("PUT", "/api/ai/mcp-rules"),
+        ("POST", "/api/ai/services"),
+        ("DELETE", "/api/ai/services/{service_id}"),
+        ("PUT", "/api/ai/services/{service_id}/data-level"),
+        ("PUT", "/api/ai/services/{service_id}/status"),
+        ("PUT", "/api/ai/watch"),
+        ("POST", "/api/alert-targets"),
+        ("DELETE", "/api/alert-targets/{target_id}"),
+        ("PATCH", "/api/alert-targets/{target_id}"),
+        ("POST", "/api/alert-targets/{target_id}/test"),
+        ("POST", "/api/alerts/close"),
+        ("DELETE", "/api/alerts/mutes/{mute_id}"),
+        ("POST", "/api/alerts/{item_id}/close"),
+        ("POST", "/api/alerts/{item_id}/mute"),
+        ("POST", "/api/alerts/{item_id}/reopen"),
+        ("POST", "/api/dashboards"),
+        ("DELETE", "/api/dashboards/{dashboard_id}"),
+        ("PATCH", "/api/dashboards/{dashboard_id}"),
+        ("POST", "/api/dashboards/{dashboard_id}/acknowledge"),
+        ("PUT", "/api/dashboards/{dashboard_id}/layout"),
+        ("PUT", "/api/dashboards/{dashboard_id}/order"),
+        ("DELETE", "/api/dashboards/{dashboard_id}/panels/{schedule_id}"),
+        ("PUT", "/api/dashboards/{dashboard_id}/panels/{schedule_id}"),
+        ("PATCH", "/api/dashboards/{dashboard_id}/sections"),
+        ("PUT", "/api/enrichment/feeds/{feed_id}"),
+        ("POST", "/api/enrichment/feeds/{feed_id}/update"),
+        ("POST", "/api/enrichment/feeds/{feed_id}/upload"),
+        ("PUT", "/api/enrichment/places"),
+        ("PUT", "/api/enrichment/settings"),
+        ("POST", "/api/groups"),
+        ("POST", "/api/groups/suggestions/accept"),
+        ("DELETE", "/api/groups/{group_id}"),
+        ("PATCH", "/api/groups/{group_id}"),
+        ("PUT", "/api/groups/{group_id}/members"),
+        ("PUT", "/api/groups/{group_id}/sources"),
+        ("POST", "/api/health-checks/devices"),
+        ("DELETE", "/api/health-checks/devices/{device_id}"),
+        ("PUT", "/api/health-checks/devices/{device_id}"),
+        ("PUT", "/api/identities/aliases"),
+        ("PUT", "/api/identities/domains"),
+        ("PUT", "/api/install"),
+        ("PUT", "/api/integrity/settings"),
+        ("POST", "/api/integrity/verify"),
+        ("POST", "/api/library/{pack_id}/dashboard"),
+        ("POST", "/api/library/{pack_id}/{query_id}/copy"),
+        ("POST", "/api/library/{pack_id}/{query_id}/replace"),
+        ("PUT", "/api/mcp/settings"),
+        ("POST", "/api/providers"),
+        ("DELETE", "/api/providers/{provider_id}"),
+        ("PATCH", "/api/providers/{provider_id}"),
+        ("POST", "/api/providers/{provider_id}/test"),
+        ("PUT", "/api/rules/builtin/refusals"),
+        ("POST", "/api/rules/enabled"),
+        ("POST", "/api/rules/import"),
+        ("POST", "/api/rules/import/sigmahq"),
+        ("POST", "/api/rules/import/upload"),
+        ("POST", "/api/schedules"),
+        ("DELETE", "/api/schedules/{schedule_id}"),
+        ("PATCH", "/api/schedules/{schedule_id}"),
+        ("POST", "/api/schedules/{schedule_id}/run"),
+        ("POST", "/api/searches"),
+        ("POST", "/api/searches/import"),
+        ("DELETE", "/api/searches/{search_id}"),
+        ("PUT", "/api/searches/{search_id}"),
+        ("PUT", "/api/searches/{search_id}/verified"),
+        ("PUT", "/api/settings/auditor-sql"),
+        ("PUT", "/api/settings/backups"),
+        ("PUT", "/api/settings/live"),
+        ("POST", "/api/sources"),
+        ("POST", "/api/sources/api/test"),
+        ("POST", "/api/sources/loki/test"),
+        ("DELETE", "/api/sources/{source_id}"),
+        ("PATCH", "/api/sources/{source_id}"),
+        ("PUT", "/api/sources/{source_id}/alert-notify"),
+        ("POST", "/api/sources/{source_id}/reparse"),
+        ("POST", "/api/sources/{source_id}/reparse/{job_id}/rules"),
+        ("POST", "/api/sources/{source_id}/claude-plugin"),
+        ("PUT", "/api/sources/{source_id}/watch"),
+        ("POST", "/api/templates/drafts"),
+        ("DELETE", "/api/templates/drafts/{template_id}"),
+        ("PUT", "/api/templates/drafts/{template_id}"),
+        ("POST", "/api/templates/drafts/{template_id}/ai-draft"),
+        ("POST", "/api/templates/drafts/{template_id}/approve"),
+        ("DELETE", "/api/templates/{template_id}"),
+    }
+)
+
+# Reads sent as POST (or ending a read): never recorded unless denied.
+READ_ONLY: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("POST", "/api/ai/watch/check"),
+        ("POST", "/api/ask"),
+        ("POST", "/api/ask/{ask_id}/answer"),
+        ("POST", "/api/ask/{ask_id}/drill"),
+        ("POST", "/api/ask/{ask_id}/run"),
+        ("POST", "/api/explain"),
+        ("POST", "/api/query"),
+        ("POST", "/api/query/refine"),
+        ("POST", "/api/rules/{rule_id}/run"),
+        ("POST", "/api/search/compile"),
+        ("POST", "/api/search/facets"),
+        ("DELETE", "/api/search/live/streams/{stream_id}"),
+        ("POST", "/api/searches/{search_id}/run"),
+        ("POST", "/api/sources/discover"),
+        ("POST", "/api/templates/drafts/{template_id}/preview"),
+    }
+)
 
 
-def wanted(method: str, path: str) -> bool:
-    """A request worth a record: an API change or an export, never a read or a push."""
-    if not path.startswith("/api/") or path.startswith(SKIP_PREFIXES):
+def wanted(method: str, route: str, status: int, blocked: bool = False) -> bool:
+    """A request worth a record: on RECORDED, denied, or a query the guard blocked
+    (`blocked`: a statement, table function, or function it never allows; a plain SQL
+    error is not recorded). `route` is the route template."""
+    if not route.startswith("/api/") or route.startswith(SKIP_PREFIXES):
         return False
-    return method not in READS or (method == "GET" and path.endswith(EXPORT_SUFFIX))
+    return blocked or (method, route) in RECORDED or status in DENIED
 
 
 class _Budget:

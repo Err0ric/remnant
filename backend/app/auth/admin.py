@@ -44,6 +44,8 @@ class UserRecord:
     created_at: str
     last_login_at: str | None
     sso: bool = False  # signs in with single sign-on (ADR-0013)
+    # View people in AI usage (ADR-0029 G1, D242), effective: always true for an admin.
+    view_ai_people: bool = False
 
 
 def _digest(token: str) -> str:
@@ -71,7 +73,8 @@ class UserAdmin:
         with self._meta.connect() as con:
             rows = con.execute(
                 "SELECT user_id, username, role, disabled, password_hash, created_at,"
-                " last_login_at, sso_subject FROM users ORDER BY username COLLATE NOCASE"
+                " last_login_at, sso_subject, view_ai_people FROM users"
+                " ORDER BY username COLLATE NOCASE"
             ).fetchall()
         return [
             UserRecord(
@@ -83,6 +86,7 @@ class UserAdmin:
                 r["created_at"],
                 r["last_login_at"],
                 r["sso_subject"] is not None,
+                r["role"] == "admin" or bool(r["view_ai_people"]),
             )
             for r in rows
         ]
@@ -125,9 +129,10 @@ class UserAdmin:
         ip: str | None,
         role: Role | None = None,
         disabled: bool | None = None,
+        view_ai_people: bool | None = None,
     ) -> UserRecord:
         try:
-            return self._update(user_id, actor, ip, role, disabled)
+            return self._update(user_id, actor, ip, role, disabled, view_ai_people)
         except LastAdminError:
             self._audit.write(
                 "user.update",
@@ -145,12 +150,14 @@ class UserAdmin:
         ip: str | None,
         role: Role | None,
         disabled: bool | None,
+        view_ai_people: bool | None,
     ) -> UserRecord:
         with self._meta.connect() as con:
             con.execute("BEGIN IMMEDIATE")  # serialise the last-admin check with the write
             self._assert_admin(con, actor)
             row = con.execute(
-                "SELECT role, disabled, password_hash FROM users WHERE user_id = ?", (user_id,)
+                "SELECT role, disabled, password_hash, view_ai_people FROM users WHERE user_id = ?",
+                (user_id,),
             ).fetchone()
             if row is None:
                 raise NotFoundError("No such user")
@@ -174,17 +181,47 @@ class UserAdmin:
                     # Access removal is immediate: end every session and CLI token.
                     con.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
                     con.execute("DELETE FROM user_tokens WHERE user_id = ?", (user_id,))
+            # The stored flag. An admin has the permission whatever it says, so it is never
+            # set on an admin, and promotion clears it: a later demotion starts without (D242).
+            final_role = role if role is not None else row["role"]
+            people_cleared = final_role == "admin" and bool(row["view_ai_people"])
+            if people_cleared:
+                con.execute("UPDATE users SET view_ai_people = 0 WHERE user_id = ?", (user_id,))
+            people_changed = (
+                final_role != "admin"
+                and view_ai_people is not None
+                and view_ai_people != bool(row["view_ai_people"])
+            )
+            if people_changed:
+                con.execute(
+                    "UPDATE users SET view_ai_people = ? WHERE user_id = ?",
+                    (int(bool(view_ai_people)), user_id),
+                )
         if role is not None and role != row["role"]:
             self._audit.write(
                 "user.role_change",
                 "success",
                 actor.user_id,
                 ip,
-                {"target": user_id, "from": row["role"], "to": role},
+                {"target": user_id, "from": row["role"], "to": role}
+                | ({"view_ai_people_cleared": True} if people_cleared else {}),
             )
         if disabled is not None and disabled != bool(row["disabled"]):
             action = "user.disable" if disabled else "user.enable"
             self._audit.write(action, "success", actor.user_id, ip, {"target": user_id})
+        if people_changed:
+            self._audit.write(
+                "admin.change",
+                "success",
+                actor.user_id,
+                ip,
+                {
+                    "target": user_id,
+                    "permission": "view_ai_people",
+                    "from": bool(row["view_ai_people"]),
+                    "to": view_ai_people,
+                },
+            )
         return next(u for u in self.all() if u.user_id == user_id)
 
     def issue_reset(self, user_id: str, actor: User, ip: str | None) -> str:
@@ -272,12 +309,7 @@ class UserAdmin:
         row = con.execute(
             "SELECT role, disabled FROM users WHERE user_id = ?", (actor.user_id,)
         ).fetchone()
-        if row is None:
-            no_accounts = con.execute("SELECT 1 FROM users LIMIT 1").fetchone() is None
-            if actor.user_id == "local" and no_accounts:
-                return  # open local mode: the implicit local admin
-            raise ForbiddenError("Your role does not allow this action")
-        if row["role"] != "admin" or row["disabled"]:
+        if row is None or row["role"] != "admin" or row["disabled"]:
             raise ForbiddenError("Your role does not allow this action")
 
     @staticmethod

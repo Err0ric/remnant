@@ -144,6 +144,13 @@ def signins_sql(ident: IdentityMap, person: str) -> str:
     return _signins(_mine(ident, ident.keys_for(person)))
 
 
+# AI telemetry, left out of a person's events for a caller without View people in AI usage:
+# Claude Code telemetry, the MCP inventory, and every Anthropic report feed (per-person
+# Claude Code and claude.ai rows carry the email as the user name).
+AI_TEMPLATES = ("claude_code_otel", "mcp_inventory", "anthropic_reports")
+AI_TELEMETRY = " AND template_id NOT IN (" + ", ".join(f"'{t}'" for t in AI_TEMPLATES) + ")"
+
+
 def timeline(
     engine: QueryEngine,
     allowed: list[str] | None,
@@ -153,9 +160,12 @@ def timeline(
     start: datetime,
     end: datetime,
     rollup: Covers | None = None,
+    ai: bool = True,
 ) -> Timeline:
     """With `rollup` (the AI rollup), first use of AI services reads closed days from it,
-    never days of raw DNS (F46, F63): the step that ran out of memory on a busy install."""
+    never days of raw DNS (F46, F63): the step that ran out of memory on a busy install.
+    Without `ai` (a caller without View people in AI usage, D242) the AI rows are left
+    out, not read: Claude sessions, first use of AI services, and AI telemetry events."""
     if not person.strip():
         raise ParamInvalidError("Name a person")
     keys = ident.keys_for(person)
@@ -251,10 +261,12 @@ def timeline(
             f"SELECT {_HOUR}, source_id, message, count(*), min({_TS}), max({_TS}),"  # noqa: S608  # escaped literals only
             " count(*) FILTER (WHERE status_id = 2) FROM events"
             " WHERE template_id NOT LIKE 'm365_%' AND template_id <> 'claude_hooks'"
-            f" AND {mine} GROUP BY 1, 2, 3 ORDER BY 1 DESC LIMIT 300",
+            f"{'' if ai else AI_TELEMETRY} AND {mine} GROUP BY 1, 2, 3 ORDER BY 1 DESC LIMIT 300",
             "events",
         ),
     }
+    if not ai:
+        del queries["sessions"], queries["ai"]
     pool = ThreadPoolExecutor(max_workers=len(queries))
     ahead = {n: pool.submit(in_context(run), *q) for n, q in queries.items()}
     pool.shutdown(wait=False)
@@ -288,13 +300,13 @@ def timeline(
         add("signin", s, e, f"{how} to {app_s}", "Microsoft 365", n, "m365_signin", cond,
             "warn" if how == "Failed" else "neutral")  # fmt: skip
 
-    for sid, s, e, dev, calls, failed in ahead["sessions"].result():
+    for sid, s, e, dev, calls, failed in ahead["sessions"].result() if ai else []:
         detail = f"{int(calls or 0)} tool calls" + (f", {int(failed)} failed" if failed else "")
         cond = f"template_id = 'claude_hooks' AND {_a('session_id')} = {drill.lit(str(sid))}"
         add("session", s, e, f"Claude session on {dev or 'a device'}", detail, calls,
             "claude_hooks", cond, "warn" if failed else "neutral")  # fmt: skip
 
-    for svc, s in ahead["ai"].result():
+    for svc, s in ahead["ai"].result() if ai else []:
         add("ai_first", s, s, f"First used {svc} in this window", "AI service", 1, "network",
             "true")  # fmt: skip
         out.rows[-1].sql = ""  # the use rows need the AI usage query; opened from AI usage

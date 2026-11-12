@@ -107,15 +107,26 @@ def test_the_consent_card_counts_granted_and_shows_blocked_apart(tmp_path: Path)
     _write(engine, [])
     kinds = {"m365": ["m365_graph", "m365_mgmt"], "telemetry": []}
     now = datetime(2026, 10, 29, 12, tzinfo=UTC)
-    cards, sources = _signal_cards(engine, None, kinds, START, START - timedelta(days=1), now)
+    cards, sources, names = _signal_cards(
+        engine, None, kinds, START, START - timedelta(days=1), now
+    )
     consent = cards[0]
+    assert names and consent.context.endswith(" by admin@example.com")
     assert (consent.value, consent.previous, consent.blocked) == (1, 0, 1)
     assert consent.context.startswith("Latest: Lab Notes App")
     assert consent.blocked_context.startswith("Blocked: an app with no name")
     assert consent.rows_sql and consent.blocked_sql and "status_id = 2" in consent.blocked_sql
     assert sources == ["m365_graph", "m365_mgmt"]
+    # Without View people in AI usage the card says what, never by whom (D242).
+    cards, _, names = _signal_cards(
+        engine, None, kinds, START, START - timedelta(days=1), now, named=False
+    )
+    assert not names
+    assert cards[0].context == "Latest: Lab Notes App (User.Read, Mail.Read)"
+    assert cards[0].blocked_context == "Blocked: an app with no name (openid, profile, email +2)"
+    assert (cards[0].value, cards[0].blocked) == (1, 1)
     # A viewer who may not read the M365 sources sees it restricted, with no SQL.
-    cards, _ = _signal_cards(engine, ["other"], kinds, START, START - timedelta(days=1), now)
+    cards, _, _ = _signal_cards(engine, ["other"], kinds, START, START - timedelta(days=1), now)
     assert cards[0].restricted and cards[0].rows_sql is None
 
 

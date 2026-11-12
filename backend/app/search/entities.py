@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
 
 from app.ai.catalog import NON_USAGE, Catalog
+from app.ai.people_view import HIDDEN, tie
 from app.ai.usage import (
     HOST_EXPR,
     HOST_MATCH_SQL,
@@ -226,11 +227,14 @@ def entity_risk(
     scope: QueryScope,
     ident: IdentityMap | None = None,
     usage: Any = None,
+    ai_people: bool = True,
 ) -> tuple[dict[EntityKind, list[Risk]], int, list[str], targeted.Split]:
     """Every user, source IP, and host seen in the range (the busiest of each), ranked by
     a score whose parts are rule matches, flagged runs, and the D195 signals, then by
     events; the number of matches considered; sources read; and the targeted usernames,
-    which are left out of the users (D212)."""
+    which are left out of the users (D212). Without `ai_people` (View people in AI usage,
+    D242) a person's row carries no AI Watch flag and counts no AI Watch alert; machines
+    and addresses keep theirs."""
     ident = ident or IdentityMap()
     # Each part is named in the Server-Timing header (review item 7).
     with phase("rule_matches"):
@@ -239,7 +243,7 @@ def entity_risk(
     read: list[str] = [] if scope.sources is None else list(scope.sources)
     signals, read = entity_signals.collect(engine, meta, allowed, scope, ident, usage)
     with phase("alerts"):
-        alerts = entity_signals.alert_names(meta, allowed, scope)
+        alerts = entity_signals.alert_names(meta, allowed, scope, ai_people)
     for (kind, value), sig in signals.items():
         if kind not in COLUMN:
             continue
@@ -251,7 +255,7 @@ def entity_risk(
             mail_rules=sig.mail_rules,
             consents=sig.consents,
             attacks=sig.attacks,
-            ai_flags=list(sig.ai_flags),
+            ai_flags=list(sig.ai_flags) if ai_people or kind != "user" else [],
         )
     if matches:
         with phase("rule_match_query"):
@@ -590,8 +594,9 @@ def entity_graph(
 
 # AI flow: one row per (person, client, tool, destination) with counts. Claude Code
 # telemetry, the MCP inventory, and network logs matched to the AI catalog.
-def ai_sql(pairs_sql: str, where: str, pre: str = "true") -> str:
-    """`pre` filters events early in each branch; `{m}` in it is that branch's machine."""
+def ai_sql(pairs_sql: str, where: str, pre: str = "true", by_machine: bool = False) -> str:
+    """`pre` filters events early in each branch; `{m}` in it is that branch's machine.
+    `by_machine`: each row also says its machine, as a ninth column (`_by_machine`)."""
     cc_pre = pre.replace("{m}", "device_hostname")
     net_pre = pre.replace("{m}", MACHINE_EXPR)
     if pre != "true":
@@ -638,19 +643,16 @@ netr AS (
 ),
 flow AS (
   SELECT coalesce(who, machine) AS person, who IS NOT NULL AS named, client, tool, dest, sens,
-         mcp FROM cc
-  UNION ALL SELECT coalesce(who, machine), who IS NOT NULL, client, tool, dest, sens, mcp
+         mcp, machine FROM cc
+  UNION ALL SELECT coalesce(who, machine), who IS NOT NULL, client, tool, dest, sens, mcp,
+         machine
   FROM inv
   UNION ALL SELECT coalesce(who, machine), who IS NOT NULL, client, tool,
-         'svc:' || service_id, sens, false
+         'svc:' || service_id, sens, false, machine
   FROM netr
 )
 SELECT person, client, tool, dest, count(*) AS n, coalesce(sum(sens), 0) AS sens,
-       bool_or(mcp) AS mcp, bool_or(named) AS named
-FROM flow
-WHERE person IS NOT NULL AND {where}
-GROUP BY 1, 2, 3, 4
-ORDER BY n DESC
+       bool_or(mcp) AS mcp, bool_or(named) AS named{_flow_end(where, by_machine)}
 LIMIT 3000"""  # noqa: S608  # fixed text; catalog domains are checked before use
 
 
@@ -669,17 +671,24 @@ def person_names(
     return sorted(found | keys | {person.strip().lower()})
 
 
-_FLOW_SELECT = """
+def _flow_end(where: str, by_machine: bool) -> str:
+    """The rest of the flow's SELECT after `named`: with `by_machine` the machine is a
+    column and a group, so a viewer without View people in AI usage sees machines (D242)."""
+    col, group = (", machine", ", 9") if by_machine else ("", "")
+    return (
+        f"{col}\nFROM flow\nWHERE person IS NOT NULL AND {where}\n"
+        f"GROUP BY 1, 2, 3, 4{group}\nORDER BY n DESC"
+    )
+
+
+def _flow_select(where: str, by_machine: bool) -> str:
+    return f"""
 SELECT person, client, tool, dest, sum(w)::BIGINT AS n, coalesce(sum(sens), 0) AS sens,
-       bool_or(mcp) AS mcp, bool_or(named) AS named
-FROM flow
-WHERE person IS NOT NULL AND {where}
-GROUP BY 1, 2, 3, 4
-ORDER BY n DESC
+       bool_or(mcp) AS mcp, bool_or(named) AS named{_flow_end(where, by_machine)}
 LIMIT 3000"""
 
 
-def ai_tools_sql(where: str) -> str:
+def ai_tools_sql(where: str, by_machine: bool = False) -> str:
     """The AI flow's Claude Code and MCP inventory rows: small, by template."""
     return f"""
 WITH cc AS (
@@ -702,13 +711,16 @@ inv AS (
 ),
 flow AS (
   SELECT coalesce(who, machine) AS person, who IS NOT NULL AS named, client, tool, dest, sens,
-         mcp, 1 AS w FROM cc
-  UNION ALL SELECT coalesce(who, machine), who IS NOT NULL, client, tool, dest, sens, mcp, 1
+         mcp, 1 AS w, machine FROM cc
+  UNION ALL SELECT coalesce(who, machine), who IS NOT NULL, client, tool, dest, sens, mcp, 1,
+         machine
   FROM inv
-){_FLOW_SELECT.replace("{where}", where)}"""  # noqa: S608  # fixed text
+){_flow_select(where, by_machine)}"""  # noqa: S608  # fixed text
 
 
-def ai_web_sql(pairs: list[tuple[str, str]], where: str, rollup: bool) -> str:
+def ai_web_sql(
+    pairs: list[tuple[str, str]], where: str, rollup: bool, by_machine: bool = False
+) -> str:
     """The AI flow's browser and app rows: the same use rows as AI usage (`_use_ctes`),
     so closed days come from the daily AI rollup instead of a scan of every event
     (owner re-time, 2026-11-01: the person graph read 30 days of DNS for each load)."""
@@ -717,9 +729,9 @@ WITH {_use_ctes(pairs, rollup)},
 flow AS (
   SELECT coalesce(who, machine) AS person, who IS NOT NULL AS named,
          'Browser or app' AS client, CAST(NULL AS VARCHAR) AS tool,
-         'svc:' || service_id AS dest, 0 AS sens, false AS mcp, n AS w
+         'svc:' || service_id AS dest, 0 AS sens, false AS mcp, n AS w, machine
   FROM r
-){_FLOW_SELECT.replace("{where}", where)}"""  # noqa: S608  # catalog domains checked in _values
+){_flow_select(where, by_machine)}"""  # noqa: S608  # catalog domains checked in _values
 
 
 def _ai_rows_rolled(
@@ -731,6 +743,7 @@ def _ai_rows_rolled(
     skip: list[str],
     covered: list[str],
     after: tuple[list[str], datetime] | None,
+    by_machine: bool = False,
 ) -> tuple[list[Any], list[str]]:
     """The AI flow's rows with closed days from the rollup: Claude Code and MCP inventory
     from events (small, by template; `skip_days` would drop them), the rest from the
@@ -739,7 +752,7 @@ def _ai_rows_rolled(
     with ThreadPoolExecutor(max_workers=1) as pool:
         tools = pool.submit(
             in_context(engine.run),
-            ai_tools_sql(where),
+            ai_tools_sql(where, by_machine),
             scope,
             params or None,
             timeout_s=TIMEOUT_S,
@@ -747,7 +760,7 @@ def _ai_rows_rolled(
             page=True,
         )
         web = engine.run(
-            ai_web_sql(catalog.domain_table(), where, True),
+            ai_web_sql(catalog.domain_table(), where, True, by_machine),
             scope,
             web_params,
             timeout_s=TIMEOUT_S,
@@ -770,9 +783,13 @@ def ai_graph(
     value: str | None,
     ident: IdentityMap | None = None,
     rollup: AiRollup | None = None,
+    names: bool = True,
 ) -> Graph:
     """People -> AI clients -> Tools and MCP servers -> Destinations (ADR-0016 row 5).
-    People are merged by identity (ADR-0018)."""
+    People are merged by identity (ADR-0018). Without `names` (no View people in AI usage,
+    D242) each person is a card keyed by place and labelled with the machine they used
+    most (or "Hidden"), and a device card is keyed by its machine: no name in any id,
+    label, or search."""
     ident = ident or IdentityMap()
     where = {
         None: "true",
@@ -790,7 +807,9 @@ def ai_graph(
     planned = scope if scope.end is not None else replace(scope, end=clock.now())
     skip, covered, after = rollup.plan(planned) if rollup is not None else ([], [], None)
     if covered:
-        rows, sources = _ai_rows_rolled(engine, catalog, scope, where, params, skip, covered, after)
+        rows, sources = _ai_rows_rolled(
+            engine, catalog, scope, where, params, skip, covered, after, not names
+        )
     else:
         pre = "true"
         if kind == "user" and value:
@@ -799,7 +818,7 @@ def ai_graph(
             pre = "list_contains($names, lower(coalesce(" + WHO_EXPR + ", {m})))"
             params["names"] = person_names(engine, scope, ident, value)
         result = engine.run(
-            ai_sql(catalog_values(catalog.domain_table()), where, pre),
+            ai_sql(catalog_values(catalog.domain_table()), where, pre, not names),
             scope,
             params or None,
             timeout_s=TIMEOUT_S,
@@ -808,7 +827,7 @@ def ai_graph(
         )
         rows, sources = result.rows, result.sources
     seen_email: dict[str, bool] = {}
-    names: dict[str, set[str]] = {}
+    raw_names: dict[str, set[str]] = {}
     named_keys: dict[str, bool] = {}  # person cards that a logged person name produced
     services = {s.id: s for s in catalog.services()}
     rules = catalog.mcp_rules()
@@ -823,18 +842,24 @@ def ai_graph(
                 return host if hit is not None and hit.kind == NON_USAGE else f"svc:{sid}"
         return host
 
+    def ai_use(dest: Any) -> bool:
+        """A vendor tag on another site is not AI use."""
+        hit = services.get(str(dest)[4:]) if dest and str(dest).startswith("svc:") else None
+        return hit is None or hit.kind != NON_USAGE
+
+    rows = [r for r in rows if ai_use(r[3])]
     b = _Builder(["People", "AI clients", "Tools and MCP servers", "Destinations"])
-    for person, client, tool, dest, n, sens, mcp, named in rows:
-        if dest and str(dest).startswith("svc:"):
-            hit = services.get(str(dest)[4:])
-            if hit is not None and hit.kind == NON_USAGE:
-                continue  # a vendor tag on another site is not AI use
+    places = None if names else _places(rows, ident, b)
+    for person, client, tool, dest, n, sens, mcp, named, *_machine in rows:
         n, sens = int(n), int(sens or 0)
-        pkey = ident.key(str(person))
-        seen_email[pkey] = seen_email.get(pkey, False) or ident.org_email(str(person))
-        names.setdefault(pkey, set()).add(str(person))
-        p = b.card(0, pkey, pkey, n)
-        named_keys[pkey] = named_keys.get(pkey, False) or bool(named)
+        if places is not None:
+            p = places.card(b, str(person), bool(named), n)
+        else:
+            pkey = ident.key(str(person))
+            seen_email[pkey] = seen_email.get(pkey, False) or ident.org_email(str(person))
+            raw_names.setdefault(pkey, set()).add(str(person))
+            p = b.card(0, pkey, pkey, n)
+            named_keys[pkey] = named_keys.get(pkey, False) or bool(named)
         cname = CLIENT_NAMES.get(str(client), str(client))
         c = b.card(1, cname.lower(), cname, n)
         b.edge(p, c, n)
@@ -873,7 +898,9 @@ def ai_graph(
             for cid in (p, c, last):
                 if "Sensitive data" not in b.cards[cid].badges:
                     b.cards[cid].badges.append("Sensitive data")
-    for pkey, raw in names.items():
+    if places is not None:
+        places.finish(b)
+    for pkey, raw in raw_names.items():
         card = b.cards[f"0:{pkey}"]
         card.label = ident.display(pkey, seen_email[pkey])
         if len(raw) > 1:
@@ -894,6 +921,67 @@ def ai_graph(
             f" ({', '.join(quote(r) for r in sorted(raw))}))"
         )
     return b.build("ai", sources)
+
+
+class _Places:
+    """Lane 0 of the AI flow for a viewer without View people in AI usage (D242): each
+    person a card keyed `row-N` and labelled with the machine they used most (or
+    "Hidden"), ordered by what is shown and then a keyed hash, never by the name; each
+    device or address with no person a card keyed by itself."""
+
+    def __init__(self, people: dict[str, tuple[str, list[str]]], ident: IdentityMap) -> None:
+        self.people = people  # person key -> (card key, their machines, busiest first)
+        self.ident = ident
+        self.devices: set[str] = set()
+
+    def card(self, b: _Builder, person: str, named: bool, n: int) -> str:
+        if named:
+            key, machines = self.people[self.ident.key(person)]
+            return b.card(0, key, machines[0] if machines else HIDDEN, n)
+        self.devices.add(person)
+        return b.card(0, f"m:{person}", person, n)
+
+    def finish(self, b: _Builder) -> None:
+        for key, machines in self.people.values():
+            card = b.cards[f"0:{key}"]
+            card.group = "People"
+            card.search_sql = _machines_sql(machines) if machines else None
+        for device in self.devices:
+            card = b.cards[f"0:m:{device}"]
+            card.sublabel = "No user name in these logs" if _is_ip(device) else ""
+            card.group = "Addresses" if _is_ip(device) else "Devices not matched to a person"
+            card.search_sql = _machines_sql([device])
+
+
+def _places(rows: list[Any], ident: IdentityMap, b: _Builder) -> _Places:
+    """Each person's machines by events, and their card key by place (see `_Places`).
+    The person cards are made here, in that order, so cards that tie keep it."""
+    used: dict[str, dict[str, int]] = {}
+    total: dict[str, int] = {}
+    for person, _c, _t, _d, n, _s, _m, named, machine in rows:
+        if named:
+            pkey = ident.key(str(person))
+            on = used.setdefault(pkey, {})
+            total[pkey] = total.get(pkey, 0) + int(n)
+            if machine:
+                on[str(machine)] = on.get(str(machine), 0) + int(n)
+    ranked = sorted(
+        ((pkey, sorted(on, key=lambda m: (-on[m], m))) for pkey, on in used.items()),
+        key=lambda r: (-total[r[0]], r[1][0] if r[1] else HIDDEN, tie(r[0])),
+    )
+    people = {pkey: (f"row-{i}", machines) for i, (pkey, machines) in enumerate(ranked)}
+    for key, machines in people.values():
+        b.card(0, key, machines[0] if machines else HIDDEN, 0)
+    return _Places(people, ident)
+
+
+def _machines_sql(machines: list[str]) -> str:
+    """Search for the events of these machines or addresses, by no person's name."""
+    lits = ", ".join(quote(m) for m in sorted(machines))
+    return search_sql(
+        f"(device_hostname IN ({lits}) OR src_endpoint_hostname IN ({lits})"
+        f" OR src_endpoint_ip IN ({lits}))"
+    )
 
 
 def _is_ip(text: str) -> bool:

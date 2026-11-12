@@ -14,6 +14,7 @@ from app.ingest.sources import SourceConfig, SourceStore, resolve_source_path
 from app.ingest.watcher import IngestService
 from app.main import create_app
 from app.meta.db import MetaDB
+from tests.host_os import open_bytes_name
 
 NOW = datetime(2026, 10, 10, 12, 0, tzinfo=UTC)
 LINE = "<38>Oct  9 20:41:{:02d} bastion sshd[{}]: Accepted publickey for jordan\n"
@@ -218,7 +219,9 @@ def test_server_lifespan_polls_sources(env: dict[str, Path]) -> None:
         client.post(
             "/api/sources", json={"source_id": "linux_auth", "format": "syslog", "path": str(f)}
         )
-        deadline = time.monotonic() + 5
+        # Waits for the first background pass. 20 s: a loaded CI runner missed 5 s once
+        # (#494); a pass that lands stops the wait at once, so this costs nothing when green.
+        deadline = time.monotonic() + 20
         # Only this source: the running server also writes its requests to server_events.
         mine = "source_id = 'linux_auth'"
         while time.monotonic() < deadline and count(env, mine) == 0:
@@ -311,7 +314,7 @@ def test_a_name_that_is_not_utf8_neither_stops_ingest_nor_the_api(env: dict[str,
     a, b = env["logs"] / "a", env["logs"] / "b"
     a.mkdir()
     b.mkdir()
-    with open(os.fsencode(a) + b"/host\xff.log", "w") as fh:
+    with open_bytes_name(os.fsencode(a) + b"/host\xff.log") as fh:
         fh.write(LINE.format(1, 1))
     write(b / "good.log", LINE.format(2, 2))
     store.add(SourceConfig(source_id="a_src", format="syslog", path=str(a), glob="*.log"))

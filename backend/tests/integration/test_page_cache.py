@@ -3,19 +3,23 @@ and window; a cached answer is still audited, and is never served to another sco
 
 from pathlib import Path
 
+import pytest
+
+from app.api import cache as cache_module
 from app.api.cache import PageCache
 from tests.integration.test_dashboards import audit
 from tests.integration.test_schedules import make_lab
 
 
-def test_cache_expires_and_keeps_scopes_apart() -> None:
-    c = PageCache(ttl_s=0.05)
+def test_cache_expires_and_keeps_scopes_apart(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = [1000.0]  # the cache's clock, moved by hand
+    monkeypatch.setattr(cache_module, "monotonic", lambda: now[0])
+    c = PageCache(ttl_s=60)
     c.put(("x", ("a",)), 1)
+    now[0] += 59
     assert c.get(("x", ("a",))) == 1
     assert c.get(("x", ("b",))) is None
-    import time
-
-    time.sleep(0.06)
+    now[0] += 1
     assert c.get(("x", ("a",))) is None
 
 

@@ -396,3 +396,60 @@ def test_refusals_become_events_and_the_built_in_detection_raises_one_item(
         "/api/rules/builtin/refusals", json={"enabled": False, "threshold": 10}, headers=lab["h"]
     )
     assert off.status_code == 200 and off.json()["enabled"] is False
+
+
+def test_a_missing_template_keeps_the_spool_draining(lab: dict[str, Any]) -> None:
+    """ADR-0050: an OTLP source whose template is gone keeps storing its records (generic
+    JSON parse, marked template_missing), so the spool is read and never fills for this."""
+    res = lab["admin"].post(
+        "/api/sources",
+        json={"source_id": "claude_tm", "kind": "otlp", "format": "json",
+              "template_id": "claude_code_otel"},
+        headers=lab["h"],
+    )  # fmt: skip
+    assert res.status_code == 201, res.text
+    token = res.json()["otlp_token"]
+    lab["app"].state.templates._templates.pop("claude_code_otel")
+    assert send(lab, payload(), token=token).status_code == 200
+    spool = lab["spool"].parent / "claude_tm"
+    (first,) = list(spool.glob("*.jsonl"))
+    lab["app"].state.ingest.run_once()
+    res = lab["admin"].post(
+        "/api/query",
+        json={"sql": "SELECT template_id, parse_status, raw FROM events"
+              " WHERE source_id = 'claude_tm'"},
+        headers=lab["h"],
+    )  # fmt: skip
+    rows = res.json()["rows"]
+    assert len(rows) == 2
+    assert {(r[0], r[1]) for r in rows} == {("claude_code_otel", "template_missing")}
+    assert all(r[2] in first.read_text() for r in rows)  # raw is the spooled record
+    lab["app"].state.ingest._clock = lambda: datetime.now(UTC) + timedelta(hours=2)
+    lab["app"].state.ingest.run_once()  # fully read: the spool file is removed
+    assert not first.exists()
+
+
+def test_a_source_token_delivers_before_the_first_administrator_exists(tmp_path: Path) -> None:
+    """D245: an install that ran without sign-in is in setup mode after the update until
+    its administrator is made. Its senders must lose nothing meanwhile: the endpoint
+    checks the source's token, as always, and nothing else."""
+    from fastapi.testclient import TestClient
+
+    from app.core.config import load_config
+    from app.main import create_app
+
+    env = {"APP__PATHS__DATA_DIR": str(tmp_path / "data"), "APP__SERVER__HOST": "127.0.0.1"}
+    with TestClient(create_app(load_config(Path("missing.yaml"), env))) as client:
+        # Made through the tests' stand-in administrator (conftest), as the old mode would.
+        made = client.post(
+            "/api/sources",
+            json={"source_id": "claude", "kind": "otlp", "format": "json", "template_id": "auto"},
+        )
+        assert made.status_code == 201, made.text
+        assert client.app.state.auth.mode() == "setup"  # type: ignore[attr-defined]
+        body = json.dumps({"resourceLogs": []}).encode()
+        headers = {"Content-Type": "application/json"}
+        assert client.post("/api/otlp/v1/logs", content=body, headers=headers).status_code == 401
+        headers["Authorization"] = f"Bearer {made.json()['otlp_token']}"
+        res = client.post("/api/otlp/v1/logs", content=body, headers=headers)
+        assert res.status_code == 200, res.text

@@ -97,13 +97,17 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         duration_ms = round((time.perf_counter() - started) * 1000, 1)
         client = request.client.host if request.client else None
         path = request.url.path  # never the query string
-        if self._recorder is not None and wanted(request.method, path):
-            route = getattr(request.scope.get("route"), "path", None)
-            if isinstance(route, str) and not route.startswith("/api/"):
-                route = "/api" + route  # routers are mounted under /api
+        route = getattr(request.scope.get("route"), "path", None)
+        if isinstance(route, str) and not route.startswith("/api/"):
+            route = "/api" + route  # routers are mounted under /api
+        template = route if isinstance(route, str) else path  # no ids or names
+        blocked = getattr(request.state, "guard_blocked", False) is True
+        if self._recorder is not None and wanted(
+            request.method, template, response.status_code, blocked
+        ):
             self._recorder(
                 request.method,
-                route if isinstance(route, str) else path,  # the template: no ids or names
+                template,
                 response.status_code,
                 duration_ms,
                 getattr(user, "user_id", None),

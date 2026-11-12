@@ -35,11 +35,22 @@ def _fsync_dir(folder: Path) -> None:
 def publish(table: pa.Table, final: Path, row_group_size: int | None = None) -> Path:
     """Write `table` to `final` so a crash leaves either the whole file or nothing."""
     tmp = final.parent / f".{final.name}.tmp"
-    pq.write_table(table, tmp, compression="zstd", row_group_size=row_group_size)
-    with tmp.open("rb") as fh:
-        os.fsync(fh.fileno())
-    os.replace(tmp, final)
-    _fsync_dir(final.parent)
+    try:
+        pq.write_table(table, tmp, compression="zstd", row_group_size=row_group_size)
+        with tmp.open("rb") as fh:
+            os.fsync(fh.fileno())
+        os.replace(tmp, final)
+        _fsync_dir(final.parent)
+    except BaseException:
+        # The caller hears a failure, so nothing may stay: not the temporary file (a full
+        # disk fails here on every retry), and not the published file when only the
+        # folder sync failed, or the retry would store its rows a second time.
+        for leftover in (tmp, final):
+            try:
+                leftover.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
     return final
 
 

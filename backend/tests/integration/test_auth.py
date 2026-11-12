@@ -46,10 +46,13 @@ def add_user(client: TestClient, username: str, role: str, disabled: bool = Fals
 # --- modes --------------------------------------------------------------------------
 
 
-def test_loopback_without_users_is_open(tmp_path: Path) -> None:
+@pytest.mark.real_auth
+def test_loopback_without_users_is_setup_only_too(tmp_path: Path) -> None:
+    """D245: there is no no-sign-in mode (tests/integration/test_always_setup.py)."""
     c = make(tmp_path, "127.0.0.1")
-    assert c.get("/api/auth/state").json()["mode"] == "open"
-    assert c.post("/api/query", json=QUERY).status_code == 200
+    assert c.get("/api/auth/state").json()["mode"] == "setup"
+    res = c.post("/api/query", json=QUERY)
+    assert res.status_code == 403 and res.json()["code"] == "setup_required"
 
 
 def test_network_bind_without_users_is_setup_only(tmp_path: Path) -> None:

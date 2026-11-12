@@ -6,7 +6,6 @@ with what held the pool."""
 
 import asyncio
 import threading
-import time
 from typing import Any
 
 import httpx
@@ -36,7 +35,7 @@ def test_a_trivial_request_stays_fast_while_the_pool_is_full_at_rollover(
     body = {"kind": "panel", "error_id": "e-0a1b2c", "name": "TypeError", "message": "",
             "route": "/dashboard", "build": ""}  # fmt: skip
 
-    async def scenario() -> tuple[float, list[int]]:
+    async def scenario() -> tuple[bool, list[int]]:
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url=BASE, headers=auth) as client:
             # The day rollover's closed-day builds, on their low-priority thread.
@@ -48,19 +47,21 @@ def test_a_trivial_request_stays_fast_while_the_pool_is_full_at_rollover(
                 for _ in range(WORKER_POOL + 10)
             ]
             await asyncio.sleep(0.5)  # every pool thread is taken by now
-            started = time.monotonic()
             res = await client.post("/api/client-errors", json=body)
-            took = time.monotonic() - started
+            # The shape, not a stopwatch: every parked page still holds its pool thread
+            # when this answers. Had it needed a pool thread, it could only have got one
+            # once a page let go (after HOLD_S), so some page would be done by now.
+            answered_before_release = not any(p.done() for p in pages)
             assert res.status_code == 204, res.text
             await asyncio.sleep(2.5)  # the queued pages have now waited over 2 s
             release.set()
             codes = [r.status_code for r in await asyncio.gather(*pages)]
             await rollover
-            return took, codes
+            return answered_before_release, codes
 
     with capture_logs() as logs:
-        took, codes = asyncio.run(scenario())
-    assert took < 1.0, f"the sign-in check waited {took:.1f} s for a worker"
+        first, codes = asyncio.run(scenario())
+    assert first, "the client-errors request waited for a pool thread"
     assert codes.count(200) == WORKER_POOL + 10
     # The requests that did wait for a pool thread are named, with how long they waited.
     waits = [x for x in logs if x["event"] == "pool.wait"]

@@ -14,7 +14,7 @@ EXPECTED = {
     "dns": ["dns_bind", "dns_powerdns", "dns_unbound", "dns_windows"],
     "network": ["cisco_asa", "cisco_ios", "fortinet_fortigate", "paloalto_traffic", "unifi"],
     "system": ["linux_systemd", "paloalto_system"],
-    "findings": ["cef_generic", "leef_generic", "m365_alert", "paloalto_threat"],
+    "findings": ["cef_alerts", "cef_generic", "leef_generic", "m365_alert", "paloalto_threat"],
     "inventory": ["proxmox_inventory"],
 }
 

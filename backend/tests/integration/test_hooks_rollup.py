@@ -17,7 +17,9 @@ def _record(at: datetime, n: int, **attrs: str) -> dict[str, Any]:
     base = {
         "event_name": "claude_hooks.pre_tool_use",
         "role": "tool_call",
-        "session_id": f"s-{at:%d}",
+        # One session unless a test names others: a session id from the record's day made
+        # records either side of UTC midnight two sessions (failed at 23:56 UTC).
+        "session_id": "s-1",
         "install_id": "i1",
         "seq": str(n),
         "user": "dana@example.com",

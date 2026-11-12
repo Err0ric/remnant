@@ -528,6 +528,12 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
                       Seen on the network but no plugin: {networkOnly}.
                     </span>
                   ) : null}
+                  {data?.masked ? (
+                    // D242: the server sent machines in place of names.
+                    <span className="ml-1">
+                      Names are hidden. An admin can turn on View people in AI usage for you.
+                    </span>
+                  ) : null}
                 </>
               }
               empty={
@@ -557,9 +563,14 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
                 </thead>
                 <tbody>
                   {(data?.people ?? []).map((p) => (
-                    <tr key={p.person} className="border-b border-border last:border-0">
+                    <tr key={p.key} className="border-b border-border last:border-0">
                       <td className={`${TD} font-mono`}>
-                        <EntityLink kind="user" value={p.person} tab="ai" />
+                        {data?.masked ? (
+                          // A machine (or "Hidden"), not a person: plain text, no person link.
+                          p.person
+                        ) : (
+                          <EntityLink kind="user" value={p.person} tab="ai" />
+                        )}
                       </td>
                       <td className={TD}>
                         <span title={seenTitle(p)}>{SEEN[p.seen_through ?? "plugin"]}</span>

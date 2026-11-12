@@ -11,10 +11,10 @@ interface ViewerProviderProps {
 /** The viewer's rights for shared chrome. Open mode (no accounts) is the local admin. */
 export function ViewerProvider({ user, children }: ViewerProviderProps) {
   const canRunSql = useCanRunSql(user);
+  const isAdmin = !user || user.role === "admin";
+  const canViewPeople = isAdmin || user?.view_ai_people === true;
   return (
-    <ViewerContext.Provider
-      value={{ isAdmin: !user || user.role === "admin", canAsk: canRunSql, canRunSql }}
-    >
+    <ViewerContext.Provider value={{ isAdmin, canAsk: canRunSql, canRunSql, canViewPeople }}>
       {children}
     </ViewerContext.Provider>
   );

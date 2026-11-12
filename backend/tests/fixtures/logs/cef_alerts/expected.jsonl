@@ -1,0 +1,10 @@
+{"actor_user_name": "alice", "device_hostname": "sensor01", "message": "Credential dumping detected", "parse_status": "ok", "severity_id": 4, "src_endpoint_ip": "10.20.1.5", "time": "2026-10-09T20:00:51+00:00"}
+{"actor_user_name": "bob", "device_hostname": "sensor01", "message": "Beacon | periodic callout", "parse_status": "ok", "severity_id": 2, "src_endpoint_ip": "10.20.1.6", "time": "2026-10-09T20:01:09+00:00"}
+{"actor_user_name": "carol", "device_hostname": "sensor01", "message": "Suspicious script run", "parse_status": "ok", "severity_id": 5, "src_endpoint_ip": "10.20.2.14", "time": "2026-10-09T20:01:39+00:00"}
+{"actor_user_name": "dave", "device_hostname": "sensor01", "message": "Impossible travel sign-in", "parse_status": "ok", "severity_id": 3, "src_endpoint_ip": "10.20.3.30", "time": "2026-10-09T20:01:44+00:00"}
+{"actor_user_name": "alice", "device_hostname": "sensor01", "message": "Ransomware behavior blocked", "parse_status": "ok", "severity_id": 3, "src_endpoint_ip": "10.20.1.5", "time": "2026-10-09T20:02:53+00:00"}
+{"actor_user_name": "alice", "device_hostname": "ndr01", "message": "Ransomware behavior blocked", "parse_status": "ok", "severity_id": 4, "src_endpoint_ip": "10.20.1.5", "time": "2026-10-09T20:03:20+00:00"}
+{"actor_user_name": "carol", "device_hostname": "sensor01", "message": "Beacon | periodic callout", "parse_status": "ok", "severity_id": 2, "src_endpoint_ip": "10.20.2.14", "time": "2026-10-09T20:03:23+00:00"}
+{"actor_user_name": "dave", "device_hostname": "ndr01", "message": "Suspicious script run", "parse_status": "ok", "severity_id": 4, "src_endpoint_ip": "10.20.3.30", "time": "2026-10-09T20:03:49+00:00"}
+{"actor_user_name": "alice", "device_hostname": "sensor01", "message": "Impossible travel sign-in", "parse_status": "ok", "severity_id": 4, "src_endpoint_ip": "10.20.1.5", "time": "2026-10-09T20:04:36+00:00"}
+{"actor_user_name": "bob", "device_hostname": "sensor01", "message": "Ransomware behavior blocked", "parse_status": "ok", "severity_id": 3, "src_endpoint_ip": "10.20.1.6", "time": "2026-10-09T20:05:04+00:00"}

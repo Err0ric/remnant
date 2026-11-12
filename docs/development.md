@@ -11,7 +11,7 @@ make demo           # synthetic demo install on http://127.0.0.1:8090 (build the
 
 ## Demo and screenshots
 
-`make demo` (`scripts/demo/run.sh`) replaces `data/demo/` with two weeks of synthetic logs from `scripts/demo/generate.py`, starts a server on loopback with no accounts, and loads it with `scripts/demo/load.py`: one file source per log type, an OTLP source with Claude Code hook and telemetry records, a synthetic GeoIP file, and some AI services and MCP servers reviewed. `DEMO_DETACH=1` leaves the server running and returns; `DEMO_PORT` changes the port.
+`make demo` (`scripts/demo/run.sh`) replaces `data/demo/` with two weeks of synthetic logs from `scripts/demo/generate.py`, starts a server on loopback, and loads it with `scripts/demo/load.py` (which first makes the administrator `admin` through the one-time setup link, with a password generated for that run in `data/demo/state/dev-account.json`; `scripts/devauth.py`): one file source per log type, an OTLP source with Claude Code hook and telemetry records, a synthetic GeoIP file, and some AI services and MCP servers reviewed. `DEMO_DETACH=1` leaves the server running and returns; `DEMO_PORT` changes the port.
 
 The demo turns on `enrichment.place_documentation_ranges` so its GeoIP file can place documentation addresses (D157). Never set it on a real install.
 

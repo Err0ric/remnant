@@ -218,10 +218,10 @@ jobs:
             uv run app-server > "$lab/server.log" 2>&1 &
           server=$!
           for i in $(seq 1 30); do curl -sf http://127.0.0.1:8080/api/health && break; sleep 1; done
-          uv run python ../scripts/demo_lab.py --url http://127.0.0.1:8080 --logs "$lab/logs/demo" --rules "$lab/rules/demo" > /dev/null
+          uv run python ../scripts/demo_lab.py --url http://127.0.0.1:8080 --logs "$lab/logs/demo" --rules "$lab/rules/demo" --data "$lab/data" > /dev/null
           if command -v google-chrome >/dev/null; then channel="--channel chrome"; else uv run playwright install chromium; channel=""; fi
           status=0
-          uv run python ../scripts/check-layout.py --url http://127.0.0.1:8080 --width 1280 $channel || status=$?
+          uv run python ../scripts/check-layout.py --url http://127.0.0.1:8080 --data "$lab/data" --width 1280 $channel || status=$?
           kill "$server" 2>/dev/null || true
           exit $status
       - name: Self-hosted runner, leave nothing behind

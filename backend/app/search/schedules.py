@@ -37,6 +37,7 @@ import structlog
 from app.alerts.dispatch import AlertDispatcher
 from app.alerts.items import AlertItems
 from app.alerts.render import Alert, AlertKind
+from app.alerts.stops import DetectionStops
 from app.auth.users import LOCAL_USER, User, UserStore
 from app.core import clock
 from app.core.branding import PRODUCT_NAME
@@ -110,6 +111,7 @@ COLUMN_NAME_MAX = 120
 LATE = timedelta(minutes=5)  # a run this late covers up to now, not just to its fire time
 MAX_LAST_INTERVAL = timedelta(days=31)
 DUE_PER_TICK = 20
+RULE_COLUMNS = ("event_id", "event_time", "source_id")  # a rule run's sample columns
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,6 +221,7 @@ class ScheduleService:
         self._clock = clock
         self._dispatcher = dispatcher
         self._link = link
+        self.stops: DetectionStops | None = None  # set by the app (D33 as amended)
 
     # --- definition snapshot -----------------------------------------------------------------
 
@@ -497,18 +500,7 @@ class ScheduleService:
         """Raise an alert item and queue an alert for a flagged run or a rule run with
         matches (when no threshold is set); queue an alert for a schedule that paused itself.
         Summaries only (ADR-0007 row 2); the message links to the item (ADR-0037 row 9)."""
-        kind: AlertKind | None = None
-        if run.status == "paused":
-            kind = "pause"
-        elif run.status == "ok" and run.flagged:
-            kind = "flag"
-        elif (
-            run.status == "ok"
-            and sched.kind == "rule"
-            and sched.threshold_kind is None
-            and (run.row_count or 0) > 0
-        ):
-            kind = "match"
+        kind = _message_kind(sched, run.status, run.row_count, run.flagged)
         if kind is None:
             return
         link = f"{self._link}/dashboard" if self._link else None
@@ -540,7 +532,7 @@ class ScheduleService:
         if self._dispatcher is None:
             return
         targets = self.targets_of(sched.schedule_id)
-        if not targets:
+        if kind != "pause" and not targets:
             return
         if kind == "pause":
             detail = f"Paused: {run.error or 'no reason given'}"
@@ -563,9 +555,48 @@ class ScheduleService:
             link=link,
             product=PRODUCT_NAME,
         )
-        self._dispatcher.enqueue(alert, targets, sched.schedule_id, run.run_id)
+        if kind == "pause" and self.stops is not None:
+            # A self-pause stops detection: never silent, every alert target when the
+            # schedule has none (D33 as amended).
+            self.stops.notify(alert, targets, sched.schedule_id, run.run_id)
+            return
+        if targets:
+            self._dispatcher.enqueue(alert, targets, sched.schedule_id, run.run_id)
 
     # --- reading ---------------------------------------------------------------------------
+
+    def late_targets(self, rule_id: str, source_id: str, matched: int) -> list[str]:
+        """The alert targets that hear of `matched` late matches of a rule on a source (a
+        rule re-run over reparsed events, D241): those of each unpaused schedule of the rule
+        whose scheduled run would have alerted on them. Such a run goes ahead (the checks
+        that pause a schedule pass: owner, rule enabled and unchanged, sources kept), its
+        owner may read the source now (CLAUDE.md rule 13), and its count meets the
+        schedule's threshold as a run's would. Reads only; nothing is paused or recorded."""
+        with self._meta.connect() as con:
+            rows = con.execute(
+                "SELECT * FROM schedules WHERE kind = 'rule' AND target_id = ? AND paused = 0",
+                (rule_id,),
+            ).fetchall()
+        out: set[str] = set()
+        for r in rows:
+            sched = _schedule(r)
+            try:
+                owner = self._check(sched)
+            except _Stop:
+                continue  # a scheduled run would pause it, not alert
+            allowed = permitted_sources(self._meta, owner)
+            if allowed is not None and source_id not in allowed:
+                continue  # its run could never read the source
+            if sched.threshold_kind == "change_pct":
+                # A change against the last run's window cannot be judged for a late run
+                # (other window): late matches count as flagged; told, not silent (D241).
+                flagged = matched > 0
+            else:
+                flagged, _ = self._flag(sched, matched)
+            if _message_kind(sched, "ok", matched, flagged) is None:
+                continue
+            out.update(self.targets_of(sched.schedule_id))
+        return sorted(out)
 
     def get(self, schedule_id: str) -> Schedule:
         with self._meta.connect() as con:
@@ -695,7 +726,7 @@ class ScheduleService:
                 if rr.status == "failed":
                     status, error = "failed", rr.error
                 matches = self._rule_runner.matches(rr.run_id, owner)
-                columns = ["event_id", "event_time", "source_id"]
+                columns = list(RULE_COLUMNS)
                 sample = [
                     [m.event_id, m.event_time, m.source_id]
                     for m in matches[: self._config.sample_rows]
@@ -1008,6 +1039,25 @@ class ScheduleService:
                 " ORDER BY started_at DESC, run_id DESC LIMIT ?)",
                 (run.schedule_id, run.schedule_id, self._config.keep_runs),
             )
+
+
+def _message_kind(
+    sched: Schedule, status: str, count: int | None, flagged: bool
+) -> AlertKind | None:
+    """Which message a run sends, if any: a pause, a flag (its threshold met), or for a
+    rule schedule with no threshold, a match."""
+    if status == "paused":
+        return "pause"
+    if status == "ok" and flagged:
+        return "flag"
+    if (
+        status == "ok"
+        and sched.kind == "rule"
+        and sched.threshold_kind is None
+        and (count or 0) > 0
+    ):
+        return "match"
+    return None
 
 
 def _cron(text: str) -> str:

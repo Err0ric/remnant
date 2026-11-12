@@ -70,7 +70,8 @@ def lab(tmp_path: Path) -> dict[str, Any]:
     out = make_lab(tmp_path)
     reg: lv.LiveRegistry = out["app"].state.live
     reg.poll_s = 0.05
-    reg.limit_override_s = 0.6
+    # Long enough for the first polls on a loaded runner; tests that need the end read it.
+    reg.limit_override_s = 3.0
     return out
 
 

@@ -21,7 +21,7 @@ import { Sections } from "./Sections";
 import { WINDOWS, daysOf, rangeText as windowRange, readWindow, saveWindow } from "./pageWindow";
 import type { PageWindow } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { AttentionBanner, SourcesLine } from "./Attention";
+import { AttentionBanner, HealthBanner, SourcesLine } from "./Attention";
 import { layoutOf, placed, sectionAdded, sectionRemoved, sectionStepped, stepped } from "./layout";
 import { SchedulePanel } from "./SchedulePanel";
 
@@ -249,8 +249,11 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
         ) : null}
       </div>
       <div className="flex flex-col gap-3 px-5 py-3">
-        {/* Order (F62): what needs me (only when something does), AI Watch, my panels,
-            then sources in one line. */}
+        {/* Order (F62): Health problems (only when there are any), what needs me (only
+            when something does), AI Watch, my panels, then sources in one line. */}
+        <ErrorBoundary label="Health">
+          <HealthBanner />
+        </ErrorBoundary>
         <ErrorBoundary label="Needs attention">
           <DashboardAttention window={win} days={daysOf(win)} />
         </ErrorBoundary>

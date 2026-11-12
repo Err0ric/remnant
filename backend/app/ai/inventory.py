@@ -16,7 +16,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
-from app.ai.agents import agents
+from app.ai.agents import agents, masked
 from app.ai.catalog import NON_USAGE, Catalog
 from app.ai.consents import CONSENTS_CTE
 from app.ai.usage import Usage
@@ -120,8 +120,11 @@ def inventory(
     excluded: dict[tuple[str, str], Exclusion],
     now: datetime,
     days: int,
+    named: bool = True,
 ) -> tuple[list[Item], list[str]]:
-    """Every item seen in the last `days`, newest last seen first, and the sources read."""
+    """Every item seen in the last `days`, newest last seen first, and the sources read.
+    Not `named` (no View people in AI usage, D242): agents as `agents.masked` shows them,
+    with the same counts and exclusions."""
     now = now.astimezone(UTC)
     # Open-ended and to the minute, as AI usage asks: the two pages share the answer.
     scope = QueryScope(allowed, (now - timedelta(days=days)).replace(second=0, microsecond=0), None)
@@ -142,12 +145,13 @@ def inventory(
                  m.last_seen, where)
         )  # fmt: skip
     start = now - timedelta(days=days)
-    for a in agents(engine, allowed, now):
+    listed = agents(engine, allowed, now)
+    for a, real in masked(listed) if not named else [(x, x) for x in listed]:
         if _iso(a.last_seen) and str(_iso(a.last_seen)) < start.isoformat():
             continue
         out.append(
-            Item("agent", a.agent, a.label, None, len(a.owners), len(a.machines),
-                 a.first_seen, a.last_seen, [a.kind])
+            Item("agent", a.agent, a.label, None, len(real.owners), len(a.machines),
+                 a.first_seen, a.last_seen, [a.kind], excluded.get(("agent", real.agent)))
         )  # fmt: skip
     apps = engine.run(
         APPS_SQL, scope, timeout_s=TIMEOUT_S, intel=False, name="inventory.apps", page=True
@@ -158,7 +162,8 @@ def inventory(
                  _iso(last), ["Microsoft 365 consents"])
         )  # fmt: skip
     for it in out:
-        it.excluded = excluded.get((it.type, it.key))
+        if it.type != "agent":  # an agent's is by its own key, which a masked row hides
+            it.excluded = excluded.get((it.type, it.key))
     out.sort(key=lambda i: i.last_seen or "", reverse=True)
     return out, sorted(set(sources) | set(apps.sources) | set(mcp_read))
 

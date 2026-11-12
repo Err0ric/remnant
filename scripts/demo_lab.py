@@ -3,10 +3,12 @@
 file source, a few Sigma rules (imported, enabled, and run), and AI review settings.
 
 Synthetic data only (the fixtures under backend/tests/fixtures/logs). For a fresh install
-on loopback with no accounts (open mode); it talks HTTP like the CLI.
+with no accounts, run on the server with the server's environment: it makes the first
+administrator through the one-time setup link (scripts/devauth.py; the password is written
+to dev-account.json in the data folder), then talks HTTP like the CLI.
 
     python3 scripts/demo_lab.py --url http://127.0.0.1:8080 --logs /srv/logs/demo \
-        --rules /srv/rules/demo
+        --rules /srv/rules/demo --data /var/lib/remnant
 
 `--logs` must be under the server's allowed_roots and `--rules` under its rule_roots. Run it
 once per install: sources that already exist are skipped.
@@ -16,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
 import time
@@ -23,6 +26,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
+
+import devauth
 
 ROOT = Path(__file__).resolve().parents[1]
 FIX = ROOT / "backend" / "tests" / "fixtures" / "logs"
@@ -80,20 +85,19 @@ detection:
 
 
 class Client:
-    def __init__(self, url: str) -> None:
+    def __init__(self, url: str, data: Path) -> None:
         self.url = url.rstrip("/")
-        self.csrf: str | None = None
-        state = self.call("GET", "/api/auth/state")
-        if state.get("mode") != "open":
-            sys.exit("This script is for a loopback install with no accounts (open mode).")
-        self.csrf = state.get("csrf_token")
+        self.session: devauth.Session | None = None
+        # The first administrator, made through the one-time setup link (scripts/devauth.py).
+        self.session = devauth.sign_in(self.url, data)
 
     def call(self, method: str, path: str, body: Any = None) -> Any:
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(self.url + path, data=data, method=method)  # noqa: S310  # the URL the operator passed
         req.add_header("Content-Type", "application/json")
-        if self.csrf:
-            req.add_header("X-CSRF-Token", self.csrf)
+        if self.session:
+            for name, value in self.session.headers().items():
+                req.add_header(name, value)
         try:
             with urllib.request.urlopen(req, timeout=120) as res:  # noqa: S310  # same
                 raw = res.read()
@@ -109,8 +113,18 @@ def main() -> None:
     ap.add_argument("--logs", type=Path, required=True)
     ap.add_argument("--rules", type=Path, required=True)
     ap.add_argument("--days", type=int, default=30, help="range to run rules over")
+    known = os.environ.get("APP__PATHS__DATA_DIR")
+    ap.add_argument(
+        "--data",
+        type=Path,
+        default=Path(known) if known else None,
+        help="the server's data folder: on a fresh install the first administrator is made"
+        " there (password in dev-account.json); needs the server's environment",
+    )
     args = ap.parse_args()
-    api = Client(args.url)
+    if args.data is None:
+        sys.exit("Pass --data (the server's data folder) or set APP__PATHS__DATA_DIR.")
+    api = Client(args.url, args.data)
 
     have = {s["source_id"] for s in api.call("GET", "/api/sources")}
     for folder in sorted(p for p in FIX.iterdir() if p.is_dir()):

@@ -18,6 +18,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.alerts.dispatch import AlertDispatcher
+from app.alerts.fallback import is_fallback_error
 from app.alerts.targets import TargetStore
 from app.auth.users import User
 from app.detect.runner import RuleRunner
@@ -186,7 +187,9 @@ class OverviewService:
         for s in configured:
             st = statuses.get(s.source_id)
             error = st.error if st else None
-            if error and allowed is not None:  # server paths are for administrators only
+            # Server paths are for administrators only; the fallback text has none (it names
+            # the source and template, ADR-0050 row 4), so everyone who reads the source sees it.
+            if error and allowed is not None and not is_fallback_error(error):
                 error = "This source cannot be read right now. An administrator can see why."
             health.append(
                 SourceHealth(

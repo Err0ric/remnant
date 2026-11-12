@@ -28,6 +28,8 @@ class UserOut(BaseModel):
     created_at: str
     last_login_at: str | None
     sso: bool = False
+    # View people in AI usage (ADR-0029 G1, D242), effective: always true for an admin.
+    view_ai_people: bool = False
 
 
 class InviteRequest(BaseModel):
@@ -43,6 +45,7 @@ class InviteResponse(BaseModel):
 class UserUpdate(BaseModel):
     role: RoleName | None = None
     disabled: bool | None = None
+    view_ai_people: bool | None = None
 
 
 class ResetResponse(BaseModel):
@@ -69,6 +72,7 @@ def _out(r: UserRecord) -> UserOut:
         created_at=r.created_at,
         last_login_at=r.last_login_at,
         sso=r.sso,
+        view_ai_people=r.view_ai_people,
     )
 
 
@@ -93,7 +97,12 @@ async def update_user(
 ) -> UserOut:
     record = await run_in_threadpool(
         lambda: _admin(request).update(
-            user_id, actor, client_ip(request), role=body.role, disabled=body.disabled
+            user_id,
+            actor,
+            client_ip(request),
+            role=body.role,
+            disabled=body.disabled,
+            view_ai_people=body.view_ai_people,
         )
     )
     return _out(record)

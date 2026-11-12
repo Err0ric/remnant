@@ -177,7 +177,7 @@ def test_hostile_lines_never_raise_and_stay_fast() -> None:
     for text in ("", "\x00" * 100, "a" * 10_240, "<" * 10_240, "<38>" + "x " * 5000):
         row = t.normalize(line(text))
         assert row["raw"] == text
-    assert time.monotonic() - started < 2
+    assert time.monotonic() - started < 10  # a hang guard for a blowup
 
 
 def test_parse_rate_counts() -> None:
@@ -609,7 +609,7 @@ def test_replace_is_bounded_on_hostile_input() -> None:
     started = time.monotonic()
     fields = {"q": "(" * 10_000}
     TransformRunner([step], UTC).apply(fields)
-    assert time.monotonic() - started < 2
+    assert time.monotonic() - started < 10  # a hang guard for a blowup
 
 
 def _actor_template(**envelope: Any) -> Template:

@@ -14,6 +14,7 @@ from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.widgets import DataTable, Footer, Input, Label, RichLog, Select, Static
 
 from app.cli.banner import banner
@@ -137,7 +138,10 @@ class Tui(App[None]):
         self.set_status(f"{len(data['rows'])} rows · {data['elapsed_ms']} ms{note}")
 
     def set_status(self, text: str) -> None:
-        self.query_one("#status", Label).update(Text(text))
+        try:
+            self.query_one("#status", Label).update(Text(text))
+        except NoMatches:
+            pass  # sent from a worker after the screen closed
 
     # Tail -------------------------------------------------------------------------------
 
@@ -151,7 +155,10 @@ class Tui(App[None]):
         self.call_from_thread(self.fill_sources, sources)
 
     def fill_sources(self, sources: list[str]) -> None:
-        select = self.query_one("#tail-source", Select)
+        try:
+            select = self.query_one("#tail-source", Select)
+        except NoMatches:
+            return  # the list arrived after the screen closed (a quick exit): nothing to fill
         select.set_options((clean(s), s) for s in sources)
         if self.tail_source in sources:
             select.value = self.tail_source
@@ -203,7 +210,10 @@ class Tui(App[None]):
             log.write(Text("  ").join(plain(v, 400) for v in row))
 
     def tail_note(self, text: str) -> None:
-        self.query_one("#tail", RichLog).write(Text(text, style="italic"))
+        try:
+            self.query_one("#tail", RichLog).write(Text(text, style="italic"))
+        except NoMatches:
+            pass  # sent from a worker after the screen closed
 
     # Actions ----------------------------------------------------------------------------
 

@@ -4,6 +4,427 @@
 
 <!-- unreleased:start -->
 
+### Docs: D244 accepted (2026-11-12)
+
+- The owner confirmed decision D244 (lake maintenance is one of the never-silent paths) as written; its status now reads Accepted.
+- What you will notice: nothing visible.
+- What changes for existing installs: nothing.
+
+### Development: handoff after the owner's decisions on the audit batch (2026-11-12)
+
+- `docs/handoff.md` (development only, not published) records #538 and #539 as merged, ADR-0051 as a draft waiting for the owner, the decision to fold the People & devices AI view audit row into the page's visit row with the audit volume item, and what is left before the next publish.
+- What you will notice: nothing visible.
+- What changes for existing installs: nothing.
+
+### Security: no access without an account, also on the machine itself (2026-11-12)
+
+- Found by the 2026-11 audit (H1): an install bound to `127.0.0.1` with no accounts treated every request as the administrator. Behind a reverse proxy on the same machine, as `docs/install/tls.md` describes, every request comes from `127.0.0.1`, so until the first account existed anyone who could reach the proxy was the administrator. No header check closes this (a plain `proxy_pass` sends none), so the mode without sign-in is removed (D245, amends ADR-0001).
+- With no accounts the server now only accepts the one-time setup link, on every address. The link is in the server log at each start, and `app-admin setup-link` on the server prints a fresh one (single use, 30 minutes). On a loopback install the link opens on the machine itself; from another computer use an SSH tunnel (`docs/install/tls.md`, "First setup through a proxy") or set the public name and URL first.
+- An install that ran without sign-in keeps its work: saved searches, schedules, dashboards and alert items of the old built-in `local` user become the first administrator's when that account is created (recorded in the audit log). Until then schedules keep running, and Claude Code telemetry sources keep delivering with their token.
+- Development tools (`make demo`, the speed check, the smoke test, screenshots) create their throwaway server's administrator through the same link; the demo's password is generated per run in `data/demo/state/dev-account.json`.
+- What you will notice: nothing if you already sign in. If your install opened without a sign-in page, it now shows the setup page, which asks for the one-time link, until you open that link and create your administrator account; after that you sign in as on any other install.
+- What changes for existing installs: installs with accounts, nothing. Installs without accounts: after the update, run `app-admin setup-link` on the server (or read the link from the server log), open it, and create the administrator; ingest, schedules and alerts run in the meantime. To go back: `update-systemd.sh --rollback` (see `docs/install/team-vm.md`, Rolling back). The older version ignores the new `setup_link` table; if you already created the administrator it keeps asking for that sign-in, and the items it took over stay with it.
+
+### Docs: rotate with create, not copytruncate; rotation ADR draft; the session handoff is not published (2026-11-12)
+
+- `docs/ingest/README.md` and the rsyslog guide now say to rotate log files by rename (logrotate `create`), not `copytruncate`, to keep rotated copies out of a source's file pattern, and name the gap that remains (a line written in the last seconds before a rename can be missed). The rsyslog guide no longer says both styles are handled. Found by the 2026-11 audit (H5).
+- `docs/adr/ADR-0051-file-rotation.md` is a draft for the owner's review: one read position per file, not per path. Nothing in it is built.
+- Development only: `docs/handoff.md` (open work and owner questions) is left out of the published tree, and `publish.sh` stops if it would be published. The install guide `docs/install/handoff.md` is unaffected.
+- What you will notice: nothing visible in the app. If your logrotate rule uses `copytruncate`, change it to `create` as the guide shows.
+- What changes for existing installs: nothing.
+
+### Lake maintenance keeps going past a bad folder and says when it is stuck (2026-11-12)
+
+- Hourly compaction stopped at the first day folder it could not read and never reached the folders after it, and a failed retention delete skipped compaction, the AI rollups, and the integrity check for that run. The only sign was a warning in the server log once a minute (found by the 2026-11 audit).
+- Each maintenance job now runs on its own: one failing does not skip the others, and one day folder that cannot be compacted does not stop the rest. A file whose content cannot be read (its footer reads, its data does not) is moved to `data/quarantine/`, as files with an unreadable footer already were, so searches over that day work again. An error of the system (out of memory, a disk error) never moves a file.
+- A job that fails, or a compaction run that left a folder undone, is listed on Health under failing jobs. If it lasts 15 minutes, alert targets get one "stopped" message and, when it works again, one "running again" message, with the usual flap limit (D236, D244). A job that failed outright (retention, compaction, the integrity run) is tried again on the next tick, a minute later; the AI rollup build waits for a compaction run that got through.
+- What you will notice: nothing visible while maintenance is healthy. If it gets stuck, Health lists the job and, after 15 minutes, your alert targets get one message.
+- What changes for existing installs: nothing to do. To go back, roll back the update (`update-systemd.sh --rollback`, see `docs/install/`); files already moved to `data/quarantine/` stay there.
+
+### Development: publishing checks its folder, its source, and names outside file contents (2026-11-12)
+
+- Development tooling only (`scripts/publish/publish.sh`, not part of the public tree). Found by the 2026-11 audit: the script emptied whatever folder `PUB_DIR` named without checking it, copied the local `main` instead of what the merge queue had put on `origin/main`, and matched the name list against file contents only.
+- It now stops, before removing anything, unless `PUB_DIR` is a separate clone standing exactly on the public `main` (never the development checkout or one of its worktrees); publishes `origin/main` and stops when the local `main` differs from it; refuses a tree that still contains `scripts/dev/`; checks the name list against file names, the commit message, and the tag; fixes the public commit's author and committer whatever the environment says; and checks that the one new commit sits directly on the public `main` before pushing.
+- Not decided here: whether `docs/handoff.md` should stay in the public tree (owner).
+- What you will notice: nothing visible.
+- What changes for existing installs: nothing.
+
+### Development: the publish scan catches more real-looking names (2026-11-12)
+
+- Development tooling only (`scripts/publish/`, not part of the public tree). The scan that stops a publish when the tree names a real organization missed some forms (found by the 2026-11 audit): names in capitals, names in code comments, some country and business endings, a customer's own subdomain under an allowed vendor (a Slack workspace, a Microsoft tenant), links to another owner's repositories, names in a file's own name, and images, which it could not read at all.
+- It now reads names in any letter case and in comments, knows more endings, allows tenant-bearing vendors by exact host only, checks the owner in repository links against a list, scans file names, and stops on an image (or any file that is not text) that is not in the reviewed list `scripts/publish/binaries.txt`. The leak scan also knows the shape of a real Slack webhook path and a signed webhook URL.
+- The images already in the tree are listed as they were; they were not looked at again.
+- What you will notice: nothing visible.
+- What changes for existing installs: nothing.
+
+### A failed update leaves a known version; nightly backups no longer show in the AIDE check (2026-11-12)
+
+- `update-systemd.sh`: when the build of the new version failed after the checkout had moved, the service was started on the new code with the old packages, and `--rollback` then went two versions back (found by the 2026-11 audit). Now the script returns the checkout to the version the service last ran, rebuilds it, and starts it. A rollback whose build fails does the same.
+- When the new version was built but did not start, the script records the version it replaced before it stops, and says so: `--rollback` returns to the version that was running, not to the one before it, and reports the build that did not start as what it left (D226).
+- The AIDE rules the script writes (`/etc/aide/aide.conf.d/90_aide_remnant`) now skip the files in the data folder's `backups/` (scheduled backups write a new archive every night) and keep watching the `backups/` folder and the data folder themselves for owner, group, and mode.
+- What you will notice: nightly backups no longer appear in the update's AIDE check, and a failed update no longer needs manual repair before a rollback.
+- What changes for existing installs: the rules file is replaced on the next update, as on every update; with `--aide` that run reports the rules file as changed once, which is expected. If you added your own rules file for backups (for example `/etc/aide/aide.conf.d/90_remnant`), you can delete it. To go back, `update-systemd.sh --rollback` (see `docs/install/team-vm.md`, Rolling back); the older script writes the older rules on its next run.
+
+### A failed write to the lake no longer stores the same events again and again (2026-11-12)
+
+- Ingest saves its position in a file only after the events are written. When a write failed part way (the integrity ledger could not be written because the disk was full or the database was locked, or a second day's file could not be written), the file already written stayed in the lake, and the next pass two seconds later wrote the same lines again, on every pass while the fault lasted. Searches then showed each event many times (found by the 2026-11 audit).
+- A write is now all or nothing: on a failure the files it had written are removed before the error is reported, so the retry stores each event once. The source still shows its error while the fault lasts, as before.
+- The same when the events were written but the position could not be saved (the database was locked or full at that moment): the files are taken back, with the removal recorded in the integrity ledger. This covers files, the syslog spool, Windows event logs, Loki, and API sources (tested on the file path; the others share the same step). If the removal cannot be recorded either, ingest writes nothing more until it can, tries again on every pass, and compaction is told to leave those files alone.
+- Compaction leaves files newer than a minute for its next run, so it does not merge a file ingest is about to take back. A failed write no longer leaves a temporary file behind on a full disk, and a write whose folder could not be synced to disk is taken back like any other failed write.
+- Files are taken back under the same lock as compaction, retention, and the integrity check, so a check never sees a recorded file disappear under it; while that lock is held the take-back waits for the next pass.
+- Not covered: a restart while a file is still owed to an undo repeats that one batch once; a file changed on disk after it was written is left for the integrity check to report instead of being removed; a file whose removal was recorded but which could not be deleted from disk stays and its lines are stored again; a reparse started while a file is owed can keep a copy of its rows.
+- A crash (power loss, the process killed) between the write and saving the position can still repeat up to one read (8 MB) of a file once, as before.
+- What you will notice: nothing visible; a full disk or a locked database no longer leaves repeated events behind.
+- What changes for existing installs: nothing to do. Events already stored twice by an earlier fault are not removed. To go back, roll back the update (`update-systemd.sh --rollback`, see `docs/install/`).
+
+### The merge queue stops when the CI changes job fails (2026-11-12)
+
+- Development tooling only. The CI `changes` job decides whether the backend and frontend jobs run. When it failed, both were skipped, and the merge queue read "architecture passed, the others skipped" as a green run and merged (found by the 2026-11 audit).
+- The queue now requires the `changes` job to succeed, and requires the job each changed path needs (backend for `backend/`, `library/`, `templates/`, `scripts/`; frontend for `frontend/`) to succeed, not to be skipped. Docs-only PRs still run no CI.
+- What you will notice: nothing visible.
+- What changes for existing installs: nothing.
+
+### People & devices hides a person's AI watch flags without View people in AI usage (2026-11-12)
+
+- People & devices listed, next to each person's name, the AI watch flags on them (personal Claude account, unreviewed AI service, new MCP server, blocked or failed tool calls) and counted AI Watch alerts about them, for every viewer. That is AI usage by person, which **View people in AI usage** is meant to keep to the people an admin chose (D242, ADR-0029 G2; found by the 2026-11 audit).
+- Without the permission, a person's row now carries no AI watch flags, counts no AI Watch alerts, and its score leaves both out. The AI watch flags column says "Hidden" for people. Machines and addresses keep their flags and alerts, as on the AI pages (machines, never names). The check is on the server (`GET /api/entities/risk`).
+- Administrators and anyone with the permission see the page as before.
+- Each load of the ranking is recorded as on the AI pages (ADR-0029 G3): `ai.view_people` (page `investigate.risk`) when it showed a person with an AI watch flag or an AI Watch alert, otherwise `ai.view`. This is one more audit entry per load, next to `investigate.risk`.
+- What you will notice: without View people in AI usage, the AI watch flags column on People & devices says "Hidden" for people, and their scores no longer include AI watch flags or AI Watch alerts.
+- What changes for existing installs: nothing to do. An admin can turn on View people in AI usage for someone on the Users page. To go back, roll back the update (`update-systemd.sh --rollback`, see `docs/install/`).
+
+### The start page is always the Dashboard, and the alerts note no longer counts what you can't read (2026-11-12)
+
+- Opening the address of the app, or the product mark, now always opens the Dashboard, also when it has no panels yet (D243). Before, it opened Health when the Dashboard had no panel.
+- When a source is not healthy or has a gap open, a one-line Health banner at the top of the Dashboard says so in the same words as the Sources line at the bottom, with Open Health.
+- When an open alert is in a source you can't read, the Alerts summary and the Dashboard's Needs you banner say "Some alerts are in sources you can't read. Ask an admin for access." instead of how many there are. The alert API answers `restricted` as true or false, no longer a count. Admins read every source, so they never see the note.
+- While the Health banner shows, the Sources line at the bottom of the Dashboard is hidden, so the problem is said once; the banner links to the gap alert when there is one, otherwise to Health. When every source is healthy the banner is gone and the bottom line shows as before (owner, 2026-11-12).
+- What you will notice: the start page is always the Dashboard, with a banner when something needs attention on Health, and the alerts note no longer says how many alerts are in sources you can't read.
+- What changes for existing installs: nothing to do. To go back, roll back the update (`update-systemd.sh --rollback`, see `docs/install/`): the older version opens Health again when the Dashboard has no panel and shows the count.
+
+### Tests: a Claude Code session across midnight UTC counts once (2026-11-11)
+
+- A session from 23:50 to 00:10 UTC (4 PM in UTC-8) was checked on every page that counts sessions: AI usage People and MCP servers, Agents Sessions, Accounts, and Overview, the person page's AI activity and timeline, with the AI rollup built or not, ending today or on closed days, over the last 7 days; AI usage People also for ranges that start or end at midnight. Each counts it once; sessions are counted from the events, never added up per day.
+- The two sessions a test saw at 23:56 UTC came from the test's own helper, which named each session after the day of the month, so records either side of midnight had two session ids. The helper now uses one session id, and the new test keeps every page to one.
+- What you will notice: nothing visible; a session across midnight already counted once.
+- What changes for existing installs: nothing to do; tests only, the app and the AI rollup are unchanged and nothing rebuilds. To go back, roll back the update (`update-systemd.sh --rollback`, see `docs/install/`).
+
+### The Audit log hides names from AI pages without View people in AI usage (2026-11-11)
+
+- Audit entries that store a person from an AI page keep the names they recorded, so the audit log stays complete and no stored entry changes: AI Watch's own entries (`ai.sighting`, `ai.sensitive`, `ai.agent_change`), approving an agent from its alert (`ai.review`), AI views of a person (`ai.view` and `ai.view_people` with the person asked for or the AI flow of a person, and `investigate.graph` for that flow), excluding or including a Claude Code agent in the inventory (`ai.inventory_exclude`, `ai.inventory_include` with a `cc|` key), and closing, reopening, muting, or unmuting an AI watch alert (`alert.close`, `alert.reopen`, `alert.mute`, `alert.unmute`, whose subject can hold a person for alerts stored before they stored no names). The Audit page and its CSV export now show "a person" in place of each name to anyone without **View people in AI usage**, using the same rules as AI watch alerts, and the entry's own user stays (D242). A machine stays visible only where the entry itself proves it is a machine (the AI agent lines, "Claude Code, a person: WS-1"); in AI service and MCP sighting entries nothing proves that, so the device is hidden too. Alert entries about other kinds of alert are shown as stored.
+- Opening a person's page writes `search.timeline` with the person, as before: the person page is not an AI page, so that entry keeps the name. The `ai.view` or `ai.view_people` entry the same page writes no longer repeats the person; it keeps the page, the days, the sources, and whether names were shown.
+- The Audit page says once, above the list, "Names are hidden. An admin can turn on View people in AI usage for you." when an entry on the page has hidden names.
+- The audit filters (action, user, outcome, time) never search the entry's details, so no filter can find an entry by a hidden name.
+- An export that carries these names, for an administrator or anyone with the permission, is also recorded as `ai.export_people` with the number of rows.
+- Entries for services, MCP servers, apps, MCP clients and API keys (`mcp|<machine>|...`, `key|<id>`), and exports (`ai.inventory_export`, `ai.export_people`) name no one and are shown as stored. A Claude Code agent keyed by its machine (`cc|<host>`) cannot be told from one keyed by a person in an entry, so it shows "a person" too, and a machine in an AI agent line can be hidden when the same entry also names a person: this hides more than needed, never less.
+- What you will notice: without View people in AI usage, audit entries from AI pages on the Audit page and in its export show "a person" instead of names, and nothing stored changes.
+- What changes for existing installs: nothing to do; stored audit entries are unchanged. To go back, roll back the update (`update-systemd.sh --rollback`, see `docs/install/`): the older version shows these entries with names again to every admin and auditor.
+
+### A script that turns AI watch alert codes back into names (2026-11-11)
+
+- A new script, `scripts/restore_alert_text.py`, is for an administrator who rolls back to a version from before AI watch alerts stored codes such as `{p:3f2a9c0b1d4e5f60}` in place of names, and wants the older version to show and match those alerts by name again. It turns each code in AI watch alerts and their mutes back into the name it stands for, in place: it finds the name in that alert's own People with the install key (`.key` in the data folder), as the server does when it shows an alert. Everything else stays as it is, including what changed since the update: new lines in an alert's changes, people added, counts, alerts raised since, alert states and notes, rule alerts, where each source had read up to, the lake file ledger, and the audit log so far. Each run that changes something is recorded in the audit log as `alerts.restore_text`, with counts only (and the server account that ran it), chained like every other audit row; a `--dry-run` or a run with nothing to do adds no row.
+- With `--backup` and one of the copies the server made before rewriting (`backups/meta-before-alert-rewrite-<time>.sqlite`), a code whose name has since left the alert's People is also looked up in the People that alert had in the copy; nothing else is taken from the copy. A code no one matches stays, as does an alert the older version has raised again since the rollback (two alerts cannot share a reference or group); the script counts both. To check the key, the server now stores, with its record that AI watch alerts are coded, the code of a fixed text; the script makes that code with its key file and, when the two differ, refuses (exit 3) and changes nothing, whatever is left to decode. A database coded before the server kept that value is checked by matching instead: the script refuses only when codes are left and not one matches a name, and otherwise stores the value so later runs check it the first way. It prints counts only, never names. Running it again is safe: a second run decodes what it can (more with `--backup`), counts again the codes no one matches, and changes nothing else. Add `--dry-run` to see the counts without changing anything.
+- Steps with systemd: before rolling back, copy the script out (the older version does not have it): `sudo cp /opt/remnant/scripts/restore_alert_text.py /var/lib/remnant/backups/`. Roll back (`sudo sh /opt/remnant/scripts/update-systemd.sh --rollback`, see `docs/install/team-vm.md`), then `sudo systemctl stop remnant`, then `sudo -u remnant python3 /var/lib/remnant/backups/restore_alert_text.py --meta /var/lib/remnant/meta.sqlite --backup /var/lib/remnant/backups/meta-before-alert-rewrite-<time>.sqlite` (the newest copy from `ls /var/lib/remnant/backups/`), then `sudo systemctl start remnant`.
+- Steps with Docker: before rolling back, copy the script out of the checkout: `cp /opt/remnant/scripts/restore_alert_text.py "$HOME/restore_alert_text.py"`. Roll back as `docs/install/team-vm.md` describes (check out the earlier commit and rebuild), then `cd /opt/remnant && docker compose stop app`, list the copies with `docker compose run --rm --no-deps app ls /srv/data/backups`, run `docker compose run --rm --no-deps -v "$HOME/restore_alert_text.py:/restore_alert_text.py:ro" app python3 /restore_alert_text.py --meta /srv/data/meta.sqlite --backup /srv/data/backups/meta-before-alert-rewrite-<time>.sqlite`, then `docker compose start app`.
+- What you will notice: nothing visible; the script runs only when an administrator runs it by hand.
+- What changes for existing installs: the settings database gets one new empty column for that stored value (`one_time_fixes.value`), filled at the next start; an older version ignores it. Nothing else changes until the script is run, and the server never runs it. To go back after running it, stop the server and copy back the `meta.sqlite` you had before (or roll forward again, which copies `meta.sqlite` to a new file and codes the names again); update and rollback steps are in `docs/install/` (`update-systemd.sh --rollback`).
+
+### AI watch alerts store no names (2026-11-11)
+
+- AI Watch alerts no longer store names in their title, details, changes, or subject. Each person is kept only in the alert's People field, and the text holds a code in its place (a keyed hash of that exact spelling, the same for one person every time, so repeats still join the same alert and mutes still match). The code goes only where a person stands (the person a sensitive-data or account alert is about, an agent's owners, who used a service): machine, host, and client names are never changed, even when they contain a name. When an alert is read, the names are put back exactly as they were for administrators and anyone with **View people in AI usage**, and "a person" is shown to everyone else (ADR-0029 C6, D242).
+- At each start, AI Watch alerts and their mutes stored with names (all of them at the first start after this update) are rewritten the same way, and names that were only in the text move into the People field. An alert whose rewritten reference would clash with another is left as it was and still shows "a person" without the permission. The server logs how many it rewrote and left, never the names.
+- Just before that rewrite, the server copies its settings database (`meta.sqlite`) to a new file, `backups/meta-before-alert-rewrite-<time>.sqlite` (the time in UTC, such as `20261111T093000Z`), in the data folder (`/var/lib/remnant/backups/` with systemd, `/srv/data/backups/` with Docker), readable by the service account only. It never overwrites an earlier copy, and it makes one only when there is something to rewrite. An alert left as it was never causes a copy on its own. If the copy fails (a full disk, permissions), nothing is rewritten at that start. At the first start, new AI watch alerts then keep names in their stored text as before, so mutes and repeats keep matching; once a start has rewritten them, new alerts keep their codes and only what is still stored with names waits for the next start. Either way, Health shows "AI watch alerts still store names: the backup before the rewrite failed. They stay hidden when read; the next start tries again." Viewers without the permission still see "a person" throughout.
+- What you will notice: nothing visible; alerts read as before.
+- What changes for existing installs: stored AI watch alerts are rewritten at the first start (text and subjects get codes, names move to the People field), after a copy of `meta.sqlite`; nothing to do. To go back, roll back the update (`update-systemd.sh --rollback`, see `docs/install/`): the older version then shows the rewritten alerts with codes such as `{p:3f2a9c0b1d4e5f60}` in place of names in their text and subjects, opens new alerts beside them instead of joining them, and its mutes of a person's alerts stop matching; rolling forward again copies `meta.sqlite` to a new file and rewrites what it raised. To turn those codes back into names, run `scripts/restore_alert_text.py` as the note "A script that turns AI watch alert codes back into names" describes, starting before the rollback.
+
+### AI watch alert messages carry only a reference and a link; summaries record no AI view on load (2026-11-11)
+
+- Messages to alert targets (Teams, Slack, email, webhooks) for AI watch alerts carry only a reference and a link: "AI watch alert", the kind, the severity, how many items are new or changed, and a link to Alerts. No person, machine, service, or MCP name and no line of the item is sent (D242, replacing the per-target setting ADR-0029 G5 described). The audit log entry for each message keeps what AI Watch saw, as before.
+- The alert badge, the collapsed rail's alert button, and the Dashboard's open-alerts count read a new count-only answer (`GET /api/alerts/count`) and write no audit row.
+- The Dashboard's "Needs you" lines and Health's newest open alert read only the lines they show (`GET /api/alerts/lines`). They write an `ai.view_people` audit row only when a shown line names someone to a viewer with View people in AI usage, and no row otherwise. Opening Alerts or an alert is recorded as before.
+- What you will notice: AI watch alert messages to Teams, Slack, email, or webhooks no longer list items or names, only the count, the severity, and a link to Alerts; the audit log no longer gets an AI view entry from the alert badge or from a Dashboard or Health load that shows no name.
+- What changes for existing installs: nothing to do; no stored data or settings change. To go back, roll back the update (`update-systemd.sh --rollback`, see `docs/install/`): messages list the items again and the badge, Dashboard, and Health read the full alert list.
+
+### AI watch alerts hide names without View people in AI usage (2026-11-11)
+
+- On Alerts, a viewer without the **View people in AI usage** permission sees AI Watch alerts with "a person" in place of each name in the title, the details, and the changes, including alerts raised before this update. The People row says names are hidden, and "Person on device" gives the count without names. Rule, saved search, and source alerts are unchanged (ADR-0029 G2, D242).
+- Muted AI Watch alerts are listed the same way, and closing an AI Watch alert as Approved still decides the agent, service, or MCP server it is about.
+- Blocked-call and sensitive-data alerts about a machine where no person was seen now list the machine as a device, so it is shown as the machine, not hidden as a person; when a value may be a person, it is hidden. A mute keeps no device list, so a muted machine shows as "a person" there.
+- Each Alerts list, alert view, and close, reopen, or mute answer that includes AI Watch alerts is audited `ai.view_people` when it showed names and `ai.view` when it did not (G3).
+- What you will notice: without View people in AI usage, AI watch alerts show "a person" or the machine instead of names, including alerts raised before this update. Administrators, and anyone an administrator gave the permission, see no change.
+- What changes for existing installs: nothing to do and nothing already stored changes; names are hidden when an alert is read. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`).
+
+### AI watch, the AI flow, and a person's timeline hide names without View people in AI usage (2026-11-11)
+
+- On the Dashboard, a viewer without the **View people in AI usage** permission sees the AI Watch cards with machines instead of names: "Most from ws-0042" on the sensitive data card, app consents without who granted them, and new Claude Code agents by their machines. Counts stay the same, and a named view is never served to them from the page cache (ADR-0029 G2, D242).
+- In Investigate, the AI flow shows each person as the machine they used most (or "Hidden"), in the People group, with Open in Logs by machine and no "Investigate this"; asking the AI flow for one person answers "Needs View people in AI usage". Devices and addresses with no person are listed as before.
+- A person's timeline leaves out Claude sessions, first use of AI services, AI telemetry events, and AI Watch alerts for a viewer without the permission; the rest of the timeline is unchanged.
+- Each AI Watch, AI flow, and timeline view is audited `ai.view_people` when it showed names and `ai.view` when it did not, with the surface and the sources (G3).
+- What you will notice: without View people in AI usage, AI watch cards on the Dashboard, the AI flow in Investigate, and AI rows on a person's timeline show machines or leave names out. Administrators, and anyone an administrator gave the permission, see no change.
+- What changes for existing installs: nothing to do and nothing stored changes. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`).
+
+### Agents and the AI inventory hide names without View people in AI usage (2026-11-11)
+
+- On AI usage and Agents, a viewer without the **View people in AI usage** permission sees each Claude Code agent by its machines ("Claude Code: ws-0042") with no owners, and the AI inventory and its CSV or JSON export list agents the same way. Counts, machines, and exclusions stay the same (ADR-0029 G2, D242).
+- A person's Alerts tab works again for everyone: without the permission, AI Watch items are left out of the person filter on `/api/alerts`; other alerts about the person are listed as before (D242, amended 2026-11-11).
+- Each agents and inventory view is audited `ai.view_people` when it showed names and `ai.view` when it did not, with the surface, the time range, and the sources (G3).
+- What you will notice: without View people in AI usage, agents and the AI inventory show machines instead of owners' names, and a person's Alerts tab works again, without AI watch items. Administrators, and anyone an administrator gave the permission, see no change.
+- What changes for existing installs: nothing to do and nothing stored changes. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`).
+
+### A read during compaction never counts events twice (2026-11-11)
+
+- When a whole merge of small lake files started and finished while a read was listing a day's files, that read could include both the merged file and the files it replaced, so counts and lists on any page could briefly show some events twice. A read now also rechecks the retired list after listing and looks again when it changed.
+- What you will notice: nothing visible, except that a rare, brief double count on busy installs no longer happens.
+- What changes for existing installs: nothing stored changes; no action needed.
+
+### Agent sessions and Claude accounts hide names without View people in AI usage (2026-11-11)
+
+- On Agents, a viewer without the **View people in AI usage** permission sees each session's person and Claude account as the session's machine (or "Hidden"), and each Claude account as its first device with no OS users, as plain text with no person link. The person filter on Sessions is left out, and a machine is never matched to another account's tier. Counts stay the same (ADR-0029 G2, D242).
+- A person's AI activity (`/api/ai/people/{person}/activity`) and the `person` filter on sessions and alerts answer 403 "Needs View people in AI usage" without the permission, before anything is read, audited `access.denied`. The person page's AI use and Alerts tabs say so instead of asking.
+- Each sessions, session, accounts, and AI activity view is audited `ai.view_people` when it showed names and `ai.view` when it did not, with the surface, the time range, and the sources (G3). Session step paths can still contain user names (a residual in D242).
+- What you will notice: without View people in AI usage, AI sessions and accounts show machines instead of names, and a person's AI activity says "Needs View people in AI usage". Administrators, and anyone an administrator gave the permission, see no change.
+- What changes for existing installs: nothing to do and nothing stored changes. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`).
+
+### AI usage page hides names without View people in AI usage (2026-11-11)
+
+- On the AI usage page, a viewer without the **View people in AI usage** permission sees each person on the People tab as the machine they used most (or "Hidden" when no record names one), as plain text with no person link. Services list their machines instead of people, and the "may be" hint on network rows is left out. Two people on one machine stay two rows (ADR-0029 G2, D242).
+- The server removes the names from its answer, kept apart in the 60-second page cache, so a named answer is never served to a viewer without the permission. Each view is audited `ai.view_people` when it showed names and `ai.view` when it did not, with the surface, the time range, and the sources read (G3).
+- What you will notice: analysts and auditors without View people in AI usage see machines instead of names on the AI usage page, with a short note that names are hidden; every count stays the same. Administrators, and anyone an administrator gave the permission, see no change.
+- What changes for existing installs: nothing to do and nothing stored changes. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`).
+
+### View people in AI usage permission (2026-11-11)
+
+- Users and access has a new per-user permission, **View people in AI usage**. Administrators always have it. Analysts and Auditors, new and existing, start without it; an administrator turns it on per user, and each change is in the audit log as `admin.change` (ADR-0029 G1, D242).
+- Without it, the next updates show the machine or address instead of a person's name on AI pages, or "Hidden" where there is none; counts of people stay. The server removes the names from its answers, not only the page (G2). Views that show names are recorded as `ai.view_people`, others as `ai.view` (G3).
+- What you will notice: administrators get a "View people in AI usage" switch per user on the Users page; analysts and auditors will stop seeing names on AI pages as the following updates land, until an administrator turns it on for them.
+- What changes for existing installs: nothing to do; the update adds one column to the users table, off for every existing analyst and auditor. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`); the column stays and the older release ignores it.
+
+### Handoff after ADR-0050 (2026-11-11)
+
+- `docs/handoff.md` records ADR-0050 as done (#494, #497, #500, #503), decisions D239 to D241, and names ADR-0048 slice 0 as the next item.
+- What you will notice: nothing visible.
+- What changes for existing installs: nothing to do. Documentation only.
+
+### One message each way for a missing parser; reparse count in the integrity report (2026-11-11)
+
+- A source storing events without its parser no longer also sends the general "Detection stopped" and "Detection running again" messages after 15 minutes. Its own two messages ("Source without its parser" and "Source parser back") cover it, so one outage sends two messages instead of four (D239).
+- The integrity report now shows how many files and events were reparsed in its period (D240).
+- What you will notice: fewer duplicate alert messages when a parser goes missing; a reparse count in the integrity report.
+- What changes for existing installs: nothing to do. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`).
+
+### The terminal interface no longer errors when closed quickly (2026-11-11)
+
+- In the terminal interface (`app tui`), the source list loads in the background. Closing the window before it arrived could end with an error; a result that arrives after the window is gone is now ignored. This also fixes a test that failed now and then.
+- What you will notice: nothing visible.
+- What changes for existing installs: nothing to do. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`).
+
+### Development: the merge queue posts the speed table on every app PR (2026-11-11)
+
+- The merge queue now adds the speed check table to each app PR as a comment, also when no page is flagged, as CLAUDE.md section 9 asks. Before, it posted it only for a flagged page merged with the owner's OK.
+- What you will notice: nothing visible.
+- What changes for existing installs: nothing to do. A development script only.
+
+### Rules can run over reparsed events (2026-11-11)
+
+- After a reparse finishes, an administrator can choose "Run rules over the reparsed range" on Sources. The server runs every enabled rule that applies to the source over the events that reparse rewrote, and only those, in the background, and shows the result on the source: matches, rules run, and alerts raised or updated (ADR-0050 row 7, D233). Events stored without an event time are included, and events that parsed normally between two outages are not alerted on again. If a reparse stops before it finishes, the next reparse of the source includes the events the stopped one rewrote, so the rules run over them too; if it had already rewritten the last waiting events, Sources offers the rule run on the stopped reparse itself.
+- Matches are stored as normal rule matches and raise alerts the way scheduled rule runs do: an alert already open today for the same rule grows instead of a second one appearing. These alerts carry a "Late" badge on Alerts with the time range of the reparsed events (D241).
+- When the run ends, each alert target of a matched rule's schedules gets one "Late detection from reparse" message for the run, listing the rules that matched, their match counts, the source, and the time range of the events. A schedule's targets hear about a rule only when a scheduled run of that schedule would have alerted on these matches: the schedule is not paused, its owner can read the source, and the matches meet its threshold. A rule that runs on no such schedule, or a muted rule, sends nothing (its alert is on Alerts), nothing is sent when nothing matched, and no message is sent twice. Retrying the remaining rules sends one more message only for the rules that matched then.
+- If a stopped reparse rewrote some events but others are still waiting, starting the rules says how many: "Reparse the remaining N events first".
+- It runs once per reparse: a second start is refused. If a rule cannot run (for example it takes too long), the source lists it with the reason and offers "Run the remaining rules". If the server stops during it, starting it again runs only the rules that had not finished; no match or alert count is added twice.
+- Analysts and auditors cannot start it, and the source list shows reparse jobs to administrators only. The start and the result are in the audit log as `source.reparse_rules`, and each rule run as `rule.run`.
+- What you will notice: on Sources, after a reparse, an administrator sees "Run rules over the reparsed range", then its matches and alerts; alerts it finds carry a "Late" badge, and the rules' alert targets get one "Late detection from reparse" message.
+- What changes for existing installs: nothing to do; the update adds columns to the table of reparse jobs, a table of the events each reparse rewrites, a table of each rule's progress for a reparse, and late-detection columns to alerts. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`); matches and alerts already raised stay, and the older release ignores the new columns and tables.
+
+### Server logs follow the current error stream (2026-11-11)
+
+- The server's log lines are written to the error stream as it is at each write, not as it was when logging started. A server is unchanged; tests no longer fail now and then with "I/O operation on closed file" when one test's captured output was closed before another logged.
+- What you will notice: nothing visible.
+- What changes for existing installs: nothing to do. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`).
+
+### Stopping the server stops a query that was just starting (2026-11-11)
+
+- When the server stops, it interrupts running queries and waits for them (#490). A query that was just starting could miss that interrupt and keep the stop waiting for up to 10 seconds. The server now repeats the interrupt until every query has stopped.
+- What you will notice: nothing visible.
+- What changes for existing installs: nothing to do. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`).
+
+### Events stored without their parser can be reparsed (2026-11-11)
+
+- When a source's template was missing for a while, its events were stored with the basic parser and marked `template_missing`. Once the template loads again, an administrator can now choose "Reparse N events" on Sources. The server parses those events again with the template, in the background, and shows the job's progress and result on the source (ADR-0050 rows 7 and 8, D233).
+- Only that source's `template_missing` events inside its retention period change. Each event keeps its event ID, its original line, its time, and its classification; other events are not touched. Files are rewritten the way compaction rewrites them, so a stop or crash mid-job leaves either the old events or the new ones, never both. Each rewrite is recorded in the integrity ledger, and the start and the result are in the audit log as `source.reparse`.
+- Analysts and auditors cannot start a reparse. Running the rules over the reparsed time range follows in the next change.
+- What ingest adds after the parser stays: a syslog listener event keeps the sender's address as its device IP when the template finds none in the line, and a Loki event keeps its stream labels.
+- Loki sources: an event is parsed again from its stored line only; Loki stream labels are not used as parser input, so a field that only a label supplied stays empty.
+- Sources reads no event files to decide where to offer a reparse: a source is offered one after its template loads again, until a reparse of it finishes.
+- What you will notice: on Sources, an administrator sees "Reparse N events" on a source whose template is back after events were stored without it, then the job's progress and result.
+- What changes for existing installs: nothing to do; the update adds a table for reparse jobs and a column to the table of sources storing without their parser. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`); events already reparsed stay reparsed, the older release ignores the new table and column, and a source whose template already loaded again may send one more "template loads again" message.
+
+### Tests no longer fail on a slow test machine (2026-11-11)
+
+- Tests that measured elapsed time with tight limits failed on busy CI machines and cost extra runs. Each now checks the shape of the work (how many queries, no list written into the SQL), waits for the event it needs with a generous ceiling, or uses a fixed clock; real slowdowns are caught by the speed check on every app change.
+- What you will notice: nothing visible.
+- What changes for existing installs: nothing to do. Tests only.
+
+### A source without its parser says so on Health and to alert targets (2026-11-10)
+
+- When a source keeps storing events without its parser (its template is not available), Health and Sources now say which source and which template, and that rules and searches using the template's fields miss those events until they are reparsed. Analysts who read the source see the same words, not "cannot be read right now".
+- Every alert target gets one message when it starts ("Source without its parser") and one when the template loads again ("Source parser back"), with how many events were stored without it. Nothing repeats while it lasts, also across restarts. Both are in the audit log (ADR-0050 rows 4 to 6).
+- If the outage lasts more than 15 minutes, the general "Detection stopped" and "Detection running again" messages also go out, so four messages in all; whether to leave this case out of them is with the owner.
+- What you will notice: a clearer Health message for such a source, and alert messages when it starts and ends (two, or four past 15 minutes).
+- What changes for existing installs: nothing to do. The update adds one small table to the settings database. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`); the older release ignores the table.
+
+### Development: the session check fast-forwards main (2026-11-10)
+
+- `scripts/dev/session-check.sh` now fast-forwards a local `main` that is only behind `origin/main` (when it is not checked out elsewhere and has no local changes), so tools never compare against a stale `main`. A `main` with commits of its own is still only reported.
+- What you will notice: nothing visible.
+- What changes for existing installs: nothing to do. A development script only.
+
+### Handoff after ADR-0050 slice 1 (2026-11-10)
+
+- `docs/handoff.md` records #492 to #494 and names ADR-0050 slice 2 as the next item.
+- What you will notice: nothing visible.
+- What changes for existing installs: nothing to do. Documentation only.
+
+### A source whose parser is missing keeps storing its events (2026-11-10)
+
+- Before, a source whose template could not load (a rollback to an older release, a broken edit, a missing file) stopped. A syslog listener or agent source then filled its waiting space and refused new messages, which were lost.
+- Now the source keeps storing every event with the basic parser for its format: the original line is kept exactly, time, host, and message are filled where the format allows, and each event is marked `template_missing`, so a search on the template still finds it. CSV files are read without taking any line as a header, so no line is lost; the cells are kept by position. When the template loads again, new events are parsed with it from the next pass (ADR-0050, D233).
+- Sources still shows the source as an error ("Storing events without its parser: template ... is not available"), and the "Detection stopped" message still goes out, until the template is back. A clearer Health message and alerts follow in the next part.
+- What you will notice: a source with a missing template keeps receiving events instead of stopping; its error on Sources reads "Storing events without its parser".
+- What changes for existing installs: nothing to do; no settings change. Events stored while a template was missing keep the `template_missing` mark. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`).
+
+### Backlog: DuckDB out-of-memory crash, retest on 2.0.1 (2026-11-10)
+
+- `docs/BACKLOG.md` row 54 records the DuckDB out-of-memory crash findings, what is ruled out, and when to retest and report it upstream.
+- What you will notice: nothing visible.
+- What changes for existing installs: nothing to do. Documentation only.
+
+### Development: a local patch for a command-hold tool (2026-11-10)
+
+- A development-only patch, kept in `.claude/patches/` (not published), lets cleanup inside throwaway containers and temporary folders run without a confirmation prompt during development sessions.
+- What you will notice: nothing visible.
+- What changes for existing installs: nothing to do. Development files only.
+
+### Handoff for the next batch (2026-11-10)
+
+- `docs/handoff.md` lists what merged in this batch (#482, #484 to #490), the DuckDB out-of-memory crash findings, and what waits on the owner.
+- What you will notice: nothing visible.
+- What changes for existing installs: nothing to do. Documentation only.
+
+### The server stops its running queries before it exits (2026-11-10)
+
+- When the server stops, it now stops any query still running and waits for it to close before the process exits. Before, a query left running after another one ran out of memory could make the process end with an abort on the way out (about 1 exit in 10 in a test loop), so a normal stop or restart could be reported as a failure.
+- Queries that arrive while the server is stopping are refused with "The server is shutting down".
+- What you will notice: nothing visible.
+- What changes for existing installs: nothing to do; no data or settings change. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`).
+
+### DuckDB 1.5.6 (2026-11-10)
+
+- The query engine moves from DuckDB 1.5.5 to 1.5.6, a patch release. In a 200-run test where a query runs out of memory, the server process crashed in 12% of runs on 1.5.6 against 20.5% on 1.5.5 (Linux arm64); the rest answered with the usual "Out of memory" message. The crash is not fixed upstream yet; this lowers how often it happens. DuckDB 2.0 stays out for now.
+- What you will notice: nothing visible.
+- What changes for existing installs: the update installs DuckDB 1.5.6 with the other packages; no data or settings change. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`).
+
+### Development roles kept out of the public repository (2026-11-10)
+
+- CLAUDE.md section 10 imports the development roles and owner checkpoints from `.claude/factory.md` (D238). That file, the development agents and commands (`.claude/`), and design and bug proposals (`docs/proposals/`) are left out of the public repository.
+- The publish script now stops if `.claude/` or `docs/proposals/` would be published, so a missing `.gitattributes` line cannot leak them.
+- What you will notice: nothing visible.
+- What changes for existing installs: nothing to do. Development files only; nothing in the app, data, settings, or update steps changes.
+
+### Slash commands for the development workflow (2026-11-10)
+
+- Five Claude Code commands in `.claude/commands/`: `/next` (session check, handoff, plan the next item), `/review <pr>` (the reviewer agent on a PR), `/report` (merged, failed, needs owner decision, status items closed; 15 lines at most), `/design-pass` and `/bug-hunt` (the designer or tester on the synthetic demo; proposals only).
+- What you will notice: nothing visible.
+- What changes for existing installs: nothing to do. Development files only; nothing in the app, data, settings, or update steps changes.
+
+### Reviewer, designer, and tester agents for development (2026-11-10)
+
+- Three Claude Code subagents in `.claude/agents/` for building this project: a reviewer that reads only CLAUDE.md, the PR's ADR or handoff item, and the diff, and posts one ranked comment; a designer and a tester that work only on the synthetic demo and write proposals to `docs/proposals/`. None of them edits code, approves, or merges.
+- What you will notice: nothing visible.
+- What changes for existing installs: nothing to do. Development files only; nothing in the app, data, settings, or update steps changes.
+
+### Development scripts and tests run on macOS too (2026-11-10)
+
+- The update script (`scripts/update-systemd.sh`) used two Linux-only commands (`find -perm /0111` and `stat -c`); it now uses forms that work on Linux and macOS, with the same result on Linux.
+- The speed check reads the server's CPU time through `ps` where `/proc` is missing, so its CPU confirmation works on macOS.
+- Tests that need Linux (file names that are not UTF-8, per-thread priority) skip on macOS with the reason; Linux and CI still run them. The out-of-memory test for AI usage also skips on macOS: DuckDB crashes there about 1 run in 3 when that query runs out of memory. The AI usage memory test fixes two threads per query, as a 4 vCPU install gets.
+- The merge queue runs the smoke test through the backend's environment (`uv run`), where Playwright is installed, instead of whichever `python3` is first on the path.
+- The merge queue marks a draft PR ready with `gh pr ready` (the path it used only worked through the old cloud session) and stamps its push time with GNU or BSD `date`.
+- What you will notice: nothing visible.
+- What changes for existing installs: nothing to do. The update script behaves the same on Linux; to go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`).
+
+### Server events keep sign-ins, changes, exports, and denials only (2026-11-10)
+
+- The built-in `server_events` source recorded every request that was not a GET, so each search, count, facet, Ask, and Explain became an event. It now records only sign-ins, setup, user and token changes, exports and hand-offs, and admin and settings changes, plus any request that was denied or throttled (401, 403, 429) and any query the safety check blocked (for example ATTACH, read_csv, or COPY). A typo in a query is not recorded.
+- Searches and other reads are still in the audit log with the user, as before; only the copy in `server_events` stops.
+- A new endpoint has to be listed as recorded or read-only, or a test fails, so a change is never dropped by accident.
+- What you will notice: far fewer `server.request` events in Logs for the `server_events` source; searches no longer appear there.
+- What changes for existing installs: nothing to do. Events already stored stay; no settings or update steps change. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`).
+
+### The speed check no longer waits on its own requests (2026-11-10)
+
+- The speed check waits for each server's event count to hold still before timing. Since #469 the server records every changing request in its built-in `server_events` source, and the count query is itself such a request, so on a lake built after #469 the count rose by one every read and never held still. The check now leaves `server_events` out of that count.
+- It also never waits silently: a copied lake that is still adding events after 10 minutes (a new lake: 60 minutes) stops the check with the last counts, and while it waits it prints the count once a minute.
+- Stopping the check (a timeout or a kill) now stops its two servers too; before, they kept running and took CPU from whatever ran next.
+- What you will notice: nothing visible.
+- What changes for existing installs: nothing to do. Only a developer script changes; no data, settings, or update steps change. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`).
+
+### Detection never stops silently (2026-11-10)
+
+- When something that feeds detection stops on its own, your alert targets hear about it: a source or connector that cannot read for 15 minutes, an AI Watch check failing for 15 minutes, a threat feed that cannot update for a day, a schedule that pauses itself, and a failed integrity check. Each sends "Detection stopped" once and "Detection running again" once when it recovers.
+- Only real errors count (a failed fetch, a listener that is down, a full spool, a missing parser), never a quiet period or a connector running behind. A source whose spool is full now shows that on Health.
+- Something that keeps failing and recovering sends one stop and one recovery message an hour at most, then one "still flapping" message until it settles for an hour.
+- Anything with no alert targets of its own now tells every alert target instead of nobody.
+- Settings > Backups waits for its saved settings before showing the form, so an edit made while they load is no longer lost (found as a flaky test).
+- What you will notice: "Detection stopped", "Detection running again", and "Detection flapping" messages, a "Spool full" error on Health when a spool refuses messages, and schedule pause messages even for schedules with no targets chosen.
+- What changes for existing installs: three new settings tables, added on start. To go back, roll back the update (`update-systemd.sh --rollback`, see `docs/install/`); the extra tables are ignored by the older version.
+
+### Vendor alert pause messages (2026-11-10)
+
+- When a vendor alert source goes over 100 new alerts an hour, its alert targets now get a short message right away saying alert creation is paused and that High and Critical alerts still raise. The summary with held counts still comes when the pause ends.
+- If the source has no alert targets chosen, both messages go to every alert target.
+- What you will notice: a "Vendor alerts paused" message when a pause starts and a "Vendor alerts resumed" message when it ends.
+- What changes for existing installs: nothing to do. To go back, roll back the update (`update-systemd.sh --rollback`, see `docs/install/`); no data or settings change.
+
+### Template fallback decided, and threat numbers checked (2026-11-10)
+
+- ADR-0050 accepted: a source whose parser template cannot load will keep storing its events, say so on Health, and send one alert; the events can be reparsed later and the rules re-run over them. Built in the next three changes.
+- The release tooling now refuses a design record that reuses a threat number another one already owns.
+- What you will notice: nothing visible.
+- What changes for existing installs: nothing.
+
+### Vendor alerts: a rise after a close opens a new alert, and a starter CEF alert parser (2026-11-10)
+
+- When another security tool resends an alert at a higher severity after you closed it, a new alert opens. It says how the earlier one was closed and links to it; the closed alert and its reason stay as you left them.
+- New starter parser "CEF security alerts" for sources that receive only alerts from another security tool in CEF. It is never picked automatically: choose it for the source.
+- What you will notice: a closed vendor alert that comes back more severe now shows as a new alert with a "Follows" link, where before nothing appeared.
+- What changes for existing installs: nothing to do. The update adds one column to the settings database. To go back, roll back the update (`docs/install/team-vm.md`, Rolling back, `update-systemd.sh --rollback`): the older version ignores the new column, does not open new alerts for a rise after a close, and does not list the new parser, so pick another parser for a source that used it before rolling back.
+
+### Vendor alerts: an hourly cap and optional messages (2026-11-09)
+
+- A source that sends alerts from another security tool can create up to 100 new alerts an hour. Past that, High and Critical alerts still appear; lower ones are stored and searchable but do not appear as alerts until the hour is back under 100.
+- Health and Sources show a source over its cap with how many alerts were held, by severity. Its chosen alert targets get one message when the pause ends, with those counts.
+- New: "Vendor alert messages" on such a source. "Notify alert targets" is off by default; when on, new alerts at or above a minimum severity (High unless changed) go to the targets you pick.
+- What you will notice: nothing unless a vendor alert source sends more than 100 new alerts in an hour, or an admin turns on its messages.
+- What changes for existing installs: nothing to do; messages stay off until an admin turns them on. The update adds four tables to the settings database. To go back, roll back the update (`docs/install/team-vm.md`, Rolling back, `update-systemd.sh --rollback`): the older version ignores the new tables, raises every vendor alert with no cap, and sends no vendor alert messages; the settings come back if you update again.
+
+### An external alert lists every vendor alert it groups (2026-11-09)
+
+- An alert from another security tool shows how many vendor alerts it groups and the first 50 of their IDs; Show all loads the rest 200 at a time.
+- Show alert events lists those alerts' own lines, newest first, read only from the alert's sources and time range.
+- A resend or a higher severity on any grouped vendor alert updates the same alert.
+- What you will notice: external alerts have a Vendor alerts list and a Show alert events button in their Evidence section.
+- What changes for existing installs: nothing to do. The update adds one index to the settings database; to go back, roll back the update (`docs/install/team-vm.md`, Rolling back, `update-systemd.sh --rollback`): the older version ignores the index, and external alerts show their Evidence as before.
+
+### Alerts from other security tools can land in Alerts (2026-11-09)
+
+- A parser template can now mark its source as an alert source (`emits: alerts`, with where the vendor's alert ID and product are). Such a template takes effect only after an admin approves it, like every user template.
+- Each alert from that source becomes an item in Alerts within about a minute, with the vendor's title and severity (High or Medium; a low or informational alert has no severity badge and says its level), the person and device it names, and an Open in Search link to the alert's own lines. Alerts about the same person with the same title on the same day add to one item.
+- The same alert sent again raises nothing new; sent again at a higher severity, the open item's severity rises.
+- An alert line missing its ID, product, time, title, severity, or who or what it is about is still stored and searchable, marked partial, and raises no item. An alert whose own time is more than 7 days old when it arrives is stored but raises no item.
+- No starter template uses this yet, and these items send no notifications yet.
+- What you will notice: nothing visible until an admin approves a template with `emits: alerts`; after that, its alerts appear in Alerts.
+- What changes for existing installs: nothing to do. The update adds one table to the settings database, which an older version ignores; items already raised stay in Alerts. To go back, roll back the update (`docs/install/team-vm.md`, Rolling back, `update-systemd.sh --rollback`), but first, if any template uses `emits: alerts`, remove its `emits:` and `alert:` lines, or do not roll back and roll forward instead. The older version cannot load a template with those lines, and a source set to that template stops: Sources shows "Template ... is not available", file sources are not read until it is fixed, and syslog listener and OTLP sources hold up to 512 MB of waiting messages and then drop new ones. With the lines removed, its events are stored as ordinary events, raw line kept. Sources using the Automatic parser are not affected.
+
 ### Sign-ins and changes to this server are searchable in Logs (2026-11-08)
 
 - The built-in `server_events` source now also records successful sign-ins (password and single sign-on) and every request that changes something or exports data: the time, user id and name, client address (through trusted proxies), method, route, status, and duration. Searching an address in Logs answers "who is this", not only the server journal.
@@ -47,6 +468,14 @@
 - The built-in source of refused sign-ins and tokens (`server_events`) is expected to be quiet: it is never called quiet and never named as the longest wait. GET /api/sources marks it with `built_in` and `events_on_failure`; GET /api/overview adds a `condition` per source and a `source_summary`.
 - What you will notice: the Dashboard's Sources line now says "N of M healthy" and names quiet sources, matching Health.
 - What changes for existing installs: nothing to do. No data, settings, or update steps change. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`).
+
+### AI usage counts Windows DNS lookups and each hook record once (2026-11-08)
+
+- Windows DNS, Unbound, and PowerDNS put the looked-up name in `message`, which AI usage did not read, so their lookups of AI services were missed. AI usage, AI Watch, and the AI parts of People & devices and the top bar lookup now read it on DNS events. A name kept in the extra fields still comes first.
+- Finding AI service lookups no longer reads the extra fields of sign-ins (Windows sign-ins carry about 1.5 KB each), and parses those fields only when they hold a host. On a synthetic day of 1.36 million sign-ins and 814,500 Windows DNS queries, today's AI check went from about 2.7 s to 1.6 s while now reading the DNS lookups.
+- AI usage, People: a hook record the plugin sent twice counts once, as on Agents and Sessions. People seen only through the hooks plugin show for Last 7 days with or without the AI rollup built (tests added).
+- What you will notice: Windows DNS lookups of AI services now count in AI usage; tool call counts in People no longer double for a record the plugin resent.
+- What changes for existing installs: nothing to do. Days the AI rollup already built keep their counts until those days change; new days and today include Windows DNS lookups. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`).
 
 ### People & devices opens faster on large installs (2026-11-08)
 

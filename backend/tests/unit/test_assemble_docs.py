@@ -225,3 +225,51 @@ def test_hand_rows_keep_their_order(root: Path) -> None:
         f"| D{A.FROZEN} | Decision {A.FROZEN} | Accepted |",
         f"| D{A.FROZEN} | Decision {A.FROZEN} | Accepted |\n| D209 | x | Accepted |",
     )
+
+
+THREATS = "| ID | Threat | ATLAS | ATT&CK | Control |\n|---|---|---|---|---|\n"
+
+
+def adr(n: int, status: str, *rows: int) -> str:
+    body = "".join(f"| T{t} | Threat {t} | n/a | n/a | c |\n" for t in rows)
+    return f"# ADR-{n:04d}\n\nStatus: {status}\n\n## Threats\n\n{THREATS}{body}"
+
+
+def test_check_fails_when_two_adrs_claim_a_threat_number(root: Path) -> None:
+    """D234, after ADR-0050 first reused ADR-0049's T83 and T84: a range on a Status line
+    counts as a claim; a table without a Threat column does not."""
+    (root / "docs" / "adr").mkdir()
+    add(root, "docs/adr/ADR-0049-a.md", adr(49, "Accepted. Threats T79 to T86 are in SPEC 7.1."))
+    add(root, "docs/adr/ADR-0030-b.md", "| # | Row |\n|---|---|\n| T83 | not a threat |\n")
+    A.main(["--root", str(root)])
+    assert A.main(["--root", str(root), "--check"]) == 0
+    add(root, "docs/adr/ADR-0050-c.md", adr(50, "Proposed.", 83, 87))
+    docs = A.Docs(root)
+    assert not docs.check()
+    assert docs.problems == ["T83 is claimed by ADR-0049-a.md and ADR-0050-c.md"]
+    add(root, "docs/adr/ADR-0050-c.md", adr(50, "Proposed.", 87, 88))
+    assert A.main(["--root", str(root), "--check"]) == 0
+
+
+def test_prep_fails_when_a_new_threat_number_is_already_in_spec(root: Path) -> None:
+    (root / "docs" / "adr").mkdir()
+    spec = (
+        (root / "docs/SPEC.md")
+        .read_text()
+        .replace(
+            "## 9. Decisions log",
+            f"## 7. Threats\n\n### 7.1 Threats and controls\n\n{THREATS}| T82 | Forged | n/a | n/a | c |\n\n### 7.2 Next\n\n## 9. Decisions log",
+        )
+    )
+    add(root, "docs/SPEC.md", spec)
+    git(root, "init", "-q", "-b", "main")
+    git(root, "add", "-A")
+    git(root, "commit", "-qm", "base")
+    git(root, "checkout", "-qb", "mine")
+    add(root, "docs/adr/ADR-0050-c.md", adr(50, "Proposed.", 82))
+    git(root, "add", "-A")
+    git(root, "commit", "-qm", "mine")
+    assert A.main(["--root", str(root), "--prep", "--base", "main", "--pr", "478"]) == 1
+    add(root, "docs/adr/ADR-0050-c.md", adr(50, "Proposed.", 87))
+    git(root, "commit", "-qam", "renumbered")
+    assert A.main(["--root", str(root), "--prep", "--base", "main", "--pr", "478"]) == 0

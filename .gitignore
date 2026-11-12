@@ -239,3 +239,6 @@ frontend/dist/
 !backend/tests/fixtures/mixed/**
 sbom.cdx.json
 offline-bundle/
+
+# Claude Code agent worktrees (local only)
+.claude/worktrees/

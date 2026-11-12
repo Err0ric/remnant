@@ -1,0 +1,10 @@
+### Events stored without their parser can be reparsed (2026-11-11)
+
+- When a source's template was missing for a while, its events were stored with the basic parser and marked `template_missing`. Once the template loads again, an administrator can now choose "Reparse N events" on Sources. The server parses those events again with the template, in the background, and shows the job's progress and result on the source (ADR-0050 rows 7 and 8, D233).
+- Only that source's `template_missing` events inside its retention period change. Each event keeps its event ID, its original line, its time, and its classification; other events are not touched. Files are rewritten the way compaction rewrites them, so a stop or crash mid-job leaves either the old events or the new ones, never both. Each rewrite is recorded in the integrity ledger, and the start and the result are in the audit log as `source.reparse`.
+- Analysts and auditors cannot start a reparse. Running the rules over the reparsed time range follows in the next change.
+- What ingest adds after the parser stays: a syslog listener event keeps the sender's address as its device IP when the template finds none in the line, and a Loki event keeps its stream labels.
+- Loki sources: an event is parsed again from its stored line only; Loki stream labels are not used as parser input, so a field that only a label supplied stays empty.
+- Sources reads no event files to decide where to offer a reparse: a source is offered one after its template loads again, until a reparse of it finishes.
+- What you will notice: on Sources, an administrator sees "Reparse N events" on a source whose template is back after events were stored without it, then the job's progress and result.
+- What changes for existing installs: nothing to do; the update adds a table for reparse jobs and a column to the table of sources storing without their parser. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`); events already reparsed stay reparsed, the older release ignores the new table and column, and a source whose template already loaded again may send one more "template loads again" message.

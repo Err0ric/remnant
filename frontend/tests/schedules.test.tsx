@@ -138,11 +138,13 @@ describe("Dashboards at scale (ADR-0034)", () => {
       "href",
       "/health#source=win_dc",
     );
-    expect(within(banner).getByText(/1 restricted/)).toBeVisible();
+    expect(within(banner).getByText(/Some alerts are in sources you can't read\./)).toBeVisible();
     // AI Watch comes next, then the panels, then sources in one line at the bottom.
     const watch = screen.getByRole("region", { name: "AI Watch" });
     expect(banner.compareDocumentPosition(watch) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.getByRole("link", { name: /^Sources: / })).toBeVisible();
+    // A source with problems: said once, in the Health banner at the top, not again below.
+    expect(screen.getByRole("region", { name: "Health needs attention" })).toBeVisible();
+    expect(screen.queryByRole("link", { name: /^Sources: / })).toBeNull();
   });
 
   it("sets the headline the panel shows, for the schedule's owner", async () => {

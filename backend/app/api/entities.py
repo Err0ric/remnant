@@ -12,7 +12,8 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from app.ai.catalog import Catalog
-from app.api.access import CurrentUser, client_ip
+from app.ai.people_view import audit_ai_view, can_view_people
+from app.api.access import CurrentUser, client_ip, require_ai_people
 from app.auth.service import AuthService
 from app.auth.users import User
 from app.core import clock
@@ -22,6 +23,7 @@ from app.engine.duckdb import QueryEngine, QueryScope
 from app.engine.views import permitted_sources
 from app.enrich.geoip import GeoIP
 from app.meta.db import MetaDB
+from app.search import entity_signals
 from app.search.entities import ai_graph, entity_graph, entity_risk, to_json
 from app.search.entity_summary import entity_summary
 from app.search.identity import IdentityMap, IdentityStore
@@ -79,6 +81,8 @@ class RiskResponse(BaseModel):
     targeted_total: int = 0
     matches_considered: int
     sources: list[str]
+    # Without View people in AI usage, people carry no AI Watch flags or alerts (D242).
+    ai_people_hidden: bool = False
 
 
 class CardOut(BaseModel):
@@ -167,6 +171,9 @@ class GraphOut(BaseModel):
     edges: list[EdgeOut]
     more: list[int]
     sources: list[str]
+    # AI flow without View people in AI usage: people are cards by machine, never by name,
+    # and cannot be followed (D242).
+    masked: bool = False
 
 
 async def _scope(
@@ -205,7 +212,8 @@ async def risk(
 ) -> RiskResponse:
     """Users, source IPs, and hosts seen in the range, ranked by a score whose parts are
     shown: rule matches, flagged runs, failed sign-ins, risky inbox rules, app consents, AI
-    watch flags, attack hits, and alerts naming them (D195); then by events."""
+    watch flags, attack hits, and alerts naming them (D195); then by events. Without View
+    people in AI usage, people have no AI watch flags and no AI Watch alerts counted (D242)."""
     # Named phases in Server-Timing, so a slow load shows where it went (review item 7).
     with phase("access"):
         allowed, scope = await _scope(request, user, start, end)
@@ -213,13 +221,27 @@ async def risk(
     meta: MetaDB = request.app.state.meta
     with phase("identities"):
         ident = await _identities(request, scope, user)
+    named_ok = can_view_people(user)
     ranked, considered, read, spl = await run_in_threadpool(
-        entity_risk, engine, meta, allowed, scope, ident, request.app.state.ai_usage
+        entity_risk, engine, meta, allowed, scope, ident, request.app.state.ai_usage, named_ok
     )
     with phase("enrichment"):
         await run_in_threadpool(place, spl.rows, request.app.state.geoip)
     with phase("audit"):
         await _audit(request, user, "investigate.risk", {"sources_in_scope": read})
+        # ADR-0029 G3: `ai.view_people` when the answer shows AI usage by person (an AI
+        # watch flag, or an AI Watch alert counted on a person's row), else `ai.view`.
+        named = False
+        if named_ok:
+            about = await run_in_threadpool(entity_signals.ai_alert_people, meta, allowed, scope)
+            named = any(
+                r.ai_flags or (r.alerts and about & {n.lower() for n in [r.value, *r.names]})
+                for r in ranked["user"]
+            )
+        await run_in_threadpool(
+            audit_ai_view, request.app.state.auth.audit, user, client_ip(request),
+            "investigate.risk", scope.start, scope.end, read, named,
+        )  # fmt: skip
     targeted_rows = []
     for t in spl.rows:
         data = to_json(t)
@@ -233,6 +255,7 @@ async def risk(
         targeted_total=spl.total,
         matches_considered=considered,
         sources=read,
+        ai_people_hidden=not named_ok,
     )
 
 
@@ -247,7 +270,12 @@ async def graph(
     end: datetime | None = None,
 ) -> GraphOut:
     """Entity mode: Entity, Sources, Activities, Targets. AI flow: People, AI clients,
-    Tools and MCP servers, Destinations; optionally for one person, MCP server, or service."""
+    Tools and MCP servers, Destinations; optionally for one person, MCP server, or service.
+    Without View people in AI usage the AI flow shows machines for people, and a person
+    asked for is refused (D242); the AI flow is also audited ai.view_people or ai.view."""
+    named_ok = mode == "entity" or can_view_people(user)
+    if mode == "ai" and kind == "user":
+        await run_in_threadpool(require_ai_people, request, user)
     allowed, scope = await _scope(request, user, start, end)
     engine: QueryEngine = request.app.state.engine
     if mode == "entity":
@@ -265,15 +293,21 @@ async def graph(
         catalog: Catalog = request.app.state.ai_catalog
         ident = await _identities(request, scope, user)
         g = await run_in_threadpool(
-            ai_graph, engine, catalog, scope, kind, value, ident, request.app.state.ai_rollup
-        )
+            ai_graph, engine, catalog, scope, kind, value, ident, request.app.state.ai_rollup,
+            named_ok,
+        )  # fmt: skip
+        people = any(c.lane == 0 and c.group == "People" for c in g.cards)
+        await run_in_threadpool(
+            audit_ai_view, request.app.state.auth.audit, user, client_ip(request), "ai.flow", start,
+            end, g.sources, named_ok and people, kind=kind, value=(value or "")[:200],
+        )  # fmt: skip
     await _audit(
         request,
         user,
         "investigate.graph",
         {"mode": mode, "kind": kind, "value": (value or "")[:200], "sources_in_scope": g.sources},
     )
-    return GraphOut(**to_json(g))
+    return GraphOut(**to_json(g), masked=not named_ok)
 
 
 @router.get("/entities/summary")

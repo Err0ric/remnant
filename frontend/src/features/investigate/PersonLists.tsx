@@ -91,7 +91,8 @@ export function PersonSignIns({ person }: { person: string }) {
   );
 }
 
-/** Alerts about the person, any state (ADR-0038 row 27). */
+/** Alerts about the person, any state (ADR-0038 row 27). Without View people in AI usage
+ * the server leaves AI Watch items out (D242, amended 2026-11-11). */
 export function PersonAlerts({ person }: { person: string }) {
   const q = useQuery({
     queryKey: ["person-alerts", person],

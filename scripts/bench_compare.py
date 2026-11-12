@@ -33,6 +33,7 @@ import argparse
 import json
 import os
 import shutil
+import signal
 import socket
 import statistics
 import subprocess
@@ -48,6 +49,8 @@ from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+
+import devauth
 
 ROOT = Path(__file__).resolve().parents[1]
 # One zone per round, never repeated in a run (rounds 0 to 3n+1 for --rounds n up to 8).
@@ -142,6 +145,19 @@ def pages() -> dict[str, list[Call]]:
     }
 
 
+def ps_time_ms(text: str) -> float:
+    """`ps -o time=` ([dd-][hh:]mm:ss[.cc]) in milliseconds."""
+    days, _, rest = text.strip().rpartition("-")
+    total = 0.0
+    for part in rest.split(":"):
+        total = total * 60 + float(part)
+    return (total + int(days or 0) * 86_400) * 1000
+
+
+# Signed-in administrator per server started here (D245: no server runs without accounts).
+SESSIONS: dict[str, devauth.Session] = {}
+
+
 class Api:
     def __init__(self, base: str, pid: int | None = None) -> None:
         self.base = base
@@ -149,21 +165,32 @@ class Api:
         self.pid = pid
 
     def cpu_ms(self) -> float:
-        """The server process's CPU time so far (Linux), 0 when it cannot be read."""
+        """The server process's CPU time so far: /proc on Linux, `ps` elsewhere (macOS);
+        0 when it cannot be read."""
         try:
             fields = Path(f"/proc/{self.pid}/stat").read_text().rsplit(")", 1)[1].split()
             return (int(fields[11]) + int(fields[12])) * 1000 / os.sysconf("SC_CLK_TCK")
         except (OSError, ValueError, IndexError):
+            pass
+        try:
+            out = subprocess.run(  # noqa: S603  # fixed arguments, our own child's pid
+                ["ps", "-o", "time=", "-p", str(self.pid)],  # noqa: S607  # ps on PATH
+                capture_output=True, text=True, timeout=5, check=True,
+            ).stdout  # fmt: skip
+            return ps_time_ms(out)
+        except (OSError, ValueError, subprocess.SubprocessError):
             return 0.0
 
     def call(self, method: str, path: str, body: Any = None, timeout: float = 300) -> Any:
-        if not self.csrf:
+        session = SESSIONS.get(self.base)
+        if session is None and not self.csrf:
             with urllib.request.urlopen(self.base + "/api/auth/state", timeout=10) as r:  # noqa: S310  # loopback
                 self.csrf = json.loads(r.read()).get("csrf_token") or "-"
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(self.base + path, data=data, method=method)  # noqa: S310  # loopback
         req.add_header("Content-Type", "application/json")
-        req.add_header("X-CSRF-Token", self.csrf)
+        for name, value in (session.headers() if session else {"X-CSRF-Token": self.csrf}).items():
+            req.add_header(name, value)
         with urllib.request.urlopen(req, timeout=timeout) as res:  # noqa: S310  # loopback
             out = res.read()
         return json.loads(out) if out else None
@@ -259,7 +286,11 @@ def serve(
             why = "failed its start check" if proc.returncode == WRONG_APP else "exited"
             raise RuntimeError(f"server from {code} {why}; see {log}")
         try:
-            Api(f"http://127.0.0.1:{port}").call("GET", "/api/auth/state", timeout=3)
+            base = f"http://127.0.0.1:{port}"
+            Api(base).call("GET", "/api/auth/state", timeout=3)
+            session = devauth.sign_in(base, data, env, code / "backend", python)
+            if session is not None:
+                SESSIONS[base] = session
             return proc
         except (OSError, urllib.error.URLError):
             time.sleep(1)
@@ -275,20 +306,34 @@ def stop(proc: subprocess.Popen[bytes]) -> None:
         proc.kill()
 
 
-def settle(api: Api) -> int:
+# Each count below is a POST, and since #469 the server records every non-GET request in
+# its built-in server_events source, so counting those would never hold still.
+SETTLE_SQL = "SELECT count(*) FROM events WHERE source_id <> 'server_events'"
+SETTLE_LIMIT_S = 600  # a copied lake: only files its copy picks up
+BUILD_SETTLE_LIMIT_S = 3600  # a new lake: ingest of the whole build
+
+
+def settle(api: Api, name: str, limit_s: int = SETTLE_LIMIT_S) -> int:
     """Wait until ingest stops adding events: the same count for 30 s (four reads 10 s
     apart). Two reads 5 s apart stopped a full-size build at 383,000 of 482,000 events,
-    and each server then ingested the rest while it was being timed."""
+    and each server then ingested the rest while it was being timed. The bench's own
+    requests are not counted. Still changing after `limit_s`: fail with the counts,
+    never wait on."""
     seen: list[int] = []
-    for _ in range(180):
-        n = int(
-            api.call("POST", "/api/query", {"sql": "SELECT count(*) FROM events"})["rows"][0][0]
-        )
+    start = time.monotonic()
+    said = start
+    while time.monotonic() - start < limit_s:
+        n = int(api.call("POST", "/api/query", {"sql": SETTLE_SQL})["rows"][0][0])
         seen = [*seen[-3:], n]
         if len(seen) == 4 and len(set(seen)) == 1 and n > 0:
             return n
+        if time.monotonic() - said >= 60:
+            print(f"settling {name}: {n:,} events", file=sys.stderr)
+            said = time.monotonic()
         time.sleep(10)
-    return seen[-1] if seen else -1
+    raise RuntimeError(
+        f"{name} server still adding events after {limit_s // 60} min; last counts {seen}"
+    )
 
 
 def build(code: Path, lake: Path, events: int, router: int, log: Path, shape: float = 0.0) -> int:
@@ -327,7 +372,7 @@ def build(code: Path, lake: Path, events: int, router: int, log: Path, shape: fl
             gen = ROOT / "scripts" / "fixtures" / "real_shape.py"
             cmd = [sys.executable, str(gen), "--lake", str(lake / "data" / "lake"), "--scale", str(shape)]  # fmt: skip
             subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, cwd=code / "backend", env=env)  # noqa: S603  # fmt: skip
-        n = settle(api)
+        n = settle(api, "build", BUILD_SETTLE_LIMIT_S)
     finally:
         stop(proc)
     kept = {"events": n, "loggen": events, "shape": shape, "at": time.time()}
@@ -451,6 +496,9 @@ def flag(before: float, after: float) -> str:
 
 
 def main() -> int:
+    # A stop (the queue's timeout, a person's kill) still runs the cleanup below, so no
+    # server outlives the bench.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--before", default="origin/main", help="git ref or checkout folder")
     ap.add_argument("--after", default="HEAD", help="git ref or checkout folder")
@@ -503,7 +551,7 @@ def main() -> int:
             point_router(sides[name], router_port)
         # Both copies settle (a copy picks up files whose checkpoint names the lake's own
         # data folder) and must hold the same events, or the two sides time different work.
-        counts = {name: settle(api) for name, api in sides.items()}
+        counts = {name: settle(api, name) for name, api in sides.items()}
         if counts["before"] != counts["after"]:
             raise RuntimeError(f"the two servers hold different events: {counts}")
         print(f"servers: {counts['after']:,} events each; load average {os.getloadavg()[0]:.2f}", file=sys.stderr)  # fmt: skip

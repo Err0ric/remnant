@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Freshness, ago } from "@/components/shell/Freshness";
 
 function Page({ updated }: { updated: string }) {
@@ -16,13 +16,17 @@ describe("Freshness", () => {
   });
 
   it("shows when the server computed the page's numbers (D147)", async () => {
+    // A fixed clock: the label does not drift past 49 s on a slow runner.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-10T12:00:42Z"));
     const client = new QueryClient();
-    const updated = new Date(Date.now() - 42_000).toISOString();
+    const updated = new Date("2026-11-10T12:00:00Z").toISOString();
     render(
       <QueryClientProvider client={client}>
         <Page updated={updated} />
       </QueryClientProvider>,
     );
-    expect(await screen.findByText(/Updated 4\d s ago/)).toBeInTheDocument();
+    expect(await screen.findByText(/Updated 42 s ago/)).toBeInTheDocument();
+    vi.useRealTimers();
   });
 });

@@ -18,13 +18,18 @@ Merged inputs are retired, not deleted (owner, 2026-11-03: a running read failed
 "Cannot open file" when compaction deleted a file it had listed). They stay in place for
 `RETIRE_GRACE_S`, hidden from new reads, and a later run deletes them and records the
 removal in the integrity ledger then (D183).
+
+A reparse (ADR-0050 row 7, `app.ingest.reparse`) rewrites files through the same steps;
+its manifest and retired entries say "reparsed", and so does the ledger's removal.
 """
 
 import json
 import os
 import re
+import stat
+import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 
@@ -34,6 +39,7 @@ import structlog
 
 from app.core import clock as _clock
 from app.core import lake_files
+from app.core.errors import log_detail
 from app.core.ids import uuid7
 from app.core.lake_files import MANIFEST_SUFFIX, RETIRE_GRACE_S
 from app.core.schema import arrow_schema
@@ -47,6 +53,12 @@ SORT_KEYS = [("template_id", "ascending"), ("time", "ascending")]
 # DuckDB's own row group size: small enough to skip, large enough to compress well.
 ROW_GROUP_ROWS = 122_880
 
+# Why a file was replaced, kept in its manifest and retired entry and named in the ledger
+# when it is deleted: merged by compaction, or rewritten by a reparse (ADR-0050 row 7).
+COMPACTED = "compacted"
+REPARSED = "reparsed"
+KINDS = frozenset({COMPACTED, REPARSED})
+
 _PARTITION = re.compile(r"day=(\d{4}-\d{2}-\d{2})")
 
 
@@ -57,6 +69,9 @@ class CompactionReport:
     files_written: int = 0
     recovered: int = 0
     deleted: int = 0  # retired files whose grace period was over
+    # Day folders this run could not compact ("source=x/day=y", the error's type): one
+    # of them never stops the others, and maintenance reports them (audit 2026-11 H7).
+    failed: list[tuple[str, str]] = field(default_factory=list)
 
 
 log = structlog.get_logger(__name__)
@@ -73,7 +88,16 @@ class Compactor:
         events: LakeEvents | None = None,
         clock: Callable[[], datetime] = lambda: _clock.now(),
         grace_s: float = RETIRE_GRACE_S,
+        settle_s: float = 0.0,
+        hold: Callable[[], set[Path]] | None = None,
     ) -> None:
+        # Files ingest says it may still take back (an undo the ledger could not record
+        # yet): never merged, however old.
+        self._hold = hold
+        # Files newer than this are left for the next run: ingest may still take a file
+        # back when its write or its position could not be recorded (LakeWriter), and a
+        # merge in that moment would keep a copy of rows that are then read again.
+        self._settle = settle_s
         self._clock = clock
         self._grace = grace_s
         self._lake = lake_dir
@@ -93,36 +117,54 @@ class Compactor:
             match = _PARTITION.fullmatch(folder.name)
             if folder.is_symlink() or not folder.is_dir() or match is None:
                 continue
-            report.recovered += self._recover(folder)
-            report.deleted += self._reap(folder)
             try:
-                closed = date.fromisoformat(match.group(1)) < today
-            except ValueError:
-                continue
-            small = [
-                p
-                for p in lake_files.visible(folder)
-                if not p.is_symlink() and p.stat().st_size < self._small
-            ]
-            if len(small) < (2 if closed else self._min_open):
-                continue
-            small = [p for p in small if self._usable(p)]
-            # Never merge a file whose content differs from the ledger: the edit would be
-            # laundered into a new, legitimately recorded file (security review).
-            small = self._events.unchanged(small)
-            if len(small) < (2 if closed else self._min_open):
-                continue
-            touched = False
-            for batch in self._batches(small):
-                if len(batch) < 2:
-                    continue
-                output = self._merge(folder, batch)
-                self._finish(folder, output.name, [p.name for p in batch])
-                report.files_merged += len(batch)
-                report.files_written += 1
-                touched = True
-            report.partitions += int(touched)
+                self._compact_folder(folder, match.group(1), today, report)
+            except Exception as exc:  # this folder waits; the others are still compacted
+                name = f"{folder.parent.name}/{folder.name}"
+                log.warning("compaction.folder_failed", folder=name, **log_detail(exc))
+                report.failed.append((name, type(exc).__name__))
         return report
+
+    def _compact_folder(
+        self, folder: Path, day: str, today: date, report: CompactionReport
+    ) -> None:
+        report.recovered += self._recover(folder)
+        report.deleted += self._reap(folder)
+        try:
+            closed = date.fromisoformat(day) < today
+        except ValueError:
+            return
+        held = self._hold() if self._hold is not None else set()
+        oldest_new = time.time() - self._settle  # file times are the real clock's
+        small = []
+        for p in lake_files.visible(folder):
+            try:  # ingest may take a file back between the listing and this look
+                info = p.lstat()
+            except FileNotFoundError:
+                continue
+            if stat.S_ISLNK(info.st_mode) or info.st_size >= self._small or p in held:
+                continue
+            if self._settle and info.st_mtime > oldest_new:
+                continue
+            small.append(p)
+        if len(small) < (2 if closed else self._min_open):
+            return
+        small = [p for p in small if self._usable(p)]
+        # Never merge a file whose content differs from the ledger: the edit would be
+        # laundered into a new, legitimately recorded file (security review).
+        small = self._events.unchanged(small)
+        if len(small) < (2 if closed else self._min_open):
+            return
+        touched = False
+        for batch in self._batches(small):
+            if len(batch) < 2:
+                continue
+            output = self._merge(folder, batch)
+            self._finish(folder, output.name, [p.name for p in batch])
+            report.files_merged += len(batch)
+            report.files_written += 1
+            touched = True
+        report.partitions += int(touched)
 
     def _usable(self, path: Path) -> bool:
         """A damaged file is moved aside instead of failing the whole run."""
@@ -149,34 +191,30 @@ class Compactor:
 
     def _merge(self, folder: Path, inputs: list[Path]) -> Path:
         """Write the merged file and its manifest. Inputs are left in place."""
-        tables = [self._conform(pq.read_table(p)) for p in inputs]
+        tables = []
+        for p in inputs:
+            try:
+                tables.append(conform(pq.read_table(p), self._schema))
+            except (pa.ArrowInvalid, OSError) as exc:
+                # Its footer read (`_usable`) but its data does not: every search over this
+                # day fails on it too. Only for what pyarrow says about the content (an
+                # invalid file, or its I/O error, which carries no errno): the file is
+                # moved aside, the run reports this folder, and the next run compacts the
+                # rest (audit 2026-11 H7). An error of the system (memory, too many open
+                # files, a disk error with an errno) leaves the file where it is.
+                if isinstance(exc, pa.ArrowInvalid) or exc.errno is None:
+                    why = f"data does not read: {type(exc).__name__}"
+                    quarantine(self._lake, p, why, self._events)
+                raise
         merged = pa.concat_tables(tables).sort_by(SORT_KEYS)
-        final = folder / f"part-{uuid7().hex}.parquet"
-        manifest = folder / f"{final.stem}{MANIFEST_SUFFIX}"
-        with manifest.open("w", encoding="utf-8") as fh:
-            json.dump({"output": final.name, "inputs": [p.name for p in inputs]}, fh)
-            fh.flush()
-            os.fsync(fh.fileno())
+        final = new_part(folder)
+        write_manifest(final, [p.name for p in inputs])
         published = publish(merged, final, row_group_size=ROW_GROUP_ROWS)
         self._events.added([published])
         return published
 
-    def _conform(self, table: pa.Table) -> pa.Table:
-        """Fit an older file to the current schema (migrations are additive only)."""
-        columns = []
-        for fld in self._schema:
-            if fld.name in table.column_names:
-                columns.append(table.column(fld.name).cast(fld.type))
-            else:
-                columns.append(pa.nulls(table.num_rows, type=fld.type))
-        return pa.Table.from_arrays(columns, schema=self._schema)
-
-    def _finish(self, folder: Path, output: str, inputs: list[str]) -> None:
-        """Retire the inputs (reads already running may still open them), then drop the
-        manifest. Retiring first: with the manifest gone, the retired list hides them."""
-        names = [n for n in inputs if n != output and (folder / n).is_file()]
-        lake_files.retire(folder, names, output, self._clock())
-        (folder / f"{Path(output).stem}{MANIFEST_SUFFIX}").unlink(missing_ok=True)
+    def _finish(self, folder: Path, output: str, inputs: list[str], why: str = COMPACTED) -> None:
+        finish(folder, output, inputs, self._clock(), why)
 
     def _reap(self, folder: Path) -> int:
         """Delete retired files whose grace period is over. The ledger records the
@@ -188,12 +226,15 @@ class Compactor:
         into = lake_files.retired(folder)
         present = [folder / n for n in due if (folder / n).is_file()]
         deleted = 0
-        by_output: dict[str, list[Path]] = {}
+        by_output: dict[tuple[str, str], list[Path]] = {}
         for p in present:
-            by_output.setdefault(into[p.name].get("into", "?"), []).append(p)
+            entry = into[p.name]
+            why = entry.get("why") or COMPACTED
+            why = why if why in KINDS else COMPACTED
+            by_output.setdefault((why, entry.get("into", "?")), []).append(p)
         done = [n for n in due if not (folder / n).is_file()]  # already gone
-        for output, paths in by_output.items():
-            for path in self._events.removed(paths, f"compacted into {output}"):
+        for (why, output), paths in by_output.items():
+            for path in self._events.removed(paths, f"{why} into {output}"):
                 path.unlink(missing_ok=True)
                 done.append(path.name)
                 deleted += 1
@@ -207,11 +248,14 @@ class Compactor:
                 data = json.loads(manifest.read_text(encoding="utf-8"))
                 output = _safe_name(data["output"])
                 inputs = [_safe_name(n) for n in data["inputs"]]
-            except (ValueError, KeyError, TypeError):
+                kind = data.get("kind", COMPACTED)
+                if kind not in KINDS:
+                    raise ValueError("bad manifest kind")
+            except (ValueError, KeyError, TypeError, AttributeError):
                 manifest.unlink(missing_ok=True)
                 continue
             if (folder / output).is_file() and _contains(folder / output, folder, inputs):
-                self._finish(folder, output, inputs)
+                self._finish(folder, output, inputs, kind)
                 recovered += 1
             elif (folder / output).is_file():
                 # A manifest that does not describe a real merge (security review): keep
@@ -222,6 +266,46 @@ class Compactor:
                 (folder / f".{output}.tmp").unlink(missing_ok=True)
                 manifest.unlink(missing_ok=True)
         return recovered
+
+
+def new_part(folder: Path) -> Path:
+    return folder / f"part-{uuid7().hex}.parquet"
+
+
+def write_manifest(output: Path, inputs: list[str], kind: str = COMPACTED) -> Path:
+    """Name the output and the files it replaces before publishing it: a crash then leaves
+    a manifest the next pass finishes (output in place) or discards (output missing)."""
+    manifest = output.parent / f"{output.stem}{MANIFEST_SUFFIX}"
+    body: dict[str, object] = {"output": output.name, "inputs": inputs}
+    if kind != COMPACTED:
+        body["kind"] = kind
+    with manifest.open("w", encoding="utf-8") as fh:
+        json.dump(body, fh)
+        fh.flush()
+        os.fsync(fh.fileno())
+    return manifest
+
+
+def finish(
+    folder: Path, output: str, inputs: list[str], now: datetime, why: str = COMPACTED
+) -> None:
+    """Retire the inputs (reads already running may still open them), then drop the
+    manifest. Retiring first: with the manifest gone, the retired list hides them."""
+    names = [n for n in inputs if n != output and (folder / n).is_file()]
+    lake_files.retire(folder, names, output, now, why)
+    (folder / f"{Path(output).stem}{MANIFEST_SUFFIX}").unlink(missing_ok=True)
+
+
+def conform(table: pa.Table, schema: pa.Schema | None = None) -> pa.Table:
+    """Fit an older file to the current schema (migrations are additive only)."""
+    schema = schema or arrow_schema()
+    columns = []
+    for fld in schema:
+        if fld.name in table.column_names:
+            columns.append(table.column(fld.name).cast(fld.type))
+        else:
+            columns.append(pa.nulls(table.num_rows, type=fld.type))
+    return pa.Table.from_arrays(columns, schema=schema)
 
 
 def _contains(output: Path, folder: Path, inputs: list[str]) -> bool:

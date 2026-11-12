@@ -133,3 +133,19 @@ def test_banner_shown_in_the_tui(api: Api) -> None:
             assert "Security workspace" in str(text)
 
     asyncio.run(go())
+
+
+def test_a_source_list_that_arrives_after_exit_is_ignored(api: Api) -> None:
+    """The flake in test_banner_shown_in_the_tui: the background source list came back
+    after the app had closed, and filling it raised NoMatches."""
+
+    async def go() -> Tui:
+        app = Tui(api)
+        async with app.run_test(size=(140, 40)):
+            pass
+        return app
+
+    app = asyncio.run(go())
+    app.fill_sources(["lin_auth"])  # the screen is gone: no error
+    app.tail_note("late")
+    app.set_status("late")

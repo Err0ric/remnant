@@ -84,7 +84,7 @@ Remnant treats every line as untrusted input, but a flood of fake lines still co
 
 ## 5. Rotation
 
-Remnant handles both logrotate styles (rename and `copytruncate`). A typical `/etc/logrotate.d/remote`:
+Rotate by rename (logrotate's default, `create`), not with `copytruncate`: see [Rotating log files](README.md#rotating-log-files) for why. A typical `/etc/logrotate.d/remote`:
 
 ```
 /var/log/remote/*/*.log {

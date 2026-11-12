@@ -57,13 +57,18 @@ class Normalizer:
     """One instance per file stream (CSV headers are per file)."""
 
     def __init__(
-        self, spec: SourceSpec, clock: Callable[[], datetime] = lambda: datetime.now(UTC)
+        self,
+        spec: SourceSpec,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        csv_header: bool = True,
     ) -> None:
         self._spec = spec
         self._clock = clock
         self._tz = ZoneInfo(spec.envelope.timezone)
         self._envelope = EnvelopeParser(spec.envelope, clock=clock)
-        self._csv = CsvRowParser(spec.csv_delimiter) if spec.format == "csv" else None
+        self._csv = (
+            CsvRowParser(spec.csv_delimiter, header=csv_header) if spec.format == "csv" else None
+        )
 
     def normalize(self, line: DecodedLine) -> dict[str, Any] | None:
         """Return a full event row, or None for a line that is not an event (CSV header)."""
@@ -149,3 +154,34 @@ class Normalizer:
             errors.append("column_count_mismatch")
             return "partial"
         return "ok"
+
+
+class TemplateMissingNormalizer:
+    """A source whose configured template is not available (ADR-0050 rows 1 to 3): the
+    generic parser for the source's format fills what it can, exactly as a source with no
+    template, and the row is marked so it can be found, shown, and reparsed later. `raw`,
+    classification, and the parsed fields are the generic parser's; `template_id` stays the
+    configured one, so a search on the template still finds these rows."""
+
+    def __init__(
+        self,
+        spec: SourceSpec,
+        template_id: str,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        # CSV: no line is taken as a header. The template's files may have none, and a pass
+        # that starts mid-file has none saved; cells are kept by position instead.
+        self._generic = Normalizer(spec, clock=clock, csv_header=False)
+        self._template_id = template_id
+
+    def normalize(self, line: DecodedLine) -> dict[str, Any] | None:
+        row = self._generic.normalize(line)
+        if row is None:
+            return None
+        reason = f"Template {self._template_id} was not available"
+        row.update(
+            template_id=self._template_id,
+            parse_status="template_missing",
+            parse_errors=",".join(e for e in (reason, row["parse_errors"]) if e),
+        )
+        return row

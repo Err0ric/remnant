@@ -89,6 +89,9 @@ export function InventoryCard({ isAdmin, canExport }: { isAdmin: boolean; canExp
         <SectionTitle>Inventory</SectionTitle>
         <span className="text-sm text-text-muted">
           Everything AI seen in the last 30 days, from the sources you can read.
+          {q.data?.masked
+            ? " Names are hidden. An admin can turn on View people in AI usage for you."
+            : null}
         </span>
         <span className="ml-auto flex flex-wrap items-center gap-2">
           <label className="flex items-center gap-1.5 text-sm">

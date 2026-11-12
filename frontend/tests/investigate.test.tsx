@@ -220,6 +220,35 @@ describe("Investigations (ADR-0016)", () => {
     expect(String(last?.[0])).toContain("value=alice%40example.com");
   });
 
+  it("shows machines for people without View people in AI usage, never to follow (D242)", async () => {
+    window.history.replaceState(null, "", "/investigate/people#service=chatgpt");
+    const spy = mockApi("Codename", { mode: "open" });
+    const base = spy.getMockImplementation()!;
+    spy.mockImplementation(async (input, init) => {
+      const res = await base(input, init);
+      if (!String(input).includes("/api/entities/graph")) return res;
+      const g = await res.json();
+      g.masked = true;
+      g.cards[0] = { ...g.cards[0], id: "0:row-0", label: "ws-0042" };
+      g.edges[0] = { ...g.edges[0], source: "0:row-0" };
+      return new Response(JSON.stringify(g), { headers: { "content-type": "application/json" } });
+    });
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<App initialTheme="dark" queryClient={client} />);
+    const lanes = await screen.findByRole("group", { name: /People, AI clients/ });
+    expect(
+      screen.getByText("Names are hidden. An admin can turn on View people in AI usage for you."),
+    ).toBeVisible();
+    await userEvent.click(within(lanes).getByRole("button", { name: /People: ws-0042/ }));
+    const detail = screen.getByRole("region", { name: "Selected card" });
+    expect(within(detail).getByText("ws-0042")).toBeVisible();
+    expect(within(detail).queryByRole("button", { name: "Investigate this" })).toBeNull();
+  });
+
   it("renders attacker-controlled labels as text", async () => {
     await openInvestigate(
       `/investigate/people#user=${encodeURIComponent("<img src=x onerror=alert(1)>")}`,
@@ -309,5 +338,58 @@ describe("A person's AI activity (D189)", () => {
     expect(entityHref({ kind: "user", value: "dana@example.com" }, "ai")).toBe(
       "/investigate/people#user=dana%40example.com&tab=ai",
     );
+  });
+});
+
+describe("A person's AI activity without View people in AI usage (D242)", () => {
+  const NEEDS = "Needs View people in AI usage";
+  async function open(analyst: boolean, refused = false) {
+    window.history.replaceState(null, "", "/investigate/people#user=alice%40example.com&tab=ai");
+    const spy = analyst
+      ? mockApi("Codename", { mode: "login", signedIn: true, role: "analyst" })
+      : mockApi("Codename", { mode: "open" });
+    const base = spy.getMockImplementation()!;
+    if (refused)
+      spy.mockImplementation(async (input, init) =>
+        String(input).includes("/activity?")
+          ? new Response(JSON.stringify({ detail: NEEDS, code: "forbidden" }), {
+              status: 403,
+              headers: { "content-type": "application/json" },
+            })
+          : base(input, init),
+      );
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<App initialTheme="dark" queryClient={client} />);
+    await screen.findByRole("heading", { level: 1, name: "Investigate" });
+    return spy;
+  }
+
+  it("says what is needed and never asks the server", async () => {
+    const spy = await open(true);
+    expect(await screen.findByText(NEEDS)).toBeVisible();
+    expect(screen.queryByRole("region", { name: "AI activity" })).toBeNull();
+    expect(spy.mock.calls.some(([u]) => String(u).includes("/activity?"))).toBe(false);
+  });
+
+  it("still lists the person's alerts: the server leaves AI Watch items out", async () => {
+    const spy = await open(true);
+    const tabs = await screen.findByRole("tablist", { name: "Person" });
+    await userEvent.click(within(tabs).getByRole("tab", { name: "Alerts" }));
+    const box = await screen.findByRole("region", { name: "Alerts" });
+    expect(within(box).queryByText(NEEDS)).toBeNull();
+    await vi.waitFor(() =>
+      expect(spy.mock.calls.some(([u]) => String(u).includes("person=alice"))).toBe(true),
+    );
+  });
+
+  it("shows the plain message when the server refuses", async () => {
+    const spy = await open(false, true);
+    expect(await screen.findByText(NEEDS)).toBeVisible();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(spy.mock.calls.some(([u]) => String(u).includes("/activity?"))).toBe(true);
   });
 });

@@ -20,6 +20,7 @@ async function renderAt(path: string, auth: MockAuth) {
 
 afterEach(() => {
   mockFlags.aiWatchFailing = false;
+  mockFlags.rewriteBackupFailed = false;
   vi.restoreAllMocks();
 });
 
@@ -60,6 +61,18 @@ describe("Failing AI Watch checks are on screen (owner, 2026-11-03)", () => {
         ([u, i]) => String(u).endsWith("/api/ai/watch/check") && i?.method === "POST",
       ),
     ).toBe(true);
+  });
+
+  it("Health says when the backup before the alert rewrite failed", async () => {
+    mockFlags.rewriteBackupFailed = true;
+    await renderAt("/health", ADMIN);
+    const section = await screen.findByRole("region", { name: "Background checks failing" });
+    expect(
+      within(section).getByText(
+        "AI watch alerts still store names: the backup before the rewrite failed. They stay hidden when read; the next start tries again.",
+      ),
+    ).toBeVisible();
+    expect(within(section).getByText(/No space left on device/)).toBeVisible();
   });
 
   it("nothing shows while the checks work", async () => {

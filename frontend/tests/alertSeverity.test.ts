@@ -36,7 +36,7 @@ function list(items: AlertItem[]): AlertList {
   return {
     items,
     open: items.length,
-    restricted: 0,
+    restricted: false,
     muted: 0,
     reasons: {} as AlertList["reasons"],
   };

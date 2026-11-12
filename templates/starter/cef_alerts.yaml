@@ -1,0 +1,55 @@
+schema_version: 1
+id: cef_alerts
+name: CEF security alerts
+version: 1.0.0
+author: starter-pack
+description: >-
+  Alerts from another security product (EDR, NDR, IDS, email security) sent as CEF over
+  syslog. Each alert becomes an alert item, deduplicated by vendor and product plus the
+  vendor's alert ID (externalId), grouped per person or host, title, and day. It has no
+  match rule, so automatic sources never pick it: choose it for a source that receives
+  only alerts. Copy it to map a vendor's own keys.
+category: findings
+classification_default: local_only
+
+envelope:
+  type: syslog
+  syslog: { rfc: auto, assume_year: rollover_safe, timezone: UTC, strip_relay_headers: true }
+
+payload:
+  format: cef
+
+emits: alerts
+alert:
+  id: externalId
+  product: [device_vendor, device_product]
+
+mapping:
+  class_uid: 2004          # Detection Finding
+  fields:
+    src_endpoint_ip: { from: src }
+    src_endpoint_hostname: { from: shost }
+    dst_endpoint_ip: { from: dst }
+    dst_endpoint_hostname: { from: dhost }
+    actor_user_name: { from: suser }
+    message: { from: [name, msg] }   # the alert's title
+  severity:
+    from: severity
+    map: { "0": 1, "1": 2, "2": 2, "3": 2, "4": 3, "5": 3, "6": 3, "7": 4, "8": 4, "9": 5, "10": 5, Low: 2, Medium: 3, High: 4, Very-High: 5 }
+
+tests:
+  - name: endpoint alert with user and host
+    input: "<132>Nov  9 20:41:12 sensor01 CEF:0|ExampleCorp|EdgeSensor|2.1|sig-9|Credential dumping detected|9|externalId=A-1001 src=10.20.1.5 suser=alice shost=ws-0042"
+    expect:
+      parse_status: ok
+      fields: { message: Credential dumping detected, severity_id: 5, actor_user_name: alice, src_endpoint_hostname: ws-0042, device_hostname: sensor01 }
+  - name: network alert with text severity and escaped pipe in the title
+    input: "<132>Nov  9 20:42:00 ndr01 CEF:0|ExampleSec|NetWatch|4.0|beacon-2|Beacon \\| periodic callout|High|externalId=NW-77 src=10.20.2.14 dst=203.0.113.9"
+    expect:
+      parse_status: ok
+      fields: { message: Beacon | periodic callout, severity_id: 4, src_endpoint_ip: 10.20.2.14, dst_endpoint_ip: 203.0.113.9 }
+  - name: an alert with no ID is stored but raises nothing
+    input: "<132>Nov  9 20:43:00 sensor01 CEF:0|ExampleCorp|EdgeSensor|2.1|sig-3|Suspicious script|5|src=10.20.1.6"
+    expect:
+      parse_status: partial
+      fields: { severity_id: 3, src_endpoint_ip: 10.20.1.6 }

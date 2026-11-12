@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from app.engine.duckdb import QueryScope
 from tests.integration.test_schedules import NOW, make_lab
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts" / "fixtures"))
@@ -203,7 +204,7 @@ def test_review_is_admin_only_audited_and_applied(lab: dict[str, Any]) -> None:
     assert (
         actions.count("ai.service_change") == 2
         and "ai.mcp_change" in actions
-        and "ai.view" in actions
+        and "ai.view_people" in actions  # an administrator always sees names (D242)
     )
 
 
@@ -325,9 +326,9 @@ def test_review_items_on_alerts_without_alert_messages(lab: dict[str, Any]) -> N
     assert sens["severity"] == "high" and sens["why"] == "aws_access_key x1"
     assert "AKIA" not in json.dumps(sens)
     assert "mcp:paste-share" in items
-    # Ana reads Linux only: the AI items are restricted for her, counted, not described.
+    # Ana reads Linux only: the AI items are restricted for her, flagged, never counted.
     ana = lab["ana"].get("/api/alerts").json()
-    assert not [i for i in ana["items"] if i["kind"] == "ai_watch"] and ana["restricted"] >= 3
+    assert not [i for i in ana["items"] if i["kind"] == "ai_watch"] and ana["restricted"] is True
     # A second check adds nothing.
     before = len(items)
     app.state.ai_watch.tick()
@@ -655,3 +656,47 @@ def test_people_without_cost_metrics_say_so(lab: dict[str, Any]) -> None:
     people = {p["person"]: p for p in usage(a)["people"]}
     assert people["alice@example.com"]["cost_reported"] is True
     assert people["bob@example.com"]["cost_reported"] is False
+
+
+def test_windows_and_unbound_dns_lookups_of_ai_services_count(
+    lab: dict[str, Any], tmp_path: Path
+) -> None:
+    """Windows DNS and Unbound map the question name to `message` (a mapped field leaves
+    `unmapped`), so AI usage reads it on DNS Activity rows (owner follow-up to #462)."""
+    a, h = lab["admin"], lab["h"]
+    win = tmp_path / "logs" / "windns"
+    win.mkdir()
+    (win / "dns.log").write_text(
+        "10/10/2026 11:20:00 AM 0E5C PACKET  000001D3A1B2C3D0 UDP Rcv 10.20.1.21      9f3a"
+        "   Q [0001   D   NOERROR] A      (6)gemini(6)google(3)com(0)\n"
+    )
+    body = {
+        "source_id": "windns",
+        "format": "syslog",
+        "path": str(win),
+        "template_id": "dns_windows",
+    }
+    assert a.post("/api/sources", json=body, headers=h).status_code == 201, body
+    unb = tmp_path / "logs" / "unbound"
+    unb.mkdir()
+    (unb / "q.log").write_text(
+        "<30>Oct 10 11:21:00 ns2 unbound: [812:0] info: 10.20.1.22 aistudio.google.com. A IN\n"
+    )
+    body = {"source_id": "unb", "format": "syslog", "path": str(unb), "template_id": "dns_unbound"}
+    assert a.post("/api/sources", json=body, headers=h).status_code == 201, body
+    lab["app"].state.ingest.run_once()
+    rows = (
+        lab["app"]
+        .state.engine.run(
+            "SELECT class_uid, message, unmapped FROM events WHERE source_id = 'windns'",
+            QueryScope(None, None, None),
+        )
+        .rows
+    )
+    assert rows and rows[0][0] == 4003 and rows[0][1] == "gemini.google.com"
+    assert "gemini" not in (rows[0][2] or "")  # the name is only in message
+    lab["app"].state.page_cache.clear()
+    lab["app"].state.ai_usage.cache = None
+    got = {u["service"]["id"]: u for u in usage(a)["services"]}
+    assert "gemini" in got, sorted(got)
+    assert got["gemini"]["events"] == 2 and got["gemini"]["machines"] == 2

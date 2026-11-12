@@ -72,7 +72,7 @@ cd frontend && pnpm install && pnpm build && cd ..
 make demo
 ```
 
-Then open http://127.0.0.1:8090. `make demo` writes synthetic logs to `data/demo/`, starts a throwaway server on loopback (no accounts), and loads them with a synthetic GeoIP file. Everything in it is made up: example.com people, documentation-range addresses, invented hosts. The demo loads two weeks at once, so Claude Code hook records show as delivered late. `scripts/screenshots/capture.py` takes the screenshots above from it.
+Then open http://127.0.0.1:8090. `make demo` writes synthetic logs to `data/demo/`, starts a throwaway server on loopback, and loads them with a synthetic GeoIP file. Sign in as `admin`; the password is generated on every run and written to `data/demo/state/dev-account.json`. Everything in it is made up: example.com people, documentation-range addresses, invented hosts. The demo loads two weeks at once, so Claude Code hook records show as delivered late. `scripts/screenshots/capture.py` takes the screenshots above from it.
 
 ## Where it sits
 

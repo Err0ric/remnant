@@ -56,7 +56,11 @@ def hardware() -> dict[str, str]:
         kb = int(Path("/proc/meminfo").read_text().split()[1])
         mem = f"{kb / 1024 / 1024:.1f} GB"
     except (OSError, ValueError, IndexError):
-        pass
+        try:  # macOS: no /proc
+            total = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+            mem = f"{total / 1024**3:.1f} GB"
+        except (OSError, ValueError):
+            pass
     return {
         "CPU": f"{cpu}, {os.cpu_count()} cores",
         "Memory": mem,

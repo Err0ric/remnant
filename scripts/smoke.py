@@ -3,9 +3,9 @@
 an Analyst, and an Auditor, and fail on any console error, any 4xx or 5xx response the
 role is not expected to get, and any blank panel.
 
-    python3 scripts/smoke.py --url http://127.0.0.1:8090     # a running demo install
-    python3 scripts/smoke.py --lake data/bench/lake          # this checkout on a copy of
-                                                             # the bench lake (bench_compare.py)
+    cd backend && uv run python ../scripts/smoke.py --url http://127.0.0.1:8090  # a demo install
+    cd backend && uv run python ../scripts/smoke.py --lake ../data/bench/lake    # this checkout
+        # on a copy of the bench lake (bench_compare.py); Playwright is a backend dev dependency
 
 Pages come from the app's route table (frontend/src/lib/route.ts: every path and tab). On
 an install with no accounts (the demo, open mode) it first adds three synthetic accounts,
@@ -22,7 +22,6 @@ card that says it could not be shown. Needs Python Playwright with Chromium.
 from __future__ import annotations
 
 import argparse
-import http.cookiejar
 import json
 import re
 import shutil
@@ -38,6 +37,7 @@ ROOT = HERE.parent
 sys.path.insert(0, str(HERE))
 
 import bench_compare as bc  # noqa: E402  # sibling script, standard library only
+import devauth  # noqa: E402  # same
 
 PASSWORD = "smoke-test-password-1"  # noqa: S105  # synthetic accounts on a throwaway install only
 ROLES = (("alice", "admin"), ("bob", "analyst"), ("carol", "auditor"))
@@ -68,28 +68,26 @@ def routes(route_ts: Path) -> list[str]:
     return out + EXTRA
 
 
-def accounts(base: str) -> None:
-    """On an install with no accounts: the first one (Admin) from open mode, then the
-    others signed in as that Admin (the install leaves open mode with its first account)."""
-    if bc.Api(base).call("GET", "/api/auth/state").get("mode") != "open":
-        return  # made on an earlier run
-    jar = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))  # fmt: skip
-
-    def call(path: str, body: dict[str, str], csrf: str = "") -> dict[str, object]:
-        req = urllib.request.Request(base + path, data=json.dumps(body).encode(), method="POST")  # noqa: S310  # loopback
+def accounts(base: str, data: Path) -> None:
+    """One account per role, made by the install's administrator (the first account, which
+    `devauth` makes through the one-time setup link when the server has none)."""
+    if base not in bc.SESSIONS:
+        session = devauth.sign_in(base, data)
+        if session is None:
+            raise RuntimeError(f"{base} runs without accounts: a server from before D245")
+        bc.SESSIONS[base] = session
+    api = bc.Api(base)
+    have = {u["username"] for u in api.call("GET", "/api/users")}
+    for name, role in ROLES:
+        if name in have:
+            continue  # made on an earlier run
+        made = api.call("POST", "/api/users", {"username": name, "role": role})
+        body = {"token": str(made["invite_token"]), "password": PASSWORD}
+        req = urllib.request.Request(
+            base + "/api/account/password", data=json.dumps(body).encode(), method="POST"
+        )  # noqa: S310  # loopback
         req.add_header("Content-Type", "application/json")
-        if csrf:
-            req.add_header("X-CSRF-Token", csrf)
-        with jar.open(req, timeout=60) as res:
-            out = res.read()
-        return json.loads(out) if out else {}
-
-    csrf = str(bc.Api(base).call("GET", "/api/auth/state").get("csrf_token") or "")
-    for i, (name, role) in enumerate(ROLES):
-        made = call("/api/users", {"username": name, "role": role}, csrf)
-        call("/api/account/password", {"token": str(made["invite_token"]), "password": PASSWORD})  # fmt: skip
-        if i == 0:
-            csrf = str(call("/api/auth/login", {"username": name, "password": PASSWORD})["csrf_token"])  # fmt: skip
+        urllib.request.urlopen(req, timeout=60).close()  # noqa: S310  # loopback
 
 
 def expected(role: str, method: str, url: str) -> bool:
@@ -183,6 +181,8 @@ def main() -> int:
     where = ap.add_mutually_exclusive_group(required=True)
     where.add_argument("--url", help="a running throwaway install, for example the demo")
     where.add_argument("--lake", type=Path, help="a bench lake (scripts/bench_compare.py)")
+    ap.add_argument("--data", type=Path, default=ROOT / "data" / "demo" / "state",
+                    help="with --url: that server's data folder (default: the demo's)")  # fmt: skip
     ap.add_argument("--role", choices=[r for _, r in ROLES], help=argparse.SUPPRESS)  # one child
     ap.add_argument("--python", default=str(ROOT / "backend" / ".venv" / "bin" / "python"))
     args = ap.parse_args()
@@ -204,7 +204,7 @@ def main() -> int:
             for p in check(base, tuple(x for x in ROLES if x[1] == args.role)):
                 print(f"FAIL {p}")
             return 0
-        accounts(base)
+        accounts(base, tmp / "data" if args.lake else args.data)
         t = time.monotonic()
         problems = parallel(base)
         n = len(routes(ROOT / "frontend" / "src" / "lib" / "route.ts"))

@@ -1,13 +1,14 @@
 """FastAPI app factory and server entrypoint.
 
-Access policy (ADR-0001): loopback with no accounts is open; a network bind with no
-accounts is setup-only and prints a one-time setup link; otherwise sign-in is required.
+Access policy (ADR-0001, D245): with no accounts every bind is setup-only and prints a
+one-time setup link; otherwise sign-in is required.
 """
 
 import asyncio
 import re
 import resource
 import socket
+import sqlite3
 import sys
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
@@ -24,14 +25,19 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import HTMLResponse, Response
 from starlette.types import Scope
 
+from app.ai.alert_codes import backup_copy, store_without_names
 from app.ai.catalog import Catalog
 from app.ai.rollup import AiRollup
 from app.ai.usage import Usage
 from app.ai.watch import AiWatch
 from app.ai.watch_summary import source_classes
 from app.alerts.dispatch import AlertDispatcher
+from app.alerts.external import ExternalAlerts
+from app.alerts.external_cap import ExternalAlertSettings
+from app.alerts.fallback import SourceFallbacks
 from app.alerts.items import AlertItems
 from app.alerts.net import Egress, configure_egress
+from app.alerts.stops import DetectionStops
 from app.alerts.supersede import RULES_REVISION, current_rules, why_superseded
 from app.alerts.targets import TargetStore
 from app.api.addresses import router as addresses_router
@@ -81,6 +87,8 @@ from app.api.users import router as users_router
 from app.auth.groups import GroupStore
 from app.auth.oidc import HttpFactory, OidcClient
 from app.auth.service import AuthService
+from app.auth.setup import link_host
+from app.auth.setup import notice as setup_notice
 from app.auth.tls import ensure_self_signed, resolve_tls
 from app.core import clock, pool_watch
 from app.core.branding import PRODUCT_NAME
@@ -110,6 +118,7 @@ from app.core.errors import (
     ProviderError,
     ProviderOutputLimitError,
     ProviderUnreachableError,
+    QueryBlockedError,
     QueryBusyError,
     QueryFailedError,
     QueryMemoryError,
@@ -128,11 +137,13 @@ from app.core.errors import (
     UnsupportedMediaError,
     log_detail,
 )
+from app.core.job_status import JobStatus
 from app.core.logging import configure_logging
 from app.core.memory import budget_note, server_budget_mb
 from app.core.net import parse_trusted
 from app.core.speed import SpeedLog
 from app.core.threads import WORKER_POOL, cap_allocator_arenas, query_threads, run_low
+from app.detect.reparse_rules import ReparseRules
 from app.detect.runner import RuleRunner
 from app.detect.store import RuleStore
 from app.engine import signin_classes
@@ -156,6 +167,7 @@ from app.ingest.maintenance import LakeMaintenance
 from app.ingest.otlp import Spool
 from app.ingest.otlp_tokens import OtlpTokens
 from app.ingest.quiet import QuietWatch
+from app.ingest.reparse import ReparseJobs
 from app.ingest.server_events import ServerEvents
 from app.ingest.sources import SourceStore
 from app.ingest.watcher import IngestService
@@ -171,6 +183,7 @@ from app.mcp.settings import McpSettingsStore
 from app.meta.audit import AuditReader
 from app.meta.db import MetaDB
 from app.meta.secrets import SecretBox
+from app.ops.backup import BACKUPS_DIR
 from app.ops.integrity import IntegrityService
 from app.ops.scheduled_backup import BackupScheduler
 from app.search import m365 as m365_facts
@@ -197,6 +210,7 @@ log = structlog.get_logger("app")
 
 _ERROR_STATUS: dict[type[Exception], tuple[int, str]] = {
     QueryRejectedError: (400, "query_rejected"),
+    QueryBlockedError: (400, "query_rejected"),  # same answer; recorded (D237)
     QueryFailedError: (400, "query_failed"),
     QueryMemoryError: (503, "query_memory"),  # a server limit, not a bad request (F63)
     QueryTimeoutError: (408, "query_timeout"),
@@ -311,6 +325,7 @@ async def _schedule_loop(
     health: HealthService,
     refusals: RefusalWatch,
     backups: BackupScheduler,
+    external: ExternalAlerts,
 ) -> None:
     while True:
         try:
@@ -333,6 +348,10 @@ async def _schedule_loop(
             await asyncio.to_thread(refusals.tick)
         except Exception as exc:  # never fatal; retried next tick
             log.warning("refusal_watch.failed", **log_detail(exc))
+        try:
+            await asyncio.to_thread(external.tick)
+        except Exception as exc:  # never fatal; retried next tick
+            log.warning("external_alerts.failed", **log_detail(exc))
         try:  # starts a due backup on its own thread; returns at once
             await asyncio.to_thread(backups.tick)
         except Exception as exc:  # never fatal; retried next tick
@@ -400,6 +419,7 @@ def _lifespan(config: AppConfig) -> Callable[[FastAPI], AbstractAsyncContextMana
                         app.state.health,
                         app.state.refusal_watch,
                         app.state.backups,
+                        app.state.external_alerts,
                     )
                 )
             )
@@ -419,7 +439,8 @@ def _lifespan(config: AppConfig) -> Callable[[FastAPI], AbstractAsyncContextMana
                     await task
             await app.state.listeners.close()
             await run_in_threadpool(app.state.server_events.flush)  # the last second's records
-            app.state.engine.close_kept()
+            # Stops running queries and waits for their threads before the process exits.
+            await run_in_threadpool(app.state.engine.shutdown)
 
     return lifespan
 
@@ -637,6 +658,15 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     app.state.alert_dispatcher = AlertDispatcher(
         meta, app.state.alert_targets, lambda: app.state.auth.clock()
     )
+    # A pause or failure that stops detection is never silent (D33 as amended): each such
+    # path sends through this one helper.
+    app.state.detection_stops = stops = DetectionStops(
+        meta,
+        app.state.alert_dispatcher,
+        app.state.auth.audit,
+        clock=lambda: app.state.auth.clock(),
+        link=app.state.public_url,
+    )
     app.state.rule_runner = RuleRunner(
         meta,
         app.state.engine,
@@ -651,18 +681,60 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         tz=config.schedules.timezone,
         gap_min_back=timedelta(minutes=config.sources.gap_renotify_min_back),
         gap_max_notify=config.sources.gap_max_notify_per_day,
+        install_key=SecretBox(config.paths.data_dir).install_key,
     )  # fmt: skip
     # Open duplicates raised before grouping merge once, audited (ADR-0043 row 5).
     alert_items_.merge_open_duplicates()
+    # AI Watch items stored with names keep references instead (D242), at every start and
+    # after the merge above, so the copy holds the groups it gave them; what an older
+    # version raised after a rollback is coded too. The meta database is copied first, to
+    # a new timestamped file each time (owner, 2026-11-11); if the copy fails nothing is
+    # rewritten, new items keep names too until a start completes it, Health says so, and
+    # the items stay masked when read.
+    app.state.startup_jobs = startup_jobs = JobStatus()
+    started = app.state.auth.clock().astimezone(UTC)
+
+    def backed_up(con: sqlite3.Connection) -> bool:
+        try:
+            backup_copy(con, config.paths.data_dir / BACKUPS_DIR, started)
+        except Exception as exc:
+            log.warning("alerts.rewrite_backup_failed", **log_detail(exc))
+            startup_jobs.failed("alerts.rewrite_backup", exc)
+            return False
+        return True
+
+    rewritten, kept = store_without_names(meta, alert_items_.refs, backed_up, started.isoformat())
+    if rewritten or kept:
+        log.info("alerts.names_moved", rewritten=rewritten, kept=kept)
     # Gap items from before gaps carried a severity get the gap's one, so every surface
     # reads one stored value (review item 2, 2026-11-06).
     alert_items_.fill_severity()
     app.state.refusal_watch = RefusalWatch(app.state.engine, meta, alert_items_)
+    # ADR-0049 Phase 0: alerts from approved `emits: alerts` templates become items.
+    app.state.external_alert_settings = ExternalAlertSettings(
+        meta,
+        app.state.auth.audit,
+        source_ids=lambda: app.state.sources.ids(),
+        clock=lambda: app.state.auth.clock(),
+    )
+    app.state.external_alerts = ExternalAlerts(
+        app.state.engine,
+        meta,
+        alert_items_,
+        app.state.templates,
+        settings=app.state.external_alert_settings,
+        dispatcher=app.state.alert_dispatcher,
+        audit=app.state.auth.audit,
+        link=app.state.public_url,
+        stops=stops,
+    )
     app.state.schedules = ScheduleService(
         meta,
         config.schedules,
         app.state.auth.users,
-        lambda: app.state.auth.mode() == "open",
+        # Schedules made in the old no-sign-in mode keep running until the first
+        # administrator exists and takes them over (D245).
+        lambda: app.state.auth.mode() == "setup",
         app.state.searches,
         app.state.rules,
         app.state.rule_runner,
@@ -672,6 +744,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         link=app.state.public_url,
         items=app.state.alert_items,
     )
+    app.state.schedules.stops = stops
     app.state.quiet = QuietWatch(
         meta,
         received=lambda: {sid: st.last_event_at for sid, st in app.state.ingest.status().items()},
@@ -765,6 +838,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         blocked_burst=config.agents.blocked_burst,
         domains=lambda: app.state.identities.load().domains,
     )
+    app.state.ai_watch.stops = stops
     app.state.audit_reader = AuditReader(meta)
     app.state.overview = OverviewService(
         meta,
@@ -833,6 +907,40 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         templates=app.state.templates,
         events=app.state.integrity,
     )
+    app.state.ingest.stops = stops
+    app.state.ingest.fallbacks = SourceFallbacks(
+        meta,
+        stops,
+        app.state.auth.audit,
+        clock=lambda: app.state.auth.clock(),
+        link=app.state.public_url,
+    )
+    # ADR-0050 rows 7 and 8: reparse template_missing rows once the template loads again.
+    app.state.reparse = ReparseJobs(
+        meta,
+        lake_dir,
+        app.state.sources,
+        app.state.templates,
+        app.state.integrity,
+        app.state.auth.audit,
+        reparsed=app.state.ingest.fallbacks.reparsed,
+    )
+    app.state.reparse.interrupt_left_running()
+    # Slice 3b: the enabled rules over a done job's range, on that source only.
+    app.state.reparse_rules = ReparseRules(
+        meta,
+        app.state.reparse,
+        app.state.rule_runner,
+        app.state.rules,
+        app.state.alert_items,
+        app.state.engine,
+        app.state.auth.audit,
+        dispatcher=app.state.alert_dispatcher,
+        link=app.state.public_url,
+        schedules=app.state.schedules,
+    )
+    app.state.reparse_rules.interrupt_left_running()
+    app.state.feed_updater.stops = stops
     app.state.ingest.listener_errors = lambda: {
         sid: st.error for sid, st in app.state.listeners.status().items() if st.error
     }
@@ -846,6 +954,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         integrity_interval_s=config.maintenance.integrity_interval_s,
     )
     # Rollup builds run at lower CPU priority on their own thread (owner, 2026-10-31).
+    app.state.maintenance.hold = app.state.ingest.held
     app.state.maintenance.after_compaction = lambda: run_low(lambda: _rollups(app))
     app.state.maintenance.each_tick = lambda: run_low(lambda: _each_tick(app))
     app.state.integrity_service = IntegrityService(
@@ -856,6 +965,8 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         dispatcher=app.state.alert_dispatcher,
         link=app.state.public_url,
     )
+    app.state.integrity_service.stops = stops
+    app.state.maintenance.stops = stops
     app.state.maintenance.on_verified = app.state.integrity_service.seal
     app.include_router(meta_router, prefix="/api")
     app.include_router(client_errors_router, prefix="/api")
@@ -902,6 +1013,8 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     async def app_error(request: Request, exc: Exception) -> JSONResponse:
         code, kind = _ERROR_STATUS[type(exc)]
         headers = {}
+        if isinstance(exc, QueryBlockedError):
+            request.state.guard_blocked = True  # the request middleware records it
         if isinstance(exc, QueryMemoryError):
             log.warning(
                 "query.memory",
@@ -935,6 +1048,18 @@ def _listener_tls(config: AppConfig) -> tuple[Path, Path] | None:
         config.paths.data_dir / "tls", config.server.public_names
     )
     return tls.cert, tls.key
+
+
+def print_setup_link(config: AppConfig, auth: AuthService) -> None:
+    """At every start with no accounts: a fresh one-time link in the server log (D245)."""
+    if auth.mode() != "setup":
+        return
+    host = link_host(config, socket.gethostname())
+    url = auth.setup_url(host, config.server.port, config.server.public_url)
+    print("")
+    for line in setup_notice(config, url):
+        print(line)
+    print("", flush=True)  # reach the log now, even when stdout is a pipe
 
 
 def run() -> None:
@@ -993,20 +1118,7 @@ def run() -> None:
 
     app = create_app(config)
     auth: AuthService = app.state.auth
-    if auth.mode() == "setup":
-        public = (
-            config.server.public_names[0] if config.server.public_names else socket.gethostname()
-        )
-        print("")
-        print("No administrator account exists yet. Open this one-time link to create it:")
-        print(f"  {auth.setup_url(public, config.server.port, config.server.public_url)}")
-        print("The link works once and expires in 30 minutes. Restarting issues a new one.")
-        if not config.server.public_url:
-            print(
-                "Behind a reverse proxy? Set APP_PUBLIC_URL (systemd: APP__SERVER__PUBLIC_URL)"
-                " to the address people open, then restart, so this link goes through it."
-            )
-        print("", flush=True)  # reach the log now, even when stdout is a pipe
+    print_setup_link(config, auth)
 
     uvicorn.run(
         app,

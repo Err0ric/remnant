@@ -10,7 +10,7 @@ import errno
 import json
 import os
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -19,6 +19,8 @@ from typing import Any, Literal
 import httpx
 import structlog
 
+from app.alerts.fallback import SourceFallbacks, fallback_error, is_fallback_error
+from app.alerts.stops import DetectionStops
 from app.core.errors import ParamInvalidError, SourceRejectedError
 from app.core.ids import AUTO_PARSER
 from app.ingest.connectors import registry as api_connectors
@@ -35,7 +37,8 @@ from app.ingest.evtx import EvtxReader, file_signature
 from app.ingest.framer import Framer
 from app.ingest.integrity import LakeEvents
 from app.ingest.labels import labels_envelope
-from app.ingest.normalizer import Normalizer
+from app.ingest.normalizer import Normalizer, TemplateMissingNormalizer
+from app.ingest.otlp import spool_full
 from app.ingest.records import DecodedLine, Frame, decode_frame
 from app.ingest.skew import SkewTracker
 from app.ingest.sources import (
@@ -54,6 +57,8 @@ from app.meta.db import MetaDB
 from app.templates.registry import TemplateRegistry
 from app.templates.router import AutoNormalizer
 from app.templates.runtime import TemplateNormalizer
+from app.templates.tables import LookupTable
+from app.templates.validator import Template
 
 log = structlog.get_logger(__name__)
 
@@ -64,6 +69,7 @@ SHORT_EVTX_GRACE = timedelta(minutes=10)
 SYSLOG_MAX_MESSAGE = 65_536  # the listener never spools a longer message
 SPOOL_HEADER_MAX = 256  # bytes: a syslog spool record header is far shorter
 READ_LIMIT = 8 << 20  # bytes per file per pass, so one huge file cannot starve the rest
+UNDO_REASON = "ingest: the position was not saved, so the lines are read again"
 MAX_LINE = 65_536
 
 
@@ -107,6 +113,25 @@ def source_state(enabled: bool, st: SourceStatus | None) -> SourceState:
     return "reading"
 
 
+def template_normalizer(
+    source: SourceConfig,
+    template: Template,
+    tables: Mapping[str, LookupTable] | None,
+    clock: Callable[[], datetime],
+) -> TemplateNormalizer:
+    """How ingest parses a source's lines with its template (also used by a reparse,
+    ADR-0050 row 7): the source's time zone wins over the template's."""
+    envelope = template.envelope.syslog.model_copy(update={"timezone": source.timezone})
+    return TemplateNormalizer(
+        template,
+        source.source_id,
+        source.classification,
+        envelope=envelope,
+        clock=clock,
+        tables=tables,
+    )
+
+
 class IngestService:
     def __init__(
         self,
@@ -121,6 +146,10 @@ class IngestService:
         self._templates = templates
         self._meta = meta
         self._writer = LakeWriter(lake_dir, events)
+        # Files written whose position is not saved yet, and files an undo could not
+        # remove yet (the ledger could not be written): see `_write`.
+        self._unsaved: list[Path] = []
+        self._stuck: list[Path] = []
         # Event times a whole number of hours off: a time zone to check (trial finding).
         self.skew = SkewTracker()
         self._evtx = EvtxReader(max_len=MAX_LINE)
@@ -134,6 +163,9 @@ class IngestService:
         self._lock = threading.Lock()
         # Set by the app: source id -> why its syslog listener is not listening.
         self.listener_errors: Callable[[], dict[str, str]] | None = None
+        # Set by the app: a source that stops reading is never silent (D33 as amended).
+        self.stops: DetectionStops | None = None
+        self.fallbacks: SourceFallbacks | None = None  # ADR-0050 row 5 messages
         self._loki_polled: dict[str, datetime] = {}  # source id -> last poll
         # Tests swap this for a client with a fake transport.
         self.loki_client: Callable[[LokiSettings, str | None], LokiClient] = LokiClient
@@ -149,14 +181,17 @@ class IngestService:
         status and skipped; it never stops the other sources.
         """
         total = 0
+        self._retry_stuck()  # every pass, not only when the next write comes
+        before = {sid: st.events_since_start for sid, st in self.status().items()}
+        missing_at_start: dict[str, bool] = {}
         for source in self._sources.list():
             if not source.enabled:
                 continue
+            missing_at_start[source.source_id] = self._missing_error(source) is not None
             prev = self.status().get(source.source_id, SourceStatus())
             count, files, error = 0, 0, None
             skipped, waiting = prev.records_skipped, prev.files_waiting
             try:
-                self._normalizer(source)  # a missing template shows even with no new data
                 if source.kind == "loki":
                     count, behind = self._ingest_loki(source, prev)
                     now = self._clock()
@@ -167,7 +202,7 @@ class IngestService:
                             last_event_at=now if count else prev.last_event_at,
                             events_last_pass=count,
                             events_since_start=prev.events_since_start + count,
-                            error=None,
+                            error=self._missing_error(source),
                             behind_s=behind,
                         )
                     total += count
@@ -185,7 +220,11 @@ class IngestService:
                 for path in paths:
                     # One unreadable file is reported and skipped; the others are still read.
                     try:
-                        count += self._ingest_file(source, path)
+                        try:
+                            count += self._ingest_file(source, path)
+                        except BaseException:
+                            self._undo_unsaved()  # written, but its position was not saved
+                            raise
                     except FileNotFoundError:
                         continue  # rotated or removed since it was listed
                     except OSError as exc:
@@ -209,6 +248,8 @@ class IngestService:
             except Exception as exc:  # one source must not stop the others
                 log.exception("ingest_source_failed", source_id=source.source_id)
                 error = f"Ingest failed: {type(exc).__name__}"
+            self._undo_unsaved()  # a Loki or API write whose position was not saved
+            error = error or self._missing_error(source)
             now = self._clock()
             with self._lock:
                 self._status[source.source_id] = replace(
@@ -223,7 +264,46 @@ class IngestService:
                     files_waiting=waiting,
                 )
             total += count
+        self._report_stops()
+        self._report_fallbacks(before, missing_at_start)
         return total
+
+    def _report_fallbacks(self, before: dict[str, int], missing_at_start: dict[str, bool]) -> None:
+        """ADR-0050 row 5: one message when a source starts storing without its parser and
+        one when its template loads again, with the count stored meanwhile."""
+        if self.fallbacks is None:
+            return
+        enabled = [s for s in self._sources.list() if s.enabled]
+        status = self.status()
+        for source in enabled:
+            sid = source.source_id
+            missing = source.template_id if self._missing_error(source) else None
+            st = status.get(sid)
+            stored = (st.events_since_start if st else 0) - before.get(sid, 0)
+            # Counted as stored without the parser when it was missing as the pass began,
+            # even if the template was approved during the pass.
+            without = stored if missing_at_start.get(sid) else 0
+            self.fallbacks.update(sid, missing, without, source.template_id)
+        self.fallbacks.forget(s.source_id for s in enabled)
+
+    def _report_stops(self) -> None:
+        """A source that cannot read (files, spool, listener, Loki, API connector) sends one
+        "Detection stopped" message once it has lasted the grace, and one "running again"
+        message when it reads again. A missing template is not a stop (ADR-0050 messages)."""
+        if self.stops is None:
+            return
+        enabled = [s.source_id for s in self._sources.list() if s.enabled]
+        status = self.status()
+        for sid in enabled:
+            st = status.get(sid)
+            where = f"health#source={sid}"
+            # A missing parser is not a stop: events are still stored, and ADR-0050's own
+            # start and back messages cover it (owner, 2026-11-11). Never silent either way.
+            if st is not None and st.error and not is_fallback_error(st.error):
+                self.stops.failing(f"source:{sid}", f"Source {sid}", st.error, where)
+            else:
+                self.stops.working(f"source:{sid}", where)
+        self.stops.forget("source:", [f"source:{sid}" for sid in enabled])
 
     def _ingest_loki(self, source: SourceConfig, prev: SourceStatus) -> tuple[int, float | None]:
         """Read new lines from Loki (ADR-0011) at most every POLL_EVERY. The lake is
@@ -261,6 +341,7 @@ class IngestService:
                 " position = excluded.position, updated_at = excluded.updated_at",
                 (source.source_id, result.position.dump(), now.isoformat()),
             )
+        self._unsaved = []
         return len(rows), result.behind.total_seconds()
 
     def _run_api(self, source: SourceConfig, prev: SourceStatus) -> int:
@@ -268,12 +349,14 @@ class IngestService:
         now = self._clock()
         sid = source.source_id
         if prev.retry_at is not None and now < prev.retry_at:
+            self._refresh_missing(source, prev)
             return 0
         connector = api_connectors.for_source(
             source, self._sources.connector_secret(sid), self.api_transport
         )
         last = self._api_polled.get(sid)
         if last is not None and now - last < connector.poll_every:
+            self._refresh_missing(source, prev)
             return 0
         self._api_polled[sid] = now
         count, error, retry_at = 0, None, None
@@ -321,7 +404,7 @@ class IngestService:
                 last_event_at=now if count else prev.last_event_at,
                 events_last_pass=count,
                 events_since_start=prev.events_since_start + count,
-                error=error,
+                error=error or self._missing_error(source),
                 behind_s=behind,
                 warnings=warnings,
                 retry_at=retry_at,
@@ -353,6 +436,7 @@ class IngestService:
                 " position = excluded.position, updated_at = excluded.updated_at",
                 (source_id, position, now.isoformat()),
             )
+        self._unsaved = []
 
     def _drop_read_spool(self, source: SourceConfig, paths: list[Path]) -> list[Path]:
         """Delete spool files that are fully read and no longer written (an older hour),
@@ -402,8 +486,30 @@ class IngestService:
                     self._status[sid] = replace(cur, last_event_at=at)
 
     def _write(self, source_id: str, rows: list[dict[str, Any]]) -> None:
-        self._writer.write(rows)
+        """Store rows. The caller saves its position next; until it has, the files are
+        `_unsaved`, and `_undo_unsaved` takes them back if the save fails, so the retry
+        does not store the batch a second time (audit 2026-11 H6)."""
+        if self._retry_stuck():  # an earlier undo is still owed: nothing new until done
+            raise OSError(errno.EIO, "an earlier write could not be undone yet")
+        self._unsaved += self._writer.write(rows)
         self.skew.observe(source_id, rows)
+
+    def _retry_stuck(self) -> bool:
+        """Try again to take back files an undo could not remove. True while some remain."""
+        if self._stuck:
+            self._stuck = self._writer.discard(self._stuck, UNDO_REASON)
+        return bool(self._stuck)
+
+    def held(self) -> set[Path]:
+        """Lake files ingest may still take back: compaction must not merge them."""
+        return {*self._unsaved, *self._stuck}
+
+    def _undo_unsaved(self) -> None:
+        """A position was not saved after a write: remove what was written for it."""
+        unsaved, self._unsaved = self._unsaved, []
+        if unsaved:
+            self._stuck += self._writer.discard(unsaved, UNDO_REASON)
+            log.warning("ingest.write_undone", files=len(unsaved), left=len(self._stuck))
 
     def status(self) -> dict[str, SourceStatus]:
         with self._lock:
@@ -413,6 +519,11 @@ class IngestService:
         # A syslog listener that cannot bind its port is this source's error (ADR-0021).
         for sid, error in (self.listener_errors() if self.listener_errors else {}).items():
             out[sid] = replace(out.get(sid) or SourceStatus(), error=error)
+        # A full spool drops new messages: an error, so Health and the never-silent check
+        # see it (D33 as amended).
+        for sid, st in list(out.items()):
+            if st.error is None and spool_full(sid):
+                out[sid] = replace(st, error="Spool full: new messages are being refused")
         return out
 
     def _ingest_file(self, source: SourceConfig, path: Path) -> int:
@@ -650,7 +761,28 @@ class IngestService:
             return False
         return now - seen[1] >= SHORT_EVTX_GRACE
 
-    def _normalizer(self, source: SourceConfig) -> Normalizer | TemplateNormalizer | AutoNormalizer:
+    def _refresh_missing(self, source: SourceConfig, prev: SourceStatus) -> None:
+        """Between API polls: show or clear only the missing-template error, every pass, so
+        it (and D236's clock) does not wait for the next poll. Other errors are left alone."""
+        want = self._missing_error(source)
+        was = prev.error if is_fallback_error(prev.error) else None
+        if want == was or (prev.error is not None and was is None):
+            return
+        with self._lock:
+            self._status[source.source_id] = replace(prev, error=want)
+
+    def _missing_error(self, source: SourceConfig) -> str | None:
+        """The source's error while its configured template is not in the registry
+        (ADR-0050): shown even with no new data, until the template loads again."""
+        if source.template_id is None or source.template_id == AUTO_PARSER:
+            return None
+        if self._templates is not None and self._templates.get(source.template_id) is not None:
+            return None
+        return fallback_error(source.source_id, source.template_id)
+
+    def _normalizer(
+        self, source: SourceConfig
+    ) -> Normalizer | TemplateNormalizer | AutoNormalizer | TemplateMissingNormalizer:
         if source.template_id is None:
             return Normalizer(source.spec(), clock=self._clock)
         if source.template_id == AUTO_PARSER:
@@ -665,16 +797,11 @@ class IngestService:
             )
         template = self._templates.get(source.template_id) if self._templates else None
         if template is None:
-            # Never fall back silently: the source shows an error until the template exists.
-            raise SourceRejectedError(f"Template {source.template_id} is not available")
-        envelope = template.envelope.syslog.model_copy(update={"timezone": source.timezone})
-        return TemplateNormalizer(
-            template,
-            source.source_id,
-            source.classification,
-            envelope=envelope,
-            clock=self._clock,
-            tables=self._templates.tables if self._templates else None,
+            # ADR-0050: keep storing with the generic parser, every row marked
+            # template_missing; never silently: run_once keeps the source's error set.
+            return TemplateMissingNormalizer(source.spec(), source.template_id, clock=self._clock)
+        return template_normalizer(
+            source, template, self._templates.tables if self._templates else None, self._clock
         )
 
     def _checkpoint(self, source_id: str, path: str) -> Any:
@@ -719,6 +846,7 @@ class IngestService:
                     self._clock().isoformat(),
                 ),
             )
+        self._unsaved = []
 
 
 def _json_object(text: Any) -> dict[str, Any]:

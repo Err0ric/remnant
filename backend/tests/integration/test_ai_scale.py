@@ -4,6 +4,7 @@ small groups before any join. The full-size run (300k a day for 30 days) is `-m 
 
 import json
 import shutil
+import sys
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -55,7 +56,9 @@ def _every_tab(c: TestClient, days: int) -> dict[str, Any]:
 def test_thirty_days_of_busy_dns_fit_a_small_share_without_spilling(tmp_path: Path) -> None:
     lake = tmp_path / "lake"
     rows = write_dns(lake, per_day=70_000, days=30, end=datetime.now(UTC))
-    c = _app(tmp_path, lake, memory_mb=256, spill=False)
+    # Two threads per query: what a 4 vCPU install (F46) and CI get automatically. With 4
+    # (12 or more cores) a 256 MB share is too small and the query spills.
+    c = _app(tmp_path, lake, memory_mb=256, spill=False, env={"APP__SERVER__QUERY_THREADS": "2"})
     body = _every_tab(c, days=30)
     found = {s["service"]["id"]: s["events"] for s in body["services"]}
     # One row in 50 is an AI name; the 8 names take turns.
@@ -100,6 +103,11 @@ def test_full_size_300k_a_day_for_30_days(tmp_path: Path) -> None:
         assert res.json()["top"], "AI use in the data"
 
 
+@pytest.mark.skipif(
+    sys.platform == "darwin",
+    reason="DuckDB 1.5 can crash when this query runs out of memory at 16 MB (Linux arm64:"
+    " 20% of runs on 1.5.5, 12% on 1.5.6; more on macOS); Linux CI runs it (owner, 2026-11-10)",
+)
 def test_too_little_memory_is_a_server_limit_with_its_own_code(tmp_path: Path) -> None:
     """A server-side memory limit is not a bad request: 503 with its own code, logged at
     WARN with the request id and which query it was (F63)."""

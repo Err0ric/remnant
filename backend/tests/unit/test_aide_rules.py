@@ -1,5 +1,6 @@
 """AIDE rules from the update script (owner, 2026-11-01): the data folder's lake, rollup,
-tmp, enrichment, spool, and meta.sqlite, and frontend/node_modules, are skipped; tls/, .venv,
+tmp, enrichment, spool, meta.sqlite, and the files in backups/ (owner, 2026-11-12), and
+frontend/node_modules, are skipped; tls/, .venv,
 .python, backend/app, frontend/dist, and .git stay watched. The data folder comes from the
 service's settings, so a custom one gets matching rules. Checked with AIDE itself when it
 is installed, and with the same regular expressions otherwise."""
@@ -29,6 +30,7 @@ SKIPPED = [
     "spool/otlp/claude/000001.log",
     "meta.sqlite",
     "meta.sqlite-wal",
+    "backups/remnant-2026-11-11.tar",
 ]
 SKIPPED_INSTALL = ["frontend/node_modules/react/index.js"]
 
@@ -58,7 +60,14 @@ def test_default_layout_is_the_owner_rule_set(tmp_path: Path) -> None:
         "!/var/lib/remnant/enrichment(/|$)",
         "!/var/lib/remnant/spool(/|$)",
         "!/var/lib/remnant/meta\\.sqlite",
+        "!/var/lib/remnant/backups/.*",
         "!/opt/remnant/frontend/node_modules(/|$)",
+    ]
+    # Scheduled backups are skipped; the two folders stay watched for owner and mode
+    # (owner, 2026-11-12).
+    assert [ln for ln in text.splitlines() if ln.startswith("=")] == [
+        "=/var/lib/remnant/backups$ p+u+g",
+        "=/var/lib/remnant$ p+u+g",
     ]
 
 

@@ -112,7 +112,7 @@ function pageClass(current: boolean, bar = current): string {
 
 /** The open alerts the viewer may read, beside Alerts (ADR-0037 row 2). */
 function OpenAlerts() {
-  const q = useQuery({ queryKey: ["alerts", "open"], queryFn: () => api.alerts("open") });
+  const q = useQuery({ queryKey: ["alerts", "count"], queryFn: api.alertCount });
   const n = q.data?.open ?? 0;
   if (!n) return null;
   return (

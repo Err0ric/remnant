@@ -1,2 +1,5 @@
 scripts/publish export-ignore
 scripts/dev export-ignore
+.claude export-ignore
+docs/proposals export-ignore
+docs/handoff.md export-ignore
