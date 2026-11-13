@@ -22,6 +22,7 @@ const ACTIONS: Record<string, string> = {
   "auth.logout": "Signed out",
   "auth.sessions_ended": "Ended sessions",
   "auth.sso_refused": "Was refused single sign-on",
+  "dashboard.view": "Viewed the Dashboard",
   "device.quiet": "Watched device went quiet",
   "device.resumed": "Watched device sent again",
   "device_watch.change": "Changed device watch",

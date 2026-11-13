@@ -36,7 +36,7 @@ export function LiveLimit({ canEdit }: { canEdit: boolean }) {
             inputMode="numeric"
             value={value}
             onChange={(e) => setDraft(e.target.value)}
-            className="h-8 w-24 rounded border border-border-strong bg-surface px-2 tabular-nums"
+            className="h-8 w-24 rounded border border-border-control bg-surface px-2 tabular-nums"
           />
           <span className="text-text-secondary">minutes (1 to 1440)</span>
           <button

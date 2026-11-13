@@ -85,6 +85,18 @@ def test_flagged_searches_and_paused_schedules_are_listed(lab: dict[str, Any]) -
     (d,) = o["detections"]
     assert (d["kind"], d["schedule_id"], d["count"]) == ("search", sid, 1)
     assert [p["schedule_id"] for p in o["paused"]] == [sid]
+    # Ana paused it herself: listed, and marked as her choice, so the Dashboard does not
+    # report it as detection that stopped (D236 is about pauses nobody chose).
+    assert [p["by_person"] for p in o["paused"]] == [True]
+    # A pause the system made carries its own reason, and is not marked as a person's.
+    with lab["app"].state.meta.connect() as con:
+        con.execute(
+            "UPDATE schedules SET paused_reason = ? WHERE schedule_id = ?",
+            ("The owner no longer has access to every source", sid),
+        )
+    lab["app"].state.overview._cache = {}
+    (paused,) = lab["bob"].get("/api/overview").json()["paused"]
+    assert paused["by_person"] is False and paused["reason"].startswith("The owner no longer")
 
 
 def test_cached_for_a_minute_audited_once_and_never_across_an_access_change(

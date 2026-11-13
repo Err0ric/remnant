@@ -1,8 +1,16 @@
+import { EmptyState } from "@/components/EmptyState";
+import { StateNotice } from "@/components/StateNotice";
+import { When } from "@/components/When";
+import { About } from "@/components/About";
+import { Skeleton } from "@/components/Skeleton";
+import { ChangePill } from "@/components/ChangePill";
 import { createContext, useContext, type ReactNode } from "react";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { useQuery } from "@tanstack/react-query";
 import {
   api,
+  DASHBOARD_PARTS,
+  type DashboardPart,
   type DashboardSections,
   type PageWindow,
   type SectionKpi,
@@ -14,7 +22,7 @@ import { cn } from "@/lib/cn";
 import { navigate } from "@/lib/route";
 import { openDrill } from "@/lib/drill";
 import { EntityLink } from "@/components/EntityLink";
-import { LoadFailed } from "@/components/LoadFailed";
+import { InlineError } from "@/components/InlineError";
 import { useViewer } from "@/lib/viewer";
 import { comparisonLabel, comparisonTime, previousPhrase } from "./pageWindow";
 import { startIndex, TrendChart, TrendLegend } from "./TrendChart";
@@ -83,29 +91,15 @@ function Delta({ kpi, label, noun }: { kpi: SectionKpi; label: string; noun: str
   const d = kpi.value - kpi.before;
   const open = drill(kpi.drill_before ?? kpi.drill, `${label} (${before})`, "before");
   const text = d === 0 ? "same" : `${d > 0 ? "↑" : "↓"} ${Math.abs(d).toLocaleString()}`;
-  const cls =
-    "rounded-badge bg-surface-head px-1.5 font-mono text-xs font-semibold tabular-nums text-text";
-  if (!open)
-    return (
-      <span className={cls}>
-        {text}
-        <span className="sr-only"> against the window before</span>
-      </span>
-    );
   return (
-    <button
-      type="button"
-      data-drill=""
-      onClick={open}
-      title={`Open ${kpi.before.toLocaleString()} ${noun} from ${before} in Logs`}
-      className={cn(
-        cls,
-        "cursor-pointer hover:bg-border focus-visible:outline focus-visible:outline-1 focus-visible:outline-focus-ring",
-      )}
-    >
-      {text}
-      <span className="sr-only"> against the window before; open its {noun} in Logs</span>
-    </button>
+    <ChangePill
+      change={d}
+      spoken={`${text} against the window before${open ? `; open its ${noun} in Logs` : ""}`}
+      title={
+        open ? `Open ${kpi.before.toLocaleString()} ${noun} from ${before} in Logs` : undefined
+      }
+      onOpen={open ?? undefined}
+    />
   );
 }
 
@@ -122,9 +116,21 @@ export interface KpiProps {
   /** "How this is counted", behind an (i) beside the label. Required: every number says
    * how it is counted (owner 2026-11-02). */
   about: string;
+  /** What feeds this number is paused or stopped (D236): a zero would read as "nothing
+   * happened", so it says "Not running" instead. A number above zero is still shown. */
+  notRunning?: boolean;
 }
 
-export function Kpi({ label, kpi, noun = "events", context, extra, empty, about }: KpiProps) {
+export function Kpi({
+  label,
+  kpi,
+  noun = "events",
+  context,
+  extra,
+  empty,
+  about,
+  notRunning = false,
+}: KpiProps) {
   const { history } = useContext(Compare);
   const drill = useDrill();
   const partial = !history.compared && kpi !== null && kpi.before !== null;
@@ -148,7 +154,11 @@ export function Kpi({ label, kpi, noun = "events", context, extra, empty, about 
         </PanelTitle>
         <About text={about} />
       </span>
-      {kpi ? (
+      {kpi && notRunning && kpi.value === 0 ? (
+        <span data-not-running="" className="py-1.5 text-md text-warn">
+          Not running
+        </span>
+      ) : kpi ? (
         <span className="flex flex-wrap items-center gap-x-2">
           {open ? (
             <button
@@ -182,21 +192,6 @@ export function Kpi({ label, kpi, noun = "events", context, extra, empty, about 
       ) : null}
       {context ? <span className="line-clamp-2 text-sm text-text-muted">{context}</span> : null}
     </div>
-  );
-}
-
-/** The (i) beside a number's label: how it is counted, on hover and for screen readers. */
-export function About({ text }: { text: string }) {
-  return (
-    <span
-      role="img"
-      data-about=""
-      aria-label={`How this is counted: ${text}`}
-      title={`How this is counted: ${text}`}
-      className="flex size-3.5 shrink-0 cursor-help items-center justify-center rounded-full border border-text-muted text-[10px] font-semibold leading-none text-text-muted"
-    >
-      i
-    </span>
   );
 }
 
@@ -362,11 +357,14 @@ interface MultiplesProps {
   window: PageWindow;
   mono?: boolean;
   empty: string;
+  /** What a row's name opens instead of its events (a rule opens Alerts > Rules on it);
+   * the total then opens the events. */
+  onName?: (label: string) => void;
 }
 
 /** Small multiples: one row of bars per host or rule on its own scale, with its peak and
  * total, instead of a stack of colors (severity colors stay reserved; call 5). */
-function Multiples({ title, series, buckets, window, mono, empty }: MultiplesProps) {
+function Multiples({ title, series, buckets, window, mono, empty, onName }: MultiplesProps) {
   const drill = useDrill();
   return (
     <figure className="min-w-0">
@@ -408,7 +406,19 @@ function Multiples({ title, series, buckets, window, mono, empty }: MultiplesPro
                     title={s.label}
                     style={{ width: "34%" }}
                   >
-                    {open ? (
+                    {onName ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onName(s.label);
+                        }}
+                        title={`Open the rule ${s.label}`}
+                        className="max-w-full truncate text-left text-accent-text hover:underline"
+                      >
+                        {s.label}
+                      </button>
+                    ) : open ? (
                       <button
                         type="button"
                         data-drill=""
@@ -447,7 +457,22 @@ function Multiples({ title, series, buckets, window, mono, empty }: MultiplesPro
                     peak {peak.toLocaleString()}
                   </td>
                   <td className="whitespace-nowrap py-1.5 text-right font-mono tabular-nums">
-                    {total.toLocaleString()}
+                    {onName && open ? (
+                      <button
+                        type="button"
+                        data-drill=""
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          open();
+                        }}
+                        title={`Open ${total.toLocaleString()} events in Logs`}
+                        className={DRILL}
+                      >
+                        {total.toLocaleString()}
+                      </button>
+                    ) : (
+                      total.toLocaleString()
+                    )}
                   </td>
                 </tr>
               );
@@ -481,10 +506,7 @@ export function Top({ title, columns, rows, cells, empty }: TopProps) {
                 {columns.map((c, i) => (
                   <th
                     key={c}
-                    className={cn(
-                      "py-1 pr-3 font-semibold",
-                      i === columns.length - 1 && "pr-0 text-right",
-                    )}
+                    className={cn("py-1 pr-3", i === columns.length - 1 && "pr-0 text-right")}
                   >
                     {c}
                   </th>
@@ -778,13 +800,38 @@ function TopSources({ s, rows }: { s: DashboardSections; rows: SectionRow[] }) {
   );
 }
 
+/** Detections (DESIGN.md 6.3, ADR-0052): matched events, the rules that matched, and the
+ * hosts and people involved. When the system paused detection (D236) the header says so and
+ * a zero reads "Not running". With no rule enabled an administrator is offered Enable rules. */
 function Detections({ s }: { s: DashboardSections }) {
   const d = s.detections;
-  if (!d) return null;
+  const { isAdmin } = useViewer();
+  // The Overview the page already has (Needs you reads the same answer).
+  const overview = useQuery({ queryKey: ["overview"], queryFn: api.overview, staleTime: 60_000 });
+  // Only rule schedules feed this section; a paused saved-search schedule does not blind it.
+  const stopped = (overview.data?.paused ?? []).filter((p) => p.kind === "rule" && !p.by_person);
+  const blind = stopped.length > 0;
+  if (!d) {
+    // No rule is enabled: only someone who can enable one is told.
+    if (!s.no_rules || !isAdmin) return null;
+    return (
+      <section aria-label="Detections" className="rounded-card border border-border bg-surface">
+        <div className="border-b border-border px-3 py-2">
+          <SectionTitle>Detections</SectionTitle>
+        </div>
+        <EmptyState
+          kind="not-set-up"
+          title="No rules are enabled."
+          action={{ label: "Enable rules", onClick: () => navigate("rules") }}
+        />
+      </section>
+    );
+  }
   const kpis = [
     <Kpi
       key="m"
       label="Matched events"
+      notRunning={blind}
       kpi={d.matches}
       noun="matched events"
       about={COUNTED.ruleMatches}
@@ -797,6 +844,7 @@ function Detections({ s }: { s: DashboardSections }) {
     <Kpi
       key="r"
       label="Rules that matched"
+      notRunning={blind}
       kpi={d.rules_matched}
       about={COUNTED.rulesMatched}
       noun="matches"
@@ -814,10 +862,18 @@ function Detections({ s }: { s: DashboardSections }) {
         ) : undefined
       }
     />,
-    <Kpi key="h" label="Hosts involved" kpi={d.hosts} noun="hosts" about={COUNTED.hostsInvolved} />,
+    <Kpi
+      key="h"
+      label="Hosts involved"
+      notRunning={blind}
+      kpi={d.hosts}
+      noun="hosts"
+      about={COUNTED.hostsInvolved}
+    />,
     <Kpi
       key="u"
-      label="Users involved"
+      label="People involved"
+      notRunning={blind}
       kpi={d.users}
       noun="people"
       about={COUNTED.usersInvolved}
@@ -829,6 +885,15 @@ function Detections({ s }: { s: DashboardSections }) {
       s={s}
       window={s.window}
       history={d.history}
+      note={
+        blind ? (
+          <StateNotice blind>
+            Detection is not running for {stopped.length}{" "}
+            {stopped.length === 1 ? "schedule" : "schedules"}:{" "}
+            {stopped.map((p) => p.name).join(", ")}.
+          </StateNotice>
+        ) : undefined
+      }
       kpis={kpis}
       count={kpis.length}
       chart={
@@ -837,13 +902,15 @@ function Detections({ s }: { s: DashboardSections }) {
           series={d.by_rule}
           buckets={s.buckets}
           window={s.window}
-          empty="No rule matched in this window."
+          empty={blind ? "Not running." : "No rule matched in this window."}
+          // A rule's name opens Alerts > Rules filtered by that name; its total opens the events.
+          onName={(rule) => navigate("rules", `rule=${encodeURIComponent(rule)}`)}
         />
       }
       table={
         <Top
-          title="Hosts and users involved"
-          columns={["", "Name", "Matches"]}
+          title="Hosts and people involved"
+          columns={["", "Name", "Rules", "Last match", "Matches"]}
           rows={d.involved}
           cells={(r) => [
             <span key="k" className="text-text-muted">
@@ -855,16 +922,20 @@ function Detections({ s }: { s: DashboardSections }) {
               value={r.label}
               className="font-mono"
             />,
+            <span key="r" className="font-mono tabular-nums">
+              {r.rules ?? ""}
+            </span>,
+            <When key="l" iso={r.last} />,
             r.count.toLocaleString(),
           ]}
-          empty="No hosts or users in this window's matches."
+          empty={blind ? "Not running." : "No hosts or people in this window's matches."}
         />
       }
     />
   );
 }
 
-type Part = "identity" | "attacks" | "detections";
+type Part = DashboardPart;
 const PART_NAME: Record<Part, string> = {
   identity: "Identity",
   attacks: "Attacks and access",
@@ -878,21 +949,14 @@ function Part({ window, part }: { window: PageWindow; part: Part }) {
     queryFn: () => api.dashboardSections(window, part),
     refetchInterval: 300_000,
   });
-  if (q.isLoading)
-    return (
-      <div
-        aria-busy="true"
-        aria-label={`Loading ${PART_NAME[part]}`}
-        className="h-48 animate-pulse rounded-card bg-surface"
-      />
-    );
+  if (q.isLoading) return <Skeleton label={PART_NAME[part]} block="h-48" />;
   if (q.isError && !q.data)
     return (
       <section
         aria-label={PART_NAME[part]}
         className="rounded-card border border-border bg-surface"
       >
-        <LoadFailed
+        <InlineError
           what={PART_NAME[part]}
           error={q.error}
           onRetry={() => void q.refetch()}
@@ -910,17 +974,16 @@ function Part({ window, part }: { window: PageWindow; part: Part }) {
 /** Identity, Attacks and access, and Detections (ADR-0038 edit 10), each shown only when
  * the viewer has its source, each loading on its own. */
 export function Sections({ window }: { window: PageWindow }) {
+  // Every part in DASHBOARD_PARTS, which the page also declares to the audit log.
   return (
     <>
-      <ErrorBoundary label="Identity">
-        <Part window={window} part="identity" />
-      </ErrorBoundary>
-      <ErrorBoundary label="Attacks and access">
-        <Part window={window} part="attacks" />
-      </ErrorBoundary>
-      <ErrorBoundary label="Detections">
-        <Part window={window} part="detections" />
-      </ErrorBoundary>
+      {DASHBOARD_PARTS.map((part) => (
+        <ErrorBoundary key={part} label={PART_NAME[part]}>
+          <Part window={window} part={part} />
+        </ErrorBoundary>
+      ))}
     </>
   );
 }
+
+export { About };

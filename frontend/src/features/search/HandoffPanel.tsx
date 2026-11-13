@@ -72,7 +72,7 @@ export function HandoffPanel({ eventIds, onClose }: HandoffPanelProps) {
               <select
                 value={chosen}
                 onChange={(e) => setTargetId(e.target.value)}
-                className="h-8 rounded border border-border-strong bg-inset px-2"
+                className="h-8 rounded border border-border-control bg-inset px-2"
               >
                 {(targets.data ?? []).map((t) => (
                   <option key={t.target_id} value={t.target_id}>
@@ -90,7 +90,7 @@ export function HandoffPanel({ eventIds, onClose }: HandoffPanelProps) {
               maxLength={2000}
               rows={3}
               placeholder="What should whoever picks this up know?"
-              className="max-w-2xl rounded border border-border-strong bg-inset px-2.5 py-1.5"
+              className="max-w-2xl rounded border border-border-control bg-inset px-2.5 py-1.5"
             />
           </label>
           <p className="max-w-2xl text-xs text-text-muted">

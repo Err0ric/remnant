@@ -38,7 +38,7 @@ export function McpPage() {
 
   return (
     <div className="flex min-w-0 flex-1 flex-col">
-      <PageHeader crumbs={["Home", "Settings", "MCP server"]} title="MCP server" />
+      <PageHeader title="MCP server" />
       <div className="flex max-w-4xl flex-col gap-4 px-5 py-3 text-sm">
         <p className="text-text-secondary">
           AI assistants that speak the Model Context Protocol (Claude Code, Claude Desktop, IDE

@@ -1,6 +1,8 @@
+import { Skeleton } from "@/components/Skeleton";
+import { EmptyState } from "@/components/EmptyState";
 import { useInfiniteQuery, useMutation } from "@tanstack/react-query";
 import { useState } from "react";
-import { Command, PageHeader } from "@/components/shell/PageHeader";
+import { PageHeader } from "@/components/shell/PageHeader";
 import { ApiError, api, type AuditEvent, type AuditLlmCall } from "@/lib/api";
 import { useSectionTab } from "@/lib/route";
 import { ActivityTable } from "./ActivityTable";
@@ -75,18 +77,17 @@ export function AuditLogPage({ isAdmin }: AuditLogPageProps) {
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       <PageHeader
-        crumbs={["Home", "Settings", "Audit log"]}
         title="Audit log"
-        meta="Append-only · reading and exporting are recorded here too"
-        commands={
-          tab === "integrity" ? undefined : (
-            <Command
-              label={exporter.isPending ? "Exporting…" : "Export CSV"}
-              primary
-              onClick={() => exporter.mutate()}
-              disabled={exporter.isPending || count === 0}
-            />
-          )
+        secondary={
+          tab === "integrity"
+            ? []
+            : [
+                {
+                  label: exporter.isPending ? "Exporting…" : "Export CSV",
+                  onClick: () => exporter.mutate(),
+                  disabled: exporter.isPending || count === 0,
+                },
+              ]
         }
       />
       <div className="flex flex-col gap-2.5 px-5 py-3">
@@ -136,11 +137,13 @@ export function AuditLogPage({ isAdmin }: AuditLogPageProps) {
           className="mx-5 mb-5 rounded border border-border bg-surface"
         >
           {query.isPending ? (
-            <p className="px-3 py-6 text-center text-sm text-text-secondary">Loading…</p>
+            <Skeleton label="the audit log" rows={8} className="rounded-none border-0" />
           ) : count === 0 ? (
-            <p className="px-3 py-6 text-center text-sm text-text-secondary">
-              Nothing matches these filters. Try a longer time range.
-            </p>
+            <EmptyState
+              kind="filtered"
+              title="Nothing matches these filters."
+              detail="Try a longer time range."
+            />
           ) : log === "activity" ? (
             <ActivityTable rows={eventRows} onUser={onUser} />
           ) : (

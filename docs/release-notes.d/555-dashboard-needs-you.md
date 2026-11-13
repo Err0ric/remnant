@@ -1,0 +1,12 @@
+### Design: one Needs you list on the Dashboard, blind states first; key numbers in one strip (2026-11-12)
+
+- Console redesign, build row 17 (ADR-0052 section 3.9, D247). The Dashboard opens with one list of everything that needs you. Blind states are pinned first and are never folded away: a source that is down or in error, a source stored without its parser because its template is missing, and detection that the system paused (a schedule you paused yourself is your choice and is not listed). They sit on a pale amber row with a bar on the left and a "Blind" tag, and never look like an alert. Then come High alerts, then other alerts, then AI services waiting for review, five rows at most, with "N more on Alerts" under them.
+- Each row says what kind it is, what it is, who or what it is about (a link), and when. A source gap alert is a blind row that opens its alert; an AI review row opens AI usage.
+- This replaces three things that said the same in different places: the Health banner at the top, the one-line "Needs attention" strip, and the Sources line at the bottom. A blind state is now said once, here, and on Health (D243's banner is superseded by D247).
+- Under the list, one strip of key numbers for the chosen window: Open alerts, Failed sign-ins, Sign-ins outside approved countries, AI services in use (with how many are to review), and Sources healthy (the same count as on Health, in amber when not all are). Each number opens the place to act on it, and each has its "how this is counted" note. A tile shows only when you have its source.
+- The note about alerts in sources you cannot read stays at the foot of the list, with no count.
+- For the "AI services in use" number the AI Watch summary (`/api/ai/watch/summary`) gained one field, `services_in_use`.
+- The few alert lines the Dashboard asks for (`/api/alerts/lines`) now come in the list's own order (High, other alerts, then AI review items), with a `review` field naming the review items, so services waiting for review can never push a real alert out of the five rows.
+- A source gap alert whose source is sending again is an ordinary alert row asking to be closed, not a blind row.
+- What you will notice: the top of the Dashboard is one list and one row of numbers; the amber Health banner, the "Needs attention" line, and the Sources line at the bottom are gone. The "risky mail rule" and "blocked app consent" counts that were in that line are still in the Identity section below.
+- What changes for existing installs: nothing.

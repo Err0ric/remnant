@@ -139,7 +139,7 @@ export function GroupEditor({ group, sources, users, onClose }: GroupEditorProps
             <button
               type="button"
               onClick={() => remove.mutate()}
-              className="rounded border border-danger px-2 py-0.5 text-danger hover:bg-sev-critical-bg"
+              className="rounded border border-danger px-2 py-0.5 text-danger hover:bg-surface-head"
             >
               Delete group
             </button>

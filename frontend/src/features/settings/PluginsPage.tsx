@@ -1,3 +1,4 @@
+import { Skeleton } from "@/components/Skeleton";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useState, type FormEvent } from "react";
 import { ApiError, api, type OtlpToken, type PluginPlatform, type UnknownToken } from "@/lib/api";
@@ -5,7 +6,7 @@ import { PRODUCT_NAME } from "@/lib/branding";
 import { cn } from "@/lib/cn";
 import { navigate } from "@/lib/route";
 import { PageHeader } from "@/components/shell/PageHeader";
-import { LoadFailed } from "@/components/LoadFailed";
+import { InlineError } from "@/components/InlineError";
 import { since, stamp } from "@/features/overview/time";
 import { SectionTitle } from "@/components/SectionTitle";
 
@@ -76,12 +77,12 @@ export function PluginsPage() {
   });
   return (
     <div className="flex min-w-0 flex-1 flex-col">
-      <PageHeader crumbs={["Home", "Settings", "Claude plugins"]} title="Claude plugins" />
+      <PageHeader title="Claude plugins" />
       <div className="flex max-w-6xl flex-col gap-4 p-5">
         {q.isLoading ? (
-          <div aria-busy="true" className="h-48 animate-pulse rounded-card bg-surface" />
+          <Skeleton label="the plugins" block="h-48" />
         ) : q.isError ? (
-          <LoadFailed
+          <InlineError
             what="Claude plugins"
             error={q.error}
             onRetry={() => void q.refetch()}
@@ -353,13 +354,13 @@ function Tokens({ tokens }: { tokens: OtlpToken[] }) {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-text-secondary">
-                <th className="px-3 py-2 font-semibold">Name</th>
-                <th className="px-3 py-2 font-semibold">Token</th>
-                <th className="px-3 py-2 font-semibold">Source</th>
-                <th className="px-3 py-2 font-semibold">Created</th>
-                <th className="px-3 py-2 font-semibold">Last used</th>
-                <th className="px-3 py-2 text-right font-semibold">Devices</th>
-                <th className="px-3 py-2 font-semibold">
+                <th className="px-3 py-2">Name</th>
+                <th className="px-3 py-2">Token</th>
+                <th className="px-3 py-2">Source</th>
+                <th className="px-3 py-2">Created</th>
+                <th className="px-3 py-2">Last used</th>
+                <th className="px-3 py-2 text-right">Devices</th>
+                <th className="px-3 py-2">
                   <span className="sr-only">Actions</span>
                 </th>
               </tr>
@@ -507,10 +508,10 @@ function UnknownTokens({ unknown }: { unknown: UnknownToken[] }) {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border text-left text-text-secondary">
-              <th className="px-3 py-2 font-semibold">Token</th>
-              <th className="px-3 py-2 font-semibold">From</th>
-              <th className="px-3 py-2 font-semibold">Last tried</th>
-              <th className="px-3 py-2 text-right font-semibold">Tries</th>
+              <th className="px-3 py-2">Token</th>
+              <th className="px-3 py-2">From</th>
+              <th className="px-3 py-2">Last tried</th>
+              <th className="px-3 py-2 text-right">Tries</th>
             </tr>
           </thead>
           <tbody>

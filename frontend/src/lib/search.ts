@@ -11,6 +11,25 @@ export const TIME_RANGES = [
 
 export type TimeRangeId = (typeof TIME_RANGES)[number]["id"];
 
+/** The fixed windows of Logs: the four presets every page has (ADR-0052 section 3.7). */
+export type LogsRange = "1h" | "24h" | "7d" | "30d";
+const LOGS_RANGES: readonly string[] = ["1h", "24h", "7d", "30d"];
+
+/** A range from before the five presets, or from a page that still has the old list, as
+ * Logs shows it now: "15 minutes" is 1 hour, and "all time" is Custom with no dates. */
+export function logsRange(
+  id: string | undefined,
+  fallback: LogsRange = "24h",
+): {
+  range: LogsRange;
+  /** Custom with both sides open: everything kept. */
+  open: boolean;
+} {
+  if (id === "all") return { range: fallback, open: true };
+  if (id === "15m") return { range: "1h", open: false };
+  return { range: id && LOGS_RANGES.includes(id) ? (id as LogsRange) : fallback, open: false };
+}
+
 export function rangeStart(id: TimeRangeId, now: Date = new Date()): string | undefined {
   const range = TIME_RANGES.find((r) => r.id === id);
   return range?.ms ? new Date(now.getTime() - range.ms).toISOString() : undefined;

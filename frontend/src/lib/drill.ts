@@ -1,6 +1,6 @@
 import { navigate } from "@/lib/route";
 import { seedSearch } from "@/lib/searchSeed";
-import { TIME_RANGES, type TimeRangeId } from "@/lib/search";
+import { TIME_RANGES, type LogsRange } from "@/lib/search";
 
 /**
  * Dashboard drill-through (ADR-0039): the server sends each number's query with `{from}`
@@ -44,10 +44,11 @@ export function placeholderSql(sql: string): string {
 }
 
 /** The smallest Search range that covers `from`, so the query reads only those days. */
-export function coveringRange(from: string, now: Date = new Date()): TimeRangeId {
+export function coveringRange(from: string, now: Date = new Date()): LogsRange {
   const back = now.getTime() - new Date(from).getTime();
-  const fit = TIME_RANGES.find((r) => r.ms !== null && r.ms >= back);
-  return fit?.id ?? "all";
+  const fit = TIME_RANGES.find((r) => r.ms !== null && r.ms >= back && r.id !== "15m");
+  // Logs opens on the drill's own window (Custom); this is what a preset falls back to.
+  return fit && fit.id !== "all" && fit.id !== "15m" ? fit.id : "30d";
 }
 
 export function openDrill(d: Drill): void {

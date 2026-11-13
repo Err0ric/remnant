@@ -1,3 +1,4 @@
+import { Skeleton } from "@/components/Skeleton";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, api } from "@/lib/api";
@@ -54,10 +55,10 @@ export function BackupSettings() {
       ) : null}
       {/* The form waits for the saved settings: an edit made before they load would save
           an empty time (and Save would stay disabled). */}
-      {!c ? (
-        <p className="text-text-muted">
-          {current.isError ? "Could not load the settings." : "Loading…"}
-        </p>
+      {!c && !current.isError ? (
+        <Skeleton label="the backup settings" rows={1} />
+      ) : !c ? (
+        <p className="text-text-muted">Could not load the settings.</p>
       ) : (
         <form onSubmit={submit} className="flex flex-wrap items-center gap-2">
           <label className="flex items-center gap-1.5">
@@ -73,7 +74,7 @@ export function BackupSettings() {
             type="time"
             value={value.at_time}
             onChange={(e) => setDraft({ ...value, at_time: e.target.value })}
-            className="h-8 rounded border border-border-strong bg-surface px-2 font-mono tabular-nums"
+            className="h-8 rounded border border-border-control bg-surface px-2 font-mono tabular-nums"
           />
           <span className="text-text-secondary">{c.timezone}, keep</span>
           <input
@@ -81,7 +82,7 @@ export function BackupSettings() {
             inputMode="numeric"
             value={value.keep}
             onChange={(e) => setDraft({ ...value, keep: e.target.value })}
-            className="h-8 w-14 rounded border border-border-strong bg-surface px-2 tabular-nums"
+            className="h-8 w-14 rounded border border-border-control bg-surface px-2 tabular-nums"
           />
           <span className="text-text-secondary">(1 to 90)</span>
           <button

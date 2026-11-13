@@ -44,9 +44,9 @@ export function AskResults({ result, drillKeys = [], onShowEvents }: AskResultsP
       <div className="overflow-x-auto rounded border border-border">
         <table aria-label="Results" className="w-full text-sm">
           <thead>
-            <tr className="border-b border-border bg-surface-head text-left text-text-secondary">
+            <tr className="border-b border-border text-left text-text-secondary">
               {result.columns.map((c) => (
-                <th key={c} className="whitespace-nowrap px-2.5 py-1.5 font-mono font-semibold">
+                <th key={c} className="whitespace-nowrap px-2.5 py-1.5 font-mono">
                   {c}
                 </th>
               ))}

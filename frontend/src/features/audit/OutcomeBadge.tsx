@@ -1,8 +1,9 @@
 const TONES: Record<string, string> = {
-  success: "bg-sev-info-bg text-text-secondary",
-  failure: "bg-sev-critical-bg text-sev-critical-text",
-  denied: "bg-sev-high-bg text-sev-high-text",
-  blocked: "bg-sev-high-bg text-sev-high-text",
+  success: "bg-info-bg text-text-secondary",
+  failure: "border border-danger text-danger",
+  denied: "border border-warn text-warn",
+  // A gate block is an error color (DESIGN.md 2), like a failure.
+  blocked: "border border-danger text-danger",
 };
 
 interface OutcomeBadgeProps {
@@ -10,7 +11,7 @@ interface OutcomeBadgeProps {
   label?: string;
 }
 
-/** Outcome as text in a tinted badge; never color alone. */
+/** Outcome as text in a tag (outlined for a problem); never color alone. */
 export function OutcomeBadge({ outcome, label }: OutcomeBadgeProps) {
   return (
     <span className={`rounded-badge px-2 py-px text-xs ${TONES[outcome] ?? TONES.success}`}>

@@ -211,3 +211,36 @@ def test_a_link_through_the_proxy_needs_the_public_name_and_the_url(tmp_path: Pa
         assert client.get("/api/auth/state", headers=via_proxy).json()["mode"] == "setup"
         made = client.post("/api/setup", json={"token": _token(url), **ACCOUNT}, headers=via_proxy)
         assert made.status_code == 201, made.text
+
+
+def test_a_valid_link_passes_the_address_limit_and_wrong_ones_still_count(
+    tmp_path: Path,
+) -> None:
+    """Behind a proxy without trusted proxies every client has one address, so someone
+    sending wrong links could keep the real setup out for the whole window. A valid,
+    unexpired link is 256 random bits: it passes the per-address limit (owner,
+    2026-11-12). Wrong and expired links still count and are still refused."""
+    with _client(tmp_path) as client:
+        auth = client.app.state.auth  # type: ignore[attr-defined]
+        good = _token(auth.setup_url("127.0.0.1", 8080))
+        codes = [
+            client.post("/api/setup", json={"token": f"wrong-{i}", **ACCOUNT}).status_code
+            for i in range(7)
+        ]
+        assert codes == [403] * 5 + [429] * 2  # counted, then limited
+        made = client.post("/api/setup", json={"token": good, **ACCOUNT})
+        assert made.status_code == 201, made.text
+
+
+def test_an_expired_link_counts_against_the_limit(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        auth = client.app.state.auth  # type: ignore[attr-defined]
+        start = datetime(2026, 11, 12, 9, 0, tzinfo=UTC)
+        auth.clock = lambda: start
+        late = _token(auth.setup_url("127.0.0.1", 8080))
+        auth.clock = lambda: start + SETUP_TTL
+        codes = [
+            client.post("/api/setup", json={"token": late, **ACCOUNT}).status_code for _ in range(6)
+        ]
+        assert codes == [403] * 5 + [429]
+        assert client.get("/api/auth/state").json()["mode"] == "setup"

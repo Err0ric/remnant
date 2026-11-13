@@ -36,7 +36,7 @@ If this file and `docs/SPEC.md` disagree on a product decision, the spec wins an
 
 ## 3. Repository layout
 
-`backend/app/`: `main.py` (app factory, bind and auth), `api/` (routers only), `auth/`, `cli/`, `core/` (schema, config, errors, ids, branding; imports no siblings), `ingest/`, `templates/`, `engine/` (duckdb, guard, views), `detect/`, `llm/` (gate, providers, redact, audit, prompts), `search/`, `meta/` (sqlite and migrations). Tests in `backend/tests/{unit,integration,fixtures}`. `frontend/src/`: `app/`, `components/`, `features/`, `lib/`, `styles/` (tokens.css from DESIGN.md section 9). `templates/starter/` ships YAML templates; `scripts/` holds dev helpers. Runtime data lives in `./data/` (gitignored) or the compose volume.
+`backend/app/`: `main.py` (app factory, bind and auth), `api/` (routers only), `auth/`, `cli/`, `core/` (schema, config, errors, ids, branding; imports no siblings), `ingest/`, `templates/`, `engine/` (duckdb, guard, views), `detect/`, `llm/` (gate, providers, redact, audit, prompts), `search/`, `meta/` (sqlite and migrations). Tests in `backend/tests/{unit,integration,fixtures}`. `frontend/src/`: `app/`, `components/`, `features/`, `lib/`, `styles/` (tokens.css from DESIGN.md sections 2 and 11). `templates/starter/` ships YAML templates; `scripts/` holds dev helpers. Runtime data lives in `./data/` (gitignored) or the compose volume.
 
 ## 4. Coding conventions
 

@@ -173,3 +173,22 @@ def test_quarantined_files_are_counted(lab: dict[str, Any]) -> None:
     (folder / "part-empty.parquet").write_bytes(b"")
     assert sweep(lake) == 1
     assert checks(lab["admin"])["quarantined_files"] == 1
+
+
+def test_backups_and_rollups_go_to_administrators_only(lab: dict[str, Any]) -> None:
+    """Settings > System (ADR-0052 section 3.3; owner, 2026-11-13): the state of backups, the
+    page rollups, and page speed are an administrator's. An Analyst and an Auditor get the
+    watched devices and agents of their sources as before, and none of the three."""
+    admin = checks(lab["admin"])
+    assert admin["backup"] is not None and admin["backup"]["state"]
+    assert isinstance(admin["rollups"], list) and admin["rollups"]
+    for who in ("ana", "aud"):
+        got = checks(lab[who])
+        assert got["backup"] is None, who
+        assert got["rollups"] == [], who
+        # What they had before is still theirs.
+        assert set(got) >= {"devices", "agents", "quarantined_files"}
+        assert got["client_errors"] == [] and got["background_failures"] == []
+        for path in ("/api/health-checks/speed", "/api/health-checks/refreshes"):
+            assert lab[who].get(path).status_code == 403, (who, path)
+    assert lab["admin"].get("/api/health-checks/speed").status_code == 200

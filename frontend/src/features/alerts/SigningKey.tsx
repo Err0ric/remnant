@@ -27,7 +27,7 @@ export function SigningKey({ name, signingKey, onDone }: SigningKeyProps) {
           aria-label="Webhook signing key"
           value={signingKey}
           onFocus={(e) => e.currentTarget.select()}
-          className="h-8 min-w-0 flex-1 rounded border border-border-strong bg-inset px-2 font-mono"
+          className="h-8 min-w-0 flex-1 rounded border border-border-control bg-inset px-2 font-mono"
         />
         <button
           type="button"

@@ -13,7 +13,7 @@ describe("title levels (DESIGN.md 7)", () => {
     expect(h.className).not.toMatch(/accent|hover:|underline|cursor-pointer/);
   });
 
-  it("renders a panel title in small upper case, below a section title, never as a link", () => {
+  it("renders a panel title at 14px in sentence case, never upper case or a link", () => {
     render(
       <>
         <PanelTitle>Top services</PanelTitle>
@@ -22,8 +22,8 @@ describe("title levels (DESIGN.md 7)", () => {
     );
     const h = screen.getByRole("heading", { level: 3, name: "Top services" });
     expect(h.dataset.title).toBe("panel");
-    expect(h.className).toMatch(/text-xs/);
-    expect(h.className).toMatch(/uppercase/);
+    expect(h).toHaveClass("text-base", "font-semibold");
+    expect(h.className).not.toMatch(/uppercase|tracking-/);
     expect(h.className).toContain("text-panel-title");
     expect(h.className).not.toMatch(/accent|hover:|underline|cursor-pointer/);
     expect(screen.getByText("Failed sign-ins").tagName).toBe("SPAN");

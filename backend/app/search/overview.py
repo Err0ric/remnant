@@ -29,13 +29,14 @@ from app.ingest.watcher import IngestService, source_state
 from app.meta.db import MetaDB
 from app.search.gaps import Gap, find_gaps
 from app.search.hour_marks import mark_hours, typical
-from app.search.schedules import ScheduleService
+from app.search.schedules import PAUSED_BY_PERSON, ScheduleService
 from app.search.source_state import BEHIND_S
 
 HOURS = 24
 BASELINE_DAYS = 7  # earlier days compared hour by hour for unusual hours (D65)
 LAST_SEEN_DAYS = 7
 CACHE_SECONDS = 60.0
+COUNT_SECONDS = 300  # the rail's Health dot: built at most once in five minutes per viewer
 MAX_DETECTIONS = 20
 
 VOLUME_SQL = (
@@ -93,6 +94,8 @@ class PausedSchedule:
     name: str
     kind: str
     reason: str | None
+    # Someone paused it themselves: not a blind state (a pause nobody chose is, D236).
+    by_person: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,6 +157,12 @@ class OverviewService:
         self._clock = clock
         self._lock = threading.Lock()
         self._cache: dict[tuple[str, str, tuple[str, ...] | None], tuple[float, Overview]] = {}
+        # For the numbers-only count (the rail's Health dot). Kept apart from `_cache`: a count
+        # must never make the next Overview read a cached one, since that read is audited
+        # only when it computes.
+        self._count_cache: dict[
+            tuple[str, str, tuple[str, ...] | None], tuple[float, Overview]
+        ] = {}
 
     def get(self, user: User) -> tuple[Overview, bool]:
         """The Overview for this viewer, and whether it was computed now (not cached)."""
@@ -169,6 +178,24 @@ class OverviewService:
             self._cache = {k: v for k, v in self._cache.items() if v[0] > now}
             self._cache[key] = (now + CACHE_SECONDS, result)
         return result, True
+
+    def for_count(self, user: User) -> Overview:
+        """The Overview behind `/api/health/count`. A fresh answer the viewer already has is
+        used as it is; otherwise one is built and kept for COUNT_SECONDS in a cache of its
+        own, so the audited cache above is never filled from here."""
+        allowed = permitted_sources(self._meta, user)
+        key = (user.user_id, user.role, None if allowed is None else tuple(sorted(allowed)))
+        now = monotonic.monotonic()
+        with self._lock:
+            for cache in (self._cache, self._count_cache):
+                hit = cache.get(key)
+                if hit and hit[0] > now:
+                    return hit[1]
+        result = self._build(user, allowed)
+        with self._lock:
+            self._count_cache = {k: v for k, v in self._count_cache.items() if v[0] > now}
+            self._count_cache[key] = (now + COUNT_SECONDS, result)
+        return result
 
     # --- building ---------------------------------------------------------------------------
 
@@ -308,7 +335,14 @@ class OverviewService:
 
     def _paused(self, user: User) -> list[PausedSchedule]:
         return [
-            PausedSchedule(s.schedule_id, s.name, s.kind, s.paused_reason)
+            PausedSchedule(
+                s.schedule_id,
+                s.name,
+                s.kind,
+                s.paused_reason,
+                # No reason at all is a pause from before reasons were kept: a person's.
+                s.paused_reason in (None, PAUSED_BY_PERSON),
+            )
             for s in self._schedules.all()
             if s.paused and _sees(s.owner_id, s.shared, user)
         ]

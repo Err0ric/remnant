@@ -65,7 +65,7 @@ export function SimplePanel({
               placeholder={`Words, "phrases", field:value, -field:value, OR, ( )`}
               spellCheck={false}
               autoComplete="off"
-              className="h-9 min-w-0 flex-1 rounded border border-border-strong bg-inset px-3 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-focus-ring"
+              className="h-9 min-w-0 flex-1 rounded border border-border-control bg-inset px-3 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-focus-ring"
             />
           </div>
           <button
@@ -85,7 +85,7 @@ export function SimplePanel({
                 const p = presets.find((x) => x.id === e.target.value);
                 if (p) onPreset(p.text);
               }}
-              className="h-7 w-auto max-w-48 rounded border border-border-strong bg-surface px-1.5 text-sm text-text"
+              className="h-7 w-auto max-w-48 rounded border border-border-control bg-surface px-1.5 text-sm text-text"
             >
               <option value="">Suspicious…</option>
               {presets.map((p) => (

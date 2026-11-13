@@ -2,7 +2,7 @@ import { PanelTitle } from "@/components/PanelTitle";
 import { useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 
-/** One layer of a trend. `color` is a token name from tokens.css ("warn", "local-text"). */
+/** One layer of a trend. `color` is a token name from tokens.css ("warn", "local-tx"). */
 export interface TrendSeries {
   key: string;
   label: string;
@@ -13,7 +13,7 @@ export interface TrendSeries {
 interface TrendChartProps {
   title: ReactNode;
   note?: ReactNode;
-  /** Stacked bottom first when `stacked`; else drawn in order. */
+  /** Parts of one total when `stacked`: each is its own line and the hover adds them up. */
   series: TrendSeries[];
   stacked?: boolean;
   /** The same points one window earlier: a dashed line. `label` says what it is ("Same
@@ -146,16 +146,10 @@ export function TrendChart({
   const tipId = useId();
   const h = Math.min(160, height);
 
-  // Layers as drawn: cumulative when stacked. A stack's tangents are the sums of its
-  // layers' tangents, so bands never cross between points.
-  const own = series.map((s) => s.values.slice(begin, last + 1));
-  const ownM = own.map(tangents);
-  const layers = own.map((vals, k) =>
-    stacked ? vals.map((_, i) => own.slice(0, k + 1).reduce((a, l) => a + (l[i] ?? 0), 0)) : vals,
-  );
-  const layerM = ownM.map((ms, k) =>
-    stacked ? ms.map((_, i) => ownM.slice(0, k + 1).reduce((a, l) => a + (l[i] ?? 0), 0)) : ms,
-  );
+  // Lines only, no area fill (DESIGN.md 4): the parts of a stack are separate lines, each at
+  // its own value, with the legend naming them; the tooltip still gives their total.
+  const layers = series.map((s) => s.values.slice(begin, last + 1));
+  const layerM = layers.map(tangents);
   const prev = previous?.values.slice(0, n) ?? [];
   const top = niceTop(Math.max(2, ...layers.flatMap((l) => l), ...(prev.length ? prev : [0])));
   const x = (i: number) => (n <= 1 ? W / 2 : (i / (n - 1)) * W);
@@ -312,7 +306,7 @@ export function TrendChart({
                 )}`}
                 fill="none"
                 stroke="var(--text-muted)"
-                strokeWidth={1.75}
+                strokeWidth={1.5}
                 strokeDasharray="5 3"
                 vectorEffect="non-scaling-stroke"
               />
@@ -321,8 +315,6 @@ export function TrendChart({
               ? layers.map((l, k) => {
                   const s = series[k] as TrendSeries;
                   const m = layerM[k] as number[];
-                  const below = stacked && k > 0 ? (layers[k - 1] as number[]) : null;
-                  const belowM = stacked && k > 0 ? (layerM[k - 1] as number[]) : null;
                   const upper = `M${xs[0]},${y(l[0] ?? 0)} ${segments(xs, l, m, y)}`;
                   // A still-filling last point: the line up to the one before is solid,
                   // the last segment dashed.
@@ -330,16 +322,8 @@ export function TrendChart({
                   const solid = open
                     ? `M${xs[0]},${y(l[0] ?? 0)} ${segments(xs.slice(0, k1), l.slice(0, k1), m.slice(0, k1), y)}`
                     : upper;
-                  const area = below
-                    ? `${upper} L${xs[xs.length - 1]},${y(below[below.length - 1] ?? 0)} ${segments(xs, below, belowM as number[], y, true)} Z`
-                    : `${upper} L${xs[xs.length - 1]},${h} L${xs[0]},${h} Z`;
                   return (
                     <g key={s.key}>
-                      <path
-                        d={area}
-                        fill={`var(--${s.color})`}
-                        fillOpacity={stacked ? 0.32 : 0.16}
-                      />
                       <path
                         d={solid}
                         fill="none"

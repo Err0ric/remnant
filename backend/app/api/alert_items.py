@@ -8,7 +8,7 @@ counted: the viewer only learns that some exist (`restricted`, owner 2026-11-12)
 
 import ipaddress
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Query, Request, Response, status
@@ -127,6 +127,9 @@ class MuteOut(BaseModel):
     until: str
     created_by: str | None
     created_at: str
+    # False for a mute listed because it ended in the asked window; `ended_at` says when.
+    active: bool = True
+    ended_at: str | None = None
 
 
 class ListOut(BaseModel):
@@ -140,6 +143,8 @@ class ListOut(BaseModel):
     # Open items the viewer may read, by their stored severity ("other" when none): the
     # Alerts strip shows these, so it can never disagree with the badges in the list.
     by_severity: dict[str, int] = {}
+    # Closed lists only: more alerts were closed in the asked window than the list holds.
+    capped: bool = False
 
 
 class CountOut(BaseModel):
@@ -158,6 +163,9 @@ class LinesOut(BaseModel):
     runs: dict[str, int] = {}  # item_id: open items of its kind and subject
     groups: int  # every kind and subject open and readable, shown or not
     gap_sources: list[str] = []  # sources with an open gap alert (no extra source line)
+    # Of `items`, the AI Watch ones whose service or MCP server is still not reviewed: a
+    # review task, listed after every other alert.
+    review: list[str] = []
     open: int
     restricted: bool  # as ListOut.restricted: a flag, never a count
     by_severity: dict[str, int] = {}
@@ -354,16 +362,27 @@ def _unreviewed(request: Request, item: AlertItem) -> bool:
     return False
 
 
+def _aware(at: datetime | None) -> datetime | None:
+    """A time from the address; one with no offset is read as UTC."""
+    return at if at is None or at.tzinfo else at.replace(tzinfo=UTC)
+
+
 def _list(
     request: Request,
     user: User,
     state: str,
     unreviewed: bool = False,
     person: str | None = None,
+    closed_from: datetime | None = None,
+    closed_to: datetime | None = None,
 ) -> ListOut:
     store = _store(request)
     readable = _readable(request, user)
-    found = store.items(user, state)
+    capped = False
+    if state == "closed":
+        found, capped = store.closed(user, closed_from=closed_from, closed_to=closed_to)
+    else:
+        found = store.items(user, state)
     if unreviewed:
         found = [i for i in found if _unreviewed(request, i)]
     if person and not can_view_people(user):
@@ -399,6 +418,7 @@ def _list(
         muted=len(mutes),
         reasons=dict(REASONS),
         by_severity=tally.by_severity,
+        capped=capped,
     )
 
 
@@ -418,14 +438,23 @@ async def list_alerts(
     state: Annotated[State, Query()] = "open",
     unreviewed: Annotated[bool, Query()] = False,
     person: Annotated[str | None, Query(max_length=256)] = None,
+    closed_from: Annotated[datetime | None, Query()] = None,
+    closed_to: Annotated[datetime | None, Query()] = None,
 ) -> ListOut:
-    """The viewer's alerts, newest first: open by default, or closed, or all. With
+    """The viewer's alerts, newest first: open by default, or closed, or all. Closed ones
+    are newest closed first, and `closed_from` and `closed_to` keep those closed in that
+    window (Alerts > Closed's Time filter); the bounds are refused with another state,
+    since an open alert is never filtered by time (owner, 2026-11-13). With
     `unreviewed`, only AI Watch items whose service or MCP server is still not reviewed,
     closed ones included: what AI Watch's "not reviewed" line links to. With `person`, only
     items about that person under any form of the name (ADR-0038 row 27); without View
     people in AI usage, AI Watch items are left out of it (D242). Without it, AI Watch
     items name no one: "a person" stands in place of each name."""
-    return await run_in_threadpool(_list, request, user, state, unreviewed, person)
+    if (closed_from or closed_to) and state != "closed":
+        raise ParamInvalidError("A close time filter applies to closed alerts only")
+    return await run_in_threadpool(
+        _list, request, user, state, unreviewed, person, _aware(closed_from), _aware(closed_to)
+    )
 
 
 @router.get("/alerts/count")
@@ -440,7 +469,18 @@ async def count_alerts(request: Request, user: CurrentUser) -> CountOut:
     return await run_in_threadpool(run)
 
 
-_RANK = {"high": 0, "medium": 1}
+def in_list_order[T](top: list[tuple[T, int]], review: set[str]) -> list[tuple[T, int]]:
+    """Lines in the order of the Needs you list (ADR-0052 section 3.9): High alerts, then other
+    alerts, then AI review items. `top` comes newest first and the sort is stable, so each
+    part stays newest first. A review item is one whatever its severity."""
+
+    def part(line: tuple[T, int]) -> int:
+        item: Any = line[0]
+        if item.item_id in review:
+            return 2
+        return 0 if item.severity == "high" else 1
+
+    return sorted(top, key=part)
 
 
 def _lines(request: Request, user: User, limit: int, by: str) -> LinesOut:
@@ -453,8 +493,9 @@ def _lines(request: Request, user: User, limit: int, by: str) -> LinesOut:
         first, runs = groups.get((i.kind, i.subject), (i, 0))
         groups[(i.kind, i.subject)] = (first, runs + 1)
     top = list(groups.values())
-    if by == "severity":  # stable: newest first within a severity, as the banner sorts
-        top.sort(key=lambda g: _RANK.get(g[0].severity or "", 2))
+    review = {i.item_id for i, _ in top if _unreviewed(request, i)}
+    if by == "severity":
+        top = in_list_order(top, review)
     top = top[:limit]
     named_ok = can_view_people(user)
     # Access, not page loads (owner, 2026-11-11): a row only when a line shows a name.
@@ -470,6 +511,7 @@ def _lines(request: Request, user: User, limit: int, by: str) -> LinesOut:
         runs={i.item_id: n for i, n in top},
         groups=len(groups),
         gap_sources=sorted({i.subject for i in shown if i.kind == "gap"}),
+        review=sorted(i.item_id for i, _ in top if i.item_id in review),
         open=tally.open,
         restricted=tally.restricted,
         by_severity=tally.by_severity,
@@ -483,8 +525,9 @@ async def alert_lines(
     limit: Annotated[int, Query(ge=1, le=20)] = 5,
     by: Annotated[Literal["severity", "newest"], Query()] = "severity",
 ) -> LinesOut:
-    """The first `limit` open alerts a summary shows, one per kind and subject: most
-    severe first (the Dashboard's "Needs you"), or newest first (Health). Only those lines,
+    """The first `limit` open alerts a summary shows, one per kind and subject: in the order
+    of the Dashboard's "Needs you" (High alerts, then other alerts, then AI review items,
+    which `review` names; ADR-0052 section 3.9), or newest first (Health). Only those lines,
     so the audit log records what was shown: `ai.view_people` when a line names someone to
     a viewer with View people in AI usage, else no row (owner, 2026-11-11; D242). Without
     the permission AI Watch lines name no one, as on Alerts."""
@@ -542,9 +585,18 @@ def _audit_view(
 
 
 @router.get("/alerts/mutes")
-async def list_mutes(request: Request, user: CurrentUser) -> list[MuteOut]:
-    """Active mutes, soonest to expire first. Everyone may see what is muted."""
-    mutes = await run_in_threadpool(_store(request).mutes)
+async def list_mutes(
+    request: Request,
+    user: CurrentUser,
+    since: Annotated[datetime | None, Query(alias="from")] = None,
+    before: Annotated[datetime | None, Query(alias="to")] = None,
+    ended: Annotated[bool, Query()] = False,
+) -> list[MuteOut]:
+    """Active mutes, soonest to expire first. Everyone may see what is muted. With `ended`
+    (the Time filter of Alerts > Muted), also the mutes that were in force at some point
+    between `from` and `to` (either or both may be left open) and have ended, newest ended
+    first, each with `active` false."""
+    mutes = await run_in_threadpool(_store(request).mutes, _aware(since), _aware(before), ended)
     if not can_view_people(user):
         mutes = [mask_mute(m) for m in mutes]
     return [
@@ -556,6 +608,8 @@ async def list_mutes(request: Request, user: CurrentUser) -> list[MuteOut]:
             until=m.until,
             created_by=_name(request, m.created_by),
             created_at=m.created_at,
+            active=m.ended_at is None,
+            ended_at=m.ended_at,
         )
         for m in mutes
     ]

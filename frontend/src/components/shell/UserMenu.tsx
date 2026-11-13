@@ -15,7 +15,7 @@ const DENSITIES: { id: Density; label: string; hint: string }[] = [
   { id: "compact", label: "Compact", hint: "More rows on screen" },
 ];
 
-/** Account, row density (ADR-0038 edit 10, call 7), and sign out. */
+/** Account, row density (Comfortable unless the user chose Compact, D248), and sign out. */
 export function UserMenu({ user, onSignOut }: UserMenuProps) {
   const [open, setOpen] = useState(false);
   const [density, setDensity] = useState<Density>(() => currentDensity(user.username));
@@ -59,7 +59,7 @@ export function UserMenu({ user, onSignOut }: UserMenuProps) {
         <ChevronDown size={14} aria-hidden className="text-white/50" />
       </button>
       {open ? (
-        <div className="absolute right-0 top-full z-50 mt-1 w-60 rounded-card border border-border bg-surface p-1.5 text-text shadow-lg">
+        <div className="absolute right-0 top-full z-50 mt-1 w-60 [--focus-ring:var(--accent-text)] rounded-card border border-border bg-surface p-1.5 text-text shadow-lg">
           <a
             href="/me"
             onClick={(e) => {

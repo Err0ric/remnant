@@ -1,11 +1,13 @@
+import { Skeleton } from "@/components/Skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { COUNTED, M365_COUNT_COUNTED, OUTCOME_COUNTED } from "@/features/dashboard/counted";
 import { useState, type ReactNode } from "react";
 import { api, type M365Overview, type PageWindow } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { navigate, useTab } from "@/lib/route";
+import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/shell/PageHeader";
-import { LoadFailed } from "@/components/LoadFailed";
+import { InlineError } from "@/components/InlineError";
 import { AdminChanges } from "./AdminChanges";
 import { MailRules } from "./MailRules";
 import {
@@ -26,7 +28,6 @@ import { SignIns } from "./SignIns";
 import {
   attentionItems,
   count,
-  failedSigninsItem,
   NeedsAttention,
   useOpenAlertsItem,
 } from "@/features/dashboard/NeedsAttention";
@@ -46,10 +47,20 @@ function readWindow(): PageWindow {
 const hourFmt = (d: Date) => d.toLocaleTimeString("en-US", { hour: "numeric" });
 const dayFmt = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
-/** Microsoft 365 (ADR-0038 section 5): Overview, then Sign-ins, Mail, Apps, and Admin as
- * event lists. One time window for the area; every number opens its rows (ADR-0039). */
+const VIEW_LABEL: Record<string, string> = {
+  "sign-ins": "Microsoft 365 sign-ins",
+  mail: "Microsoft 365 mail",
+  admin: "Microsoft 365 admin",
+};
+
+/** The Microsoft 365 views of Logs (ADR-0052 section 3.3): Sign-ins, Mail, and Admin, each
+ * a set of lists the server builds and runs on the caller's own sources (rule 13), so they
+ * need no SQL access and show no editor. Microsoft 365 has no area of its own: its
+ * numbers are in the Dashboard's Identity section and its apps in the AI usage Inventory.
+ * One time window for the three views, remembered in this browser; every number opens its
+ * rows (ADR-0039). */
 export function M365Page() {
-  const tab = useTab() ?? "overview";
+  const tab = useTab() ?? "sign-ins";
   const [win, setWin] = useState<PageWindow>(readWindow);
   const q = useQuery({
     queryKey: ["m365-overview", win],
@@ -65,9 +76,10 @@ export function M365Page() {
     }
   };
   const m = q.data;
+  const view = VIEW_LABEL[tab] ?? VIEW_LABEL["sign-ins"];
   return (
     <div className="flex min-w-0 flex-1 flex-col">
-      <PageHeader title="Microsoft 365" />
+      <PageHeader title="Logs" count={view} />
       <div className="flex flex-col gap-4 p-5">
         <div className="flex flex-wrap items-center gap-3">
           <div role="group" aria-label="Time window" className="flex rounded border border-border">
@@ -88,61 +100,47 @@ export function M365Page() {
               </button>
             ))}
           </div>
-          {m ? (
+          {m?.has_source ? (
             <span className="text-sm text-text-muted">
               {compareLine(m.history.compared, m.history.since, previousPhrase(win))}
             </span>
           ) : null}
         </div>
         {q.isLoading ? (
-          <div aria-busy="true" className="h-64 animate-pulse rounded-card bg-surface" />
+          <Skeleton label={view ?? "this view"} block="h-64" />
         ) : q.isError && !m ? (
-          <section
-            aria-label="Microsoft 365"
-            className="rounded-card border border-border bg-surface"
-          >
-            <LoadFailed
-              what="Microsoft 365"
+          <section aria-label={view} className="rounded-card border border-border bg-surface">
+            <InlineError
+              what={view ?? "This view"}
               error={q.error}
               onRetry={() => void q.refetch()}
               retrying={q.isFetching}
             />
           </section>
         ) : !m ? null : !m.has_source ? (
-          <section
-            aria-label="Microsoft 365"
-            className="rounded-card border border-border bg-surface p-5 text-sm"
-          >
-            <p className="mb-2 font-semibold">Needs a Microsoft 365 source</p>
-            <p className="text-text-secondary">
-              Add the Microsoft 365 connector, or a file read with a Microsoft 365 template, to see
-              sign-ins, mail, apps, and admin changes here. If one exists, you may not have access
-              to it.{" "}
-              <button
-                type="button"
-                onClick={() => navigate("sources")}
-                className="text-accent-text hover:underline"
-              >
-                Add a source
-              </button>
-            </p>
-          </section>
+          <EmptyState
+            kind="not-set-up"
+            title="Needs a Microsoft 365 source"
+            detail="Add the Microsoft 365 connector, or a file read with a Microsoft 365 template. If one exists, you may not have access to it."
+            action={{ label: "Add a source", onClick: () => navigate("sources") }}
+          />
         ) : (
           <DrillScope
             bounds={m}
-            area={`Microsoft 365 > ${TAB_LABEL[tab] ?? "Overview"}`}
+            area={`Logs > ${view}`}
             history={m.history}
             before={previousPhrase(win)}
           >
-            {tab === "sign-ins" ? (
-              <SignIns m={m} />
-            ) : tab === "mail" ? (
+            {tab === "mail" ? (
               <>
                 <MailRules m={m} />
                 <EventList title="DLP matches" list="dlp" sql={m.lists.dlp} m={m} />
               </>
-            ) : tab === "apps" ? (
+            ) : tab === "admin" ? (
               <>
+                <AdminChanges m={m} />
+                {/* The event lists of the old Apps tab: consents and registrations are
+                    changes an administrator made. The register of apps is the Inventory. */}
                 <EventList title="App consents" list="consents" sql={m.lists.consents} m={m} />
                 <EventList
                   title="App registrations"
@@ -151,10 +149,13 @@ export function M365Page() {
                   m={m}
                 />
               </>
-            ) : tab === "admin" ? (
-              <AdminChanges m={m} />
             ) : (
-              <Overview m={m} />
+              <>
+                {/* What the Microsoft 365 Overview showed: the Dashboard's Identity section
+                    has its headline numbers, and the rest of it is about sign-ins. */}
+                <Overview m={m} />
+                <SignIns m={m} />
+              </>
             )}
           </DrillScope>
         )}
@@ -162,14 +163,6 @@ export function M365Page() {
     </div>
   );
 }
-
-const TAB_LABEL: Record<string, string> = {
-  overview: "Overview",
-  "sign-ins": "Sign-ins",
-  mail: "Mail",
-  apps: "Apps",
-  admin: "Admin",
-};
 
 function Box({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -199,9 +192,10 @@ function Overview({ m }: { m: M365Overview }) {
       "blocked app consent",
       "blocked app consents",
       "m365",
-      "apps",
+      "admin",
     ),
-    failedSigninsItem(m.failed),
+    // Not the failed sign-ins item: its list is this view, right under these numbers, so
+    // a link to it would go nowhere.
   ]);
   const kpis = [
     <Kpi key="s" label="Sign-ins" kpi={m.sign_ins} about={COUNTED.signIns} />,
@@ -264,7 +258,7 @@ function Overview({ m }: { m: M365Overview }) {
   return (
     <>
       <NeedsAttention items={attention} />
-      <Box label="Overview">
+      <Box label="Summary">
         <div className="grid grid-cols-2 gap-px bg-border lg:grid-cols-4 min-[1400px]:grid-cols-7 [&>*:last-child]:col-span-2 min-[1400px]:[&>*:last-child]:col-span-1">
           {kpis}
         </div>
@@ -454,7 +448,8 @@ function Outcome({ m }: { m: M365Overview }) {
           series={[
             { key: "o", label: "Other", values: o.other ?? [], color: "text-secondary" },
             { key: "e", label: "Expired", values: o.expired ?? [], color: "series-neutral" },
-            { key: "i", label: "Interrupted", values: o.interrupted, color: "text-muted" },
+            // Not the muted gray: that is the dashed line of the window before.
+            { key: "i", label: "Interrupted", values: o.interrupted, color: "accent-text" },
             { key: "f", label: "Failed", values: o.failed, color: "warn" },
           ]}
           pointLabel={name}

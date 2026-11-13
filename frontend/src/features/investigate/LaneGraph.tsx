@@ -165,18 +165,25 @@ interface Box {
   h: number;
 }
 
+// "High severity" is the one badge that is a severity (the server adds it from 4 up): the
+// solid High pair. A review or data state is a warn outline, never a severity color or a
+// fill (DESIGN.md 2 and 7). Anything else, a count of rule matches too, is neutral.
+export function badgeKind(b: string): "severity" | "state" | "neutral" {
+  if (b === "High severity") return "severity";
+  if (b === "Not approved" || b === "Sensitive data") return "state";
+  return "neutral";
+}
+
 function badgeClass(b: string): string {
-  if (b === "Not approved" || b === "High severity" || b.includes("rule match"))
-    return "fill-sev-critical-bg";
-  if (b === "Sensitive data") return "fill-sev-medium-bg";
-  return "fill-sev-info-bg";
+  return {
+    severity: "fill-sev-h-solid",
+    state: "fill-surface stroke-warn",
+    neutral: "fill-info-bg",
+  }[badgeKind(b)];
 }
 
 function badgeText(b: string): string {
-  if (b === "Not approved" || b === "High severity" || b.includes("rule match"))
-    return "fill-sev-critical-text";
-  if (b === "Sensitive data") return "fill-sev-medium-text";
-  return "fill-sev-info-text";
+  return { severity: "fill-sev-h-on", state: "fill-warn", neutral: "fill-info-tx" }[badgeKind(b)];
 }
 
 interface LaneGraphProps {

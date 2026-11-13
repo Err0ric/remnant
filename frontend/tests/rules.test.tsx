@@ -74,6 +74,10 @@ describe("Detection rules", () => {
     await userEvent.click(
       await within(table).findByRole("checkbox", { name: "Select Disabled example" }),
     );
+    // The buttons for ticked rules sit directly above the rule list, not in the header.
+    const group = screen.getByRole("group", { name: "Selected rules" });
+    expect(group.nextElementSibling?.querySelector("table")).not.toBeNull();
+    expect(group.closest("[data-header-actions]")).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Enable selected (1)" }));
     await vi.waitFor(() =>
       expect(bodies(spy, (u) => u.endsWith("/api/rules/enabled"))).toEqual([

@@ -91,7 +91,7 @@ describe("Command palette", () => {
     const box = within(dialog).getByRole("combobox");
     await userEvent.type(box, "search");
     const nav = await within(dialog).findByRole("group", { name: "Navigate" });
-    expect(within(nav).getByRole("option", { name: /^Logs/ })).toBeInTheDocument();
+    expect(within(nav).getByRole("option", { name: /^Logs(?! ›)/ })).toBeInTheDocument();
     await userEvent.clear(box);
     await userEvent.type(box, "ask");
     const nav2 = await within(dialog).findByRole("group", { name: "Navigate" });
@@ -100,7 +100,7 @@ describe("Command palette", () => {
     expect(within(dialog).queryByRole("group", { name: "Search" })).toBeNull();
     await userEvent.clear(box);
     await userEvent.type(box, "logs");
-    await userEvent.click(await within(dialog).findByRole("option", { name: /^Logs/ }));
+    await userEvent.click(await within(dialog).findByRole("option", { name: /^Logs(?! ›)/ }));
     await waitFor(() => expect(window.location.pathname).toBe("/investigate/logs"));
   });
 
@@ -111,8 +111,19 @@ describe("Command palette", () => {
     for (const [typed, label] of [
       ["mcp servers", "Agents › MCP servers"],
       ["rules", "Alerts › Rules"],
-      ["endpoint agents", "Health › Endpoint agents"],
-      ["people & devices", "Investigate › People & devices"],
+      ["collectors", "Health › Collectors"],
+      // The old tab names still find Health.
+      ["endpoint agents", "Health"],
+      ["page rollups", "System"],
+      // What was AI usage > Review.
+      ["ai watch", "AI watch and catalog"],
+      ["mcp rules", "AI watch and catalog"],
+      ["people & devices", "People & devices"],
+      ["saved searches", "Logs › Saved searches"],
+      // The Microsoft 365 views of Logs (ADR-0052 section 3.3).
+      ["entra", "Logs › Microsoft 365 sign-ins"],
+      ["inbox rules", "Logs › Microsoft 365 mail"],
+      ["conditional access", "Logs › Microsoft 365 admin"],
     ] as const) {
       await userEvent.clear(box);
       await userEvent.type(box, typed);

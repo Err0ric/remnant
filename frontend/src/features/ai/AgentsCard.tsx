@@ -1,12 +1,15 @@
+import { Skeleton } from "@/components/Skeleton";
+import { EmptyState } from "@/components/EmptyState";
 import { useQuery } from "@tanstack/react-query";
 import { ApiError, api } from "@/lib/api";
 import { SectionTitle } from "@/components/SectionTitle";
 import { EntityList } from "@/components/EntityLink";
 
 const STATE: Record<string, { label: string; tint: string }> = {
-  changed: { label: "Changed", tint: "bg-sev-high-bg text-sev-high-text" },
-  new: { label: "New agent", tint: "bg-sev-low-bg text-sev-low-text" },
-  usual: { label: "As usual", tint: "bg-sev-info-bg text-sev-info-text" },
+  changed: { label: "Changed", tint: "border border-warn text-warn" },
+  // Neutral and outlined: the accent is for links and selection only (DESIGN.md 1).
+  new: { label: "New agent", tint: "border border-border-strong text-text-secondary" },
+  usual: { label: "As usual", tint: "bg-info-bg text-info-tx" },
 };
 
 function when(iso: string): string {
@@ -33,14 +36,13 @@ export function AgentsCard() {
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-surface-head px-3 py-2">
         <SectionTitle>Agents</SectionTitle>
         <span className="text-sm text-text-muted">
-          Claude Code per person, MCP setups per machine and client, and API keys. Changes are
-          against the 30 days before the last 24 hours.
+          Changes are against the 30 days before the last 24 hours.
           {masked
             ? " Names are hidden. An admin can turn on View people in AI usage for you."
             : null}
         </span>
         {changed ? (
-          <span className="ml-auto rounded-badge bg-sev-high-bg px-2 py-0.5 text-sm text-sev-high-text">
+          <span className="ml-auto rounded-badge border border-warn px-2 py-0.5 text-sm text-warn">
             {changed} changed
           </span>
         ) : null}
@@ -50,22 +52,23 @@ export function AgentsCard() {
           {q.error instanceof ApiError ? q.error.message : "Could not load agents"}
         </p>
       ) : q.isLoading ? (
-        <p className="px-3 py-4 text-sm text-text-muted">Loading…</p>
+        <Skeleton label="agents" rows={4} className="rounded-none border-0" />
       ) : rows.length === 0 ? (
-        <p className="px-3 py-6 text-center text-sm text-text-secondary">
-          No agents in the last 30 days. Claude Code telemetry, the MCP inventory, and the Anthropic
-          usage connector feed this view.
-        </p>
+        <EmptyState
+          kind="not-set-up"
+          title="No agents in the last 30 days."
+          detail="Claude Code telemetry, the MCP inventory, and the Anthropic usage connector feed this view."
+        />
       ) : (
         <div className="overflow-x-auto">
           <table aria-label="Agents" className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-text-secondary">
-                <th className="px-3 py-2 font-semibold">Agent</th>
-                <th className="px-3 py-2 font-semibold">Owner</th>
-                <th className="px-3 py-2 text-right font-semibold">Events (24 h)</th>
-                <th className="px-3 py-2 font-semibold">Last seen</th>
-                <th className="px-3 py-2 font-semibold">What changed</th>
+                <th className="px-3 py-2">Agent</th>
+                <th className="px-3 py-2">Owner</th>
+                <th className="px-3 py-2 text-right">Events (24 h)</th>
+                <th className="px-3 py-2">Last seen</th>
+                <th className="px-3 py-2">What changed</th>
               </tr>
             </thead>
             <tbody>

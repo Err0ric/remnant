@@ -1,12 +1,14 @@
+import { lastDays } from "@/lib/timeWindow";
+import { Skeleton } from "@/components/Skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { EntityLink } from "@/components/EntityLink";
-import { LoadFailed } from "@/components/LoadFailed";
+import { InlineError } from "@/components/InlineError";
 import { When } from "@/components/When";
 import { api, type PersonUsed } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { Box } from "./PersonLists";
 
-const TH = "px-3 py-2 font-semibold";
+const TH = "px-3 py-2";
 const TD = "px-3 py-1.5";
 
 function UsedTable({
@@ -63,20 +65,21 @@ export function PersonHosts({ person, days }: { person: string; days: number }) 
     queryKey: ["person-hosts", person, days],
     queryFn: () => api.personHosts(person, days),
   });
-  if (q.isLoading) return <div aria-busy="true" className="h-40 animate-pulse" />;
+  if (q.isLoading) return <Skeleton label="devices" rows={4} className="rounded-none border-0" />;
   if (q.isError || !q.data)
     return (
-      <LoadFailed
+      <InlineError
         what="hosts and devices"
         error={q.error}
         onRetry={() => void q.refetch()}
         retrying={q.isFetching}
       />
     );
-  const range = `last ${days} ${days === 1 ? "day" : "days"}`;
+  // These panels count whole days back from now, whatever the page's time is: they say so.
+  const range = lastDays(days);
   return (
     <div role="region" aria-label="Hosts and devices" className="grid gap-3 lg:grid-cols-2">
-      <Box label="Hosts" note={`on this person's records, ${range}`}>
+      <Box label="Hosts" note={`${range}, on this person's records`}>
         <UsedTable label="Hosts" kind="host" rows={q.data.hosts} />
       </Box>
       <Box label="Source addresses" note={range}>

@@ -37,7 +37,7 @@ interface AuditFilterBarProps {
 }
 
 const SELECT =
-  "h-8 rounded border border-border-strong bg-surface px-2 text-sm focus:outline-none focus:ring-2 focus:ring-focus-ring";
+  "h-8 rounded border border-border-control bg-surface px-2 text-sm focus:outline-none focus:ring-2 focus:ring-focus-ring";
 
 export function AuditFilterBar({ log, value, onChange }: AuditFilterBarProps) {
   const set = (patch: Partial<AuditFilterState>) => onChange({ ...value, ...patch });

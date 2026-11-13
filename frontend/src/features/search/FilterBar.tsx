@@ -1,14 +1,16 @@
 import { useQuery } from "@tanstack/react-query";
 import { X } from "lucide-react";
+import { FilterBar as Bar } from "@/components/FilterBar";
 import { api } from "@/lib/api";
-import { TIME_RANGES, type TimeRangeId } from "@/lib/search";
+import type { LogsRange } from "@/lib/search";
 
 interface FilterBarProps {
-  range: TimeRangeId;
-  /** A page's own window (a drill-through), shown as the selected range until a preset
-   * is chosen. */
+  range: LogsRange;
+  /** Custom: a start and an end as local date-times (an empty side is open). A page's own
+   * window (a drill-through) arrives as Custom. */
   custom?: { from: string; to: string } | null;
-  onRange: (range: TimeRangeId) => void;
+  onRange: (range: LogsRange) => void;
+  onCustom: (from: string, to: string) => void;
   sources: string[];
   onSources: (sources: string[]) => void;
 }
@@ -16,15 +18,14 @@ interface FilterBarProps {
 const SOURCES_SQL =
   "SELECT source_id, count(*) AS events FROM events GROUP BY source_id ORDER BY source_id";
 
-const fmt = (iso: string) =>
-  new Date(iso).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-
-export function FilterBar({ range, custom, onRange, sources, onSources }: FilterBarProps) {
+export function FilterBar({
+  range,
+  custom,
+  onRange,
+  onCustom,
+  sources,
+  onSources,
+}: FilterBarProps) {
   const available = useQuery({
     // Its own key: ["sources"] once also held api.sources (a list), and a Dashboard opened
     // after Search read this result instead and failed on .map (owner, 2026-11-03; D194).
@@ -38,26 +39,16 @@ export function FilterBar({ range, custom, onRange, sources, onSources }: Filter
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <label className="flex items-center gap-2 rounded-chip bg-accent-subtle py-0.5 pl-2.5 pr-1 text-sm text-accent-text">
-        Time range:
-        <select
-          aria-label="Time range"
-          value={custom ? "custom" : range}
-          onChange={(e) => onRange(e.target.value as TimeRangeId)}
-          className="cursor-pointer rounded-chip border-0 bg-transparent pr-1 text-sm font-semibold text-accent-text focus:outline-none"
-        >
-          {custom ? (
-            <option value="custom" className="bg-surface text-text">
-              {fmt(custom.from)} to {fmt(custom.to)}
-            </option>
-          ) : null}
-          {TIME_RANGES.map((r) => (
-            <option key={r.id} value={r.id} className="bg-surface text-text">
-              {r.label}
-            </option>
-          ))}
-        </select>
-      </label>
+      <Bar
+        label="Filter events"
+        time={{
+          value: custom ? "custom" : range,
+          // Custom opens with both sides open: everything kept, until a date is set.
+          onChange: (id) => (id === "custom" ? onCustom("", "") : onRange(id)),
+          custom: { from: custom?.from ?? "", to: custom?.to ?? "", onChange: onCustom },
+        }}
+        isDefault
+      />
       {sources.map((s) => (
         <span
           key={s}

@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { SeverityMark } from "@/components/SeverityMark";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, api, type AlertItem, type CloseReason } from "@/lib/api";
-import { LoadFailed } from "@/components/LoadFailed";
+import { InlineError } from "@/components/InlineError";
 import { kindForColumn, type EntityKind } from "@/lib/entity";
 import { cn } from "@/lib/cn";
-import { navigate, pathFor, useSection, useSectionTab } from "@/lib/route";
+import { fragmentValues, navigate, pathFor, setFragment, useSection } from "@/lib/route";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { EntityLink } from "@/components/EntityLink";
 import { DevicePeople } from "./DevicePeople";
@@ -18,15 +19,21 @@ import { CloseForm } from "./CloseForm";
 import { VendorAlerts } from "./VendorAlerts";
 import { KIND_LABEL, NAMES_HIDDEN, RESTRICTED_NOTE } from "./kinds";
 import { openDrill } from "@/lib/drill";
+import { StateNotice } from "@/components/StateNotice";
+import { EmptyState } from "@/components/EmptyState";
+import { Skeleton } from "@/components/Skeleton";
+import { since } from "@/features/overview/time";
+import { FilterBar } from "@/components/FilterBar";
+import { useFilters } from "@/lib/filters";
+import { localTime, windowOf, type TimeChoice } from "@/lib/timeWindow";
+import { usePageTime } from "@/lib/timeChoice";
 import {
   CATEGORY_LABEL,
   guideFor,
   bySeverityThenNewest,
   categoryOf,
   evidenceSql,
-  summarize,
   type Category,
-  type Summary,
 } from "./guide";
 
 type Tab = "open" | "closed" | "muted";
@@ -39,30 +46,117 @@ interface AlertsPageProps {
 
 type SevFilter = "" | "high" | "medium" | "none";
 
-/** One queue of everything that fired and needs a decision (ADR-0037, ADR-0043 layout): a
- * summary strip, the list with filters and bulk close, and the open alert beside it, all
- * across the full width. `#item=<id>` opens that alert, which is where every alert message
+// Time is for Closed and Muted only, 7 days unless chosen: an open alert never drops out of
+// the queue for being old (owner, 2026-11-13).
+const FILTER_DEFAULTS = { state: "open", sev: "", cat: "", q: "" };
+const SEVERITIES: { id: SevFilter; label: string }[] = [
+  { id: "", label: "Any" },
+  { id: "high", label: "High" },
+  { id: "medium", label: "Medium" },
+  { id: "none", label: "None" },
+];
+const CATEGORIES: { id: string; label: string }[] = [
+  { id: "", label: "Any" },
+  ...(Object.keys(CATEGORY_LABEL) as Category[]).map((c) => ({ id: c, label: CATEGORY_LABEL[c] })),
+];
+const FILTER_VALUES = {
+  state: ["open", "closed", "muted"],
+  sev: SEVERITIES.map((o) => o.id),
+  cat: CATEGORIES.map((o) => o.id),
+};
+
+/** One queue of everything that fired and needs a decision (ADR-0037, ADR-0043 layout):
+ * the list with filters and bulk close and the open alert beside it, across the full width
+ * (no summary strip, DESIGN.md 6.2e). `#item=<id>` opens that alert, which is where every alert message
  * links. */
 export function AlertsPage({ canClose, isAdmin }: AlertsPageProps) {
   const section = useSection();
-  const focus = section.startsWith("item=") ? decodeURIComponent(section.slice(5)) : null;
-  const [tab, setTab] = useSectionTab<Tab>(["open", "closed", "muted"]);
+  // The fragment holds the State filter and the open alert: `#state=closed&item=<id>`.
+  const frag = fragmentValues(section);
+  const focus = frag.get("item");
+  // The filters live in the fragment too (DESIGN.md 6.0), so a filtered list has an address.
+  const filters = useFilters(FILTER_DEFAULTS, FILTER_VALUES);
+  const wanted = filters.values.state;
+  const tab: Tab = wanted === "closed" || wanted === "muted" ? wanted : "open";
   // `#review`: AI Watch alerts whose service or MCP server is still not reviewed, open
   // and closed (what AI Watch's "not reviewed" count opens; owner, 2026-10-29).
-  const reviewing = section === "review";
+  const reviewing = frag.has("review");
+  // The window applies to what was closed in it, and the server picks those (its list is
+  // capped, so the browser cannot). Open alerts, and the review list, which holds open ones
+  // too, are never filtered by time.
+  const timed = tab !== "open" && !reviewing;
+  // The time control and its place in the address (UTC times) are the shared ones.
+  const time = usePageTime("7d");
+  const { choice } = time;
   const list = useQuery({
-    queryKey: ["alerts", reviewing ? "unreviewed" : tab === "closed" ? "closed" : "open"],
+    // A preset ends now, so the window is worked out when the list is read, not here.
+    queryKey: [
+      "alerts",
+      reviewing ? "unreviewed" : tab === "closed" ? "closed" : "open",
+      ...(timed && tab === "closed" ? [choice.preset, choice.from, choice.to] : []),
+    ],
     queryFn: () =>
-      reviewing ? api.unreviewedAlerts() : api.alerts(tab === "closed" ? "closed" : "open"),
+      reviewing
+        ? api.unreviewedAlerts()
+        : tab === "closed"
+          ? api.alerts("closed", windowOf(choice))
+          : api.alerts("open"),
   });
   const [picked, setPicked] = useState<string | null>(null);
-  const [sev, setSev] = useState<SevFilter>("");
-  const [cat, setCat] = useState<Category | "">("");
-  const [who, setWho] = useState("");
+  const sev = filters.values.sev as SevFilter;
+  const cat = filters.values.cat as Category | "";
+  // The text box filters as it is typed; the address follows a moment after the last key,
+  // so a held key does not rewrite it on every repeat (browsers limit how often).
+  const [who, setWho] = useState(filters.values.q);
+  useEffect(() => setWho(filters.values.q), [filters.values.q]);
+  const latest = useRef(filters);
+  latest.current = filters;
+  const pending = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(pending.current), []);
+  const typeWho = (value: string) => {
+    setWho(value);
+    window.clearTimeout(pending.current);
+    pending.current = window.setTimeout(() => latest.current.set("q", value, true), 300);
+  };
+  const resetFilters = () => {
+    window.clearTimeout(pending.current);
+    setWho("");
+    // The filters and the time, in one step.
+    const next = fragmentValues(section);
+    for (const k of [...Object.keys(FILTER_DEFAULTS), "time", "from", "to"]) next.delete(k);
+    setFragment(next.toString());
+  };
+  // "Checked 2 min ago": when this list was last read from the server.
+  // The page reads the clock twice a minute, so the text stays true on a page left open.
+  const [clock, setClock] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const read = list.dataUpdatedAt || clock;
+  const checkedAgo = since(
+    new Date(read).toISOString(),
+    new Date(Math.max(clock, read)).toISOString(),
+  );
+  // A new State is a new list: the alert a link opened does not stay beside it.
+  const setState = (next: Tab) => {
+    const to = fragmentValues(section);
+    to.delete("item");
+    if (next === "open") to.delete("state");
+    else to.set("state", next);
+    navigate("alerts", to.toString() || undefined);
+  };
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const data = list.data;
   const reasons = data?.reasons ?? ({} as Record<CloseReason, string>);
-  const all = [...(data?.items ?? [])].sort(bySeverityThenNewest);
+  // Closed comes newest closed first from the server and stays so; the rest are by
+  // severity, then newest.
+  const all =
+    tab === "closed" && !reviewing
+      ? (data?.items ?? [])
+      : [...(data?.items ?? [])].sort(bySeverityThenNewest);
+  // Every close time kept: Custom with no dates.
+  const everything = choice.preset === "custom" && !localTime(choice.from) && !localTime(choice.to);
   const needle = who.trim().toLowerCase();
   const rows = all.filter(
     (i) =>
@@ -76,27 +170,90 @@ export function AlertsPage({ canClose, isAdmin }: AlertsPageProps) {
   const current = focus ?? picked ?? rows[0]?.item_id ?? null;
   const pick = (id: string) => {
     setPicked(id);
-    if (focus) navigate("alerts");
+    if (!focus) return;
+    // Leave the linked alert, keeping the filters.
+    const rest = fragmentValues(section);
+    rest.delete("item");
+    navigate("alerts", rest.toString() || undefined);
   };
-  const summary = summarize(all, new Date(), reviewing ? undefined : data?.by_severity);
-  const filtered = rows.length !== all.length;
+  // Open, Closed, Muted: the State filter (they were tabs before ADR-0052). The same bar is
+  // over the mutes list, so there is always a way back to Open. The count is of the alerts
+  // this person can read: the list never holds a restricted one (D243).
+  // No zero when some alerts are in sources this person cannot read (DESIGN.md 6.0).
+  const openCount = !data || (data.restricted && data.open === 0) ? undefined : data.open;
+  const word = (n: number) => (n === 1 ? "alert" : "alerts");
+  const bar = (
+    <FilterBar
+      label="Filter alerts"
+      time={timed ? time.bar : undefined}
+      state={
+        reviewing
+          ? undefined
+          : {
+              value: tab,
+              onChange: setState,
+              options: [
+                { id: "open", label: "Open", count: openCount },
+                { id: "closed", label: "Closed" },
+                { id: "muted", label: "Muted", count: data?.muted || undefined },
+              ],
+            }
+      }
+      facets={
+        tab === "muted" && !reviewing
+          ? []
+          : [
+              {
+                name: "Severity",
+                value: sev,
+                options: SEVERITIES,
+                onChange: (id) => filters.set("sev", id),
+              },
+              {
+                name: "Category",
+                value: cat,
+                options: CATEGORIES,
+                onChange: (id) => filters.set("cat", id),
+              },
+            ]
+      }
+      text={
+        tab === "muted" && !reviewing
+          ? undefined
+          : {
+              label: "Person, device, or source",
+              value: who,
+              onChange: typeWho,
+            }
+      }
+      count={
+        // No count over an empty list: with alerts this person cannot read, "0 alerts"
+        // would say there are none (DESIGN.md 6.0: no permission is never shown as zero).
+        !data || all.length === 0 || (tab === "muted" && !reviewing)
+          ? undefined
+          : rows.length === all.length
+            ? `${all.length} ${word(all.length)}`
+            : `${rows.length} of ${all.length} ${word(all.length)}`
+      }
+      onReset={resetFilters}
+      isDefault={
+        tab === "open" &&
+        !sev &&
+        !cat &&
+        who === "" &&
+        filters.values.q === "" &&
+        (!timed || time.isDefault)
+      }
+    />
+  );
   const visibleChecked = rows.filter((i) => checked.has(i.item_id) && i.state === "open");
   return (
     <div className="flex min-w-0 flex-1 flex-col">
-      <PageHeader
-        title="Alerts"
-        meta="Everything that fired and needs a decision. Close each one with a reason."
-        tabExtras={{
-          ...(data ? { Open: data.open } : {}),
-          ...(data?.muted ? { Muted: data.muted } : {}),
-        }}
-      />
-      <div className="flex min-w-0 flex-col gap-3 p-4">
+      <PageHeader title="Alerts" tabExtras={openCount === undefined ? {} : { Queue: openCount }} />
+      <div className="flex min-w-0 flex-col gap-3 px-5 py-4">
         {reviewing ? (
           <p className="text-sm text-text-secondary">
-            AI services and MCP servers still not reviewed, with their alerts open and closed.
-            Closing an alert does not review it: open one and choose Approve or Not approved, close
-            it as Approved, or set it on AI usage.{" "}
+            Not reviewed yet. Closing an alert does not review it: an administrator does.{" "}
             <button
               type="button"
               onClick={() => navigate("alerts")}
@@ -106,13 +263,22 @@ export function AlertsPage({ canClose, isAdmin }: AlertsPageProps) {
             </button>
           </p>
         ) : null}
+        {/* The bar is there in every state of the page (loading, failed, empty), so the
+            list never moves under it. */}
+        {bar}
         {tab === "muted" && !reviewing ? (
-          <MutesList isAdmin={isAdmin} />
+          <MutesList isAdmin={isAdmin} choice={choice} />
         ) : list.isLoading ? (
-          <div className="h-24 animate-pulse rounded-card bg-surface" aria-busy="true" />
-        ) : list.isError ? (
+          // The final layout while loading: the list and the pane.
+          <>
+            <div className="grid min-w-0 items-start gap-3 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
+              <Skeleton label="alerts" rows={6} />
+              <Skeleton label="the open alert" rows={4} />
+            </div>
+          </>
+        ) : list.isError && !data ? (
           <div className="rounded-card border border-border bg-surface">
-            <LoadFailed
+            <InlineError
               what="Alerts"
               error={list.error}
               onRetry={() => void list.refetch()}
@@ -121,59 +287,6 @@ export function AlertsPage({ canClose, isAdmin }: AlertsPageProps) {
           </div>
         ) : (
           <>
-            {tab === "open" && !reviewing ? (
-              <SummaryStrip
-                summary={summary}
-                restricted={data?.restricted ?? false}
-                muted={data?.muted ?? 0}
-                onSeverity={(v) => setSev(sev === v ? "" : v)}
-                onCategory={(v) => setCat(cat === v ? "" : v)}
-                onOldest={(id) => pick(id)}
-                onMuted={() => setTab("muted")}
-              />
-            ) : null}
-            <div
-              role="group"
-              aria-label="Filter alerts"
-              className="flex flex-wrap items-center gap-2 text-sm"
-            >
-              <select
-                aria-label="Severity"
-                value={sev}
-                onChange={(e) => setSev(e.target.value as SevFilter)}
-                className="h-8 rounded border border-border-strong bg-surface px-2"
-              >
-                <option value="">Any severity</option>
-                <option value="high">High</option>
-                <option value="medium">Medium</option>
-                <option value="none">No severity</option>
-              </select>
-              <select
-                aria-label="Category"
-                value={cat}
-                onChange={(e) => setCat(e.target.value as Category | "")}
-                className="h-8 rounded border border-border-strong bg-surface px-2"
-              >
-                <option value="">Any category</option>
-                {(Object.keys(CATEGORY_LABEL) as Category[]).map((c) => (
-                  <option key={c} value={c}>
-                    {CATEGORY_LABEL[c]}
-                  </option>
-                ))}
-              </select>
-              <input
-                aria-label="Person, device, or source"
-                placeholder="Person, device, or source"
-                value={who}
-                onChange={(e) => setWho(e.target.value)}
-                className="h-8 w-56 min-w-0 rounded border border-border-strong bg-inset px-2"
-              />
-              {filtered ? (
-                <span className="tabular-nums text-text-muted">
-                  {rows.length} of {all.length} shown
-                </span>
-              ) : null}
-            </div>
             {canClose && visibleChecked.length > 0 ? (
               <BulkClose
                 ids={visibleChecked.map((i) => i.item_id)}
@@ -181,13 +294,25 @@ export function AlertsPage({ canClose, isAdmin }: AlertsPageProps) {
                 onDone={() => setChecked(new Set())}
               />
             ) : null}
-            {all.length === 0 ? (
+            {all.length === 0 && !focus ? (
               <>
-                <p className="rounded-card border border-border bg-surface px-3 py-6 text-center text-sm text-text-secondary">
-                  {tab === "open"
-                    ? "Nothing needs a decision. New flagged runs, rule matches, and gaps on sources with Alert if quiet on land here."
-                    : "Nothing closed yet."}
-                </p>
+                {/* With alerts this person cannot read, no sentence says there are none. */}
+                {data?.restricted ? null : timed && !everything ? (
+                  <EmptyState
+                    kind="filtered"
+                    title="No alerts closed in this time window."
+                    action={{ label: "Reset filters", onClick: resetFilters }}
+                  />
+                ) : tab === "open" && !reviewing ? (
+                  <EmptyState kind="good-zero" title={`No open alerts. Checked ${checkedAgo}.`} />
+                ) : (
+                  <EmptyState
+                    kind="default-empty"
+                    title={reviewing ? "Nothing left to review." : "No closed alerts."}
+                  />
+                )}
+                {/* Nothing listed may only mean nothing this viewer can read (D243). */}
+                {data?.restricted ? <StateNotice>{RESTRICTED_NOTE}</StateNotice> : null}
                 {tab === "open" && !reviewing ? (
                   <RecentlyClosed canClose={canClose} isAdmin={isAdmin} reasons={reasons} />
                 ) : null}
@@ -199,8 +324,17 @@ export function AlertsPage({ canClose, isAdmin }: AlertsPageProps) {
                   className="min-w-0 overflow-hidden rounded-card border border-border bg-surface"
                 >
                   {rows.length === 0 ? (
-                    <li className="px-3 py-6 text-center text-sm text-text-secondary">
-                      No alerts match these filters.
+                    <li>
+                      <EmptyState
+                        kind="filtered"
+                        // Only the alert a link named is open: the window itself is empty.
+                        title={
+                          all.length === 0 && timed
+                            ? "No alerts closed in this time window."
+                            : "No alerts match these filters."
+                        }
+                        action={{ label: "Reset filters", onClick: resetFilters }}
+                      />
                     </li>
                   ) : null}
                   {rows.map((i) => (
@@ -220,6 +354,19 @@ export function AlertsPage({ canClose, isAdmin }: AlertsPageProps) {
                       />
                     </li>
                   ))}
+                  {data?.restricted ? (
+                    <li className="p-2">
+                      <StateNotice>{RESTRICTED_NOTE}</StateNotice>
+                    </li>
+                  ) : null}
+                  {data?.capped ? (
+                    <li className="p-2">
+                      <StateNotice>
+                        Only the most recently closed are listed. Choose a shorter time to see the
+                        rest.
+                      </StateNotice>
+                    </li>
+                  ) : null}
                 </ul>
                 <DetailPane
                   id={current}
@@ -239,120 +386,7 @@ export function AlertsPage({ canClose, isAdmin }: AlertsPageProps) {
 
 function SevBadge({ value }: { value: AlertItem["severity"] }) {
   if (!value) return null;
-  return (
-    <span
-      className={cn(
-        "rounded-badge px-1.5 text-xs font-semibold",
-        value === "high"
-          ? "bg-sev-high-bg text-sev-high-text"
-          : "bg-sev-medium-bg text-sev-medium-text",
-      )}
-    >
-      {value === "high" ? "High" : "Medium"}
-    </span>
-  );
-}
-
-interface SummaryStripProps {
-  summary: Summary;
-  restricted: boolean;
-  muted: number;
-  onSeverity: (v: SevFilter) => void;
-  onCategory: (v: Category) => void;
-  onOldest: (id: string) => void;
-  onMuted: () => void;
-}
-
-/** Open alerts at a glance (ADR-0043 layout): by severity, new today, the oldest still
- * open, and by category. Each figure filters the list. */
-function SummaryStrip({ summary: s, restricted, muted, ...on }: SummaryStripProps) {
-  const cell = "flex min-w-0 flex-col gap-1 px-4 py-2.5";
-  const label = "text-xs text-text-muted";
-  return (
-    <section
-      aria-label="Open alerts summary"
-      className="grid min-w-0 divide-y divide-border rounded-card border border-border bg-surface sm:grid-cols-2 sm:divide-y-0 xl:grid-cols-[auto_auto_minmax(0,1fr)_auto] xl:divide-x"
-    >
-      <div className={cell}>
-        <span className={label}>Open by severity</span>
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          <button
-            type="button"
-            onClick={() => on.onSeverity("high")}
-            className="flex items-center gap-1.5 hover:underline"
-          >
-            <SevBadge value="high" />
-            <span className="font-mono tabular-nums">{s.high}</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => on.onSeverity("medium")}
-            className="flex items-center gap-1.5 hover:underline"
-          >
-            <SevBadge value="medium" />
-            <span className="font-mono tabular-nums">{s.medium}</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => on.onSeverity("none")}
-            className="flex items-center gap-1.5 text-text-secondary hover:underline"
-          >
-            Other <span className="font-mono tabular-nums text-text">{s.other}</span>
-          </button>
-        </div>
-      </div>
-      <div className={cell}>
-        <span className={label}>New today</span>
-        <span className="font-mono text-lg tabular-nums">{s.newToday}</span>
-      </div>
-      <div className={cell}>
-        <span className={label}>Oldest open</span>
-        {s.oldest ? (
-          <button
-            type="button"
-            onClick={() => s.oldest && on.onOldest(s.oldest.item_id)}
-            className="min-w-0 truncate text-left text-sm text-accent-text hover:underline"
-            title={s.oldest.title}
-          >
-            <When iso={s.oldest.created_at} />: {s.oldest.title}
-          </button>
-        ) : (
-          <span className="text-sm text-text-muted">None</span>
-        )}
-      </div>
-      <div className={cell}>
-        <span className={label}>By category</span>
-        <div className="flex flex-wrap gap-x-3 gap-y-1 text-sm">
-          {(Object.keys(CATEGORY_LABEL) as Category[]).map((c) => (
-            <button
-              key={c}
-              type="button"
-              onClick={() => on.onCategory(c)}
-              className="text-text-secondary hover:underline"
-            >
-              {CATEGORY_LABEL[c]}{" "}
-              <span className="font-mono tabular-nums text-text">{s.categories[c]}</span>
-            </button>
-          ))}
-        </div>
-        {restricted || muted > 0 ? (
-          <span className="text-xs text-text-muted">
-            {restricted ? RESTRICTED_NOTE : ""}
-            {restricted && muted > 0 ? " " : ""}
-            {muted > 0 ? (
-              <button
-                type="button"
-                onClick={on.onMuted}
-                className="text-accent-text hover:underline"
-              >
-                {muted} muted
-              </button>
-            ) : null}
-          </span>
-        ) : null}
-      </div>
-    </section>
-  );
+  return <SeverityMark tone={value} label={value === "high" ? "High" : "Medium"} />;
 }
 
 interface ListRowProps {
@@ -440,7 +474,7 @@ function BulkClose({
         aria-label="Reason for all selected"
         value={reason}
         onChange={(e) => setReason(e.target.value as CloseReason | "")}
-        className="h-8 rounded border border-border-strong bg-surface px-2"
+        className="h-8 rounded border border-border-control bg-surface px-2"
       >
         <option value="">Reason</option>
         {(Object.keys(reasons) as CloseReason[]).map((r) => (
@@ -455,12 +489,13 @@ function BulkClose({
         value={note}
         maxLength={2000}
         onChange={(e) => setNote(e.target.value)}
-        className="h-8 min-w-0 flex-1 rounded border border-border-strong bg-inset px-2"
+        className="h-8 min-w-0 flex-1 rounded border border-border-control bg-inset px-2"
       />
       <button
         type="submit"
         disabled={!ready || close.isPending}
-        className="h-8 rounded bg-accent px-3 font-semibold text-white disabled:opacity-40"
+        // Outlined: the page's one filled button is Close in the pane (DESIGN.md 6.0).
+        className="h-8 rounded border border-border-strong px-3 font-semibold hover:bg-surface-head disabled:opacity-40"
       >
         Close {ids.length}
       </button>
@@ -540,7 +575,9 @@ function DetailPane({
       className="min-w-0 rounded-card border border-border bg-surface lg:sticky lg:top-12"
     >
       {item ? (
-        <AlertDetail item={item} {...rest} />
+        // Keyed by the alert: another alert starts with its closed section closed again and
+        // no half-filled close form.
+        <AlertDetail key={item.item_id} item={item} {...rest} />
       ) : id && one.isError ? (
         <p className="px-3 py-4 text-sm">
           {one.error instanceof ApiError && one.error.status === 403
@@ -548,9 +585,9 @@ function DetailPane({
             : "This alert is not there any more, or you cannot see it."}
         </p>
       ) : id ? (
-        <div className="h-40 animate-pulse" aria-busy="true" />
+        <Skeleton label="this alert" rows={5} className="rounded-none border-0" />
       ) : (
-        <p className="px-3 py-6 text-center text-sm text-text-secondary">Pick an alert.</p>
+        <EmptyState kind="default-empty" title="Pick an alert." />
       )}
     </section>
   );
@@ -570,6 +607,28 @@ function AlertDetail({ item, canClose, isAdmin, reasons }: DetailProps) {
   const guide = guideFor(item);
   const sql = evidenceSql(item);
   const changes = item.changes ?? [];
+  // Opens the alert's own events in Logs, an hour either side of what fired. No number on
+  // the button: `item.count` is people, runs, or times by kind, never a count of events.
+  const showEvents = sql ? (
+    <button
+      type="button"
+      onClick={() =>
+        openDrill({
+          sql,
+          from: new Date(
+            new Date(item.range_start ?? item.created_at).getTime() - 3600_000,
+          ).toISOString(),
+          to: new Date(
+            new Date(item.last_seen ?? item.range_end ?? item.created_at).getTime() + 3600_000,
+          ).toISOString(),
+          origin: `Alerts > ${item.title}`,
+        })
+      }
+      className="h-8 rounded px-2 text-accent-text hover:bg-surface-head hover:underline"
+    >
+      Show events in Logs
+    </button>
+  ) : null;
   return (
     <div className="grid gap-4 px-4 py-3 text-sm">
       <header className="grid gap-1">
@@ -580,6 +639,12 @@ function AlertDetail({ item, canClose, isAdmin, reasons }: DetailProps) {
           <span className="text-text-muted">
             {item.state === "open" ? "Open" : `Closed: ${item.close_reason_label ?? ""}`}
             {item.closed_by ? ` by ${item.closed_by}` : ""}
+          </span>
+          <span
+            className="ml-auto font-mono text-xs text-text-muted"
+            title={`Alert ${item.item_id}`}
+          >
+            {item.item_id.replace(/-/g, "").slice(-8)}
           </span>
         </div>
         <h2 className="text-md">{item.title}</h2>
@@ -676,57 +741,8 @@ function AlertDetail({ item, canClose, isAdmin, reasons }: DetailProps) {
           </>
         ) : null}
       </dl>
-      {changes.length ? (
-        <div className="grid gap-1">
-          <h3 className="text-sm font-semibold">
-            Changes today{" "}
-            <span className="font-normal text-text-muted">
-              ({changes.length + (item.more_changes ?? 0)}, newest first)
-            </span>
-          </h3>
-          <ul aria-label="Changes" className="grid gap-0.5 font-mono text-xs text-text-secondary">
-            {changes.map((c, n) => (
-              <li key={n} className="[overflow-wrap:anywhere]">
-                {c}
-              </li>
-            ))}
-            {item.more_changes ? <li>and {item.more_changes} more</li> : null}
-          </ul>
-        </div>
-      ) : null}
-      <div className="grid gap-1">
-        <h3 className="text-sm font-semibold">Evidence</h3>
-        {sql ? (
-          <div>
-            <button
-              type="button"
-              onClick={() =>
-                openDrill({
-                  sql,
-                  from: new Date(
-                    new Date(item.range_start ?? item.created_at).getTime() - 3600_000,
-                  ).toISOString(),
-                  to: new Date(
-                    new Date(item.last_seen ?? item.range_end ?? item.created_at).getTime() +
-                      3600_000,
-                  ).toISOString(),
-                  origin: `Alerts > ${item.title}`,
-                })
-              }
-              className="text-accent-text hover:underline"
-            >
-              Show events
-            </button>
-          </div>
-        ) : null}
-        {item.schedule_id && item.ref_id ? (
-          <RunRows scheduleId={item.schedule_id} runId={item.ref_id} />
-        ) : item.kind === "rule" && item.subject.startsWith("ext:") ? (
-          <VendorAlerts itemId={item.item_id} />
-        ) : !sql ? (
-          <p className="text-text-muted">No events to show for this alert.</p>
-        ) : null}
-      </div>
+      {/* The Triage card sits here once it is built (ADR-0049 Phase 1c); empty until then. */}
+      <div data-slot="triage" hidden />
       <div className="grid gap-1">
         <h3 className="text-sm font-semibold">Next steps</h3>
         <ol aria-label="Next steps" className="ml-5 grid list-decimal gap-0.5 text-text-secondary">
@@ -735,8 +751,7 @@ function AlertDetail({ item, canClose, isAdmin, reasons }: DetailProps) {
           ))}
         </ol>
       </div>
-      {/* Closed too: closing never reviewed it (owner, 2026-10-29). */}
-      {isAdmin ? <Decide item={item} /> : null}
+      {sql && !(canClose && item.state === "open" && !closing) ? <div>{showEvents}</div> : null}
       {canClose ? (
         item.state === "open" ? (
           closing ? (
@@ -751,7 +766,8 @@ function AlertDetail({ item, canClose, isAdmin, reasons }: DetailProps) {
               <button
                 type="button"
                 onClick={() => setClosing(true)}
-                className="h-8 rounded border border-border-strong px-3 hover:bg-surface-head"
+                data-primary=""
+                className="h-8 rounded bg-accent px-3 font-medium text-on-accent hover:opacity-90"
               >
                 Close
               </button>
@@ -771,6 +787,7 @@ function AlertDetail({ item, canClose, isAdmin, reasons }: DetailProps) {
                   ))}
                 </>
               ) : null}
+              {showEvents}
             </div>
           )
         ) : (
@@ -786,19 +803,66 @@ function AlertDetail({ item, canClose, isAdmin, reasons }: DetailProps) {
           </div>
         )
       ) : null}
-      {item.history.length ? (
-        <ol aria-label="History" className="grid gap-1 text-text-secondary">
-          {item.history.map((h, n) => (
-            <li key={n}>
-              <When iso={h.at} />{" "}
-              {h.action === "close"
-                ? `Closed by ${h.user ?? "the system"}: ${h.reason_label ?? reasons[h.reason as CloseReason] ?? h.reason}`
-                : `Reopened by ${h.user ?? "the system"}`}
-              {h.note ? <span className="text-text"> ({h.note})</span> : null}
-            </li>
-          ))}
-        </ol>
-      ) : null}
+      {/* Until the full alert page exists (ADR-0049 Phase 1c), what moves there stays here,
+          in one section that starts closed, so the pane is slim and nothing is lost (owner,
+          2026-11-12). */}
+      <details data-more="" className="border-t border-border pt-2">
+        <summary className="cursor-pointer select-none text-text-secondary hover:text-text">
+          Evidence, changes, and history
+        </summary>
+        <div className="mt-2 grid gap-4">
+          {changes.length ? (
+            <div className="grid gap-1">
+              <h3 className="text-sm font-semibold">
+                Changes today{" "}
+                <span className="font-normal text-text-muted">
+                  ({changes.length + (item.more_changes ?? 0)}, newest first)
+                </span>
+              </h3>
+              <ul
+                aria-label="Changes"
+                className="grid gap-0.5 font-mono text-xs text-text-secondary"
+              >
+                {changes.map((c, n) => (
+                  <li key={n} className="[overflow-wrap:anywhere]">
+                    {c}
+                  </li>
+                ))}
+                {item.more_changes ? <li>and {item.more_changes} more</li> : null}
+              </ul>
+            </div>
+          ) : null}
+          <div className="grid gap-1">
+            <h3 className="text-sm font-semibold">Evidence</h3>
+            {item.schedule_id && item.ref_id ? (
+              <RunRows scheduleId={item.schedule_id} runId={item.ref_id} />
+            ) : item.kind === "rule" && item.subject.startsWith("ext:") ? (
+              <VendorAlerts itemId={item.item_id} />
+            ) : (
+              <p className="text-text-muted">
+                {sql
+                  ? "Its events open in Logs, from the button above."
+                  : "No events to show for this alert."}
+              </p>
+            )}
+          </div>
+          {/* Closed too: closing never reviewed it (owner, 2026-10-29). */}
+          {isAdmin ? <Decide item={item} /> : null}
+          {item.history.length ? (
+            <ol aria-label="History" className="grid gap-1 text-text-secondary">
+              {item.history.map((h, n) => (
+                <li key={n}>
+                  <When iso={h.at} />{" "}
+                  {h.action === "close"
+                    ? `Closed by ${h.user ?? "the system"}: ${h.reason_label ?? reasons[h.reason as CloseReason] ?? h.reason}`
+                    : `Reopened by ${h.user ?? "the system"}`}
+                  {h.note ? <span className="text-text"> ({h.note})</span> : null}
+                </li>
+              ))}
+            </ol>
+          ) : null}
+        </div>
+      </details>
     </div>
   );
 }
@@ -819,7 +883,7 @@ function RunRows({ scheduleId, runId }: { scheduleId: string; runId: string }) {
     queryKey: ["schedule-run", scheduleId, runId],
     queryFn: () => api.scheduleRun(scheduleId, runId),
   });
-  if (run.isLoading) return <div className="h-12 animate-pulse rounded bg-surface-head" />;
+  if (run.isLoading) return <Skeleton label="the run" rows={1} />;
   if (!run.data) return <p className="text-text-muted">The rows of this run are no longer kept.</p>;
   const { columns, sample: kept, truncated, row_count } = run.data;
   const sample = all ? kept : kept.slice(0, SHOWN);
@@ -835,12 +899,12 @@ function RunRows({ scheduleId, runId }: { scheduleId: string; runId: string }) {
         <thead>
           <tr className="text-text-muted">
             {columns.map((c) => (
-              <th key={c} className="px-2 py-1 font-normal">
+              <th key={c} className="px-2 py-1">
                 {c}
               </th>
             ))}
             {canAround ? (
-              <th className="px-2 py-1 font-normal">
+              <th className="px-2 py-1">
                 <span className="sr-only">Around</span>
               </th>
             ) : null}
@@ -905,23 +969,48 @@ function RunRows({ scheduleId, runId }: { scheduleId: string; runId: string }) {
   );
 }
 
-function MutesList({ isAdmin }: { isAdmin: boolean }) {
+interface MutesListProps {
+  isAdmin: boolean;
+  /** The page's time choice. Mutes in force are always listed; the window adds those that
+   * were in force at some point in it and have ended. */
+  choice: TimeChoice;
+}
+
+function MutesList({ isAdmin, choice }: MutesListProps) {
   const client = useQueryClient();
-  const mutes = useQuery({ queryKey: ["alerts", "mutes"], queryFn: api.alertMutes });
+  const mutes = useQuery({
+    queryKey: ["alerts", "mutes", choice.preset, choice.from, choice.to],
+    queryFn: () => api.alertMutes(windowOf(choice)),
+  });
   const unmute = useMutation({
     mutationFn: api.unmuteAlert,
     onSuccess: () => client.invalidateQueries({ queryKey: ["alerts"] }),
   });
-  if (mutes.isLoading) return <div className="h-12 animate-pulse rounded-card bg-surface" />;
-  if (!mutes.data?.length)
+  if (mutes.isLoading) return <Skeleton label="mutes" rows={2} />;
+  // Only when there is nothing to show: a failed refresh keeps the mutes already listed.
+  if (mutes.isError && !mutes.data)
     return (
-      <p className="rounded-card border border-border bg-surface px-3 py-6 text-center text-sm text-text-secondary">
-        Nothing is muted. An administrator can mute alerts like one they close, for 7 or 30 days.
-      </p>
+      <div className="rounded-card border border-border bg-surface">
+        <InlineError
+          what="Mutes"
+          error={mutes.error}
+          onRetry={() => void mutes.refetch()}
+          retrying={mutes.isFetching}
+        />
+      </div>
+    );
+  const listed = mutes.data ?? [];
+  if (!listed.length)
+    return (
+      <EmptyState
+        kind="default-empty"
+        title="Nothing is muted."
+        detail="No mute ended in this time window."
+      />
     );
   return (
     <ul className="rounded-card border border-border bg-surface text-sm">
-      {mutes.data.map((m) => (
+      {listed.map((m) => (
         <li
           key={m.mute_id}
           className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-3 py-2 last:border-0"
@@ -929,10 +1018,18 @@ function MutesList({ isAdmin }: { isAdmin: boolean }) {
           <span className="font-semibold">{m.title}</span>
           <span className="text-text-secondary">{KIND_LABEL[m.kind]}</span>
           <span className="text-text-secondary">
-            until <When iso={m.until} />
+            {m.active === false ? (
+              <>
+                ended <When iso={m.ended_at ?? m.until} />
+              </>
+            ) : (
+              <>
+                until <When iso={m.until} />
+              </>
+            )}
             {m.created_by ? `, by ${m.created_by}` : ""}
           </span>
-          {isAdmin ? (
+          {isAdmin && m.active !== false ? (
             <button
               type="button"
               aria-label={`Unmute ${m.title}`}

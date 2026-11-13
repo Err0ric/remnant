@@ -1,3 +1,4 @@
+import { EmptyState } from "@/components/EmptyState";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { localClock } from "@/lib/localTime";
 import { useEffect, useRef, useState } from "react";
@@ -317,10 +318,11 @@ export function LivePanel({ sql, sources, fillMinutes = 0, onClose }: LivePanelP
           />
         </div>
       ) : state === "live" ? (
-        <p className="px-3 py-6 text-center text-sm text-text-secondary">
-          Waiting for new events. They appear here as they arrive.
-          {cadence ? ` ${cadence}` : ""}
-        </p>
+        <EmptyState
+          kind="default-empty"
+          title="Waiting for new events."
+          detail={`They appear here as they arrive.${cadence ? ` ${cadence}` : ""}`}
+        />
       ) : null}
     </section>
   );

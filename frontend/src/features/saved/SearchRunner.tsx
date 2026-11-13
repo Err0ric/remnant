@@ -66,7 +66,7 @@ export function SearchRunner({ search, onClose }: SearchRunnerProps) {
                   aria-label={p.name}
                   value={values[p.name] ?? ""}
                   onChange={(e) => setValues({ ...values, [p.name]: e.target.value })}
-                  className="h-8 rounded border border-border-strong bg-inset px-2"
+                  className="h-8 rounded border border-border-control bg-inset px-2"
                 >
                   <option value="true">true</option>
                   <option value="false">false</option>
@@ -77,7 +77,7 @@ export function SearchRunner({ search, onClose }: SearchRunnerProps) {
                   value={values[p.name] ?? ""}
                   onChange={(e) => setValues({ ...values, [p.name]: e.target.value })}
                   inputMode={p.type === "int" || p.type === "float" ? "decimal" : undefined}
-                  className="h-8 w-48 rounded border border-border-strong bg-inset px-2 font-mono"
+                  className="h-8 w-48 rounded border border-border-control bg-inset px-2 font-mono"
                 />
               )}
             </label>
@@ -88,7 +88,7 @@ export function SearchRunner({ search, onClose }: SearchRunnerProps) {
               aria-label="Time range"
               value={range}
               onChange={(e) => setRange(e.target.value as TimeRangeId)}
-              className="h-8 rounded border border-border-strong bg-inset px-2"
+              className="h-8 rounded border border-border-control bg-inset px-2"
             >
               {RANGES.map((r) => (
                 <option key={r.id} value={r.id}>

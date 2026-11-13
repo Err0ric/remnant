@@ -127,6 +127,34 @@ export function setCsrfToken(token: string | null) {
 }
 setErrorCsrf(() => csrfToken);
 
+// The Dashboard visit, sent with every request while it is open: its id, every part the
+// page requests, and its window. The server writes the visit's audit row on the first
+// request and skips the later ones that row already covers (handoff item 3).
+let pageLoad: { id: string; parts: string; window: PageWindow | null } | null = null;
+
+/** Start a page visit that will request `parts`: a new id (a UUID, or random hex where the
+ * browser has none). */
+export function startPageLoad(parts: readonly string[]): string {
+  let id: string;
+  if (typeof crypto.randomUUID === "function") id = crypto.randomUUID();
+  else {
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    id = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  }
+  pageLoad = { id, parts: parts.join(","), window: null };
+  return id;
+}
+
+/** The visit's window, set before the requests for it start. */
+export function setPageLoadWindow(id: string, window: PageWindow) {
+  if (pageLoad?.id === id) pageLoad.window = window;
+}
+
+/** End a page visit; a later visit's id is left alone. */
+export function endPageLoad(id: string) {
+  if (pageLoad?.id === id) pageLoad = null;
+}
+
 /** Called when the server says the session is gone, so the app can show sign-in. */
 export function setAuthLostHandler(handler: (() => void) | null) {
   onAuthLost = handler;
@@ -139,6 +167,11 @@ async function request<T>(path: string, init?: RequestInit, asText = false): Pro
     "Content-Type": "application/json",
   };
   if (method !== "GET" && csrfToken) headers["X-CSRF-Token"] = csrfToken;
+  if (pageLoad) {
+    headers["X-Page-Load"] = pageLoad.id;
+    headers["X-Page-Load-Parts"] = pageLoad.parts;
+    if (pageLoad.window) headers["X-Page-Load-Window"] = pageLoad.window;
+  }
   let res: Response;
   try {
     res = await fetch(path, { ...init, credentials: "same-origin", headers });
@@ -443,6 +476,9 @@ export interface EnrichmentFeed {
 
 /** GET /api/dashboard/sections (ADR-0038 edit 10). */
 export type PageWindow = "24h" | "7d" | "30d";
+/** The Dashboard's sections, each loaded on its own request. */
+export const DASHBOARD_PARTS = ["identity", "attacks", "detections"] as const;
+export type DashboardPart = (typeof DASHBOARD_PARTS)[number];
 
 /** A Dashboard number. `drill`: the Search query behind it, with `{from}` and `{to}` for
  * the window (ADR-0039); `drill_before` when the window before needs another query. */
@@ -469,6 +505,8 @@ export interface SectionRow {
   detail: string;
   last: string | null;
   drill?: string | null;
+  /** Detections' involved rows: how many rules matched this host or person. */
+  rules?: number | null;
 }
 
 /** False while the window before is under 90% covered by the section's sources. */
@@ -554,6 +592,8 @@ export interface DashboardSections {
   has_public: boolean;
   /** When the GeoIP country file was installed; null without one. */
   geoip_date: string | null;
+  /** Detections is absent because no rule is enabled: the page offers Enable rules. */
+  no_rules?: boolean;
   /** When the server computed these numbers (7-day view, refreshed in the background). */
   updated_at?: string | null;
   identity: {
@@ -1934,6 +1974,8 @@ export interface AskRequest {
   question: string;
   provider_id?: string;
   start?: string;
+  /** The end of a Custom range; left out for a window that ends now. */
+  end?: string;
   sources?: string[];
   history: AskTurn[];
   /** The asker's IANA time zone, for "today" and "yesterday". */
@@ -2188,7 +2230,14 @@ export interface Overview {
   }[];
   sources: OverviewSourceHealth[];
   detections: OverviewDetection[];
-  paused: { schedule_id: string; name: string; kind: string; reason: string | null }[];
+  paused: {
+    schedule_id: string;
+    name: string;
+    kind: string;
+    reason: string | null;
+    /** Someone paused it themselves; otherwise the system did (D236). */
+    by_person?: boolean;
+  }[];
   alerts: { targets: OverviewTargetHealth[]; failed_deliveries: number } | null;
   events_24h: number;
   /** Full days of history before the window, at most 7 (F60). */
@@ -2409,6 +2458,8 @@ export interface AlertList {
   reasons: Record<CloseReason, string>;
   /** Open readable items by their stored severity; what the strip shows. */
   by_severity?: { high: number; medium: number; other: number };
+  /** A Closed list: more alerts were closed in the window than the list holds. */
+  capped?: boolean;
 }
 
 /** Open alerts as numbers only (the alert badge, the Dashboard's count). */
@@ -2425,6 +2476,8 @@ export interface AlertLines extends AlertCount {
   groups: number;
   /** Sources with an open gap alert. */
   gap_sources: string[];
+  /** Of `items`, the AI Watch ones still not reviewed: review tasks, after other alerts. */
+  review?: string[];
 }
 
 export interface AlertMute {
@@ -2435,6 +2488,9 @@ export interface AlertMute {
   until: string;
   created_by: string | null;
   created_at: string;
+  /** False for a mute listed because it ended in the asked window. */
+  active?: boolean;
+  ended_at?: string | null;
 }
 
 /** AI Watch on the Dashboard (ADR-0035 rows 10, 12, 13). */
@@ -2501,6 +2557,8 @@ export interface AiWatchSummary {
   /** Start of the period before; and AI use per service for one chart day. */
   before?: string;
   chart_drill?: string | null;
+  /** AI services with any use in the period, whatever their review status. */
+  services_in_use?: number;
   /** See AiUsage. */
   people_pending_days?: number;
   people_days?: number;
@@ -2651,10 +2709,22 @@ export interface AlertDelivery {
 }
 
 export const api = {
-  alerts: (state: "open" | "closed" | "all" = "open") =>
-    request<AlertList>(`/api/alerts?state=${state}`),
+  /** `closed`: only with state "closed", the window they were closed in (either side open). */
+  alerts: (
+    state: "open" | "closed" | "all" = "open",
+    closed?: { from: Date | null; to: Date | null },
+  ) =>
+    request<AlertList>(
+      `/api/alerts${queryString({
+        state,
+        closed_from: closed?.from?.toISOString(),
+        closed_to: closed?.to?.toISOString(),
+      })}`,
+    ),
   /** Open alerts as numbers only, for counts: no item, so no AI view is recorded (D242). */
   alertCount: () => request<AlertCount>("/api/alerts/count"),
+  /** How many of the viewer's sources are not healthy: numbers only, for the rail's dot. */
+  healthCount: () => request<{ total: number; not_healthy: number }>("/api/health/count"),
   /** Only the open alert lines a summary shows, most severe or newest first. */
   alertLines: (limit: number, by: "severity" | "newest" = "severity") =>
     request<AlertLines>(`/api/alerts/lines?limit=${limit}&by=${by}`),
@@ -2690,7 +2760,16 @@ export const api = {
     ),
   muteAlert: (id: string, days: 7 | 30) =>
     request<AlertItem>(`/api/alerts/${encodeURIComponent(id)}/mute`, post({ days })),
-  alertMutes: () => request<AlertMute[]>("/api/alerts/mutes"),
+  /** Mutes in force; with a window, also those that ended in it (`active` false). */
+  alertMutes: (span?: { from: Date | null; to: Date | null }) =>
+    request<AlertMute[]>(
+      `/api/alerts/mutes${queryString({
+        // With a window (even one open on both sides): the mutes that ended in it too.
+        ended: span ? "true" : undefined,
+        from: span?.from?.toISOString(),
+        to: span?.to?.toISOString(),
+      })}`,
+    ),
   unmuteAlert: (muteId: string) =>
     request<void>(`/api/alerts/mutes/${encodeURIComponent(muteId)}`, { method: "DELETE" }),
   alertTargets: () => request<AlertTarget[]>("/api/alert-targets"),
@@ -3037,7 +3116,7 @@ export const api = {
   m365SignInClasses: () => request<SignInClasses>("/api/m365/signin-classes"),
   m365Overview: (window: PageWindow) =>
     request<M365Overview>(`/api/m365/overview?window=${window}&tz=${viewerZone()}`),
-  dashboardSections: (window: PageWindow, part?: "identity" | "attacks" | "detections") =>
+  dashboardSections: (window: PageWindow, part?: DashboardPart) =>
     request<DashboardSections>(
       `/api/dashboard/sections?window=${window}${part ? `&part=${part}` : ""}&tz=${viewerZone()}`,
     ).then(shapeSections),
@@ -3082,21 +3161,27 @@ export const api = {
     request<string[]>("/api/identities/domains", put({ domains })),
   setIdentityAlias: (alias: string, person: string | null) =>
     request<IdentityAlias[]>("/api/identities/aliases", put({ alias, person })),
-  entityRisk: (start?: string) =>
-    request<RiskResponse>(
-      `/api/entities/risk${start ? `?start=${encodeURIComponent(start)}` : ""}`,
-    ),
-  entityGraph: (q: { mode: "entity" | "ai"; kind?: GraphKind; value?: string; start?: string }) => {
+  entityRisk: (start?: string, end?: string) =>
+    request<RiskResponse>(`/api/entities/risk${queryString({ start, end })}`),
+  entityGraph: (q: {
+    mode: "entity" | "ai";
+    kind?: GraphKind;
+    value?: string;
+    start?: string;
+    end?: string;
+  }) => {
     const p = new URLSearchParams({ mode: q.mode });
     if (q.kind) p.set("kind", q.kind);
     if (q.value) p.set("value", q.value);
     if (q.start) p.set("start", q.start);
+    if (q.end) p.set("end", q.end);
     return request<EntityGraph>(`/api/entities/graph?${p.toString()}`);
   },
-  inventoryMatches: (values: string[], start?: string) => {
+  inventoryMatches: (values: string[], start?: string, end?: string) => {
     const p = new URLSearchParams();
     for (const v of values) p.append("value", v);
     if (start) p.set("start", start);
+    if (end) p.set("end", end);
     return request<{ matches: Record<string, InventoryMatch[]> }>(
       `/api/inventory/matches?${p.toString()}`,
     );
@@ -3111,13 +3196,19 @@ export const api = {
     request<{ hits: LookupHit[]; days: number }>(
       `/api/entities/lookup?${new URLSearchParams({ q }).toString()}`,
     ),
-  entitySummary: (q: { kind: "user" | "ip" | "host"; value: string; start?: string }) => {
+  entitySummary: (q: {
+    kind: "user" | "ip" | "host";
+    value: string;
+    start?: string;
+    end?: string;
+  }) => {
     const p = new URLSearchParams({ kind: q.kind, value: q.value });
     if (q.start) p.set("start", q.start);
+    if (q.end) p.set("end", q.end);
     return request<EntitySummary>(`/api/entities/summary?${p.toString()}`);
   },
-  aiUsage: (start?: string) =>
-    request<AiUsage>(`/api/ai/usage${start ? `?start=${encodeURIComponent(start)}` : ""}`),
+  aiUsage: (start?: string, end?: string) =>
+    request<AiUsage>(`/api/ai/usage${queryString({ start, end })}`),
   healthSpeed: () => request<RouteSpeed[]>("/api/health-checks/speed"),
   healthRefreshes: () => request<RefreshHours>("/api/health-checks/refreshes"),
   aiCatalog: () => request<AiService[]>("/api/ai/catalog"),
@@ -3181,11 +3272,12 @@ export const api = {
   aiInventory: (days = 30) => request<AiInventory>(`/api/ai/inventory?days=${days}`),
   aiInventoryExport: (
     format: "csv" | "json",
-    f: { days: number; type: InventoryType | null; excluded: boolean },
+    f: { days: number; type: InventoryType | null; excluded: boolean; status?: AiStatus | null },
   ) =>
     requestText(
       `/api/ai/inventory/export?format=${format}&days=${f.days}&excluded=${f.excluded}` +
-        (f.type ? `&type=${f.type}` : ""),
+        (f.type ? `&type=${f.type}` : "") +
+        (f.status ? `&status=${f.status}` : ""),
     ),
   excludeInventory: (type: InventoryType, key: string, reason: string) =>
     request<{ reason: string; by: string; at: string }>(

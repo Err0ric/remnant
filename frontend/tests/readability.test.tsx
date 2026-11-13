@@ -44,16 +44,20 @@ describe("Needs attention (owner, 2026-11-02)", () => {
     expect(items.map((i) => i.text)).toEqual(["1 risky mail rule"]);
   });
 
-  it("tops the Dashboard and the Microsoft 365 overview with what needs someone", async () => {
+  it("tops the Dashboard with the key numbers, each opening the place to act", async () => {
     await renderAt("/dashboard");
-    const strip = await screen.findByRole("region", { name: "Needs attention" });
-    expect(within(strip).getByRole("button", { name: /open alert/ })).toBeVisible();
-    expect(within(strip).getByRole("button", { name: "1 blocked app consent" })).toBeVisible();
-    // AI services as on AI usage: Not approved and Unreviewed apart, never "unapproved".
+    const strip = await screen.findByRole("region", { name: "Key numbers" });
     expect(
-      within(strip).getByRole("button", { name: "1 not approved AI service in use" }),
+      await within(strip).findByRole("link", { name: /^Open alerts: \d+\. Open Alerts/ }),
     ).toBeVisible();
-    expect(within(strip).getByRole("button", { name: "1 unreviewed AI service" })).toBeVisible();
+    // AI services in use, with how many are still to review; never "unapproved".
+    const ai = (
+      await within(strip).findByRole("link", { name: /^AI services in use: \d+/ })
+    ).closest("[data-kpi]") as HTMLElement;
+    expect(ai).toHaveTextContent(/\d+ to review|All reviewed/);
+    expect(strip).not.toHaveTextContent(/unapproved/i);
+    // The old one-line strip is gone from the Dashboard.
+    expect(screen.queryByRole("region", { name: "Needs attention" })).toBeNull();
     // Panels cover their own ranges: the header no longer names one.
     expect(screen.queryByText(/^Last 24 hours, /)).toBeNull();
   });

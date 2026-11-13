@@ -1,9 +1,10 @@
 """/api/dashboard/sections: Identity, Attacks and access, and Detections for one page
 window (ADR-0038 edit 10). Router only; the numbers come from `app.search.dashboard` on the
-caller's own view. Audited as `dashboard.sections` with the sources read."""
+caller's own view. Audited as `dashboard.sections` with the sources read, or, with the
+Dashboard's page-load headers, by its visit's `dashboard.view` row (`app.meta.page_loads`)."""
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast
 
 from fastapi import APIRouter, Query, Request, Response
 from pydantic import BaseModel
@@ -11,12 +12,12 @@ from starlette.concurrency import run_in_threadpool
 
 from app.api.access import CurrentUser, client_ip
 from app.api.cache import STALE_MAX_S, PageCache, scope_key
-from app.auth.service import AuthService
 from app.auth.users import User
 from app.core import clock
 from app.engine.views import permitted_sources
 from app.enrich import networks
 from app.enrich.geoip import GeoInfo, GeoIP
+from app.meta.page_loads import PageLoadAudit, declared
 from app.search.dashboard import PARTS, Window, sections
 from app.search.entities import to_json
 
@@ -47,6 +48,8 @@ class RowOut(BaseModel):
     detail: str
     last: str | None
     drill: str | None = None
+    # Detections' involved rows: how many rules matched this host or person.
+    rules: int | None = None
 
 
 class HistoryOut(BaseModel):
@@ -108,6 +111,8 @@ class SectionsOut(BaseModel):
     identity: IdentityOut | None
     attacks: AttacksOut | None
     detections: DetectionsOut | None
+    # Detections is absent because no rule is enabled: the page offers Enable rules.
+    no_rules: bool = False
 
 
 Part = Literal["identity", "attacks", "detections"]
@@ -158,10 +163,9 @@ async def dashboard_sections(
 
     hit = cache.peek(key, STALE_MAX_S) if default else cache.get(key)
     if hit is not None:
-        body, read = hit[0] if default else hit
+        body, read = cast(tuple[bytes, list[str]], hit[0] if default else hit)
         await run_in_threadpool(
-            app.state.auth.audit.write, "dashboard.sections", "success", user.user_id,
-            client_ip(request),
+            _audit, request, user, window, part, allowed,
             {"window": window, "part": part, "cached": True, "sources_in_scope": read},
         )  # fmt: skip
         if default:  # seen now: refreshed while viewed, again after a lapse (D147)
@@ -169,16 +173,29 @@ async def dashboard_sections(
         return Response(body, media_type="application/json")
 
     body, read = await run_in_threadpool(compute, user, allowed)
-    auth: AuthService = app.state.auth
     await run_in_threadpool(
-        auth.audit.write,
-        "dashboard.sections",
-        "success",
-        user.user_id,
-        client_ip(request),
+        _audit, request, user, window, part, allowed,
         {"window": window, "part": part, "sources_in_scope": read},
-    )
+    )  # fmt: skip
     cache.put(key, (body, read))
     if default:
         app.state.refresher.watch(key, user.user_id, scope_key(allowed), compute)
     return Response(body, media_type="application/json")
+
+
+def _audit(
+    request: Request,
+    user: User,
+    window: str,
+    part: str | None,
+    allowed: list[str] | None,
+    detail: dict[str, object],
+) -> None:
+    """One `dashboard.sections` row, or, with the Dashboard's page-load headers, its
+    visit's `dashboard.view` row when no row of the visit covers this request yet. Both are
+    written before the answer. Blocking."""
+    loads: PageLoadAudit = request.app.state.page_loads
+    loads.record(
+        declared(request.headers), user.user_id, client_ip(request),
+        [part] if part else list(PARTS), window, allowed, ("dashboard.sections", detail),
+    )  # fmt: skip

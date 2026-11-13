@@ -25,7 +25,7 @@ export function ListenerSummary({ settings, listener }: ListenerSummaryProps) {
   return (
     <div className="flex min-w-48 flex-col gap-0.5">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="whitespace-nowrap rounded-badge bg-sev-info-bg px-2 py-px text-xs font-normal text-text-secondary">
+        <span className="whitespace-nowrap rounded-badge bg-info-bg px-2 py-px text-xs font-normal text-text-secondary">
           Syslog {PROTOCOL[protocol] ?? protocol}
         </span>
         <span>port {port}</span>
@@ -63,7 +63,7 @@ export function ListenerSummary({ settings, listener }: ListenerSummaryProps) {
               <li key={s.address} className="flex flex-wrap items-baseline gap-x-2">
                 <span className="font-mono">{s.address}</span>
                 {s.allowed ? null : (
-                  <span className="rounded-badge bg-sev-critical-bg px-1.5 text-xs text-sev-critical-text">
+                  <span className="rounded-badge border border-danger px-1.5 text-xs text-danger">
                     Refused
                   </span>
                 )}

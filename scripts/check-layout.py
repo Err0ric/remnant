@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""No page scrolls sideways (F54): open every page and tab at a desktop width and check
-that the page is no wider than the window and that no card or table scrolls sideways
-inside it. Only elements marked `data-scroll-x` (the search results grid, whose columns are
-the user's choice) may scroll.
+"""No page scrolls sideways (F54): open every page and tab at a desktop width, in the dark
+and the light theme, and check that the page is no wider than the window and that no card
+or table scrolls sideways inside it. Only elements marked `data-scroll-x` (the search
+results grid, whose columns are the user's choice) may scroll.
 
     python3 scripts/check-layout.py --url http://127.0.0.1:8080 --data DIR [--width 1280]
 
@@ -16,6 +16,7 @@ one) instead of a downloaded browser.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import re
 import sys
 from pathlib import Path
@@ -59,12 +60,13 @@ def main() -> int:
     ap.add_argument("--shots", type=Path, default=None, help="save a screenshot per failure")
     args = ap.parse_args()
 
+    from playwright.sync_api import TimeoutError as PlaywrightTimeout
     from playwright.sync_api import sync_playwright
 
     failures: list[str] = []
     with sync_playwright() as p:
         browser = p.chromium.launch(channel=args.channel) if args.channel else p.chromium.launch()
-        for theme in ("dark",):
+        for theme in ("dark", "light"):
             ctx = browser.new_context(
                 viewport={"width": args.width, "height": 900}, color_scheme=theme
             )
@@ -79,6 +81,31 @@ def main() -> int:
             for path in pages():
                 page.goto(args.url.rstrip("/") + path, wait_until="networkidle")
                 page.wait_for_timeout(400)
+                # Measure in the app's own fonts: a fallback font has other widths, so a
+                # page could pass or fail here and do the opposite for a user.
+                missing = page.evaluate(
+                    """async () => {
+                      await document.fonts.ready;
+                      const want = ['14px Geist', '500 14px Geist', '600 14px Geist',
+                        '13px "Geist Mono"'];
+                      // A font file that fails to load rejects; the check below reports it.
+                      await Promise.allSettled(want.map((f) => document.fonts.load(f)));
+                      return want.filter((f) => !document.fonts.check(f));
+                    }"""
+                )
+                if missing:
+                    print(f"FONT {theme:<5} {path:<28} not loaded: {', '.join(missing)}")
+                    failures.append(f"{path} ({theme}, fonts)")
+                    continue
+                # One h1 per page: the page header's title (DESIGN.md 6.0). The first page
+                # of a run can still be loading its code when the network goes quiet (seen
+                # on CI: 0 h1 on the first dark page), so wait for a title before counting.
+                with contextlib.suppress(PlaywrightTimeout):
+                    page.locator("h1").first.wait_for(state="attached", timeout=5000)
+                headings = page.locator("h1").count()
+                if headings != 1:
+                    print(f"H1   {theme:<5} {path:<28} {headings} h1 elements, expected 1")
+                    failures.append(f"{path} ({theme}, {headings} h1)")
                 doc, view, widest, inner = page.evaluate(
                     """() => {
                       const el = document.documentElement;
@@ -95,31 +122,48 @@ def main() -> int:
                               : "");
                         }
                       }
+                      // What makes a scroller wide: its table's column widths and the widest
+                      // text that may not wrap.
+                      const wide = (n) => {
+                        const cols = [...n.querySelectorAll("thead th")]
+                          .map((h) => Math.round(h.getBoundingClientRect().width));
+                        const fixed = [...n.querySelectorAll("*")]
+                          .filter((e) => getComputedStyle(e).whiteSpace === "nowrap"
+                            && e.children.length === 0 && e.textContent.trim())
+                          .sort((x, y) => y.getBoundingClientRect().width
+                            - x.getBoundingClientRect().width)[0];
+                        return (cols.length ? ` columns ${cols.join("/")}` : "") + (fixed
+                          ? ` widest unwrapped text ${Math.round(fixed.offsetWidth)}px`
+                            + ` "${fixed.textContent.trim().slice(0, 40)}"`
+                          : "");
+                      };
                       const inner = [...document.querySelectorAll("body *")].filter((n) =>
                         n.scrollWidth > n.clientWidth + 1 && n.clientWidth > 0
                         && ["auto", "scroll"].includes(getComputedStyle(n).overflowX)
                         && !n.closest("[data-scroll-x]")
                       ).map((n) => (n.closest("[aria-label]")?.getAttribute("aria-label") ?? n.tagName.toLowerCase())
-                        + ` ${n.scrollWidth}/${n.clientWidth}px`);
+                        + ` ${n.scrollWidth}/${n.clientWidth}px` + wide(n));
                       return [el.scrollWidth, el.clientWidth, widest, inner];
                     }"""
                 )
                 ok = doc <= view and not inner
                 note = "" if doc <= view else f"; widest: {widest}"
                 note += f"; scrolls inside: {', '.join(inner)}" if inner else ""
-                print(f"{'ok  ' if ok else 'WIDE'} {path:<28} page {doc}px, window {view}px{note}")
+                mark = "ok  " if ok else "WIDE"
+                print(f"{mark} {theme:<5} {path:<28} page {doc}px, window {view}px{note}")
                 if not ok:
-                    failures.append(path)
+                    failures.append(f"{path} ({theme})")
                     if args.shots:
                         args.shots.mkdir(parents=True, exist_ok=True)
                         name = path.strip("/").replace("/", "_").replace("#", "-") or "root"
-                        page.screenshot(path=str(args.shots / f"{name}.png"), full_page=True)
+                        shot = args.shots / f"{name}-{theme}.png"
+                        page.screenshot(path=str(shot), full_page=True)
             ctx.close()
         browser.close()
     if failures:
-        print(f"\n{len(failures)} page(s) scroll sideways at {args.width}px: {', '.join(failures)}")
+        print(f"\n{len(failures)} page(s) fail at {args.width}px: {', '.join(failures)}")
         return 1
-    print(f"\nNo page scrolls sideways at {args.width}px.")
+    print(f"\nNo page scrolls sideways at {args.width}px in either theme.")
     return 0
 
 

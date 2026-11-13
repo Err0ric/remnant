@@ -1,6 +1,7 @@
+import { EmptyState } from "@/components/EmptyState";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { Command, PageHeader } from "@/components/shell/PageHeader";
+import { PageHeader } from "@/components/shell/PageHeader";
 import { ApiError, api } from "@/lib/api";
 import { DraftEditor } from "./DraftEditor";
 import { takeDraftSeed } from "./draftSeed";
@@ -26,20 +27,16 @@ export function TemplatesPage() {
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       <PageHeader
-        crumbs={["Home", "Settings", "Templates"]}
         title="Templates"
-        meta={`${templates.data?.length ?? 0} available · ${drafts.data?.length ?? 0} drafts`}
-        commands={
-          <Command
-            label="New draft"
-            primary
-            onClick={() => {
-              setOpen(null);
-              setCreating(true);
-            }}
-            disabled={creating}
-          />
-        }
+        count={`${templates.data?.length ?? 0} available · ${drafts.data?.length ?? 0} drafts`}
+        primary={{
+          label: "New draft",
+          onClick: () => {
+            setOpen(null);
+            setCreating(true);
+          },
+          disabled: creating,
+        }}
       />
       <div className="flex min-w-0 flex-col gap-3 px-5 py-3">
         {creating ? (
@@ -72,16 +69,18 @@ export function TemplatesPage() {
             <SectionTitle>Drafts</SectionTitle>
           </div>
           {(drafts.data ?? []).length === 0 ? (
-            <p className="px-3 py-6 text-center text-sm text-text-secondary">
-              No drafts. Start one from a copy of the closest template, or from a blank one.
-            </p>
+            <EmptyState
+              kind="not-set-up"
+              title="No drafts."
+              detail="Start one from a copy of the closest template, or from a blank one."
+            />
           ) : (
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border text-left text-text-secondary">
-                  <th className="px-3 py-2 font-semibold">Draft</th>
-                  <th className="px-3 py-2 font-semibold">Sample</th>
-                  <th className="px-3 py-2 font-semibold">Updated</th>
+                  <th className="px-3 py-2">Draft</th>
+                  <th className="px-3 py-2">Sample</th>
+                  <th className="px-3 py-2">Updated</th>
                   <th className="px-3 py-2" aria-label="Actions" />
                 </tr>
               </thead>
@@ -126,9 +125,9 @@ export function TemplatesPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-text-secondary">
-                <th className="px-3 py-2 font-semibold">Template</th>
-                <th className="px-3 py-2 font-semibold">Version</th>
-                <th className="px-3 py-2 font-semibold">Format</th>
+                <th className="px-3 py-2">Template</th>
+                <th className="px-3 py-2">Version</th>
+                <th className="px-3 py-2">Format</th>
               </tr>
             </thead>
             <tbody>

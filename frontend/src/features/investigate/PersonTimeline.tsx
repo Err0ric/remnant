@@ -1,6 +1,7 @@
+import { Skeleton } from "@/components/Skeleton";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { LoadFailed } from "@/components/LoadFailed";
+import { InlineError } from "@/components/InlineError";
 import { EntityLink } from "@/components/EntityLink";
 import { api, type TimelineRow } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -110,9 +111,9 @@ export function PersonTimeline({ person }: { person: string }) {
         </p>
       ) : null}
       {q.isLoading ? (
-        <div aria-busy="true" className="h-40 animate-pulse" />
+        <Skeleton label="the timeline" rows={4} className="rounded-none border-0" />
       ) : q.isError ? (
-        <LoadFailed
+        <InlineError
           what="the timeline"
           error={q.error}
           onRetry={() => void q.refetch()}
@@ -174,8 +175,17 @@ export function PersonTimeline({ person }: { person: string }) {
         </ol>
       ) : null}
       {d?.more ? (
-        <p className="border-t border-border px-3 py-2 text-sm text-text-muted">
-          The newest 500 rows. Narrow the window, or open the rest in Logs.
+        <p className="flex flex-wrap items-center gap-2 border-t border-border px-3 py-2 text-sm text-text-muted">
+          The newest 500 rows.
+          <button
+            type="button"
+            onClick={() =>
+              openDrill({ sql: d.sql, from: d.start, to: d.end, origin: `${person} > Timeline` })
+            }
+            className="h-7 rounded border border-border-strong px-2.5 text-text hover:bg-surface-head"
+          >
+            Open the rest in Logs
+          </button>
         </p>
       ) : null}
     </section>

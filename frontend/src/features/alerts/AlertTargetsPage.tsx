@@ -1,6 +1,7 @@
+import { EmptyState } from "@/components/EmptyState";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Command, PageHeader } from "@/components/shell/PageHeader";
+import { PageHeader } from "@/components/shell/PageHeader";
 import { ApiError, api, type AlertTarget } from "@/lib/api";
 import { SigningKey } from "./SigningKey";
 import { TargetForm } from "./TargetForm";
@@ -51,18 +52,13 @@ export function AlertTargetsPage() {
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       <PageHeader
-        crumbs={["Home", "Settings", "Alert targets"]}
         title="Alert targets"
-        meta={`${list.length} ${list.length === 1 ? "target" : "targets"}`}
-        commands={
-          <Command label="Add target" primary onClick={() => setAdding(true)} disabled={adding} />
-        }
+        count={`${list.length} ${list.length === 1 ? "target" : "targets"}`}
+        primary={{ label: "Add target", onClick: () => setAdding(true), disabled: adding }}
       />
       <div className="flex flex-col gap-3 px-5 py-3">
         <p className="max-w-3xl text-sm text-text-secondary">
-          Where schedules send alerts. Analysts choose from these when they set up a schedule.
-          Alerts say what fired, when, how many, and why, with a link back; they never carry log
-          content.
+          Alerts carry a summary and a link back, never log content.
         </p>
         {key ? (
           <SigningKey name={key.name} signingKey={key.key} onDone={() => setKey(null)} />
@@ -85,11 +81,11 @@ export function AlertTargetsPage() {
           <div className="overflow-x-auto">
             <table aria-label="Alert targets" className="w-full text-sm">
               <thead>
-                <tr className="border-b border-border bg-surface-head text-left text-text-secondary">
-                  <th className="px-3 py-2 font-semibold">Name</th>
-                  <th className="px-3 py-2 font-semibold">Kind</th>
-                  <th className="px-3 py-2 font-semibold">Goes to</th>
-                  <th className="px-3 py-2 font-semibold">Health</th>
+                <tr className="border-b border-border text-left text-text-secondary">
+                  <th className="px-3 py-2">Name</th>
+                  <th className="px-3 py-2">Kind</th>
+                  <th className="px-3 py-2">Goes to</th>
+                  <th className="px-3 py-2">Health</th>
                   <th className="px-3 py-2" aria-label="Actions" />
                 </tr>
               </thead>
@@ -162,9 +158,11 @@ export function AlertTargetsPage() {
             </table>
           </div>
           {list.length === 0 && targets.isSuccess ? (
-            <p className="px-3 py-8 text-center text-sm text-text-secondary">
-              No alert targets. Add Slack, Teams, email, or a webhook.
-            </p>
+            <EmptyState
+              kind="not-set-up"
+              title="No alert targets."
+              detail="Add Slack, Teams, email, or a webhook."
+            />
           ) : null}
         </section>
       </div>

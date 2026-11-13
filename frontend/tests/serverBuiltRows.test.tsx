@@ -1,5 +1,5 @@
 import { QueryClient } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mockApi } from "./mockApi";
 
@@ -32,10 +32,15 @@ describe("rows the server builds", () => {
 
   it("Microsoft 365 Mail and Admin lists", async () => {
     for (const [path, name] of [
-      ["/m365/mail", "name=mail"],
-      ["/m365/admin", "name=admin"],
-      ["/m365/apps", "name=consents"],
+      ["/investigate/views/mail", "name=mail"],
+      ["/investigate/views/admin", "name=admin"],
+      // The old Apps tab's lists are at the foot of the Admin view.
+      ["/investigate/views/admin", "name=consents"],
+      ["/investigate/views/admin", "name=registrations"],
     ] as const) {
+      // A fresh page and a fresh record of calls for each row.
+      cleanup();
+      vi.restoreAllMocks();
       const spy = await renderAt(path);
       await vi.waitFor(() => expect(called(spy, name)).toBe(true));
       expect(called(spy, "/api/query")).toBe(false);

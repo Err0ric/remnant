@@ -1,8 +1,9 @@
+import { Skeleton } from "@/components/Skeleton";
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { api, type M365Overview, type QueryResult } from "@/lib/api";
 import { openDrill } from "@/lib/drill";
-import { LoadFailed } from "@/components/LoadFailed";
+import { InlineError } from "@/components/InlineError";
 import { SectionTitle } from "@/components/SectionTitle";
 import { ResultsTable } from "@/features/search/ResultsTable";
 
@@ -47,9 +48,9 @@ export function EventList({ title, sql, list, filter, m, controls }: EventListPr
         </button>
       </div>
       {q.isLoading ? (
-        <div aria-busy="true" className="h-40 animate-pulse bg-surface" />
+        <Skeleton label="the events" rows={4} className="rounded-none border-0" />
       ) : q.isError ? (
-        <LoadFailed
+        <InlineError
           what={title}
           error={q.error}
           onRetry={() => void q.refetch()}

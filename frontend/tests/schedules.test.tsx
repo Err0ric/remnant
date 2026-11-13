@@ -1,3 +1,4 @@
+import { fromMore } from "./headerMenu";
 import { QueryClient } from "@tanstack/react-query";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -104,7 +105,8 @@ describe("Dashboard panels (trial finding, ADR-0034)", () => {
   it("offers no layout editing on a shared dashboard someone else owns", async () => {
     await renderAt("/dashboard");
     await userEvent.selectOptions(await screen.findByLabelText("Dashboard"), "d2");
-    expect(await screen.findByRole("heading", { name: "Team", level: 1 })).toBeVisible();
+    expect(await screen.findByText(/^Team, \d+ saved-search/)).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Dashboard", level: 1 })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Edit layout" })).toBeNull();
     // Sections have headers; a tile shows the number but no table.
     const section = screen.getByRole("region", { name: "Windows" });
@@ -115,35 +117,49 @@ describe("Dashboard panels (trial finding, ADR-0034)", () => {
 });
 
 describe("Dashboards at scale (ADR-0034)", () => {
-  it("puts what needs me first, one line each, severity first (F62)", async () => {
+  it("puts what needs me first: blind rows pinned, then alerts by severity (ADR-0052 3.9)", async () => {
     await renderAt("/dashboard");
-    const banner = await screen.findByRole("region", { name: "Needs you" });
-    const lines = (await within(banner).findAllByRole("row")).slice(1); // after the header
-    // High first: the not-approved service; then the rest, by the severity each alert
-    // stores (review item 2: a rule alert without one shows no badge, as on Alerts).
-    expect(lines[0]).toHaveTextContent(/^High/);
-    // The badge column is severity only; the kind is in the text (ADR-0038).
-    const badges = lines.map((l) => within(l).getAllByRole("cell")[0]?.textContent);
-    expect(badges.every((b) => b === "High" || b === "Medium" || b === "")).toBe(true);
-    const rule = lines.find((l) => /Failed logons/.test(l.textContent ?? ""));
-    expect(rule && within(rule).getAllByRole("cell")[0]?.textContent).toBe("");
-    // The AI Watch title already says the decision needed: no trailing reason.
-    expect(
-      within(banner).getByRole("link", { name: "AI Watch: New AI service: DeepSeek" }),
-    ).toBeVisible();
-    expect(
-      within(banner).getByRole("link", { name: /^Rule: Failed logons: Count 12 is above 5/ }),
-    ).toHaveAttribute("href", "/alerts#item=a1");
-    expect(within(banner).getByRole("link", { name: "Source: win_dc has errors" })).toHaveAttribute(
+    const list = await screen.findByRole("region", { name: "Needs you" });
+    const rows = (await within(list).findAllByRole("row")).slice(1); // after the header
+    const kinds = rows.map((r) => r.dataset.needsYou);
+    // Every blind row comes before the first alert row.
+    expect(kinds).toContain("blind");
+    expect(kinds).toContain("alert");
+    expect(kinds.lastIndexOf("blind")).toBeLessThan(kinds.indexOf("alert"));
+    for (const r of rows.filter((r) => r.dataset.needsYou === "blind")) {
+      // On the warn tint with an outlined Blind badge: never a severity mark or color.
+      expect(r).toHaveClass("bg-warn-tint");
+      expect(within(r).getByText("Blind")).toHaveClass("border-warn", "text-warn");
+      expect(r.querySelector("[data-severity]")).toBeNull();
+    }
+    // A source in error is a blind row that opens the source on Health (a source gap
+    // alert as a blind row is covered in alertSeverity.test.ts).
+    expect(within(list).getByRole("link", { name: /win_dc has errors/ })).toHaveAttribute(
       "href",
       "/health#source=win_dc",
     );
-    expect(within(banner).getByText(/Some alerts are in sources you can't read\./)).toBeVisible();
-    // AI Watch comes next, then the panels, then sources in one line at the bottom.
+    // Alerts: High first, each with the severity it stores (a rule alert without one shows
+    // no badge, as on Alerts), its kind in its own column, and who it is about as a link.
+    const alerts = rows.filter((r) => r.dataset.needsYou === "alert");
+    expect(alerts[0]?.querySelector("[data-severity]")).toHaveAttribute("data-severity", "high");
+    // The AI Watch title already says the decision needed: no trailing reason.
+    const watchRow = within(list).getByRole("link", { name: /New AI service: DeepSeek$/ });
+    expect(watchRow.closest("tr")).toHaveTextContent("AI Watch");
+    const rule = within(list).getByRole("link", {
+      name: /Failed logons: Count 12 is above 5/,
+    });
+    expect(rule).toHaveAttribute("href", "/alerts#item=a1");
+    const ruleRow = rule.closest("tr") as HTMLElement;
+    expect(ruleRow.querySelector("[data-severity]")).toBeNull();
+    expect(within(ruleRow).getByRole("link", { name: "alice" })).toBeVisible();
+    // The restricted note at the foot, as a state notice, with no count.
+    const note = within(list).getByRole("note");
+    expect(note).toHaveTextContent(/Some alerts are in sources you can't read\./);
+    expect(note).not.toHaveTextContent(/\d/);
+    // The key numbers and AI Watch come next; a blind state is said once, here, and on Health.
     const watch = screen.getByRole("region", { name: "AI Watch" });
-    expect(banner.compareDocumentPosition(watch) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // A source with problems: said once, in the Health banner at the top, not again below.
-    expect(screen.getByRole("region", { name: "Health needs attention" })).toBeVisible();
+    expect(list.compareDocumentPosition(watch) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Health needs attention" })).toBeNull();
     expect(screen.queryByRole("link", { name: /^Sources: / })).toBeNull();
   });
 
@@ -180,7 +196,8 @@ describe("Dashboards at scale (ADR-0034)", () => {
     const spy = await renderAt("/dashboard");
     await screen.findByRole("region", { name: "Failed SSH daily" });
     await userEvent.click(screen.getByRole("button", { name: "New dashboard" }));
-    expect(await screen.findByRole("heading", { name: "New dashboard", level: 1 })).toBeVisible();
+    expect(await screen.findByText(/^New dashboard, \d+ saved-search/)).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Dashboard", level: 1 })).toBeVisible();
     const settings = screen.getByRole("region", { name: "Dashboard settings" });
     await userEvent.selectOptions(within(settings).getByLabelText("Schedule to add"), "s1");
     await userEvent.click(within(settings).getByRole("button", { name: "Add panel" }));
@@ -288,7 +305,7 @@ describe("Schedules", () => {
 
   it("Schedule on Search saves first, then opens the form with that search", async () => {
     await renderAt("/search");
-    await userEvent.click(await screen.findByRole("button", { name: "Schedule" }));
+    await userEvent.click(await fromMore("Schedule"));
     const save = await screen.findByRole("form", { name: "Save search" });
     await userEvent.type(within(save).getByLabelText("Name"), "Nightly check");
     await userEvent.click(within(save).getByRole("button", { name: "Save" }));

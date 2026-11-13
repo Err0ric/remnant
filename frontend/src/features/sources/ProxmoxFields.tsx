@@ -17,7 +17,7 @@ export const PROXMOX_DEFAULTS: ProxmoxSettings = {
 export const PROXMOX_VERIFIED = "Verified on Proxmox 8 and 9: pending";
 
 const AREA =
-  "min-h-24 rounded border border-border-strong bg-inset px-2 py-1.5 font-mono text-sm text-text";
+  "min-h-24 rounded border border-border-control bg-inset px-2 py-1.5 font-mono text-sm text-text";
 
 interface ProxmoxFieldsProps {
   /** required: host and token; optional: CA and schedule; test: the connection test. */

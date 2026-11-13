@@ -1,5 +1,5 @@
-// Density (ADR-0038 edit 10, call 7): comfortable or compact rows, chosen per user in the
-// user menu and remembered in this browser. With no choice, comfortable from 1440px wide.
+// Density (ADR-0052 section 3.10, D248): Comfortable is the default for every role and every
+// screen width. Compact is a per-user choice in the user menu, remembered in this browser.
 export type Density = "comfortable" | "compact";
 
 const PREFIX = "app.density.";
@@ -17,12 +17,10 @@ export function storedDensity(user: string): Density | null {
   }
 }
 
-export function defaultDensity(): Density {
-  return (window.matchMedia?.("(min-width: 1440px)").matches ?? true) ? "comfortable" : "compact";
-}
+export const DEFAULT_DENSITY: Density = "comfortable";
 
 export function currentDensity(user: string): Density {
-  return storedDensity(user) ?? defaultDensity();
+  return storedDensity(user) ?? DEFAULT_DENSITY;
 }
 
 /** Applies a density to the page; `save` also remembers it for this user. */

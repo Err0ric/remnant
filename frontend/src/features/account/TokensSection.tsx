@@ -52,7 +52,7 @@ export function TokensSection() {
               aria-label="New token"
               value={secret}
               onFocus={(e) => e.currentTarget.select()}
-              className="mt-2 h-8 w-full rounded border border-border-strong bg-inset px-2 font-mono text-sm"
+              className="mt-2 h-8 w-full rounded border border-border-control bg-inset px-2 font-mono text-sm"
             />
             <button
               type="button"
@@ -102,10 +102,10 @@ export function TokensSection() {
           <table aria-label="Tokens" className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-text-secondary">
-                <th className="py-2 pr-3 font-semibold">Name</th>
-                <th className="py-2 pr-3 font-semibold">Created</th>
-                <th className="py-2 pr-3 font-semibold">Last used</th>
-                <th className="py-2 pr-3 font-semibold">Expires</th>
+                <th className="py-2 pr-3">Name</th>
+                <th className="py-2 pr-3">Created</th>
+                <th className="py-2 pr-3">Last used</th>
+                <th className="py-2 pr-3">Expires</th>
                 <th className="py-2" aria-label="Actions" />
               </tr>
             </thead>

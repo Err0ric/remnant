@@ -1,3 +1,4 @@
+import { Skeleton } from "@/components/Skeleton";
 import { useState } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
@@ -27,7 +28,7 @@ export function VendorAlerts({ itemId }: VendorAlertsProps) {
     queryFn: () => api.alertEvents(itemId),
     enabled: events,
   });
-  if (ids.isLoading) return <div className="h-12 animate-pulse rounded bg-surface-head" />;
+  if (ids.isLoading) return <Skeleton label="the events" rows={1} />;
   const count = ids.data?.pages[0]?.count ?? 0;
   const list = ids.data?.pages.flatMap((p) => p.ids) ?? [];
   if (!count) return null;
@@ -61,14 +62,14 @@ export function VendorAlerts({ itemId }: VendorAlertsProps) {
       </div>
       {events ? (
         rows.isLoading ? (
-          <div className="h-12 animate-pulse rounded bg-surface-head" />
+          <Skeleton label="the events" rows={2} />
         ) : rows.data && rows.data.rows.length ? (
           <div className="min-w-0 overflow-x-auto">
             <table aria-label="Alert events" className="w-full text-left font-mono text-xs">
               <thead>
                 <tr className="text-text-muted">
                   {rows.data.columns.map((c) => (
-                    <th key={c} className="px-2 py-1 font-normal">
+                    <th key={c} className="px-2 py-1">
                       {c}
                     </th>
                   ))}

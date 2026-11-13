@@ -20,13 +20,13 @@ export function ActivityTable({ rows, onUser }: ActivityTableProps) {
       ) : null}
       <table aria-label="Activity" className="w-full text-sm">
         <thead>
-          <tr className="border-b border-border bg-surface-head text-left text-text-secondary">
+          <tr className="border-b border-border text-left text-text-secondary">
             <th className="w-8" />
-            <th className="px-2 py-1.5 font-semibold">Time (UTC)</th>
-            <th className="px-2 py-1.5 font-semibold">User</th>
-            <th className="px-2 py-1.5 font-semibold">Action</th>
-            <th className="px-2 py-1.5 font-semibold">Outcome</th>
-            <th className="px-2 py-1.5 font-semibold">Address</th>
+            <th className="px-2 py-1.5">Time (UTC)</th>
+            <th className="px-2 py-1.5">User</th>
+            <th className="px-2 py-1.5">Action</th>
+            <th className="px-2 py-1.5">Outcome</th>
+            <th className="px-2 py-1.5">Address</th>
           </tr>
         </thead>
         <tbody>

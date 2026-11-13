@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Overview, OverviewSourceHealth } from "@/lib/api";
-import { HealthBanner, SourcesLine } from "@/features/dashboard/Attention";
+import { KpiStrip } from "@/features/dashboard/KpiStrip";
 import { SystemStrip } from "@/features/health/SystemStrip";
 import { sourcesSummaryText } from "@/features/health/flow";
 
@@ -60,17 +60,20 @@ afterEach(() => vi.restoreAllMocks());
 
 describe("one healthy count on Health and the Dashboard (handoff item 4)", () => {
   it("prints the same 4 of 6 and the same quiet list on both pages", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
       Promise.resolve(
-        new Response(JSON.stringify(OVERVIEW), { headers: { "Content-Type": "application/json" } }),
+        String(input).endsWith("/api/overview")
+          ? new Response(JSON.stringify(OVERVIEW), {
+              headers: { "Content-Type": "application/json" },
+            })
+          : new Response("{}", { status: 404 }),
       ),
     );
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     client.setQueryData(["overview"], OVERVIEW);
     render(
       <QueryClientProvider client={client}>
-        <HealthBanner />
-        <SourcesLine />
+        <KpiStrip window="7d" days={7} />
         <SystemStrip
           overview={OVERVIEW}
           tally={{ summary: OVERVIEW.source_summary }}
@@ -84,16 +87,17 @@ describe("one healthy count on Health and the Dashboard (handoff item 4)", () =>
         />
       </QueryClientProvider>,
     );
-    // Not all healthy: the banner at the top says it, and the bottom line steps aside.
-    const top = await screen.findByRole("region", { name: "Health needs attention" });
-    expect(top).toHaveTextContent(
-      "Sources 4 of 6 healthy, 2 quiet: win_dc 2 d, vpn 6 h, no gaps in 24 hours",
-    );
+    // Not all healthy: the Dashboard's tile says the same count as Health's, in the warn
+    // color and with words, never by color alone. There is no Health banner or Sources line.
+    const top = await screen.findByRole("link", { name: /^Sources healthy: 4 of 6\. Open Health/ });
+    expect(top).toHaveTextContent("4 of 6");
+    expect(top).toHaveClass("text-warn");
+    expect(screen.queryByRole("region", { name: "Health needs attention" })).toBeNull();
     expect(screen.queryByRole("link", { name: /^Sources:/ })).toBeNull();
     const tile = screen.getByRole("button", { name: /^Sources/ });
     expect(tile).toHaveTextContent("4 of 6 healthy");
     expect(tile).toHaveTextContent("2 quiet: win_dc 2 d, vpn 6 h");
-    for (const el of [top, tile]) expect(el).not.toHaveTextContent("server_events");
+    expect(tile).not.toHaveTextContent("server_events");
   });
 
   it("names the longest wait only when nothing is quiet, never a refusal-only source", () => {

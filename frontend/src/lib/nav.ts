@@ -30,8 +30,9 @@ export interface NavGroup {
   items: NavItem[];
 }
 
-// Plain labels only (CLAUDE.md rule 12). The rail lists areas, one row each; an area's
-// tabs sit in the page header (ADR-0038). Each tab is a page, or a page's tab (`tab`).
+// Plain labels only (CLAUDE.md rule 12). An area is one page of the rail (ADR-0052 section
+// 3.2); its tabs sit in the page header and never repeat the rail. Each tab is a page, or a
+// page's tab (`tab`).
 export interface AreaTab {
   label: string;
   page: PageId;
@@ -39,8 +40,31 @@ export interface AreaTab {
   adminOnly?: boolean;
   /** Only for those who may ask a model (admins and analysts, not auditors). */
   askOnly?: boolean;
+  /** Only for those who may run a search (an Auditor only when Auditor SQL is on, D220). */
+  sqlOnly?: boolean;
   aliases?: string[];
+  /** A view of the page, opened from its Views menu: not a tab of the tab strip. */
+  view?: boolean;
 }
+
+/** The Views of Logs: Microsoft 365 has no area of its own (ADR-0052 section 3.3). */
+export const LOGS_VIEWS: { label: string; tab: string; aliases: string[] }[] = [
+  {
+    label: "Microsoft 365 sign-ins",
+    tab: "sign-ins",
+    aliases: ["m365", "office 365", "entra", "logins", "failed sign-ins"],
+  },
+  {
+    label: "Microsoft 365 mail",
+    tab: "mail",
+    aliases: ["exchange", "inbox rules", "forwarding", "dlp"],
+  },
+  {
+    label: "Microsoft 365 admin",
+    tab: "admin",
+    aliases: ["role grants", "conditional access", "consents", "app registrations", "sharepoint"],
+  },
+];
 
 export interface Area {
   id: string;
@@ -57,45 +81,35 @@ export const AREAS: Area[] = [
     label: "Alerts",
     aliases: ["inbox", "queue", "close", "needs attention", "mutes", "detections", "detect"],
     tabs: [
-      { label: "Open", page: "alerts", tab: "open" },
-      { label: "Closed", page: "alerts", tab: "closed" },
-      { label: "Muted", page: "alerts", tab: "muted" },
+      // Open, Closed, and Muted are the Queue's State filter (ADR-0052 section 3.3).
+      { label: "Queue", page: "alerts" },
       { label: "Rules", page: "rules", aliases: ["detection rules", "sigma"] },
       { label: "Schedules", page: "schedules", aliases: ["scheduled searches"] },
     ],
   },
   {
-    // ADR-0038 section 5, under Monitor (owner edit 10 call 2).
-    id: "m365",
-    label: "Microsoft 365",
-    aliases: ["m365", "office 365", "entra", "sign-ins", "exchange", "sharepoint"],
+    // One name per thing (D206): Logs is the manual search; saved searches are its tab.
+    id: "logs",
+    label: "Logs",
+    aliases: ["search", "events", "query", "sql", "filters", "simple search"],
     tabs: [
-      { label: "Overview", page: "m365", tab: "overview" },
-      { label: "Sign-ins", page: "m365", tab: "sign-ins", aliases: ["logins", "failed sign-ins"] },
-      { label: "Mail", page: "m365", tab: "mail", aliases: ["inbox rules", "forwarding", "dlp"] },
-      { label: "Apps", page: "m365", tab: "apps", aliases: ["consents", "app registrations"] },
-      {
-        label: "Admin",
-        page: "m365",
-        tab: "admin",
-        aliases: ["role grants", "conditional access"],
-      },
+      { label: "Search", page: "logs", sqlOnly: true },
+      { label: "Saved searches", page: "saved", aliases: ["grimoire"] },
+      // Views of Logs (ADR-0052 section 3.3): lists the server builds and runs on the
+      // caller's own sources, so they need no SQL access. Opened from the Views menu.
+      ...LOGS_VIEWS.map((v) => ({ ...v, page: "m365" as const, view: true })),
     ],
   },
   {
-    id: "investigate",
-    label: "Investigate",
-    tabs: [
-      // One name per thing (D206): Logs is the manual search, Ask AI is its own page.
-      { label: "Logs", page: "logs", aliases: ["search", "events", "query"] },
-      { label: "Ask AI", page: "ask", askOnly: true, aliases: ["ask", "seance"] },
-      {
-        label: "People & devices",
-        page: "investigate",
-        aliases: ["investigations", "entities", "risk", "investigator", "graph", "ai flow"],
-      },
-      { label: "Saved searches", page: "saved", aliases: ["grimoire"] },
-    ],
+    id: "ask",
+    label: "Ask AI",
+    tabs: [{ label: "Ask AI", page: "ask", askOnly: true, aliases: ["ask", "seance"] }],
+  },
+  {
+    id: "people",
+    label: "People & devices",
+    aliases: ["investigations", "entities", "risk", "investigator", "graph", "ai flow"],
+    tabs: [{ label: "People & devices", page: "investigate" }],
   },
   {
     id: "ai",
@@ -110,7 +124,6 @@ export const AREAS: Area[] = [
         tab: "inventory",
         aliases: ["ai inventory", "export ai inventory"],
       },
-      { label: "Review", page: "ai", tab: "settings", adminOnly: true },
     ],
   },
   {
@@ -118,15 +131,18 @@ export const AREAS: Area[] = [
     label: "Agents",
     aliases: ["ai agents", "claude code", "sessions", "mcp servers"],
     tabs: [
-      { label: "Overview", page: "agents", tab: "overview" },
-      { label: "Sessions", page: "agents", tab: "sessions" },
       {
-        label: "Tools",
+        label: "Sessions",
         page: "agents",
-        tab: "tools",
-        aliases: ["tool calls", "failed tool calls"],
+        tab: "sessions",
+        aliases: ["agents overview", "failed tool calls"],
       },
-      { label: "MCP servers", page: "agents", tab: "mcp" },
+      {
+        label: "MCP servers",
+        page: "agents",
+        tab: "mcp",
+        aliases: ["tools", "tool calls", "built-in tools"],
+      },
       {
         label: "Accounts",
         page: "agents",
@@ -145,58 +161,60 @@ export const AREAS: Area[] = [
       "collectors",
       "connectors health",
       "enrichment health",
+      // The names of the tabs that are now Types of Sources and Collectors.
+      "enrichment feeds",
+      "endpoint agents",
+      "watched devices",
+      "alert delivery",
     ],
     tabs: [
-      { label: "Sources", page: "health", tab: "sources" },
-      { label: "Enrichment feeds", page: "health", tab: "enrichment" },
-      // "Agents" alone is the AI agents area; these are the log collectors (F48).
-      { label: "Endpoint agents", page: "health", tab: "agents" },
-      { label: "Watched devices", page: "health", tab: "devices" },
-      { label: "Delivery", page: "health", tab: "alerts", aliases: ["alert delivery"] },
-      { label: "Backups", page: "health", tab: "backups", aliases: ["backup status", "restore"] },
-      { label: "Page rollups", page: "health", tab: "rollups", aliases: ["rollup status"] },
       {
-        label: "Speed",
+        label: "Sources",
         page: "health",
-        tab: "speed",
-        aliases: ["page speed", "slow pages", "p95"],
-        adminOnly: true,
+        tab: "sources",
+        aliases: ["enrichment feeds", "enrichment health"],
       },
+      // Log collectors, apart from the AI agents of the Agents page (F48).
+      {
+        label: "Collectors",
+        page: "health",
+        tab: "collectors",
+        aliases: ["endpoint agents", "watched devices", "sensors"],
+      },
+      { label: "Delivery", page: "health", tab: "delivery", aliases: ["alert delivery"] },
     ],
   },
 ];
 
-/** Groups of the rail (ADR-0038 edit 10, reordered by the owner 2026-10-31): Monitor,
- * Investigate, AI, Connected apps (one area per connected service: Microsoft 365 now, Okta,
- * Google Workspace, and CloudTrail later), and System. Each lists areas by id; Settings is
- * the last row of System and keeps its own sub-nav. */
+/** The rail (ADR-0052 section 3.2): three labeled groups of pages, then a pinned cluster at
+ * the bottom (Health, and Settings, which keeps its own sub-nav). Pages only: no entry has
+ * children, and nothing collapses. Reports joins the pinned cluster when its page exists. */
 export interface RailGroup {
   id: string;
+  /** Empty for the pinned cluster, which has no label. */
   label: string;
   areas: string[];
-  /** The group is one area: its tabs are the rows (Investigate). */
-  flatten?: boolean;
-  settings?: boolean;
-  /** Folded until the viewer opens it (remembered per browser like the others). */
-  collapsedByDefault?: boolean;
+  pinned?: boolean;
 }
 
 export const RAIL_GROUPS: RailGroup[] = [
   { id: "monitor", label: "Monitor", areas: ["dashboard", "alerts"] },
-  { id: "investigate", label: "Investigate", areas: ["investigate"], flatten: true },
+  { id: "investigate", label: "Investigate", areas: ["logs", "ask", "people"] },
   { id: "ai", label: "AI", areas: ["ai", "agents"] },
-  { id: "connected", label: "Connected apps", areas: ["m365"], collapsedByDefault: true },
-  { id: "system", label: "System", areas: ["health"], settings: true, collapsedByDefault: true },
+  { id: "pinned", label: "", areas: ["health"], pinned: true },
 ];
 
-/** The group an area sits in. */
-export function groupOf(areaId: string): RailGroup | undefined {
-  return RAIL_GROUPS.find((g) => g.areas.includes(areaId));
-}
-
 /** Tabs this user can open. */
-export function visibleTabs(area: Area, isAdmin: boolean, canAsk = true): AreaTab[] {
-  return area.tabs.filter((t) => (isAdmin || !t.adminOnly) && (canAsk || !t.askOnly));
+export function visibleTabs(
+  area: Area,
+  isAdmin: boolean,
+  canAsk = true,
+  canRunSql = true,
+): AreaTab[] {
+  return area.tabs.filter(
+    (t) =>
+      !t.view && (isAdmin || !t.adminOnly) && (canAsk || !t.askOnly) && (canRunSql || !t.sqlOnly),
+  );
 }
 
 /** The area a page belongs to, and which of its tabs is open. */
@@ -212,7 +230,8 @@ export function areaOf(page: PageId, tab: string): { area: Area; tab: AreaTab } 
 
 /** Areas and their tabs as nav items, for the command palette ("Alerts › Rules"). */
 function areaItems(): NavItem[] {
-  return AREAS.flatMap((a): NavItem[] =>
+  // Logs and Ask AI are added by the palette, which knows who may search or ask.
+  return AREAS.filter((a) => !a.tabs.some((t) => t.askOnly || t.sqlOnly)).flatMap((a): NavItem[] =>
     a.tabs.length === 1
       ? [{ id: a.id, label: a.label, ready: true, page: a.tabs[0]?.page, aliases: a.aliases }]
       : [
@@ -331,6 +350,16 @@ export const SETTINGS_GROUPS: NavGroup[] = [
         adminOnly: true,
       },
       {
+        // What was AI usage > Review: what AI Watch alerts on, the MCP server rules, and
+        // the catalog of AI services. Reviewing itself is the Inventory's Status filter.
+        id: "aisettings",
+        label: "AI watch and catalog",
+        ready: true,
+        page: "aisettings",
+        adminOnly: true,
+        aliases: ["ai watch", "mcp rules", "mcp server rules", "ai service catalog", "review"],
+      },
+      {
         id: "plugins",
         label: "Claude plugins",
         ready: true,
@@ -358,6 +387,31 @@ export const SETTINGS_GROUPS: NavGroup[] = [
         page: "targets",
         adminOnly: true,
         aliases: ["teams", "slack", "email", "webhook"],
+      },
+    ],
+  },
+  {
+    // Settings > System (ADR-0052 section 3.3): Backups, Page rollups, and Speed, which were
+    // Health tabs. Administrators only (owner, 2026-11-13).
+    label: "System",
+    items: [
+      {
+        id: "system",
+        label: "System",
+        ready: true,
+        page: "system",
+        adminOnly: true,
+        aliases: [
+          "backups",
+          "backup status",
+          "restore",
+          "page rollups",
+          "rollup status",
+          "speed",
+          "page speed",
+          "slow pages",
+          "p95",
+        ],
       },
     ],
   },

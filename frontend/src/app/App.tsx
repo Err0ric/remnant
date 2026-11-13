@@ -1,3 +1,5 @@
+import { EmptyState } from "@/components/EmptyState";
+import { PageHeader } from "@/components/shell/PageHeader";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Suspense, lazy, useEffect, useState, useSyncExternalStore } from "react";
 import { CommandPalette } from "@/components/shell/CommandPalette";
@@ -132,11 +134,32 @@ const SetupPage = lazy(
     import("@/features/setup/SetupPage").then((m) => ({ default: m.SetupPage })),
   ),
 );
+const AiSettings = lazy(
+  withChunkReload(() =>
+    import("@/features/ai/AiSettings").then((m) => ({ default: m.AiSettings })),
+  ),
+);
 const HealthPage = lazy(
   withChunkReload(() =>
     import("@/features/health/HealthPage").then((m) => ({ default: m.HealthPage })),
   ),
 );
+
+interface ForAdministratorsProps {
+  title: string;
+  detail: string;
+}
+
+/** An administrators' page opened by someone else (an old address, a shared link): says so
+ * in place, and never shows another page under that address. */
+function ForAdministrators({ title, detail }: ForAdministratorsProps) {
+  return (
+    <div className="flex min-w-0 flex-1 flex-col">
+      <PageHeader title={title} />
+      <EmptyState kind="restricted" title="For administrators" detail={detail} />
+    </div>
+  );
+}
 
 /** One fetch per endpoint per page load (owner, 2026-10-31): data stays fresh for 30 s, so
  * a second component mounting a moment later reuses it instead of asking again, and a
@@ -310,6 +333,22 @@ export function App({ initialTheme, queryClient }: AppProps) {
                           <SetupPage />
                         ) : page === "health" ? (
                           <HealthPage isAdmin={!user || user.role === "admin"} />
+                        ) : page === "aisettings" && (!user || user.role === "admin") ? (
+                          <AiSettings />
+                        ) : page === "system" && (!user || user.role === "admin") ? (
+                          <HealthPage isAdmin scope="system" />
+                        ) : page === "system" ? (
+                          // Backups, Page rollups, and Speed were Health tabs everyone saw:
+                          // an old address says why it no longer opens for this person.
+                          <ForAdministrators
+                            title="System"
+                            detail="Backups, page rollups, and page speed are shown to administrators. A failed backup raises an alert that everyone sees."
+                          />
+                        ) : page === "aisettings" ? (
+                          <ForAdministrators
+                            title="AI watch and catalog"
+                            detail="What AI Watch alerts on, the MCP server rules, and the service catalog are set by administrators. The review status of each service is on AI usage."
+                          />
                         ) : page === "investigate" ? (
                           <InvestigatePage />
                         ) : page === "overview" ? (

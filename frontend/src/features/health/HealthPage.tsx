@@ -1,3 +1,5 @@
+import { FilterBar } from "@/components/FilterBar";
+import { Skeleton } from "@/components/Skeleton";
 import { localStamp } from "@/lib/localTime";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent, type ReactNode } from "react";
@@ -12,7 +14,14 @@ import {
   type Source,
   type WatchedDevice,
 } from "@/lib/api";
-import { navigate, useSection, useSectionTab, type PageId } from "@/lib/route";
+import {
+  fragmentValues,
+  navigate,
+  setFragment,
+  useSection,
+  useSectionTab,
+  type PageId,
+} from "@/lib/route";
 import { SpeedTable } from "./SpeedTable";
 import { BackgroundFailures } from "./BackgroundFailures";
 import { EntityLink } from "@/components/EntityLink";
@@ -52,10 +61,10 @@ const LEVELS: { id: Level; label: string; color: string }[] = [
   { id: "healthy", label: "Healthy", color: "border-t-ok text-ok" },
 ];
 const BADGE: Record<Level, string> = {
-  unhealthy: "bg-sev-critical-bg text-sev-critical-text",
-  attention: "bg-sev-medium-bg text-sev-medium-text",
-  paused: "bg-sev-info-bg text-sev-info-text",
-  healthy: "bg-local-bg text-local-text",
+  unhealthy: "border border-danger text-danger",
+  attention: "border border-warn text-warn",
+  paused: "bg-info-bg text-info-tx",
+  healthy: "bg-local-bg text-local-tx",
 };
 const TABS: { id: TabId; label: string }[] = [
   { id: "sources", label: "Sources" },
@@ -67,7 +76,6 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "rollups", label: "Page rollups" },
   { id: "speed", label: "Speed" },
 ];
-const TAB_IDS = TABS.map((t) => t.id);
 const SILENCE = [
   { s: 300, label: "5 minutes" },
   { s: 900, label: "15 minutes" },
@@ -160,41 +168,113 @@ function Spark({ counts }: { counts: number[] }) {
 
 interface HealthPageProps {
   isAdmin: boolean;
+  /** "system": Settings > System, with Backups, Page rollups, and Speed (they were Health
+   * tabs; ADR-0052 section 3.3), and none of Health's own strip. */
+  scope?: "health" | "system";
 }
+
+// The pages' tabs, and the Type each merged tab filters by (the old tabs it holds).
+const HEALTH_VIEWS = ["sources", "collectors", "delivery"] as const;
+type View = (typeof HEALTH_VIEWS)[number] | "system";
+const TYPES: Partial<Record<View, { id: TabId; label: string }[]>> = {
+  sources: [
+    { id: "sources", label: "Log sources" },
+    { id: "enrichment", label: "Enrichment feeds" },
+  ],
+  collectors: [
+    { id: "agents", label: "Endpoint agents" },
+    { id: "devices", label: "Watched devices" },
+  ],
+  system: [
+    { id: "backups", label: "Backups" },
+    { id: "rollups", label: "Page rollups" },
+    { id: "speed", label: "Speed" },
+  ],
+};
+/** The view a kind of row is on: where the strip's tiles and the old tabs lead. */
+const VIEW_OF: Record<TabId, View> = {
+  sources: "sources",
+  enrichment: "sources",
+  agents: "collectors",
+  devices: "collectors",
+  alerts: "delivery",
+  backups: "system",
+  rollups: "system",
+  speed: "system",
+};
 
 /** Health (ADR-0019): is every source, connector, agent, watched device, alert target,
  * and schedule working, on one page. */
-export function HealthPage({ isAdmin }: HealthPageProps) {
+export function HealthPage({ isAdmin, scope = "health" }: HealthPageProps) {
   const client = useQueryClient();
-  const [tab, setTab] = useSectionTab<TabId>(TAB_IDS);
+  const [healthView, setView] = useSectionTab<View>(HEALTH_VIEWS);
+  const view: View = scope === "system" ? "system" : healthView;
   // `#source=<id>` (alert messages, the Dashboard, Settings) opens Sources at that row.
   const section = useSection();
-  const focused = section.startsWith("source=") ? decodeURIComponent(section.slice(7)) : null;
+  const frag = fragmentValues(section);
+  const focused = frag.get("source");
+  // The Type filter of a merged tab, in the address (`#type=enrichment`); the first type
+  // is the usual one and is left out. `tab` is the kind of row the table lists.
+  const types = TYPES[view];
+  const asked = frag.get("type");
+  const tab: TabId =
+    focused && view === "sources"
+      ? "sources"
+      : (types?.find((t) => t.id === asked)?.id ?? types?.[0]?.id ?? "alerts");
+  const setType = (id: TabId) => {
+    const next = fragmentValues(section);
+    next.delete("source");
+    if (id === types?.[0]?.id) next.delete("type");
+    else next.set("type", id);
+    setFragment(next.toString());
+  };
+  const go = (kind: TabId) => {
+    const to = VIEW_OF[kind];
+    if (to === "system") navigate("system");
+    else setView(to);
+  };
   const [filter, setFilter] = useState<Level | null>(null);
   const [adding, setAdding] = useState(false);
-  const sources = useQuery({ queryKey: ["source-list"], queryFn: api.sources });
+  // Settings > System shows only what the checks report: none of Health's other reads
+  // (the Overview is audited when it computes).
+  const onHealth = scope !== "system";
+  const sources = useQuery({
+    queryKey: ["source-list"],
+    queryFn: api.sources,
+    enabled: onHealth,
+  });
   const checks = useQuery({
     queryKey: ["health-checks"],
     queryFn: api.healthChecks,
     refetchInterval: 60_000,
   });
-  const schedules = useQuery({ queryKey: ["schedules"], queryFn: api.schedules });
+  const schedules = useQuery({
+    queryKey: ["schedules"],
+    queryFn: api.schedules,
+    enabled: onHealth,
+  });
   // Flow, gaps, totals, detections, and delivery (F55; the former Overview's numbers).
   const overview = useQuery({
     queryKey: ["overview"],
     queryFn: api.overview,
     refetchInterval: 60_000,
+    enabled: onHealth,
   });
   // The newest open alert only (owner, 2026-11-11: the audit log records access, not loads).
   const alerts = useQuery({
     queryKey: ["alerts", "lines", 1, "newest"],
     queryFn: () => api.alertLines(1, "newest"),
+    enabled: onHealth,
   });
-  const enrichment = useQuery({ queryKey: ["enrichment"], queryFn: api.enrichment });
+  const enrichment = useQuery({
+    queryKey: ["enrichment"],
+    queryFn: api.enrichment,
+    enabled: onHealth,
+  });
   const targets = useQuery({
     queryKey: ["alert-targets"],
     queryFn: api.alertTargets,
-    enabled: isAdmin,
+    enabled: isAdmin && onHealth,
   });
   const remove = useMutation({
     mutationFn: api.removeWatchedDevice,
@@ -370,26 +450,51 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       <PageHeader
-        title="Health"
-        tabExtras={Object.fromEntries(
-          TABS.filter((t) => t.id !== "speed").map((t) => {
-            const bad = rows[t.id].filter(
-              (r) => r.level === "unhealthy" || r.level === "attention",
-            ).length;
-            return [
-              t.label,
-              <>
-                {rows[t.id].length}
-                {bad ? (
-                  <span className="ml-1 rounded-badge bg-sev-medium-bg px-1 text-xs font-semibold text-sev-medium-text">
-                    {bad}
-                  </span>
-                ) : null}
-              </>,
-            ];
-          }),
-        )}
-        meta={o ? `Updated ${since(o.generated_at, now)}` : "Checked every minute"}
+        title={scope === "system" ? "System" : "Health"}
+        tabExtras={
+          scope === "system"
+            ? {}
+            : Object.fromEntries(
+                (
+                  [
+                    // Log sources only, as the Dashboard's Sources tile counts them; the
+                    // Type filter carries the count of enrichment feeds.
+                    ["Sources", ["sources"]],
+                    ["Collectors", ["agents", "devices"]],
+                    ["Delivery", ["alerts"]],
+                  ] as [string, TabId[]][]
+                ).map(([label, kinds]) => {
+                  // The Data folder row (quarantined files) is listed with the sources but is
+                  // not one: the count is of sources, as the Dashboard's tile counts them.
+                  const all = kinds
+                    .flatMap((k) => rows[k])
+                    .filter((r) => r.key !== "lake-quarantine");
+                  // A problem on any type of the tab shows on the tab.
+                  const watched = label === "Sources" ? [...all, ...rows.enrichment] : all;
+                  const bad = watched.filter(
+                    (r) => r.level === "unhealthy" || r.level === "attention",
+                  ).length;
+                  return [
+                    label,
+                    <>
+                      {all.length}
+                      {bad ? (
+                        <span className="ml-1 rounded-badge border border-warn px-1 text-xs font-semibold text-warn">
+                          {bad}
+                        </span>
+                      ) : null}
+                    </>,
+                  ];
+                }),
+              )
+        }
+        count={
+          scope === "system"
+            ? null
+            : o
+              ? `Updated ${since(o.generated_at, now)}`
+              : "Checked every minute"
+        }
       />
       <div className="flex flex-col gap-3 px-5 py-3">
         {error ? (
@@ -397,18 +502,20 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
             {error instanceof ApiError ? error.message : "Could not load health"}
           </p>
         ) : null}
-        <SystemStrip
-          overview={o}
-          tally={tally}
-          alerts={alerts.data}
-          isAdmin={isAdmin}
-          now={now}
-          onEvents={() => navigate("logs")}
-          onSources={() => setTab("sources")}
-          onAttention={() => navigate("alerts")}
-          onDelivery={() => setTab("alerts")}
-        />
-        {o ? <StatusLine overview={o} now={now} /> : null}
+        {scope === "system" ? null : (
+          <SystemStrip
+            overview={o}
+            tally={tally}
+            alerts={alerts.data}
+            isAdmin={isAdmin}
+            now={now}
+            onEvents={() => navigate("logs")}
+            onSources={() => go("sources")}
+            onAttention={() => navigate("alerts")}
+            onDelivery={() => go("alerts")}
+          />
+        )}
+        {o && scope !== "system" ? <StatusLine overview={o} now={now} /> : null}
         {isAdmin && checks.data?.background_failures?.length ? (
           <BackgroundFailures rows={checks.data.background_failures} now={now} />
         ) : null}
@@ -416,6 +523,25 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
           <BrowserErrors rows={checks.data.client_errors} now={now} />
         ) : null}
 
+        {types ? (
+          <FilterBar
+            label={scope === "system" ? "Choose what to show" : "Filter by type"}
+            state={{
+              label: "Type",
+              value: tab,
+              onChange: setType,
+              options: types.map((t) => ({
+                id: t.id,
+                label: t.label,
+                count:
+                  t.id === "speed"
+                    ? undefined
+                    : rows[t.id].filter((r) => r.key !== "lake-quarantine").length,
+              })),
+            }}
+            isDefault
+          />
+        ) : null}
         {tab === "speed" ? (
           isAdmin ? (
             <SpeedTable />
@@ -505,9 +631,11 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
                         : undefined,
                     }))}
                 />
+              ) : shown.length === 0 && loading ? (
+                <Skeleton label="health" rows={5} className="rounded-none border-0" />
               ) : shown.length === 0 ? (
                 <p className="p-4 text-sm text-text-muted">
-                  {loading ? "Loading…" : filter ? "Nothing in this state here." : EMPTY[tab]}
+                  {filter ? "Nothing in this state here." : EMPTY[tab]}
                 </p>
               ) : (
                 <div className="overflow-x-auto">
@@ -516,9 +644,9 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
                     aria-label={TABS.find((t) => t.id === tab)?.label}
                   >
                     <thead>
-                      <tr className="border-b border-border bg-surface-head text-left text-text-secondary">
-                        <th className="px-3 py-2 font-semibold">Name</th>
-                        <th className="hidden px-3 py-2 font-semibold md:table-cell">
+                      <tr className="border-b border-border text-left text-text-secondary">
+                        <th className="px-3 py-2">Name</th>
+                        <th className="hidden px-3 py-2 md:table-cell">
                           {tab === "enrichment"
                             ? "Last updated"
                             : tab === "backups"
@@ -528,13 +656,9 @@ export function HealthPage({ isAdmin }: HealthPageProps) {
                                 : "Last seen"}
                         </th>
                         {tab === "devices" ? (
-                          <th className="hidden px-3 py-2 font-semibold md:table-cell">
-                            Last 24 hours
-                          </th>
+                          <th className="hidden px-3 py-2 md:table-cell">Last 24 hours</th>
                         ) : null}
-                        <th className="hidden px-3 py-2 text-right font-semibold md:table-cell">
-                          State
-                        </th>
+                        <th className="hidden px-3 py-2 text-right md:table-cell">State</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -725,7 +849,7 @@ function DeviceForm({ targets, onDone }: DeviceFormProps) {
     e.preventDefault();
     add.mutate({ name: name.trim(), match: match.trim(), silence_s: silence, target_ids: picked });
   };
-  const input = "h-8 w-full rounded border border-border-strong bg-inset px-2 text-sm";
+  const input = "h-8 w-full rounded border border-border-control bg-inset px-2 text-sm";
   return (
     <form
       onSubmit={submit}
@@ -843,11 +967,11 @@ function BrowserErrors({ rows, now }: { rows: ClientErrorRow[]; now: string }) {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border text-left text-text-secondary">
-              <th className="px-3 py-2 font-semibold">When</th>
-              <th className="px-3 py-2 font-semibold">What</th>
-              <th className="px-3 py-2 font-semibold">Page</th>
-              <th className="px-3 py-2 font-semibold">Error</th>
-              <th className="px-3 py-2 font-semibold">Error id</th>
+              <th className="px-3 py-2">When</th>
+              <th className="px-3 py-2">What</th>
+              <th className="px-3 py-2">Page</th>
+              <th className="px-3 py-2">Error</th>
+              <th className="px-3 py-2">Error id</th>
             </tr>
           </thead>
           <tbody>

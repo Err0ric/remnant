@@ -91,6 +91,8 @@ export interface MockAuth {
   sso?: string;
   /** An admin has let Auditors run SQL (D220); off by default. */
   auditorSql?: boolean;
+  /** What `/api/health/count` answers; every source healthy when left out. */
+  healthCount?: { total: number; not_healthy: number };
 }
 
 export const SOURCE = {
@@ -750,6 +752,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         end: "2026-10-10T18:00:00+00:00",
         before: "2026-09-27T00:00:00+00:00",
         chart_drill: AI_DRILL,
+        services_in_use: 6,
         cards: [
           {
             key: "services",
@@ -850,7 +853,12 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       const items = alertItems.filter(
         (i) =>
           (state === "all" || i.state === state) &&
-          (params.get("unreviewed") !== "true" || i.kind === "ai_watch"),
+          (params.get("unreviewed") !== "true" || i.kind === "ai_watch") &&
+          // The server keeps the alerts closed in the asked window.
+          (!params.get("closed_from") ||
+            Date.parse(String(i.closed_at)) >= Date.parse(String(params.get("closed_from")))) &&
+          (!params.get("closed_to") ||
+            Date.parse(String(i.closed_at)) <= Date.parse(String(params.get("closed_to")))),
       );
       return json({
         items,
@@ -880,6 +888,9 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         by_severity: { high: sev("high"), medium: sev("medium"), other: sev("other") },
       });
     }
+    if (url.endsWith("/api/health/count") && method === "GET") {
+      return json(state.healthCount ?? { total: 2, not_healthy: 0 });
+    }
     if (url.endsWith("/api/alerts/count") && method === "GET") {
       const open = alertItems.filter((i) => i.state === "open");
       const sev = (s: string) => open.filter((i) => (i.severity ?? "other") === s).length;
@@ -889,7 +900,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         by_severity: { high: sev("high"), medium: sev("medium"), other: sev("other") },
       });
     }
-    if (url.endsWith("/api/alerts/mutes") && method === "GET") return json(alertMutes);
+    if (/\/api\/alerts\/mutes(\?|$)/.test(url) && method === "GET") return json(alertMutes);
     if (url.endsWith("/api/alerts/close") && method === "POST") {
       const body = JSON.parse(String(init?.body ?? "{}")) as { item_ids: string[]; reason: string };
       for (const id of body.item_ids) {
@@ -2111,7 +2122,16 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
               drill: q,
             },
           ],
-          involved: [{ label: "bastion", count: 9, kind: "host", detail: "", last: null }],
+          involved: [
+            {
+              label: "bastion",
+              count: 9,
+              kind: "host",
+              detail: "",
+              last: "2026-10-30T09:58:00+00:00",
+              rules: 2,
+            },
+          ],
           history: { compared: true, since: null },
         },
       });

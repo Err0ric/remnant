@@ -78,7 +78,7 @@ export function NewDraftForm({
             id="draft-from"
             value={from}
             onChange={(e) => setFrom(e.target.value)}
-            className="h-9 rounded border border-border-strong bg-inset px-2 text-sm text-text"
+            className="h-9 rounded border border-border-control bg-inset px-2 text-sm text-text"
           >
             <option value="">Blank template (each line becomes a message)</option>
             {(templates.data ?? []).map((t) => (
@@ -123,7 +123,7 @@ export function NewDraftForm({
               onChange={(e) => setText(e.target.value)}
               rows={8}
               spellCheck={false}
-              className="rounded border border-border-strong bg-inset p-2 font-mono text-sm text-text"
+              className="rounded border border-border-control bg-inset p-2 font-mono text-sm text-text"
             />
             <p className="text-sm text-text-muted">
               Up to 200 lines. Kept with the draft and deleted with it. Never sent to a cloud AI

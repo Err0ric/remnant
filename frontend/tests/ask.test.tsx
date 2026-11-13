@@ -61,9 +61,11 @@ describe("Old addresses (D206)", () => {
 describe("Ask (ADR-0042 slice 1a)", () => {
   it("runs the answer by its id, shows the rows, and keeps the SQL under How I got this", async () => {
     const spy = await renderAt("/ask-ai");
-    expect(await screen.findByRole("heading", { name: "Investigate", level: 1 })).toBeVisible();
-    const tabs = screen.getByRole("navigation", { name: "Investigate tabs" });
-    expect(within(tabs).getByRole("link", { name: "Ask AI" })).toHaveAttribute(
+    expect(await screen.findByRole("heading", { name: "Ask AI", level: 1 })).toBeVisible();
+    // Ask AI is a page of its own with no tabs; the rail marks it.
+    expect(screen.queryByRole("navigation", { name: /tabs$/ })).toBeNull();
+    const rail = screen.getByRole("navigation", { name: "Primary" });
+    expect(within(rail).getByRole("link", { name: "Ask AI" })).toHaveAttribute(
       "aria-current",
       "page",
     );
@@ -146,9 +148,38 @@ describe("Ask (ADR-0042 slice 1a)", () => {
     );
   });
 
+  it("asks over a Custom range, start and end, and hands it on to Logs", async () => {
+    const spy = await renderAt("/ask-ai");
+    const time = await screen.findByRole("group", { name: "Time" });
+    await userEvent.click(within(time).getByRole("button", { name: "Custom" }));
+    const { fireEvent } = await import("@testing-library/react");
+    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-11-01T08:00" } });
+    fireEvent.change(screen.getByLabelText("To"), { target: { value: "2026-11-02T08:00" } });
+    await askQuestion("failed logins");
+    const block = await screen.findByRole("region", { name: "Question: failed logins" });
+    const asked = (posts(spy, "/api/ask") as { start?: string; end?: string }[]).at(-1);
+    expect(asked?.start).toBe(new Date("2026-11-01T08:00").toISOString());
+    expect(asked?.end).toBe(new Date("2026-11-02T08:00:59.999").toISOString());
+    await within(block).findByRole("table", { name: "Results" });
+    await userEvent.click(within(block).getByRole("button", { name: "Open in Logs" }));
+    await vi.waitFor(() => expect(window.location.pathname).toBe("/investigate/logs"));
+    // Logs opens on the same Custom range, not on everything kept.
+    await vi.waitFor(() => expect(screen.getByLabelText("From")).toHaveValue("2026-11-01T08:00"));
+    expect(screen.getByLabelText("To")).toHaveValue("2026-11-02T08:00");
+    await vi.waitFor(() =>
+      expect((posts(spy, "/api/query") as { start?: string }[]).at(-1)?.start).toBe(
+        new Date("2026-11-01T08:00").toISOString(),
+      ),
+    );
+  });
+
   it("Open in Logs opens the answer's SQL in the SQL mode, and Save keeps the question (D206)", async () => {
     const spy = await renderAt("/ask-ai");
-    await userEvent.selectOptions(await screen.findByLabelText("Time range"), "7d");
+    await userEvent.click(
+      within(await screen.findByRole("group", { name: "Time" })).getByRole("button", {
+        name: "7 days",
+      }),
+    );
     await askQuestion("failed logins");
     const block = await screen.findByRole("region", { name: "Question: failed logins" });
     await within(block).findByRole("table", { name: "Results" });
@@ -160,7 +191,9 @@ describe("Ask (ADR-0042 slice 1a)", () => {
     await vi.waitFor(() =>
       expect((posts(spy, "/api/query") as { sql: string }[]).at(-1)?.sql).toContain("turn 1"),
     );
-    expect(screen.getByLabelText("Time range")).toHaveValue("7d");
+    expect(
+      within(screen.getByRole("group", { name: "Time" })).getByRole("button", { name: "7 days" }),
+    ).toHaveAttribute("aria-pressed", "true");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     const form = screen.getByRole("form", { name: "Save search" });
     await userEvent.type(within(form).getByLabelText("Name"), "Failed by IP");
@@ -173,7 +206,7 @@ describe("Ask (ADR-0042 slice 1a)", () => {
 
   it("is hidden from auditors", async () => {
     await renderAt("/ask-ai", { mode: "login", signedIn: true, role: "auditor" });
-    await screen.findByRole("heading", { name: "Investigate", level: 1 });
+    await screen.findByRole("heading", { name: "Logs", level: 1 });
     const nav = screen.getByRole("navigation", { name: "Primary" });
     expect(within(nav).queryByText("Ask AI")).not.toBeInTheDocument();
   });

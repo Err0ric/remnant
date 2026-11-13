@@ -64,7 +64,7 @@ export function UserRow({ user, groupNames, isSelf, onResetLink }: UserRowProps)
             value={user.role}
             disabled={update.isPending}
             onChange={(e) => update.mutate({ role: e.target.value as Role })}
-            className="h-7 rounded border border-border-strong bg-inset px-1.5 text-sm text-text"
+            className="h-7 rounded border border-border-control bg-inset px-1.5 text-sm text-text"
           >
             {(Object.keys(ROLE_LABEL) as Role[]).map((r) => (
               <option key={r} value={r}>
@@ -102,16 +102,15 @@ export function UserRow({ user, groupNames, isSelf, onResetLink }: UserRowProps)
               ? groupNames.join(", ")
               : "None"}
         </td>
-        <td className="whitespace-nowrap px-3 py-2.5 font-mono text-sm">
-          {when(user.last_login_at)}
-        </td>
+        {/* May wrap between date and time, so the table fits a 1280px window. */}
+        <td className="px-3 py-2.5 font-mono text-sm">{when(user.last_login_at)}</td>
         <td className="whitespace-nowrap px-3 py-2.5 text-right">
           {confirming ? (
             <span className="flex items-center justify-end gap-2">
               <button
                 type="button"
                 onClick={() => update.mutate({ disabled: true })}
-                className="rounded border border-danger px-2 py-0.5 text-danger hover:bg-sev-critical-bg"
+                className="rounded border border-danger px-2 py-0.5 text-danger hover:bg-surface-head"
               >
                 Disable
               </button>

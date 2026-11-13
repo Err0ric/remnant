@@ -1,9 +1,11 @@
 import type { AiStatus } from "@/lib/api";
 
-const STYLE: Record<AiStatus, string> = {
-  approved: "bg-local-bg text-local-text",
-  not_approved: "bg-sev-critical-bg text-sev-critical-text",
-  unreviewed: "bg-surface-head text-text-secondary",
+// A dot and the label (DESIGN.md 7). Never a severity color: Not approved is a review
+// state, not an alert.
+const DOT: Record<AiStatus, string> = {
+  approved: "bg-local-tx",
+  not_approved: "border-[1.5px] border-warn",
+  unreviewed: "border-[1.5px] border-accent-text",
 };
 export const STATUS_LABEL: Record<AiStatus, string> = {
   approved: "Approved",
@@ -14,7 +16,11 @@ export const STATUS_LABEL: Record<AiStatus, string> = {
 /** Review status of an AI service or MCP server; text, never color alone. */
 export function StatusBadge({ status }: { status: AiStatus }) {
   return (
-    <span className={`whitespace-nowrap rounded-badge px-1.5 py-px text-sm ${STYLE[status]}`}>
+    <span
+      data-ai-status={status}
+      className="inline-flex items-center gap-1.5 whitespace-nowrap text-text"
+    >
+      <span className={`h-2 w-2 shrink-0 rounded-full ${DOT[status]}`} aria-hidden />
       {STATUS_LABEL[status]}
     </span>
   );
@@ -33,7 +39,7 @@ export function StatusPicker({ label, value, onChange }: StatusPickerProps) {
       aria-label={`Review status of ${label}`}
       value={value}
       onChange={(e) => onChange(e.target.value as AiStatus)}
-      className={`h-7 rounded border border-border-strong px-1.5 text-sm ${STYLE[value]}`}
+      className="h-7 rounded border border-border-control bg-inset px-1.5 text-sm text-text"
     >
       {(Object.keys(STATUS_LABEL) as AiStatus[]).map((s) => (
         <option key={s} value={s}>

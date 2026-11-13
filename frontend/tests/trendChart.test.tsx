@@ -29,4 +29,49 @@ describe("TrendChart (owner, 2026-10-31)", () => {
     await userEvent.keyboard("{End}");
     expect(screen.getByRole("tooltip")).toHaveTextContent("10-04 (so far): Failed 1");
   });
+
+  it("draws lines only, each part of a stack at its own value, and still gives the total", async () => {
+    const { container } = render(
+      <TrendChart
+        title="AI use"
+        stacked
+        series={[
+          { key: "a", label: "Approved", values: [4, 4], color: "local-tx" },
+          { key: "n", label: "Not approved", values: [1, 3], color: "warn" },
+        ]}
+        pointLabel={(i) => `day ${i + 1}`}
+        axisLabel={(i) => `day ${i + 1}`}
+        summary="AI use"
+      />,
+    );
+    const paths = [...container.querySelectorAll("svg path")];
+    expect(paths.length).toBe(2);
+    for (const path of paths) {
+      expect(path.getAttribute("fill")).toBe("none");
+      expect(path.getAttribute("stroke-width")).toBe("1.5");
+      expect(path.hasAttribute("fill-opacity")).toBe(false);
+      expect(path.getAttribute("d")).not.toMatch(/Z$/);
+    }
+    // Not cumulative: every line is where the same series is drawn with no stacking.
+    const plain = render(
+      <TrendChart
+        title="AI use, plain"
+        series={[
+          { key: "a", label: "Approved", values: [4, 4], color: "local-tx" },
+          { key: "n", label: "Not approved", values: [1, 3], color: "warn" },
+        ]}
+        pointLabel={(i) => `day ${i + 1}`}
+        axisLabel={(i) => `day ${i + 1}`}
+        summary="AI use, plain"
+      />,
+    );
+    const plainPaths = [...plain.container.querySelectorAll("svg path")];
+    expect(paths.map((p) => p.getAttribute("d"))).toEqual(
+      plainPaths.map((p) => p.getAttribute("d")),
+    );
+    plain.unmount();
+    screen.getByRole("img").focus();
+    await userEvent.keyboard("{End}");
+    expect(screen.getByRole("tooltip")).toHaveTextContent("7");
+  });
 });

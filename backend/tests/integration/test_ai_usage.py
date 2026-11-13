@@ -363,6 +363,11 @@ def test_ai_watch_summary_cards_chart_and_top(lab: dict[str, Any]) -> None:
     assert list(cards) == ["services", "people", "agents", "consent", "sensitive"]
     assert cards["services"]["value"] >= 3 and cards["services"]["previous"] == 0
     assert cards["services"]["unreviewed"] >= 1  # linked to the review list (owner, 2026-10-29)
+    # Every service with use in the period, whatever its status (the Dashboard's "AI services
+    # in use"): nothing is approved here, so it equals the not-yet-approved count, and it is
+    # never less than the top list, which shows only the first few.
+    assert s["services_in_use"] == cards["services"]["value"]
+    assert s["services_in_use"] >= len(s["top"])
     # DNS names no person: 0 people, and 10.20.1.5, .6, .7 as devices apart (never added in);
     # the ad tag host is not use.
     assert cards["people"]["value"] == 0 and cards["people"]["devices"] == 3
@@ -389,6 +394,7 @@ def test_ai_watch_summary_cards_chart_and_top(lab: dict[str, Any]) -> None:
     assert sum(r[3] for r in rows(cards["sensitive"]["drill"])) == cards["sensitive"]["value"]
     assert rows(s["chart_drill"]) and s["before"] < s["start"]
     # Ana reads Linux only: no AI use, and the telemetry cards are restricted for her.
+    assert lab["ana"].get("/api/ai/watch/summary").json()["services_in_use"] == 0
     ana = {c["key"]: c for c in lab["ana"].get("/api/ai/watch/summary").json()["cards"]}
     assert ana["services"]["value"] == 0 and ana["sensitive"]["restricted"] is True
     assert ana["agents"]["restricted"] is True

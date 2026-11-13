@@ -1,11 +1,13 @@
+import { Skeleton } from "@/components/Skeleton";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { EntityLink } from "@/components/EntityLink";
-import { LoadFailed } from "@/components/LoadFailed";
-import { api, type InventoryItem, type InventoryType } from "@/lib/api";
-import { cn } from "@/lib/cn";
+import { InlineError } from "@/components/InlineError";
+import { api, type AiStatus, type InventoryItem, type InventoryType } from "@/lib/api";
+import { FilterBar } from "@/components/FilterBar";
+import { useFilters } from "@/lib/filters";
 import { since, stamp } from "@/features/overview/time";
-import { STATUS_LABEL, StatusBadge } from "./StatusBadge";
+import { STATUS_LABEL, StatusBadge, StatusPicker } from "./StatusBadge";
 import { SectionTitle } from "@/components/SectionTitle";
 
 const TYPE_LABEL: Record<InventoryType, string> = {
@@ -22,7 +24,21 @@ const ONE: Record<InventoryType, string> = {
 };
 const TYPES = Object.keys(TYPE_LABEL) as InventoryType[];
 type Group = "none" | "type" | "status";
-const TH = "px-3 py-2 font-semibold";
+const STATUSES = Object.keys(STATUS_LABEL) as AiStatus[];
+// `status` empty: Unreviewed while anything is unreviewed, otherwise All (ADR-0052 3.3).
+const FILTER_DEFAULTS = { state: "active", type: "", status: "" };
+const FILTER_VALUES = {
+  state: ["active", "excluded"],
+  type: ["", ...TYPES],
+  status: ["", "all", ...STATUSES],
+};
+type StatusFilter = "all" | AiStatus;
+
+/** Active items of the inventory still to review: the "N to review" count (ADR-0052 3.3). */
+export function toReview(items: InventoryItem[]): number {
+  return items.filter((i) => i.excluded === null && i.status === "unreviewed").length;
+}
+const TH = "px-3 py-2";
 const TD = "px-3 py-1.5";
 
 function save(text: string, name: string, type: string) {
@@ -43,8 +59,9 @@ function statusText(i: InventoryItem): string {
 export function InventoryCard({ isAdmin, canExport }: { isAdmin: boolean; canExport: boolean }) {
   const client = useQueryClient();
   const q = useQuery({ queryKey: ["ai-inventory"], queryFn: () => api.aiInventory(30) });
-  const [type, setType] = useState<InventoryType | null>(null);
-  const [excludedView, setExcludedView] = useState(false);
+  const filters = useFilters(FILTER_DEFAULTS, FILTER_VALUES);
+  const type = (filters.values.type || null) as InventoryType | null;
+  const excludedView = filters.values.state === "excluded";
   const [group, setGroup] = useState<Group>("none");
   const [excluding, setExcluding] = useState<InventoryItem | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -53,11 +70,33 @@ export function InventoryCard({ isAdmin, canExport }: { isAdmin: boolean; canExp
     mutationFn: (i: InventoryItem) => api.includeInventory(i.type, i.key),
     onSuccess: refresh,
   });
+  // An admin reviews in place: the same audited calls as the Services and MCP server lists.
+  const review = useMutation({
+    mutationFn: async (v: { item: InventoryItem; status: AiStatus }): Promise<void> => {
+      if (v.item.type === "service") await api.setAiServiceStatus(v.item.key, v.status);
+      else await api.setAiMcpRule(v.item.key, v.status === "unreviewed" ? null : v.status);
+    },
+    onSuccess: () => {
+      refresh();
+      void client.invalidateQueries({ queryKey: ["ai-usage"] });
+      void client.invalidateQueries({ queryKey: ["ai-mcp-rules"] });
+    },
+  });
   const items = q.data?.items ?? [];
+  const waiting = toReview(items);
+  // Opens on Unreviewed; with nothing to review, on All. Decided once, when the list first
+  // loads: a review made on this page does not move the view under the person. Excluded
+  // items are out of review, so that view always opens on All.
+  const opened = useRef<StatusFilter | null>(null);
+  if (opened.current === null && q.data) opened.current = waiting > 0 ? "unreviewed" : "all";
+  const usual: StatusFilter = excludedView ? "all" : (opened.current ?? "all");
+  const status = (filters.values.status || usual) as StatusFilter;
   const inView = items.filter((i) => (i.excluded !== null) === excludedView);
-  const rows = inView.filter((i) => type === null || i.type === type);
+  const ofType = inView.filter((i) => type === null || i.type === type);
+  const rows = ofType.filter((i) => status === "all" || i.status === status);
   const count = (t: InventoryType | null) =>
     inView.filter((i) => t === null || i.type === t).length;
+  const word = (n: number) => (n === 1 ? "item" : "items");
   const groups: [string, InventoryItem[]][] =
     group === "none"
       ? [["", rows]]
@@ -73,7 +112,12 @@ export function InventoryCard({ isAdmin, canExport }: { isAdmin: boolean; canExp
   const doExport = async (format: "csv" | "json") => {
     setExportError(null);
     try {
-      const text = await api.aiInventoryExport(format, { days: 30, type, excluded: excludedView });
+      const text = await api.aiInventoryExport(format, {
+        days: 30,
+        type,
+        excluded: excludedView,
+        status: status === "all" ? null : status,
+      });
       save(text, `ai-inventory.${format}`, format === "csv" ? "text/csv" : "application/json");
     } catch (e) {
       setExportError(e instanceof Error ? e.message : "The export failed");
@@ -126,48 +170,60 @@ export function InventoryCard({ isAdmin, canExport }: { isAdmin: boolean; canExp
           ) : null}
         </span>
       </div>
-      <div className="flex flex-wrap items-center gap-3 border-b border-border px-3 py-2">
-        <div role="group" aria-label="Type" className="flex flex-wrap gap-1">
-          {[null, ...TYPES].map((t) => (
-            <button
-              key={t ?? "all"}
-              type="button"
-              aria-pressed={type === t}
-              onClick={() => setType(t)}
-              className={cn(
-                "h-7 rounded px-2 text-sm",
-                type === t
-                  ? "bg-surface-head font-semibold text-text"
-                  : "text-text-secondary hover:text-text",
-              )}
-            >
-              {t ? TYPE_LABEL[t] : "All"}{" "}
-              <span className="font-mono tabular-nums text-text-muted">{count(t)}</span>
-            </button>
-          ))}
-        </div>
-        <div role="group" aria-label="State" className="ml-auto flex rounded border border-border">
-          {[false, true].map((x) => (
-            <button
-              key={String(x)}
-              type="button"
-              aria-pressed={excludedView === x}
-              onClick={() => setExcludedView(x)}
-              className={cn(
-                "h-7 px-3 text-sm first:rounded-l last:rounded-r",
-                excludedView === x
-                  ? "bg-surface-head font-semibold text-text"
-                  : "text-text-secondary hover:text-text",
-              )}
-            >
-              {x ? "Excluded" : "Active"}{" "}
-              <span className="font-mono tabular-nums text-text-muted">
-                {items.filter((i) => (i.excluded !== null) === x).length}
-              </span>
-            </button>
-          ))}
-        </div>
+      <div className="border-b border-border px-3 py-1">
+        <FilterBar
+          label="Filter the inventory"
+          state={{
+            value: excludedView ? "excluded" : "active",
+            onChange: (id) => filters.set("state", id),
+            options: [
+              { id: "active", label: "Active", count: items.filter((i) => !i.excluded).length },
+              {
+                id: "excluded",
+                label: "Excluded",
+                count: items.filter((i) => i.excluded).length,
+              },
+            ],
+          }}
+          facets={[
+            {
+              name: "Type",
+              value: type ?? "",
+              options: [
+                { id: "", label: `All (${count(null)})` },
+                ...TYPES.map((t) => ({ id: t, label: `${TYPE_LABEL[t]} (${count(t)})` })),
+              ],
+              onChange: (id) => filters.set("type", id),
+            },
+            {
+              name: "Status",
+              value: status,
+              options: [
+                { id: "all", label: "All" },
+                ...STATUSES.map((x) => ({ id: x, label: STATUS_LABEL[x] })),
+              ],
+              // The usual choice is left out of the address.
+              onChange: (id) => filters.set("status", id === usual ? "" : id),
+            },
+          ]}
+          count={
+            q.data
+              ? rows.length === inView.length
+                ? `${inView.length} ${word(inView.length)}`
+                : `${rows.length} of ${inView.length} ${word(inView.length)}`
+              : undefined
+          }
+          onReset={filters.reset}
+          isDefault={filters.values.state === "active" && !type && status === usual}
+        />
       </div>
+      {review.isError ? (
+        <p role="alert" className="border-b border-border px-3 py-2 text-sm text-danger">
+          The review status was not saved:{" "}
+          {review.error instanceof Error ? review.error.message : "the server could not be reached"}
+          .
+        </p>
+      ) : null}
       {exportError ? (
         <p role="alert" className="border-b border-border px-3 py-2 text-sm text-warn">
           {exportError}
@@ -184,9 +240,9 @@ export function InventoryCard({ isAdmin, canExport }: { isAdmin: boolean; canExp
         />
       ) : null}
       {q.isLoading ? (
-        <div aria-busy="true" className="h-40 animate-pulse" />
+        <Skeleton label="the inventory" rows={4} className="rounded-none border-0" />
       ) : q.isError ? (
-        <LoadFailed
+        <InlineError
           what="the AI inventory"
           error={q.error}
           onRetry={() => void q.refetch()}
@@ -194,9 +250,11 @@ export function InventoryCard({ isAdmin, canExport }: { isAdmin: boolean; canExp
         />
       ) : rows.length === 0 ? (
         <p className="px-3 py-4 text-sm text-text-secondary">
-          {excludedView
-            ? "Nothing is excluded. Excluded items move here with who excluded them and why."
-            : "Nothing AI seen in the last 30 days for this type."}
+          {inView.length > 0
+            ? "Nothing matches these filters."
+            : excludedView
+              ? "Nothing is excluded. Excluded items move here with who excluded them and why."
+              : "Nothing AI seen in the last 30 days."}
         </p>
       ) : (
         <div className="overflow-x-auto">
@@ -240,7 +298,16 @@ export function InventoryCard({ isAdmin, canExport }: { isAdmin: boolean; canExp
                     <td className={`${TD} font-mono`}>{i.name}</td>
                     <td className={`${TD} text-text-secondary`}>{ONE[i.type]}</td>
                     <td className={TD}>
-                      {i.status ? (
+                      {i.status &&
+                      isAdmin &&
+                      !i.excluded &&
+                      (i.type === "service" || i.type === "mcp") ? (
+                        <StatusPicker
+                          label={i.name}
+                          value={i.status}
+                          onChange={(to) => review.mutate({ item: i, status: to })}
+                        />
+                      ) : i.status ? (
                         <StatusBadge status={i.status} />
                       ) : (
                         <span className="text-text-muted">No review</span>

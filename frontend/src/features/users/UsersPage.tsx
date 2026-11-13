@@ -1,6 +1,7 @@
+import { EmptyState } from "@/components/EmptyState";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { Command, PageHeader } from "@/components/shell/PageHeader";
+import { PageHeader } from "@/components/shell/PageHeader";
 import { navigate } from "@/lib/route";
 import { ApiError, api, type User } from "@/lib/api";
 import { accountLink } from "@/lib/links";
@@ -36,20 +37,16 @@ export function UsersPage({ me }: UsersPageProps) {
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       <PageHeader
-        crumbs={["Home", "Settings", "Users and access"]}
         title="Users and access"
-        meta={`${list.length} ${list.length === 1 ? "user" : "users"}`}
-        commands={
-          <Command
-            label="Invite user"
-            primary
-            onClick={() => {
-              setShown(null);
-              setInviting(true);
-            }}
-            disabled={inviting}
-          />
-        }
+        count={`${list.length} ${list.length === 1 ? "user" : "users"}`}
+        primary={{
+          label: "Invite user",
+          onClick: () => {
+            setShown(null);
+            setInviting(true);
+          },
+          disabled: inviting,
+        }}
       />
       <p className="px-5 pt-3 text-sm text-text-secondary">
         Sign-in with your identity provider is set up on{" "}
@@ -94,11 +91,11 @@ export function UsersPage({ me }: UsersPageProps) {
             <table aria-label="Users" className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border text-left text-sm text-text-secondary">
-                  <th className="px-3 py-2 font-semibold">User</th>
-                  <th className="px-3 py-2 font-semibold">Role</th>
-                  <th className="px-3 py-2 font-semibold">Status</th>
-                  <th className="px-3 py-2 font-semibold">Source access</th>
-                  <th className="px-3 py-2 font-semibold">Last sign-in</th>
+                  <th className="px-3 py-2">User</th>
+                  <th className="px-3 py-2">Role</th>
+                  <th className="px-3 py-2">Status</th>
+                  <th className="px-3 py-2">Source access</th>
+                  <th className="px-3 py-2">Last sign-in</th>
                   <th className="px-3 py-2" aria-label="Actions" />
                 </tr>
               </thead>
@@ -118,10 +115,7 @@ export function UsersPage({ me }: UsersPageProps) {
             </table>
           </div>
           {list.length === 0 && !users.isPending ? (
-            <p className="px-3 py-8 text-center text-sm text-text-secondary">
-              No accounts yet. This install runs without sign-in until the first administrator is
-              invited.
-            </p>
+            <EmptyState kind="not-set-up" title="No accounts yet." />
           ) : null}
         </section>
         <AuditorSqlSection />

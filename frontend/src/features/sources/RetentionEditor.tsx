@@ -63,7 +63,7 @@ export function RetentionEditor({ sourceId, value, canManage }: RetentionEditorP
           max={3650}
           value={days}
           onChange={(e) => setDays(e.target.value)}
-          className="h-8 w-28 rounded border border-border-strong bg-inset px-2 font-mono tabular-nums"
+          className="h-8 w-28 rounded border border-border-control bg-inset px-2 font-mono tabular-nums"
         />
       </label>
       <span className="flex flex-wrap gap-1.5">

@@ -1,6 +1,8 @@
+import { EmptyState } from "@/components/EmptyState";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Fragment, useState } from "react";
-import { Command, PageHeader } from "@/components/shell/PageHeader";
+import { Fragment, useEffect, useState } from "react";
+import { fragmentValues, useSection } from "@/lib/route";
+import { PageHeader } from "@/components/shell/PageHeader";
 import { ApiError, api, type Schedule } from "@/lib/api";
 import { takeScheduleSeed } from "@/lib/scheduleSeed";
 import { DeliveryLog } from "./DeliveryLog";
@@ -31,9 +33,16 @@ export function SchedulesPage({ canCreate, isAdmin }: SchedulesPageProps) {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [showLog, setShowLog] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
+  // `#item=<schedule id>`: the schedule a saved search links to, marked and scrolled to.
+  const linked = fragmentValues(useSection()).get("item");
   const schedules = useQuery({ queryKey: ["schedules"], queryFn: api.schedules });
   const list = schedules.data ?? [];
   const refresh = () => client.invalidateQueries({ queryKey: ["schedules"] });
+  const linkedShown = Boolean(linked && list.some((s) => s.schedule_id === linked));
+  useEffect(() => {
+    if (!linkedShown) return;
+    document.querySelector("tr[data-linked]")?.scrollIntoView?.({ block: "center" });
+  }, [linkedShown, linked]);
   const pause = useMutation({
     mutationFn: (s: Schedule) => api.updateSchedule(s.schedule_id, { paused: !s.paused }),
     onSuccess: refresh,
@@ -55,18 +64,12 @@ export function SchedulesPage({ canCreate, isAdmin }: SchedulesPageProps) {
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       <PageHeader
-        crumbs={["Home", "Detect", "Schedules"]}
         title="Schedules"
-        meta={`${list.length} ${list.length === 1 ? "schedule" : "schedules"}`}
-        commands={
-          canCreate ? (
-            <Command
-              label="New schedule"
-              primary
-              onClick={() => setAdding(true)}
-              disabled={adding}
-            />
-          ) : null
+        count={`${list.length} ${list.length === 1 ? "schedule" : "schedules"}`}
+        primary={
+          canCreate
+            ? { label: "New schedule", onClick: () => setAdding(true), disabled: adding }
+            : undefined
         }
       />
       <div className="flex flex-col gap-3 px-5 py-3">
@@ -87,14 +90,14 @@ export function SchedulesPage({ canCreate, isAdmin }: SchedulesPageProps) {
           <div className="overflow-x-auto">
             <table aria-label="Schedules" className="w-full text-sm">
               <thead>
-                <tr className="border-b border-border bg-surface-head text-left text-text-secondary">
-                  <th className="px-3 py-2 font-semibold">Name</th>
-                  <th className="px-3 py-2 font-semibold">Runs</th>
-                  <th className="px-3 py-2 font-semibold">When</th>
-                  <th className="px-3 py-2 font-semibold">Range</th>
-                  <th className="px-3 py-2 font-semibold">Last run</th>
-                  <th className="px-3 py-2 font-semibold">State</th>
-                  <th className="px-3 py-2 font-semibold">Alerts</th>
+                <tr className="border-b border-border text-left text-text-secondary">
+                  <th className="px-3 py-2">Name</th>
+                  <th className="px-3 py-2">Runs</th>
+                  <th className="px-3 py-2">When</th>
+                  <th className="px-3 py-2">Range</th>
+                  <th className="px-3 py-2">Last run</th>
+                  <th className="px-3 py-2">State</th>
+                  <th className="px-3 py-2">Alerts</th>
                   <th className="px-3 py-2" aria-label="Actions" />
                 </tr>
               </thead>
@@ -103,7 +106,13 @@ export function SchedulesPage({ canCreate, isAdmin }: SchedulesPageProps) {
                   const manage = s.mine || isAdmin;
                   return (
                     <Fragment key={s.schedule_id}>
-                      <tr className="border-b border-border align-top last:border-0">
+                      <tr
+                        data-linked={s.schedule_id === linked ? "" : undefined}
+                        aria-current={s.schedule_id === linked ? "true" : undefined}
+                        className={`border-b border-border align-top last:border-0 ${
+                          s.schedule_id === linked ? "bg-accent-subtle" : ""
+                        }`}
+                      >
                         <td className="px-3 py-2">
                           <div className="font-semibold">{s.name}</div>
                           <div className="text-text-muted">
@@ -227,10 +236,11 @@ export function SchedulesPage({ canCreate, isAdmin }: SchedulesPageProps) {
             </table>
           </div>
           {list.length === 0 && schedules.isSuccess ? (
-            <p className="px-3 py-8 text-center text-sm text-text-secondary">
-              No schedules. Put a saved search or a detection rule on a schedule and its results
-              appear on the Dashboard.
-            </p>
+            <EmptyState
+              kind="not-set-up"
+              title="No schedules."
+              detail="Put a saved search or a detection rule on a schedule and its results appear on the Dashboard."
+            />
           ) : null}
         </section>
         <p className="text-xs text-text-muted">

@@ -100,7 +100,8 @@ class BackupHealthOut(BaseModel):
 class HealthOut(BaseModel):
     devices: list[DeviceOut]
     agents: list[AgentOut]
-    # Daily and today-so-far page rollups: counts and times only, no source names.
+    # Daily and today-so-far page rollups: counts and times only, no source names. For
+    # administrators only (Settings > System).
     rollups: list[RollupOut] = []
     # Damaged lake files moved out of the way (SPEC D51); kept for an administrator.
     quarantined_files: int = 0
@@ -111,7 +112,8 @@ class HealthOut(BaseModel):
     # refreshes, and a step at start that waits for the next start (the backup before the
     # alert rewrite): when they started failing and why; for administrators only.
     background_failures: list[FailingOut] = []
-    # Scheduled backups (handoff item 8): the last run, its age, size, and result.
+    # Scheduled backups (handoff item 8): the last run, its age, size, and result. For
+    # administrators only (Settings > System); null for everyone else.
     backup: BackupHealthOut | None = None
 
 
@@ -129,8 +131,9 @@ def _svc(request: Request) -> HealthService:
 
 @router.get("/health-checks")
 async def health_checks(request: Request, user: CurrentUser) -> HealthOut:
-    """Watched devices and per-machine agents, from the sources the caller may read.
-    Audited as health.view."""
+    """Watched devices and per-machine agents, from the sources the caller may read; for an
+    administrator also the page rollups and the state of scheduled backups (Settings >
+    System). Audited as health.view."""
     allowed = await run_in_threadpool(permitted_sources, request.app.state.meta, user)
     svc = _svc(request)
     devices = await run_in_threadpool(svc.device_status, allowed)
@@ -145,6 +148,9 @@ async def health_checks(request: Request, user: CurrentUser) -> HealthOut:
         {"sources_in_scope": allowed},
     )
     admin = allowed is None or user.role == "admin"
+    # Settings > System is an administrator's (ADR-0052 section 3.3; owner, 2026-11-13): the
+    # state of backups and the page rollups go to the role, not to whoever reads every source.
+    system = user.role == "admin"
     return HealthOut(
         devices=[
             DeviceOut(
@@ -162,10 +168,10 @@ async def health_checks(request: Request, user: CurrentUser) -> HealthOut:
         ],
         agents=[AgentOut(**asdict(a)) for a in agents],
         quarantined_files=await run_in_threadpool(quarantined_count, request.app.state.lake_dir),
-        rollups=await run_in_threadpool(_rollups, request),
+        rollups=await run_in_threadpool(_rollups, request) if system else [],
         client_errors=_client_errors(request) if admin else [],
         background_failures=_failing(request) if admin else [],
-        backup=await run_in_threadpool(_backup, request),
+        backup=await run_in_threadpool(_backup, request) if system else None,
     )
 
 

@@ -47,7 +47,7 @@ export function AiDraftBar({ templateId, dirty, hasSample, onDrafted }: AiDraftB
           id="ai-provider"
           value={providerId}
           onChange={(e) => setChosen(e.target.value)}
-          className="h-8 rounded border border-border-strong bg-inset px-2 text-sm text-text"
+          className="h-8 rounded border border-border-control bg-inset px-2 text-sm text-text"
         >
           {list.map((p) => (
             <option key={p.provider_id} value={p.provider_id}>

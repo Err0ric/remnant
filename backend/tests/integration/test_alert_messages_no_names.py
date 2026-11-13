@@ -167,3 +167,35 @@ def test_summary_lines_are_audited_only_when_they_name_someone(
     assert ai_lab["ana"].get("/api/alerts").status_code == 200
     assert rows() == (before[0] + 1, before[1] + 1)
     assert _audit(ai_lab, "ai.view")[-1]["surface"] == "alerts"
+
+
+def test_alert_lines_come_in_the_lists_order_and_name_the_review_items(
+    ai_lab: dict[str, Any],  # noqa: F811
+) -> None:
+    """ADR-0052 section 3.9, review of #555: High alerts, then other alerts, then AI review
+    items. Picked by severity alone, the five unreviewed services below (Medium, newer)
+    filled the five lines and pushed the older Medium rule alert out."""
+    store = ai_lab["app"].state.alert_items
+    rule = store.raise_item(
+        "rule", "rule:r-old", "Rule: older medium", ref_id="r-old", sources=["dns"],
+        severity="medium",
+    )  # fmt: skip
+    waiting = [
+        store.raise_item(
+            "ai_watch", f"service:new-service-{n}", f"AI service not reviewed: service {n}",
+            ref_id=f"svc{n}", sources=["dns"], severity="medium", why="Not reviewed yet",
+        ).item_id
+        for n in range(5)
+    ]  # fmt: skip
+    body = ai_lab["admin"].get("/api/alerts/lines?limit=5").json()
+    sent = [i["item_id"] for i in body["items"]]
+    assert rule.item_id in sent  # a real alert is never pushed out by review items
+    assert set(body["review"]) <= set(waiting) and body["review"]
+    assert set(body["review"]) == set(sent) & set(waiting)
+    # Every line that is not a review item comes before every one that is.
+    kinds = [i in body["review"] for i in sent]
+    assert kinds == sorted(kinds)
+    # Health's newest-first lines are not reordered, and name their review items too.
+    newest = ai_lab["admin"].get("/api/alerts/lines?limit=3&by=newest").json()
+    assert [i["item_id"] for i in newest["items"]] == list(reversed(waiting))[:3]
+    assert set(newest["review"]) == {i["item_id"] for i in newest["items"]}

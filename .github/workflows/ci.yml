@@ -194,6 +194,8 @@ jobs:
       - name: Known vulnerabilities in shipped packages (docs/security/dependencies.md)
         # Findings fail at once; only an error from the audit service is retried (3 tries).
         run: ../scripts/pnpm-audit.sh
+      - name: Token contrast in both themes, and tokens.css matches DESIGN.md (scripts/check-contrast.py)
+        run: python3 ../scripts/check-contrast.py
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test -- --reporter=default --reporter=github-actions  # failing tests become check annotations

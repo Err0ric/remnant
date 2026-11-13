@@ -18,13 +18,13 @@ export function TargetedTable({ rows, onPick }: TargetedTableProps) {
     <div className="overflow-x-auto">
       <table aria-label="Targeted usernames" className="w-full min-w-[760px] text-sm">
         <thead>
-          <tr className="border-b border-border bg-surface-head text-left text-text-secondary">
-            <th className="px-3 py-2 font-semibold">Username</th>
-            <th className="px-3 py-2 text-right font-semibold">Attempts</th>
-            <th className="px-3 py-2 font-semibold">Sources</th>
-            <th className="px-3 py-2 font-semibold">Top countries</th>
-            <th className="px-3 py-2 font-semibold">Top networks (ASN)</th>
-            <th className="px-3 py-2 font-semibold">Hosts targeted</th>
+          <tr className="border-b border-border text-left text-text-secondary">
+            <th className="px-3 py-2">Username</th>
+            <th className="px-3 py-2 text-right">Attempts</th>
+            <th className="px-3 py-2">Sources</th>
+            <th className="px-3 py-2">Top countries</th>
+            <th className="px-3 py-2">Top networks (ASN)</th>
+            <th className="px-3 py-2">Hosts targeted</th>
           </tr>
         </thead>
         <tbody>

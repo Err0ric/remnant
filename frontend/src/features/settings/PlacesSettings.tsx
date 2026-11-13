@@ -1,3 +1,4 @@
+import { Skeleton } from "@/components/Skeleton";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, type Places } from "@/lib/api";
@@ -148,7 +149,7 @@ export function PlacesSettings() {
           {q.error instanceof ApiError ? q.error.message : "Could not load"}
         </p>
       ) : (
-        <p className="p-4 text-text-secondary">Loading…</p>
+        <Skeleton label="places" rows={3} className="rounded-none border-0" />
       )}
     </section>
   );

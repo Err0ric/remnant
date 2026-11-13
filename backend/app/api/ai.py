@@ -41,6 +41,7 @@ from app.core.job_status import Failure
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.engine.views import permitted_sources, scope_sources
 from app.meta.db import MetaDB
+from app.meta.page_loads import AI_WATCH, PageLoadAudit, declared
 
 router = APIRouter(tags=["ai"])
 
@@ -392,10 +393,47 @@ class WatchSummaryOut(BaseModel):
     since: str | None = None
     before: str = ""
     chart_drill: str | None = None
+    services_in_use: int = 0  # AI services with any use in the period, whatever their status
     people_pending_days: int = 0  # see UsageOut
     people_days: int = 0
     # When these numbers were computed: the page shows "updated N s ago" (D147).
     updated_at: datetime | None = None
+
+
+# The Dashboard's window for each `days` it asks AI Watch for (frontend `WINDOWS`).
+_WATCH_WINDOWS = {1: "24h", 7: "7d", 30: "30d"}
+
+
+def _audit_watch(
+    request: Request,
+    user: User,
+    allowed: list[str] | None,
+    read: list[str],
+    names: bool,
+    days: int,
+    tz: str,
+    cached: bool,
+) -> None:
+    """One AI Watch answer in the audit log (ADR-0029 G3 as amended 2026-11-12). With names:
+    its own `ai.view_people` row, always. Without names, on the Dashboard (its page-load
+    headers): the part `ai_watch` of the visit's row, written at once when no row of the
+    visit covers it yet. Without names anywhere else: an `ai.view` row. Blocking."""
+    audit, ip = _audit(request).audit, client_ip(request)
+    extra: dict[str, Any] = {"days": days, "tz": tz}
+    if cached:
+        extra["cached"] = True
+    visit = None if names else declared(request.headers)
+    # The row must say what was read: only an answer for the visit's own window is part of
+    # the visit's row (the request's `days`, never the header alone). Any other `days`, or
+    # a visit with no window, is audited on its own.
+    window = _WATCH_WINDOWS.get(days)
+    if visit is None or window is None or visit.window != window:
+        audit_ai_view(audit, user, ip, "ai.watch.summary", None, None, read, names, **extra)
+        return
+    loads: PageLoadAudit = request.app.state.page_loads
+    detail = {"surface": "ai.watch.summary", "start": None, "end": None,
+              "sources_in_scope": read, **extra}  # fmt: skip
+    loads.record(visit, user.user_id, ip, [AI_WATCH], window, allowed, ("ai.view", detail))
 
 
 @router.get("/ai/watch/summary", response_model=WatchSummaryOut)
@@ -408,7 +446,8 @@ async def ai_watch_summary(
     """AI Watch (ADR-0035 rows 10, 12, 13): five cards against the period before, AI use
     over 30 days by review status, and the top services, all on the caller's view.
     Without View people in AI usage, card text and new agents show machines, never names
-    (D242). Audited ai.view_people when names are shown, else ai.view."""
+    (D242). Audited ai.view_people when names are shown; else as part of the Dashboard
+    visit's row when the request belongs to one, or ai.view on its own."""
     app = request.app
     meta: MetaDB = app.state.meta
     allowed = await run_in_threadpool(permitted_sources, meta, user)
@@ -456,30 +495,24 @@ async def ai_watch_summary(
             since=s.since,
             before=s.before,
             chart_drill=s.chart_drill,
+            services_in_use=s.services_in_use,
             people_pending_days=pending,
             people_days=of,
             updated_at=app_now(request),
         )
         return result.model_dump_json().encode(), list(s.sources), s.names
 
-    audit, ip = _audit(request).audit, client_ip(request)
     peeked = cache.peek(key, STALE_MAX_S) if default else None
     hit = (peeked[0] if peeked is not None else None) if default else cache.get(key)
     if hit is not None:
         body, read, names = hit
-        await run_in_threadpool(
-            audit_ai_view, audit, user, ip, "ai.watch.summary", None, None, read, names,
-            days=days, tz=tz, cached=True,
-        )  # fmt: skip
+        await run_in_threadpool(_audit_watch, request, user, allowed, read, names, days, tz, True)
         if default:  # seen now: refreshed while viewed, again after a lapse (D147)
             app.state.refresher.watch(key, user.user_id, scope_key(allowed), compute)
         return Response(body, media_type="application/json")
 
     body, read, names = await run_in_threadpool(compute, user, allowed)
-    await run_in_threadpool(
-        audit_ai_view, audit, user, ip, "ai.watch.summary", None, None, read, names,
-        days=days, tz=tz,
-    )  # fmt: skip
+    await run_in_threadpool(_audit_watch, request, user, allowed, read, names, days, tz, False)
     cache.put(key, (body, read, names))
     if default:
         app.state.refresher.watch(key, user.user_id, scope_key(allowed), compute)
@@ -1183,6 +1216,9 @@ async def ai_inventory_export(
     days: Annotated[int, Query(ge=1, le=90)] = 30,
     type: InventoryType | None = None,  # the query parameter's name
     excluded: bool = False,
+    review: Annotated[
+        Literal["approved", "not_approved", "unreviewed"] | None, Query(alias="status")
+    ] = None,  # `status` is the fastapi module here
 ) -> Response:
     """The current view as a file (row 22): admins and analysts only, every export
     audited `ai.inventory_export` with its filters and row count. Without View people in
@@ -1191,10 +1227,11 @@ async def ai_inventory_export(
     rows = [
         i for i in items
         if (type is None or i.type == type) and (i.excluded is not None) == excluded
+        and (review is None or i.status == review)
     ]  # fmt: skip
     body = inventory_export(rows, format)
     detail = {"format": format, "days": days, "type": type, "excluded": excluded,
-              "rows": len(rows), "sources_in_scope": sources}  # fmt: skip
+              "status": review, "rows": len(rows), "sources_in_scope": sources}  # fmt: skip
     await run_in_threadpool(
         _audit(request).audit.write, "ai.inventory_export", "success", user.user_id,
         client_ip(request), detail,

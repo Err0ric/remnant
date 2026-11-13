@@ -1,3 +1,5 @@
+import { About } from "@/components/About";
+import { SeverityMark } from "@/components/SeverityMark";
 import { useQuery } from "@tanstack/react-query";
 import { api, type EntityRisk } from "@/lib/api";
 import { InventoryMatches } from "./InventoryLine";
@@ -11,16 +13,13 @@ interface RiskTableProps {
   onPick: (row: EntityRisk) => void;
   /** The range's start, for the Proxmox inventory lines on address and host rows. */
   start?: string;
+  /** The end of a Custom range; left out for a window that ends now. */
+  end?: string;
   /** People's AI watch flags are withheld from this viewer (View people in AI usage, D242). */
   aiPeopleHidden?: boolean;
 }
 
-const LEVELS = [
-  ["critical", "bg-sev-critical-bg text-sev-critical-text"],
-  ["high", "bg-sev-high-bg text-sev-high-text"],
-  ["medium", "bg-sev-medium-bg text-sev-medium-text"],
-  ["low", "bg-sev-low-bg text-sev-low-text"],
-] as const;
+const LEVELS = ["critical", "high", "medium", "low"] as const;
 
 /** What each part of the score is called, in the order the hover lists them (D195). */
 export const PART_LABEL: Record<string, string> = {
@@ -89,12 +88,20 @@ function Cell({ r, col, hidden }: { r: EntityRisk; col: Column; hidden: boolean 
 
 /** People and devices, ranked by a score whose parts each have a column and show on
  * hover (ADR-0016 row 4, D195), then by events. A row opens the person or host page. */
-export function RiskTable({ label, kind, rows, onPick, start, aiPeopleHidden }: RiskTableProps) {
+export function RiskTable({
+  label,
+  kind,
+  rows,
+  onPick,
+  start,
+  end,
+  aiPeopleHidden,
+}: RiskTableProps) {
   // Which Proxmox guest each address or host is (ADR-0045 A5): exact matches only.
   const values = kind === "user" ? [] : rows.slice(0, 50).map((r) => r.value);
   const inventory = useQuery({
-    queryKey: ["inventory-matches", values, start],
-    queryFn: () => api.inventoryMatches(values, start),
+    queryKey: ["inventory-matches", values, start, end],
+    queryFn: () => api.inventoryMatches(values, start, end),
     enabled: values.length > 0,
     staleTime: 60_000,
   });
@@ -105,16 +112,24 @@ export function RiskTable({ label, kind, rows, onPick, start, aiPeopleHidden }: 
     <div className="overflow-x-auto">
       <table aria-label={label} className="w-full min-w-[760px] text-sm">
         <thead>
-          <tr className="border-b border-border bg-surface-head text-left text-text-secondary">
-            <th className="px-3 py-2 font-semibold">{label}</th>
-            <th className="w-40 px-3 py-2 text-right font-semibold">Score</th>
-            <th className="px-3 py-2 font-semibold">Rule matches</th>
+          <tr className="border-b border-border text-left text-text-secondary">
+            <th className="px-3 py-2">{label}</th>
+            <th aria-label="Score" className="w-40 px-3 py-2 text-right">
+              <span className="flex items-center justify-end gap-1.5">
+                Score
+                <About
+                  align="end"
+                  text="10 per critical, 5 per high, 2 per medium, 1 per low rule match; 3 per flagged schedule run that names it; 1 per failed sign-in and 1 per attack hit from outside (up to 25 each); 5 per risky inbox rule; 3 per app consent; 3 per AI watch flag; 5 per alert. Only sources you may read are counted. Users are names with a successful sign-in, a Microsoft 365 identity, or an Identities link; names only ever tried in failed sign-ins are under Targeted usernames. Ranked by score, then by events."
+                />
+              </span>
+            </th>
+            <th className="px-3 py-2">Rule matches</th>
             {cols.map((c) => (
-              <th key={c} className="px-3 py-2 text-right font-semibold">
+              <th key={c} className="px-3 py-2 text-right">
                 {PART_LABEL[c]}
               </th>
             ))}
-            <th className="px-3 py-2 text-right font-semibold">Events</th>
+            <th className="px-3 py-2 text-right">Events</th>
           </tr>
         </thead>
         <tbody>
@@ -155,18 +170,18 @@ export function RiskTable({ label, kind, rows, onPick, start, aiPeopleHidden }: 
               </td>
               <td className="px-3 py-2 align-top" title={r.rules.join(", ") || undefined}>
                 <div className="flex flex-wrap gap-1">
-                  {LEVELS.map(([level, tint]) =>
+                  {LEVELS.map((level) =>
                     r[level] ? (
-                      <span
+                      <SeverityMark
                         key={level}
-                        className={`rounded-badge px-1.5 py-px text-xs font-semibold ${tint}`}
-                      >
-                        {r[level]} {level}
-                      </span>
+                        tone={level}
+                        label={`${r[level]} ${level}`}
+                        className="text-xs"
+                      />
                     ) : null,
                   )}
                   {r.flagged_runs ? (
-                    <span className="rounded-badge bg-sev-info-bg px-1.5 py-px text-xs text-sev-info-text">
+                    <span className="rounded-badge bg-info-bg px-1.5 py-px text-xs text-info-tx">
                       {r.flagged_runs} flagged {r.flagged_runs === 1 ? "run" : "runs"}
                     </span>
                   ) : null}

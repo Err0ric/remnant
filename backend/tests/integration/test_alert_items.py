@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from app.auth.users import User
 from app.meta.db import MIGRATIONS
 from tests.integration.test_dashboards import audit
 from tests.integration.test_schedules import NOW, WIN_ID, make_lab, run_now, schedule
@@ -352,3 +353,115 @@ def test_the_person_filter_never_tells_whether_a_hidden_alert_names_that_person(
     assert named["items"] == other["items"] == []
     assert named["restricted"] is other["restricted"] is True
     assert named["open"] == other["open"] == 0
+
+
+def test_closed_alerts_are_listed_by_when_they_were_closed_in_a_window(
+    lab: dict[str, Any],
+) -> None:
+    """The Time filter of Alerts > Closed (owner, 2026-11-13): the server picks the alerts
+    closed in the window, newest closed first, so an alert raised long ago and closed
+    yesterday is in "the last 7 days" whatever the list's cap."""
+    items = lab["app"].state.alert_items
+    old = items.raise_item("rule", "r-old", "Raised first", ref_id="a1")
+    lab["clock"].now += timedelta(days=30)
+    new = items.raise_item("rule", "r-new", "Raised later", ref_id="a2")
+    close = {"reason": "expected"}
+    # The newer one is closed first, the older one 20 days later.
+    assert lab["admin"].post(f"/api/alerts/{new.item_id}/close", json=close, headers=lab["h"]).status_code == 200  # fmt: skip
+    first_close = lab["clock"].now
+    lab["clock"].now += timedelta(days=20)
+    assert lab["admin"].post(f"/api/alerts/{old.item_id}/close", json=close, headers=lab["h"]).status_code == 200  # fmt: skip
+    lab["clock"].now += timedelta(hours=1)
+
+    def closed(**bounds: str) -> list[str]:
+        res = lab["admin"].get("/api/alerts", params={"state": "closed", **bounds})
+        assert res.status_code == 200, res.text
+        return [i["subject"] for i in res.json()["items"]]
+
+    week_ago = (lab["clock"].now - timedelta(days=7)).isoformat()
+    assert closed(closed_from=week_ago) == ["r-old"]
+    # Both sides, and a window that holds only the first close.
+    assert closed(closed_to=(first_close + timedelta(minutes=1)).isoformat()) == ["r-new"]
+    assert closed(
+        closed_from=(first_close - timedelta(days=1)).isoformat(),
+        closed_to=lab["clock"].now.isoformat(),
+    ) == ["r-old", "r-new"]  # newest closed first
+    # Another offset names the same moments.
+    assert closed(closed_from=week_ago.replace("+00:00", "Z")) == ["r-old"]
+    # No bounds: as before.
+    assert sorted(closed()) == ["r-new", "r-old"]
+    # Open alerts are never filtered by time: the bounds are refused with another state.
+    assert lab["admin"].get("/api/alerts", params={"closed_from": week_ago}).status_code == 400
+    assert lab["admin"].get("/api/alerts?state=closed&closed_from=yesterday").status_code == 422
+
+
+def test_the_newest_closed_are_kept_when_the_list_is_capped(lab: dict[str, Any]) -> None:
+    items = lab["app"].state.alert_items
+    old = items.raise_item("rule", "r-first", "Raised first", ref_id="b0")
+    close = {"reason": "expected"}
+    for n in range(3):
+        lab["clock"].now += timedelta(minutes=1)
+        later = items.raise_item("rule", f"r-{n}", f"Later {n}", ref_id=f"b{n + 1}")
+        lab["admin"].post(f"/api/alerts/{later.item_id}/close", json=close, headers=lab["h"])
+    lab["clock"].now += timedelta(days=1)
+    lab["admin"].post(f"/api/alerts/{old.item_id}/close", json=close, headers=lab["h"])
+    # Raised first, closed last: the cap keeps it, since Closed is ordered by close time.
+    admin = User("u0", "admin", "admin")
+    got, more = items.closed(admin, limit=2)
+    assert [i.subject for i in got] == ["r-first", "r-2"] and more is True
+    assert items.closed(admin, limit=4) == (items.items(admin, "closed", limit=4), False)
+    assert alerts(lab["admin"], "closed")["capped"] is False
+    # The cap counts what the viewer may know of: another person's private alerts do not
+    # push the viewer's own out of the list.
+    mine = items.raise_item(
+        "schedule", "s-mine", "Ana's own", ref_id="b9", owner_id=lab["ids"]["ana"], shared=False
+    )
+    lab["admin"].post(f"/api/alerts/{mine.item_id}/close", json=close, headers=lab["h"])
+    for n in range(3):
+        lab["clock"].now += timedelta(minutes=1)
+        other = items.raise_item(
+            "schedule", f"s-bob-{n}", "Bob's own", ref_id=f"c{n}",
+            owner_id=lab["ids"]["bob"], shared=False,
+        )  # fmt: skip
+        lab["admin"].post(f"/api/alerts/{other.item_id}/close", json=close, headers=lab["h"])
+    ana = User(lab["ids"]["ana"], "ana", "analyst")
+    seen, _ = items.closed(ana, limit=1)
+    assert [i.subject for i in seen] == ["s-mine"]
+
+
+def test_mutes_that_ended_in_a_window_are_listed_with_those_in_force(
+    lab: dict[str, Any],
+) -> None:
+    """Alerts > Muted with a time window: every mute in force now, and those that ended in
+    the window (ended early or ran out), marked as ended."""
+    items = lab["app"].state.alert_items
+    for n in ("a", "b", "c"):
+        it = items.raise_item("rule", f"r-{n}", f"Rule {n}", ref_id=f"m-{n}")
+        res = lab["admin"].post(
+            f"/api/alerts/{it.item_id}/mute", json={"days": 7 if n != "c" else 30}, headers=lab["h"]
+        )
+        assert res.status_code == 200, res.text
+    start = lab["clock"].now
+    by_subject = {m["subject"]: m for m in lab["admin"].get("/api/alerts/mutes").json()}
+    # "a" is ended by hand the next day; "b" runs out after 7 days; "c" is still in force.
+    lab["clock"].now += timedelta(days=1)
+    url = f"/api/alerts/mutes/{by_subject['r-a']['mute_id']}"
+    assert lab["admin"].delete(url, headers=lab["h"]).status_code == 204
+    lab["clock"].now += timedelta(days=9)
+
+    def mutes(**bounds: str) -> dict[str, bool]:
+        res = lab["admin"].get("/api/alerts/mutes", params=bounds)
+        assert res.status_code == 200, res.text
+        return {m["subject"]: m["active"] for m in res.json()}
+
+    assert mutes() == {"r-c": True}  # as before: in force only
+    three_days = (lab["clock"].now - timedelta(days=3)).isoformat()
+    assert mutes(**{"from": three_days}) == {"r-c": True}  # a window alone adds nothing
+    assert mutes(ended="true", **{"from": three_days}) == {"r-c": True, "r-b": False}
+    everything = {"r-c": True, "r-a": False, "r-b": False}
+    assert mutes(ended="true", **{"from": (start - timedelta(days=1)).isoformat()}) == everything
+    assert mutes(ended="true") == everything  # no dates: every mute kept
+    # A window in the past still lists what is in force now: a mute never drops out.
+    past = mutes(ended="true", **{"from": (start - timedelta(days=9)).isoformat(), "to": (start - timedelta(days=8)).isoformat()})  # fmt: skip
+    assert past == {"r-c": True}
+    assert alerts(lab["admin"])["muted"] == 1  # the count is of mutes in force

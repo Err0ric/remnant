@@ -20,10 +20,10 @@ from playwright.sync_api import sync_playwright
 ROOT = Path(__file__).resolve().parents[2]
 MARK = (ROOT / "frontend" / "public" / "favicon.svg").read_text(encoding="utf-8")
 PAGE = """<!doctype html><html><head><meta charset="utf-8"><style>
-@font-face {{ font-family: "Source Sans 3"; font-weight: 400; src: url("{sans400}"); }}
-@font-face {{ font-family: "Source Sans 3"; font-weight: 700; src: url("{sans700}"); }}
+@font-face {{ font-family: "Geist"; font-weight: 400; src: url("{sans400}"); }}
+@font-face {{ font-family: "Geist"; font-weight: 700; src: url("{sans700}"); }}
 html, body {{ margin: 0; width: 1280px; height: 640px; overflow: hidden; background: #0f1115; }}
-body {{ font-family: "Source Sans 3", system-ui, sans-serif; color: #e6e9ef; position: relative; }}
+body {{ font-family: "Geist", system-ui, sans-serif; color: #e6e9ef; position: relative; }}
 .left {{ position: absolute; left: 72px; top: 0; bottom: 0; width: 470px; display: flex;
   flex-direction: column; justify-content: center; gap: 22px; }}
 .brand {{ display: flex; align-items: center; gap: 20px; }}
@@ -46,7 +46,7 @@ body {{ font-family: "Source Sans 3", system-ui, sans-serif; color: #e6e9ef; pos
 
 
 def font(weight: int) -> str:
-    found = sorted((ROOT / "frontend" / "dist" / "assets").glob(f"source-sans-3-latin-{weight}-normal-*.woff2"))  # fmt: skip
+    found = sorted((ROOT / "frontend" / "dist" / "assets").glob(f"geist-latin-{weight}-normal-*.woff2"))  # fmt: skip
     if not found:
         raise SystemExit("frontend/dist is missing its fonts: build the frontend first")
     return found[0].as_uri()

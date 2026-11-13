@@ -10,7 +10,7 @@ interface ApiCredentialsFieldsProps {
 }
 
 const AREA =
-  "min-h-24 rounded border border-border-strong bg-inset px-2 py-1.5 font-mono text-sm text-text";
+  "min-h-24 rounded border border-border-control bg-inset px-2 py-1.5 font-mono text-sm text-text";
 
 /** Write-only credential inputs for an API source; stored encrypted, never shown again. */
 export function ApiCredentialsFields({ kind, auth, value, onChange }: ApiCredentialsFieldsProps) {

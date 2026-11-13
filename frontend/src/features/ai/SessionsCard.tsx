@@ -1,3 +1,6 @@
+import { lastDays } from "@/lib/timeWindow";
+import { EmptyState } from "@/components/EmptyState";
+import { Skeleton } from "@/components/Skeleton";
 import { EntityLink } from "@/components/EntityLink";
 import { When } from "@/components/When";
 import { useQuery } from "@tanstack/react-query";
@@ -5,6 +8,9 @@ import { useState } from "react";
 import { AroundEvent } from "@/features/search/AroundEvent";
 import { ApiError, api, type AgentAccount, type AgentSession, type SessionStep } from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { FilterBar } from "@/components/FilterBar";
+import { useFilters } from "@/lib/filters";
+import { fragmentValues, setFragment, useSection } from "@/lib/route";
 import { TIER_LABEL, TierBadge } from "./AccountsCard";
 import { since, stamp } from "@/features/overview/time";
 import { groupTurns, type ToolCall, type Turn } from "./sessionTurns";
@@ -41,22 +47,30 @@ export function sessionState(s: AgentSession, short = false): string {
   return short ? "open" : "still open";
 }
 
-function readOpen(): string | null {
-  const m = /(?:^|&)session=([^&]+)/.exec(window.location.hash.replace(/^#/, ""));
-  return m?.[1] ? decodeURIComponent(m[1]) : null;
-}
+const FILTER_DEFAULTS = { person: "", machine: "", tool: "", flags: "" };
 
 /** Agent sessions from the hooks plugin (ADR-0026), as list and detail (ADR-0038 section 6):
  * the list on the left, newest first; the open session on the right with its Claude account
  * tier, tools, and steps in order. Metadata only: what was touched, never what was said. */
-export function SessionsCard() {
-  const list = useQuery({ queryKey: ["ai-sessions"], queryFn: () => api.aiSessions(7) });
+interface SessionsCardProps {
+  /** Whole days back from now, from the page's time choice (as the strip above counts). */
+  days?: number;
+}
+
+export function SessionsCard({ days = 7 }: SessionsCardProps) {
+  const list = useQuery({
+    queryKey: ["ai-sessions", days],
+    queryFn: () => api.aiSessions(days),
+  });
   const accounts = useQuery({ queryKey: ["agent-accounts"], queryFn: () => api.agentAccounts(30) });
-  const [open, setOpenState] = useState<string | null>(readOpen);
+  // The open session is the one in the address, so Back and a sent link agree with the pane.
+  const open = fragmentValues(useSection()).get("session");
   const setOpen = (id: string | null) => {
-    setOpenState(id);
-    const url = `${window.location.pathname}${id ? `#session=${encodeURIComponent(id)}` : ""}`;
-    window.history.replaceState(null, "", url);
+    // Beside the filters in the fragment, which stay.
+    const next = fragmentValues(window.location.hash.replace(/^#/, ""));
+    if (id) next.set("session", id);
+    else next.delete("session");
+    setFragment(next.toString(), true);
   };
   const timeline = useQuery({
     queryKey: ["ai-session", open],
@@ -75,10 +89,12 @@ export function SessionsCard() {
   const account = (email: string | null) =>
     email && !masked ? accounts.data?.rows.find((a) => a.email === email.toLowerCase()) : undefined;
   // Filters (owner, 2026-11-03; D188): person, machine, tool, and has flags.
-  const [person, setPerson] = useState("");
-  const [machine, setMachine] = useState("");
-  const [tool, setTool] = useState("");
-  const [flagged, setFlagged] = useState(false);
+  // In the address (DESIGN.md 6.0), so a filtered list can be sent or bookmarked.
+  const filters = useFilters(FILTER_DEFAULTS, { flags: ["", "flagged"] });
+  // Without names, a person in the address filters nothing (and is not offered).
+  const person = masked ? "" : filters.values.person;
+  const { machine, tool } = filters.values;
+  const flagged = filters.values.flags === "flagged";
   const flagsOf = (r: AgentSession) => sessionFlags(r, account);
   const rows = shown.filter(
     (r) =>
@@ -91,6 +107,22 @@ export function SessionsCard() {
   const current = rows.find((r) => r.session_id === open) ?? null;
   const options = (pick: (r: AgentSession) => (string | null)[]) =>
     [...new Set(shown.flatMap(pick).filter((v): v is string => !!v))].sort();
+  const facet = (
+    name: string,
+    key: "person" | "machine" | "tool",
+    pick: (r: AgentSession) => (string | null)[],
+  ) => ({
+    name,
+    value: key === "person" ? person : filters.values[key],
+    // A value in the address that no listed session has stays selectable, so it shows.
+    options: [
+      { id: "", label: "Any" },
+      ...[...new Set([...options(pick), ...(filters.values[key] ? [filters.values[key]] : [])])]
+        .sort()
+        .map((v) => ({ id: v, label: v })),
+    ],
+    onChange: (id: string) => filters.set(key, id),
+  });
   return (
     <section
       aria-label="Agent sessions"
@@ -99,8 +131,8 @@ export function SessionsCard() {
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-surface-head px-3 py-2">
         <SectionTitle>Sessions</SectionTitle>
         <span className="text-sm text-text-muted">
-          Claude Code and Cowork sessions from the hooks plugin, last 7 days. Browser chat is not
-          covered.
+          {lastDays(days)}. Claude Code and Cowork sessions from the hooks plugin. Browser chat is
+          not covered.
           {masked
             ? " Names are hidden. An admin can turn on View people in AI usage for you."
             : null}
@@ -118,39 +150,31 @@ export function SessionsCard() {
         </label>
       </div>
       {shown.length > 0 ? (
-        <div
-          role="group"
-          aria-label="Filter sessions"
-          className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 text-sm"
-        >
-          {masked ? null : (
-            <Pick
-              label="Person"
-              value={person}
-              set={setPerson}
-              values={options((r) => [r.person])}
-            />
-          )}
-          <Pick
-            label="Machine"
-            value={machine}
-            set={setMachine}
-            values={options((r) => [r.machine])}
+        <div className="border-b border-border px-3 py-1">
+          <FilterBar
+            label="Filter sessions"
+            facets={[
+              ...(masked ? [] : [facet("Person", "person", (r) => [r.person])]),
+              facet("Machine", "machine", (r) => [r.machine]),
+              facet("Tool", "tool", (r) => r.tools),
+              {
+                name: "Flags",
+                value: filters.values.flags,
+                options: [
+                  { id: "", label: "Any" },
+                  { id: "flagged", label: "Flagged" },
+                ],
+                onChange: (id) => filters.set("flags", id),
+              },
+            ]}
+            count={
+              filtered > 0
+                ? `${rows.length} of ${shown.length} ${shown.length === 1 ? "session" : "sessions"}`
+                : `${shown.length} ${shown.length === 1 ? "session" : "sessions"}`
+            }
+            onReset={filters.reset}
+            isDefault={!machine && !tool && !flagged && !person}
           />
-          <Pick label="Tool" value={tool} set={setTool} values={options((r) => r.tools)} />
-          <label className="flex items-center gap-1.5 text-text-secondary">
-            <input
-              type="checkbox"
-              checked={flagged}
-              onChange={(e) => setFlagged(e.target.checked)}
-            />
-            Has flags
-          </label>
-          {filtered > 0 ? (
-            <span className="tabular-nums text-text-muted">
-              {rows.length} of {shown.length} shown
-            </span>
-          ) : null}
         </div>
       ) : null}
       {list.error ? (
@@ -215,11 +239,9 @@ export function SessionsCard() {
           </ul>
           <div className="min-w-0 border-t border-border px-3 py-2 lg:border-t-0">
             {!open ? (
-              <p className="py-6 text-center text-sm text-text-secondary">
-                Pick a session to see its account, tools, and steps in order.
-              </p>
+              <EmptyState kind="default-empty" title="Pick a session." />
             ) : timeline.isLoading ? (
-              <div aria-busy="true" className="h-40 animate-pulse" />
+              <Skeleton label="the session" rows={4} className="rounded-none border-0" />
             ) : timeline.data ? (
               <Detail
                 person={timeline.data.person}
@@ -478,33 +500,8 @@ function count(n: number, word: string): string {
 
 function FlagBadge({ flag }: { flag: SessionFlag }) {
   return (
-    <span className="rounded-badge bg-sev-medium-bg px-1.5 py-px text-xs text-sev-medium-text">
+    <span className="rounded-badge border border-warn px-1.5 py-px text-xs text-warn">
       {FLAG_LABEL[flag]}
     </span>
-  );
-}
-
-interface PickProps {
-  label: string;
-  value: string;
-  set: (v: string) => void;
-  values: string[];
-}
-
-function Pick({ label, value, set, values }: PickProps) {
-  return (
-    <select
-      aria-label={label}
-      value={value}
-      onChange={(e) => set(e.target.value)}
-      className="h-7 max-w-48 rounded border border-border-strong bg-surface px-1.5"
-    >
-      <option value="">Any {label.toLowerCase()}</option>
-      {values.map((v) => (
-        <option key={v} value={v}>
-          {v}
-        </option>
-      ))}
-    </select>
   );
 }

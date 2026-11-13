@@ -84,6 +84,8 @@ docker compose exec app app-admin setup-link
 
 On an install bound to loopback the link is `http://127.0.0.1:8080/setup#...`: open it in the browser on your own computer, and the tunnel carries it to the server. Create the account, close the tunnel, and sign in at the public address. A Docker install listens on the network, so its link names the server (`https://<name>:8080/setup#...`) and opens without a tunnel from any computer that reaches that port.
 
+Set `trusted_proxies` as well (see [Trusted proxies](#trusted-proxies-each-persons-own-address) below), so the limit on wrong setup links and wrong passwords counts each person's own address instead of the proxy's. A valid setup link always works, even when wrong ones from the same address have reached the limit.
+
 ### Proxy on a different host (SSL offload on an existing nginx)
 
 Docker installs always serve HTTPS inside the container, so a proxy on another host re-encrypts to the app instead of sending plain HTTP. Users see the proxy's certificate; the app's self-signed certificate is only used on the hop between them.

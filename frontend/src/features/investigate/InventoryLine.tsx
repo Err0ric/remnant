@@ -85,14 +85,16 @@ function InventoryList({ matches }: { matches: InventoryMatch[] }) {
 interface InventoryLineProps {
   value: string;
   start: string | undefined;
+  /** The end of a Custom range; left out for a window that ends now. */
+  end?: string;
 }
 
 /** The inventory line on an IP or host page: exact matches only, from the caller's own
  * Proxmox sources; nothing when there is no match. */
-export function InventoryLine({ value, start }: InventoryLineProps) {
+export function InventoryLine({ value, start, end }: InventoryLineProps) {
   const q = useQuery({
-    queryKey: ["inventory-matches", [value], start],
-    queryFn: () => api.inventoryMatches([value], start),
+    queryKey: ["inventory-matches", [value], start, end],
+    queryFn: () => api.inventoryMatches([value], start, end),
     staleTime: 60_000,
   });
   return <InventoryMatches matches={q.data?.matches[value] ?? []} />;

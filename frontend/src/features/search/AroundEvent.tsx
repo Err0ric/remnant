@@ -1,5 +1,6 @@
+import { Skeleton } from "@/components/Skeleton";
 import { useQuery } from "@tanstack/react-query";
-import { LoadFailed } from "@/components/LoadFailed";
+import { InlineError } from "@/components/InlineError";
 import { EntityLink } from "@/components/EntityLink";
 import { api, type Cell } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -71,9 +72,9 @@ export function AroundEvent({ eventId, at }: { eventId: string; at: string }) {
         ) : null}
       </div>
       {q.isLoading ? (
-        <div aria-busy="true" className="h-24 animate-pulse" />
+        <Skeleton label="the events around this one" rows={3} className="rounded-none border-0" />
       ) : q.isError ? (
-        <LoadFailed
+        <InlineError
           what="the rows around this event"
           error={q.error}
           onRetry={() => void q.refetch()}
@@ -84,11 +85,11 @@ export function AroundEvent({ eventId, at }: { eventId: string; at: string }) {
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-surface">
               <tr className="border-b border-border text-left text-text-secondary">
-                <th className="px-3 py-1.5 font-semibold">
+                <th className="px-3 py-1.5">
                   <span className="sr-only">Mark</span>
                 </th>
                 {SHOWN.map((c) => (
-                  <th key={c} className="px-3 py-1.5 font-semibold">
+                  <th key={c} className="px-3 py-1.5">
                     {LABEL[c]}
                   </th>
                 ))}

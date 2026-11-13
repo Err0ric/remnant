@@ -228,9 +228,11 @@ async def risk(
     with phase("enrichment"):
         await run_in_threadpool(place, spl.rows, request.app.state.geoip)
     with phase("audit"):
-        await _audit(request, user, "investigate.risk", {"sources_in_scope": read})
-        # ADR-0029 G3: `ai.view_people` when the answer shows AI usage by person (an AI
-        # watch flag, or an AI Watch alert counted on a person's row), else `ai.view`.
+        # One audit row per load (owner, 2026-11-12; amends ADR-0029 G3 for this page).
+        # `ai.view_people` when the answer shows AI usage by person (an AI watch flag, or
+        # an AI Watch alert counted on a person's row): G3's row, naming this page as its
+        # surface. Otherwise the page's own `investigate.risk` row, which says no names
+        # were shown; there is no separate `ai.view` row.
         named = False
         if named_ok:
             about = await run_in_threadpool(entity_signals.ai_alert_people, meta, allowed, scope)
@@ -238,10 +240,18 @@ async def risk(
                 r.ai_flags or (r.alerts and about & {n.lower() for n in [r.value, *r.names]})
                 for r in ranked["user"]
             )
-        await run_in_threadpool(
-            audit_ai_view, request.app.state.auth.audit, user, client_ip(request),
-            "investigate.risk", scope.start, scope.end, read, named,
-        )  # fmt: skip
+        if named:
+            await run_in_threadpool(
+                audit_ai_view, request.app.state.auth.audit, user, client_ip(request),
+                "investigate.risk", scope.start, scope.end, read, True,
+            )  # fmt: skip
+        else:
+            await _audit(
+                request, user, "investigate.risk",
+                {"sources_in_scope": read, "ai_view": "no_names",
+                 "start": scope.start.isoformat() if scope.start else None,
+                 "end": scope.end.isoformat() if scope.end else None},
+            )  # fmt: skip
     targeted_rows = []
     for t in spl.rows:
         data = to_json(t)

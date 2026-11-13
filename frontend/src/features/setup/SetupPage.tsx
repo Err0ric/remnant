@@ -135,7 +135,7 @@ export function SetupPage() {
 
   return (
     <div className="flex min-w-0 flex-1 flex-col">
-      <PageHeader crumbs={["Home", "Settings", "Setup checklist"]} title="Setup checklist" />
+      <PageHeader title="Setup checklist" />
       <div className="flex max-w-3xl flex-col gap-4 px-5 py-3 text-sm">
         <p className="text-text-secondary">
           What a new install needs before it is useful. Each step links to where you do it.

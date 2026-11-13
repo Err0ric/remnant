@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Overview } from "@/lib/api";
-import { attentionLines, sourceStates } from "@/features/dashboard/Attention";
+import { sourceStates } from "@/features/dashboard/Attention";
+import { needsYouRows } from "@/features/dashboard/NeedsYou";
 import { openGaps, openGapsText } from "@/features/health/flow";
 
 function overview(sources: Partial<Overview["sources"][number]>[]): Overview {
@@ -58,12 +59,14 @@ describe("footer and alerts agree (review item 3)", () => {
 describe("Needs you banner keeps its inputs (handoff item 4, owner rule 5)", () => {
   it("lists no source that is quiet only in the shared count", () => {
     // win_dc sent nothing in 24 hours with no watch or alert: quiet in the shared count
-    // and on Health, but the banner shows only errors, stopped sources, and ongoing gaps.
+    // and on Health, but the list shows only errors, stopped sources, and ongoing gaps.
     const o = overview([
       { source_id: "dns", state: "error", condition: "error" },
       { source_id: "win_dc", last_event_at: "2026-11-04T12:00:00+00:00", condition: "quiet" },
     ]);
-    const lines = attentionLines(undefined, sourceStates([], o));
-    expect(lines.map((l) => l.text)).toEqual(["Source: dns has errors"]);
+    const rows = needsYouRows(undefined, [], o);
+    expect(rows.map((r) => [r.order, r.kind, r.title])).toEqual([
+      [1, "Source error", "dns has errors"],
+    ]);
   });
 });

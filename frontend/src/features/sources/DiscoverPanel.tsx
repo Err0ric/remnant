@@ -151,10 +151,10 @@ export function DiscoverPanel({ allowedRoots, existingIds, onUse, onClose }: Dis
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border text-left text-text-secondary">
-                    <th className="px-2 py-2 font-semibold">Files</th>
-                    <th className="px-2 py-2 font-semibold">Hosts</th>
-                    <th className="px-2 py-2 font-semibold">Looks like</th>
-                    <th className="px-2 py-2 font-semibold">Suggested parser</th>
+                    <th className="px-2 py-2">Files</th>
+                    <th className="px-2 py-2">Hosts</th>
+                    <th className="px-2 py-2">Looks like</th>
+                    <th className="px-2 py-2">Suggested parser</th>
                     <th className="px-2 py-2" aria-label="Actions" />
                   </tr>
                 </thead>

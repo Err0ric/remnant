@@ -1,6 +1,6 @@
 # ADR-0038: Areas with tabs, one page grammar, and the Microsoft 365, Agents, and Inventory pages
 
-Status: **Accepted** 2026-10-29 by the owner, with the eight edits in "Owner edits" below (they amend rows 4, 9, 13, 15, 17, 18, and the area tables). Recorded as D123 in `docs/SPEC.md`. Combines the owner's product pass inputs of 2026-10-29 (nav and page structure; visualization grammar with the Microsoft 365 and Agents areas; F66 items 4 and 5, "Around this event" and the person timeline) and the 16:21 fixes for the after version. Amends ADR-0037 (nav) and `docs/DESIGN.md` sections 5 to 7.
+Status: **Accepted** 2026-10-29 by the owner, with the eight edits in "Owner edits" below (they amend rows 4, 9, 13, 15, 17, 18, and the area tables). Recorded as D123 in `docs/SPEC.md`. Combines the owner's product pass inputs of 2026-10-29 (nav and page structure; visualization grammar with the Microsoft 365 and Agents areas; F66 items 4 and 5, "Around this event" and the person timeline) and the 16:21 fixes for the after version. Amends ADR-0037 (nav) and `docs/DESIGN.md` sections 5 to 7. **Amended 2026-11-12 by ADR-0052 (D246, D248):** the rail lists pages only, Microsoft 365 has no area of its own, and density no longer follows the window width (edit 10).
 
 ## Context
 

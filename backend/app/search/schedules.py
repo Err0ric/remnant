@@ -114,6 +114,11 @@ DUE_PER_TICK = 20
 RULE_COLUMNS = ("event_id", "event_time", "source_id")  # a rule run's sample columns
 
 
+# The reason stored when someone pauses a schedule themselves; any other reason is a pause
+# the system made (D236), which is what the Dashboard reports as detection not running.
+PAUSED_BY_PERSON = "Paused by a person"
+
+
 @dataclass(frozen=True, slots=True)
 class Schedule:
     schedule_id: str
@@ -376,7 +381,7 @@ class ScheduleService:
                 raise ParamInvalidError("Give a threshold value with the threshold kind")
             sets["threshold_kind"], sets["threshold_value"] = threshold_kind, threshold_value
         if paused is True and not s.paused:
-            sets["paused"], sets["paused_reason"] = 1, "Paused by a person"
+            sets["paused"], sets["paused_reason"] = 1, PAUSED_BY_PERSON
         elif paused is False and s.paused:
             # Resuming is a review: a new snapshot of the definition and of the owner's
             # sources, taken as the owner, so a change is only ever accepted on purpose.

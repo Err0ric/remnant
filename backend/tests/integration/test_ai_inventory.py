@@ -43,6 +43,13 @@ def test_inventory_lists_types_excludes_and_exports(
     assert [i["key"] for i in json.loads(res.text)] == ["github"]
     csv = admin.get("/api/ai/inventory/export?format=csv&type=m365_app").text
     assert csv.splitlines()[0].startswith("type,name,status") and "Lab Notes App" in csv
+    # The Status filter of the page (redesign row 10): the file is the view. Before the
+    # exclusion github was unreviewed; excluded items carry their status too.
+    by_status = admin.get("/api/ai/inventory/export?format=json&excluded=true&status=unreviewed")
+    assert [i["key"] for i in json.loads(by_status.text)] == ["github"]
+    none = admin.get("/api/ai/inventory/export?format=json&excluded=true&status=approved")
+    assert json.loads(none.text) == []
+    assert admin.get("/api/ai/inventory/export?status=loud").status_code == 422
     assert lab["aud"].get("/api/ai/inventory/export").status_code == 403
     assert lab["ana"].get("/api/ai/inventory/export").status_code == 200
 
@@ -50,8 +57,10 @@ def test_inventory_lists_types_excludes_and_exports(
         rows = con.execute(
             "SELECT detail FROM audit_log WHERE action = 'ai.inventory_export'"
         ).fetchall()
-    assert len(rows) == 3
+    assert len(rows) == 5
     assert json.loads(rows[0][0])["rows"] == 1
+    assert json.loads(rows[2][0])["status"] == "unreviewed"
+    assert json.loads(rows[0][0])["status"] is None
 
     gone = "/api/ai/inventory/exclusions?type=mcp&key=github"
     assert admin.delete(gone, headers=h).status_code == 204

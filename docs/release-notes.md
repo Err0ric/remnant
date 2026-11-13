@@ -4,6 +4,278 @@
 
 <!-- unreleased:start -->
 
+### Design: the Dashboard's Detections section (2026-11-13)
+
+- Console redesign, build row 18 (ADR-0052, DESIGN.md 6.3). The table of hosts and people involved also shows how many rules matched each one and when its last match was. The fourth number reads "People involved".
+- A rule's name in "Matches by rule" opens Alerts > Rules with that name in the filter; its total opens the matched events in Logs, as every number does.
+- When the system has paused detection, the section says so in its header ("Detection is not running for 1 schedule: ..."), and a number that would be zero reads "Not running" instead, so a quiet section is not mistaken for "nothing happened". A number above zero is still shown.
+- With no rule enabled, an administrator sees "No rules are enabled." with Enable rules. Others see no section, as before.
+- What you will notice: two more columns in the Detections table, rule names that open the rule list filtered by that name, and "Not running" in place of a zero while detection is paused.
+- What changes for existing installs: nothing to do.
+
+### Design: less explanatory text on the pages (2026-11-13)
+
+- Console redesign, build rows 15 and 16 (ADR-0052 section 3.7; owner, 2026-11-13). Lines that only explained what a page is are gone (People & devices "Everyone seen in this range...", the AI flow's "Select a card...", the Agents card's first sentence, the Alert targets introduction).
+- Notes about one column moved to an (i) on that column's title: how the People & devices score adds up, when a saved search's schedules update, which sources a rule runs on, what counts as a risky mail rule, how a company email is confirmed on Accounts, and what Wait and DuckDB mean on Speed. Hover over the (i), tab to it, or tap it to read the note.
+- Every line about access, permissions, masking, or where data goes stays on the page: "Saved searches run with your own source access", "Only sources you may read are counted", "Alerts carry a summary and a link back, never log content", and the others like them.
+- The AI review list on Alerts says in one line what it is and who reviews.
+- What you will notice: shorter pages, and a small (i) beside some column titles.
+- What changes for existing installs: nothing to do.
+
+### Backups, Page rollups, and Speed are sent to administrators only (2026-11-13)
+
+- Owner decision of 2026-11-13, following Settings > System (ADR-0052 section 3.3). The server now leaves the state of scheduled backups and the page rollups out of what it sends to Analysts and Auditors: `GET /api/health-checks` answers `backup: null` and `rollups: []` for them. Page speed was already for administrators. Before this, only the web page hid them.
+- A failed or overdue backup still raises an alert that everyone sees.
+- The panels that count whole days back from now say so: the Agents numbers, sessions and tool rows, and a person's AI activity and devices are labeled "Last 7 days" (or 24 hours, or the days counted), whatever the page's time choice is.
+- What you will notice: the Agents numbers, sessions and tool rows, and a person's AI activity and devices now start with "Last 7 days" (or the days they count). Nothing else changes on the page for anyone: Settings > System was already hidden from Analysts and Auditors.
+- What changes for existing installs: nothing to do. A script that read `backup` or `rollups` from `/api/health-checks` with an Analyst's or Auditor's token now gets null and an empty list; use an administrator's token.
+
+### Design: Microsoft 365 is three views of Logs (2026-11-13)
+
+- Console redesign, build row 9 (ADR-0052 section 3.3; owner, 2026-11-13). Microsoft 365 has no area of its own. Logs has a Views menu on every one of its tabs, with Microsoft 365 sign-ins, Microsoft 365 mail, and Microsoft 365 admin. Each view shows the lists the server builds and runs on the sources you can read, so they need no SQL access and show no editor: everyone who could open Microsoft 365 before can open the views.
+- Nothing was dropped. The charts and lists of the old Overview (sign-in outcomes, failure reasons, sign-ins outside approved countries, apps signed in to) are at the top of the Sign-ins view. The app consents and app registrations lists of the old Apps tab are at the foot of the Admin view; the register of apps is AI usage > Inventory with Type set to Microsoft 365 apps.
+- Old addresses still open: `/m365` and `/m365/sign-ins` open the Sign-ins view, `/m365/mail` and `/m365/admin` their views, and `/m365/apps` the Inventory on Microsoft 365 apps. The time window you chose is kept.
+- Without a Microsoft 365 source a view says so, with Add a source.
+- The views keep their 24 hours, 7 days, 30 days window for now.
+- What you will notice: Microsoft 365 pages open under Logs, from a Views menu at the top right.
+- What changes for existing installs: nothing to do. Bookmarks and links in alert messages keep working.
+
+### Design: AI usage has no Review tab; its settings are under Settings (2026-11-13)
+
+- Console redesign (ADR-0052 section 3.3; owner, 2026-11-13). Reviewing AI services and MCP servers is done in AI usage > Inventory, with its Status filter. The Review tab is gone, and its old address opens the Inventory, on Unreviewed while something waits for a review.
+- What the tab held is under Settings > AI > AI watch and catalog, for administrators as before: what AI Watch alerts on, the MCP server rules, and the catalog of AI services.
+- What you will notice: AI usage has three tabs (Services, People, Inventory); administrators find the AI watch settings under Settings.
+- What changes for existing installs: nothing to do.
+
+### Design: Health has three tabs; Backups, Page rollups, and Speed are in Settings (2026-11-13)
+
+- Console redesign, build row 12 (ADR-0052 section 3.3; owner, 2026-11-13). Health has Sources, Collectors, and Delivery. Enrichment feeds are a Type of Sources; Endpoint agents and Watched devices are the two Types of Collectors. The Type choice is in the address.
+- The Sources tab counts log sources only, as the Dashboard's Sources tile does; a problem on an enrichment feed still shows on the tab.
+- Backups, Page rollups, and Speed moved to Settings > System, for administrators only. Analysts and Auditors no longer see these three lists. A failed backup still raises an alert, which everyone sees on the Dashboard and in Alerts.
+- Old addresses still open their new places. For an Analyst or Auditor, an old Backups, Page rollups or Speed address opens System with a line saying it is for administrators.
+- What you will notice: five fewer tabs on Health, a Type choice on Sources and Collectors, and System under Settings for administrators.
+- What changes for existing installs: nothing to do. To go back, install the previous version with `update-systemd.sh --rollback` (docs/install/).
+
+### Design: Agents has three tabs (2026-11-13)
+
+- Console redesign, build row 11 (ADR-0052 section 3.3; owner, 2026-11-13). Agents has Sessions, MCP servers, and Accounts. The numbers of the old Overview tab (sessions, people, tool calls, failed calls, not-approved MCP servers in use, devices delivering late) are a strip at the top of Sessions.
+- The Tools tab is gone: on MCP servers every server's row opens to its figures (people, devices, calls, failures, first and last seen), and one Built-in row opens to the tools Claude Code has built in (Bash, Read, Edit and others), one by one.
+- The strip, the sessions list, and the tool rows follow the page's time choice in whole days back from now: 1 hour and 24 hours show the last day, and Custom the days since its start (30 at most).
+- Old addresses still open: Overview opens Sessions, and Tools opens MCP servers.
+- What you will notice: two fewer tabs on Agents, the numbers above the sessions, and an arrow on each MCP server row.
+- What changes for existing installs: nothing to do.
+
+### Design: AI usage, Agents, and People & devices use the same five time choices (2026-11-13)
+
+- Console redesign, build row 7, time controls, part 3 (ADR-0052 section 3.7; owner, 2026-11-13). The time filter of AI usage, Agents (all tabs but Overview), and People & devices is 1 hour, 24 hours, 7 days, 30 days, or Custom with a start and an end in your own time zone. "All time" is gone: Custom with no dates is everything kept.
+- On AI usage and Agents the choice is in the address (`#time=30d`), so it can be bookmarked, with a Reset link when it is not the usual 7 days. A Custom range is compared against the period of the same length before it.
+- On People & devices the choice stays with the page while you move from one person or device to the next. A person's AI activity and devices count whole days back from now, so with Custom they cover the days since its start (30 at most).
+- Choosing Custom starts from the window you were looking at, with its start filled in. Clear the start to see everything kept.
+- The time you chose stays when you move between the tabs of AI usage or Agents.
+- The Alerts address now writes a Custom range as UTC times, as Logs does, so a link opens on the same moments for a reader in another time zone.
+- What you will notice: five time buttons on these pages, and two date boxes for Custom.
+- What changes for existing installs: nothing to do.
+
+### Design: Logs and Ask AI use the same five time choices (2026-11-13)
+
+- Console redesign, build row 7, time controls, part 2 (ADR-0052 section 3.7; owner, 2026-11-13). The time filter of Logs and of Ask AI is 1 hour, 24 hours, 7 days, 30 days, or Custom, as on Alerts. Custom is a start and an end in your own time zone (hover for UTC); an empty side is open.
+- "Last 15 minutes" and "All time" are gone. Custom with no dates is everything kept, which is what a query opened from another page (a rule's matches, Ask AI's "Open in Logs") now opens on.
+- Old links keep working: an address with All time opens as Custom with no dates, and one with 15 minutes opens on 1 hour. A number opened from the Dashboard still shows exactly its own window, now as Custom with its two dates, and keeps it through a reload. A link with a Custom range opens on the same moments for a reader in another time zone.
+- What you will notice: time is five buttons on Logs and Ask AI, with two date boxes for Custom.
+- What changes for existing installs: nothing to do. Bookmarks keep working.
+
+### Design: a Time filter on closed and muted alerts (2026-11-13)
+
+- Console redesign, build row 7, time controls, first part (ADR-0052 section 3.7; owner, 2026-11-13). The filter bar's Time control has five choices: 1 hour, 24 hours, 7 days, 30 days, and Custom. Custom is a start and an end, as a date and time in your own time zone (hover for UTC); leaving one empty leaves that side open, so Custom with no dates is everything kept.
+- Alerts: open alerts are never filtered by time, so an old open alert cannot drop out of the queue, and Open shows no Time control. Closed lists what was closed in the window, newest closed first, 7 days unless you choose another; the server picks them, so an alert raised long ago and closed yesterday is there. Muted always lists the mutes in force, and adds the ones that ended in the window, marked "ended".
+- An alert opened from a link is shown whatever the window.
+- API: `GET /api/alerts` takes `closed_from` and `closed_to` with `state=closed`; `GET /api/alerts/mutes` takes `ended`, `from` and `to`. A Closed list that holds only the newest of a long window says so.
+- What you will notice: Closed shows the last 7 days by default; choose 30 days or Custom to see older ones.
+- What changes for existing installs: nothing to do. Bookmarks to Closed open on the last 7 days.
+
+### Design: the same loading and empty states on every page (2026-11-13)
+
+- Console redesign, build row 15, first part (ADR-0052, DESIGN.md 6.0). The pages that still showed a grey block or "Loading…" while loading now hold the place of their rows (AI usage, Agents, People & devices, Microsoft 365, Logs panels, Audit log, Settings pages). Empty lists are left-aligned at the top with at most two lines, in the same words as before.
+- Two texts are shorter: Agents > Sessions says "Pick a session.", and Users no longer says the install runs without sign-in (it has not since sign-in became required).
+- Not in this part: removing the paragraphs that explain a page (the help text sweeps).
+- What you will notice: empty lists read from the top left instead of the middle, and pages keep their shape while loading.
+- What changes for existing installs: nothing to do.
+
+### Design: loading, errors, and empty pages look the same everywhere they are used (2026-11-13)
+
+- Console redesign, build row 14 (ADR-0052, DESIGN.md 6.0). Shared pieces for the states of a page: placeholder rows while a list loads (no jump when the data arrives, no spinner), an error in place with Retry, and an empty state at the top left with at most two lines and one action. Alerts and the Dashboard use them first.
+- Alerts: an empty queue reads "No open alerts. Checked 2 min ago."; when the filters hide everything there is a Reset filters button; when the only alerts are in sources you cannot read, the page says so and does not say there are none.
+- Dashboard: "No panels yet." with Go to Schedules.
+- What you will notice: shorter, left-aligned messages on empty lists, and rows held in place while Alerts loads.
+- What changes for existing installs: nothing to do.
+
+### Design: review AI items in the Inventory (2026-11-13)
+
+- Console redesign, build row 10 (ADR-0052 section 3.3). AI usage > Inventory has one filter bar: Active or Excluded, Type (AI services, Agents, MCP servers, Microsoft 365 apps), and Status. It opens on Unreviewed while something waits for a review, and on All when nothing does. The page header says how many wait ("3 to review").
+- An administrator sets Approved or Not approved in the Status column of an AI service or MCP server. It is the same audited change as on the Services and MCP server lists; everyone else sees the status as text.
+- The filters are in the address, and Export CSV and Export JSON now export what the Status filter shows (the export's audit row records it).
+- The Review tab is unchanged for now.
+- What you will notice: the Inventory opens on what still needs a review, with a Status filter.
+- What changes for existing installs: nothing to do.
+
+### Design: the Agents sessions filters use the shared filter bar (2026-11-13)
+
+- Console redesign, build row 7, first part (ADR-0052, DESIGN.md 6.0). On Agents > Sessions the Person, Machine, and Tool filters and the "Has flags" box are now one filter bar like the one on Alerts: each reads "Machine ws-0042", Flags is Any or Flagged, the count of sessions is on the right, and Reset appears while something is filtered.
+- The filters are in the address, next to the open session, so a filtered list can be bookmarked or sent.
+- Not in this part: the time controls of Logs, AI usage, Agents, Health, and People & devices. They keep today's choices until the owner decides what Custom and "All time" become.
+- What you will notice: the session filters look like the Alerts filters, with a Reset link.
+- What changes for existing installs: nothing to do.
+
+### Design: Saved searches shows what is scheduled (2026-11-13)
+
+- Console redesign, build row 8 (ADR-0052 section 3.3). Saved searches is a tab of Logs (since the new rail) and its table has a Scheduled column: a search that runs on a schedule shows when ("Daily at 07:00"), and that is a link to the schedule on Alerts > Schedules, which opens with that schedule marked. A search with no schedule says No.
+- Only schedules you can see are listed, the same ones Alerts > Schedules shows you.
+- The old address `/saved` still opens the tab.
+- What you will notice: a Scheduled column on Saved searches.
+- What changes for existing installs: nothing to do.
+
+### Design: one filter bar, first on Alerts (2026-11-12)
+
+- Console redesign, build row 6 (ADR-0052, DESIGN.md 6.0). A shared filter bar in a fixed order: Time, State, the other filters, the text box, with the count on the right. Alerts uses it: State is three buttons (Open with its count, Closed, Muted), Severity and Category read as "Severity High", and the count says how many alerts are listed ("2 alerts", "1 of 2 alerts"). The count is only of alerts you can read.
+- Filters are in the address (`/alerts#state=closed&sev=high`), so a filtered list can be bookmarked or sent, and Back undoes a filter. Reset appears only while a filter is off its default.
+- The Alerts queue has no Time filter yet: every open alert is listed, as before.
+- What you will notice: the Alerts filters look like one bar, with a Reset link when something is filtered.
+- What changes for existing installs: nothing to do.
+
+### Design: Alerts has three tabs; Open, Closed, and Muted are a State filter (2026-11-12)
+
+- Console redesign, build row 5 (ADR-0052 sections 3.3 and 3.4, D246). The Alerts tabs are Queue, Rules, and Schedules. Open, Closed, and Muted are no longer tabs: they are the State filter, first in the row of filters on the Queue, with Open as the default and the open count beside it.
+- The address shows the choice (`/alerts#state=closed`). Old addresses still work: `/alerts/closed`, `/alerts/muted`, and `/alerts/open` open the Queue with that state, without adding a step to Back, and a link to one alert (`#item=<id>`) opens it as before, closed ones too.
+- What you will notice: two fewer tabs on Alerts, and a State menu where Closed and Muted now are.
+- What changes for existing installs: nothing to do. Bookmarks and links in alert messages keep working.
+
+### Design: a slimmer alert pane with one filled button (2026-11-12)
+
+- Console redesign, build row 19 (ADR-0052, DESIGN.md 6.2e). The pane beside the alert list shows what you need to decide: severity, kind, state, and the alert's ID; the title; what fired; why it matters; who and what it is about; when; the next steps; then the actions. Close is the one filled button. "Show events in Logs" sits beside it and opens the alert's own events.
+- Changes today, the rows that fired, Approve or Not approved, and the history are still in the pane, in one section called "Evidence, changes, and history" that starts closed. They move to the full alert page when that page is built; until then nothing is lost, it is one click away.
+- The summary strip above the list (open by severity, new today, oldest open, by category) is removed. The Severity and Category filters under the tabs do the same filtering. The note about alerts in sources you cannot read is at the foot of the list, with no count.
+- What you will notice: the alert pane is shorter and fits a laptop screen without scrolling; to approve a service or read the history from an alert, open "Evidence, changes, and history" first.
+- What changes for existing installs: nothing.
+
+### Design: one Needs you list on the Dashboard, blind states first; key numbers in one strip (2026-11-12)
+
+- Console redesign, build row 17 (ADR-0052 section 3.9, D247). The Dashboard opens with one list of everything that needs you. Blind states are pinned first and are never folded away: a source that is down or in error, a source stored without its parser because its template is missing, and detection that the system paused (a schedule you paused yourself is your choice and is not listed). They sit on a pale amber row with a bar on the left and a "Blind" tag, and never look like an alert. Then come High alerts, then other alerts, then AI services waiting for review, five rows at most, with "N more on Alerts" under them.
+- Each row says what kind it is, what it is, who or what it is about (a link), and when. A source gap alert is a blind row that opens its alert; an AI review row opens AI usage.
+- This replaces three things that said the same in different places: the Health banner at the top, the one-line "Needs attention" strip, and the Sources line at the bottom. A blind state is now said once, here, and on Health (D243's banner is superseded by D247).
+- Under the list, one strip of key numbers for the chosen window: Open alerts, Failed sign-ins, Sign-ins outside approved countries, AI services in use (with how many are to review), and Sources healthy (the same count as on Health, in amber when not all are). Each number opens the place to act on it, and each has its "how this is counted" note. A tile shows only when you have its source.
+- The note about alerts in sources you cannot read stays at the foot of the list, with no count.
+- For the "AI services in use" number the AI Watch summary (`/api/ai/watch/summary`) gained one field, `services_in_use`.
+- The few alert lines the Dashboard asks for (`/api/alerts/lines`) now come in the list's own order (High, other alerts, then AI review items), with a `review` field naming the review items, so services waiting for review can never push a real alert out of the five rows.
+- A source gap alert whose source is sending again is an ordinary alert row asking to be closed, not a blind row.
+- What you will notice: the top of the Dashboard is one list and one row of numbers; the amber Health banner, the "Needs attention" line, and the Sources line at the bottom are gone. The "risky mail rule" and "blocked app consent" counts that were in that line are still in the Identity section below.
+- What changes for existing installs: nothing.
+
+### Design: the rail lists pages only (2026-11-12)
+
+- Console redesign, build row 4 (ADR-0052 section 3.2, D246). The left rail is nine entries with nothing under them and nothing to fold: Monitor (Dashboard, Alerts), Investigate (Logs, Ask AI, People & devices), AI (AI usage, Agents), and, pinned at the bottom, Health and Settings. A page's tabs are in its header. The rail is narrower (208px) and fits a laptop screen without scrolling.
+- Logs, Ask AI, and People & devices are pages of their own, each titled by its own name. Saved searches is a tab of Logs. Addresses are unchanged.
+- Microsoft 365 is no longer in the rail. Its pages still open by their address and from Ctrl+K ("Microsoft 365") until they move into Logs, the person page, and the AI inventory in later steps.
+- Health shows a small dot in the rail only when one of the sources you can read needs attention; a source paused on purpose does not count. On the Dashboard and Health the dot follows what the page itself shows, as it refreshes. On other pages it asks a new numbers-only request, `/api/health/count`, once every five minutes, so there it can be up to five minutes behind; that request names no source and writes no audit row, like the alert count, and it never stands in for the recorded read of Health or Sources: opening those pages is still recorded as before.
+- An Auditor sees only what they can open: no Ask AI, and Logs opens on Saved searches unless an administrator has allowed Auditors to run SQL.
+- The open-alert counts in the rail and on the bell use the solid High color. Ctrl+K lists every page and every tab under Navigate.
+- What you will notice: a shorter left menu with no sub-items; Saved searches is now a tab on Logs; Microsoft 365 is found through Ctrl+K.
+- What changes for existing installs: nothing to do. Bookmarks keep working. The rail no longer remembers folded groups, since there is nothing to fold.
+
+### Design: every page uses the one page header; the command bar is gone (2026-11-12)
+
+- Console redesign, build row 3 (ADR-0052 section 3.5, D246). Every page now has the same header: its name and a short count or status on the left, and its buttons at the top right, with at most one filled button. The row of text commands under the title is removed everywhere.
+- Logs: Save and Open are buttons at the top right; New search, Library, Schedule, Add to dashboard, and Export CSV are under the "More" button next to them. Run stays beside the search box and the SQL editor, where it already was, and is the page's one filled button.
+- Alerts > Rules: "Enable selected", "Disable selected", and "Schedule selected" sit directly above the rule list they act on.
+- Audit log: Export CSV is an outlined button at the top right; the "Append-only" sentence under the title is removed.
+- Logs: while an export from the More menu runs, "Exporting…" shows beside the page title.
+- On a phone the header's buttons take their own row under the title and tabs.
+- `scripts/check-layout.py` also fails when a page has no `h1` or more than one.
+- What you will notice: buttons moved from a row under the page title to the top right of the page, and on Logs five less-used commands are behind "More".
+- What changes for existing installs: nothing.
+
+### Design: severity colors only for severities; states are outlined tags (2026-11-12)
+
+- Console redesign, build row 1b, last of four changes (ADR-0052 section 3.10, D248). The tinted red, orange, and yellow boxes that marked things other than an alert severity are gone: errors, failed checks, blocked requests, and "Out of date" are outlined in the error color; warnings, "Needs attention", denied outcomes, "Changed", and sensitive-data counts are outlined in the warning color; neutral tags (success, built in, counts) sit on the plain gray tag fill, and "New agent" is a neutral outlined tag, because the accent color is kept for links and selection. Solid red and orange now always mean a Critical or High severity.
+- The Health page's per-source flow lines have no filled area, like the other charts, and its header row is flat.
+- The old tinted color tokens are removed from `tokens.css`.
+- What you will notice: error and warning messages are a colored outline with colored text instead of a tinted box; nothing moved.
+- What changes for existing installs: nothing.
+
+### Design: one page header, first on Alerts and the Dashboard (2026-11-12)
+
+- Console redesign, build row 2 (ADR-0052 section 3.5, D246). `PageHeader` is the one header every page will use: the page's name and an optional count on the left; on the right up to two outlined buttons, a "More" menu for the rest, and at most one filled button, last. The page's tabs follow. With the keyboard the order is title, tabs, then the buttons.
+- Alerts and the Dashboard use it now; the other pages follow in the next change and keep their row of text commands until then.
+- Dashboard: the heading is always "Dashboard". A board's own name is in the board picker and at the right of the row under the header. "Edit layout" and "New dashboard" are buttons at the top right.
+- Alerts: the sentence under the tabs ("Everything that fired and needs a decision...") is removed; the page does not explain itself in a paragraph.
+- What you will notice: on the Dashboard and Alerts the title row is slimmer and the buttons sit at the top right.
+- What changes for existing installs: nothing.
+
+### Design: charts as lines, one change pill, one cited ID chip (2026-11-12)
+
+- Console redesign, build row 1b, third of four changes (ADR-0052 section 3.10, D248). Trend charts are thin lines with no filled area. Where a chart used to stack its parts into bands (AI use by review status on the Dashboard, failed sign-ins by class on Microsoft 365), each part is now its own line at its own value; the legend names them and the hover still gives the total.
+- The change beside a headline number ("↑ 53", "same") is one neutral pill everywhere, and a cited event ID in an explanation or an Ask summary is one chip. A cited ID that was not among the events sent is outlined in the error color instead of filled.
+- `scripts/check-layout.py` waits for the app's fonts and fails when Geist or Geist Mono is not the font in use, so pages are measured as users see them.
+- `docs/BACKLOG.md`: a 2027 item for company-wide local AI through one gateway (nothing built).
+- What you will notice: the Dashboard charts are lines, not filled bands; on the AI use chart and the Microsoft 365 failed sign-ins chart the lines no longer sit on top of each other, so read each line against the scale by itself.
+- What changes for existing installs: nothing.
+
+### Design: flat table headers, clearer edges on inputs and checkboxes (2026-11-12)
+
+- Console redesign, build row 1b, second of four changes (ADR-0052 section 3.10, D248). Every table header is the same: no fill, small text in the secondary color over a thin divider.
+- Text inputs, selects, and checkboxes have a darker edge (`--border-control`, at least 3:1 against what they sit on), so a field is visible before you click it. Checkboxes are drawn by the app in both themes and fill with the accent color when ticked. Buttons with a text label keep their lighter edge.
+- What you will notice: quieter table headers, and input boxes and checkboxes that are easier to see, mostly in the light theme.
+- What changes for existing installs: nothing.
+
+### Design: solid badges for Critical and High only, dots for the rest, sentence-case panel titles (2026-11-12)
+
+- Console redesign, first half of build row 1b (ADR-0052 section 3.10, D248). Severity looks the same everywhere it appears (Logs, Alerts, the Dashboard's Needs attention list, rules, People & devices, mail rules): Critical and High are solid badges; Medium, Low, and Info are a small square dot followed by the word. Low is no longer blue. Every mark keeps its word.
+- AI review status is a dot and the word: Approved a filled green dot, Unreviewed a hollow dot in the accent color, Not approved a hollow dot in the warning color. It no longer uses the red of a Critical alert, because a review status is not an alert; the same holds for the AI use chart on the Dashboard (Unreviewed in the accent color, Not approved in the warning color) and the "not approved in use" count on AI usage.
+- Panel titles are 14px in sentence case; nothing in the app is set in upper case any more.
+- What you will notice: fewer colored boxes on a calm screen, and only Critical and High stand out as filled badges.
+- What changes for existing installs: nothing.
+
+### Design: the Graphite colors, Geist fonts, and Comfortable rows for everyone (2026-11-12)
+
+- First build step of the console redesign (ADR-0052, D248). The colors in both themes are the Graphite set: flatter, with cards drawn by their border. Text is set in Geist and data in Geist Mono (license OFL-1.1, shipped with the app, nothing fetched); the Source fonts are gone. Layout, navigation, and badges are unchanged in this step.
+- Comfortable is now the row density for everyone on every screen width, with rows 34px tall (36px before). Compact is still in the user menu and is remembered per user in the browser; it now also makes text one size smaller (13px for text, 12px for data, smaller headline numbers), where before it only made rows shorter. Before, a window under 1440px wide started Compact.
+- Two contrast fixes the owner approved: the edge color for text inputs in the light theme is darker (`#808896`), and keyboard focus inside the top bar has its own ring color, since the top bar is dark in both themes.
+- `scripts/check-contrast.py` runs in CI: 160 color pairs across both themes must meet WCAG AA, and `tokens.css` must match `docs/DESIGN.md` section 11. `scripts/check-layout.py` now checks every page in the light theme too. On the Users page the last sign-in time may wrap onto two lines so the table fits a 1280px window.
+- What you will notice: new colors and a new typeface on every page, slightly taller rows if your window is under 1440px wide and you never picked a density, and smaller text if you picked Compact.
+- What changes for existing installs: nothing to do. A density you picked before is kept. To get the denser rows back, choose Compact in the user menu. Going back to the release before this one restores the old look (`docs/install/`, `update-systemd.sh --rollback`).
+
+### Design: the console redesign is accepted; DESIGN.md describes it (2026-11-12)
+
+- The owner accepted ADR-0052, "Navigation and page pattern built around top tasks" (decisions D246 to D248): a rail of 10 pages with no sub-pages, one page header with at most one filled primary button, one filter bar, five page layouts, one Needs you list on the Dashboard with blind states pinned first, and the Graphite look (new colors, solid badges for Critical and High only, Geist fonts, Comfortable density by default).
+- `docs/DESIGN.md` sections 1 to 8 and 11 are edited to it. This change is documents only: the app looks and works as before until the build's own changes land, tokens and fonts first.
+- What you will notice: nothing visible yet.
+- What changes for existing installs: nothing.
+
+### Audit: AI Watch on the Dashboard is part of the visit's entry unless it shows a name (2026-11-12)
+
+- A Dashboard visit wrote its `dashboard.view` entry and, for AI Watch, a separate `ai.view` entry on every load and every refresh. Now AI Watch that names no one, for the window the page shows, is listed as `ai_watch` in the visit's entry and writes nothing of its own (owner decision; ADR-0029 G3 amended).
+- AI Watch that shows a person's name still writes `ai.view_people` every time, so the list of who saw people's AI usage stays complete.
+- Requests outside a Dashboard visit (the CLI, scripts), and AI Watch asked for another range than the page's window, are audited one by one as before.
+- What you will notice: nothing on screen; fewer "Viewed AI usage" entries in the audit log.
+- What changes for existing installs: nothing to do. To go back, roll back the update (`update-systemd.sh --rollback`, see `docs/install/team-vm.md`, Rolling back); entries already written stay as they are.
+
+### One audit entry per Dashboard visit and per People & devices load (2026-11-12)
+
+- Opening the Dashboard now writes one `dashboard.view` audit entry for the visit, listing every part the page loads (Identity, Attacks and access, Detections, the Overview numbers), the window, and the sources the viewer can read, instead of three `dashboard.sections` entries and an `overview.view` entry. The audit log records access, not requests (owner, 2026-11-12).
+- The entry is written by the page's first request, before it is answered, and is never held back: a crash or restart loses no entry.
+- The page sends one visit id and the list of parts it loads with its requests. A request without them, from the CLI or a script, is audited on its own as before. An id covers only the same person's requests, while the page stays open (its own refresh every minute keeps the visit going) and for at most 12 hours; after a minute without requests, or past 12 hours, the next request starts a new entry; a part not in the list, another window, or a change in the sources the viewer can read gets its own entry at once.
+- AI Watch and the Needs you lines keep their own entries: `ai.view_people` whenever they show names (ADR-0029 G3).
+- People & devices writes one entry per load instead of two: `ai.view_people` (surface `investigate.risk`) when the answer shows AI usage by person, otherwise `investigate.risk`, which now says that no names were shown and for which range (ADR-0029 G3, amended by the owner). To list every load of that page, search the audit log for both actions.
+- For developers: `scripts/dev/queue.sh` holds a lock while it merges, and `scripts/dev/heavy.sh <command>` runs full suites, speed checks, and loops only while no merge is running (exit code 75 otherwise, `--wait` to wait).
+- What you will notice: nothing on screen; the audit log gets one entry per Dashboard visit instead of four, and one per People & devices load instead of two.
+- What changes for existing installs: nothing to do. To go back, roll back the update (`update-systemd.sh --rollback`, see `docs/install/`): the older version writes one entry per request again; entries already written stay as they are.
+
+### Setup: a valid setup link works even when wrong ones reached the limit (2026-11-12)
+
+- Wrong setup links are limited per address (5 in 5 minutes). Behind a reverse proxy without `trusted_proxies` every person has the proxy's address, so someone sending wrong links could keep the real first setup out. A valid, unexpired link now passes that limit (owner decision, D245 amended); wrong and expired links still count and are refused, and the link check is unchanged.
+- `docs/install/tls.md` says to set `trusted_proxies` so the limits count each person's own address.
+- What you will notice: nothing visible, unless your first setup was being blocked with "Too many failed attempts".
+- What changes for existing installs: nothing. To go back: `update-systemd.sh --rollback` (see `docs/install/team-vm.md`, Rolling back).
+
 ### Docs: D244 accepted (2026-11-12)
 
 - The owner confirmed decision D244 (lake maintenance is one of the never-silent paths) as written; its status now reads Accepted.

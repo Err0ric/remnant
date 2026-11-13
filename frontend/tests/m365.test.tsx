@@ -20,25 +20,146 @@ async function renderAt(path: string) {
 
 afterEach(() => vi.restoreAllMocks());
 
-describe("Microsoft 365 area (ADR-0038 section 5)", () => {
-  it("sits under Connected apps and shows the Overview with every number openable", async () => {
-    await renderAt("/m365");
-    const overview = await screen.findByRole("region", { name: "Overview" });
-    const apps = screen.getByRole("region", { name: "Connected apps" });
-    expect(within(apps).getAllByText("Microsoft 365")[0]).toBeInTheDocument();
-    expect(screen.getByRole("navigation", { name: "Microsoft 365 tabs" })).toBeVisible();
+describe("Microsoft 365 as views of Logs (ADR-0052 section 3.3, redesign build row 9)", () => {
+  it("has no area: the Sign-ins view is a page of Logs, with every number openable", async () => {
+    await renderAt("/investigate/views");
+    const summary = await screen.findByRole("region", { name: "Summary" });
+    const rail = screen.getByRole("navigation", { name: "Primary" });
+    expect(within(rail).queryByText("Microsoft 365")).toBeNull();
+    expect(within(rail).getByRole("link", { name: "Logs" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("heading", { level: 1, name: "Logs" })).toBeVisible();
+    expect(screen.queryByRole("navigation", { name: "Microsoft 365 tabs" })).toBeNull();
+    // The tabs are those of Logs, and none of them is this view.
+    const tabs = screen.getByRole("navigation", { name: "Logs tabs" });
+    expect(within(tabs).queryByRole("link", { current: "page" })).toBeNull();
     for (const card of document.querySelectorAll<HTMLElement>("[data-kpi]")) {
       if (/not set|Set approved countries/i.test(card.textContent ?? "")) continue;
       expect(card.querySelector("[data-drill]"), card.dataset.kpi).not.toBeNull();
     }
     const outcomes = screen.getByRole("region", { name: "Sign-in outcomes" });
     expect(within(outcomes).getByRole("img", { name: /12 failed/ })).toHaveAttribute("data-drill");
-    expect(within(overview).getByTitle("Open 31 events in Logs")).toBeVisible();
-    await userEvent.click(within(overview).getByTitle("Open 12 failed sign-ins in Logs"));
+    // The list of the view is under the summary.
+    expect(await screen.findByRole("region", { name: "Sign-ins: Real failures" })).toBeVisible();
+    expect(within(summary).getByTitle("Open 31 events in Logs")).toBeVisible();
+    await userEvent.click(within(summary).getByTitle("Open 12 failed sign-ins in Logs"));
     await waitFor(() => expect(window.location.pathname).toBe("/investigate/logs"));
     expect(
-      await screen.findByText(/^From Microsoft 365 > Overview > Failed sign-ins, Oct 24/),
+      await screen.findByText(/^From Logs > Microsoft 365 sign-ins > Failed sign-ins, Oct 24/),
     ).toBeVisible();
+  });
+
+  it("opens the views from one Views menu, on every tab of Logs", async () => {
+    await renderAt("/investigate/saved");
+    await screen.findByRole("heading", { level: 1, name: "Logs" });
+    await userEvent.click(screen.getByRole("button", { name: "Views" }));
+    const menu = screen.getByRole("menu");
+    expect(
+      within(menu)
+        .getAllByRole("menuitem")
+        .map((i) => i.textContent),
+    ).toEqual(["Search", "Microsoft 365 sign-ins", "Microsoft 365 mail", "Microsoft 365 admin"]);
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "Microsoft 365 mail" }));
+    expect(window.location.pathname).toBe("/investigate/views/mail");
+    expect(await screen.findByRole("heading", { level: 1, name: "Logs" })).toBeVisible();
+    // The open view is marked in the menu, and the first item goes back to Logs itself.
+    await userEvent.click(screen.getByRole("button", { name: "Views" }));
+    expect(screen.getByRole("menuitem", { name: "Microsoft 365 mail" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("menuitem", { name: "Search" }));
+    expect(window.location.pathname).toBe("/investigate/logs");
+  });
+
+  it("shows the Views menu to an Auditor who may not run SQL, on Saved searches", async () => {
+    window.history.replaceState(null, "", "/investigate/saved");
+    mockApi("Codename", { mode: "login", signedIn: true, role: "auditor" });
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    render(
+      <App
+        initialTheme="dark"
+        queryClient={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      />,
+    );
+    // With one tab left, the page is titled by it and has no tab strip.
+    expect(await screen.findByRole("heading", { level: 1 })).toHaveTextContent("Saved searches");
+    expect(screen.queryByRole("link", { name: "Search" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Views" }));
+    const items = screen.getAllByRole("menuitem");
+    // No Search for this person: the first item is the tab they are on, so it is disabled.
+    expect(items.map((i) => i.textContent)).toEqual([
+      "Saved searches",
+      "Microsoft 365 sign-ins",
+      "Microsoft 365 mail",
+      "Microsoft 365 admin",
+    ]);
+    expect(items[0]).toBeDisabled();
+    await userEvent.click(items[2] as HTMLElement);
+    expect(window.location.pathname).toBe("/investigate/views/mail");
+    await waitFor(() =>
+      expect(document.querySelectorAll("section[aria-label]").length).toBeGreaterThan(0),
+    );
+  });
+
+  it.each([
+    ["/m365", "/investigate/views"],
+    ["/m365/overview", "/investigate/views"],
+    ["/m365/sign-ins", "/investigate/views"],
+    ["/m365#sign-ins", "/investigate/views"],
+    ["/m365/mail", "/investigate/views/mail"],
+    ["/m365#mail", "/investigate/views/mail"],
+    ["/m365/admin", "/investigate/views/admin"],
+    ["/m365/apps", "/ai/inventory#type=m365_app"],
+    ["/m365#apps", "/ai/inventory#type=m365_app"],
+    ["/m365/mail?from=mail", "/investigate/views/mail?from=mail"],
+  ])("sends the old address %s to %s", async (old, now) => {
+    const { canonical } = await import("@/lib/route");
+    window.history.replaceState(null, "", old);
+    expect(canonical()).toBe(now);
+  });
+
+  it("opens the Inventory on Microsoft 365 apps from the old Apps address", async () => {
+    await renderAt("/m365/apps");
+    await waitFor(() =>
+      expect(window.location.pathname + window.location.hash).toBe("/ai/inventory#type=m365_app"),
+    );
+    const card = await screen.findByRole("region", { name: "AI inventory" });
+    await waitFor(() =>
+      expect(within(card).getByRole("combobox", { name: "Type" })).toHaveValue("m365_app"),
+    );
+  });
+
+  it("says what is missing when there is no Microsoft 365 source", async () => {
+    window.history.replaceState(null, "", "/investigate/views/mail");
+    const spy = mockApi("Codename", { mode: "login", signedIn: true, role: "analyst" });
+    const real = spy.getMockImplementation() as typeof fetch;
+    spy.mockImplementation(async (url, init) => {
+      const res = await real(url, init);
+      if (!String(url).includes("/api/m365/overview")) return res;
+      const body = await res.json();
+      return new Response(JSON.stringify({ ...body, has_source: false }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    render(
+      <App
+        initialTheme="dark"
+        queryClient={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      />,
+    );
+    const title = await screen.findByText("Needs a Microsoft 365 source");
+    const box = title.closest("[data-empty]") as HTMLElement;
+    expect(box).toHaveAttribute("data-empty", "not-set-up");
+    await userEvent.click(within(box).getByRole("button", { name: "Add a source" }));
+    expect(window.location.pathname).toBe("/sources");
   });
 
   it("lists a tab's events over the page window", async () => {
@@ -58,7 +179,7 @@ describe("Microsoft 365 area (ADR-0038 section 5)", () => {
   });
 
   it("names the top user and app of each spike in the tooltip (owner 2026-10-31)", async () => {
-    await renderAt("/m365");
+    await renderAt("/investigate/views");
     const outcomes = await screen.findByRole("region", { name: "Sign-in outcomes" });
     const chart = within(outcomes).getByRole("img", { name: /^Failed sign-ins by class/ });
     chart.focus();
@@ -71,8 +192,8 @@ describe("Microsoft 365 area (ADR-0038 section 5)", () => {
 
 describe("Failed sign-ins by class (D158)", () => {
   it("counts real failures, names the rest, and says how it is counted", async () => {
-    await renderAt("/m365");
-    const overview = await screen.findByRole("region", { name: "Overview" });
+    await renderAt("/investigate/views");
+    const overview = await screen.findByRole("region", { name: "Summary" });
     const card = overview.querySelector<HTMLElement>('[data-kpi="Failed sign-ins"]');
     expect(card).not.toBeNull();
     expect(

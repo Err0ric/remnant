@@ -33,7 +33,7 @@ export const editorTheme = EditorView.theme({
   },
   "&.cm-focused": { outline: "none", borderColor: "var(--accent-text)" },
   ".cm-scroller": {
-    fontFamily: '"Source Code Pro", ui-monospace, "SF Mono", Menlo, Consolas, monospace',
+    fontFamily: '"Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace',
     lineHeight: "20px",
     minHeight: "92px",
   },

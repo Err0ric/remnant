@@ -1,3 +1,4 @@
+import { About } from "@/components/About";
 import type { SigmaRule, SigmaRuleListed } from "@/lib/api";
 import { LevelBadge } from "./LevelBadge";
 import { authorText, logsourceText } from "./rules";
@@ -32,7 +33,7 @@ export function RulesTable({
     <div className="overflow-x-auto">
       <table aria-label="Detection rules" className="w-full text-sm">
         <thead>
-          <tr className="border-b border-border bg-surface-head text-left text-text-secondary">
+          <tr className="border-b border-border text-left text-text-secondary">
             {isAdmin ? (
               <th className="w-8 px-3 py-2">
                 <input
@@ -43,12 +44,20 @@ export function RulesTable({
                 />
               </th>
             ) : null}
-            <th className="px-3 py-2 font-semibold">Title</th>
-            <th className="px-3 py-2 font-semibold">Level</th>
-            <th className="px-3 py-2 font-semibold">Log source</th>
-            <th className="px-3 py-2 font-semibold">Author</th>
-            <th className="px-3 py-2 font-semibold">Sources</th>
-            <th className="px-3 py-2 font-semibold">State</th>
+            <th className="px-3 py-2">Title</th>
+            <th className="px-3 py-2">Level</th>
+            <th className="px-3 py-2">Log source</th>
+            <th className="px-3 py-2">Author</th>
+            <th aria-label="Sources" className="px-3 py-2">
+              <span className="flex items-center gap-1.5">
+                Sources
+                <About
+                  lead="About this"
+                  text="A rule runs only on sources whose template declares its log source."
+                />
+              </span>
+            </th>
+            <th className="px-3 py-2">State</th>
             <th className="px-3 py-2" aria-label="Actions" />
           </tr>
         </thead>

@@ -75,7 +75,9 @@ export function AlertsButton() {
     >
       <Bell size={16} aria-hidden />
       {n ? (
-        <span className="rounded-full bg-accent px-1.5 text-xs tabular-nums text-white">{n}</span>
+        <span className="rounded-badge bg-sev-h-solid px-1.5 text-xs font-semibold tabular-nums text-sev-h-on">
+          {n}
+        </span>
       ) : null}
     </a>
   );

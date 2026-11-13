@@ -30,7 +30,7 @@ afterEach(() => vi.restoreAllMocks());
 describe("Simple search", () => {
   it("loads the SQL editor only when the SQL tab is opened", async () => {
     await renderAt("/investigate/logs");
-    expect(await screen.findByRole("heading", { name: "Investigate", level: 1 })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Logs", level: 1 })).toBeVisible();
     expect(screen.queryByLabelText("SQL query")).toBeNull();
     await userEvent.click(screen.getByRole("tab", { name: "SQL" }));
     expect(await screen.findByLabelText("SQL query")).toBeInTheDocument();
@@ -38,7 +38,7 @@ describe("Simple search", () => {
 
   it("is the first tab and sends its values as bound parameters", async () => {
     const { spy } = await renderAt("/investigate/logs");
-    expect(await screen.findByRole("heading", { name: "Investigate", level: 1 })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Logs", level: 1 })).toBeVisible();
     expect(screen.getByRole("tab", { name: "Filters", selected: true })).toBeVisible();
     expect(screen.queryByRole("tab", { name: "Ask AI" })).toBeNull();
     await screen.findByText("Failed password for invalid user oracle");
@@ -112,7 +112,7 @@ describe("Simple search", () => {
     const host = within(detail).getAllByRole("link", { name: "bastion" })[0] as HTMLElement;
     expect(host).toHaveAttribute("href", "/investigate/people#host=bastion");
     await userEvent.click(host);
-    await screen.findByRole("heading", { level: 1, name: "Investigate" });
+    await screen.findByRole("heading", { level: 1, name: "People & devices" });
     expect(window.location.pathname + window.location.hash).toBe(
       "/investigate/people#host=bastion",
     );
@@ -253,7 +253,7 @@ describe("Simple search", () => {
     const { spy } = await renderAt("/investigate/logs");
     await screen.findByText("Failed password for invalid user oracle");
     await userEvent.click(screen.getByRole("tab", { name: "SQL" }));
-    await userEvent.click(screen.getByRole("button", { name: "Run query" }));
+    await userEvent.click(screen.getByRole("button", { name: "Run" }));
     const fields = await screen.findByRole("complementary", { name: "Fields" });
     expect(await within(fields).findByText("click to filter")).toBeVisible();
     const src = await within(fields).findByRole("region", { name: /^source$/i });

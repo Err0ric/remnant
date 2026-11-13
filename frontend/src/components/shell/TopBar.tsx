@@ -31,7 +31,7 @@ export function TopBar({
 }: TopBarProps) {
   const next = theme === "dark" ? "light" : "dark";
   return (
-    <header className="sticky top-0 z-30 grid h-12 shrink-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 border-b border-black/20 bg-top px-4 text-white md:gap-5 min-[1100px]:grid-cols-[216px_minmax(0,1fr)_auto]">
+    <header className="sticky top-0 z-30 grid h-12 [--focus-ring:var(--focus-ring-top)] shrink-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 border-b border-black/20 bg-top px-4 text-white md:gap-5 min-[1100px]:grid-cols-[172px_minmax(0,1fr)_auto]">
       <div className="flex min-w-0 items-center gap-3">
         {onToggleMenu ? (
           <button

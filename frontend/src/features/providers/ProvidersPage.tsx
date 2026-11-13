@@ -1,6 +1,7 @@
+import { EmptyState } from "@/components/EmptyState";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Command, PageHeader } from "@/components/shell/PageHeader";
+import { PageHeader } from "@/components/shell/PageHeader";
 import { ApiError, api, type ProviderConfig, type ProviderHealth } from "@/lib/api";
 import { LoadedModel } from "./LoadedModel";
 import { LocalityBadge } from "./LocalityBadge";
@@ -50,20 +51,16 @@ export function ProvidersPage() {
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       <PageHeader
-        crumbs={["Home", "Settings", "AI providers"]}
         title="AI providers"
-        meta={`${list.length} ${list.length === 1 ? "provider" : "providers"}`}
-        commands={
-          <Command
-            label="Add provider"
-            primary
-            onClick={() => {
-              setEditing(null);
-              setAdding(true);
-            }}
-            disabled={adding}
-          />
-        }
+        count={`${list.length} ${list.length === 1 ? "provider" : "providers"}`}
+        primary={{
+          label: "Add provider",
+          onClick: () => {
+            setEditing(null);
+            setAdding(true);
+          },
+          disabled: adding,
+        }}
       />
       <div className="flex flex-col gap-3 px-5 py-3">
         <p className="max-w-3xl text-sm text-text-secondary">
@@ -83,12 +80,12 @@ export function ProvidersPage() {
           <div className="overflow-x-auto">
             <table aria-label="AI providers" className="w-full text-sm">
               <thead>
-                <tr className="border-b border-border bg-surface-head text-left text-text-secondary">
-                  <th className="px-3 py-2 font-semibold">Name</th>
-                  <th className="px-3 py-2 font-semibold">Where</th>
-                  <th className="px-3 py-2 font-semibold">Model</th>
-                  <th className="px-3 py-2 font-semibold">Key</th>
-                  <th className="px-3 py-2 font-semibold">Status</th>
+                <tr className="border-b border-border text-left text-text-secondary">
+                  <th className="px-3 py-2">Name</th>
+                  <th className="px-3 py-2">Where</th>
+                  <th className="px-3 py-2">Model</th>
+                  <th className="px-3 py-2">Key</th>
+                  <th className="px-3 py-2">Status</th>
                   <th className="px-3 py-2" aria-label="Actions" />
                 </tr>
               </thead>
@@ -191,9 +188,11 @@ export function ProvidersPage() {
             </table>
           </div>
           {list.length === 0 && providers.isSuccess ? (
-            <p className="px-3 py-8 text-center text-sm text-text-secondary">
-              No providers. Add a local one, such as Ollama, to use Ask.
-            </p>
+            <EmptyState
+              kind="not-set-up"
+              title="No providers."
+              detail="Add a local one, such as Ollama, to use Ask."
+            />
           ) : null}
         </section>
         {editing

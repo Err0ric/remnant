@@ -1,9 +1,10 @@
+import { EmptyState } from "@/components/EmptyState";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { Command, PageHeader } from "@/components/shell/PageHeader";
+import { PageHeader } from "@/components/shell/PageHeader";
 import { BuiltInRefusals } from "./BuiltInRefusals";
 import { ApiError, api, type RuleRun, type SigmaRule } from "@/lib/api";
-import { navigate } from "@/lib/route";
+import { fragmentValues, navigate, setFragment } from "@/lib/route";
 import { seedSchedule } from "@/lib/scheduleSeed";
 import { TIME_RANGES } from "@/lib/search";
 import { BulkSchedule } from "./BulkSchedule";
@@ -30,7 +31,10 @@ export function RulesPage({ isAdmin, canRun }: RulesPageProps) {
   const client = useQueryClient();
   const [importing, setImporting] = useState(false);
   const [importingCore, setImportingCore] = useState(false);
-  const [text, setText] = useState("");
+  // `#rule=<title>` (the Dashboard's Detections section) fills the filter box with that name.
+  const [text, setText] = useState(
+    () => fragmentValues(window.location.hash.replace(/^#/, "")).get("rule") ?? "",
+  );
   const [enabledOnly, setEnabledOnly] = useState(false);
   const [withDataOnly, setWithDataOnly] = useState(false);
   const [rangeId, setRangeId] = useState<string>("24h");
@@ -84,42 +88,23 @@ export function RulesPage({ isAdmin, canRun }: RulesPageProps) {
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       <PageHeader
-        crumbs={["Home", "Detect", "Detection rules"]}
         title="Detection rules"
-        meta={`${all.length} ${all.length === 1 ? "rule" : "rules"} · ${enabledCount} enabled`}
-        commands={
-          isAdmin ? (
-            <>
-              <Command
-                label="Import rules"
-                primary
-                onClick={() => setImporting(true)}
-                disabled={importing}
-              />
-              <Command
-                label="Import SigmaHQ core rules"
-                onClick={() => setImportingCore(true)}
-                disabled={importingCore}
-              />
-              <Command
-                label={`Enable selected (${selected.size})`}
-                onClick={() => setEnabled.mutate(true)}
-                disabled={!selected.size || setEnabled.isPending}
-              />
-              <Command
-                label="Disable selected"
-                onClick={() => setEnabled.mutate(false)}
-                disabled={!selected.size || setEnabled.isPending}
-              />
-              {canRun ? (
-                <Command
-                  label="Schedule selected"
-                  onClick={() => setBulk(true)}
-                  disabled={!selected.size || bulk}
-                />
-              ) : null}
-            </>
-          ) : null
+        count={`${all.length} ${all.length === 1 ? "rule" : "rules"} · ${enabledCount} enabled`}
+        secondary={
+          isAdmin
+            ? [
+                {
+                  label: "Import SigmaHQ core rules",
+                  onClick: () => setImportingCore(true),
+                  disabled: importingCore,
+                },
+              ]
+            : []
+        }
+        primary={
+          isAdmin
+            ? { label: "Import rules", onClick: () => setImporting(true), disabled: importing }
+            : undefined
         }
       />
       <div className="flex flex-col gap-3 px-5 py-3">
@@ -152,7 +137,11 @@ export function RulesPage({ isAdmin, canRun }: RulesPageProps) {
             placeholder="Filter by title, author, tag, or log source"
             className="h-8 min-w-0 flex-[1_1_280px] rounded border border-border bg-inset px-2"
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => {
+              setText(e.target.value);
+              // The box is the person's now: a reload must not bring the old name back.
+              setFragment("", true);
+            }}
           />
           <label className="flex items-center gap-1.5">
             <input
@@ -188,6 +177,32 @@ export function RulesPage({ isAdmin, canRun }: RulesPageProps) {
             </label>
           ) : null}
         </div>
+        {/* What applies to the ticked rules sits with the list, not in the page header. */}
+        {isAdmin ? (
+          <div role="group" aria-label="Selected rules" className="flex flex-wrap gap-2">
+            {(
+              [
+                [
+                  `Enable selected (${selected.size})`,
+                  () => setEnabled.mutate(true),
+                  setEnabled.isPending,
+                ],
+                ["Disable selected", () => setEnabled.mutate(false), setEnabled.isPending],
+                ...(canRun ? ([["Schedule selected", () => setBulk(true), bulk]] as const) : []),
+              ] as const
+            ).map(([label, run, busy]) => (
+              <button
+                key={label}
+                type="button"
+                onClick={run}
+                disabled={!selected.size || busy}
+                className="h-7 rounded border border-border-strong px-2.5 text-sm hover:bg-surface-head disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent"
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        ) : null}
         <section className="overflow-hidden rounded-card border border-border bg-surface">
           <RulesTable
             rules={shown}
@@ -222,17 +237,20 @@ export function RulesPage({ isAdmin, canRun }: RulesPageProps) {
             </p>
           ) : null}
           {all.length === 0 && rules.isSuccess ? (
-            <p className="px-3 py-8 text-center text-sm text-text-secondary">
-              No rules yet.{" "}
-              {isAdmin
-                ? "Import a folder of Sigma rules, such as a copy of SigmaHQ in /rules."
-                : "An administrator can import them."}
-            </p>
+            <EmptyState
+              kind="not-set-up"
+              title="No rules yet."
+              detail={
+                isAdmin
+                  ? "Import a folder of Sigma rules, such as a copy of SigmaHQ in /rules."
+                  : "An administrator can import them."
+              }
+            />
           ) : null}
         </section>
         <p className="text-xs text-text-muted">
           Each rule shows its author as its license requires (SigmaHQ rules: Detection Rule License
-          1.1). A rule runs only on sources whose template declares its log source.
+          1.1).
         </p>
       </div>
     </div>

@@ -243,9 +243,9 @@ export function SchedulePanel({
             <div className="rounded border border-border">
               <table aria-label={`Top rows of ${s.name}`} className="w-full table-fixed">
                 <thead>
-                  <tr className="border-b border-border bg-surface-head text-left text-text-secondary">
+                  <tr className="border-b border-border text-left text-text-secondary">
                     {run.columns.slice(0, shown).map((c) => (
-                      <th key={c} title={c} className="truncate px-2 py-1 font-semibold">
+                      <th key={c} title={c} className="truncate px-2 py-1">
                         {c}
                       </th>
                     ))}
@@ -479,7 +479,7 @@ function MoveTo({ name, value, sections, onMove }: MoveToProps) {
           autoFocus
           placeholder="Section name, for example Identity"
           onChange={(e) => setText(e.target.value)}
-          className="h-7 min-w-0 flex-1 rounded border border-border-strong bg-inset px-2"
+          className="h-7 min-w-0 flex-1 rounded border border-border-control bg-inset px-2"
         />
         <button
           type="submit"
@@ -500,7 +500,7 @@ function MoveTo({ name, value, sections, onMove }: MoveToProps) {
         aria-label={`Move ${name} to section`}
         value={value}
         onChange={(e) => (e.target.value === NEW ? setAdding(true) : onMove(e.target.value))}
-        className="h-7 min-w-0 flex-1 rounded border border-border-strong bg-inset px-1"
+        className="h-7 min-w-0 flex-1 rounded border border-border-control bg-inset px-1"
       >
         <option value="">No section</option>
         {sections.map((x) => (
@@ -550,7 +550,7 @@ function HeadlineForm({ schedule: s, columns }: HeadlineFormProps) {
           aria-label={`Number shown for ${s.name}`}
           value={kind}
           onChange={(e) => setKind(e.target.value as HeadlineKind)}
-          className="h-7 rounded border border-border-strong bg-inset px-1"
+          className="h-7 rounded border border-border-control bg-inset px-1"
         >
           {HEADLINES.map(([k, text]) => (
             <option key={k} value={k}>
@@ -564,7 +564,7 @@ function HeadlineForm({ schedule: s, columns }: HeadlineFormProps) {
           aria-label={`Column for ${s.name}`}
           value={column}
           onChange={(e) => setColumn(e.target.value)}
-          className="h-7 rounded border border-border-strong bg-inset px-1 font-mono"
+          className="h-7 rounded border border-border-control bg-inset px-1 font-mono"
         >
           {(columns.includes(column) || !column ? columns : [column, ...columns]).map((c) => (
             <option key={c} value={c}>
@@ -579,7 +579,7 @@ function HeadlineForm({ schedule: s, columns }: HeadlineFormProps) {
         maxLength={60}
         placeholder="Label, for example devices"
         onChange={(e) => setLabel(e.target.value)}
-        className="h-7 min-w-0 flex-1 basis-40 rounded border border-border-strong bg-inset px-2"
+        className="h-7 min-w-0 flex-1 basis-40 rounded border border-border-control bg-inset px-2"
       />
       <button
         type="submit"

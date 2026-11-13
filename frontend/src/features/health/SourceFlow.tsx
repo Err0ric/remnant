@@ -55,7 +55,7 @@ interface SparkProps {
   timeZone?: string;
 }
 
-/** Events per hour as an area, the source's own peak printed, gap hours shaded (F55). The
+/** Events per hour as a line, the source's own peak printed, gap hours shaded (F55). The
  * reading for each hour is in a tooltip; the totals beside it are printed. */
 function Spark({ counts, hours, gaps, name, timeZone }: SparkProps) {
   const n = Math.max(1, counts.length);
@@ -64,7 +64,6 @@ function Spark({ counts, hours, gaps, name, timeZone }: SparkProps) {
   const x = (i: number) => (i / (n - 1 || 1)) * 100;
   const y = (v: number) => 26 - (v / top) * 22;
   const line = counts.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(2)},${y(v).toFixed(2)}`);
-  const area = `${line.join(" ")} L100,28 L0,28 Z`;
   const inGap = (i: number) =>
     gaps.some((g) => {
       const start = hours.indexOf(g.start);
@@ -99,7 +98,6 @@ function Spark({ counts, hours, gaps, name, timeZone }: SparkProps) {
             />
           ) : null,
         )}
-        <path d={area} className="fill-accent opacity-20" />
         <path
           d={line.join(" ")}
           className="fill-none stroke-accent-text"
@@ -154,9 +152,9 @@ export function SourceFlow({
         </p>
       ) : null}
       <div
-        className={`${COLS} border-b border-border bg-surface-head px-3 py-2 text-text-secondary max-md:hidden`}
+        className={`${COLS} border-b border-border px-3 py-2 text-xs font-medium text-text-secondary max-md:hidden`}
       >
-        <span className="font-semibold">Source</span>
+        <span>Source</span>
         <span className="relative h-4 min-w-0" aria-label={`Hour axis, ${zone}`}>
           {ticks.map(({ h, i }) => (
             <span
@@ -177,9 +175,9 @@ export function SourceFlow({
             </span>
           ))}
         </span>
-        <span className="text-right font-semibold">24 hours</span>
-        <span className="text-right font-semibold">Per minute</span>
-        <span className="text-right font-semibold">Last received</span>
+        <span className="text-right">24 hours</span>
+        <span className="text-right">Per minute</span>
+        <span className="text-right">Last received</span>
       </div>
       <ul aria-label="Sources">
         {sources.map((s) => {

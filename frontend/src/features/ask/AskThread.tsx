@@ -21,6 +21,8 @@ const TZ = (() => {
 
 interface AskThreadProps {
   start: string | undefined;
+  /** The end of a Custom range; left out for a window that ends now. */
+  end?: string;
   sources: string[];
   isAdmin: boolean;
   /** A question to start with (the slide-over opened from the command palette). */
@@ -41,6 +43,7 @@ interface AskThreadProps {
  */
 export function AskThread({
   start,
+  end,
   sources,
   isAdmin,
   initialQuestion = "",
@@ -147,6 +150,7 @@ export function AskThread({
           question: q,
           provider_id: chosen?.provider_id,
           start,
+          end,
           sources: sources.length ? sources : undefined,
           history,
           tz: TZ,
@@ -252,7 +256,7 @@ export function AskThread({
             value={chosen?.provider_id ?? ""}
             onChange={(e) => setAskProvider(e.target.value)}
             disabled={!providers.data?.length}
-            className="h-8 rounded border border-border-strong bg-surface px-2 text-sm"
+            className="h-8 rounded border border-border-control bg-surface px-2 text-sm"
           >
             {providers.data?.length ? null : <option value="">None enabled</option>}
             {(providers.data ?? []).map((p) => (
@@ -263,11 +267,11 @@ export function AskThread({
           </select>
           {chosen ? (
             chosen.locality === "cloud" ? (
-              <span className="rounded-badge bg-cloud-bg px-2 py-px text-xs text-cloud-text">
+              <span className="rounded-badge bg-cloud-bg px-2 py-px text-xs text-cloud-tx">
                 Cloud
               </span>
             ) : (
-              <span className="rounded-badge bg-local-bg px-2 py-px text-xs text-local-text">
+              <span className="rounded-badge bg-local-bg px-2 py-px text-xs text-local-tx">
                 Local
               </span>
             )
@@ -323,7 +327,7 @@ export function AskThread({
           />
         </div>
         {chosen?.locality === "cloud" ? (
-          <p role="note" className="text-sm text-cloud-text">
+          <p role="note" className="text-sm text-cloud-tx">
             Your question is sent to {chosen.name}.
           </p>
         ) : null}

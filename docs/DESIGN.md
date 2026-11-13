@@ -4,7 +4,9 @@ Product name is a working codename and is rendered from the `PRODUCT_NAME` const
 
 **Direction (D24): "Workspace."** A polished commercial security console, closer to Microsoft Sentinel and Splunk in structure and to the best commercial consoles in readability than to a developer side project. Dark theme first with a complete light theme. Labeled navigation, clear page hierarchy, consistent components, inline detail. If a screen looks like a chat app, a marketing site, or a weekend project, it is wrong.
 
-Reference mockups: the "Remnant Design Directions" canvas, second row (Search dark, Search light, Investigation view).
+Reference mockups: the "Remnant Design Directions" canvas, second row (Search dark, Search light, Investigation view), and for navigation, the page pattern, and the Graphite visual direction, the "Remnant console redesign: 4 key screens" canvas (ADR-0052, accepted 2026-11-12). The mockup images are not in the repository.
+
+**Build status (2026-11-12).** Sections 1 to 8 and 11 were edited to ADR-0052 when it was accepted. Built so far: the tokens, fonts, type scale, and density default (sections 2, 3, 4, 11). The rest follows in that ADR's build; until each part lands, the app shows the layout and components it replaces.
 
 Tokens below are the contract. They land in `frontend/src/styles/tokens.css` and Tailwind reads from them. No component uses a hex value directly.
 
@@ -14,64 +16,70 @@ Tokens below are the contract. They land in `frontend/src/styles/tokens.css` and
 
 | Principle | In practice |
 |---|---|
-| Enterprise, not app-like | Full app chrome (top bar, labeled nav, area tabs, command bar). No floating gimmicks, no oversized hero text |
-| Readable first, dense second | 14px UI text, 13px data. Density toggles exist, but the default is comfortable to read for a whole shift |
-| One accent | Blue marks interaction and selection. Severity colors only mean severity |
+| Enterprise, not app-like | Full app chrome (top bar, labeled nav, page header, page tabs). No floating gimmicks, no oversized hero text |
+| Readable first, dense second | 14px UI text, 13px data, 34px rows by default (Comfortable) for every role. Compact (13px, 12px, 30px rows) is a per-user choice, remembered |
+| One accent | Blue marks interaction and selection. Severity colors only mean severity. Low severity is neutral, so nothing but a link or a selection is blue |
 | Show the work | SQL, filters, time range, source scope, and "computed from" lines are always visible |
 | Detail in place | Expanding a row reveals its detail directly under it. No side panels for reading events, no modals for data |
-| Two page types | **Logs** for open-ended querying, **Investigation** for a focused summary of one entity (an IP, user, host, or alert) |
+| One page pattern | Every page has the same four zones and one of five body templates: Board, Table, List-detail, Record, Form (6.0). **Logs** is for open-ended querying; a Record page is a focused summary of one entity (an address, person, device, or alert) |
 
 ---
 
 ## 2. Themes and palette
 
-Dark is the default. Light is a first-class theme with its own values, not an inversion. Respect `prefers-color-scheme` on first load, then the user's choice.
+Dark is the default. Light is a first-class theme with its own values. Respect `prefers-color-scheme` on first load, then the user's choice.
 
 | Token | Dark | Light | Use |
 |---|---|---|---|
-| `--bg` | `#0F1115` | `#F3F4F6` | Page background |
-| `--top` | `#0A0C10` | `#1D2330` | Top bar (dark in both themes) |
-| `--nav` | `#13161C` | `#FFFFFF` | Left navigation |
-| `--surface` | `#161A21` | `#FFFFFF` | Cards, tables, panels |
-| `--surface-head` | `#1A1F27` | `#F8F9FB` | Table header rows |
-| `--surface-expand` | `#1B212B` | `#F6F9FE` | Inline row expansion |
-| `--inset` | `#0B0D11` | `#F3F5F8` | SQL editor, raw log blocks |
-| `--border` | `#272D38` | `#E1E4EA` | Default 1px borders and row dividers |
-| `--border-strong` | `#3A4250` | `#C3C9D4` | Inputs, secondary buttons |
-| `--text` | `#E6E9EF` | `#1D2330` | Primary text and data |
-| `--text-secondary` | `#A3ACBA` | `#4B5263` | Labels, breadcrumbs, metadata |
-| `--text-muted` | `#838D9C` | `#646D7E` | Section labels, hints, NULL glyph |
-| `--series-neutral` | `#646D7D` | `#878F9E` | A second neutral chart series beside `--text-muted` (Expired sign-ins): at least 3:1 on both surfaces in both themes, never a border token |
-| `--accent` | `#2F6FE0` | `#1F5FBF` | Primary buttons (fill) |
-| `--accent-text` | `#7AAEFA` | `#1F5FBF` | Links, active nav text, command bar primary |
-| `--accent-subtle` | `rgba(76,141,246,0.16)` | `#E8F0FB` | Active nav item, filter chips |
-| `--row-selected` | `rgba(76,141,246,0.10)` | `#EEF4FD` | Expanded or selected row |
-| `--focus-ring` | `#7AAEFA` | `#1F5FBF` | 2px outline, 1px offset |
-| `--section-bg` | `rgba(148,163,184,0.16)` | `#E2E7EE` | Section title pill fill (`SectionTitle`). Neutral slate, never the link blue |
-| `--section-text` | `#F4F6FA` | `#111722` | Section title text, brighter than data |
-| `--panel-title` | `#F4F6FA` | `#111722` | Panel, card, chart, and KPI label titles (`PanelTitle`), higher contrast than data |
+| `--bg` | `#0E1013` | `#FAFAFB` | Page background |
+| `--top` | `#0A0B0E` | `#16181D` | Top bar (dark in both themes) |
+| `--nav` | `#0E1013` | `#FAFAFB` | Left navigation |
+| `--surface` | `#0E1013` | `#FFFFFF` | Cards, tables, panels. Same as the page in dark: borders define a card, not a fill |
+| `--surface-head` | `#13161A` | `#F4F5F7` | Hover fill, header strips where one is needed |
+| `--surface-expand` | `#14171C` | `#F5F8FE` | Inline row expansion, the Triage card |
+| `--inset` | `#0A0B0E` | `#F1F2F4` | SQL editor, raw log blocks, text inputs |
+| `--border` | `#1F242B` | `#E4E6EA` | 1px borders and row dividers |
+| `--border-strong` | `#2E353F` | `#C9CDD4` | Secondary buttons, facet buttons, segmented controls (controls that carry a text label) |
+| `--border-control` | `#5F6977` | `#808896` | Text inputs and checkboxes: the edge is the only cue, so it meets 3:1 on `--surface`, `--inset`, and a selected row |
+| `--text` | `#E4E7EC` | `#16181D` | Primary text and data |
+| `--text-secondary` | `#9BA3B0` | `#4A5160` | Labels, metadata, breadcrumbs |
+| `--text-muted` | `#7F8896` | `#636D7D` | Hints, group labels, NULL glyph, the Low and Info dot |
+| `--series-neutral` | `#646D7D` | `#858D9C` | Second neutral chart series |
+| `--accent` | `#3A68E0` | `#2B5BD7` | Primary button fill |
+| `--on-accent` | `#FFFFFF` | `#FFFFFF` | Text on the primary button |
+| `--accent-text` | `#7EA2FF` | `#2452C9` | Links, current nav item, current tab underline, focus ring |
+| `--focus-ring-top` | `#7EA2FF` | `#7EA2FF` | Focus ring inside the top bar, which is dark in both themes |
+| `--accent-subtle` | `rgba(91,140,255,0.14)` | `#E9EFFD` | Pressed segment, selected cited ID chip |
+| `--row-selected` | `rgba(91,140,255,0.09)` | `#EFF3FE` | Selected or expanded row |
+| `--warn-tint` | `rgba(232,188,98,0.08)` | `#FCF5E4` | Blind row in Needs you, blind state notices. Never an alert |
 
 ### Severity (reserved for alerts, Sigma levels, and OCSF `severity_id` only)
 
-Shown as a filled badge with a text label, never color alone.
+Always a text label, never color alone.
 
-| Level | Dark badge (bg / text) | Light badge (bg / text) | OCSF `severity_id` |
-|---|---|---|---|
-| Critical | `rgba(244,63,94,0.18)` / `#F7899B` | `#FDE7EA` / `#B4162F` | 5, 6 |
-| High | `rgba(249,115,22,0.18)` / `#F9A66B` | `#FEEBDD` / `#A34A08` | 4 |
-| Medium | `rgba(224,169,59,0.18)` / `#F0C46A` | `#FDF1DC` / `#8A5300` | 3 |
-| Low | `rgba(76,141,246,0.16)` / `#9CC2FA` | `#E8F0FB` / `#174A96` | 2 |
-| Info | `#232A35` / `#A3ACBA` | `#EEF0F4` / `#3D4555` | 1 |
+| Level | Form | Dark | Light | OCSF `severity_id` |
+|---|---|---|---|---|
+| Critical | Solid badge | `#F2647A` fill, `#1F0409` text | `#B4162F` fill, `#FFFFFF` text | 5, 6 |
+| High | Solid badge | `#F08A3C` fill, `#1A0E03` text | `#B8500A` fill, `#FFFFFF` text | 4 |
+| Medium | 7px square dot, then the label in `--text` | dot `#F0C46A` | dot `#8A5300` | 3 |
+| Low | Dot, then the label | dot `--text-muted` (neutral, no longer blue) | dot `--text-muted` | 2 |
+| Info | Dot, then the label | dot `--text-muted` | dot `--text-muted` | 1 |
+
+Token names in `tokens.css`: `--sev-c-solid`, `--sev-c-on`, `--sev-h-solid`, `--sev-h-on`, `--sev-m-dot`. The old tinted pairs (`--sev-<level>-bg` / `-text`) are removed, including the blue Low pair. The rail and bell counts use the High solid pair.
 
 ### Semantic
 
 | Token | Dark | Light | Use |
 |---|---|---|---|
-| `--ok` | `#5FC9A0` | `#1F7A5A` | Healthy, passed, "0 successful after failures" |
-| `--warn` | `#F0C46A` | `#8A5300` | Partial parse, unverified citation |
-| `--danger` | `#F7899B` | `#B4162F` | Destructive confirm, gate block, errors |
-| `--local` | `#7FD3B2` on `rgba(63,182,139,0.16)` | `#1F6B57` on `#E3F4EF` | "Local only" classification badge |
-| `--cloud` | `#B9A2FB` on `rgba(167,139,250,0.16)` | `#6D28D9` on `#F1EBFE` | Cloud provider badge. SPEC D12: the only purple in the app |
+| `--ok` | `#58C29A` | `#1C7656` | Healthy, passed, a good zero |
+| `--warn` | `#E8BC62` | `#855100` | Blind states, partial parse, unverified citation, Not approved outline |
+| `--danger` | `#F28B9B` | `#B0152E` | Destructive confirm, gate block, errors |
+| `--info-bg` | `#1A1E24` | `#EDEFF2` | Event ID chip fill |
+| `--info-tx` | `#9BA3B0` | `#3F4654` | Event ID chip text |
+| `--local-bg` / `--local-tx` | `rgba(63,182,139,0.16)` / `#7FD3B2` | `#E3F4EF` / `#1F6B57` | Local only badge; Approved dot uses the text value |
+| `--cloud-bg` / `--cloud-tx` | `rgba(167,139,250,0.16)` / `#B9A2FB` | `#F1EBFE` / `#6D28D9` | Cloud provider badge. The only purple in the app |
+
+AI status: Approved is a dot in `--local-tx`; Unreviewed is a hollow dot outlined in `--accent-text`, so it stands apart from Low and Info; Not approved is a hollow dot outlined in `--warn`. Each with its label. Never a severity color.
 
 ---
 
@@ -79,31 +87,36 @@ Shown as a filled badge with a text label, never color alone.
 
 | Role | Font | Notes |
 |---|---|---|
-| UI | Source Sans 3 | Self-hosted via `@fontsource` (400, 500, 600, 700). Tabular numbers in tables and KPIs |
-| Data | Source Code Pro | Every log field value, IP, event id, SQL, raw line |
+| UI | Geist | Self-hosted via `@fontsource` (400, 500, 600, 700). Tabular numbers everywhere |
+| Data | Geist Mono | 400, 500. Every log field value, IP, event ID, SQL, raw line |
 
-| Name | Size / line | Weight | Use |
-|---|---|---|---|
-| `text-xs` | 12 / 16 | 600 | Nav section labels, badges; panel titles in upper case with wider letter spacing (`PanelTitle`) |
-| `text-sm` | 13 / 18 | 400 | Data cells, metadata, breadcrumbs, chips |
-| `text-base` | 14 / 20 | 400 | Default UI text, buttons, inputs, table text (500 for the current sub-page in the rail) |
-| `text-md` | 15 / 22 | 600 (700 in a section title) | Section titles (`SectionTitle`), expanded-row title |
-| `text-lg` | 22 / 28 | 600 | Page title (Logs and other pages) |
-| `text-xl` | 24 / 32 | 700 | Page title (Investigation pages) |
-| `text-kpi` | 28 / 36 | 700 | KPI card values only |
-| `text-kpi-lg` | 34 / 40 | 700 | Dashboard KPI values from 1500px wide (ADR-0038 edit 10) |
+| Name | Comfortable (default) | Compact | Weight | Use |
+|---|---|---|---|---|
+| `text-xs` | 12 / 16 | 12 / 16 | 500 | Rail group labels, table headers, axis labels, change pills |
+| `text-data` | 13 / 18 | 12 / 18 | 400 | Mono data in tables and chips |
+| `text-base` | 14 / 20 | 13 / 18 | 400 | Default UI text, table text, buttons, inputs; panel titles at 600; rail items at 500 (600 when current) |
+| `text-md` | 15 / 22 | 14 / 20 | 600 | Alert titles in lists and the pane, empty state headings |
+| `text-lg` | 20 / 26 | 20 / 26 | 600 | Page title |
+| `text-xl` | 22 / 28 | 22 / 28 | 600 | Page title on Record pages |
+| `text-kpi` | 28 / 36 | 24 / 30 | 600 | KPI values |
+| `text-kpi-lg` | 32 / 40 | 28 / 34 | 600 | Dashboard KPI values from 1500px wide |
 
 **Time format** (owner, 2026-11-08): every time reads in the app's local format, in the viewer's time zone, "Nov 8, 7:19 AM" (`components/When.tsx`, `localStamp` where text cannot hold an element), with the UTC time on hover. Seconds only in log and event tables ("Nov 8, 7:19:52 AM", `When seconds`), so events in one minute read apart. Never a raw ISO or UTC stamp as the visible text. The zone is added only in an hour that happens twice. KPI labels wrap to at most two lines, full text on hover, never cut off in one.
+
+Density (owner, 2026-11-11): Comfortable is the default for every role, because users are internal and non-technical. Compact is a per-user choice in the user menu, remembered in the browser. There is no width-based default.
 
 ---
 
 ## 4. Spacing, shape, density
 
 - 4px grid. Allowed: 2, 4, 6, 8, 10, 12, 14, 16, 20, 24, 32.
-- Radius: 4px on controls and tables, 6px on cards, 3px on badges, 12px only on filter chips. Nothing larger.
-- Table row: 36px "comfortable", 30px "compact". Density is a per-user choice in the user menu, remembered in the browser; with no choice, comfortable from 1440px wide and compact below (ADR-0038 edit 10). Search results keep their own table toggle.
-- Page padding 20px (Logs) or 24px (Investigation). Card padding 14 to 16px.
-- Borders 1px. No drop shadows in dark theme except the command palette. Light theme cards use border only.
+- Radius: 6px cards, 5px controls, 3px solid badges, 2px dots. Nothing larger.
+- Density is a per-user choice in the user menu, remembered in the browser; Comfortable for everyone until they choose (section 3). Search results keep their own table toggle.
+- Comfortable (default): table rows 34px, controls 32px (28px in the filter bar), rail rows 32px, tabs 36px. Compact: table rows 30px, controls 28px (26px in the filter bar), rail rows 28px, tabs 34px.
+- Page padding 20px on every page. Card padding 12 to 14px.
+- Surfaces are flat: 1px `--border`, no fills in dark, white on `--bg` in light. No drop shadows except the command palette.
+- Table headers have no fill: 12px at 500 in `--text-secondary` over a 1px divider.
+- Charts: 1.5px lines, no area fill; the window before as a dashed `--text-muted` line. Stacked parts are separate lines with a printed legend. Top values stay horizontal bars.
 - Transitions 120ms ease-out. `prefers-reduced-motion` disables them.
 
 ---
@@ -111,39 +124,81 @@ Shown as a filled badge with a text label, never color alone.
 ## 5. Application shell
 
 ```
-+--------------------------------------------------------------------------------------------------+
-| [logo] Remnant  [install]   [ Search pages, saved searches, sources      Ctrl K ]   Updated 1 min ago  Refresh  [bell 9]  (sun)  user v |  48px
-+------------------------+-------------------------------------------------------------------------+
-| Monitor              v | Investigate                                              (area title)   |
-|   Dashboard            | Logs | Ask AI | People & devices | Saved searches 17      (tabs)         |
-|   Alerts             9 |-------------------------------------------------------------------------|
-|   | Open               | Run query  Save  Schedule  Export  Columns                              |
-|   | Closed  Muted ...  |-------------------------------------------------------------------------|
-| Investigate          v | [Last 24 hours] [Source: linux_sshd] + Filter  (o 9 sources)            |
-|   Logs                 | +---------------------------------------------------------------------+ |
-|   Ask AI               | | Results  23 items                                                   | |
-|   People & devices     | |                                                                     | |
-|   Saved searches       | | > row                                                               | |
-| AI                   v | +---------------------------------------------------------------------+ |
-|   AI usage / Agents    |                                                                         |
-| System               > |                                                                         |
-+------------------------+-------------------------------------------------------------------------+
++----------------------------------------------------------------------------------------------+
+| Remnant [install]   [ Search pages, people, addresses, saved searches   Ctrl K ]  Updated 1 min ago  Refresh  [bell 7]  user v |  48px
++--------------------+-------------------------------------------------------------------------+
+| Monitor            | Alerts  7 open                                    [secondary] [Primary] |  header 44px
+|   Dashboard        | Queue | Rules | Schedules                                               |  tabs 36px
+| | Alerts         7 | [Time] [State] [facets] [text box]                         7 alerts     |  filter bar 40px
+| Investigate        |-------------------------------------------------------------------------|
+|   Logs             | body: Board, Table, List-detail, Record, or Form                        |
+|   Ask AI           |                                                                         |
+|   People & devices |                                                                         |
+| AI                 |                                                                         |
+|   AI usage         |                                                                         |
+|   Agents           |                                                                         |
+|                    |                                                                         |
+| ------------------ |                                                                         |
+|   Health         o |                                                                         |
+|   Reports          |                                                                         |
+|   Settings         |                                                                         |
++--------------------+-------------------------------------------------------------------------+
 ```
 
 - **Top bar** is dark in both themes, 48px, and stays in view on scroll. Three columns: product mark and the optional install name (set by an admin; signed-in people only; nothing when unset) on the left; a wide **search** in the center (up to 680px, ADR-0038 edit 10) with the shortcut, which opens the command palette's list; on the right an optional environment label (`server.environment_label`, for example "Lab"; hidden when unset, never the raw host or IP), **Updated N min ago** and **Refresh** (refetches everything on the page; the only freshness line, pages do not repeat it), the bell with the open alert count, the theme toggle as a sun or moon icon with a tooltip, and the user menu (account, **Density**, sign out).
-- **Left nav** (ADR-0038 edit 10) is 240px from 1100px up, in four collapsible groups: **Monitor** (Dashboard, Alerts with the open count, Microsoft 365 once built), **Investigate** (Logs, Ask AI, People & devices, Saved searches), **AI** (AI usage, Agents), **System** (Health, Settings). Page rows are 34px at 15px semibold with an 18px icon; every page with sub-pages lists them under it on a hairline (30px rows, 14px). Where you are is shown like a tree (see **Where you are** below). Each group's open or closed state is remembered in the browser. Settings keeps its own sub-nav on its pages (Start here, Data, Access, AI, Alerts, Records; D70); its sub-pages are not listed in the rail, so the rail fits a 1080px tall screen. Between 768 and 1100px the rail shows icons only, with the label as a tooltip, and hovering or focusing a page shows a menu of its sub-pages; on phones it opens from the Menu button. Items hidden by role. One label per meaning: **Agents** is the AI agents area; the Health tab for log collectors is **Endpoint agents**.
-- **Where you are** (owner, 2026-11-03; SPEC D199). The rail marks the current page with a bar and weight, not a fill:
-  - Sub-pages hang on a 1px guide line in `--border` (low contrast on purpose; it shows structure, not state).
-  - The current sub-page gets a 2px bar in `--accent-text` on that line, the height of its row, and its label in `--accent-text` at 500 (one step up from 400).
-  - A page with no sub-pages (Dashboard, Logs, Settings, and the like) gets the same 2px bar on its left edge when current, with its label in `--accent-text` at 700 (one step up from 600).
-  - A folded page whose current sub-page is hidden, and a folded group holding the current page, carry the bar on their own row (the page row in accent at 700; the group header in accent, bold). In the icon rail the current page's icon row carries it.
-  - No filled background on the current row. Hover keeps the `--surface-head` fill.
-  - The bar is `--accent-text`, 8.0:1 on `--nav` in dark and 6.1:1 in light (over 3:1 for a non-text cue). `--accent` (3.9:1 on dark `--nav`) is for button fills, not the bar. Color is never the only cue: the bar is a shape and the label changes weight. The current link keeps `aria-current="page"`.
-- **Page header**: the area title, then the area's **tabs** (a tab row with counts; each tab has its own URL, `/<area>/<tab>`), then a command bar of text buttons. No breadcrumb, except on entity pages. The primary command is in accent text; destructive commands are never in the command bar.
+- **Left nav** (ADR-0052) is 208px from 1100px up. Three labeled groups: **Monitor** (Dashboard, Alerts with the open count), **Investigate** (Logs, Ask AI, People & devices), **AI** (AI usage, Agents). A pinned cluster at the bottom under a hairline: **Health** (a `--warn` dot only when something is wrong), **Reports**, **Settings**. Rows are 32px, 14px at 500 with a 16px icon (28px, 13px in Compact); pinned rows are 400. The rail lists pages only, never sub-pages. Groups do not collapse. Group labels are `text-xs` (12px at 500) in `--text-muted`, sentence case. Entries a role cannot use are not shown. Between 768 and 1100px the rail shows icons only with the label as a tooltip; on phones it opens from the Menu button. Settings keeps its own sub-nav on its pages (D70). One label per meaning: **Agents** is the AI agents area; log collectors are **Collectors** on Health.
+- **Where you are.** The current page has a 2px bar in `--accent-text` on its left edge and its label in `--accent-text` at 600. No fill. Hover keeps the `--surface-head` fill. The current link keeps `aria-current="page"`. A Record page marks the rail entry it was reached from (an alert page marks Alerts; a person page marks People & devices). Color is never the only cue: the bar is a shape and the label changes weight.
+- **Page header** (`PageHeader`, one shared component): the page title (`text-lg`) and an optional count on the left; on the right, up to two secondary buttons, an overflow menu, and at most one filled primary button, last. The title is the page's name, never the group's. Then the page's own tabs (max 5, each with a URL `/<page>/<tab>`), then the filter bar. Record pages add a breadcrumb above the title. There is no command bar. Destructive actions are never the primary.
 
 ---
 
 ## 6. Page patterns
+
+### 6.0 Page pattern
+
+Every page has the same four zones and one of five body templates (ADR-0052 sections 3.5 to 3.7).
+
+| Zone | Height | Contents | Rules |
+|---|---|---|---|
+| 1. Header | 44px | Page title, optional count. Right: up to two secondary buttons, an overflow menu, then one filled primary button where one exists, last | Title is the page name, never the group name. One shared `PageHeader` component, landed first |
+| 2. Tabs | 36px | That page's tabs only | Omitted when the page has none |
+| 3. Filter bar | 40px | Time, State, facets, text box. Right: count, Columns | One row; extras under "More filters" |
+| 4. Body | rest | One of the five templates | First data row within 200px of the top bar |
+
+| Template | Shape | Pages |
+|---|---|---|
+| Board | Needs you list, then sections of KPI strip plus chart and table | Dashboard |
+| Table | Optional KPI strip that filters, then one table with inline row expansion | Logs, Rules, Schedules, Saved searches, People & devices, AI usage (all tabs), MCP servers, Accounts, Health, Reports |
+| List-detail | List (5 parts) and sticky detail pane (7 parts) | Alerts > Queue, Agents > Sessions |
+| Record | Breadcrumb, title, one-sentence summary, KPI row, main column (2 parts) and side column (1 part) | Full alert page, person, device, address, AI service |
+| Form | Section list and form, sticky save bar | Settings |
+
+Ask AI is the one exception (a thread, DESIGN 6.1).
+
+| Area | Standard |
+|---|---|
+| Primary action | One filled button per page, only where one exists. Alerts > Queue: Close, in the detail pane. Full alert page: Close alert. Person page: Open in Logs. Reports: Generate report. Dashboard, Health, Agents > Sessions: none |
+| Tabs | Different objects only. Max 5. Each has a URL. Count badge only on a queue that needs action. Last tab remembered per browser |
+| Filters | Fixed order: Time, State, facets, text. State in the URL. Reset appears only when filters differ from the default. Clicking a KPI or a value adds a filter |
+| Time presets | 1 hour, 24 hours, 7 days, 30 days, Custom. One time control per page |
+| Counts | "N of M": M counts only rows the caller can read. Never a count of restricted items (D243) |
+| Loading | Skeleton rows in the final layout, no layout shift. On refresh the old data stays visible. Spinners only inside buttons. Errors inline with Retry |
+| Query cancel | "Still working" with Cancel after 10 s is a build item. The Builder confirms server-side query cancel exists; the button ships only when it does |
+| Help text | Zero paragraphs on a page. What the page is: delete. How a number is counted: a popover on the label. What to do next: a button. Settings fields keep one line under the input. "Computed from" lines stay as one muted line. Allowed: one muted "what this shows" line only where a page would be unclear on a fresh install |
+| State notices | Not help text and never removed: masking ("Names hidden"), the D243 restricted note, D236 pause and stop notices, ADR-0050 template missing. One line, in the body above the content it affects |
+
+Empty states: left-aligned at the top of the body, at most two lines and one action, no illustrations.
+
+| Kind | Example | Action |
+|---|---|---|
+| Not set up | "Needs a Microsoft 365 source" | Add a source |
+| Filters hide everything | "No alerts match these filters." | Reset filters |
+| Good zero | "No open alerts. Checked 2 min ago." in normal text | none |
+| Default filter is empty | Inventory opens on All with "0 to review" | none |
+| No permission | "Restricted" | never shown as zero |
+
+- **Filter bar** (`FilterBar`): fixed order Time, State, facets, text box; count and Columns on the right. Time is a segmented control: 1 hour, 24 hours, 7 days, 30 days, Custom. State is a segmented control with counts. Facets are buttons that read "Name **Value**". Filter state lives in the URL fragment. **Reset** shows only when the filters differ from the page default.
+- **States**: the States artboard on the design canvas is the reference for `Skeleton`, `StillWorking`, `InlineError`, `EmptyState` (five kinds), and `StateNotice` (names hidden, restricted, no model, detection paused, template missing).
 
 ### 6.1 Logs and Ask AI
 
@@ -151,9 +206,9 @@ One name per thing (owner, 2026-11-04; SPEC D206). "Search" stays a verb and is 
 
 | Thing | Label | Path |
 |---|---|---|
-| Manual search page (rail row and Investigate tab) | **Logs** | `/investigate/logs` |
+| Manual search page (rail row) | **Logs** | `/investigate/logs` |
 | Its modes | **Filters** (the Simple syntax), **SQL** | same page; the address fragment keeps `tab=simple` or `tab=sql` |
-| Plain-English questions (rail row and Investigate tab; hidden from auditors) | **Ask AI** | `/ask-ai` |
+| Plain-English questions (rail row; hidden from auditors) | **Ask AI** | `/ask-ai` |
 | The Ctrl+K panel over any page | **Ask AI** | none (a panel) |
 | An answer's SQL handed to Logs | **Open in Logs** | `/investigate/logs`, SQL mode |
 | Older addresses | `/search`, `/investigate/search` open Logs; `/ask` opens Ask AI | replaced, not added to history; search state in the fragment is kept |
@@ -170,8 +225,8 @@ One name per thing (owner, 2026-11-04; SPEC D206). "Search" stays a verb and is 
 | Element | Spec |
 |---|---|
 | Filter chips | Pill chips in `--accent-subtle`. Click to edit, `x` to remove, "+ Add filter" link. Chips and SQL stay in sync |
-| SQL editor | CodeMirror 6 in `--inset`, Source Code Pro 13px, 4 lines default, resizable. `Ctrl+Enter` runs. Guard rejections show inline under the editor in `--danger` |
-| Results card | Header with count and timing, column header row in `--surface-head`, rows, pagination footer with totals |
+| SQL editor | CodeMirror 6 in `--inset`, Geist Mono 13px, 4 lines default, resizable. `Ctrl+Enter` runs. Guard rejections show inline under the editor in `--danger` |
+| Results card | Header with count and timing, column header row (no fill, section 4), rows, pagination footer with totals |
 | Row | Chevron, time, severity badge, key columns, message (ellipsis). Hover tints row. Click or Enter toggles expansion |
 | Expanded row | Directly under the row, full width, `--surface-expand`. Title + category badge + classification badge + actions on one line; below it, a two-column field list on the left and the raw event on the right. Actions: **Investigate** (primary), Explain, Copy as JSON. Each text or number field shows small **+** (Filter for), **−** (Filter out), and **Top** (Top values) buttons on hover or focus; they add to the Filters search and run it. One row expanded at a time by default |
 | Empty / no results | Heading, one sentence, one action ("Widen time range") |
@@ -184,25 +239,25 @@ A focused, saved page about one entity. Reached from an expanded row's **Investi
 |---|---|
 | Header | Breadcrumb, entity title ("Failed SSH logins from 203.0.113.9"), owner and timestamp, status, actions (time range, Export report, Save investigation) |
 | KPI cards | 3 to 5 cards: label, big value (`text-kpi`), one-line context. Values are computed from the evidence; color only for meaning (`--ok` for a good zero) |
-| Finding | One card: icon in severity tint, a one-line headline, two sentences of plain-language summary, and a "Computed from the events below" line with a link to the query. AI-written findings carry event-id citations and the "unverified" label rules from SPEC 7 |
-| Charts | Trends over time: a short area chart (`TrendChart`), at most 160 px tall (140 px by default), smooth monotone curves that never dip below zero, values on hover or with the arrow keys, a stack for parts of a whole, and the window before as a dashed `--text-muted` line where there is one (1.75 px, full opacity: at least 3:1 on both surfaces in both themes; D179), named by what it is ("Same hour yesterday", "Same hour last week", "Same day 30 days earlier") with its own date in the tooltip. Top values: horizontal bars. Any vertical bar is at most 20 px wide. One line of dashed gridline at half, no printed values on the plot |
+| Finding | One card: the severity badge, a one-line headline, two sentences of plain-language summary, and a "Computed from the events below" line with a link to the query. AI-written findings carry event-id citations and the "unverified" label rules from SPEC 7 |
+| Charts | Trends over time: a short line chart (`TrendChart`), at most 160 px tall (140 px by default), 1.5px lines with no area fill, smooth monotone curves that never dip below zero, values on hover or with the arrow keys, parts of a whole as separate lines with a printed legend, and the window before as a dashed `--text-muted` line where there is one (at least 3:1 on both surfaces in both themes; D179), named by what it is ("Same hour yesterday", "Same hour last week", "Same day 30 days earlier") with its own date in the tooltip. Top values: horizontal bars. Any vertical bar is at most 20 px wide. One line of dashed gridline at half, no printed values on the plot |
 | Evidence | Compact events table with the same row and expansion behavior as Logs, plus "View all in Logs" |
 
 ### 6.2a Microsoft 365
 
-Under Monitor (ADR-0038 section 5, owner edit 10 call 2), at `/m365` with tabs **Overview**, **Sign-ins**, **Mail**, **Apps**, **Admin** and one time window for the area (24 hours, 7 days, 30 days; remembered per browser).
-
-- **Overview**: a KPI strip (Sign-ins, Failed sign-ins, Sign-ins outside approved countries, Risky sign-ins, App consents granted with blocked as a sub-line, Admin changes); a counts row (mail rules, forwarding, DLP matches, file downloads, external shares, Copilot interactions); **Sign-in outcomes**: one bar of succeeded (`--accent`), interrupted (`--text-muted`), and failed (`--warn`), never red (owner edit 2), with counts and shares, beside interrupted and failed over time; then Failure reasons, Sign-ins outside approved countries, and Apps signed in to.
-- **Interrupted** means Entra asked for more (MFA, register a method, stay signed in, an external challenge); it is not a failure. The Dashboard's failed sign-ins use the same split.
-- **Sign-ins, Mail, Apps, Admin**: the window's events in the Logs results table, with **Open in Logs**; Apps lists consents (granted and blocked, one row per consent) and app registrations; Admin lists directory changes, one row per operation (D122).
-- Every number opens its rows in Logs (ADR-0039). With no Microsoft 365 source the area says "Needs a Microsoft 365 source" with **Add a source**.
+Microsoft 365 has no area of its own (ADR-0052). Sign-ins, Mail, and Admin are **Logs views** (the Views menu sets the source, columns, and filters). Apps is a Type filter in AI usage > Inventory. The headline KPIs live in the Dashboard Identity section, and the Overview's charts and lists are the top of the Sign-ins view (D249). The person page has a Microsoft 365 section. Interrupted is still not a failure: Entra asked for more (MFA, register a method, stay signed in, an external challenge), and the Dashboard's failed sign-ins use the same split. Every number opens its rows in Logs (ADR-0039). With no Microsoft 365 source a view says "Needs a Microsoft 365 source" with **Add a source**.
 
 ### 6.2b Agents
 
 Under AI, at `/agents` with tabs **Sessions**, **MCP servers**, **Accounts** (ADR-0038 section 6).
 
-- **Sessions** is list and detail: the list (person, device, last activity, open or ended, tool calls, failed in `--warn`) beside the open session (its id in the address as `#session=<id>`), which shows the Claude account tier with its evidence, when it started, calls and prompts, tools and hosts, how late queued steps arrived, then the steps in order.
+- **Sessions** is list and detail, with a KPI strip above the list (what Overview held): the list (person, device, last activity, open or ended, tool calls, failed in `--warn`) beside the open session (its id in the address as `#session=<id>`), which shows the Claude account tier with its evidence, when it started, calls and prompts, tools and hosts, how late queued steps arrived, then the steps in order.
+- **MCP servers** shows activity (what ran, where); a server's tools show in its expanded row. Each row links to its entry in AI usage > Inventory.
 - **Accounts**: Claude accounts the hooks plugin reported in the last 30 days, counted by tier (Company, confirmed; Company, reported; Company, not confirmed; Personal; Not checked), then one row per account with its tier, the evidence (the Entra sign-in that confirmed it, or what was looked for and not found), where the email came from, devices, sessions, and last seen. Tiers are text badges, Personal and not confirmed in `--warn`, never severity colors: nothing acts on a tier (ADR-0030 T5). With no organization email domains set, a note links to setting them.
+
+### 6.2g AI usage
+
+Under AI, with tabs **Services**, **People**, **Inventory** (ADR-0052). Inventory is the governance register of four types (AI services, agents, MCP servers, Microsoft 365 apps) with a Type filter and a Status filter that opens on Unreviewed, or on All with "0 to review" when nothing is unreviewed. Approve and Not approved are row actions here (admins, audited). Each row links to its activity on Agents where there is one.
 
 ### 6.2c Settings > Claude plugins
 
@@ -216,27 +271,75 @@ Admin only (F64, ADR-0013). Read only: status (On in `--ok`, Off, Not working in
 
 The queue of everything that fired (ADR-0037, ADR-0043), across the full content width; no narrow centered column.
 
-- **Summary strip** (open alerts): open by severity (High and Medium badges with counts, Other), New today (the viewer's day), Oldest open (its time and title, a link that opens it), and By category (Detections, Saved searches, AI Watch, Source gaps). The muted count and, when an open alert is in a source the viewer cannot read, the note "Some alerts are in sources you can't read. Ask an admin for access." sit under the categories; how many is never shown (owner, 2026-11-12). Every figure filters the list.
-- **Filter row**: Severity, Category, and a text box for a person, device, or source (matches the title, subject, people, and devices). "N of M shown" when a filter hides rows.
+- **Tabs**: Queue, Rules, Schedules.
+- **Filter bar**: Time; State (Open with its count, Closed, Muted; default Open); Severity; Category (Detections, Saved searches, AI Watch, Source gaps); a text box for a person, device, or source (matches the title, subject, people, and devices). The count on the right is rows the caller can read.
+- **No summary strip.** The restricted-sources note ("Some alerts are in sources you can't read. Ask an admin for access.") sits at the foot of the list, with no count (D243).
 - **List and detail**: the list on the left (5 parts), the open alert on the right (7 parts, sticky under the top bar); stacked below 1024px. Rows: checkbox (deciders, open alerts), severity badge, title, then category, the number of changes and the count ("3 times today", "14 blocked or failed calls"), the end note in `--ok` when the condition ended, and last seen at the right. High first, then newest. The current row is on `--row-selected`. `#item=<id>` opens that alert in the pane, closed ones included.
-- **Detail pane**: severity, kind, state; the title (`text-md`); What fired, Why it matters (one sentence per rule; for an AI service or MCP server, per its catalog status now: Not approved, Unreviewed, not in the catalog, Approved), People (each opens the person page, on AI use for AI alerts) and Devices, Person on device (from hooks plugin records the viewer reads: the person and "seen on this host in the hooks plugin", or "Possible:" with the count when several used it, ADR-0048 C1), When (first and last), Ended, Sources, Note, Muted; **Changes today** (newest first, monospace, the first 20 then "and N more"); **Evidence** (Show events opens the events behind it in Logs, and a detection's or search's kept rows with Around); **Next steps** (a short numbered list per rule); then the actions: Approve or Not approved for a service or MCP server (admins), Close (the reason form), Mute similar 7 days or 30 days (admins), or Reopen; then the history.
+- **Detail pane**: severity, kind, state, and the alert ID in mono; the title (`text-md`); What fired; Why it matters; Person, Devices, Address as entity links; When with the event count and source; the **Triage card** (verdict, confidence, the adjusted-by-check line in `--warn`, a one-sentence summary with cited ID chips, the model name with its Local or Cloud badge, **Open full investigation**, Run triage again); Next steps (numbered); then the action row: Reason, **Close** (the page's primary), Mute similar, and Show N events in Logs.
+- Changes today, the evidence, the history, and Approve or Not approved move to the full alert page (6.2f) and AI usage > Inventory.
 - **Bulk close**: selecting rows shows a bar above the list: "N selected", one reason, a note (required for False positive), **Close N**, Clear. Each alert is closed and audited on its own.
-- Severity badges use the severity tokens only (High `--sev-high-*`, Medium `--sev-medium-*`); gaps carry Medium.
+- Severity badges follow section 2 (Critical and High solid, Medium a dot and its label); gaps carry Medium.
+
+### 6.2f Full alert page
+
+Record template at `/alerts/<id>` (D229 option B, ADR-0052). The rail marks Alerts.
+
+| Part | Spec |
+|---|---|
+| Header | Breadcrumb (Alerts / ID), title (`text-xl`), a line of severity badge, state, kind, first seen, last seen, source. Actions: Copy link, Mute similar, **Close alert** (primary) |
+| Summary | One sentence written by code from the events, entities as links, then "Computed from the N events below." |
+| KPI row | Up to 5: Events, People, Devices, Addresses, and one rule-specific figure |
+| Triage card (main) | Verdict, confidence, who ran it and when, model name and badge, Run again. The adjusted-by-check notice when the check removed a statement. Then two columns: **Reasons** (each a sentence followed by its cited ID chips) and **Cited events** (ID, time with seconds, event, key values in mono). Selecting a chip highlights its row (`--row-selected`, chip in `--accent-subtle`). With no model: one line, "No model is set up, so there is no verdict. The evidence pack below is computed from the events and works without one.", and Add a provider |
+| Evidence pack (main) | Table: Check, Window, Result, Events. Each Events count opens its rows in Logs. A result that counts against the alert is `--warn` text; never a severity color |
+| All events (main) | Compact events table, first 6, Show N more, View all in Logs |
+| Pivots (side) | One row per person, device, and address: entity link and one line of context |
+| Next steps (side) | Numbered, per rule |
+| Details (side) | Rule (link to Alerts > Rules), ATT&CK IDs, source, grouping |
+| History (side) | Newest first |
+
+Model output rules are unchanged: every statement cites event IDs, failed citations are removed and the removal is shown, log content renders as text.
 
 ### 6.3 Health, Dashboards, Ask, Settings
 
-- **Health** holds what Overview used to (F55, ADR-0034 rows 11 to 16), answering "am I blind?". Top: four KPI tiles in the Dashboard card grammar, each a button that opens its detail: Events (24 h total; compared with a usual day only after 7 full days of history and only over sources that have them, otherwise "Not enough history yet (N of 7 days)"), Sources (N of N healthy in `--warn` when not all, the quiet sources, gaps, longest wait; the same count and words as the Dashboard Sources line), Needs attention (flagged dashboard panels, newest named), and for admins Alert delivery (`--danger` when anything failed). Then the status line: one sentence when there are no detections, paused schedules, or failed deliveries; otherwise a three-column card listing them (detections grouped by rule or search with their total and runs). Under the tabs, a **Show** filter row counts the open tab's rows by level. **Sources** is one row per source that brings events (files, syslog, OpenTelemetry, Loki, Microsoft 365, the Anthropic admin API), problems first; enrichment feeds have their own tab, judged by each feed's update interval (F59): name, a status dot and word ("Flowing", "Gap", "No events in 24 hours"), an area sparkline of events per hour on a shared hour axis in local time (UTC in tooltips, the zone named under the list), each line scaled to its own busiest hour with that peak printed, gap hours shaded in `--danger` at low opacity, then the 24 h total, the rate per minute, and last received, all printed. Each gap is a sentence under its row in `--danger`: "No events 2:00 to 7:00 AM (5 h). Other sources kept flowing." `/overview` opens Health > Sources; Home always opens the Dashboard (owner, 2026-11-12). The product mark in the top bar links Home.
-- **Dashboards** use the Investigation card grammar (cards, KPIs, simple bars) for scheduled-search panels (SPEC 5.5). First in the nav and always the landing page (owner, 2026-11-12, replacing ADR-0031's Health without a panel); when a source is not healthy or a gap is open, a one-line **Health** banner at the top (the Needs you banner's `--warn` left bar) gives the Sources line's words and **Open Health**; while it shows, the Sources line at the bottom is hidden, so the problem is said once, and when every source is healthy the bottom line shows as before (owner, 2026-11-12). Panels are a **tile** (a sixth: name, headline number, label, trend, flag; no table), a third, a half, or full width; a label-and-count result can show as bars (D82). Order on the page: dashboard picker and Edit layout, Health strip, **Needs attention** (one row per flagged panel: a `--sev-high-text` bar, name, flag reason, headline, relative time with UTC in a tooltip, Show panel, Acknowledge; hidden when empty), then sections, each with a plain heading and its count over a hairline. The headline is `text-kpi`, tabular, and links to the rows behind it; a zero on a panel with a flag set is `--ok`. Labels say what is counted ("3 addresses"), from the owner's label or the result's first column, never "rows". Flags read in plain words ("3 addresses over threshold (0)") in `--warn`, with an outlined `--warn` **Flagged** badge; severity colors only when the panel carries a severity. Tiles sit in their own row of the section (two per row on phones, six on wide screens) with one line each for name, number and label, and flag state, so nothing wraps and nothing floats. The trend line shows from the third run. A section with one card gives it the full row. The page header carries the page's time window (ADR-0038 edit 10): **24 hours**, **7 days**, **30 days** (remembered in the browser) with its dates; freshness is only in the top bar. An empty cell in a user column says "No user parsed" on hover. Layout controls appear only in Edit layout: panels drag within and between sections (the drop place shows as an accent outline), each panel has a **Section** list and **Earlier** / **Later** for the keyboard, and each section heading has Rename, Move up, Move down, and Delete (its panels go to No section). An empty section shows a dashed drop area. Section order is stored, not derived from panels (D100). Panels never show developer text: when columns are hidden, the button reads **View all** (ADR-0034).
-- **Dashboard order** (F62, replaces the morning answer box): a compact header row (title, dashboard picker, New dashboard, Edit layout, and "Updated N min ago" at the right; no band under the title); the **Needs you** banner only when something needs the viewer (open alerts, runs of one search, rule, or source as one line, and sources with errors or that stopped with no alert about it), one line each with a severity badge first (High, Source, Medium, Alert), the newest first within a severity, five lines then "N more on Alerts" and, when an open alert is in a source the viewer cannot read, the same note as the Alerts summary strip (never a count), each a link to the alert or the Health row, hidden entirely when nothing needs the viewer; then AI Watch; then the panels; then one **Sources** line at the bottom ("4 of 6 healthy, 2 quiet: win_dc 2 d, vpn 6 h, no gaps in 24 hours", or "6 of 6 healthy, no gaps in 24 hours, longest wait 3 min (m365)") linking to Health, in the same words and from the same server count (`source_summary` on GET /api/overview) as the Health Sources tile. On a quiet day the first screen is AI Watch and the start of the panels.
-- **Default sections** (ADR-0038 edit 10), after AI Watch and before the panels, each shown only when the viewer has its source, in the page grammar: a header with what it is from and, once, "Changes against the previous 7 days"; a KPI strip of 4 to 6 cards (`text-kpi`, `text-kpi-lg` from 1500px; the change as a neutral pill beside the value; a two-line context; a card that needs a setting says so, "Set approved countries", instead of a number); then a chart and a top-N table side by side (3fr / 2fr from 1500px, halves from 1024px, stacked below). **Identity** (Microsoft 365): failed sign-ins, sign-ins outside approved countries, inbox rules and forwarding, app consents (blocked as context), admin role grants, Conditional Access edits; failed sign-ins as one `--warn` area, hourly for 24 hours and 7 days and daily for 30 days, with the window before as a dashed line and the failure rate in the caption; top failing users. **Attacks and access**: sign-in failures from external addresses (not in Internal networks), attacking addresses, countries, VPN logins outside approved countries; failures by host as small multiples (one row of bars per host on its own scale, bars at most 20 px wide, peak and total printed); top sources by country and network. A note asks for company egress while none is listed. Top sources with no country say why instead of "Unknown": Not an address (the field holds something else), Not a public address, Not in GeoIP file (the file's install date in the tooltip, and a note under the table with Update GeoIP for admins), or No GeoIP file. **Detections**: matched events (distinct events, with rule matches as the context line, D221), rules that matched (of N enabled), hosts and users involved; matches by rule as small multiples; the hosts and users involved. With 24 hours the charts go by hour. **Every number opens its rows** (ADR-0039): a KPI value, its change pill (the window before), a chart point (that hour or day), a small-multiples row, a sub-line such as "2 blocked", and a top-N row (an entity page when there is one, else Logs) each open Logs with the query behind it, already run, with a line above the editor saying where it came from ("From Dashboard > Identity > Failed sign-ins, Oct 24, 12:00 AM to Oct 30, 11:37 AM UTC"). They show a pointer and "Open 12 events in Logs" on hover; a zero still opens its (empty) search. Back returns to the Dashboard at the same window and scroll position. **No comparison without history** (owner 2026-10-30): a section, and AI Watch, compares only when every source that counts toward it has data for at least 90% of the window before; otherwise the header reads "No comparison yet: data starts Oct 21", each card shows "Not enough history for comparison" in place of the change pill, and the failed sign-ins chart drops its dashed line.
-- **AI Watch** (ADR-0035 Part 2) sits under the Needs you banner (or at the top when there is none) on the Dashboard when there is AI use or anything to count: a header that says what it is compared against and Open AI usage (it follows the page window; with 24 hours the chart still shows 7 days, since use is counted by day); the KPI cards whose source is set up in one row from 1024 px (a card whose source the install lacks takes no card: one muted "Not set up: ... (needs ...)" line with Add a source, under the cards; F62) (people are counted as people only; devices or addresses with no person matched get their own line under the value, "3 more devices not matched to a person", linked to the list, never added in: D115) (two per row below, the fifth spanning the row; labels at most two lines, full on hover): value in `text-kpi` (`--ok` for a zero), the change against the previous period of the same length as a neutral pill beside the value ("↑ 1", "same"; the full sentence in its tooltip), and one context line. A card the viewer cannot read says Restricted, never zero. Under the cards, **New in 24 hours** lists what was first seen in the data (never a review decision: D116), each linking to its alert. **AI use, last 30 days** (with less than 7 days of data, "AI use since Oct 21" over the days that exist): a stacked area with daily points, approved at the bottom, then unreviewed, then not approved, in the status badges' colors (`--local-text`, `--text-muted`, `--sev-critical-text`), values and the total on hover, a printed legend with totals, and an `aria-label` summary. **Top services**: service (entity link), status badge, people ("·" with a tooltip when the events name no person), devices, last seen; **View all** opens AI usage. Every AI Watch number opens its rows in Logs the same way as the sections (ADR-0039); new agents and MCP servers open the review queue. AI Watch review items are on Alerts with a High or Medium badge (severity tokens) and, for admins, Approve and Not approved.
-- **Entity page** (product pass step 2, DESIGN 6.2): Investigations on an address, person, or machine leads with one sentence ("2,619 failed sign-ins against ftp-01 over the last 7 days, 0 succeeded. From Netherlands, AS64500."), then KPI cards (sign-in attempts, succeeded, users tried, hosts targeted, first and last seen, country and network for addresses), then **What it did**: activities grouped by outcome, each with a real example line (values intact, never the number-masked pattern), its user and target as links, and View in Logs; then hosts and users it touched. The lane graph sits below, open and foldable. Times use `components/When.tsx`: local, UTC on hover.
+- **Health** holds what Overview used to (F55, ADR-0034 rows 11 to 16), answering "am I blind?". Top: four KPI tiles in the Dashboard card grammar, each a button that opens its detail: Events (24 h total; compared with a usual day only after 7 full days of history and only over sources that have them, otherwise "Not enough history yet (N of 7 days)"), Sources (N of N healthy in `--warn` when not all, the quiet sources, gaps, longest wait; the same count as the Dashboard's Sources healthy tile), Needs attention (flagged dashboard panels, newest named), and for admins Alert delivery (`--danger` when anything failed). Then the status line: one sentence when there are no detections, paused schedules, or failed deliveries; otherwise a three-column card listing them (detections grouped by rule or search with their total and runs). Under the tabs, a **Show** filter row counts the open tab's rows by level. **Sources** is one row per source that brings events (files, syslog, OpenTelemetry, Loki, Microsoft 365, the Anthropic admin API), problems first; enrichment feeds are the Enrichment type in the same tab, judged by each feed's update interval (F59): name, a status dot and word ("Flowing", "Gap", "No events in 24 hours"), a line sparkline of events per hour on a shared hour axis in local time (UTC in tooltips, the zone named under the list), each line scaled to its own busiest hour with that peak printed, gap hours shaded in `--danger` at low opacity, then the 24 h total, the rate per minute, and last received, all printed. Each gap is a sentence under its row in `--danger`: "No events 2:00 to 7:00 AM (5 h). Other sources kept flowing." `/overview` opens Health > Sources; Home always opens the Dashboard (owner, 2026-11-12). The product mark in the top bar links Home. Tabs (ADR-0052): **Sources** (with a Type filter: Events, Enrichment), **Collectors** (endpoint agents and watched devices), **Delivery**. Page rollups and Speed are in Settings > System.
+- **Dashboards** use the Investigation card grammar (cards, KPIs, simple bars) for scheduled-search panels (SPEC 5.5). First in the nav and always the landing page (owner, 2026-11-12, replacing ADR-0031's Health without a panel). A blind state is said once, in the Needs you list (ADR-0052 section 3.9), and on Health. Panels are a **tile** (a sixth: name, headline number, label, trend, flag; no table), a third, a half, or full width; a label-and-count result can show as bars (D82). Order on the page: see **Dashboard order** below. There is no separate list of flagged panels: a flagged panel's alert is a row of the Needs you list like any other alert, and the panel itself carries its flag. Sections each have a plain heading and their count over a hairline. The headline is `text-kpi`, tabular, and links to the rows behind it; a zero on a panel with a flag set is `--ok`. Labels say what is counted ("3 addresses"), from the owner's label or the result's first column, never "rows". Flags read in plain words ("3 addresses over threshold (0)") in `--warn`, with an outlined `--warn` **Flagged** badge; severity colors only when the panel carries a severity. Tiles sit in their own row of the section (two per row on phones, six on wide screens) with one line each for name, number and label, and flag state, so nothing wraps and nothing floats. The trend line shows from the third run. A section with one card gives it the full row. The page header carries the page's time window, the five presets of 6.0 (**1 hour**, **24 hours**, **7 days**, **30 days**, **Custom**; remembered in the browser) with its dates; freshness is only in the top bar. An empty cell in a user column says "No user parsed" on hover. Layout controls appear only in Edit layout: panels drag within and between sections (the drop place shows as an accent outline), each panel has a **Section** list and **Earlier** / **Later** for the keyboard, and each section heading has Rename, Move up, Move down, and Delete (its panels go to No section). An empty section shows a dashed drop area. Section order is stored, not derived from panels (D100). Panels never show developer text: when columns are hidden, the button reads **View all** (ADR-0034).
+- **Dashboard order** (ADR-0052). Header (title, dashboard picker, time range, Edit layout; no primary). **Needs you** (blind rows pinned first on `--warn-tint`, then High and Critical alerts, then other alerts, then AI review items; columns badge, kind, title, subject as an entity link, time; five rows after the blind rows, then "N more on Alerts"; the restricted note at the foot with no count; hidden entirely when empty). A **KPI strip** for the window (Open alerts, Failed sign-ins, Sign-ins outside approved countries, AI services in use with "N to review", Sources healthy in `--warn` when not all; the same server count, `source_summary` on GET /api/overview, as the Health Sources tile). Then the sections, each shown only when the viewer has its source: **AI Watch**, **Identity**, **Attacks and access**, **Detections**. Then the owner's panels.
+- **Needs you list** (ADR-0052 section 3.9, replacing the Health banner of D243; the D243 restricted note stays):
+
+  One list on the Dashboard holds everything that needs the viewer.
+
+  | Order | Rows | Look |
+  |---|---|---|
+  | 1 | Blind rows: source down, detection paused or stopped (D236), template missing (ADR-0050) | Pinned first. `--warn-tint` row with a 2px `--warn` bar on its left edge and an outlined `--warn` badge. Never visually equal to an alert row, and never a severity color |
+  | 2 | High and Critical alerts, newest first | Severity badge |
+  | 3 | Other alerts, newest first | Severity badge |
+  | 4 | AI review items (link to AI usage > Inventory) | Severity badge, kind "AI review" |
+
+  - Blind rows are never folded under "N more"; the cap of rows applies to orders 2 to 4.
+  - The D243 restricted note stays at the foot of the list, with no count.
+  - There is no separate Health banner and no Sources line at the bottom; a blind state is said once, here, and on Health.
+- **Default sections** (ADR-0038 edit 10), after AI Watch and before the panels, each shown only when the viewer has its source, in the page grammar: a header with what it is from and, once, "Changes against the previous 7 days"; a KPI strip of 4 to 6 cards (`text-kpi`, `text-kpi-lg` from 1500px; the change as a neutral pill beside the value; a two-line context; a card that needs a setting says so, "Set approved countries", instead of a number); then a chart and a top-N table side by side (3fr / 2fr from 1500px, halves from 1024px, stacked below). **Identity** (Microsoft 365): failed sign-ins, sign-ins outside approved countries, inbox rules and forwarding, app consents (blocked as context), admin role grants, Conditional Access edits; failed sign-ins as one `--warn` line, hourly for 24 hours and 7 days and daily for 30 days, with the window before as a dashed line and the failure rate in the caption; top failing users. **Attacks and access**: sign-in failures from external addresses (not in Internal networks), attacking addresses, countries, VPN logins outside approved countries; failures by host as small multiples (one row of bars per host on its own scale, bars at most 20 px wide, peak and total printed); top sources by country and network. A note asks for company egress while none is listed. Top sources with no country say why instead of "Unknown": Not an address (the field holds something else), Not a public address, Not in GeoIP file (the file's install date in the tooltip, and a note under the table with Update GeoIP for admins), or No GeoIP file. **Detections**: matched events (distinct events, with rule matches as the context line, D221), rules that matched (of N enabled), hosts and users involved; matches by rule as small multiples; the hosts and users involved. With 24 hours the charts go by hour. **Every number opens its rows** (ADR-0039): a KPI value, its change pill (the window before), a chart point (that hour or day), a small-multiples row, a sub-line such as "2 blocked", and a top-N row (an entity page when there is one, else Logs) each open Logs with the query behind it, already run, with a line above the editor saying where it came from ("From Dashboard > Identity > Failed sign-ins, Oct 24, 12:00 AM to Oct 30, 11:37 AM UTC"). They show a pointer and "Open 12 events in Logs" on hover; a zero still opens its (empty) search. Back returns to the Dashboard at the same window and scroll position. **No comparison without history** (owner 2026-10-30): a section, and AI Watch, compares only when every source that counts toward it has data for at least 90% of the window before; otherwise the header reads "No comparison yet: data starts Oct 21", each card shows "Not enough history for comparison" in place of the change pill, and the failed sign-ins chart drops its dashed line.
+- **Detections section** (ADR-0052):
+
+  | Part | Spec |
+  |---|---|
+  | Shown when | At least one rule is enabled and the viewer can read a source it runs on |
+  | Header | "Detections", the window, and "Changes against the window before" once |
+  | KPI strip | Matched events (distinct events; rule matches as the context line, D221), Rules that matched (of N enabled), Hosts involved, People involved |
+  | Chart | Matches by rule as small multiples: one row of bars per rule on its own scale, bars at most 20px wide, peak and total printed; hourly for 1 hour and 24 hours, daily for 7 and 30 days |
+  | Table | Top hosts and people involved: entity link, matches, rules, last match |
+  | Links | Every number opens its rows in Logs (ADR-0039). A rule name opens Alerts > Rules on that rule |
+  | Blind state | When detection is paused or stopped on any source the section's header carries the `StateNotice` and the affected figures read "Not running", never zero |
+  | Empty | No rules enabled: "No rules are enabled." with **Enable rules** (opens Alerts > Rules) |
+- **AI Watch** (ADR-0035 Part 2) sits under the Needs you list and the KPI strip on the Dashboard when there is AI use or anything to count: a header that says what it is compared against and Open AI usage (it follows the page window; with 24 hours the chart still shows 7 days, since use is counted by day); the KPI cards whose source is set up in one row from 1024 px (a card whose source the install lacks takes no card: one muted "Not set up: ... (needs ...)" line with Add a source, under the cards; F62) (people are counted as people only; devices or addresses with no person matched get their own line under the value, "3 more devices not matched to a person", linked to the list, never added in: D115) (two per row below, the fifth spanning the row; labels at most two lines, full on hover): value in `text-kpi` (`--ok` for a zero), the change against the previous period of the same length as a neutral pill beside the value ("↑ 1", "same"; the full sentence in its tooltip), and one context line. A card the viewer cannot read says Restricted, never zero. Under the cards, **New in 24 hours** lists what was first seen in the data (never a review decision: D116), each linking to its alert. **AI use, last 30 days** (with less than 7 days of data, "AI use since Oct 21" over the days that exist): one line each with daily points for approved, unreviewed, and not approved, in the AI status colors of section 2 (never a severity color), values and the total on hover, a printed legend with totals, and an `aria-label` summary. **Top services**: service (entity link), status badge, people ("·" with a tooltip when the events name no person), devices, last seen; **View all** opens AI usage. Every AI Watch number opens its rows in Logs the same way as the sections (ADR-0039); new agents and MCP servers open AI usage > Inventory. AI Watch review items are on Alerts with a High or Medium badge (severity tokens); Approve and Not approved are row actions in AI usage > Inventory (admins).
+- **Entity page** (product pass step 2, DESIGN 6.2): Investigations on an address, person, or machine leads with one sentence ("2,619 failed sign-ins against ftp-01 over the last 7 days, 0 succeeded. From Netherlands, AS64500."), then KPI cards (sign-in attempts, succeeded, users tried, hosts targeted, first and last seen, country and network for addresses), then **What it did**: activities grouped by outcome, each with a real example line (values intact, never the number-masked pattern), its user and target as links, and View in Logs; then hosts and users it touched. The lane graph sits below, open and foldable. Times use `components/When.tsx`: local, UTC on hover. A person page leads with one sentence and a KPI row (Open alerts, Sign-ins, Devices, Addresses, AI services), then in the main column Open alerts, Activity per day, **Microsoft 365** (one table with a Sign-ins, Mail, Admin switch and Open in Logs; shown only with a Microsoft 365 source), and AI use; in the side column Accounts, Devices, Addresses. Primary action: **Open in Logs**. With names masked the title reads as the masked label and a Names hidden notice sits above the summary.
 - **Pivot rule** (product pass step 2): every IP address, user, host, and AI service value anywhere (search results, expanded rows, dashboard panel tables and bars, AI usage, Health) is an `EntityLink` to its page in Investigations (`/investigations#ip=203.0.113.9`, `#user=`, `#host=`, `#service=`), with View in Logs from there. One component, `components/EntityLink.tsx`; a column is an entity by name (`lib/entity.ts`). Links are `--accent-text`, monospace with the data, and real links (middle-click works). A link inside a clickable row opens the entity, not the row. Placeholders (`-`, empty) stay text.
 - **No sideways scrolling** (F54): at desktop widths no page, card, or table scrolls sideways. Flex and grid children that hold text or tables get `min-width: 0`; long identifiers and paths wrap anywhere (`overflow-wrap: anywhere`); times in tables follow the time format in section 3. Only the search results grid, whose columns the user picks, may scroll (`data-scroll-x`). CI opens every page and tab at 1280px with the demo lab's data and fails on any sideways scroll (`scripts/check-layout.py`).
 - **Data attribution** (F52): a license credit such as "IP Geolocation by DB-IP" is `--text-muted` small text, once per page (below the results table), never in the accent color and never repeated per row. **About and licenses** (Settings > Records) lists each outside data source, its use, license, and attribution in one table.
+- **Reports** (D67) is a pinned rail entry: the Table template, with **Generate report** as its primary button; visible to roles that can read reports.
 - **Ask AI** is its own page under Investigate, right below Logs (D206, replacing D180's Ask tab of Search; 6.1). Auditors do not see it. Before the first question, **Try one of these on your data** lists up to six example questions as outlined buttons, from the library queries the viewer's sources support (D182); one click asks it.
-- **Audit log** has Activity and AI calls tabs over a dense table, filters in one row, rows that expand to show detail as text, Load older entries at the foot, and Export CSV as the primary command.
-- **Settings** pages (Users and access, Sources, AI providers) are list + detail forms with labels above inputs, help text below, and a sticky save bar.
+- **Audit log** (Settings > Records) has Activity and AI calls tabs over a dense table, filters in one row, rows that expand to show detail as text, Load older entries at the foot, and Export CSV as the primary button.
+- **Settings** pages (Users and access, Sources, AI providers) are list + detail forms with labels above inputs, help text below, and a sticky save bar. Only the sections a role can use are shown. An Auditor sees Records.
 
 ---
 
@@ -244,15 +347,19 @@ The queue of everything that fired (ADR-0037, ADR-0043), across the full content
 
 | Component | Spec |
 |---|---|
-| Primary button | `--accent` fill, white text, 32 to 36px tall, 4px radius. One per view |
+| Primary button | `--accent` fill, `--on-accent` text, 32px tall, 5px radius. One per page, only where one exists. In the `PageHeader`, last on the right. A List-detail page puts it in the detail pane |
 | Secondary button | Transparent, 1px `--border-strong`, `--text` |
-| Command bar button | Text only, no border; primary command in `--accent-text` and 600 weight |
-| Badge | 3px radius, 12px semibold text, tinted background per section 2 |
-| Filter chip | 12px radius pill, `--accent-subtle` background |
+| Badge | Severity: Critical and High are solid (3px radius, 12px at 600). Medium, Low, and Info are a 7px square dot and the label in `--text`; Low and Info dots are `--text-muted` |
+| AI status badge | A dot and the label. Approved: `--local-tx`. Unreviewed: hollow, outlined in `--accent-text`. Not approved: hollow, outlined in `--warn`. Never a severity color |
+| Filter chip | 12px radius pill, `--accent-subtle` background (Logs, until the `FilterBar` replaces chips there) |
+| Text input and checkbox | Edge in `--border-control` (3:1). Labeled buttons keep `--border-strong` |
+| Change pill | Neutral pill beside a KPI value with the arrow glyph and the amount, or "same" |
+| Cited ID chip | Mono 12px on the Info pair; selected: `--accent-subtle` with a 1px `--accent-text` border. A real button wherever a click selects the cited event (the full alert page); plain text where there is nothing to select. An id that fails the citation check is outlined in `--danger`, never filled |
+| State notice (`StateNotice`) | One line, 1px border with a 2px `--warn` left bar; blind notices add the `--warn-tint` background |
 | Card | `--surface`, 1px `--border`, 6px radius, title as a `SectionTitle` or `PanelTitle` |
-| Section title (`SectionTitle`) | The title of a page section (AI Watch, Identity, Attacks and access, the Microsoft 365, AI usage, Agents, and Health equivalents): `text-md` 700 in `--section-text` on a `--section-bg` pill, 3px radius, no outline. Never clickable-looking: no link blue, no hover state |
-| Panel title (`PanelTitle`) | Titles inside a section (Top services, AI use since, Failed sign-ins per day, Top failing users) and KPI labels: `text-xs` 600, upper case, wider letter spacing, `--panel-title`. Clearly smaller than a section title; no hover state |
-| Table header | `--surface-head`, 13px semibold `--text-secondary`, sortable on click |
+| Section title (`SectionTitle`) | The title of a page section (AI Watch, Identity, Attacks and access, Detections, and the AI usage, Agents, and Health equivalents): `text-md` 600 in `--section-text` on a `--section-bg` pill, 3px radius, no outline. Never clickable-looking: no link blue, no hover state |
+| Panel title (`PanelTitle`) | Titles inside a section (Top services, AI use since, Failed sign-ins per day, Top failing users) and KPI labels: 14px, 600, sentence case, `--text`. No upper case, no extra letter spacing. Clearly smaller than a section title; no hover state |
+| Table header | No fill. 12px at 500 in `--text-secondary` over a 1px divider, sortable on click |
 | NULL value | `·` in `--text-muted`, never blank, never "null" |
 | Command palette | `Ctrl+K` / `Cmd+K` and the top bar search; opens under the search at its width (680px), `--surface`, 6px radius. Sections: Recent (empty query), then **Ask AI: <typed text>** when the text reads as a question (more than one word, and it ends with "?" or starts with how, what, who, when, why, which, show, list, or did; D181), then Addresses, People, Hosts, AI services (found by the server in the viewer's own sources, last 30 days; ADR-0038 edit 10), Navigate (with **Logs** and **Ask AI**), Actions, Saved searches, Sources, and a **Logs** section with **Search events for "..."** last. An entity opens its page. Addresses and hosts in the data font, with country, network, and event count. Flavor names (Séance, Grimoire, Ossuary) and former labels (Search, Ask) resolve as aliases only |
 | Ask AI slide-over | Ask AI from any page (ADR-0042): the palette's **Ask AI** item (on the Ask AI page it stays there), titled **Ask AI**, or **Ask AI: <typed text>** for a sentence typed in the palette (first for a question, otherwise beside Search events for, in the **Logs** section), opens a 560px panel on the right with the same answer blocks, last 24 hours on the viewer's sources. Escape or the close button closes it. For asking only; events still expand inline |
@@ -266,8 +373,11 @@ Icons: Lucide, 16px in nav and buttons, 14px in tables, 1.5px stroke. No emoji a
 
 | Do | Don't |
 |---|---|
-| Labeled nav in four groups, sub-pages listed, tabs in the page header | Icon-only navigation as the default (icons only on a collapsed rail) |
-| An area title and its tabs on every page | Pages without a clear "where am I" |
+| Labeled nav, pages only; tabs in the page | Sub-pages in the rail; tabs that repeat the rail; icon-only navigation as the default |
+| The page's own title and tabs on every page | Pages without a clear "where am I" |
+| One filled primary button per page, where one exists | A row of equal text commands |
+| A blind state pinned first on a warn tint | A source-down row that looks like an alert |
+| Help in popovers and buttons; state notices always shown | Paragraphs that explain the page |
 | Expand detail inline under the row | Side drawers or modals for reading an event |
 | Show SQL, filters, scope, and timing | Hide the query behind "AI magic" |
 | Severity only for severity, always with a label | Red buttons for emphasis, color-only status |
@@ -306,27 +416,36 @@ The TUI gets its own mockups on the design canvas before it is built.
 
 ## 11. Token mapping (reference)
 
+`tokens.css` carries these values; `scripts/check-contrast.py` (in CI) fails when the two differ or when a pair drops under section 9. `--focus-ring-top` is the focus ring inside the top bar. On the pressed fill (`--accent-subtle`) muted text takes `--text-secondary`: `globals.css` sets that for anything on the fill, since `--text-muted` is 4.47:1 there in dark.
+
 ```css
 :root, :root[data-theme="dark"] {
-  --bg: #0F1115; --top: #0A0C10; --nav: #13161C; --surface: #161A21;
-  --surface-head: #1A1F27; --surface-expand: #1B212B; --inset: #0B0D11;
-  --border: #272D38; --border-strong: #3A4250;
-  --text: #E6E9EF; --text-secondary: #A3ACBA; --text-muted: #838D9C; --series-neutral: #646D7D;
-  --accent: #2F6FE0; --accent-text: #7AAEFA; --accent-subtle: rgba(76,141,246,0.16);
-  --row-selected: rgba(76,141,246,0.10); --focus-ring: #7AAEFA;
-  --section-bg: rgba(148,163,184,0.16); --section-text: #F4F6FA; --panel-title: #F4F6FA;
-  --ok: #5FC9A0; --warn: #F0C46A; --danger: #F7899B;
+  --bg: #0E1013; --top: #0A0B0E; --nav: #0E1013; --surface: #0E1013; --surface-head: #13161A;
+  --surface-expand: #14171C; --inset: #0A0B0E; --border: #1F242B; --border-strong: #2E353F;
+  --border-control: #5F6977; --text: #E4E7EC; --text-secondary: #9BA3B0; --text-muted: #7F8896;
+  --series-neutral: #646D7D; --accent: #3A68E0; --on-accent: #FFFFFF; --accent-text: #7EA2FF;
+  --accent-subtle: rgba(91,140,255,0.14); --row-selected: rgba(91,140,255,0.09);
+  --warn-tint: rgba(232,188,98,0.08); --ok: #58C29A; --warn: #E8BC62; --danger: #F28B9B;
+  --info-bg: #1A1E24; --info-tx: #9BA3B0; --sev-c-solid: #F2647A; --sev-c-on: #1F0409;
+  --sev-h-solid: #F08A3C; --sev-h-on: #1A0E03; --sev-m-dot: #F0C46A;
+  --local-bg: rgba(63,182,139,0.16); --local-tx: #7FD3B2; --cloud-bg: rgba(167,139,250,0.16);
+  --cloud-tx: #B9A2FB; --focus-ring-top: #7EA2FF;
+  --focus-ring: var(--accent-text); --panel-title: var(--text); --section-text: var(--text);
+  --section-bg: rgba(148,163,184,0.12);
 }
 :root[data-theme="light"] {
-  --bg: #F3F4F6; --top: #1D2330; --nav: #FFFFFF; --surface: #FFFFFF;
-  --surface-head: #F8F9FB; --surface-expand: #F6F9FE; --inset: #F3F5F8;
-  --border: #E1E4EA; --border-strong: #C3C9D4;
-  --text: #1D2330; --text-secondary: #4B5263; --text-muted: #646D7E; --series-neutral: #878F9E;
-  --accent: #1F5FBF; --accent-text: #1F5FBF; --accent-subtle: #E8F0FB;
-  --row-selected: #EEF4FD; --focus-ring: #1F5FBF;
-  --section-bg: #E2E7EE; --section-text: #111722; --panel-title: #111722;
-  --ok: #1F7A5A; --warn: #8A5300; --danger: #B4162F;
+  --bg: #FAFAFB; --top: #16181D; --nav: #FAFAFB; --surface: #FFFFFF; --surface-head: #F4F5F7;
+  --surface-expand: #F5F8FE; --inset: #F1F2F4; --border: #E4E6EA; --border-strong: #C9CDD4;
+  --border-control: #808896; --text: #16181D; --text-secondary: #4A5160; --text-muted: #636D7D;
+  --series-neutral: #858D9C; --accent: #2B5BD7; --on-accent: #FFFFFF; --accent-text: #2452C9;
+  --accent-subtle: #E9EFFD; --row-selected: #EFF3FE; --warn-tint: #FCF5E4; --ok: #1C7656;
+  --warn: #855100; --danger: #B0152E; --info-bg: #EDEFF2; --info-tx: #3F4654;
+  --sev-c-solid: #B4162F; --sev-c-on: #FFFFFF; --sev-h-solid: #B8500A; --sev-h-on: #FFFFFF;
+  --sev-m-dot: #8A5300; --local-bg: #E3F4EF; --local-tx: #1F6B57; --cloud-bg: #F1EBFE;
+  --cloud-tx: #6D28D9; --focus-ring-top: #7EA2FF;
+  --focus-ring: var(--accent-text); --panel-title: var(--text); --section-text: var(--text);
+  --section-bg: #E6E9EE;
 }
 ```
 
-Severity, local, and cloud badge pairs are defined in `tokens.css` as `--sev-<level>-bg` / `--sev-<level>-text`, `--local-bg` / `--local-text`, `--cloud-bg` / `--cloud-text`, per section 2.
+The last two lines of each block are aliases kept so existing components do not break: `--focus-ring` is `--accent-text`; `--panel-title` and `--section-text` are `--text`; `--section-bg` is `rgba(148,163,184,0.12)` dark and `#E6E9EE` light.

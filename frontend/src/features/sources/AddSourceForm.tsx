@@ -234,7 +234,7 @@ export function AddSourceForm({ allowedRoots, initial, onDone }: AddSourceFormPr
               if (next === "proxmox")
                 setForm((f) => ({ ...f, format: "json", template_id: "proxmox_inventory" }));
             }}
-            className="h-9 rounded border border-border-strong bg-inset px-2 text-sm text-text"
+            className="h-9 rounded border border-border-control bg-inset px-2 text-sm text-text"
           >
             <option value="file">A file or folder on this server</option>
             <option value="syslog">Syslog sent over the network (UDP, TCP, TLS)</option>
@@ -292,7 +292,7 @@ export function AddSourceForm({ allowedRoots, initial, onDone }: AddSourceFormPr
                     port: v.port === DEFAULT_PORT[v.protocol] ? DEFAULT_PORT[protocol] : v.port,
                   }));
                 }}
-                className="h-9 rounded border border-border-strong bg-inset px-2 text-sm text-text"
+                className="h-9 rounded border border-border-control bg-inset px-2 text-sm text-text"
               >
                 <option value="udp">UDP</option>
                 <option value="tcp">TCP</option>
@@ -306,7 +306,7 @@ export function AddSourceForm({ allowedRoots, initial, onDone }: AddSourceFormPr
                 required
                 value={syslog.port}
                 onChange={(e) => setSyslog((v) => ({ ...v, port: Number(e.target.value) }))}
-                className="h-9 w-28 rounded border border-border-strong bg-inset px-2 font-mono text-sm text-text"
+                className="h-9 w-28 rounded border border-border-control bg-inset px-2 font-mono text-sm text-text"
               />
             </div>
             <p className="text-sm text-text-muted">
@@ -447,7 +447,7 @@ export function AddSourceForm({ allowedRoots, initial, onDone }: AddSourceFormPr
                 value={senders}
                 onChange={(e) => setSenders(e.target.value)}
                 placeholder="192.168.1.0/24"
-                className="rounded border border-border-strong bg-inset px-2 py-1.5 font-mono text-sm text-text"
+                className="rounded border border-border-control bg-inset px-2 py-1.5 font-mono text-sm text-text"
               />
               <p id="listener-senders-help" className="text-sm text-text-muted">
                 Addresses or networks, one per line. Empty accepts private networks only. Messages

@@ -38,7 +38,7 @@ export function LokiFields({
             id="loki-auth"
             value={value.auth}
             onChange={(e) => set("auth", e.target.value as LokiSettings["auth"])}
-            className="h-9 rounded border border-border-strong bg-inset px-2 text-sm text-text"
+            className="h-9 rounded border border-border-control bg-inset px-2 text-sm text-text"
           >
             <option value="none">None</option>
             <option value="basic">Username and password</option>

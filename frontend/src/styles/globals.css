@@ -34,6 +34,67 @@
   }
 }
 
+/* Muted text is under 4.5:1 on the pressed fill (4.47 in dark), so anything on that fill
+   takes the secondary color instead (scripts/check-contrast.py leaves that pair out). */
+.bg-accent-subtle {
+  --text-muted: var(--text-secondary);
+}
+
+@layer base {
+  /* Table headers (DESIGN.md 4 and 7): no fill, 12px at 500 in the secondary color, over the
+     row's 1px divider. Header cells carry no weight or size class of their own.
+     In the base layer, so a spacing utility on a checkbox (mt-1) still applies. */
+  thead th {
+    font-size: 12px;
+    line-height: 16px;
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
+
+  /* Checkboxes (DESIGN.md 7): the edge is the only cue, so it is --border-control (3:1). */
+  input[type="checkbox"] {
+    appearance: none;
+    display: inline-grid;
+    place-content: center;
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+    margin: 0;
+    vertical-align: middle;
+    border: 1px solid var(--border-control);
+    border-radius: 3px;
+    background: var(--inset);
+  }
+  input[type="checkbox"]:checked,
+  input[type="checkbox"]:indeterminate {
+    border-color: var(--accent);
+    background: var(--accent);
+  }
+  input[type="checkbox"]:checked::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    background: var(--on-accent);
+    clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+  }
+  input[type="checkbox"]:indeterminate::before {
+    content: "";
+    width: 8px;
+    height: 2px;
+    background: var(--on-accent);
+  }
+  input[type="checkbox"]:disabled {
+    opacity: 0.5;
+  }
+
+  /* Forced colors drop background fills, which is all that shows a tick: use the system's. */
+  @media (forced-colors: active) {
+    input[type="checkbox"] {
+      appearance: auto;
+    }
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

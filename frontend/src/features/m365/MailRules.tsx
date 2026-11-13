@@ -1,10 +1,12 @@
+import { About } from "@/components/About";
+import { Skeleton } from "@/components/Skeleton";
+import { SeverityMark } from "@/components/SeverityMark";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useState } from "react";
 import { api, type Cell, type M365Overview, type QueryResult } from "@/lib/api";
-import { cn } from "@/lib/cn";
 import { openDrill } from "@/lib/drill";
-import { LoadFailed } from "@/components/LoadFailed";
+import { InlineError } from "@/components/InlineError";
 import { ResultsTable } from "@/features/search/ResultsTable";
 import { SectionTitle } from "@/components/SectionTitle";
 
@@ -19,10 +21,6 @@ const CLASS_WORD: Record<string, string> = {
   other: "other",
 };
 const RANK: Record<string, number> = { high: 3, medium: 2, low: 1 };
-const TONE: Record<string, string> = {
-  high: "bg-sev-high-bg text-sev-high-text",
-  medium: "bg-sev-medium-bg text-sev-medium-text",
-};
 
 export interface Burst {
   key: string;
@@ -111,6 +109,10 @@ export function MailRules({ m }: { m: M365Overview }) {
             {q.data.truncated ? "+" : ""}, risky first
           </span>
         ) : null}
+        <About
+          lead="What counts as risky"
+          text="Rules that hide mail (Junk, RSS Feeds, Archive, Conversation History, Deleted Items, or mark read and move), delete it, or forward it outside the person's domain. Rules that file mail into other folders are organizing."
+        />
         <button
           type="button"
           onClick={() =>
@@ -121,15 +123,10 @@ export function MailRules({ m }: { m: M365Overview }) {
           Open in Logs
         </button>
       </div>
-      <p className="border-b border-border px-3 py-1.5 text-sm text-text-secondary">
-        Risky: rules that hide mail (Junk, RSS Feeds, Archive, Conversation History, Deleted Items,
-        or mark read and move), delete it, or forward it outside the person&apos;s domain. Rules
-        that file mail into other folders are organizing.
-      </p>
       {q.isLoading ? (
-        <div aria-busy="true" className="h-40 animate-pulse bg-surface" />
+        <Skeleton label="mail rules" rows={4} className="rounded-none border-0" />
       ) : q.isError ? (
-        <LoadFailed
+        <InlineError
           what={TITLE}
           error={q.error}
           onRetry={() => void q.refetch()}
@@ -158,14 +155,10 @@ export function MailRules({ m }: { m: M365Overview }) {
                     {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                   </span>
                   {b.risky ? (
-                    <span
-                      className={cn(
-                        "rounded-badge px-2 py-px text-xs",
-                        TONE[b.severity] ?? TONE.medium,
-                      )}
-                    >
-                      {b.risky} risky
-                    </span>
+                    <SeverityMark
+                      tone={b.severity === "high" ? "high" : "medium"}
+                      label={`${b.risky} risky`}
+                    />
                   ) : null}
                   <span>{burstLine(b)}</span>
                 </button>

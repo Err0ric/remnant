@@ -9,6 +9,7 @@ backend-ci:
 	cd backend && uv sync --frozen && uv run ruff format --check app tests evals && uv run ruff check app tests evals && uv run mypy && uv run pytest -q -n auto
 
 frontend-ci:
+	python3 scripts/check-contrast.py
 	cd frontend && pnpm install --frozen-lockfile && pnpm lint && pnpm typecheck && pnpm test && pnpm build
 
 dev-backend:

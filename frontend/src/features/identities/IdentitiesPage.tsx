@@ -6,7 +6,7 @@ import { ApiError, api } from "@/lib/api";
 import { SectionTitle } from "@/components/SectionTitle";
 
 const INPUT =
-  "h-8 min-w-0 rounded border border-border-strong bg-inset px-2 font-mono text-sm text-text";
+  "h-8 min-w-0 rounded border border-border-control bg-inset px-2 font-mono text-sm text-text";
 const BTN = "h-8 rounded border border-border-strong px-3 text-sm hover:bg-surface-head";
 const PRIMARY =
   "h-8 rounded bg-accent px-3 text-sm font-semibold text-white hover:brightness-110 disabled:opacity-50";
@@ -59,7 +59,7 @@ export function IdentitiesPage() {
 
   return (
     <div className="flex min-w-0 flex-1 flex-col">
-      <PageHeader crumbs={["Home", "Settings", "Identities"]} title="Identities" />
+      <PageHeader title="Identities" />
       <div className="flex max-w-4xl flex-col gap-4 px-5 py-3 text-sm">
         <p className="text-text-secondary">
           The same person often appears as <span className="font-mono">alice</span>,{" "}
@@ -236,9 +236,9 @@ export function IdentitiesPage() {
             <table aria-label="Aliases" className="w-full">
               <thead>
                 <tr className="border-b border-border text-left text-text-secondary">
-                  <th className="py-1.5 pr-3 font-semibold">Name as logged</th>
-                  <th className="py-1.5 pr-3 font-semibold">Person</th>
-                  <th className="py-1.5 pr-3 font-semibold">Added by</th>
+                  <th className="py-1.5 pr-3">Name as logged</th>
+                  <th className="py-1.5 pr-3">Person</th>
+                  <th className="py-1.5 pr-3">Added by</th>
                   <th />
                 </tr>
               </thead>

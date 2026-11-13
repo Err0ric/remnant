@@ -1,3 +1,5 @@
+import { Skeleton } from "@/components/Skeleton";
+import { ChangePill } from "@/components/ChangePill";
 import { useQuery } from "@tanstack/react-query";
 import { AI_WATCH_COUNTED } from "./counted";
 import {
@@ -14,7 +16,7 @@ import { localDayBounds } from "@/lib/localTime";
 import { EntityLink } from "@/components/EntityLink";
 import { PeoplePending } from "@/components/PeoplePending";
 import { AiWatchFailing } from "./AiWatchFailing";
-import { LoadFailed } from "@/components/LoadFailed";
+import { InlineError } from "@/components/InlineError";
 import { When } from "@/components/When";
 import { StatusBadge, STATUS_LABEL } from "@/features/ai/StatusBadge";
 import { TrendChart, TrendLegend } from "./TrendChart";
@@ -47,33 +49,13 @@ function DeltaPill({
   onOpen?: () => void;
 }) {
   if (card.value === null || card.previous === null) return null;
-  const d = card.value - card.previous;
-  const cls =
-    "rounded-badge bg-surface-head px-1.5 font-mono text-xs font-semibold tabular-nums text-text";
-  const body = (
-    <>
-      <span aria-hidden="true">
-        {d === 0 ? "same" : `${d > 0 ? "↑" : "↓"} ${Math.abs(d).toLocaleString()}`}
-      </span>
-      <span className="sr-only">{delta(card, days)}</span>
-    </>
-  );
-  if (!onOpen)
-    return (
-      <span className={cls} title={delta(card, days)}>
-        {body}
-      </span>
-    );
   return (
-    <button
-      type="button"
-      data-drill=""
-      onClick={onOpen}
-      title={`${delta(card, days)}. Open the period before in Logs`}
-      className={cn(cls, "cursor-pointer hover:bg-border")}
-    >
-      {body}
-    </button>
+    <ChangePill
+      change={card.value - card.previous}
+      spoken={delta(card, days)}
+      title={onOpen ? `${delta(card, days)}. Open the period before in Logs` : delta(card, days)}
+      onOpen={onOpen}
+    />
   );
 }
 
@@ -91,14 +73,13 @@ export function AiWatch({ days = 7, isAdmin = false }: { days?: number; isAdmin?
     queryFn: () => api.aiWatchSummary(days),
     refetchInterval: 300_000,
   });
-  if (q.isLoading)
-    return <div aria-busy="true" className="h-48 animate-pulse rounded-card bg-surface" />;
+  if (q.isLoading) return <Skeleton label="AI Watch" block="h-48" />;
   if (q.isError && !q.data)
     return (
       <section aria-label="AI Watch" className="rounded-card border border-border bg-surface">
         <h2 className="border-b border-border px-3 py-2 text-base font-semibold">AI Watch</h2>
         <AiWatchFailing isAdmin={isAdmin} />
-        <LoadFailed
+        <InlineError
           what="AI Watch"
           error={q.error}
           onRetry={() => void q.refetch()}
@@ -448,9 +429,9 @@ const dayLabel = (iso: string) =>
 /** Stack order, bottom first (owner 2026-10-30): approved, unreviewed, not approved. */
 const STACK: AiStatus[] = ["approved", "unreviewed", "not_approved"];
 const COLOR: Record<AiStatus, string> = {
-  approved: "local-text",
-  unreviewed: "text-muted",
-  not_approved: "sev-critical-text",
+  approved: "local-tx",
+  unreviewed: "accent-text",
+  not_approved: "warn",
 };
 
 interface ChartProps {
@@ -463,8 +444,8 @@ interface ChartProps {
   onOpenDay?: (day: string) => void;
 }
 
-/** AI use per day by review status as a stacked area (ADR-0038 rows 11, 15; owner
- * 2026-10-30), values on hover, and a hatched band over days after the data stops. */
+/** AI use per day by review status, one line per status (ADR-0038 rows 11, 15; lines
+ * only since D248), values and their total on hover, and a hatched band over days after the data stops. */
 export function Chart({ chart: all, days = 30, dataUntil = null, onOpenDay }: ChartProps) {
   const total = (d: AiWatchDay) => d.approved + d.unreviewed + d.not_approved;
   const windowed = all.slice(-days);
@@ -540,12 +521,12 @@ function Top({ summary }: { summary: AiWatchSummary }) {
           <table aria-label="Top AI services" className="w-full text-sm">
             <thead>
               <tr className="text-left text-text-muted">
-                <th className="py-1 pr-3 font-normal">Service</th>
-                <th className="py-1 pr-3 font-normal">Status</th>
-                <th className="py-1 pr-3 text-right font-normal">People</th>
-                <th className="py-1 pr-3 text-right font-normal">Devices</th>
-                <th className="hidden py-1 pr-3 font-normal 2xl:table-cell">First seen</th>
-                <th className="py-1 font-normal">Last seen</th>
+                <th className="py-1 pr-3">Service</th>
+                <th className="py-1 pr-3">Status</th>
+                <th className="py-1 pr-3 text-right">People</th>
+                <th className="py-1 pr-3 text-right">Devices</th>
+                <th className="hidden py-1 pr-3 2xl:table-cell">First seen</th>
+                <th className="py-1">Last seen</th>
               </tr>
             </thead>
             <tbody>

@@ -1,3 +1,4 @@
+import { fromMore } from "./headerMenu";
 import { QueryClient } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -34,7 +35,7 @@ afterEach(() => vi.restoreAllMocks());
 describe("Saving a search", () => {
   it("turns {{placeholders}} into typed parameters", async () => {
     const spy = await renderAt("/search");
-    await screen.findByRole("heading", { name: "Investigate", level: 1 });
+    await screen.findByRole("heading", { name: "Logs", level: 1 });
     await setSql("SELECT * FROM events WHERE time > {{start}} LIMIT {{top}}");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     const form = screen.getByRole("form", { name: "Save search" });
@@ -61,7 +62,7 @@ describe("Saving a search", () => {
 
   it("is not offered to auditors", async () => {
     await renderAt("/search", { mode: "login", signedIn: true, role: "auditor" });
-    await screen.findByRole("heading", { name: "Investigate", level: 1 });
+    await screen.findByRole("heading", { name: "Logs", level: 1 });
     expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
   });
 });
@@ -140,7 +141,7 @@ describe("Saved searches page", () => {
 
   it("opens a saved search on the Search page, fills its parameters, and saves changes", async () => {
     const spy = await renderAt("/search");
-    await screen.findByRole("heading", { name: "Investigate", level: 1 });
+    await screen.findByRole("heading", { name: "Logs", level: 1 });
     await userEvent.click(screen.getByRole("button", { name: "Open" }));
     const panel = await screen.findByRole("region", { name: "Open a saved search" });
     await userEvent.type(within(panel).getByLabelText("Open a saved search"), "ssh");
@@ -244,11 +245,11 @@ describe("Add to dashboard (D89)", () => {
 
   it("saves a label-and-count result, then adds it hourly over 24 hours as bars", async () => {
     const spy = await renderAt("/search");
-    await screen.findByRole("heading", { name: "Investigate", level: 1 });
+    await screen.findByRole("heading", { name: "Logs", level: 1 });
     await setSql("SELECT source_id, count(*) AS events FROM events GROUP BY source_id");
-    await userEvent.click(screen.getByRole("button", { name: "Run query" }));
+    await userEvent.click(screen.getByRole("button", { name: "Run" }));
     await screen.findAllByText("paloalto_traffic");
-    await userEvent.click(screen.getByRole("button", { name: "Add to dashboard" }));
+    await userEvent.click(await fromMore("Add to dashboard"));
     const form = screen.getByRole("form", { name: "Save search" });
     await userEvent.type(within(form).getByLabelText("Name"), "Top sources");
     await userEvent.click(within(form).getByRole("button", { name: "Save" }));
@@ -282,5 +283,114 @@ describe("Add to dashboard (D89)", () => {
     await userEvent.click(within(panel).getByRole("button", { name: "Add to dashboard" }));
     await waitFor(() => expect(window.location.pathname).toBe("/dashboard"));
     expect(calls(spy, "POST", (u) => u.endsWith("/api/schedules"))).toHaveLength(1);
+  });
+});
+
+describe("Saved searches under Logs (ADR-0052 section 3.3, redesign build row 8)", () => {
+  it("is a tab of Logs, not a rail entry, and the old address lands on it", async () => {
+    await renderAt("/saved");
+    await waitFor(() => expect(window.location.pathname).toBe("/investigate/saved"));
+    expect(await screen.findByRole("heading", { name: "Logs", level: 1 })).toBeVisible();
+    const tabs = screen.getByRole("navigation", { name: "Logs tabs" });
+    expect(within(tabs).getByRole("link", { name: "Saved searches" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    const rail = screen.getByRole("navigation", { name: "Primary" });
+    expect(within(rail).queryByRole("link", { name: /Saved searches/ })).toBeNull();
+  });
+
+  it("says which searches are scheduled, and the link opens that schedule", async () => {
+    await renderAt("/investigate/saved");
+    const table = await screen.findByRole("table", { name: "Saved searches" });
+    expect(within(table).getByRole("columnheader", { name: "Scheduled" })).toBeVisible();
+    const row = (await within(table).findByText("failed_by_ip")).closest("tr") as HTMLElement;
+    const link = await within(row).findByRole("link", { name: "Daily at 07:00" });
+    expect(link).toHaveAttribute("href", "/alerts/schedules#item=s1");
+    await userEvent.click(link);
+    expect(window.location.pathname + window.location.hash).toBe("/alerts/schedules#item=s1");
+    const schedules = await screen.findByRole("table", { name: "Schedules" });
+    const marked = await waitFor(() => {
+      const tr = schedules.querySelector("tr[aria-current]");
+      expect(tr).not.toBeNull();
+      return tr as HTMLElement;
+    });
+    expect(marked).toHaveTextContent("Failed SSH daily");
+    expect(schedules.querySelectorAll("tr[aria-current]")).toHaveLength(1);
+  });
+
+  async function renderWithSchedules(reply: () => Response) {
+    window.history.replaceState(null, "", "/investigate/saved");
+    const spy = mockApi("Codename", { mode: "login", signedIn: true, role: "analyst" });
+    const real = spy.getMockImplementation() as typeof fetch;
+    spy.mockImplementation(async (url, init) =>
+      String(url).endsWith("/api/schedules") && (init?.method ?? "GET") === "GET"
+        ? reply()
+        : real(url, init),
+    );
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    render(
+      <App
+        initialTheme="dark"
+        queryClient={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      />,
+    );
+    const table = await screen.findByRole("table", { name: "Saved searches" });
+    return (await within(table).findByText("failed_by_ip")).closest("tr") as HTMLElement;
+  }
+  const jsonReply = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    });
+
+  it("says No only when the schedules loaded and none runs the search", async () => {
+    const row = await renderWithSchedules(() => jsonReply([]));
+    expect(await within(row).findByText("No")).toBeVisible();
+  });
+
+  it("does not say No when the schedules could not be read", async () => {
+    const row = await renderWithSchedules(() =>
+      jsonReply({ error: { code: "internal", message: "boom" } }, 500),
+    );
+    expect(await within(row).findByText("Could not load")).toBeVisible();
+    expect(within(row).queryByText("No")).toBeNull();
+  });
+
+  it("marks a paused schedule, and scrolls to the linked one on Schedules", async () => {
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    const row = await renderWithSchedules(() =>
+      jsonReply([
+        {
+          schedule_id: "p1",
+          kind: "search",
+          target_id: "failed_by_ip",
+          name: "Paused one",
+          owner_id: "u1",
+          mine: true,
+          shared: false,
+          cron: "0 * * * *",
+          lookback_minutes: 60,
+          params: {},
+          threshold_kind: null,
+          threshold_value: null,
+          paused: true,
+          paused_reason: null,
+          recent: [],
+          target_ids: [],
+        },
+      ]),
+    );
+    const link = await within(row).findByRole("link", { name: "Hourly" });
+    expect(link.closest("li")).toHaveTextContent("Hourly (paused)");
+    await userEvent.click(link);
+    const schedules = await screen.findByRole("table", { name: "Schedules" });
+    await waitFor(() => expect(schedules.querySelector("tr[aria-current]")).not.toBeNull());
+    await waitFor(() => expect(scroll).toHaveBeenCalled());
+    expect(scroll.mock.instances[0]).toBe(schedules.querySelector("tr[aria-current]"));
   });
 });

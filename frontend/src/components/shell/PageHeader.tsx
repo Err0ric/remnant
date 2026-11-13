@@ -1,16 +1,49 @@
-import type { MouseEvent, ReactNode } from "react";
+import { ChevronDown, MoreHorizontal } from "lucide-react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from "react";
 import { cn } from "@/lib/cn";
 import { areaOf, visibleTabs, type AreaTab } from "@/lib/nav";
-import { navigate, pathFor, usePage, useTab } from "@/lib/route";
+import {
+  fragmentValues,
+  navigate,
+  navigateTab,
+  pathFor,
+  usePage,
+  useSection,
+  useTab,
+} from "@/lib/route";
 import { useViewer } from "@/lib/viewer";
 
+/** A button in the page header. */
+export interface HeaderAction {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  /** Hover hint; the accessible name is the label. */
+  title?: string;
+  /** For a toggle such as "Edit layout". */
+  pressed?: boolean;
+}
+
 interface PageHeaderProps {
-  /** Kept for pages that still pass it; the area and its tabs say where you are (ADR-0038
-   * row 8), so crumbs are not shown. */
-  crumbs?: string[];
+  /** The page's name, never its group's. Until the rail lists pages only (build row 4), a
+   * page inside an old tabbed area is still titled by that area. */
   title: string;
-  commands?: ReactNode;
-  meta?: ReactNode;
+  /** Shown beside the title ("12 open"). */
+  count?: ReactNode;
+  /** Outlined buttons. The first two are shown; any more go into the overflow menu. */
+  secondary?: HeaderAction[];
+  /** Overflow menu items, behind "More". */
+  menu?: HeaderAction[];
+  /** The page's one filled button, last on the right. One object, so never two. */
+  primary?: HeaderAction;
   /** Counts or flags beside tab labels, by tab label ("Sessions": 214). */
   tabExtras?: Record<string, ReactNode>;
 }
@@ -19,40 +52,209 @@ function key(t: AreaTab): string {
   return `${t.page}:${t.tab ?? ""}`;
 }
 
-/** Title, the area's tabs (ADR-0038 rows 2 and 3), then the page's commands. A page in an
- * area with tabs is titled by its area; the open tab says which part of it. */
-export function PageHeader({ title, commands, meta, tabExtras }: PageHeaderProps) {
+const SECONDARY =
+  "h-8 whitespace-nowrap rounded border border-border-strong px-3 text-text hover:bg-surface-head disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent";
+
+interface OverflowProps {
+  items: HeaderAction[];
+  /** A named menu ("Views") shows its name on the button; without one it is "More". */
+  label?: string;
+}
+
+function Overflow({ items, label }: OverflowProps) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const menuId = useId();
+  const menuItems = () => [
+    ...(box.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? []),
+  ];
+  // Esc and a choice give focus back to the button; a click or Tab elsewhere just closes.
+  const close = (refocus: boolean) => {
+    setOpen(false);
+    if (refocus) trigger.current?.focus();
+  };
+  useEffect(() => {
+    if (!open) return;
+    menuItems()[0]?.focus();
+    const away = (e: MouseEvent) => {
+      if (!box.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", away);
+    return () => document.removeEventListener("mousedown", away);
+  }, [open]);
+  const onKey = (e: ReactKeyboardEvent) => {
+    if (!open) return;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      close(true);
+      return;
+    }
+    const all = menuItems();
+    const at = all.indexOf(document.activeElement as HTMLButtonElement);
+    const to =
+      e.key === "ArrowDown"
+        ? (at + 1) % all.length
+        : e.key === "ArrowUp"
+          ? (at - 1 + all.length) % all.length
+          : e.key === "Home"
+            ? 0
+            : e.key === "End"
+              ? all.length - 1
+              : -1;
+    if (to < 0) return;
+    e.preventDefault();
+    all[to]?.focus();
+  };
+  return (
+    <div
+      ref={box}
+      className="relative"
+      onKeyDown={onKey}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOpen(false);
+      }}
+    >
+      <button
+        ref={trigger}
+        type="button"
+        aria-label={label ?? "More actions"}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
+        onClick={() => setOpen((v) => !v)}
+        className={cn(
+          SECONDARY,
+          label ? "flex items-center gap-1.5" : "flex w-8 items-center justify-center px-0",
+        )}
+      >
+        {label ? (
+          <>
+            {label}
+            <ChevronDown size={14} aria-hidden />
+          </>
+        ) : (
+          <MoreHorizontal size={16} aria-hidden />
+        )}
+      </button>
+      {open ? (
+        <div
+          id={menuId}
+          role="menu"
+          className="absolute right-0 top-full z-40 mt-1 min-w-40 rounded-card border border-border bg-surface p-1 shadow-lg"
+        >
+          {items.map((it) => (
+            <button
+              key={it.label}
+              type="button"
+              role="menuitem"
+              disabled={it.disabled}
+              title={it.title}
+              onClick={() => {
+                close(true);
+                it.onClick();
+              }}
+              className="block w-full whitespace-nowrap rounded px-2.5 py-1.5 text-left hover:bg-surface-head disabled:opacity-40"
+            >
+              {it.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** The page header (DESIGN.md 5 and 6.0): the title and an optional count; on the right up
+ * to two secondary buttons, an overflow menu, and at most one filled primary button, last;
+ * then the page's tabs. In the document the order is title, tabs, actions, which is also
+ * the keyboard order; the actions sit on the title's row on screen. */
+export function PageHeader({
+  title,
+  count,
+  secondary = [],
+  menu = [],
+  primary,
+  tabExtras,
+}: PageHeaderProps) {
   const page = usePage();
   const tab = useTab();
-  const { isAdmin, canAsk = true } = useViewer();
+  // The page's time choice lives in the fragment (ADR-0052 section 3.7: one time control
+  // per page), so a tab of the same page keeps it.
+  const frag = fragmentValues(useSection());
+  const time = new URLSearchParams();
+  for (const k of ["time", "from", "to"]) {
+    const v = frag.get(k);
+    if (v) time.set(k, v);
+  }
+  const keeps = (t: { page: string; tab?: string }) =>
+    t.page === page && t.tab !== undefined && time.toString() !== "";
+  const { isAdmin, canAsk = true, canRunSql = true } = useViewer();
   const place = areaOf(page, tab);
-  const tabs = place ? visibleTabs(place.area, isAdmin, canAsk) : [];
+  const tabs = place ? visibleTabs(place.area, isAdmin, canAsk, canRunSql) : [];
+  // The page's views (Logs: the Microsoft 365 lists), behind one "Views" menu on every tab
+  // of the page. They are server-built lists, so they do not depend on SQL access. The
+  // first item goes back to the page's own first tab.
+  const viewTabs = place ? place.area.tabs.filter((t) => t.view) : [];
+  const views: HeaderAction[] = viewTabs.length
+    ? [
+        ...(tabs[0]
+          ? [
+              {
+                label: tabs[0].label,
+                onClick: () => navigate(tabs[0]!.page, tabs[0]!.tab),
+                // Already there: the open place is the disabled item, as for a view.
+                disabled: key(tabs[0]) === key(place!.tab),
+              },
+            ]
+          : []),
+        ...viewTabs.map((t) => ({
+          label: t.label,
+          onClick: () => navigate(t.page, t.tab),
+          disabled: key(t) === key(place!.tab),
+        })),
+      ]
+    : [];
   const withTabs = tabs.length > 1;
+  const shown = secondary.slice(0, 2);
+  const more = [...secondary.slice(2), ...menu];
+  const hasActions =
+    shown.length > 0 || more.length > 0 || views.length > 0 || primary !== undefined;
   return (
-    <div className="border-b border-border bg-surface px-5 pt-3">
-      <h1 className="text-lg">{withTabs && place ? place.area.label : title}</h1>
+    <div className="grid grid-cols-[minmax(0,1fr)_auto] border-b border-border bg-surface px-5">
+      <div className="col-start-1 row-start-1 flex min-h-11 min-w-0 items-center gap-2">
+        <h1 className="shrink-0 whitespace-nowrap text-lg">
+          {withTabs && place ? place.area.label : title}
+        </h1>
+        {count !== undefined && count !== null ? (
+          <span data-header-count="" className="min-w-0 truncate text-text-secondary">
+            {count}
+          </span>
+        ) : null}
+      </div>
       {withTabs && place ? (
         <nav
           aria-label={`${place.area.label} tabs`}
-          className="-mb-px mt-1 flex gap-5 overflow-x-auto"
+          className="col-span-2 row-start-2 -mb-px flex h-9 items-end gap-5 overflow-x-auto"
         >
           {tabs.map((t) => {
             const on = key(t) === key(place.tab);
             return (
               <a
                 key={key(t)}
-                href={pathFor(t.page, t.tab)}
+                href={pathFor(t.page, t.tab) + (keeps(t) ? `#${time.toString()}` : "")}
                 aria-current={on ? "page" : undefined}
-                onClick={(e: MouseEvent) => {
+                onClick={(e: ReactMouseEvent) => {
                   if (e.metaKey || e.ctrlKey || e.shiftKey) return;
                   e.preventDefault();
-                  navigate(t.page, t.tab);
+                  if (keeps(t) && t.tab) navigateTab(t.page, t.tab, time.toString());
+                  else navigate(t.page, t.tab);
                 }}
                 className={cn(
-                  "whitespace-nowrap border-b-2 pb-2 pt-1.5 font-semibold no-underline",
+                  "whitespace-nowrap border-b-2 pb-2 pt-1.5 no-underline",
                   on
-                    ? "border-accent text-text"
-                    : "border-transparent text-text-secondary hover:text-text",
+                    ? "border-accent-text font-semibold text-text"
+                    : "border-transparent font-medium text-text-secondary hover:text-text",
                 )}
               >
                 {t.label}
@@ -64,45 +266,41 @@ export function PageHeader({ title, commands, meta, tabExtras }: PageHeaderProps
           })}
         </nav>
       ) : null}
-      {commands || meta ? (
+      {hasActions ? (
         <div
-          className={cn(
-            "flex flex-wrap items-center gap-1 py-1",
-            withTabs && "-mx-5 border-t border-border px-5",
-          )}
+          data-header-actions=""
+          // On a phone the buttons take their own row under the title and tabs.
+          className="col-start-2 row-start-1 flex flex-wrap items-center justify-end gap-2 py-1.5 pl-3 max-sm:col-span-2 max-sm:col-start-1 max-sm:row-start-3 max-sm:justify-start max-sm:pl-0"
         >
-          {commands}
-          {meta ? <span className="ml-auto text-sm text-text-secondary">{meta}</span> : null}
+          {shown.map((a) => (
+            <button
+              key={a.label}
+              type="button"
+              onClick={a.onClick}
+              disabled={a.disabled}
+              title={a.title}
+              aria-pressed={a.pressed}
+              className={cn(SECONDARY, a.pressed && "border-accent-text bg-accent-subtle")}
+            >
+              {a.label}
+            </button>
+          ))}
+          {views.length ? <Overflow label="Views" items={views} /> : null}
+          {more.length ? <Overflow items={more} /> : null}
+          {primary ? (
+            <button
+              type="button"
+              data-primary=""
+              onClick={primary.onClick}
+              disabled={primary.disabled}
+              title={primary.title}
+              className="h-8 whitespace-nowrap rounded bg-accent px-3 font-medium text-on-accent hover:opacity-90 disabled:cursor-default disabled:opacity-40"
+            >
+              {primary.label}
+            </button>
+          ) : null}
         </div>
-      ) : (
-        <div className={withTabs ? "" : "pb-2"} />
-      )}
+      ) : null}
     </div>
-  );
-}
-
-interface CommandProps {
-  label: string;
-  onClick?: () => void;
-  primary?: boolean;
-  disabled?: boolean;
-  title?: string;
-}
-
-export function Command({ label, onClick, primary, disabled, title }: CommandProps) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      // The name is the label; the title is only the hover hint (owner, 2026-10-31).
-      aria-label={label}
-      className={`h-8 rounded px-3 hover:bg-surface-head disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent ${
-        primary ? "font-semibold text-accent-text" : "text-text"
-      }`}
-    >
-      {label}
-    </button>
   );
 }

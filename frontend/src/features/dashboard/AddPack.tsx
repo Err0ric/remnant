@@ -50,7 +50,7 @@ export function AddPack({ dashboardId }: { dashboardId: string }) {
           aria-label="Pack"
           value={packId}
           onChange={(e) => pick(e.target.value)}
-          className="h-8 w-56 max-w-full rounded border border-border-strong bg-inset px-2"
+          className="h-8 w-56 max-w-full rounded border border-border-control bg-inset px-2"
         >
           <option value="">
             {lib.data && !lib.data.packs.length ? "No pack fits your sources yet" : "Pick a pack"}

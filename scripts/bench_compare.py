@@ -352,8 +352,10 @@ def build(code: Path, lake: Path, events: int, router: int, log: Path, shape: fl
     proc = serve(code, lake / "data", lake, port, log)
     try:
         url = f"http://127.0.0.1:{port}"
-        run(scripts / "demo/load.py", "--url", url, "--logs", lake / "logs")
-        run(scripts / "demo_lab.py", "--url", url, "--logs", lake / "lab", "--rules", lake / "rules")  # fmt: skip
+        # Both sign in with the account `serve` made, which is in this lake's data folder,
+        # not the demo's (D245): without --data a rebuild of the lake stopped here.
+        run(scripts / "demo/load.py", "--url", url, "--logs", lake / "logs", "--data", lake / "data")  # fmt: skip
+        run(scripts / "demo_lab.py", "--url", url, "--logs", lake / "lab", "--rules", lake / "rules", "--data", lake / "data")  # fmt: skip
         api = Api(url)
         for sid, fmt, sub, glob in (("volume_syslog", "syslog", "syslog", "**/*.log"), ("volume_web", "json", "apps", "*.jsonl")):  # fmt: skip
             api.call("POST", "/api/sources", {"source_id": sid, "format": fmt, "path": str(lake / "vol" / sub), "glob": glob, "template_id": "auto"})  # fmt: skip

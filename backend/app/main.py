@@ -182,6 +182,7 @@ from app.mcp.server import McpServer
 from app.mcp.settings import McpSettingsStore
 from app.meta.audit import AuditReader
 from app.meta.db import MetaDB
+from app.meta.page_loads import PageLoadAudit
 from app.meta.secrets import SecretBox
 from app.ops.backup import BACKUPS_DIR
 from app.ops.integrity import IntegrityService
@@ -794,6 +795,8 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         clock=lambda: app.state.auth.clock(),
     )
     app.state.page_cache = PageCache()
+    # One audit row per Dashboard visit (handoff item 3), written at once, never held.
+    app.state.page_loads = PageLoadAudit(app.state.auth.audit)
     # Default views refreshed in the background and served at once (D147).
     app.state.refresher = Refresher(app.state.page_cache, meta, app.state.auth.users)
     app.state.rollup_runs = RunLog()  # what the rollup jobs did, for Health

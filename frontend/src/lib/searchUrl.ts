@@ -1,4 +1,5 @@
-import { TIME_RANGES, type TimeRangeId } from "@/lib/search";
+import { logsRange, type LogsRange } from "@/lib/search";
+import { localInput, localTime } from "@/lib/timeWindow";
 
 /** Where Logs lives (D206); `/search` and `/investigate/search` addresses from before still
  * open it, with their search state. */
@@ -22,11 +23,15 @@ export interface SearchUrlState {
   /** An open saved search, run as saved with these parameter values. */
   saved?: string;
   params?: Record<string, string>;
-  range: TimeRangeId;
+  range: LogsRange;
+  /** Custom: a start and an end as local date-times; an empty side is open. Its presence
+   * means Custom is chosen (`range=custom` in the address). `exact`: the bounds of a
+   * window another page handed over, kept to the millisecond. In the address both are UTC
+   * times, so a link opens on the same moments in any time zone. */
+  custom?: { from: string; to: string; exact?: { from: string; to: string } };
 }
 
 export const MAX_Q = 4000;
-const RANGES = new Set<string>(TIME_RANGES.map((r) => r.id));
 const ID = /^[a-z0-9_]{1,64}$/;
 
 export function searchUrl(state: SearchUrlState): string {
@@ -38,7 +43,16 @@ export function searchUrl(state: SearchUrlState): string {
     p.set("tab", state.tab);
     if (state.q && state.q.length <= MAX_Q) p.set("q", state.q);
   }
-  p.set("range", state.range);
+  if (state.custom) {
+    p.set("range", "custom");
+    const { exact } = state.custom;
+    const utc = (local: string) => localTime(local)?.toISOString() ?? "";
+    const from = exact ? exact.from : utc(state.custom.from);
+    const to = exact ? exact.to : utc(state.custom.to);
+    if (from) p.set("from", from);
+    if (to) p.set("to", to);
+    if (exact) p.set("exact", "1");
+  } else p.set("range", state.range);
   return `${SEARCH_PATH}#${p.toString()}`;
 }
 
@@ -55,11 +69,25 @@ export function readSearchUrl(fragment: string = window.location.hash): SearchUr
   const p = new URLSearchParams(fragment.replace(/^#/, ""));
   // Only a search fragment counts: another page's `#section` or a token is not a search.
   if (!["tab", "q", "saved", "range"].some((k) => p.has(k))) return null;
-  const range = p.get("range") ?? "24h";
+  // Older addresses said `range=all` or `range=15m`: Custom with no dates, and 1 hour.
+  const asked = p.get("range") ?? "24h";
+  const was = logsRange(asked);
+  // A UTC time (what this page writes), or a local date-time typed into an address.
+  const side = (key: string) => {
+    const v = p.get(key) ?? "";
+    if (localTime(v)) return v;
+    return /^\d{4}-\d{2}-\d{2}T[\d:.]+(Z|[+-]\d{2}:\d{2})$/.test(v) ? localInput(v) : "";
+  };
   const state: SearchUrlState = {
     tab: p.get("tab") === "sql" ? "sql" : "simple",
-    range: (RANGES.has(range) ? range : "24h") as TimeRangeId,
+    range: was.range,
   };
+  if (asked === "custom") {
+    state.custom = { from: side("from"), to: side("to") };
+    const [from, to] = [p.get("from") ?? "", p.get("to") ?? ""];
+    if (p.get("exact") === "1" && state.custom.from && state.custom.to)
+      state.custom.exact = { from, to };
+  } else if (was.open) state.custom = { from: "", to: "" };
   const saved = p.get("saved");
   if (saved && ID.test(saved)) {
     state.saved = saved;

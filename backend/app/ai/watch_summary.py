@@ -170,6 +170,9 @@ class Summary:
     # 2026-10-30): the cards then show no change. `since`: the first use seen.
     compared: bool = True
     since: str | None = None
+    # AI services with any use in the period, of every review status (the Dashboard's
+    # "AI services in use"; `top` is only the first few).
+    services_in_use: int = 0
     before: str = ""  # start of the period before
     chart_drill: str | None = None  # AI use per service for one chart day (`{from}`, `{to}`)
     names: bool = False  # whether any text names a person: audited as such (G3)
@@ -385,6 +388,7 @@ def summary(
         since=oldest.isoformat() if oldest is not None and oldest > prev_start else None,
         before=prev_start.isoformat(),
         chart_drill=use_drill(set(use) | chart_svcs, "services"),
+        services_in_use=len(use),
         names=signal_names or any(n.kind == "agent" and n.id in owned for n in new),
     )
 

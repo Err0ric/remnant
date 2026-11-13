@@ -131,6 +131,7 @@ class Row:
     detail: str = ""
     last: str | None = None
     drill: str | None = None  # rows with no entity page open Search (ADR-0039)
+    rules: int | None = None  # Detections: how many rules matched this host or person
 
 
 @dataclass(slots=True)
@@ -204,6 +205,9 @@ class Sections:
     identity: Identity | None = None
     attacks: Attacks | None = None
     detections: Detections | None = None
+    # Detections was asked for and is absent because no rule is enabled (and none matched
+    # in the window): the page offers Enable rules there (DESIGN.md 6.3).
+    no_rules: bool = False
     read: list[str] = field(default_factory=list)
 
 
@@ -752,14 +756,30 @@ def _detections(
     per_event = {str(e): (who, host) for e, who, host in involved_rows}
     hosts: Counter[str] = Counter()
     users: Counter[str] = Counter()
-    for _, _, eid, _, _, _ in now:
+    # Per host or person: the rules that matched, and when the last match was. Rules are
+    # told apart by title, as in "Matches by rule" beside it, so the two always agree.
+    rules_of: dict[tuple[str, str], set[str]] = defaultdict(set)
+    last_of: dict[tuple[str, str], datetime] = {}
+    for title, _, eid, when, _, _ in now:
         who, host = per_event.get(eid, (None, None))
-        if host:
-            hosts[str(host)] += 1
-        if who:
-            users[str(who)] += 1
-    involved = [Row(h, n, kind="host") for h, n in hosts.most_common(TOP)]
-    involved += [Row(u, n, kind="user") for u, n in users.most_common(TOP)]
+        for kind, name, tally in (("host", host, hosts), ("user", who, users)):
+            if not name:
+                continue
+            key = (kind, str(name))
+            tally[key[1]] += 1
+            rules_of[key].add(title)
+            if when is not None and (key not in last_of or when > last_of[key]):
+                last_of[key] = when
+
+    def row(kind: str, name: str, n: int) -> Row:
+        last = last_of.get((kind, name))
+        return Row(
+            name, n, kind=kind, last=last.isoformat() if last else None,
+            rules=len(rules_of[(kind, name)]),
+        )  # fmt: skip
+
+    involved = [row("host", h, n) for h, n in hosts.most_common(TOP)]
+    involved += [row("user", u, n) for u, n in users.most_common(TOP)]
     involved.sort(key=lambda r: (-r.count, r.kind, r.label))
     shas = {m[0]: m[5] for m in matches}
     conds = rule_conditions(meta, set(shas.values()))
@@ -871,5 +891,6 @@ def sections(
         out.detections = _detections(
             run, meta, allowed, [s[0] for s in mine], start, before, buckets, window, first
         )
+        out.no_rules = out.detections is None and bool(mine)
     out.read = sorted(run.read)
     return out

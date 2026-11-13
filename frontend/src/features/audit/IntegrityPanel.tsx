@@ -5,9 +5,9 @@ import { When } from "@/components/When";
 import { ApiError, api, type IntegritySeal } from "@/lib/api";
 
 const STATUS: Record<IntegritySeal["status"], { label: string; badge: string; bar: string }> = {
-  verified: { label: "Verified", badge: "bg-local-bg text-local-text", bar: "bg-ok" },
-  warnings: { label: "Warnings", badge: "bg-sev-medium-bg text-sev-medium-text", bar: "bg-warn" },
-  failed: { label: "Failed", badge: "bg-sev-critical-bg text-sev-critical-text", bar: "bg-danger" },
+  verified: { label: "Verified", badge: "bg-local-bg text-local-tx", bar: "bg-ok" },
+  warnings: { label: "Warnings", badge: "border border-warn text-warn", bar: "bg-warn" },
+  failed: { label: "Failed", badge: "border border-danger text-danger", bar: "bg-danger" },
 };
 
 const KIND: Record<string, string> = {
@@ -40,7 +40,7 @@ function every(seconds: number): string {
 function Head({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex min-w-0 items-baseline gap-2">
-      <dt className="w-24 shrink-0 text-xs uppercase tracking-wide text-text-muted">{label}</dt>
+      <dt className="w-24 shrink-0 text-xs text-text-muted">{label}</dt>
       <dd className="min-w-0 truncate font-mono text-xs text-text" title={value}>
         {value}
       </dd>
@@ -135,7 +135,7 @@ export function IntegrityPanel({ isAdmin }: IntegrityPanelProps) {
                 {latest.files === 0 ? ": no lake files yet" : ""}
               </>
             ) : status.isPending ? (
-              "Loading…"
+              <span className="sr-only">Loading</span>
             ) : (
               "The first check runs shortly after start"
             )}
@@ -174,7 +174,7 @@ export function IntegrityPanel({ isAdmin }: IntegrityPanelProps) {
               ] as const
             ).map(([label, value]) => (
               <div key={label} className="flex flex-col">
-                <dt className="text-xs uppercase tracking-wide text-text-muted">{label}</dt>
+                <dt className="text-xs text-text-muted">{label}</dt>
                 <dd className="font-mono text-lg tabular-nums text-text">
                   {value.toLocaleString()}
                 </dd>
@@ -202,7 +202,7 @@ export function IntegrityPanel({ isAdmin }: IntegrityPanelProps) {
 
         {history.length > 1 ? (
           <div className="flex flex-col gap-1">
-            <span className="text-xs uppercase tracking-wide text-text-muted">Last 30 days</span>
+            <span className="text-xs text-text-muted">Last 30 days</span>
             <ol aria-label="Recent checks" className="flex h-5 items-stretch gap-px">
               {history.map((s) => (
                 <li
@@ -224,11 +224,11 @@ export function IntegrityPanel({ isAdmin }: IntegrityPanelProps) {
         <section aria-label="Findings" className="rounded border border-border bg-surface">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="bg-surface-head text-left text-xs uppercase tracking-wide text-text-muted">
+              <thead className="border-b border-border text-left text-xs text-text-secondary">
                 <tr>
-                  <th className="px-3 py-1.5 font-medium">Finding</th>
-                  <th className="px-3 py-1.5 font-medium">Where</th>
-                  <th className="px-3 py-1.5 font-medium">Detail</th>
+                  <th className="px-3 py-1.5">Finding</th>
+                  <th className="px-3 py-1.5">Where</th>
+                  <th className="px-3 py-1.5">Detail</th>
                 </tr>
               </thead>
               <tbody>

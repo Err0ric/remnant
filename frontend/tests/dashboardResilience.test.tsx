@@ -94,7 +94,7 @@ describe("Dashboard sections whatever the response (D194)", () => {
 
   it("opens after Logs without mixing up their source lists", async () => {
     await openDashboard("empty", "/investigate/logs");
-    await screen.findByRole("heading", { level: 1, name: "Investigate" });
+    await screen.findByRole("heading", { level: 1, name: "Logs" });
     await act(async () => {
       // Search's own requests (its source filter) answered before leaving the page
       await Promise.all(vi.mocked(globalThis.fetch).mock.results.map((r) => r.value));

@@ -1,6 +1,8 @@
+import { lastDays } from "@/lib/timeWindow";
+import { Skeleton } from "@/components/Skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { EntityLink } from "@/components/EntityLink";
-import { LoadFailed } from "@/components/LoadFailed";
+import { InlineError } from "@/components/InlineError";
 import { When } from "@/components/When";
 import { TierBadge } from "@/features/ai/AccountsCard";
 import { ApiError, api, type PersonAiCount } from "@/lib/api";
@@ -9,7 +11,7 @@ import { navigateTab } from "@/lib/route";
 import { useViewer } from "@/lib/viewer";
 import { Box } from "./PersonLists";
 
-const TH = "px-3 py-2 font-semibold";
+const TH = "px-3 py-2";
 const TD = "px-3 py-1.5";
 
 function Counts({
@@ -58,10 +60,11 @@ export function PersonAiActivity({ person, days }: { person: string; days: numbe
   // D242: the server refuses a person's AI activity without View people in AI usage.
   if (!canViewPeople || (q.error instanceof ApiError && q.error.status === 403))
     return <p className="py-4 text-sm text-text-secondary">Needs View people in AI usage</p>;
-  if (q.isLoading) return <div aria-busy="true" className="h-40 animate-pulse" />;
+  if (q.isLoading)
+    return <Skeleton label="AI activity" rows={4} className="rounded-none border-0" />;
   if (q.isError || !q.data)
     return (
-      <LoadFailed
+      <InlineError
         what="AI activity"
         error={q.error}
         onRetry={() => void q.refetch()}
@@ -69,7 +72,8 @@ export function PersonAiActivity({ person, days }: { person: string; days: numbe
       />
     );
   const a = q.data;
-  const range = `last ${days} ${days === 1 ? "day" : "days"}`;
+  // These panels count whole days back from now, whatever the page's time is: they say so.
+  const range = lastDays(days);
   return (
     <div aria-label="AI activity" role="region" className="flex flex-col gap-3">
       <Box label="Flags" note={range}>
@@ -160,7 +164,7 @@ export function PersonAiActivity({ person, days }: { person: string; days: numbe
           )}
         </Box>
       </div>
-      <Box label="Claude Code sessions" note={`newest first, ${range}`}>
+      <Box label="Claude Code sessions" note={`${range}, newest first`}>
         {a.sessions.length ? (
           <ul className="flex flex-col text-sm">
             {a.sessions.map((s) => (

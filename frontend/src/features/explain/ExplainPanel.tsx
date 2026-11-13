@@ -1,3 +1,4 @@
+import { EventIdChip } from "@/components/EventIdChip";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ModelWait, isAborted, isModelBusy } from "@/components/ai/ModelWait";
 import { useRef, useState } from "react";
@@ -163,22 +164,22 @@ export function ExplainPanel({ eventIds, subject, onClose }: ExplainPanelProps) 
             {answer.claims.map((c, i) => (
               <li key={i}>
                 {c.verified ? null : (
-                  <span className="mr-1.5 rounded-badge bg-sev-medium-bg px-1.5 py-px text-xs text-sev-medium-text">
+                  <span className="mr-1.5 rounded-badge border border-warn px-1.5 py-px text-xs text-warn">
                     unverified
                   </span>
                 )}
                 <span>{c.text}</span>
                 <div className="mt-0.5 flex flex-wrap gap-1">
                   {c.event_ids.map((id) => (
-                    <span
+                    <EventIdChip
                       key={id}
-                      className={`rounded-badge px-1.5 py-px font-mono text-xs ${answer.events_sent.includes(id) ? "bg-sev-info-bg text-text-secondary" : "bg-sev-critical-bg text-sev-critical-text"}`}
+                      id={id}
+                      // The tail: event ids are UUIDv7, whose first characters are the
+                      // ingest time and match across a batch (D157).
+                      label={id.replace(/-/g, "").slice(-8)}
+                      verified={answer.events_sent.includes(id)}
                       title={`${id}: ${answer.events_sent.includes(id) ? "sent" : "not one of the events sent"}`}
-                    >
-                      {/* The tail: event ids are UUIDv7, whose first characters are the
-                          ingest time and match across a batch (D157). */}
-                      {id.replace(/-/g, "").slice(-8)}
-                    </span>
+                    />
                   ))}
                 </div>
               </li>

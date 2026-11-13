@@ -23,7 +23,7 @@ export function Field({ label, help, className, ...input }: FieldProps) {
         autoComplete="off"
         {...input}
         className={cn(
-          "h-9 rounded border border-border-strong bg-inset px-2.5 text-sm text-text outline-none focus:border-accent focus:ring-1 focus:ring-focus-ring",
+          "h-9 rounded border border-border-control bg-inset px-2.5 text-sm text-text outline-none focus:border-accent focus:ring-1 focus:ring-focus-ring",
           className,
         )}
       />

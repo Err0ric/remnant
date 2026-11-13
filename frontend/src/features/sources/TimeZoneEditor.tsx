@@ -72,7 +72,7 @@ export function TimeZoneEditor({ sourceId, value, canManage }: TimeZoneEditorPro
           list={`zones-${sourceId}`}
           value={zone}
           onChange={(e) => setZone(e.target.value)}
-          className="h-8 rounded border border-border-strong bg-inset px-2 font-mono"
+          className="h-8 rounded border border-border-control bg-inset px-2 font-mono"
         />
         <datalist id={`zones-${sourceId}`}>
           {COMMON.map((z) => (

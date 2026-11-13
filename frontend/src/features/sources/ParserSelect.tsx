@@ -44,7 +44,7 @@ export function ParserSelect({
           onChange(null, rest as SourceFormat);
         }
       }}
-      className="h-9 rounded border border-border-strong bg-inset px-2 text-sm text-text"
+      className="h-9 rounded border border-border-control bg-inset px-2 text-sm text-text"
     >
       {format !== "csv" || formats.length > 1 ? (
         <option value="auto:">Automatic: pick a template per line</option>

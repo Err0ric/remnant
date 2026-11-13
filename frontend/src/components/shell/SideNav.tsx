@@ -1,11 +1,8 @@
-import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from "react";
+import { useEffect, useState, type MouseEvent } from "react";
 import {
   Activity,
   Bell,
-  BookMarked,
-  ChevronDown,
   Cpu,
-  Grid2x2,
   LayoutGrid,
   MessageCircleQuestion,
   Search,
@@ -16,6 +13,7 @@ import {
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { needingAttention } from "@/features/health/flow";
 import { cn } from "@/lib/cn";
 import {
   AREAS,
@@ -24,7 +22,6 @@ import {
   areaOf,
   visibleSettings,
   visibleTabs,
-  type Area,
   type AreaTab,
 } from "@/lib/nav";
 import { navigate, pathFor, type PageId } from "@/lib/route";
@@ -42,48 +39,6 @@ interface SideNavProps {
   open?: boolean;
 }
 
-const COLLAPSED_KEY = "app.rail.collapsed";
-// Groups whose folded-by-default state was already applied in this browser, so a group
-// that starts folded (Connected apps, System) does so once, and the viewer's own choice
-// holds from then on.
-const DEFAULTS_KEY = "app.rail.defaults";
-
-function strings(raw: string | null): string[] {
-  const v: unknown = JSON.parse(raw ?? "[]");
-  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
-}
-
-/** Areas whose sub-pages start folded (owner, 2026-10-31): Alerts shows its open count on
- * its own row, so its pages can stay out of the way. Stored as "area:<id>". */
-const FOLDED_AREAS = ["alerts"];
-
-function readCollapsed(): string[] {
-  const folded = [
-    ...RAIL_GROUPS.filter((g) => g.collapsedByDefault).map((g) => g.id),
-    ...FOLDED_AREAS.map((a) => `area:${a}`),
-  ];
-  try {
-    const collapsed = strings(window.localStorage.getItem(COLLAPSED_KEY));
-    const applied = strings(window.localStorage.getItem(DEFAULTS_KEY));
-    const fresh = folded.filter((id) => !applied.includes(id));
-    if (!fresh.length) return collapsed;
-    const next = [...new Set([...collapsed, ...fresh])];
-    window.localStorage.setItem(DEFAULTS_KEY, JSON.stringify([...applied, ...fresh]));
-    window.localStorage.setItem(COLLAPSED_KEY, JSON.stringify(next));
-    return next;
-  } catch {
-    return folded;
-  }
-}
-
-function writeCollapsed(ids: string[]): void {
-  try {
-    window.localStorage.setItem(COLLAPSED_KEY, JSON.stringify(ids));
-  } catch {
-    // Storage can be unavailable; the choice holds for this page view.
-  }
-}
-
 function go(page: PageId | undefined, tab?: string) {
   return (e: MouseEvent) => {
     if (!page || e.metaKey || e.ctrlKey || e.shiftKey) return;
@@ -92,25 +47,33 @@ function go(page: PageId | undefined, tab?: string) {
   };
 }
 
-/** Where you are (D199): a 2px accent bar the height of the row on its left edge. The bar
- * uses the accent text token, 8:1 on the rail in dark and 6:1 in light, and always comes
- * with the label in accent one weight up (sub-pages 400 to 500, pages 600 to 700), so
- * color is never the only cue. */
-const BAR =
-  "relative before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:rounded-full before:bg-accent-text";
+const ICONS: Record<string, LucideIcon> = {
+  dashboard: LayoutGrid,
+  alerts: Bell,
+  logs: Search,
+  ask: MessageCircleQuestion,
+  people: Users,
+  ai: Cpu,
+  agents: SquareTerminal,
+  health: Activity,
+};
 
-/** A page row: 32px, 15px semibold; the current page with the bar, an accent label, bold. */
-function pageClass(current: boolean, bar = current): string {
+/** Where you are (DESIGN.md 5): a 2px bar in the accent text color on the row's left edge
+ * and the label in that color at 600. No fill. The bar is a shape and the weight changes,
+ * so color is never the only cue. */
+function rowClass(current: boolean, pinned: boolean): string {
   return cn(
-    "flex min-h-[32px] items-center gap-2.5 rounded px-2.5 text-md no-underline",
-    bar && BAR,
+    "relative flex h-row-rail items-center gap-2.5 rounded px-2.5 text-base no-underline",
     current
-      ? "font-bold text-accent-text"
-      : "text-text-secondary hover:bg-surface-head hover:text-text",
+      ? "font-semibold text-accent-text before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:rounded-full before:bg-accent-text"
+      : cn(
+          "text-text-secondary hover:bg-surface-head hover:text-text",
+          pinned ? "font-normal" : "font-medium",
+        ),
   );
 }
 
-/** The open alerts the viewer may read, beside Alerts (ADR-0037 row 2). */
+/** The open alerts the viewer may read, beside Alerts, on the solid High pair. */
 function OpenAlerts() {
   const q = useQuery({ queryKey: ["alerts", "count"], queryFn: api.alertCount });
   const n = q.data?.open ?? 0;
@@ -118,81 +81,79 @@ function OpenAlerts() {
   return (
     <span
       aria-label={`${n} open`}
-      className="ml-auto rounded bg-accent-subtle px-1.5 font-mono text-xs tabular-nums text-accent-text md:hidden min-[1100px]:inline"
+      className="ml-auto rounded-badge bg-sev-h-solid px-1.5 font-mono text-xs font-semibold tabular-nums text-sev-h-on md:hidden min-[1100px]:inline"
     >
       {n}
     </span>
   );
 }
 
-const ICONS: Record<string, LucideIcon> = {
-  dashboard: LayoutGrid,
-  alerts: Bell,
-  investigate: Search,
-  ai: Cpu,
-  agents: SquareTerminal,
-  m365: Grid2x2,
-  health: Activity,
-  "page:logs": Search,
-  "page:ask": MessageCircleQuestion,
-  "page:investigate": Users,
-  "page:saved": BookMarked,
-};
+// The count's first read waits until the page's own requests are out.
+const FIRST_READ_MS = 2500;
+const EVERY_MS = 300_000;
+/** An Overview a page loaded this recently is the dot's answer; the Dashboard and Health
+ * refresh theirs every minute. */
+const PAGE_FRESH_MS = 90_000;
+
+/** A warn dot beside Health, only when one of the viewer's sources needs attention. Its
+ * text for screen readers says so; nothing is drawn when all is well or nothing is known.
+ * While a page shows the Overview (Dashboard, Health) the dot follows that page's own data
+ * as it changes, and asks for nothing. On other pages it asks a numbers-only count every
+ * five minutes, so it can be up to five minutes behind there. */
+function HealthDot() {
+  // Listens to the Overview a page loads; never loads it from here.
+  const page = useQuery({ queryKey: ["overview"], queryFn: api.overview, enabled: false });
+  const [now, setNow] = useState(() => Date.now());
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const first = window.setTimeout(() => setReady(true), FIRST_READ_MS);
+    const tick = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => {
+      window.clearTimeout(first);
+      window.clearInterval(tick);
+    };
+  }, []);
+  const pageFresh = Boolean(page.data) && now - page.dataUpdatedAt < PAGE_FRESH_MS;
+  const count = useQuery({
+    queryKey: ["health", "count"],
+    queryFn: api.healthCount,
+    // Not while a page is loading or has just loaded the same assessment.
+    enabled: ready && !page.isFetching && !pageFresh,
+    refetchInterval: EVERY_MS,
+    staleTime: 60_000,
+  });
+  // Whichever answer is newer: the page's Overview or the count.
+  const fromPage = page.data && page.dataUpdatedAt >= count.dataUpdatedAt;
+  const n = fromPage ? needingAttention(page.data) : (count.data?.not_healthy ?? 0);
+  if (!n) return null;
+  return (
+    <span
+      data-health-dot=""
+      className="ml-auto flex items-center md:absolute md:right-1.5 md:top-1.5 min-[1100px]:static"
+    >
+      <span className="h-2 w-2 rounded-full bg-warn" aria-hidden />
+      <span className="sr-only">
+        {n} {n === 1 ? "source needs" : "sources need"} attention
+      </span>
+    </span>
+  );
+}
 
 interface Row {
   key: string;
   label: string;
   icon: LucideIcon;
-  /** Where the row goes: the first tab. */
+  /** Where the row goes: the first tab the viewer may open. */
   to: AreaTab;
-  /** Sub-pages listed under the row; empty for a single page. */
-  subs: AreaTab[];
   current: boolean;
-  alerts?: boolean;
+  pinned: boolean;
 }
 
-/** The rows of a group: one per area, or one per tab when the area is the group itself
- * (Investigate lists Search, People & devices, and Saved searches as pages). */
-function rowsOf(
-  areas: Area[],
-  flatten: boolean,
-  isAdmin: boolean,
-  place: ReturnType<typeof areaOf>,
-  canAsk = true,
-): Row[] {
-  return areas.flatMap((area): Row[] => {
-    const tabs = visibleTabs(area, isAdmin, canAsk);
-    const first = tabs[0];
-    if (!first) return [];
-    if (flatten && tabs.length > 1) {
-      return tabs.map((t) => ({
-        key: `${t.page}:${t.tab ?? ""}`,
-        label: t.label,
-        icon: ICONS[`page:${t.page}`] ?? ICONS[area.id] ?? LayoutGrid,
-        to: t,
-        subs: [],
-        current: place?.tab === t,
-      }));
-    }
-    return [
-      {
-        key: area.id,
-        label: area.label,
-        icon: ICONS[area.id] ?? LayoutGrid,
-        to: first,
-        subs: tabs.length > 1 ? tabs : [],
-        current: place?.area.id === area.id,
-        alerts: area.id === "alerts",
-      },
-    ];
-  });
-}
-
-/** The main rail (ADR-0038 edit 10, owner 2026-10-31): five collapsible groups, every page
- * with its sub-pages listed under it, the current one highlighted. Connected apps and
- * System start folded; each group's open or closed state is remembered in this browser.
- * Headers open and close inline on click. Between 768 and 1100px the rail shows icons, and
- * a page's sub-pages open in a menu beside it on hover or focus. */
+/** The rail (ADR-0052 section 3.2, DESIGN.md 5): pages only, in three labeled groups, with
+ * Health and Settings pinned at the bottom under a hairline at a lower weight. No entry has
+ * children and nothing collapses; a page's tabs are in its header. An entry the viewer
+ * cannot open is not shown. 208px from 1100px; between 768 and 1100px icons only, with the
+ * label as the tooltip; on phones it opens from the Menu button. */
 export function SideNav({
   active,
   activeTab,
@@ -203,7 +164,7 @@ export function SideNav({
 }: SideNavProps) {
   const viewer = useViewer();
   const canAsk = canAskProp ?? viewer.canAsk ?? true;
-  const [collapsed, setCollapsed] = useState(readCollapsed);
+  const canRunSql = viewer.canRunSql ?? true;
   const settings = visibleSettings(isAdmin, canAudit);
   // Settings opens on Sources, the page used most; the checklist is first in its list.
   const items = settings.flatMap((g) => g.items);
@@ -211,281 +172,92 @@ export function SideNav({
   const inSettings = SETTINGS_IDS.has(active);
   const place = areaOf(active as PageId, activeTab);
 
-  // A folded group's pages, in one flyout beside its header. Fixed, so the rail's own
-  // scrolling never clips it.
-  const [fly, setFly] = useState<{ id: string; top: number; left: number } | null>(null);
-  const closing = useRef<number | undefined>(undefined);
-  useEffect(() => () => window.clearTimeout(closing.current), []);
-  const keep = () => window.clearTimeout(closing.current);
-  // Keep the flyout on screen: a group near the bottom opens upwards as far as needed.
-  const flyBox = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    const el = flyBox.current;
-    if (!fly || !el) return;
-    const room = window.innerHeight - 8;
-    const h = el.getBoundingClientRect().height;
-    if (fly.top + h > room) {
-      const top = Math.max(8, room - h);
-      if (top !== fly.top) setFly({ ...fly, top });
-    }
-  }, [fly]);
-  const leave = () => {
-    keep();
-    closing.current = window.setTimeout(() => setFly(null), 150);
-  };
-  // Only the icon rail (768 to 1100px) has hover menus: it has no room to open a page's
-  // sub-pages inline. In the labelled rail, headers open and close inline on click only
-  // (owner, 2026-11-01: a hover flyout and a click dropdown on one header was two
-  // behaviors for one control). The menu is fixed and starts at the rail's right edge, so
-  // the rail's scrolling never clips it.
-  const showGroup = (id: string, el: HTMLElement) => {
-    keep();
-    if (!iconRail()) return;
-    const r = el.getBoundingClientRect();
-    const rail = el.closest("nav")?.getBoundingClientRect();
-    setFly({ id, top: r.top, left: rail ? rail.right : r.right });
-  };
-  const iconRail = () =>
-    window.matchMedia?.("(min-width: 768px) and (max-width: 1099.98px)").matches ?? false;
+  const rowsOf = (ids: string[], pinned: boolean): Row[] =>
+    ids.flatMap((id): Row[] => {
+      const area = AREAS.find((a) => a.id === id);
+      const first = area ? visibleTabs(area, isAdmin, canAsk, canRunSql)[0] : undefined;
+      if (!area || !first) return [];
+      return [
+        {
+          key: area.id,
+          label: area.label,
+          icon: ICONS[area.id] ?? LayoutGrid,
+          to: first,
+          current: place?.area.id === area.id,
+          pinned,
+        },
+      ];
+    });
 
-  const toggle = (id: string) => {
-    setFly(null);
-    const next = collapsed.includes(id) ? collapsed.filter((x) => x !== id) : [...collapsed, id];
-    setCollapsed(next);
-    writeCollapsed(next);
+  const link = (row: Row) => {
+    const Icon = row.icon;
+    return (
+      <li key={row.key}>
+        <a
+          href={pathFor(row.to.page, row.to.tab)}
+          onClick={go(row.to.page, row.to.tab)}
+          aria-current={row.current ? "page" : undefined}
+          title={row.label}
+          className={rowClass(row.current, row.pinned)}
+        >
+          <Icon size={16} aria-hidden className="shrink-0" />
+          <span className="md:sr-only min-[1100px]:not-sr-only">{row.label}</span>
+          {row.key === "alerts" ? <OpenAlerts /> : null}
+          {row.key === "health" ? <HealthDot /> : null}
+        </a>
+      </li>
+    );
   };
 
-  const subList = (row: Row, cls: string, label: string) => (
-    <ul aria-label={label} className={cls}>
-      {row.subs.map((t) => {
-        const current = row.current && place?.tab === t;
-        return (
-          <li key={`${t.page}:${t.tab ?? ""}`}>
-            <a
-              href={pathFor(t.page, t.tab)}
-              onClick={go(t.page, t.tab)}
-              aria-current={current ? "page" : undefined}
-              className={cn(
-                "relative flex min-h-[26px] items-center whitespace-nowrap rounded px-2.5 text-base no-underline",
-                current
-                  ? // The bar sits on the guide line: 8px of padding and the 1px line to the left.
-                    "font-medium text-accent-text before:absolute before:inset-y-0 before:-left-[9.5px] before:w-0.5 before:rounded-full before:bg-accent-text"
-                  : "text-text-secondary hover:bg-surface-head hover:text-text",
-              )}
-            >
-              {t.label}
-            </a>
-          </li>
-        );
-      })}
-    </ul>
-  );
+  const groups = RAIL_GROUPS.filter((g) => !g.pinned)
+    .map((g) => ({ group: g, rows: rowsOf(g.areas, false) }))
+    .filter((g) => g.rows.length > 0);
+  const pinned = RAIL_GROUPS.filter((g) => g.pinned).flatMap((g) => rowsOf(g.areas, true));
 
   return (
     <nav
       id="primary-nav"
       aria-label="Primary"
       className={cn(
-        // From md up the rail stays in view under the top bar and scrolls on its own.
-        "w-full shrink-0 border-b border-border bg-nav px-2 py-3 md:sticky md:top-12 md:h-[calc(100dvh-3rem)] md:w-14 md:self-start md:overflow-y-auto md:border-b-0 md:border-r min-[1100px]:w-60 min-[1100px]:px-3",
-        open ? "block" : "hidden md:block",
+        // From md up the rail stays in view under the top bar; it fits without scrolling.
+        "w-full shrink-0 flex-col border-b border-border bg-nav px-2 py-3 md:sticky md:top-12 md:h-[calc(100dvh-3rem)] md:w-14 md:self-start md:overflow-y-auto md:border-b-0 md:border-r min-[1100px]:w-52",
+        open ? "flex" : "hidden md:flex",
       )}
     >
-      {RAIL_GROUPS.map((group) => {
-        const areas = group.areas
-          .map((id) => AREAS.find((a) => a.id === id))
-          .filter((a): a is Area => Boolean(a));
-        const rows = rowsOf(areas, Boolean(group.flatten), isAdmin, place, canAsk);
-        const withSettings = group.settings && firstSetting;
-        if (!rows.length && !withSettings) return null;
-        const shut = collapsed.includes(group.id);
-        const holdsCurrent = rows.some((r) => r.current) || Boolean(withSettings && inSettings);
-        const listId = `rail-${group.id}`;
-        return (
-          <section
-            key={group.id}
-            aria-label={group.label}
-            className="mb-2 border-b border-border pb-2 last:mb-0 last:border-b-0 md:mb-1 md:pb-1 min-[1100px]:mb-3 min-[1100px]:pb-3"
+      {groups.map(({ group, rows }) => (
+        <section key={group.id} aria-label={group.label} className="mb-3">
+          {/* Group labels show where the row labels do: on phones and from 1100px. */}
+          <div
+            aria-hidden="true"
+            className="px-2.5 pb-1 text-xs text-text-muted md:hidden min-[1100px]:block"
           >
-            {/* Group headers show with labels: on phones and from 1100px. */}
-            <button
-              type="button"
-              onClick={() => toggle(group.id)}
-              aria-expanded={!shut}
-              aria-label={`${group.label} group`}
-              aria-controls={listId}
-              className={cn(
-                "flex w-full items-center justify-between rounded px-2.5 py-1 text-sm font-semibold hover:text-text md:hidden min-[1100px]:flex",
-                // Folded with the current page inside: the bar says you are in here (D199).
-                shut && holdsCurrent ? cn(BAR, "font-bold text-accent-text") : "text-text-muted",
-              )}
-            >
-              {group.label}
-              <ChevronDown
-                size={16}
-                aria-hidden
-                className={cn(
-                  "transition-transform motion-reduce:transition-none",
-                  shut && "-rotate-90",
-                )}
-              />
-            </button>
-            {/* Collapsing applies where the group header shows; the icon rail lists all. */}
-            <ul id={listId} className={cn("mt-0.5", shut && "hidden md:block min-[1100px]:hidden")}>
-              {rows.map((row) => {
-                const Icon = row.icon;
-                const areaKey = `area:${row.key}`;
-                const areaShut = row.subs.length > 0 && collapsed.includes(areaKey);
-                return (
-                  <li
-                    key={row.key}
-                    className="group relative"
-                    onMouseEnter={(e) => row.subs.length && showGroup(areaKey, e.currentTarget)}
-                    onFocus={(e) => row.subs.length && showGroup(areaKey, e.currentTarget)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Escape") setFly(null);
-                    }}
-                    onMouseLeave={row.subs.length ? leave : undefined}
-                  >
-                    <a
-                      href={pathFor(row.to.page, row.to.tab)}
-                      onClick={go(row.to.page, row.to.tab)}
-                      aria-current={row.current ? (row.subs.length ? "true" : "page") : undefined}
-                      title={row.label}
-                      className={cn(
-                        row.subs.length && "min-[1100px]:pr-8",
-                        row.subs.length && row.current
-                          ? // The sub-page carries the bar while its list is open; the icon
-                            // rail and a folded area show it on this row instead.
-                            cn(
-                              pageClass(false),
-                              "relative text-text md:font-bold md:text-accent-text md:before:absolute md:before:inset-y-0 md:before:left-0 md:before:w-0.5 md:before:rounded-full md:before:bg-accent-text",
-                              areaShut
-                                ? "min-[1100px]:text-accent-text"
-                                : "min-[1100px]:font-semibold min-[1100px]:text-text min-[1100px]:before:hidden",
-                            )
-                          : pageClass(row.current),
-                      )}
-                    >
-                      <Icon size={18} aria-hidden className="shrink-0" />
-                      <span className="md:sr-only min-[1100px]:not-sr-only">{row.label}</span>
-                      {row.alerts ? <OpenAlerts /> : null}
-                    </a>
-                    {row.subs.length ? (
-                      // Fold an area's sub-pages (labelled rail only); remembered like groups.
-                      <button
-                        type="button"
-                        onClick={() => toggle(areaKey)}
-                        aria-expanded={!areaShut}
-                        aria-label={`${row.label} sub-pages`}
-                        className="absolute right-1 top-1.5 hidden size-5 items-center justify-center rounded text-text-muted hover:text-text min-[1100px]:flex"
-                      >
-                        <ChevronDown
-                          size={14}
-                          aria-hidden
-                          className={cn(
-                            "transition-transform motion-reduce:transition-none",
-                            areaShut && "-rotate-90",
-                          )}
-                        />
-                      </button>
-                    ) : null}
-                    {row.subs.length
-                      ? subList(
-                          row,
-                          cn(
-                            "mb-1 ml-[19px] mt-0.5 border-l border-border pl-2 md:hidden",
-                            !areaShut && "min-[1100px]:block",
-                          ),
-                          `${row.label} pages`,
-                        )
-                      : null}
-                  </li>
-                );
-              })}
-              {withSettings ? (
-                <li>
-                  <a
-                    href={pathFor(firstSetting)}
-                    onClick={go(firstSetting)}
-                    aria-current={inSettings ? "page" : undefined}
-                    title="Settings"
-                    className={pageClass(inSettings)}
-                  >
-                    <Settings size={18} aria-hidden className="shrink-0" />
-                    <span className="md:sr-only min-[1100px]:not-sr-only">Settings</span>
-                  </a>
-                </li>
-              ) : null}
-            </ul>
-          </section>
-        );
-      })}
-      {fly ? groupFlyout() : null}
+            {group.label}
+          </div>
+          <ul className="flex flex-col gap-px">{rows.map(link)}</ul>
+        </section>
+      ))}
+      {pinned.length || firstSetting ? (
+        <ul
+          aria-label="Health and settings"
+          className="mt-auto flex flex-col gap-px border-t border-border pt-2"
+        >
+          {pinned.map(link)}
+          {firstSetting ? (
+            <li>
+              <a
+                href={pathFor(firstSetting)}
+                onClick={go(firstSetting)}
+                aria-current={inSettings ? "page" : undefined}
+                title="Settings"
+                className={rowClass(inSettings, true)}
+              >
+                <Settings size={16} aria-hidden className="shrink-0" />
+                <span className="md:sr-only min-[1100px]:not-sr-only">Settings</span>
+              </a>
+            </li>
+          ) : null}
+        </ul>
+      ) : null}
     </nav>
   );
-
-  function groupFlyout() {
-    if (!fly) return null;
-    const area = fly.id.startsWith("area:") ? AREAS.find((a) => `area:${a.id}` === fly.id) : null;
-    const group = area
-      ? { id: fly.id, label: area.label, areas: [area.id], settings: false, flatten: false }
-      : RAIL_GROUPS.find((g) => g.id === fly.id);
-    if (!group) return null;
-    const areas = group.areas
-      .map((id) => AREAS.find((a) => a.id === id))
-      .filter((a): a is Area => Boolean(a));
-    const rows = rowsOf(areas, Boolean(group.flatten), isAdmin, place, canAsk);
-    return (
-      <div
-        ref={flyBox}
-        role="presentation"
-        onMouseEnter={keep}
-        onMouseLeave={leave}
-        onClick={() => setFly(null)}
-        style={{ top: fly.top, left: fly.left }}
-        className="fixed z-50 hidden pl-2 md:block"
-      >
-        <div
-          aria-label={`${group.label} pages`}
-          className="min-w-48 rounded-card border border-border bg-surface p-1.5 shadow-lg"
-        >
-          {area ? null : (
-            <div className="px-2.5 py-1 text-sm font-semibold text-text-muted">{group.label}</div>
-          )}
-          <ul>
-            {rows.map((row) => (
-              <li key={row.key}>
-                <a
-                  href={pathFor(row.to.page, row.to.tab)}
-                  onClick={go(row.to.page, row.to.tab)}
-                  className={pageClass(row.current && !row.subs.length)}
-                >
-                  {row.label}
-                </a>
-                {row.subs.length
-                  ? subList(
-                      row,
-                      "ml-2.5 border-l border-border pl-2",
-                      `${row.label} pages, ${group.label} menu`,
-                    )
-                  : null}
-              </li>
-            ))}
-            {group.settings && firstSetting ? (
-              <li>
-                <a
-                  href={pathFor(firstSetting)}
-                  onClick={go(firstSetting)}
-                  className={pageClass(inSettings)}
-                >
-                  Settings
-                </a>
-              </li>
-            ) : null}
-          </ul>
-        </div>
-      </div>
-    );
-  }
 }

@@ -1,3 +1,4 @@
+import { EmptyState } from "@/components/EmptyState";
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { SeverityBadge } from "@/components/SeverityBadge";
@@ -118,14 +119,15 @@ export function ResultsTable({
     // An empty scope is not an empty result: say why (ADR-0004, no groups means no events).
     const noScope = result.sources.length === 0;
     return (
-      <div className="px-4 py-10 text-center">
-        <div className="text-md">{noScope ? "No sources to search" : "No events match"}</div>
-        <div className="mt-1 text-text-secondary">
-          {noScope
+      <EmptyState
+        kind={noScope ? "restricted" : "filtered"}
+        title={noScope ? "No sources to search" : "No events match"}
+        detail={
+          noScope
             ? "None are shared with you yet. An administrator adds sources and shares them through source groups."
-            : "Try a wider time range or remove a source filter."}
-        </div>
-      </div>
+            : "Try a wider time range or remove a source filter."
+        }
+      />
     );
   }
 

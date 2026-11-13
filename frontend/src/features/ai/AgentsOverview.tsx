@@ -1,117 +1,137 @@
+import { lastDays } from "@/lib/timeWindow";
+import { Skeleton } from "@/components/Skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { COUNTED } from "@/features/dashboard/counted";
-import { useState, type ReactNode } from "react";
-import { api, type AgentsOverview, type AgentTool, type PageWindow } from "@/lib/api";
+import type { ReactNode } from "react";
+import { api, type AgentsOverview, type AgentTool } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { navigate } from "@/lib/route";
 import { EntityLink } from "@/components/EntityLink";
-import { LoadFailed } from "@/components/LoadFailed";
+import { InlineError } from "@/components/InlineError";
+import { EmptyState } from "@/components/EmptyState";
 import { DrillScope, DRILL, Kpi, useDrill } from "@/features/dashboard/Sections";
 import { compareLine } from "@/features/dashboard/History";
-import { WINDOWS, previousPhrase } from "@/features/dashboard/pageWindow";
 import { since, stamp } from "@/features/overview/time";
 import { StatusBadge } from "./StatusBadge";
-import { SectionTitle } from "@/components/SectionTitle";
 
-const KEY = "agents.window";
-const DAYS: Record<PageWindow, number> = { "24h": 1, "7d": 7, "30d": 30 };
-
-function readWindow(): PageWindow {
-  try {
-    const v = window.localStorage.getItem(KEY);
-    return v === "24h" || v === "7d" || v === "30d" ? v : "7d";
-  } catch {
-    return "7d";
-  }
-}
-
-/** Agents > Overview and Tools (ADR-0038 section 6): one window for both tabs, from the
- * hooks plugin. Every number opens its rows in Logs (ADR-0039). */
-export function AgentsArea({ tab }: { tab: "overview" | "tools" }) {
-  const [win, setWin] = useState<PageWindow>(readWindow);
-  const q = useQuery({
-    queryKey: ["agents-overview", win],
-    queryFn: () => api.agentsOverview(DAYS[win]),
+/** The numbers behind the Agents page for a number of days back from now, from the hooks
+ * plugin: shared by the strip on Sessions and the tool rows of MCP servers. */
+export function useAgentsOverview(days: number) {
+  return useQuery({
+    queryKey: ["agents-overview", days],
+    queryFn: () => api.agentsOverview(days),
     refetchInterval: 300_000,
   });
-  const pick = (w: PageWindow) => {
-    setWin(w);
-    try {
-      window.localStorage.setItem(KEY, w);
-    } catch {
-      // Storage blocked: the window still applies for this page view.
-    }
-  };
+}
+
+interface AgentsKpisProps {
+  /** Whole days back from now, from the page's time choice. */
+  days: number;
+  /** "previous 7 days": what the changes are against. */
+  before: string;
+}
+
+/** The KPI strip on Agents > Sessions (ADR-0052 section 3.3; it was the Overview tab):
+ * six numbers for the page's time, each opening its rows in Logs (ADR-0039). */
+export function AgentsKpis({ days, before }: AgentsKpisProps) {
+  const q = useAgentsOverview(days);
   const d = q.data;
-  const label = tab === "tools" ? "Tools" : "Overview";
+  if (q.isLoading) return <Skeleton label="the agents numbers" block="h-24" />;
+  if (q.isError && !d)
+    return (
+      <section aria-label="Overview" className="rounded-card border border-border bg-surface">
+        <InlineError
+          what="The agents numbers"
+          error={q.error}
+          onRetry={() => void q.refetch()}
+          retrying={q.isFetching}
+        />
+      </section>
+    );
+  if (!d) return null;
+  if (!d.has_source)
+    return (
+      <EmptyState
+        kind="not-set-up"
+        title="Needs the hooks plugin"
+        detail="Install the Claude Code hooks plugin on the devices to see sessions, tool calls, and MCP servers here. If a hooks source exists, you may not have access to it."
+        action={{ label: "Get the plugin", onClick: () => navigate("plugins") }}
+      />
+    );
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-3">
-        <div role="group" aria-label="Time window" className="flex rounded border border-border">
-          {WINDOWS.map((w) => (
-            <button
-              key={w.id}
-              type="button"
-              aria-pressed={w.id === win}
-              onClick={() => pick(w.id)}
-              className={cn(
-                "h-8 px-3 text-sm first:rounded-l last:rounded-r",
-                w.id === win
-                  ? "bg-surface-head font-semibold text-text"
-                  : "text-text-secondary hover:text-text",
-              )}
-            >
-              {w.label}
-            </button>
-          ))}
-        </div>
-        {d?.has_source ? (
-          <span className="text-sm text-text-muted">
-            {compareLine(d.history.compared, d.history.since, previousPhrase(win))}
-          </span>
-        ) : null}
-      </div>
-      {q.isLoading ? (
-        <div aria-busy="true" className="h-48 animate-pulse rounded-card bg-surface" />
-      ) : q.isError && !d ? (
-        <section aria-label={label} className="rounded-card border border-border bg-surface">
-          <LoadFailed
-            what={`Agents ${label.toLowerCase()}`}
-            error={q.error}
-            onRetry={() => void q.refetch()}
-            retrying={q.isFetching}
-          />
-        </section>
-      ) : !d ? null : !d.has_source ? (
-        <section
-          aria-label={label}
-          className="rounded-card border border-border bg-surface p-5 text-sm"
-        >
-          <p className="mb-2 font-semibold">Needs the hooks plugin</p>
-          <p className="text-text-secondary">
-            Install the Claude Code hooks plugin on the devices to see sessions, tool calls, and MCP
-            servers here. If a hooks source exists, you may not have access to it.{" "}
-            <button
-              type="button"
-              onClick={() => navigate("plugins")}
-              className="text-accent-text hover:underline"
-            >
-              Get the plugin
-            </button>
-          </p>
-        </section>
-      ) : (
-        <DrillScope
-          bounds={d}
-          area={`Agents > ${label}`}
-          history={d.history}
-          before={previousPhrase(win)}
-        >
-          {tab === "tools" ? <Tools d={d} /> : <Overview d={d} />}
-        </DrillScope>
-      )}
-    </div>
+    <DrillScope bounds={d} area="Agents > Sessions" history={d.history} before={before}>
+      <span className="text-sm text-text-muted">
+        {lastDays(days)}. {compareLine(d.history.compared, d.history.since, before)}
+      </span>
+      <Overview d={d} />
+    </DrillScope>
   );
+}
+
+interface ToolRowsProps {
+  days: number;
+  before: string;
+  /** The tools to list: one MCP server's row, or the built-in tools. */
+  pick: (t: AgentTool) => boolean;
+  label: string;
+}
+
+/** The tool rows under a row of MCP servers (ADR-0052 section 3.3; they were the Tools
+ * tab): people, devices, calls, failures, and when seen, each opening its events. */
+export function ToolRows({ days, before, pick, label }: ToolRowsProps) {
+  const q = useAgentsOverview(days);
+  const d = q.data;
+  const now = new Date().toISOString();
+  if (q.isLoading) return <Skeleton label={label} rows={2} className="rounded-none border-0" />;
+  if (q.isError && !d)
+    return (
+      <InlineError
+        what={label}
+        error={q.error}
+        onRetry={() => void q.refetch()}
+        retrying={q.isFetching}
+      />
+    );
+  const rows = (d?.tools ?? []).filter(pick);
+  if (!d || rows.length === 0)
+    return <EmptyState kind="default-empty" title={`No tool calls. ${lastDays(days)}.`} />;
+  return (
+    <DrillScope bounds={d} area="Agents > MCP servers" history={d.history} before={before}>
+      <p className="px-3 pt-2 text-sm text-text-muted">{lastDays(days)}.</p>
+      <table aria-label={label} className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-border text-left text-text-secondary">
+            <th className={TH}>Tool</th>
+            <th className={TH}>Type</th>
+            <th className={TH}>Status</th>
+            <th className={`${TH} text-right`}>People</th>
+            <th className={`${TH} text-right`}>Devices</th>
+            <th className={`${TH} text-right`}>Calls</th>
+            <th className={`${TH} text-right`}>Failed</th>
+            <th className={TH}>First seen</th>
+            <th className={TH}>Last seen</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((t) => (
+            <ToolRow key={`${t.mcp ? "m" : "b"}:${t.tool}`} t={t} now={now} />
+          ))}
+        </tbody>
+      </table>
+    </DrillScope>
+  );
+}
+
+/** How many built-in tools were called, for the group row; null until known. Asked only
+ * where the row shows. */
+export function useBuiltInCount(days: number, enabled: boolean): number | null {
+  const q = useQuery({
+    queryKey: ["agents-overview", days],
+    queryFn: () => api.agentsOverview(days),
+    refetchInterval: 300_000,
+    enabled,
+  });
+  return q.data ? q.data.tools.filter((t) => !t.mcp).length : null;
 }
 
 function Box({ label, children }: { label: string; children: ReactNode }) {
@@ -169,49 +189,8 @@ function Overview({ d }: { d: AgentsOverview }) {
   );
 }
 
-const TH = "px-3 py-2 font-semibold";
+const TH = "px-3 py-2";
 const TD = "px-3 py-1.5";
-
-function Tools({ d }: { d: AgentsOverview }) {
-  const now = new Date().toISOString();
-  return (
-    <Box label="Tools">
-      <div className="flex flex-wrap items-baseline gap-x-3 border-b border-border bg-surface-head px-3 py-2">
-        <SectionTitle>Tools</SectionTitle>
-        <span className="text-sm text-text-muted">
-          Built-in tools and MCP servers Claude Code called. Review MCP servers on the MCP servers
-          tab.
-        </span>
-      </div>
-      {d.tools.length === 0 ? (
-        <p className="px-3 py-4 text-sm text-text-secondary">No tool calls in this window.</p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border text-left text-text-secondary">
-                <th className={TH}>Tool</th>
-                <th className={TH}>Type</th>
-                <th className={TH}>Status</th>
-                <th className={`${TH} text-right`}>People</th>
-                <th className={`${TH} text-right`}>Devices</th>
-                <th className={`${TH} text-right`}>Calls</th>
-                <th className={`${TH} text-right`}>Failed</th>
-                <th className={TH}>First seen</th>
-                <th className={TH}>Last seen</th>
-              </tr>
-            </thead>
-            <tbody>
-              {d.tools.map((t) => (
-                <ToolRow key={`${t.mcp ? "m" : "b"}:${t.tool}`} t={t} now={now} />
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </Box>
-  );
-}
 
 function ToolRow({ t, now }: { t: AgentTool; now: string }) {
   const drill = useDrill();

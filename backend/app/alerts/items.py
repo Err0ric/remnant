@@ -132,6 +132,8 @@ class Mute:
     until: str
     created_by: str | None
     created_at: str
+    # When it stopped silencing alerts: ended by hand, or ran out; None while in force.
+    ended_at: str | None = None
 
 
 class AlertItems:
@@ -552,7 +554,17 @@ class AlertItems:
             or item.owner_id == user.user_id
         )
 
-    def items(self, user: User, state: str = "open", limit: int = 200) -> list[AlertItem]:
+    def items(
+        self,
+        user: User,
+        state: str = "open",
+        limit: int = 200,
+        closed_from: datetime | None = None,
+        closed_to: datetime | None = None,
+    ) -> list[AlertItem]:
+        """The viewer's items in a state, newest first; closed ones as `closed` lists them."""
+        if state == "closed":
+            return self.closed(user, limit, closed_from, closed_to)[0]
         base = (
             "SELECT a.*, r.schedule_id AS run_schedule FROM alert_items a"
             " LEFT JOIN schedule_runs r ON r.run_id = a.ref_id"
@@ -568,6 +580,41 @@ class AlertItems:
                     (state, limit),
                 ).fetchall()
         return [self.render(i) for i in (_item(r) for r in rows) if self.sees(i, user)]
+
+    def closed(
+        self,
+        user: User,
+        limit: int = 200,
+        closed_from: datetime | None = None,
+        closed_to: datetime | None = None,
+    ) -> tuple[list[AlertItem], bool]:
+        """The viewer's closed items, newest closed first, and whether more exist than
+        `limit`. `closed_from` and `closed_to` keep those closed in that window (the Time
+        filter of Alerts > Closed). The cap counts only items the viewer may know of, so
+        another person's private items never push the viewer's own out of the list."""
+        # Close times are stored as UTC ISO text, so they compare as text. An open side
+        # is an empty lower bound, or an upper bound above any time.
+        lower = closed_from.astimezone(UTC).isoformat() if closed_from else ""
+        upper = closed_to.astimezone(UTC).isoformat() if closed_to else "9999"
+        out: list[AlertItem] = []
+        with self._meta.connect() as con:
+            cur = con.execute(
+                "SELECT a.*, r.schedule_id AS run_schedule FROM alert_items a"
+                " LEFT JOIN schedule_runs r ON r.run_id = a.ref_id"
+                # An item closed before close times were kept counts by when it was raised.
+                " WHERE a.state = 'closed' AND COALESCE(a.closed_at, a.created_at) >= ?"
+                " AND COALESCE(a.closed_at, a.created_at) <= ?"
+                " ORDER BY COALESCE(a.closed_at, a.created_at) DESC, a.created_at DESC",
+                (lower, upper),
+            )
+            for r in cur:
+                item = _item(r)
+                if not self.sees(item, user):
+                    continue
+                if len(out) == limit:
+                    return [self.render(i) for i in out], True
+                out.append(item)
+        return [self.render(i) for i in out], False
 
     def get(self, item_id: str, user: User) -> AlertItem:
         return self.render(self._stored(item_id, user))
@@ -780,15 +827,36 @@ class AlertItems:
 
     # --- muting (admins only; checked here as well as on the route) ---------------------
 
-    def mutes(self) -> list[Mute]:
+    def mutes(
+        self,
+        since: datetime | None = None,
+        before: datetime | None = None,
+        ended: bool = False,
+    ) -> list[Mute]:
         """Active mutes as read: an AI Watch mute's names are those of the newest item
-        about its subject (D242)."""
+        about its subject (D242). With `ended`, also the mutes that were in force at some
+        point in the window (`since`, `before`; either or both may be open) and have
+        ended, after the active ones: a mute in force now is listed whatever the window."""
         out: list[Mute] = []
+        now = self._now()
         with self._meta.connect() as con:
             rows = con.execute(
-                "SELECT * FROM alert_mutes WHERE ended_at IS NULL AND until > ? ORDER BY until",
-                (self._now(),),
+                "SELECT *, NULL AS stopped FROM alert_mutes"
+                " WHERE ended_at IS NULL AND until > ? ORDER BY until",
+                (now,),
             ).fetchall()
+            if ended:
+                # Ended by hand at `ended_at`, or ran out at `until`: whichever came first.
+                rows += con.execute(
+                    "SELECT * FROM (SELECT *, MIN(COALESCE(ended_at, until), until) AS stopped"
+                    " FROM alert_mutes WHERE NOT (ended_at IS NULL AND until > ?))"
+                    " WHERE stopped >= ? AND created_at <= ? ORDER BY stopped DESC LIMIT 200",
+                    (
+                        now,
+                        since.astimezone(UTC).isoformat() if since else "",
+                        before.astimezone(UTC).isoformat() if before else now,
+                    ),
+                ).fetchall()
             for r in rows:
                 subject, title = r["subject"], r["title"]
                 if r["kind"] == "ai_watch" and "{p:" in subject + title:
@@ -802,7 +870,7 @@ class AlertItems:
                     title = self.refs.render(title, known) or ""
                 out.append(
                     Mute(r["mute_id"], r["kind"], subject, title, r["until"],
-                         r["created_by"], r["created_at"])
+                         r["created_by"], r["created_at"], r["stopped"])
                 )  # fmt: skip
         return out
 

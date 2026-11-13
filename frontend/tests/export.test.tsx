@@ -1,3 +1,4 @@
+import { fromMore } from "./headerMenu";
 import { QueryClient } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -19,9 +20,9 @@ it("exports through the server with exactly the request that produced the table"
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   render(<App initialTheme="dark" queryClient={client} />);
-  const button = await screen.findByRole("button", { name: "Export CSV" });
-  await vi.waitFor(() => expect(button).toBeEnabled());
-  await userEvent.click(button);
+  // Export CSV is under More actions on Logs; it is enabled once a result is on screen.
+  await vi.waitFor(async () => expect(await fromMore("Export CSV")).toBeEnabled());
+  await userEvent.click(screen.getByRole("menuitem", { name: "Export CSV" }));
   await vi.waitFor(() => expect(click).toHaveBeenCalled());
   const bodies = (suffix: string) =>
     spy.mock.calls

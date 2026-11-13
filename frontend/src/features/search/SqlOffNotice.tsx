@@ -6,7 +6,7 @@ import { navigate } from "@/lib/route";
 export function SqlOffNotice() {
   return (
     <div className="flex min-w-0 flex-1 flex-col">
-      <PageHeader crumbs={["Home", "Investigate", "Logs"]} title="Logs" />
+      <PageHeader title="Logs" />
       <section
         aria-label="SQL not available"
         className="mx-5 my-3 flex max-w-2xl flex-col gap-2 rounded-card border border-border bg-surface p-4 text-sm"

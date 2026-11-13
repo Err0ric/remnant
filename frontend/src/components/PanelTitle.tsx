@@ -10,16 +10,16 @@ interface PanelTitleProps {
   id?: string;
 }
 
-/** A title inside a section: a panel, card, chart, or KPI label (DESIGN.md 7). Small upper
- * case with wider letter spacing in a brighter color than the data; clearly below a
- * section title, with no link color and no hover state. */
+/** A title inside a section: a panel, card, chart, or KPI label (DESIGN.md 7). 14px at 600
+ * in sentence case and the text color: no upper case, no extra letter spacing, no link
+ * color and no hover state. */
 export function PanelTitle({ children, as: Tag = "h3", className, title, id }: PanelTitleProps) {
   return (
     <Tag
       id={id}
       title={title}
       data-title="panel"
-      className={cn("text-xs font-semibold uppercase tracking-wider text-panel-title", className)}
+      className={cn("text-base font-semibold text-panel-title", className)}
     >
       {children}
     </Tag>

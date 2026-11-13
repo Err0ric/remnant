@@ -21,14 +21,14 @@ export function AiCallsTable({ rows, onUser }: AiCallsTableProps) {
     <div className="overflow-x-auto">
       <table aria-label="AI calls" className="w-full text-sm">
         <thead>
-          <tr className="border-b border-border bg-surface-head text-left text-text-secondary">
+          <tr className="border-b border-border text-left text-text-secondary">
             <th className="w-8" />
-            <th className="px-2 py-1.5 font-semibold">Time (UTC)</th>
-            <th className="px-2 py-1.5 font-semibold">User</th>
-            <th className="px-2 py-1.5 font-semibold">Purpose</th>
-            <th className="px-2 py-1.5 font-semibold">Model</th>
-            <th className="px-2 py-1.5 font-semibold">Result</th>
-            <th className="px-2 py-1.5 text-right font-semibold">Tokens in / out</th>
+            <th className="px-2 py-1.5">Time (UTC)</th>
+            <th className="px-2 py-1.5">User</th>
+            <th className="px-2 py-1.5">Purpose</th>
+            <th className="px-2 py-1.5">Model</th>
+            <th className="px-2 py-1.5">Result</th>
+            <th className="px-2 py-1.5 text-right">Tokens in / out</th>
           </tr>
         </thead>
         <tbody>
@@ -64,7 +64,7 @@ export function AiCallsTable({ rows, onUser }: AiCallsTableProps) {
                   <td className="px-2 py-1">
                     <span className="mr-2 font-mono">{c.model}</span>
                     <span
-                      className={`rounded-badge px-2 py-px text-xs ${c.locality === "local" ? "bg-local-bg text-local-text" : "bg-cloud-bg text-cloud-text"}`}
+                      className={`rounded-badge px-2 py-px text-xs ${c.locality === "local" ? "bg-local-bg text-local-tx" : "bg-cloud-bg text-cloud-tx"}`}
                     >
                       {c.locality === "local" ? "Local" : "Cloud"}
                     </span>

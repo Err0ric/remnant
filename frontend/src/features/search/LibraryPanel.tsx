@@ -1,3 +1,4 @@
+import { Skeleton } from "@/components/Skeleton";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { api, type LibraryQuery } from "@/lib/api";
@@ -121,7 +122,7 @@ export function LibraryPanel({ onLoad, onClose, canSave }: LibraryPanelProps) {
         </p>
       ) : null}
       {lib.isLoading ? (
-        <div aria-busy="true" className="h-24 animate-pulse" />
+        <Skeleton label="the library" rows={3} className="rounded-none border-0" />
       ) : lib.isError ? (
         <p role="alert" className="px-3 py-3 text-sm text-warn">
           The library did not load: {(lib.error as Error).message}

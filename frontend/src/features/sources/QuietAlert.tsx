@@ -103,7 +103,7 @@ function QuietEditor({ sourceId, quiet, onClose }: QuietEditorProps) {
         <select
           value={period ?? "off"}
           onChange={(e) => setPeriod(e.target.value === "off" ? null : Number(e.target.value))}
-          className="h-7 rounded border border-border-strong bg-surface px-1"
+          className="h-7 rounded border border-border-control bg-surface px-1"
         >
           <option value="off">Off</option>
           {PERIODS.map((p) => (

@@ -72,7 +72,7 @@ export function AddToDashboardPanel({ search, result = null, onClose }: AddToDas
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          className="h-8 rounded border border-border-strong bg-inset px-2"
+          className="h-8 rounded border border-border-control bg-inset px-2"
         />
       </label>
       <p className="text-text-secondary">

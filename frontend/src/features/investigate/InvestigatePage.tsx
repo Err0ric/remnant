@@ -1,10 +1,13 @@
+import { Skeleton } from "@/components/Skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { ApiError, api, type EntityRisk, type GraphCard, type GraphKind } from "@/lib/api";
 import { navigate, useSection } from "@/lib/route";
 import { entitySection, parseEntity, parseEntityTab } from "@/lib/entity";
-import { rangeStart, TIME_RANGES, type TimeRangeId } from "@/lib/search";
+import { FilterBar } from "@/components/FilterBar";
+import { usePageTimeState } from "@/lib/timeChoice";
+import type { TimeChoice } from "@/lib/timeWindow";
 import { seedSearch } from "@/lib/searchSeed";
 import { CardDetail } from "./CardDetail";
 import { LaneGraph } from "./LaneGraph";
@@ -48,13 +51,22 @@ const PERSON_TABS: [PersonTab, string][] = [
   ["timeline", "Timeline"],
 ];
 
-/** The page's range in days for AI activity (1 to 30). */
-function rangeDays(range: TimeRangeId): number {
-  return range === "24h" || range === "1h" || range === "15m" ? 1 : range === "30d" ? 30 : 7;
+/** The page's range in days for the panels that count whole days back from now (1 to 30).
+ * Custom counts from its start, or 30 days when the start is open. */
+function rangeDays(choice: TimeChoice, start: string | undefined): number {
+  if (choice.preset === "custom") {
+    if (!start) return 30;
+    const days = Math.ceil((Date.now() - Date.parse(start)) / 86_400_000);
+    return Math.min(30, Math.max(1, days));
+  }
+  return choice.preset === "24h" || choice.preset === "1h" ? 1 : choice.preset === "30d" ? 30 : 7;
 }
 
 export function InvestigatePage() {
-  const [range, setRange] = useState<TimeRangeId>("7d");
+  // Kept in the page, not the address: the fragment names what is open and every pivot
+  // rewrites it.
+  const time = usePageTimeState("7d");
+  const range = time.key.join("|");
   // The entity lives in the address (`#ip=203.0.113.9`), so every pivot link, Back, and a
   // shared link open the same page (product pass step 2). A service opens the AI flow.
   const section = useSection();
@@ -75,19 +87,18 @@ export function InvestigatePage() {
     setSeenSection(section);
     if (linkedTab) setPersonTab(linkedTab);
   }
-  const start = rangeStart(range);
-  const rangeLabel = TIME_RANGES.find((r) => r.id === range)?.label ?? "this range";
-  const rangeWords = /^last /i.test(rangeLabel) ? `the ${rangeLabel.toLowerCase()}` : rangeLabel;
+  const { start, end } = time.bounds();
+  const rangeWords = time.words;
 
   const risk = useQuery({
     queryKey: ["entity-risk", range],
-    queryFn: () => api.entityRisk(start),
+    queryFn: () => api.entityRisk(start, end),
     staleTime: 60_000,
   });
   const focus = mode === "entity" ? entity : aiFocus;
   const graph = useQuery({
     queryKey: ["entity-graph", mode, focus?.kind, focus?.value, range],
-    queryFn: () => api.entityGraph({ mode, kind: focus?.kind, value: focus?.value, start }),
+    queryFn: () => api.entityGraph({ mode, kind: focus?.kind, value: focus?.value, start, end }),
     enabled: mode === "ai" || entity !== null,
     staleTime: 60_000,
   });
@@ -100,7 +111,11 @@ export function InvestigatePage() {
   };
   const pick = (row: EntityRisk) => investigate({ kind: row.kind, value: row.value });
   const openSearch = (sql: string) => {
-    seedSearch({ sql, range });
+    seedSearch(
+      time.choice.preset === "custom"
+        ? { sql, custom: { from: time.choice.from, to: time.choice.to } }
+        : { sql, range: time.choice.preset },
+    );
     navigate("logs");
   };
 
@@ -171,7 +186,7 @@ export function InvestigatePage() {
       {graph.error instanceof ApiError ? graph.error.message : "Could not load the graph"}
     </p>
   ) : graph.isLoading ? (
-    <p className="p-4 text-sm text-text-muted">Loading…</p>
+    <Skeleton label="the graph" rows={4} className="rounded-none border-0" />
   ) : g && g.cards.length <= (mode === "entity" ? 1 : 0) ? (
     <p className="p-6 text-sm text-text-secondary">
       {mode === "entity"
@@ -207,31 +222,20 @@ export function InvestigatePage() {
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       <PageHeader
-        crumbs={["Home", "Investigate", "Investigations"]}
-        title="Investigations"
-        meta={
+        title="People &amp; devices"
+        count={
           risk.data
             ? `${risk.data.matches_considered.toLocaleString()} rule matches considered`
             : null
         }
       />
       <div className="flex flex-col gap-4 px-5 py-3">
-        <div className="flex flex-wrap items-center justify-end gap-3">
-          <label className="flex items-center gap-2 text-sm">
-            <span className="text-text-secondary">Time range</span>
-            <select
-              value={range}
-              onChange={(e) => setRange(e.target.value as TimeRangeId)}
-              className="h-8 rounded border border-border-strong bg-surface px-2 text-sm"
-            >
-              {TIME_RANGES.filter((r) => r.id !== "15m").map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
+        <FilterBar
+          label="Filter people and devices by time"
+          time={time.bar}
+          onReset={() => time.bar.onChange("7d")}
+          isDefault={time.isDefault}
+        />
 
         {landing ? (
           <>
@@ -242,10 +246,6 @@ export function InvestigatePage() {
               <div className="flex flex-wrap items-end justify-between gap-2 border-b border-border px-4 pt-3">
                 <div className="pb-2">
                   <SectionTitle>Most active</SectionTitle>
-                  <p className="text-xs text-text-muted">
-                    Everyone seen in this range, ranked by score, then by events. Hover a score for
-                    its parts. Select a row to open the page.
-                  </p>
                 </div>
                 <div role="tablist" aria-label="Entity type" className="flex">
                   {kindTabs}
@@ -290,16 +290,13 @@ export function InvestigatePage() {
                   rows={lists[riskTab]}
                   onPick={pick}
                   start={start}
+                  end={end}
                   aiPeopleHidden={risk.data?.ai_people_hidden}
                 />
               )}
+              {/* Access is said on the page; how the score adds up is on the Score column. */}
               <p className="border-t border-border px-4 py-2 text-xs text-text-muted">
-                Score: 10 per critical, 5 per high, 2 per medium, 1 per low rule match; 3 per
-                flagged schedule run that names it; 1 per failed sign-in and 1 per attack hit from
-                outside (up to 25 each); 5 per risky inbox rule; 3 per app consent; 3 per AI watch
-                flag; 5 per alert. Only sources you may read are counted. Users are names with a
-                successful sign-in, a Microsoft 365 identity, or an Identities link; names only ever
-                tried in failed sign-ins are under Targeted usernames.
+                Only sources you may read are counted.
               </p>
             </section>
           </>
@@ -364,13 +361,13 @@ export function InvestigatePage() {
               </div>
             ) : null}
             {mode === "entity" && entity?.kind === "user" && personTab === "ai" ? (
-              <PersonAiActivity person={entity.value} days={rangeDays(range)} />
+              <PersonAiActivity person={entity.value} days={rangeDays(time.choice, start)} />
             ) : null}
             {mode === "entity" && entity?.kind === "user" && personTab === "timeline" ? (
               <PersonTimeline person={entity.value} />
             ) : null}
             {mode === "entity" && entity?.kind === "user" && personTab === "hosts" ? (
-              <PersonHosts person={entity.value} days={rangeDays(range)} />
+              <PersonHosts person={entity.value} days={rangeDays(time.choice, start)} />
             ) : null}
             {mode === "entity" && entity?.kind === "user" && personTab === "alerts" ? (
               <PersonAlerts person={entity.value} />
@@ -380,6 +377,7 @@ export function InvestigatePage() {
                 kind={entity.kind as "user" | "ip" | "host"}
                 value={entity.value}
                 start={start}
+                end={end}
                 range={range}
                 rangeWords={rangeWords}
                 onSearch={openSearch}
@@ -413,14 +411,6 @@ export function InvestigatePage() {
             )}
             {mode === "entity" && entity?.kind === "user" && personTab === "summary" ? (
               <PersonSignIns person={entity.value} />
-            ) : null}
-            {g &&
-            !selected &&
-            !(entity?.kind === "user" && personTab !== "summary") &&
-            g.cards.length > (mode === "entity" ? 1 : 0) ? (
-              <p className="text-sm text-text-muted">
-                Select a card to light its path and open its details.
-              </p>
             ) : null}
           </>
         )}

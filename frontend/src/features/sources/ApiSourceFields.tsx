@@ -108,7 +108,7 @@ export function Checklist<T extends string>({ legend, items, value, onChange }: 
   );
 }
 
-const SELECT = "h-9 rounded border border-border-strong bg-inset px-2 text-sm text-text";
+const SELECT = "h-9 rounded border border-border-control bg-inset px-2 text-sm text-text";
 const CLOUD_LABEL: Record<M365Settings["cloud"], string> = {
   commercial: "Commercial",
   gcc: "GCC",

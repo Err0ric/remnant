@@ -48,7 +48,7 @@ export function AboutPage() {
   const meta = useQuery({ queryKey: ["meta"], queryFn: api.meta });
   return (
     <div className="flex min-w-0 flex-1 flex-col">
-      <PageHeader crumbs={["Home", "Settings", "About and licenses"]} title="About and licenses" />
+      <PageHeader title="About and licenses" />
       <div className="flex max-w-4xl flex-col gap-4 px-5 py-3 text-sm">
         <section aria-label="This server" className="flex flex-col gap-1">
           <SectionTitle>{PRODUCT_NAME}</SectionTitle>
@@ -73,11 +73,11 @@ export function AboutPage() {
           <div className="overflow-x-auto rounded-card border border-border">
             <table className="w-full">
               <thead>
-                <tr className="border-b border-border bg-surface-head text-left text-text-secondary">
-                  <th className="px-3 py-2 font-semibold">Data</th>
-                  <th className="px-3 py-2 font-semibold">Used for</th>
-                  <th className="px-3 py-2 font-semibold">License</th>
-                  <th className="px-3 py-2 font-semibold">Attribution</th>
+                <tr className="border-b border-border text-left text-text-secondary">
+                  <th className="px-3 py-2">Data</th>
+                  <th className="px-3 py-2">Used for</th>
+                  <th className="px-3 py-2">License</th>
+                  <th className="px-3 py-2">Attribution</th>
                 </tr>
               </thead>
               <tbody>

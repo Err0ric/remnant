@@ -48,10 +48,10 @@ export function BackgroundFailures({ rows, now }: { rows: FailingJob[]; now: str
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-text-secondary">
-                <th className="px-3 py-2 font-semibold">Check</th>
-                <th className="px-3 py-2 font-semibold">Failing since</th>
-                <th className="px-3 py-2 text-right font-semibold">Runs failed</th>
-                <th className="px-3 py-2 font-semibold">Last error</th>
+                <th className="px-3 py-2">Check</th>
+                <th className="px-3 py-2">Failing since</th>
+                <th className="px-3 py-2 text-right">Runs failed</th>
+                <th className="px-3 py-2">Last error</th>
               </tr>
             </thead>
             <tbody>
@@ -74,7 +74,7 @@ export function BackgroundFailures({ rows, now }: { rows: FailingJob[]; now: str
       {check.data ? (
         <ul aria-label="AI Watch check" className="flex flex-col gap-0.5 px-3 py-2 text-sm">
           {check.data.map((s) => (
-            <li key={s.step} className={s.ok ? "text-text-secondary" : "text-sev-critical-text"}>
+            <li key={s.step} className={s.ok ? "text-text-secondary" : "text-danger"}>
               {NAMES[`ai_watch.${s.step}`] ?? s.step}: {s.ok ? "worked" : s.detail}
             </li>
           ))}

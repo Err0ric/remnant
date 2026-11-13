@@ -1,6 +1,7 @@
+import { Skeleton } from "@/components/Skeleton";
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { LoadFailed } from "@/components/LoadFailed";
+import { InlineError } from "@/components/InlineError";
 import { When } from "@/components/When";
 import { api, type QueryResult } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -72,9 +73,9 @@ export function PersonSignIns({ person }: { person: string }) {
       }
     >
       {t.isLoading || q.isLoading ? (
-        <div aria-busy="true" className="h-24 animate-pulse" />
+        <Skeleton label="this list" rows={3} className="rounded-none border-0" />
       ) : err ? (
-        <LoadFailed
+        <InlineError
           what="sign-ins"
           error={err}
           onRetry={() => void (t.isError ? t.refetch() : q.refetch())}
@@ -101,9 +102,9 @@ export function PersonAlerts({ person }: { person: string }) {
   return (
     <Box label="Alerts" note="Alerts that name this person, newest first">
       {q.isLoading ? (
-        <div aria-busy="true" className="h-24 animate-pulse" />
+        <Skeleton label="this list" rows={3} className="rounded-none border-0" />
       ) : q.isError ? (
-        <LoadFailed
+        <InlineError
           what="alerts"
           error={q.error}
           onRetry={() => void q.refetch()}

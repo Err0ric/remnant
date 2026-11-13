@@ -105,7 +105,7 @@ export function ProviderForm({ existing, models = [], onDone, onCancel }: Provid
               setNeedsAck(false);
               setAck(false);
             }}
-            className="h-8 max-w-sm rounded border border-border-strong bg-surface px-2 text-sm disabled:opacity-60"
+            className="h-8 max-w-sm rounded border border-border-control bg-surface px-2 text-sm disabled:opacity-60"
           >
             <option value="openai_compat">
               OpenAI-compatible (Ollama, LM Studio, vLLM, OpenAI, others)
@@ -198,7 +198,7 @@ export function ProviderForm({ existing, models = [], onDone, onCancel }: Provid
                 <select
                   value={reasoning}
                   onChange={(e) => setReasoning(e.target.value)}
-                  className="h-8 max-w-xs rounded border border-border-strong bg-surface px-2 text-sm"
+                  className="h-8 max-w-xs rounded border border-border-control bg-surface px-2 text-sm"
                 >
                   <option value="default">Model default</option>
                   <option value="none">Off</option>
@@ -254,7 +254,7 @@ export function ProviderForm({ existing, models = [], onDone, onCancel }: Provid
                 value={slots}
                 placeholder={existing.locality === "local" ? "1 (default)" : "No limit (default)"}
                 onChange={(e) => setSlots(e.target.value)}
-                className="h-8 max-w-40 rounded border border-border-strong bg-inset px-2 text-sm"
+                className="h-8 max-w-40 rounded border border-border-control bg-inset px-2 text-sm"
               />
               <span className="text-text-muted">
                 1 for a single local GPU or CPU host: two at once make each several times slower.
@@ -270,7 +270,7 @@ export function ProviderForm({ existing, models = [], onDone, onCancel }: Provid
                 value={waitS}
                 placeholder="120 (default)"
                 onChange={(e) => setWaitS(e.target.value)}
-                className="h-8 max-w-40 rounded border border-border-strong bg-inset px-2 text-sm"
+                className="h-8 max-w-40 rounded border border-border-control bg-inset px-2 text-sm"
               />
               <span className="text-text-muted">
                 How long a request waits for a free slot, and retries a busy model, before people
@@ -281,10 +281,7 @@ export function ProviderForm({ existing, models = [], onDone, onCancel }: Provid
         </div>
       ) : null}
       {needsAck ? (
-        <div
-          role="alert"
-          className="mt-3 rounded border border-warn bg-sev-medium-bg px-3 py-2 text-sm text-sev-medium-text"
-        >
+        <div role="alert" className="mt-3 rounded border border-warn px-3 py-2 text-sm text-warn">
           <p className="font-semibold">This URL is a cloud service.</p>
           <p>
             Events from local-only sources are always blocked from it. Only sources marked cloud

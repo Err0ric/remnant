@@ -1,10 +1,12 @@
+import { About } from "@/components/About";
+import { Skeleton } from "@/components/Skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { Fragment, useState } from "react";
 import { api, type Cell, type M365Overview, type QueryResult } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { openDrill } from "@/lib/drill";
-import { LoadFailed } from "@/components/LoadFailed";
+import { InlineError } from "@/components/InlineError";
 import { When } from "@/components/When";
 import { SectionTitle } from "@/components/SectionTitle";
 
@@ -153,7 +155,7 @@ function ChangeRow({ c, m, timeZone }: RowProps) {
         <td className="min-w-0 px-2 py-1.5">
           <span className="font-mono">{c.actor}</span>
           {c.actorKind === "app" ? (
-            <span className="ml-1.5 rounded-badge bg-sev-info-bg px-1.5 py-px text-xs text-sev-info-text">
+            <span className="ml-1.5 rounded-badge bg-info-bg px-1.5 py-px text-xs text-info-tx">
               App
             </span>
           ) : null}
@@ -165,14 +167,14 @@ function ChangeRow({ c, m, timeZone }: RowProps) {
         <td className="min-w-0 px-2 py-1.5">
           <span className="font-mono">{c.target ?? "·"}</span>
           {c.targetDeleted ? (
-            <span className="ml-1.5 rounded-badge bg-sev-medium-bg px-1.5 py-px text-xs text-sev-medium-text">
+            <span className="ml-1.5 rounded-badge border border-warn px-1.5 py-px text-xs text-warn">
               deleted
             </span>
           ) : null}
           {c.synced ? (
             <span
               title="The directory sync service made this change: the real change happened in on-premises Active Directory"
-              className="ml-1.5 rounded-badge bg-sev-info-bg px-1.5 py-px text-xs text-sev-info-text"
+              className="ml-1.5 rounded-badge bg-info-bg px-1.5 py-px text-xs text-info-tx"
             >
               Synced from AD
             </span>
@@ -231,15 +233,15 @@ function ChangeTable({
     <div className="overflow-x-auto">
       <table className="w-full text-sm" aria-label={label}>
         <thead>
-          <tr className="border-b border-border bg-surface-head text-left text-text-secondary">
+          <tr className="border-b border-border text-left text-text-secondary">
             <th className="w-6 px-2 py-1.5" />
-            <th className="px-2 py-1.5 font-semibold">Time</th>
-            <th className="px-2 py-1.5 font-semibold">Who</th>
-            <th className="px-2 py-1.5 font-semibold">Operation</th>
-            <th className="px-2 py-1.5 font-semibold">Target</th>
-            <th className="px-2 py-1.5 font-semibold">Status</th>
-            <th className="px-2 py-1.5 font-semibold">Changed</th>
-            <th className="px-2 py-1.5 text-right font-semibold">Events</th>
+            <th className="px-2 py-1.5">Time</th>
+            <th className="px-2 py-1.5">Who</th>
+            <th className="px-2 py-1.5">Operation</th>
+            <th className="px-2 py-1.5">Target</th>
+            <th className="px-2 py-1.5">Status</th>
+            <th className="px-2 py-1.5">Changed</th>
+            <th className="px-2 py-1.5 text-right">Events</th>
           </tr>
         </thead>
         <tbody>
@@ -291,6 +293,11 @@ export function AdminChanges({ m, timeZone }: { m: M365Overview; timeZone?: stri
           />
           Hide routine
         </label>
+        <About
+          align="end"
+          lead="About this"
+          text="Role, policy, credential, and user create, delete, or disable changes come first. Routine updates are changes to a user's or group's details."
+        />
         <button
           type="button"
           onClick={() => openDrill({ sql, from: m.start, to: m.end, origin: ORIGIN })}
@@ -299,14 +306,10 @@ export function AdminChanges({ m, timeZone }: { m: M365Overview; timeZone?: stri
           Open in Logs
         </button>
       </div>
-      <p className="border-b border-border px-3 py-1.5 text-sm text-text-secondary">
-        Role, policy, credential, and user create, delete, or disable changes come first. Routine
-        updates (a user&apos;s or group&apos;s details) are hidden unless you show them.
-      </p>
       {q.isLoading ? (
-        <div aria-busy="true" className="h-40 animate-pulse bg-surface" />
+        <Skeleton label="admin changes" rows={4} className="rounded-none border-0" />
       ) : q.isError ? (
-        <LoadFailed
+        <InlineError
           what={TITLE}
           error={q.error}
           onRetry={() => void q.refetch()}

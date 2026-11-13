@@ -12,6 +12,8 @@ export interface SearchSeed {
   sources?: string[];
   /** Time range to open with (Investigations passes its own); all time otherwise. */
   range?: TimeRangeId;
+  /** Custom as the other page had it: local date-times, an empty side open. */
+  custom?: { from: string; to: string };
   /** A page's own window (a drill-through): Search opens on exactly it, and the query
    * reads it through {{start}} and {{end}}, so another range or a saved copy still works. */
   window?: { from: string; to: string };

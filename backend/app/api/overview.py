@@ -9,8 +9,10 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from app.api.access import CurrentUser, client_ip
+from app.engine.views import permitted_sources
+from app.meta.page_loads import PageLoadAudit, declared
 from app.search.overview import OverviewService
-from app.search.source_state import Condition, SourceInput, assess
+from app.search.source_state import Condition, SourceInput, assess, needing_attention
 
 router = APIRouter(tags=["overview"])
 
@@ -84,6 +86,7 @@ class PausedOut(BaseModel):
     name: str
     kind: str
     reason: str | None
+    by_person: bool = False
 
 
 class TargetHealthOut(BaseModel):
@@ -120,8 +123,18 @@ class OverviewOut(BaseModel):
 async def overview(request: Request, user: CurrentUser) -> OverviewOut:
     svc: OverviewService = request.app.state.overview
     result, computed = await run_in_threadpool(svc.get, user)
-    if computed:  # a cached answer read nothing new, so it is not audited again
-        detail: dict[str, Any] = {"sources_in_scope": result.sources_in_scope}
+    visit = declared(request.headers)
+    detail: dict[str, Any] = {"sources_in_scope": result.sources_in_scope}
+    if visit is not None:
+        # On the Dashboard (its page-load headers) the visit's `dashboard.view` row covers
+        # it, also when cached; a new row is written at once when none covers it yet.
+        loads: PageLoadAudit = request.app.state.page_loads
+        scope = await run_in_threadpool(permitted_sources, request.app.state.meta, user)
+        await run_in_threadpool(
+            loads.record, visit, user.user_id, client_ip(request), ["overview"], None, scope,
+            ("overview.view", detail),
+        )  # fmt: skip
+    elif computed:  # a cached answer read nothing new, so it is not audited again
         await run_in_threadpool(
             request.app.state.auth.audit.write,
             "overview.view",
@@ -130,6 +143,12 @@ async def overview(request: Request, user: CurrentUser) -> OverviewOut:
             client_ip(request),
             detail,
         )
+    data, summary = await _assessed(request, result)
+    return OverviewOut(**data, source_summary=SourceSummaryOut(**asdict(summary)))
+
+
+async def _assessed(request: Request, result: Any) -> tuple[dict[str, Any], Any]:
+    """The Overview as sent, each source with its condition, and the "N of M healthy" summary."""
     data = asdict(result)
     data.pop("sources_in_scope")
     # Quiet state is read fresh on every call, not cached with the numbers above.
@@ -147,7 +166,27 @@ async def overview(request: Request, user: CurrentUser) -> OverviewOut:
     for s in data["sources"]:
         s["condition"] = conditions[s["source_id"]]
         s.pop("reading_issue", None)
-    return OverviewOut(**data, source_summary=SourceSummaryOut(**asdict(summary)))
+    return data, summary
+
+
+class HealthCountOut(BaseModel):
+    total: int
+    not_healthy: int
+
+
+@router.get("/health/count")
+async def health_count(request: Request, user: CurrentUser) -> HealthCountOut:
+    """How many of the viewer's sources need attention, for the rail's Health dot (ADR-0052
+    section 3.2). The same assessment as the Health page, on the viewer's own sources; a
+    source paused on purpose is not counted. Numbers only: it names no source, so like
+    `/alerts/count` it writes no audit row (owner, 2026-11-11: the audit log records access,
+    not page loads). It never fills the cache `/overview` reads, so the next Overview read
+    is still computed and recorded."""
+    svc: OverviewService = request.app.state.overview
+    result = await run_in_threadpool(svc.for_count, user)
+    data, summary = await _assessed(request, result)
+    wrong = needing_attention(s["condition"] for s in data["sources"])
+    return HealthCountOut(total=summary.total, not_healthy=wrong)
 
 
 def _input(s: dict[str, Any], v: dict[str, Any] | None) -> SourceInput:

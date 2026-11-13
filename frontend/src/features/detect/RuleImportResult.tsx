@@ -21,9 +21,9 @@ export function RuleImportResult({ report }: RuleImportResultProps) {
         <div className="max-h-60 overflow-auto rounded border border-border">
           <table aria-label="Refused rules" className="w-full text-sm">
             <thead>
-              <tr className="border-b border-border bg-surface-head text-left text-text-secondary">
-                <th className="px-2 py-1 font-semibold">File</th>
-                <th className="px-2 py-1 font-semibold">Reason</th>
+              <tr className="border-b border-border text-left text-text-secondary">
+                <th className="px-2 py-1">File</th>
+                <th className="px-2 py-1">Reason</th>
               </tr>
             </thead>
             <tbody>

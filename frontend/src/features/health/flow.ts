@@ -83,6 +83,14 @@ export interface OpenGap {
   quiet: string | null;
 }
 
+/** How many sources have something wrong, for the rail's Health dot: every condition but
+ * healthy and paused (a source someone paused on purpose is not a problem to flag). The
+ * same rule as the server's `needing_attention` behind `/api/health/count`. */
+export function needingAttention(o: Overview | undefined): number {
+  const rows = Array.isArray(o?.sources) ? o.sources : [];
+  return rows.filter((r) => r.condition !== "healthy" && r.condition !== "paused").length;
+}
+
 /** Sources with an open gap (review item 3): an open source gap alert, or a quiet watch
  * that is firing. The same state the source gap alerts use, so the Dashboard footer,
  * Health, and Alerts agree. Longest quiet first. */

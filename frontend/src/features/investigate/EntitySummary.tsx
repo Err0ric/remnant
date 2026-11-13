@@ -12,6 +12,8 @@ interface EntitySummaryProps {
   kind: "user" | "ip" | "host";
   value: string;
   start: string | undefined;
+  /** The end of a Custom range; left out for a window that ends now. */
+  end?: string;
   /** The range's id, for caching: `start` moves with the clock. */
   range: string;
   /** "the last 7 days" */
@@ -77,7 +79,7 @@ const OUTCOME: Record<string, string> = {
 
 /** Neutral badges; only a success from an outside address is alert-worthy. */
 function tone(kind: string, outcome: string): string {
-  if (kind === "ip" && outcome === "succeeded") return "bg-sev-high-bg text-sev-high-text";
+  if (kind === "ip" && outcome === "succeeded") return "border border-warn text-warn";
   return "bg-surface-head text-text-secondary";
 }
 
@@ -128,13 +130,14 @@ export function EntitySummary({
   kind,
   value,
   start,
+  end,
   range,
   rangeWords,
   onSearch,
 }: EntitySummaryProps) {
   const q = useQuery({
     queryKey: ["entity-summary", kind, value, range],
-    queryFn: () => api.entitySummary({ kind, value, start }),
+    queryFn: () => api.entitySummary({ kind, value, start, end }),
     staleTime: 60_000,
   });
   if (q.isPending)
@@ -205,9 +208,9 @@ export function EntitySummary({
   return (
     <section aria-label="Summary" className="flex flex-col gap-3">
       <p className="text-md">{finding(s, rangeWords)}</p>
-      {kind !== "user" ? <InventoryLine value={value} start={start} /> : null}
+      {kind !== "user" ? <InventoryLine value={value} start={start} end={end} /> : null}
       {kind === "ip" && !s.events ? (
-        <EmptyAddress value={value} start={start} rangeWords={rangeWords} />
+        <EmptyAddress value={value} start={start} end={end} rangeWords={rangeWords} />
       ) : null}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         {kpis}

@@ -1,3 +1,4 @@
+import { EmptyState } from "@/components/EmptyState";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { Field } from "@/features/auth/Field";
@@ -99,16 +100,18 @@ export function GroupsSection() {
         ) : null}
 
         {list.length === 0 && !groups.isPending ? (
-          <p className="py-4 text-center text-sm text-text-secondary">
-            No groups yet. Until you create one, analysts and auditors see no events.
-          </p>
+          <EmptyState
+            kind="not-set-up"
+            title="No groups yet."
+            detail="Until you create one, analysts and auditors see no events."
+          />
         ) : (
           <table aria-label="Source groups" className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-text-secondary">
-                <th className="py-2 pr-3 font-semibold">Group</th>
-                <th className="py-2 pr-3 font-semibold">Sources</th>
-                <th className="py-2 pr-3 font-semibold">Members</th>
+                <th className="py-2 pr-3">Group</th>
+                <th className="py-2 pr-3">Sources</th>
+                <th className="py-2 pr-3">Members</th>
                 <th className="py-2" aria-label="Actions" />
               </tr>
             </thead>

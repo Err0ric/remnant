@@ -49,7 +49,7 @@ export function ApiSummary({ source, canManage }: ApiSummaryProps) {
   return (
     <div className="flex flex-col gap-1">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="rounded-badge bg-sev-info-bg px-2 py-px font-sans text-xs text-text-secondary">
+        <span className="rounded-badge bg-info-bg px-2 py-px font-sans text-xs text-text-secondary">
           {LABEL[kind]}
         </span>
         {source.m365 ? <span className="break-all">{source.m365.tenant_id}</span> : null}

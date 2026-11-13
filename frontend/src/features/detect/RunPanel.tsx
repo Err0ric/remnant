@@ -80,10 +80,10 @@ export function RunPanel({ run, onClose, canExplain = false }: RunPanelProps) {
           <div className="max-h-80 overflow-auto rounded border border-border">
             <table aria-label="Matches" className="w-full">
               <thead>
-                <tr className="border-b border-border bg-surface-head text-left text-text-secondary">
-                  <th className="px-2 py-1 font-semibold">Time</th>
-                  <th className="px-2 py-1 font-semibold">Source</th>
-                  <th className="px-2 py-1 font-semibold">Event id</th>
+                <tr className="border-b border-border text-left text-text-secondary">
+                  <th className="px-2 py-1">Time</th>
+                  <th className="px-2 py-1">Source</th>
+                  <th className="px-2 py-1">Event id</th>
                 </tr>
               </thead>
               <tbody>

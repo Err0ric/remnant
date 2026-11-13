@@ -1,6 +1,6 @@
 import { ApiError } from "@/lib/api";
 
-interface LoadFailedProps {
+interface InlineErrorProps {
   /** What did not load, as the section names it: "AI Watch". */
   what: string;
   error: unknown;
@@ -8,9 +8,10 @@ interface LoadFailedProps {
   retrying: boolean;
 }
 
-/** A section that could not load says so in place, with Retry (F63): it is never left
+/** An error in place (DESIGN.md 6.0, F63): a section that could not load says so where its
+ * content would be, with Retry. It is never left
  * empty or dropped from the page. */
-export function LoadFailed({ what, error, onRetry, retrying }: LoadFailedProps) {
+export function InlineError({ what, error, onRetry, retrying }: InlineErrorProps) {
   const api = error instanceof ApiError ? error : null;
   const reason =
     api?.code === "query_memory"

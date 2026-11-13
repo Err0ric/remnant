@@ -132,7 +132,7 @@ export function SaveSearchForm({
             id="save-visibility"
             value={visibility}
             onChange={(e) => setVisibility(e.target.value as "private" | "shared")}
-            className="h-9 rounded border border-border-strong bg-inset px-2 text-sm text-text"
+            className="h-9 rounded border border-border-control bg-inset px-2 text-sm text-text"
           >
             <option value="private">Private: only you</option>
             <option value="shared">Shared: everyone signed in</option>
@@ -165,7 +165,7 @@ export function SaveSearchForm({
                       [n]: { type: e.target.value as ParamType, def: params[n]?.def ?? "" },
                     })
                   }
-                  className="h-8 rounded border border-border-strong bg-inset px-2 text-sm text-text"
+                  className="h-8 rounded border border-border-control bg-inset px-2 text-sm text-text"
                 >
                   {TYPES.map((t) => (
                     <option key={t} value={t}>
@@ -184,7 +184,7 @@ export function SaveSearchForm({
                       [n]: { type: params[n]?.type ?? "string", def: e.target.value },
                     })
                   }
-                  className="h-8 rounded border border-border-strong bg-inset px-2 font-mono text-sm text-text"
+                  className="h-8 rounded border border-border-control bg-inset px-2 font-mono text-sm text-text"
                 />
               </div>
             ))}

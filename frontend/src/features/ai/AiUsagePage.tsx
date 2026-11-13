@@ -1,3 +1,5 @@
+import { ChevronRight } from "lucide-react";
+import { EmptyState } from "@/components/EmptyState";
 import {
   attentionItems,
   count,
@@ -19,28 +21,19 @@ import {
   type AiStatus,
   type DataLevel,
 } from "@/lib/api";
-import { rangeStart, TIME_RANGES, type TimeRangeId } from "@/lib/search";
+import { FilterBar } from "@/components/FilterBar";
+import { usePageTime } from "@/lib/timeChoice";
 import { navigate, pathFor, useSectionTab } from "@/lib/route";
 import { When } from "@/components/When";
 import { AgentsCard } from "./AgentsCard";
 import { SessionsCard } from "./SessionsCard";
 import { AccountsCard } from "./AccountsCard";
-import { AgentsArea } from "./AgentsOverview";
-import { InventoryCard } from "./InventoryCard";
-import { AiSettings } from "./AiSettings";
+import { AgentsKpis, ToolRows, useBuiltInCount } from "./AgentsOverview";
+import { InventoryCard, toReview } from "./InventoryCard";
 import { StatusBadge, StatusPicker } from "./StatusBadge";
 import { SectionTitle } from "@/components/SectionTitle";
 
-type Tab =
-  | "services"
-  | "overview"
-  | "sessions"
-  | "tools"
-  | "mcp"
-  | "accounts"
-  | "people"
-  | "inventory"
-  | "settings";
+type Tab = "services" | "sessions" | "mcp" | "accounts" | "people" | "inventory";
 const KIND: Record<string, string> = {
   chat: "Chat",
   api: "API",
@@ -97,7 +90,7 @@ function SeenSummary({ seen }: { seen: Partial<Record<"both" | "plugin" | "netwo
   );
 }
 
-const TH = "px-3 py-2 text-left font-semibold";
+const TH = "px-3 py-2 text-left";
 const TD = "px-3 py-2 align-top";
 
 interface AiUsagePageProps {
@@ -108,30 +101,69 @@ interface AiUsagePageProps {
   area?: "ai" | "agents";
 }
 
+const BUILT_IN = "\u0000built-in";
+
+interface ToolsToggleProps {
+  /** "Tools of Built-in", or "Calls and failures of github": what the row opens to. */
+  label: string;
+  open: boolean;
+  onToggle: () => void;
+}
+
+/** Opens a row of MCP servers to its tools (they were the Tools tab). */
+function ToolsToggle({ label, open, onToggle }: ToolsToggleProps) {
+  return (
+    <button
+      type="button"
+      aria-expanded={open}
+      aria-label={label}
+      onClick={onToggle}
+      className="flex h-6 w-6 items-center justify-center rounded text-text-secondary hover:bg-surface-head hover:text-text"
+    >
+      <ChevronRight size={14} aria-hidden className={open ? "rotate-90" : ""} />
+    </button>
+  );
+}
+
 /** AI usage (ADR-0015 row 8): services, agents and MCP servers, and Claude usage. */
 export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsagePageProps) {
   const client = useQueryClient();
-  const [range, setRange] = useState<TimeRangeId>("7d");
+  // The page's one time control, in the address (ADR-0052 section 3.7).
+  const time = usePageTime("7d");
   // The service whose review and allowed data are open under its row (list-detail).
   const [reviewing, setReviewing] = useState<string | null>(null);
   const usage = useQuery({
-    queryKey: ["ai-usage", range],
-    queryFn: () => api.aiUsage(rangeStart(range)),
+    queryKey: ["ai-usage", ...time.key],
+    queryFn: () => {
+      const b = time.bounds();
+      // This endpoint reads its bounds to the minute (it caches by them), and its end is
+      // inclusive: the start of the next minute keeps the minute Custom's end names.
+      const end = b.end
+        ? new Date(Math.ceil(Date.parse(b.end) / 60_000) * 60_000).toISOString()
+        : undefined;
+      return api.aiUsage(b.start, end);
+    },
     staleTime: 60_000,
   });
   // A range too big for the memory share falls back to 24 hours, with the reason (F46).
   const tooBig =
-    usage.error instanceof ApiError && usage.error.code === "query_memory" && range !== "24h";
+    usage.error instanceof ApiError &&
+    usage.error.code === "query_memory" &&
+    time.choice.preset !== "24h";
   const fallback = useQuery({
     queryKey: ["ai-usage", "24h"],
-    queryFn: () => api.aiUsage(rangeStart("24h")),
+    queryFn: () => api.aiUsage(new Date(Date.now() - 86_400_000).toISOString()),
     staleTime: 60_000,
     enabled: tooBig,
   });
-  const shown: TimeRangeId = tooBig ? "24h" : range;
+  const shown = tooBig ? "24h" : time.choice.preset;
   const setService = useMutation({
     mutationFn: (v: { id: string; status: AiStatus }) => api.setAiServiceStatus(v.id, v.status),
-    onSuccess: () => void client.invalidateQueries({ queryKey: ["ai-usage"] }),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: ["ai-usage"] });
+      // The Inventory lists the same status and counts what is left to review.
+      void client.invalidateQueries({ queryKey: ["ai-inventory"] });
+    },
   });
   const setLevel = useMutation({
     mutationFn: (v: { id: string; level: DataLevel | null }) => api.setAiDataLevel(v.id, v.level),
@@ -143,14 +175,11 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: ["ai-usage"] });
       void client.invalidateQueries({ queryKey: ["ai-mcp-rules"] });
+      void client.invalidateQueries({ queryKey: ["ai-inventory"] });
     },
   });
   const tabs: Tab[] =
-    area === "agents"
-      ? ["overview", "sessions", "tools", "mcp", "accounts"]
-      : isAdmin
-        ? ["services", "people", "inventory", "settings"]
-        : ["services", "people", "inventory"];
+    area === "agents" ? ["sessions", "mcp", "accounts"] : ["services", "people", "inventory"];
   const [tab] = useSectionTab<Tab>(tabs);
   const data = tooBig ? fallback.data : usage.data;
   // Services and MCP servers are said apart (owner, 2026-11-08): "2 not approved" read as
@@ -174,31 +203,71 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
     data?.services.filter((s) => s.service.status === "unreviewed").length ?? 0;
   const mcpNotApproved = data?.mcp.filter((m) => m.status === "not_approved").length ?? 0;
   const mcpUnreviewed = data?.mcp.filter((m) => m.status === "unreviewed").length ?? 0;
+  // On Inventory the header says how many items wait for a review (ADR-0052 section 3.3).
+  // The card's own query, shared by key: no second request, and none on the other tabs.
+  const onInventory = area === "ai" && tab === "inventory";
+  const inventory = useQuery({
+    queryKey: ["ai-inventory"],
+    queryFn: () => api.aiInventory(30),
+    enabled: onInventory,
+  });
+  // Agents: the strip on Sessions and the tool rows of MCP servers count whole days back
+  // from now, so the page's time becomes days (Custom: since its start, 30 at most).
+  const agentDays =
+    time.choice.preset === "custom"
+      ? Math.min(
+          30,
+          Math.max(
+            1,
+            Math.ceil(
+              (Date.now() - Date.parse(time.bounds().start ?? new Date(0).toISOString())) /
+                86_400_000,
+            ),
+          ),
+        )
+      : time.choice.preset === "30d"
+        ? 30
+        : time.choice.preset === "7d"
+          ? 7
+          : 1;
+  // Which row of MCP servers shows its tools: a server's name, or the Built-in group.
+  const [toolsOf, setToolsOf] = useState<string | null>(null);
+  // In words, from the days actually counted, never from the page's choice: at 1 hour the
+  // strip still counts a day.
+  const agentWindow = agentDays === 1 ? "24 hours" : `${agentDays} days`;
+  const agentBefore = `previous ${agentWindow}`;
+  const builtIn = useBuiltInCount(agentDays, area === "agents" && tab === "mcp");
+  // Shown while its count is not known (loading, or failed: the row then opens to the
+  // error), when there are built-in calls, and while it is open.
+  const builtInRow = builtIn !== 0 || toolsOf === BUILT_IN;
   const alertsItem = useOpenAlertsItem();
   const newServices = new Set(data?.new_services ?? []);
   const newMcp = new Set(data?.new_mcp ?? []);
   const fresh = newServices.size + newMcp.size;
   const gone = data?.gone ?? [];
-  const label = TIME_RANGES.find((r) => r.id === shown)?.label ?? "";
-  const before = label.replace(/^Last /, "previous ");
+  const before = tooBig ? "previous 24 hours" : time.before;
+  // Custom with no start has no earlier period to compare with.
+  const comparable = tooBig || time.choice.preset !== "custom" || time.choice.from !== "";
   // Signed in, but no readable sources: say so instead of "add a source" (QA F17).
   const noAccess = !!data && data.sources_in_scope.length === 0 && !isAdmin;
-  const noAccessText = (
-    <>
-      You cannot read any sources yet. An administrator grants access to source groups under
-      Settings, Users and access.
-    </>
-  );
+  const noAccessEmpty: CardEmpty = {
+    kind: "restricted",
+    title: "You cannot read any sources yet.",
+    detail: "An administrator grants access to source groups under Settings, Users and access.",
+  };
 
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       <PageHeader
-        crumbs={["Home", "AI", "AI usage"]}
         title={area === "agents" ? "Agents" : "AI usage"}
-        meta={
-          data
-            ? `${data.services.length} services · ${data.mcp.length} MCP servers · ${codeUsers} Claude Code ${codeUsers === 1 ? "user" : "users"}`
-            : null
+        count={
+          onInventory
+            ? inventory.data
+              ? `${toReview(inventory.data.items)} to review`
+              : null
+            : data
+              ? `${data.services.length} services · ${data.mcp.length} MCP servers · ${codeUsers} Claude Code ${codeUsers === 1 ? "user" : "users"}`
+              : null
         }
       />
       <div className="flex flex-col gap-3 px-5 py-3">
@@ -255,34 +324,23 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
           />
         ) : null}
         <div className="flex flex-wrap items-center gap-3">
-          {/* One time control per page: Agents > Overview has its own window chips. */}
-          {area === "agents" && tab === "overview" ? null : (
-            <label className="flex items-center gap-2 text-sm">
-              <span className="text-text-secondary">Time range</span>
-              <select
-                value={range}
-                onChange={(e) => setRange(e.target.value as TimeRangeId)}
-                className="h-8 rounded border border-border-strong bg-surface px-2 text-sm"
-              >
-                {TIME_RANGES.filter((r) => r.id !== "15m").map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
+          <FilterBar
+            label={area === "agents" ? "Filter agents by time" : "Filter AI usage by time"}
+            time={time.bar}
+            onReset={() => time.bar.onChange("7d")}
+            isDefault={time.isDefault}
+          />
           {notApproved ? (
-            <span className="rounded-badge bg-sev-critical-bg px-2 py-0.5 text-sm text-sev-critical-text">
+            <span className="rounded-badge border border-warn px-2 py-px text-sm text-warn">
               {notApproved} not approved in use
             </span>
           ) : null}
           {sensitive ? (
-            <span className="rounded-badge bg-sev-high-bg px-2 py-0.5 text-sm text-sev-high-text">
+            <span className="rounded-badge border border-warn px-2 py-0.5 text-sm text-warn">
               {sensitive} sensitive-data {sensitive === 1 ? "signal" : "signals"}
             </span>
           ) : null}
-          {data && !data.compared_from && shown !== "all" && !noAccess ? (
+          {data && !data.compared_from && comparable && !noAccess ? (
             <span className="text-sm text-text-muted">
               Nothing earlier to compare with yet: New and No longer seen start once the {before}{" "}
               has data.
@@ -319,15 +377,21 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
               title="AI services seen in network logs"
               note="From DNS, firewall, and proxy sources you can read. Matched by domain against the catalog."
               empty={
-                noAccess ? (
-                  noAccessText
-                ) : data && data.services.length === 0 ? (
-                  <>
-                    No AI services in this range. They come from DNS, firewall, and proxy logs: add
-                    one of those as a source (BIND, Unbound, Windows DNS, Palo Alto, FortiGate).{" "}
-                    <GoToSources />
-                  </>
-                ) : null
+                noAccess
+                  ? noAccessEmpty
+                  : data && data.services.length === 0
+                    ? {
+                        kind: "not-set-up",
+                        title: "No AI services in this range.",
+                        detail: (
+                          <>
+                            They come from DNS, firewall, and proxy logs: add one of those as a
+                            source (BIND, Unbound, Windows DNS, Palo Alto, FortiGate).{" "}
+                            <GoToSources />
+                          </>
+                        ),
+                      }
+                    : null
               }
             >
               <table className="w-full text-sm">
@@ -426,7 +490,7 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
                                       level: (e.target.value || null) as DataLevel | null,
                                     })
                                   }
-                                  className="h-8 rounded border border-border-strong bg-inset px-2 text-sm"
+                                  className="h-8 rounded border border-border-control bg-inset px-2 text-sm"
                                 >
                                   <option value="">Not set</option>
                                   {LEVELS.map((l) => (
@@ -456,19 +520,28 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
               title="MCP servers"
               note="Installed (endpoint inventory) and used (Claude Code telemetry)."
               empty={
-                noAccess ? (
-                  noAccessText
-                ) : data && data.mcp.length === 0 ? (
-                  <>
-                    No MCP servers yet. Send Claude Code telemetry, or run the MCP inventory script
-                    on endpoints; both go to an OpenTelemetry source. <GoToSources />
-                  </>
-                ) : null
+                noAccess
+                  ? noAccessEmpty
+                  : data && data.mcp.length === 0 && builtIn === 0
+                    ? {
+                        kind: "not-set-up",
+                        title: "No MCP servers yet.",
+                        detail: (
+                          <>
+                            Send Claude Code telemetry, or run the MCP inventory script on
+                            endpoints; both go to an OpenTelemetry source. <GoToSources />
+                          </>
+                        ),
+                      }
+                    : null
               }
             >
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border text-text-secondary">
+                    <th className={TH}>
+                      <span className="sr-only">Tools</span>
+                    </th>
                     <th className={TH}>Server</th>
                     <th className={TH}>Review</th>
                     <th className={`${TH} text-right`}>Calls</th>
@@ -481,32 +554,87 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
                 </thead>
                 <tbody>
                   {(data?.mcp ?? []).map((m) => (
-                    <tr key={m.name} className="border-b border-border last:border-0">
-                      <td className={`${TD} font-mono font-semibold`}>
-                        <span className="flex items-center gap-2">
-                          {m.name}
-                          {newMcp.has(m.name) ? <NewBadge /> : null}
-                        </span>
-                      </td>
-                      <td className={TD}>
-                        {isAdmin ? (
-                          <StatusPicker
-                            label={m.name}
-                            value={m.status}
-                            onChange={(status) => setMcp.mutate({ name: m.name, status })}
+                    <Fragment key={m.name}>
+                      <tr className="border-b border-border">
+                        <td className={`${TD} w-8`}>
+                          <ToolsToggle
+                            // A server's figures as a whole: the plugin's records are not
+                            // split by the server's own tools.
+                            label={`Calls and failures of ${m.name}`}
+                            open={toolsOf === m.name}
+                            onToggle={() => setToolsOf(toolsOf === m.name ? null : m.name)}
                           />
-                        ) : (
-                          <StatusBadge status={m.status} />
-                        )}
-                      </td>
-                      <td className={`${TD} text-right font-mono tabular-nums`}>{m.calls}</td>
-                      <td className={`${TD} text-right font-mono tabular-nums`}>{m.people}</td>
-                      <td className={`${TD} text-right font-mono tabular-nums`}>{m.installs}</td>
-                      <td className={TD}>{m.clients.join(", ") || "·"}</td>
-                      <td className={TD}>{m.sources.join(", ")}</td>
-                      <td className={`${TD} whitespace-nowrap font-mono`}>{when(m.last_seen)}</td>
-                    </tr>
+                        </td>
+                        <td className={`${TD} font-mono font-semibold`}>
+                          <span className="flex items-center gap-2">
+                            {m.name}
+                            {newMcp.has(m.name) ? <NewBadge /> : null}
+                          </span>
+                        </td>
+                        <td className={TD}>
+                          {isAdmin ? (
+                            <StatusPicker
+                              label={m.name}
+                              value={m.status}
+                              onChange={(status) => setMcp.mutate({ name: m.name, status })}
+                            />
+                          ) : (
+                            <StatusBadge status={m.status} />
+                          )}
+                        </td>
+                        <td className={`${TD} text-right font-mono tabular-nums`}>{m.calls}</td>
+                        <td className={`${TD} text-right font-mono tabular-nums`}>{m.people}</td>
+                        <td className={`${TD} text-right font-mono tabular-nums`}>{m.installs}</td>
+                        <td className={TD}>{m.clients.join(", ") || "·"}</td>
+                        <td className={TD}>{m.sources.join(", ")}</td>
+                        <td className={`${TD} whitespace-nowrap font-mono`}>{when(m.last_seen)}</td>
+                      </tr>
+                      {toolsOf === m.name ? (
+                        <tr className="border-b border-border bg-surface-expand">
+                          <td colSpan={9} className="p-0">
+                            <ToolRows
+                              days={agentDays}
+                              before={agentBefore}
+                              label={`Calls and failures of ${m.name}`}
+                              pick={(t) => t.mcp && t.tool === m.name}
+                            />
+                          </td>
+                        </tr>
+                      ) : null}
+                    </Fragment>
                   ))}
+                  {/* The tools Claude Code has built in belong to no server: one group row
+                      (owner, 2026-11-13), opening to each tool. */}
+                  {builtInRow ? (
+                    <tr data-row="built-in" className="border-b border-border last:border-0">
+                      <td className={`${TD} w-8`}>
+                        <ToolsToggle
+                          label="Tools of Built-in"
+                          open={toolsOf === BUILT_IN}
+                          onToggle={() => setToolsOf(toolsOf === BUILT_IN ? null : BUILT_IN)}
+                        />
+                      </td>
+                      <td className={`${TD} font-semibold`}>Built-in</td>
+                      <td className={`${TD} text-text-muted`} colSpan={7}>
+                        {builtIn === null
+                          ? "Tools"
+                          : `${builtIn} ${builtIn === 1 ? "tool" : "tools"}`}{" "}
+                        of Claude Code itself (Bash, Read, Edit and others); not reviewed.
+                      </td>
+                    </tr>
+                  ) : null}
+                  {builtInRow && toolsOf === BUILT_IN ? (
+                    <tr className="bg-surface-expand">
+                      <td colSpan={9} className="p-0">
+                        <ToolRows
+                          days={agentDays}
+                          before={agentBefore}
+                          label="Built-in tools"
+                          pick={(t) => !t.mcp}
+                        />
+                      </td>
+                    </tr>
+                  ) : null}
                 </tbody>
               </table>
             </Card>
@@ -537,14 +665,20 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
                 </>
               }
               empty={
-                noAccess ? (
-                  noAccessText
-                ) : data && data.people.length === 0 ? (
-                  <>
-                    No Claude Code telemetry in this range. Add an OpenTelemetry source and point
-                    Claude Code at it (docs/install/claude-code-telemetry.md). <GoToSources />
-                  </>
-                ) : null
+                noAccess
+                  ? noAccessEmpty
+                  : data && data.people.length === 0
+                    ? {
+                        kind: "not-set-up",
+                        title: "No Claude Code telemetry in this range.",
+                        detail: (
+                          <>
+                            Add an OpenTelemetry source and point Claude Code at it
+                            (docs/install/claude-code-telemetry.md). <GoToSources />
+                          </>
+                        ),
+                      }
+                    : null
               }
             >
               <table className="w-full text-sm">
@@ -613,7 +747,7 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
                       )}
                       <td className={TD}>
                         {p.sensitive ? (
-                          <span className="rounded-badge bg-sev-high-bg px-1.5 py-px text-sev-high-text">
+                          <span className="rounded-badge border border-warn px-1.5 py-px text-warn">
                             {p.sensitive} {p.sensitive === 1 ? "signal" : "signals"}
                           </span>
                         ) : (
@@ -630,20 +764,18 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
             </Card>
           ) : null}
 
-          {tab === "overview" || tab === "tools" ? <AgentsArea tab={tab} /> : null}
-
           {tab === "sessions" ? (
             <div className="flex flex-col gap-3">
+              {/* The numbers that were the Overview tab (ADR-0052 section 3.3). */}
+              <AgentsKpis days={agentDays} before={agentBefore} />
               <AgentsCard />
-              <SessionsCard />
+              <SessionsCard days={agentDays} />
             </div>
           ) : null}
 
           {tab === "accounts" ? <AccountsCard /> : null}
 
           {tab === "inventory" ? <InventoryCard isAdmin={isAdmin} canExport={canExport} /> : null}
-
-          {tab === "settings" && isAdmin ? <AiSettings /> : null}
         </ErrorBoundary>
       </div>
     </div>
@@ -834,10 +966,17 @@ function NotUsageList({ items }: { items: AiServiceUse[] }) {
   );
 }
 
+/** Why a card has no rows: the viewer reads no source, or the install lacks one. */
+interface CardEmpty {
+  kind: "restricted" | "not-set-up";
+  title: string;
+  detail: ReactNode;
+}
+
 interface CardProps {
   title: string;
   note: ReactNode;
-  empty: ReactNode;
+  empty: CardEmpty | null;
   children: ReactNode;
 }
 
@@ -852,7 +991,7 @@ function Card({ title, note, empty, children }: CardProps) {
         <span className="text-sm text-text-muted">{note}</span>
       </div>
       {empty ? (
-        <p className="px-3 py-6 text-center text-sm text-text-secondary">{empty}</p>
+        <EmptyState kind={empty.kind} title={empty.title} detail={empty.detail} />
       ) : (
         <div className="overflow-x-auto">{children}</div>
       )}

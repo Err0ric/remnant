@@ -259,8 +259,8 @@ export function ScheduleForm({ onDone, initial = null, existing = null }: Schedu
       </OptionalSection>
       {e ? (
         <p className="text-sm text-text-secondary">
-          Run history is kept. The next run notes what changed in its definition (what it runs, its
-          parameters, or its range).
+          Run history is kept; the next run notes what changed in what it runs, its parameters, or
+          its range.
         </p>
       ) : null}
       <p className="text-sm text-text-secondary">

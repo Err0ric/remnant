@@ -1,3 +1,4 @@
+import { Skeleton } from "@/components/Skeleton";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState, type FormEvent } from "react";
 import { PageHeader } from "@/components/shell/PageHeader";
@@ -7,10 +8,10 @@ import { ApiError, api, type EnrichmentFeed, type FeedLevel } from "@/lib/api";
 import { SectionTitle } from "@/components/SectionTitle";
 
 const LEVEL: Record<FeedLevel, { label: string; badge: string }> = {
-  healthy: { label: "Current", badge: "bg-local-bg text-local-text" },
-  attention: { label: "Getting old", badge: "bg-sev-medium-bg text-sev-medium-text" },
-  unhealthy: { label: "Out of date", badge: "bg-sev-critical-bg text-sev-critical-text" },
-  missing: { label: "Not installed", badge: "bg-sev-info-bg text-text-secondary" },
+  healthy: { label: "Current", badge: "bg-local-bg text-local-tx" },
+  attention: { label: "Getting old", badge: "border border-warn text-warn" },
+  unhealthy: { label: "Out of date", badge: "border border-danger text-danger" },
+  missing: { label: "Not installed", badge: "bg-info-bg text-text-secondary" },
 };
 
 function mb(bytes: number): string {
@@ -42,7 +43,7 @@ function KeyForm({ feed, onDone }: { feed: EnrichmentFeed; onDone: () => void })
         onChange={(e) => setKey(e.target.value)}
         aria-label={`Auth-Key for ${feed.label}`}
         placeholder="abuse.ch Auth-Key"
-        className="h-7 w-56 rounded border border-border-strong bg-inset px-2 font-mono text-xs"
+        className="h-7 w-56 rounded border border-border-control bg-inset px-2 font-mono text-xs"
       />
       <button
         type="submit"
@@ -90,9 +91,9 @@ function FeedRow({ feed, now }: FeedRowProps) {
   const intel = feed.kind === "intel";
   const waitingForKey = feed.needs_key && !feed.has_key;
   const level = !feed.enabled
-    ? { label: "Off", badge: "bg-sev-info-bg text-text-secondary" }
+    ? { label: "Off", badge: "bg-info-bg text-text-secondary" }
     : waitingForKey
-      ? { label: "Needs a key", badge: "bg-sev-info-bg text-text-secondary" }
+      ? { label: "Needs a key", badge: "bg-info-bg text-text-secondary" }
       : LEVEL[feed.level];
   return (
     <tr className={`border-t border-border align-top ${feed.enabled ? "" : "text-text-muted"}`}>
@@ -225,17 +226,17 @@ function FeedTable({
   return (
     <div className="overflow-x-auto">
       <table aria-label={label} className="w-full text-sm">
-        <thead className="bg-surface-head text-left text-xs uppercase tracking-wide text-text-muted">
+        <thead className="border-b border-border text-left text-xs text-text-secondary">
           <tr>
             {intel ? (
-              <th className="w-10 py-2 pl-3 font-medium">
+              <th className="w-10 py-2 pl-3">
                 <span className="sr-only">On</span>
               </th>
             ) : null}
-            <th className="px-3 py-2 font-medium">{intel ? "List" : "Feed"}</th>
-            <th className="px-3 py-2 font-medium">Status</th>
-            <th className="px-3 py-2 font-medium">{intel ? "Contents" : "Edition"}</th>
-            <th className="px-3 py-2 font-medium">Last check</th>
+            <th className="px-3 py-2">{intel ? "List" : "Feed"}</th>
+            <th className="px-3 py-2">Status</th>
+            <th className="px-3 py-2">{intel ? "Contents" : "Edition"}</th>
+            <th className="px-3 py-2">Last check</th>
             <th className="px-3 py-2">
               <span className="sr-only">Actions</span>
             </th>
@@ -269,9 +270,8 @@ export function EnrichmentPage() {
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       <PageHeader
-        crumbs={["Home", "Settings", "Enrichment"]}
         title="Enrichment"
-        meta="Looked up on this server · no address is sent anywhere"
+        count="Looked up on this server · no address is sent anywhere"
       />
       <div className="flex max-w-5xl flex-col gap-4 px-5 py-3 text-sm">
         {error ? (
@@ -332,7 +332,7 @@ export function EnrichmentPage() {
 
         <PlacesSettings />
 
-        {status.isPending ? <p className="text-text-secondary">Loading…</p> : null}
+        {status.isPending ? <Skeleton label="enrichment" rows={4} /> : null}
 
         <p className="max-w-prose text-xs text-text-muted">
           No internet on this server? Download the monthly .mmdb.gz files from db-ip.com/db/lite.php

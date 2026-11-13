@@ -7,7 +7,7 @@ import { guestLabel, showGuestEvents } from "@/features/investigate/InventoryLin
 import { openEntity } from "@/lib/entity";
 import { setAskProvider, useAskProvider } from "@/lib/askProvider";
 import { openAsk } from "@/lib/askSlideOver";
-import { visibleNav, visibleSections } from "@/lib/nav";
+import { LOGS_VIEWS, visibleNav, visibleSections } from "@/lib/nav";
 import {
   arrange,
   looksLikeQuestion,
@@ -98,6 +98,7 @@ export function CommandPalette({
 }: CommandPaletteProps) {
   const viewer = useViewer();
   const canAsk = canAskProp ?? viewer.canAsk ?? true;
+  const canRunSql = viewer.canRunSql ?? true;
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const [recent] = useState(readRecent);
@@ -161,14 +162,46 @@ export function CommandPalette({
         run: () => navigate(n.page as PageId, x.id),
       })),
     ]);
-    // Logs is the Investigate area's first tab, so it has no row of its own above (D206).
+    // Logs and Ask AI depend on what the viewer may run, so they are added here and not
+    // from the page list. Every tab of a page is listed under Navigate (ADR-0052 3.2).
+    if (canRunSql) {
+      out.push({
+        key: "nav:logs",
+        section: "Navigate",
+        label: "Logs",
+        aliases: ["search", "events", "query", "sql", "filters", "simple search"],
+        run: () => navigate("logs"),
+      });
+    }
+    // Closed and Muted are the Alerts Queue's State filter, not tabs, so they have no page
+    // of their own in the list above; they stay findable by name.
+    for (const [state, label, aliases] of [
+      ["closed", "Alerts › Closed", ["closed alerts", "closed"]],
+      ["muted", "Alerts › Muted", ["muted alerts", "mutes", "muted"]],
+    ] as const)
+      out.push({
+        key: `nav:alerts:${state}`,
+        section: "Navigate",
+        label,
+        aliases: [...aliases],
+        run: () => navigate("alerts", `state=${state}`),
+      });
     out.push({
-      key: "nav:logs",
+      key: "nav:logs:saved",
       section: "Navigate",
-      label: "Logs",
-      aliases: ["search", "events", "query", "sql", "filters", "simple search"],
-      run: () => navigate("logs"),
+      label: "Logs › Saved searches",
+      aliases: ["saved searches", "grimoire"],
+      run: () => navigate("saved"),
     });
+    // The views of Logs are server-built lists: open to everyone, with or without SQL.
+    for (const v of LOGS_VIEWS)
+      out.push({
+        key: `nav:logs:view:${v.tab}`,
+        section: "Navigate",
+        label: `Logs › ${v.label}`,
+        aliases: v.aliases,
+        run: () => navigate("m365", v.tab),
+      });
     if (canAsk) {
       out.push({
         key: "nav:ask",
@@ -299,6 +332,7 @@ export function CommandPalette({
     isAdmin,
     canAudit,
     canAsk,
+    canRunSql,
     page,
     theme,
     onToggleTheme,
@@ -389,7 +423,7 @@ export function CommandPalette({
           ) : (
             groups.map((g) => (
               <div key={g.section} role="group" aria-label={g.section}>
-                <div className="px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-text-muted">
+                <div className="px-3 pb-1 pt-2 text-xs font-semibold text-text-muted">
                   {g.section}
                 </div>
                 {g.items.map((item) => {

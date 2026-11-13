@@ -1,3 +1,4 @@
+import { EventIdChip } from "@/components/EventIdChip";
 import {
   ApiError,
   type AskResponse,
@@ -164,7 +165,7 @@ export function AskTurnBlock({
           role="alert"
           className={cn(
             "flex flex-wrap items-center gap-3 rounded border px-3 py-2 text-sm",
-            isModelBusy(turn.error) ? "border-warn" : "border-danger text-sev-critical-text",
+            isModelBusy(turn.error) ? "border-warn" : "border-danger text-danger",
           )}
         >
           <span>{errorText(turn.error)}</span>
@@ -223,7 +224,7 @@ export function AskTurnBlock({
         />
       ) : null}
       {turn.drillError ? (
-        <p role="alert" className="text-sm text-sev-critical-text">
+        <p role="alert" className="text-sm text-danger">
           {turn.drillError}
         </p>
       ) : null}
@@ -320,7 +321,7 @@ export function AskTurnBlock({
               {CHECK[a.check]}
               {a.attempts > 1 ? ` (${a.attempts} attempts)` : ""}
               {a.check === "failed" && a.check_detail ? (
-                <span className="block font-mono text-sev-critical-text">{a.check_detail}</span>
+                <span className="block font-mono text-danger">{a.check_detail}</span>
               ) : null}
             </dd>
             <dt className="text-text-secondary">Sources read</dt>
@@ -369,13 +370,7 @@ function Answer({ turn }: { turn: Turn }) {
               <span>{c.text}</span>{" "}
               <span className="inline-flex flex-wrap gap-1 align-middle">
                 {c.event_ids.map((id) => (
-                  <span
-                    key={id}
-                    title={id}
-                    className="rounded-badge bg-sev-info-bg px-1.5 py-px font-mono text-xs text-text-secondary"
-                  >
-                    {shortId(id)}
-                  </span>
+                  <EventIdChip key={id} id={id} label={shortId(id)} />
                 ))}
               </span>
             </li>

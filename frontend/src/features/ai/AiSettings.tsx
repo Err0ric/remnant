@@ -1,3 +1,4 @@
+import { PageHeader } from "@/components/shell/PageHeader";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { ApiError, api, type AiWatch } from "@/lib/api";
@@ -14,10 +15,13 @@ function message(err: unknown): string {
 /** Admin settings for AI usage (ADR-0015 rows 1, 7, 9): watch, MCP rules, catalog. */
 export function AiSettings() {
   return (
-    <div className="flex flex-col gap-3">
-      <WatchSettings />
-      <McpRules />
-      <CatalogList />
+    <div className="flex min-w-0 flex-1 flex-col">
+      <PageHeader title="AI watch and catalog" />
+      <div className="flex flex-col gap-3 px-5 py-3">
+        <WatchSettings />
+        <McpRules />
+        <CatalogList />
+      </div>
     </div>
   );
 }
@@ -179,13 +183,13 @@ function McpRules() {
           onChange={(e) => setPattern(e.target.value)}
           placeholder="github or internal-*"
           maxLength={121}
-          className="h-8 min-w-0 flex-[1_1_200px] rounded border border-border-strong bg-inset px-2 font-mono"
+          className="h-8 min-w-0 flex-[1_1_200px] rounded border border-border-control bg-inset px-2 font-mono"
         />
         <select
           aria-label="Rule"
           value={status}
           onChange={(e) => setStatus(e.target.value as "approved" | "not_approved")}
-          className="h-8 rounded border border-border-strong bg-surface px-2"
+          className="h-8 rounded border border-border-control bg-surface px-2"
         >
           <option value="approved">Approved</option>
           <option value="not_approved">Not approved</option>
@@ -283,14 +287,14 @@ function CatalogList() {
             placeholder={ph}
             value={form[key]}
             onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
-            className="h-8 min-w-0 rounded border border-border-strong bg-inset px-2"
+            className="h-8 min-w-0 rounded border border-border-control bg-inset px-2"
           />
         ))}
         <select
           aria-label="Kind"
           value={form.kind}
           onChange={(e) => setForm((f) => ({ ...f, kind: e.target.value }))}
-          className="h-8 rounded border border-border-strong bg-surface px-2"
+          className="h-8 rounded border border-border-control bg-surface px-2"
         >
           {[
             "chat",
@@ -313,7 +317,7 @@ function CatalogList() {
           placeholder="Domains (llm.corp.example)"
           value={form.domains}
           onChange={(e) => setForm((f) => ({ ...f, domains: e.target.value }))}
-          className="h-8 min-w-0 rounded border border-border-strong bg-inset px-2 font-mono"
+          className="h-8 min-w-0 rounded border border-border-control bg-inset px-2 font-mono"
         />
         <button
           type="submit"
@@ -332,9 +336,9 @@ function CatalogList() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border text-text-secondary">
-              <th className="px-3 py-2 text-left font-semibold">Service</th>
-              <th className="px-3 py-2 text-left font-semibold">Domains</th>
-              <th className="px-3 py-2 text-left font-semibold">Review</th>
+              <th className="px-3 py-2 text-left">Service</th>
+              <th className="px-3 py-2 text-left">Domains</th>
+              <th className="px-3 py-2 text-left">Review</th>
               <th className="px-3 py-2" aria-label="Actions" />
             </tr>
           </thead>

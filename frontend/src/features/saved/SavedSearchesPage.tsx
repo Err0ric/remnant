@@ -1,8 +1,11 @@
+import { About } from "@/components/About";
+import { EmptyState } from "@/components/EmptyState";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
-import { Command, PageHeader } from "@/components/shell/PageHeader";
-import { ApiError, api, type SavedSearch, type User } from "@/lib/api";
-import { navigate } from "@/lib/route";
+import { PageHeader } from "@/components/shell/PageHeader";
+import { ApiError, api, type SavedSearch, type Schedule, type User } from "@/lib/api";
+import { navigate, pathFor } from "@/lib/route";
+import { cronLabel } from "@/features/schedules/schedule";
 import { seedSchedule } from "@/lib/scheduleSeed";
 import { seedSearch } from "@/lib/searchSeed";
 import { takeSavedSeed } from "@/lib/savedSeed";
@@ -27,6 +30,13 @@ function download(name: string, text: string) {
 export function SavedSearchesPage({ me }: SavedSearchesPageProps) {
   const client = useQueryClient();
   const searches = useQuery({ queryKey: ["searches"], queryFn: api.searches });
+  // The schedules this person may see, to say which searches run on one (ADR-0052 3.3).
+  const schedules = useQuery({ queryKey: ["schedules"], queryFn: api.schedules });
+  const scheduledBy = new Map<string, Schedule[]>();
+  for (const sch of schedules.data ?? []) {
+    if (sch.kind !== "search") continue;
+    scheduledBy.set(sch.target_id, [...(scheduledBy.get(sch.target_id) ?? []), sch]);
+  }
   const [chosen, setRunning] = useState<SavedSearch | null>(null);
   // A search picked in the command palette opens its runner once the list has loaded.
   const [seeded, setSeeded] = useState(takeSavedSeed);
@@ -72,13 +82,10 @@ export function SavedSearchesPage({ me }: SavedSearchesPageProps) {
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       <PageHeader
-        crumbs={["Home", "Investigate", "Saved searches"]}
         title="Saved searches"
-        meta={`${list.length} ${list.length === 1 ? "search" : "searches"}`}
-        commands={
-          canAuthor ? (
-            <Command label="Import YAML" onClick={() => file.current?.click()} />
-          ) : undefined
+        count={`${list.length} ${list.length === 1 ? "search" : "searches"}`}
+        secondary={
+          canAuthor ? [{ label: "Import YAML", onClick: () => file.current?.click() }] : []
         }
       />
       <input
@@ -128,20 +135,28 @@ export function SavedSearchesPage({ me }: SavedSearchesPageProps) {
         ) : null}
         <section className="overflow-hidden rounded-card border border-border bg-surface">
           {list.length === 0 && !searches.isPending ? (
-            <div className="px-3 py-8 text-center">
-              <p className="font-semibold">No saved searches yet</p>
-              <p className="mt-1 text-sm text-text-secondary">
-                Write a query on Logs and choose Save, or import a YAML file.
-              </p>
-            </div>
+            <EmptyState
+              kind="not-set-up"
+              title="No saved searches yet"
+              detail="Write a query on Logs and choose Save, or import a YAML file."
+            />
           ) : (
             <table aria-label="Saved searches" className="w-full text-sm">
               <thead>
-                <tr className="border-b border-border bg-surface-head text-left text-text-secondary">
-                  <th className="px-3 py-2 font-semibold">Name</th>
-                  <th className="px-3 py-2 font-semibold">Tags</th>
-                  <th className="px-3 py-2 font-semibold">Visibility</th>
-                  <th className="px-3 py-2 font-semibold">Owner</th>
+                <tr className="border-b border-border text-left text-text-secondary">
+                  <th className="px-3 py-2">Name</th>
+                  <th className="px-3 py-2">Tags</th>
+                  <th className="px-3 py-2">Visibility</th>
+                  <th className="px-3 py-2">Owner</th>
+                  <th aria-label="Scheduled" className="px-3 py-2">
+                    <span className="flex items-center gap-1.5">
+                      Scheduled
+                      <About
+                        lead="About this"
+                        text="Editing a search updates your own schedules of it at once (their next run notes the change). Other people's schedules of it pause until they review and resume."
+                      />
+                    </span>
+                  </th>
                   <th className="px-3 py-2" aria-label="Actions" />
                 </tr>
               </thead>
@@ -166,8 +181,8 @@ export function SavedSearchesPage({ me }: SavedSearchesPageProps) {
                         ) : null}
                         {s.verified ? (
                           <span
-                            title="An administrator verified this search; Ask uses it as an example"
-                            className="mt-1 inline-block rounded-badge bg-local-bg px-2 py-px text-xs text-local-text"
+                            title="An administrator verified this search; Ask uses it as an example. Editing it clears the mark."
+                            className="mt-1 inline-block rounded-badge bg-local-bg px-2 py-px text-xs text-local-tx"
                           >
                             Verified
                           </span>
@@ -178,7 +193,7 @@ export function SavedSearchesPage({ me }: SavedSearchesPageProps) {
                           {s.tags.map((t) => (
                             <span
                               key={t}
-                              className="rounded-badge bg-sev-info-bg px-2 py-px text-xs text-sev-info-text"
+                              className="rounded-badge bg-info-bg px-2 py-px text-xs text-info-tx"
                             >
                               {t}
                             </span>
@@ -189,13 +204,19 @@ export function SavedSearchesPage({ me }: SavedSearchesPageProps) {
                       <td className="px-3 py-2.5 text-text-secondary">
                         {mine ? "You" : "Someone else"}
                       </td>
+                      <td className="px-3 py-2.5">
+                        <ScheduledCell
+                          schedules={schedules.isSuccess ? (scheduledBy.get(s.id) ?? []) : null}
+                          failed={schedules.isError}
+                        />
+                      </td>
                       <td className="whitespace-nowrap px-3 py-2.5 text-right">
                         {confirming === s.id ? (
                           <span className="flex items-center justify-end gap-2">
                             <button
                               type="button"
                               onClick={() => remove.mutate(s.id)}
-                              className="rounded border border-danger px-2 py-0.5 text-danger hover:bg-sev-critical-bg"
+                              className="rounded border border-danger px-2 py-0.5 text-danger hover:bg-surface-head"
                             >
                               Delete
                             </button>
@@ -294,13 +315,43 @@ export function SavedSearchesPage({ me }: SavedSearchesPageProps) {
           )}
         </section>
         <p className="text-sm text-text-muted">
-          Saved searches always run with your own source access. A shared search never shows you
-          more than you could search yourself. Verified searches are examples Ask learns from;
-          editing one clears the mark. Editing a search updates your own schedules of it at once
-          (their next run notes the change); other people's schedules of it pause until they review
-          and resume.
+          Saved searches run with your own source access: a shared search never shows you more than
+          you could search yourself.
         </p>
       </div>
     </div>
+  );
+}
+
+/** The schedules that run one saved search, each a link to it on Alerts > Schedules. */
+interface ScheduledCellProps {
+  /** null until the schedules have loaded: "No" is only said once that is known. */
+  schedules: Schedule[] | null;
+  failed: boolean;
+}
+
+function ScheduledCell({ schedules, failed }: ScheduledCellProps) {
+  if (failed) return <span className="text-text-secondary">Could not load</span>;
+  if (!schedules) return <span className="sr-only">Loading</span>;
+  if (schedules.length === 0) return <span className="text-text-muted">No</span>;
+  return (
+    <ul className="flex flex-col gap-0.5">
+      {schedules.map((sch) => (
+        <li key={sch.schedule_id}>
+          <a
+            href={`${pathFor("schedules")}#item=${sch.schedule_id}`}
+            onClick={(e) => {
+              if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+              e.preventDefault();
+              navigate("schedules", `item=${sch.schedule_id}`);
+            }}
+            className="text-accent-text hover:underline"
+          >
+            {cronLabel(sch.cron)}
+          </a>
+          {sch.paused ? <span className="text-text-secondary"> (paused)</span> : null}
+        </li>
+      ))}
+    </ul>
   );
 }

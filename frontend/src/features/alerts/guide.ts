@@ -96,7 +96,7 @@ export const GUIDE: Record<Rule, { why: string; steps: string[] }> = {
   service_review: {
     why: "An AI service is in use that nobody has reviewed yet.",
     steps: [
-      "Decide whether it is allowed: Approve or Not approved here or on AI usage.",
+      "Decide whether it is allowed. An administrator chooses Approve or Not approved under Evidence, changes, and history, or on AI usage.",
       "Close as Approved to approve it in one step (administrators).",
     ],
   },
@@ -204,42 +204,6 @@ export function bySeverityThenNewest(a: AlertItem, b: AlertItem): number {
   const s = (SEV_ORDER[a.severity ?? ""] ?? 2) - (SEV_ORDER[b.severity ?? ""] ?? 2);
   if (s) return s;
   return (b.last_seen ?? b.created_at).localeCompare(a.last_seen ?? a.created_at);
-}
-
-export interface Summary {
-  high: number;
-  medium: number;
-  other: number;
-  newToday: number;
-  oldest: AlertItem | null;
-  categories: Record<Category, number>;
-}
-
-/** The strip over the list: open alerts by severity, new today (the viewer's day), the
- * oldest still open, and how many per category. */
-/** The strip's figures. `counts` are the server's by stored severity (the same field each
- * badge reads); without them they are counted from the items' own field. */
-export function summarize(
-  items: AlertItem[],
-  now: Date = new Date(),
-  counts?: { high: number; medium: number; other: number },
-): Summary {
-  const open = items.filter((i) => i.state === "open");
-  const today = now.toDateString();
-  const categories: Record<Category, number> = { detection: 0, search: 0, ai: 0, gap: 0 };
-  for (const i of open) categories[categoryOf(i)] += 1;
-  const oldest = open.reduce<AlertItem | null>(
-    (o, i) => (o === null || i.created_at < o.created_at ? i : o),
-    null,
-  );
-  return {
-    high: counts?.high ?? open.filter((i) => i.severity === "high").length,
-    medium: counts?.medium ?? open.filter((i) => i.severity === "medium").length,
-    other: counts?.other ?? open.filter((i) => !i.severity).length,
-    newToday: open.filter((i) => new Date(i.created_at).toDateString() === today).length,
-    oldest,
-    categories,
-  };
 }
 
 const lit = (v: string) => `'${v.replace(/'/g, "''")}'`;

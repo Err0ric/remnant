@@ -36,7 +36,7 @@ export function InstallName({ canEdit }: { canEdit: boolean }) {
             maxLength={40}
             placeholder="For example: Example SOC"
             onChange={(e) => setDraft(e.target.value)}
-            className="h-8 w-64 rounded border border-border-strong bg-surface px-2"
+            className="h-8 w-64 rounded border border-border-control bg-surface px-2"
           />
           <button
             type="submit"

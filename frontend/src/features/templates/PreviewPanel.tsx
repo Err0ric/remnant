@@ -69,11 +69,11 @@ export function PreviewPanel({ preview }: PreviewPanelProps) {
               <div className="max-h-[70vh] overflow-auto rounded-card border border-border">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="sticky top-0 border-b border-border bg-surface-head text-left text-text-secondary">
-                      <th className="px-2 py-1.5 font-semibold">Line</th>
-                      <th className="px-2 py-1.5 font-semibold">Status</th>
-                      <th className="px-2 py-1.5 font-semibold">Class</th>
-                      <th className="px-2 py-1.5 font-semibold">Fields</th>
+                    <tr className="sticky top-0 border-b border-border bg-surface text-left text-text-secondary">
+                      <th className="px-2 py-1.5">Line</th>
+                      <th className="px-2 py-1.5">Status</th>
+                      <th className="px-2 py-1.5">Class</th>
+                      <th className="px-2 py-1.5">Fields</th>
                     </tr>
                   </thead>
                   <tbody>

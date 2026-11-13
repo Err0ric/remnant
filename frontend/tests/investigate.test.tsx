@@ -13,7 +13,7 @@ async function openInvestigate(path = "/investigations") {
   const { App } = await import("@/app/App");
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(<App initialTheme="dark" queryClient={client} />);
-  await screen.findByRole("heading", { level: 1, name: "Investigate" });
+  await screen.findByRole("heading", { level: 1, name: "People & devices" });
   return spy;
 }
 
@@ -119,7 +119,13 @@ describe("Investigations (ADR-0016)", () => {
     const table = await screen.findByRole("table", { name: "User" });
     const heads = within(table)
       .getAllByRole("columnheader")
-      .map((h) => h.textContent);
+      .map((h) => h.getAttribute("aria-label") ?? h.textContent);
+    // How the score adds up is on its column (it was a paragraph under the table); what
+    // is counted, by access, stays on the page.
+    const rule = within(table).getByRole("img", { name: /^How this is counted: 10 per critical/ });
+    expect(rule).toHaveAttribute("title", expect.stringContaining("Only sources you may read"));
+    expect(screen.getByText("Only sources you may read are counted.")).toBeVisible();
+    expect(screen.queryByText(/^Everyone seen in this range/)).toBeNull();
     expect(heads).toEqual([
       "User",
       "Score",
@@ -201,10 +207,12 @@ describe("Investigations (ADR-0016)", () => {
     const detail = screen.getByRole("region", { name: "Selected card" });
     expect(within(detail).getByText("Authentication")).toBeVisible();
     await userEvent.click(within(detail).getByRole("button", { name: "Open in Logs" }));
-    await screen.findByRole("heading", { level: 1, name: "Investigate" });
+    await screen.findByRole("heading", { level: 1, name: "Logs" });
     expect(window.location.pathname).toBe("/investigate/logs");
     // Search opens over the same range the investigation used (Last 7 days by default).
-    expect(screen.getByLabelText("Time range")).toHaveValue("7d");
+    expect(
+      within(screen.getByRole("group", { name: "Time" })).getByRole("button", { name: "7 days" }),
+    ).toHaveAttribute("aria-pressed", "true");
   });
 
   it("shows the AI flow with Not approved badges and follows a person", async () => {
@@ -291,6 +299,8 @@ describe("Person timeline (ADR-0038 section 9)", () => {
     expect(within(signins).queryByText(/2026-10-30/)).toBeNull();
     await userEvent.click(within(tabs).getByRole("tab", { name: "Hosts and devices" }));
     const hosts = await screen.findByRole("region", { name: "Hosts and devices" });
+    // The panels count whole days back from now and say so (owner, 2026-11-13).
+    expect(within(hosts).getAllByText(/^Last 7 days/).length).toBeGreaterThanOrEqual(2);
     const table = within(hosts).getByRole("table", { name: "Hosts" });
     expect(within(table).getByRole("link", { name: "ws-0042" })).toBeVisible();
     expect(within(hosts).getByRole("table", { name: "Source addresses" })).toHaveTextContent("3");
@@ -313,6 +323,7 @@ describe("A person's AI activity (D189)", () => {
     const tab = await screen.findByRole("tab", { name: "AI use", selected: true });
     expect(tab).toBeVisible();
     const page = await screen.findByRole("region", { name: "AI activity" });
+    expect(within(page).getAllByText(/^Last 7 days/).length).toBeGreaterThanOrEqual(2);
     const flags = within(page).getByRole("region", { name: "Flags" });
     expect(flags).toHaveTextContent("Writes outside the session's working folder 1: /etc/hosts");
     expect(flags).toHaveTextContent("Personal Claude account");
@@ -364,7 +375,7 @@ describe("A person's AI activity without View people in AI usage (D242)", () => 
     const { App } = await import("@/app/App");
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<App initialTheme="dark" queryClient={client} />);
-    await screen.findByRole("heading", { level: 1, name: "Investigate" });
+    await screen.findByRole("heading", { level: 1, name: "People & devices" });
     return spy;
   }
 
@@ -391,5 +402,75 @@ describe("A person's AI activity without View people in AI usage (D242)", () => 
     expect(await screen.findByText(NEEDS)).toBeVisible();
     expect(screen.queryByRole("alert")).toBeNull();
     expect(spy.mock.calls.some(([u]) => String(u).includes("/activity?"))).toBe(true);
+  });
+});
+
+describe("People & devices: Open in Logs with a Custom range", () => {
+  it("hands the Custom range on, so Logs reads the same window", async () => {
+    await openInvestigate("/investigate/people#user=root");
+    const time = screen.getByRole("group", { name: "Time" });
+    await userEvent.click(within(time).getByRole("button", { name: "Custom" }));
+    // Custom opens on the window that was showing: 7 days back, no end.
+    const from = screen.getByLabelText("From") as HTMLInputElement;
+    expect(Date.now() - new Date(from.value).getTime()).toBeGreaterThan(6.9 * 86_400_000);
+    expect(screen.getByLabelText("To")).toHaveValue("");
+    const { fireEvent } = await import("@testing-library/react");
+    fireEvent.change(from, { target: { value: "2026-11-01T08:00" } });
+    fireEvent.change(screen.getByLabelText("To"), { target: { value: "2026-11-02T08:00" } });
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Activities: Failed password/ }),
+    );
+    const detail = screen.getByRole("region", { name: "Selected card" });
+    await userEvent.click(within(detail).getByRole("button", { name: "Open in Logs" }));
+    await screen.findByRole("heading", { level: 1, name: "Logs" });
+    expect(
+      within(screen.getByRole("group", { name: "Time" })).getByRole("button", { name: "Custom" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("From")).toHaveValue("2026-11-01T08:00");
+    expect(screen.getByLabelText("To")).toHaveValue("2026-11-02T08:00");
+  });
+});
+
+describe("People & devices: the time filter (ADR-0052 section 3.7; owner, 2026-11-13)", () => {
+  const asked = (spy: ReturnType<typeof mockApi>, path: string) =>
+    spy.mock.calls.map(([u]) => new URL(String(u), "http://x")).filter((u) => u.pathname === path);
+
+  it("has the five choices, opens on 7 days, and asks for Custom with a start and an end", async () => {
+    const spy = await openInvestigate();
+    const time = screen.getByRole("group", { name: "Time" });
+    expect(
+      within(time)
+        .getAllByRole("button")
+        .map((b) => b.textContent),
+    ).toEqual(["1 hour", "24 hours", "7 days", "30 days", "Custom"]);
+    expect(within(time).getByRole("button", { name: "7 days" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.queryByText(/All time/)).toBeNull();
+    await vi.waitFor(() => expect(asked(spy, "/api/entities/risk").length).toBeGreaterThan(0));
+    expect(asked(spy, "/api/entities/risk").at(-1)?.searchParams.get("end")).toBeNull();
+
+    await userEvent.click(within(time).getByRole("button", { name: "Custom" }));
+    const { fireEvent } = await import("@testing-library/react");
+    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-11-01T08:00" } });
+    fireEvent.change(screen.getByLabelText("To"), { target: { value: "2026-11-02T08:00" } });
+    await vi.waitFor(() =>
+      expect(asked(spy, "/api/entities/risk").at(-1)?.searchParams.get("end")).toBe(
+        new Date("2026-11-02T08:00:59.999").toISOString(),
+      ),
+    );
+    expect(asked(spy, "/api/entities/risk").at(-1)?.searchParams.get("start")).toBe(
+      new Date("2026-11-01T08:00").toISOString(),
+    );
+    // The inventory lines of the address list read the same window.
+    await userEvent.click(await screen.findByRole("tab", { name: /^IP addresses/ }));
+    await vi.waitFor(() =>
+      expect(asked(spy, "/api/inventory/matches").at(-1)?.searchParams.get("end")).toBe(
+        new Date("2026-11-02T08:00:59.999").toISOString(),
+      ),
+    );
+    // The fragment names what is open on this page; the time is not written into it.
+    expect(window.location.hash).toBe("");
   });
 });

@@ -70,7 +70,7 @@ export function InviteForm({ onInvited, onCancel, firstAccount = false }: Invite
             id="invite-role"
             value={role}
             onChange={(e) => setRole(e.target.value as Role)}
-            className="h-9 rounded border border-border-strong bg-inset px-2 text-sm text-text"
+            className="h-9 rounded border border-border-control bg-inset px-2 text-sm text-text"
           >
             {(Object.keys(ROLE_LABEL) as Role[]).map((r) => (
               <option key={r} value={r}>

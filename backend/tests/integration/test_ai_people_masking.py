@@ -835,11 +835,15 @@ def test_people_and_devices_keeps_ai_watch_flags_from_people_without_the_permiss
         start, end = (NOW - timedelta(days=1)).isoformat(), (NOW + timedelta(hours=2)).isoformat()
         hosts = ai_lab[who].get("/api/entities/risk", params={"start": start, "end": end}).json()
         assert [h["alerts"] for h in hosts["hosts"] if h["value"] == "ws-0042"] == [1]
-    # G3: the administrator's answers named people with AI usage; ana's named no one.
+    # One audit row per People & devices load (owner, 2026-11-12). G3: the administrator's
+    # answers named people with AI usage, so each is an `ai.view_people` row; ana's named
+    # no one, so each is the page's `investigate.risk` row, which says so.
     shown = [d for d in _audit(ai_lab, "ai.view_people") if d["surface"] == "investigate.risk"]
     assert len(shown) == 2 and shown[0]["sources_in_scope"]  # the two administrator reads
-    unnamed = [d for d in _audit(ai_lab, "ai.view") if d["surface"] == "investigate.risk"]
-    assert len(unnamed) == 2  # ana's two reads
+    assert not [d for d in _audit(ai_lab, "ai.view") if d["surface"] == "investigate.risk"]
+    page = _audit(ai_lab, "investigate.risk")
+    assert len(page) == 2  # ana's two reads; none besides the administrator's rows above
+    assert all(d["ai_view"] == "no_names" and d["start"] and d["end"] for d in page)
     body = ai_lab["ana"].get("/api/entities/risk").json()
     assert body["ai_people_hidden"] is True
     assert ai_lab["admin"].get("/api/entities/risk").json()["ai_people_hidden"] is False
@@ -874,3 +878,4 @@ def test_an_ai_watch_alert_counted_on_a_person_is_a_named_answer(ai_lab: dict[st
     named = [d for d in _audit(ai_lab, "ai.view_people") if d["surface"] == "investigate.risk"]
     counted = any(u["alerts"] for u in res.json()["users"])
     assert counted and len(named) == 1
+    assert not _audit(ai_lab, "investigate.risk")  # that row is the load's only one

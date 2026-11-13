@@ -31,7 +31,8 @@ describe("Health: the former Overview (F55, ADR-0034 row 11)", () => {
     expect(await screen.findByRole("heading", { name: "Health", level: 1 })).toBeVisible();
     expect(window.location.pathname + window.location.hash).toBe("/health");
     const events = await screen.findByRole("button", { name: /^Events, last 24 hours/ });
-    expect(events).toHaveTextContent("70");
+    // The tile is on screen before its number is: wait for it (failed once on a slow runner).
+    await vi.waitFor(() => expect(events).toHaveTextContent("70"));
     expect(events).toHaveTextContent("+25% vs a usual day");
     const sources = screen.getByRole("button", { name: /^Sources/ });
     expect(sources).toHaveTextContent("1 gap in 24 hours");
@@ -117,7 +118,8 @@ describe("Health: the former Overview (F55, ADR-0034 row 11)", () => {
   it("goes home from the product mark: the Dashboard when there are panels", async () => {
     await renderAt("/schedules");
     await userEvent.click(await screen.findByRole("link", { name: "Codename home" }));
-    expect(await screen.findByRole("heading", { name: "My dashboard", level: 1 })).toBeVisible();
+    expect(await screen.findByText(/^My dashboard, \d+ saved-search/)).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Dashboard", level: 1 })).toBeVisible();
     expect(window.location.pathname).toBe("/dashboard");
   });
 
@@ -170,44 +172,51 @@ function noSchedules(spy: ReturnType<typeof mockApi>) {
 }
 
 describe("Landing page (ADR-0031)", () => {
-  it("opens the Dashboard first when there is a panel, with source problems up top and sources below", async () => {
+  it("opens the Dashboard first when there is a panel, with blind states said once, in Needs you", async () => {
     await renderAt("/");
-    expect(await screen.findByRole("heading", { name: "My dashboard", level: 1 })).toBeVisible();
+    expect(await screen.findByText(/^My dashboard, \d+ saved-search/)).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Dashboard", level: 1 })).toBeVisible();
     expect(window.location.pathname).toBe("/dashboard");
-    const banner = await screen.findByRole("region", { name: "Needs you" });
-    expect(await within(banner).findByRole("link", { name: /has errors/ })).toBeVisible();
+    const list = await screen.findByRole("region", { name: "Needs you" });
+    expect(await within(list).findByRole("link", { name: /has errors/ })).toBeVisible();
     // Alerts in sources the viewer cannot read: the note, never how many (owner, 2026-11-12).
-    expect(banner).toHaveTextContent(
+    const note = within(list).getByRole("note");
+    expect(note).toHaveTextContent(
       "Some alerts are in sources you can't read. Ask an admin for access.",
     );
-    expect(banner).not.toHaveTextContent(/restricted/i);
+    expect(note).not.toHaveTextContent(/\d/);
+    expect(list).not.toHaveTextContent(/restricted/i);
     // win_dc has errors and linux_sshd had a gap: neither is healthy, as Health counts
-    // them (handoff item 4: one summary from the server for both pages).
-    // Problems show once, in the banner at the top; the bottom Sources line steps aside.
-    const top = screen.getByRole("region", { name: "Health needs attention" });
-    expect(top).toHaveTextContent(
-      "Sources 0 of 2 healthy, 1 gap in 24 hours, longest wait 4 min (linux_sshd)",
-    );
+    // them (handoff item 4: one summary from the server for both pages). The Dashboard says
+    // so on its Sources healthy tile; there is no Health banner and no Sources line.
+    const tile = await screen.findByRole("link", {
+      name: /^Sources healthy: 0 of 2\. Open Health/,
+    });
+    expect(tile).toHaveClass("text-warn");
+    expect(screen.queryByRole("region", { name: "Health needs attention" })).toBeNull();
     expect(screen.queryByRole("link", { name: /^Sources:/ })).toBeNull();
-    await userEvent.click(within(top).getByRole("link", { name: "Open Health" }));
+    await userEvent.click(tile);
     expect(await screen.findByRole("heading", { name: "Health", level: 1 })).toBeVisible();
   });
 
   it("opens the Dashboard, never Health, even with no panels and health problems", async () => {
-    // win_dc has errors (owner, 2026-11-12: Health problems are a banner on the Dashboard).
+    // win_dc has errors: a blind row in Needs you (ADR-0052 3.9, replacing the D243 banner).
     await renderAt("/", { mode: "login", signedIn: true, role: "analyst" }, noSchedules);
     expect(await screen.findByRole("heading", { name: "Dashboard", level: 1 })).toBeVisible();
     expect(window.location.pathname).toBe("/dashboard");
-    const health = await screen.findByRole("region", { name: "Health needs attention" });
-    expect(health).toHaveTextContent("Sources 0 of 2 healthy, 1 gap in 24 hours");
-    const open = within(health).getByRole("link", { name: "Open Health" });
-    expect(open).toHaveAttribute("href", "/health#sources");
-    await userEvent.click(open);
+    const list = await screen.findByRole("region", { name: "Needs you" });
+    const blind = (await within(list).findByRole("link", { name: /win_dc has errors/ })).closest(
+      "tr",
+    ) as HTMLElement;
+    expect(blind.dataset.needsYou).toBe("blind");
+    const tile = await screen.findByRole("link", { name: /^Sources healthy: 0 of 2/ });
+    expect(tile).toHaveAttribute("href", "/health#sources");
+    await userEvent.click(tile);
     expect(await screen.findByRole("heading", { name: "Health", level: 1 })).toBeVisible();
     expect(window.location.pathname).toBe("/health");
   });
 
-  it("shows no Health banner when every source is healthy", async () => {
+  it("shows a calm Sources healthy tile and no Health banner when every source is healthy", async () => {
     await renderAt("/", undefined, (spy) => {
       const real = spy.getMockImplementation() as typeof fetch;
       spy.mockImplementation(async (url, init) => {
@@ -222,8 +231,10 @@ describe("Landing page (ADR-0031)", () => {
         });
       });
     });
-    expect(await screen.findByRole("heading", { name: "My dashboard", level: 1 })).toBeVisible();
-    expect(await screen.findByRole("link", { name: /^Sources: 2 of 2 healthy/ })).toBeVisible();
+    expect(await screen.findByText(/^My dashboard, \d+ saved-search/)).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Dashboard", level: 1 })).toBeVisible();
+    const tile = await screen.findByRole("link", { name: /^Sources healthy: 2 of 2/ });
+    expect(tile).not.toHaveClass("text-warn");
     expect(screen.queryByRole("region", { name: "Health needs attention" })).toBeNull();
   });
 

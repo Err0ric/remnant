@@ -20,13 +20,10 @@ async function renderAt(path: string, role: MockAuth["role"] = "admin") {
 afterEach(() => vi.restoreAllMocks());
 
 describe("Scheduled backups (handoff item 8)", () => {
-  it("Health shows the last backup plainly when it failed, in local time with UTC on hover", async () => {
-    await renderAt("/health");
-    await userEvent.click(
-      within(await screen.findByRole("navigation", { name: "Health tabs" })).getByRole("link", {
-        name: /Backups/,
-      }),
-    );
+  it("Settings > System shows the last backup plainly when it failed, in local time with UTC on hover", async () => {
+    // Backups moved from Health to Settings > System (ADR-0052 section 3.3); it is the
+    // first thing the page shows.
+    await renderAt("/system");
     const table = await screen.findByRole("table", { name: "Backups" });
     expect(within(table).getByText("Scheduled backup")).toBeVisible();
     expect(

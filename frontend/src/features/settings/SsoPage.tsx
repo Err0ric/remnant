@@ -1,10 +1,11 @@
+import { Skeleton } from "@/components/Skeleton";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { navigate } from "@/lib/route";
 import { PageHeader } from "@/components/shell/PageHeader";
-import { LoadFailed } from "@/components/LoadFailed";
+import { InlineError } from "@/components/InlineError";
 import { since } from "@/features/overview/time";
 import { SectionTitle } from "@/components/SectionTitle";
 
@@ -41,12 +42,12 @@ export function SsoPage() {
   const d = q.data;
   return (
     <div className="flex min-w-0 flex-1 flex-col">
-      <PageHeader crumbs={["Home", "Settings", "Single sign-on"]} title="Single sign-on" />
+      <PageHeader title="Single sign-on" />
       <div className="flex max-w-4xl flex-col gap-4 p-5 text-sm">
         {q.isLoading ? (
-          <div aria-busy="true" className="h-48 animate-pulse rounded-card bg-surface" />
+          <Skeleton label="single sign-on" block="h-48" />
         ) : q.isError ? (
-          <LoadFailed
+          <InlineError
             what="single sign-on"
             error={q.error}
             onRetry={() => void q.refetch()}

@@ -9,6 +9,7 @@ still count.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -62,6 +63,12 @@ def condition(s: SourceInput) -> Condition:
     if s.gaps and not s.quiet_expected:
         return "gap"
     return "healthy"
+
+
+def needing_attention(conditions: Iterable[Condition]) -> int:
+    """How many sources have something wrong: every condition but healthy and paused. A
+    source someone paused on purpose is not a problem to flag (the rail's Health dot)."""
+    return sum(1 for c in conditions if c not in ("healthy", "paused"))
 
 
 def assess(sources: list[SourceInput]) -> tuple[dict[str, Condition], SourceSummary]:

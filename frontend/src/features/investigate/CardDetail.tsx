@@ -1,3 +1,6 @@
+import { SeverityMark } from "@/components/SeverityMark";
+import { badgeKind } from "@/features/investigate/LaneGraph";
+import { cn } from "@/lib/cn";
 import type { GraphCard } from "@/lib/api";
 
 interface CardDetailProps {
@@ -54,11 +57,21 @@ export function CardDetail({
       {card.badges.length ? (
         <ul className="flex flex-wrap gap-1">
           {card.badges.map((b) => (
-            <li
-              key={b}
-              className="rounded-badge bg-sev-critical-bg px-2 py-px text-xs text-sev-critical-text"
-            >
-              {b}
+            <li key={b} data-badge={badgeKind(b)} className="text-xs">
+              {badgeKind(b) === "severity" ? (
+                <SeverityMark tone="high" label={b} />
+              ) : (
+                <span
+                  className={cn(
+                    "rounded-badge border px-2 py-px",
+                    badgeKind(b) === "state"
+                      ? "border-warn text-warn"
+                      : "border-transparent bg-info-bg text-info-tx",
+                  )}
+                >
+                  {b}
+                </span>
+              )}
             </li>
           ))}
         </ul>

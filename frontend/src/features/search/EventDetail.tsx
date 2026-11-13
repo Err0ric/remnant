@@ -116,13 +116,13 @@ export function EventDetail({ columns, row, selection, geo, intel }: EventDetail
               : "Row"}
         </span>
         {record.source_id ? (
-          <span className="rounded-badge bg-sev-info-bg px-2 py-px text-xs font-normal text-text-secondary">
+          <span className="rounded-badge bg-info-bg px-2 py-px text-xs font-normal text-text-secondary">
             {String(record.source_id)}
           </span>
         ) : null}
         {record.classification ? (
           <span
-            className={`rounded-badge px-2 py-px text-xs font-normal ${local ? "bg-local-bg text-local-text" : "bg-cloud-bg text-cloud-text"}`}
+            className={`rounded-badge px-2 py-px text-xs font-normal ${local ? "bg-local-bg text-local-tx" : "bg-cloud-bg text-cloud-tx"}`}
           >
             {local ? "Local only" : "Cloud allowed"}
           </span>

@@ -65,3 +65,41 @@ def test_click_through_keeps_each_rules_sources(monkeypatch: pytest.MonkeyPatch)
     assert by["SSH failed password"] and "['lin_auth']" in by["SSH failed password"]
     assert by["SSH unknown user"] and "['bastion_auth', 'lin_auth']" in by["SSH unknown user"]
     assert d.hosts.drill and "list_contains(['lin_auth'], source_id)" in d.hosts.drill
+
+
+def test_involved_rows_say_how_many_rules_and_the_last_match(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ADR-0052 (DESIGN.md 6.3, Detections): the table of hosts and people involved shows
+    matches, the rules that matched them, and when the last match was."""
+    later = AT + timedelta(minutes=30)
+    matches = [
+        ("SSH failed password", "medium", "e1", AT, "lin_auth", "sha-a"),
+        ("SSH failed password", "medium", "e2", later, "lin_auth", "sha-a"),
+        ("SSH unknown user", "low", "e1", AT, "lin_auth", "sha-b"),
+        ("SSH unknown user", "low", "e3", AT, "bastion_auth", "sha-b"),
+    ]
+    monkeypatch.setattr(dashboard, "_matches", lambda *a: (matches, 2))
+    monkeypatch.setattr(dashboard, "rule_conditions", lambda meta, shas: CONDS)
+
+    def run(sql: str, sources: list[str], **kw: Any) -> list[list[Any]]:
+        # event id, who, host
+        return [["e1", "alice", "web-01"], ["e2", "alice", "web-01"], ["e3", None, "bastion"]]
+
+    buckets = [START + timedelta(days=i) for i in range(7)]
+    d = dashboard._detections(
+        run,  # type: ignore[arg-type]  # a fake runner
+        None,  # type: ignore[arg-type]  # rule_conditions is replaced
+        None, ["lin_auth", "bastion_auth"], START, BEFORE, buckets, "7d", {},
+    )  # fmt: skip
+    assert d is not None
+    rows = {(r.kind, r.label): r for r in d.involved}
+    web = rows[("host", "web-01")]
+    # e1 matched two rules and e2 one: three matches from two rules, the last at `later`.
+    assert (web.count, web.rules, web.last) == (3, 2, later.isoformat())
+    alice = rows[("user", "alice")]
+    assert (alice.count, alice.rules, alice.last) == (3, 2, later.isoformat())
+    bastion = rows[("host", "bastion")]
+    assert (bastion.count, bastion.rules, bastion.last) == (1, 1, AT.isoformat())
+    # Each rule's row names the rule, so its name can open Alerts > Rules on it.
+    assert {s.label for s in d.by_rule} == {"SSH failed password", "SSH unknown user"}

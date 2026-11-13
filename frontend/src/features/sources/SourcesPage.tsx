@@ -1,3 +1,4 @@
+import { EmptyState } from "@/components/EmptyState";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AUTO_PARSER } from "@/lib/parsers";
 import { ParserEditor } from "./ParserEditor";
@@ -5,7 +6,7 @@ import { ParserMix } from "./ParserMix";
 import { Fragment, useEffect, useState } from "react";
 import { useSection } from "@/lib/route";
 import { GapNote } from "@/features/health/GapNote";
-import { Command, PageHeader } from "@/components/shell/PageHeader";
+import { PageHeader } from "@/components/shell/PageHeader";
 import { ApiError, api, type Source, type SourceInput } from "@/lib/api";
 import { AddSourceForm } from "./AddSourceForm";
 import { DiscoverPanel } from "./DiscoverPanel";
@@ -127,35 +128,35 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       <PageHeader
-        crumbs={["Home", "Settings", "Sources"]}
         title="Sources"
-        meta={`${list.length} ${list.length === 1 ? "source" : "sources"}`}
-        commands={
-          <>
-            {canManage ? (
-              <>
-                <Command
-                  label="Add source"
-                  primary
-                  onClick={() => {
-                    setSuggestion((s) => ({ key: s.key + 1, values: {} }));
-                    setAdding(true);
-                  }}
-                  disabled={adding}
-                />
-                <Command
-                  label="Discover"
-                  onClick={() => setDiscovering(true)}
-                  disabled={discovering}
-                />
-              </>
-            ) : null}
-            <Command
-              label="Refresh counts"
-              onClick={() => void counts.refetch()}
-              disabled={counts.isFetching}
-            />
-          </>
+        count={`${list.length} ${list.length === 1 ? "source" : "sources"}`}
+        secondary={[
+          ...(canManage
+            ? [
+                {
+                  label: "Discover",
+                  onClick: () => setDiscovering(true),
+                  disabled: discovering,
+                },
+              ]
+            : []),
+          {
+            label: "Refresh counts",
+            onClick: () => void counts.refetch(),
+            disabled: counts.isFetching,
+          },
+        ]}
+        primary={
+          canManage
+            ? {
+                label: "Add source",
+                onClick: () => {
+                  setSuggestion((s) => ({ key: s.key + 1, values: {} }));
+                  setAdding(true);
+                },
+                disabled: adding,
+              }
+            : undefined
         }
       />
       <div className="flex flex-col gap-3 px-5 py-3">
@@ -199,26 +200,25 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
             </span>
           </div>
           {list.length === 0 && !sources.isPending ? (
-            <div className="px-3 py-8 text-center">
-              <p className="font-semibold">{canManage ? "No sources yet" : "No sources to show"}</p>
-              <p className="mt-1 text-sm text-text-secondary">
-                {canManage
+            <EmptyState
+              kind={canManage ? "not-set-up" : "restricted"}
+              title={canManage ? "No sources yet" : "No sources to show"}
+              detail={
+                canManage
                   ? "Add a file or folder your log collector writes to. New lines are read as they arrive."
-                  : "None are shared with you yet. An administrator adds sources and shares them through source groups."}
-              </p>
-            </div>
+                  : "None are shared with you yet. An administrator adds sources and shares them through source groups."
+              }
+            />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border text-left text-sm text-text-secondary">
-                    <th className="min-w-[8rem] px-3 py-2 font-semibold xl:min-w-[10rem]">
-                      Source
-                    </th>
-                    <th className="min-w-[6rem] px-3 py-2 font-semibold xl:min-w-[8rem]">Path</th>
-                    <th className="px-3 py-2 font-semibold">Status</th>
-                    <th className="px-3 py-2 text-right font-semibold">Events</th>
-                    <th className="px-3 py-2 font-semibold">Data and retention</th>
+                    <th className="min-w-[8rem] px-3 py-2">Source</th>
+                    <th className="min-w-[6rem] px-3 py-2">Path</th>
+                    <th className="px-3 py-2">Status</th>
+                    <th className="px-3 py-2 text-right">Events</th>
+                    <th className="px-3 py-2">Data and retention</th>
                     {canManage ? <th className="px-3 py-2" aria-label="Actions" /> : null}
                   </tr>
                 </thead>
@@ -329,7 +329,7 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
                             {c ? c.events.toLocaleString() : "0"}
                           </div>
                           <div
-                            className="whitespace-nowrap text-sm text-text-muted"
+                            className="text-sm text-text-muted"
                             title={typeof c?.last === "string" ? formatTime(c.last) : undefined}
                           >
                             {typeof c?.last === "string"
@@ -361,7 +361,7 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
                                 <button
                                   type="button"
                                   onClick={() => remove.mutate(s.source_id)}
-                                  className="rounded border border-danger px-2 py-0.5 text-danger hover:bg-sev-critical-bg"
+                                  className="rounded border border-danger px-2 py-0.5 text-danger hover:bg-surface-head"
                                 >
                                   Remove
                                 </button>

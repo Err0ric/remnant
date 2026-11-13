@@ -1,10 +1,17 @@
-import { DashboardAttention } from "./NeedsAttention";
+import { EmptyState } from "@/components/EmptyState";
+import { PageHeader } from "@/components/shell/PageHeader";
+import { KpiStrip } from "./KpiStrip";
+import { NeedsYou } from "./NeedsYou";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   ApiError,
   api,
+  DASHBOARD_PARTS,
+  endPageLoad,
+  setPageLoadWindow,
+  startPageLoad,
   type DashboardLayout,
   type Dashboard,
   type DashboardPanel,
@@ -21,7 +28,6 @@ import { Sections } from "./Sections";
 import { WINDOWS, daysOf, rangeText as windowRange, readWindow, saveWindow } from "./pageWindow";
 import type { PageWindow } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { AttentionBanner, HealthBanner, SourcesLine } from "./Attention";
 import { layoutOf, placed, sectionAdded, sectionRemoved, sectionStepped, stepped } from "./layout";
 import { SchedulePanel } from "./SchedulePanel";
 
@@ -49,6 +55,15 @@ function span(p: DashboardPanel, cards: number, editing: boolean): string {
  * then the panels by section. The owner or an admin edits the layout. */
 export function DashboardPage({ me = null }: DashboardPageProps) {
   const client = useQueryClient();
+  // One visit for every request while the page is open, declaring every part the page
+  // requests (its sections, the Overview, and AI Watch), so the server writes the visit's
+  // audit row on the first request. Layout effects run before the parts' fetches start.
+  const visit = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    const id = startPageLoad([...DASHBOARD_PARTS, "overview", "ai_watch"]);
+    visit.current = id;
+    return () => endPageLoad(id);
+  }, []);
   const isAdmin = !me || me.role === "admin";
   const canCreate = !me || me.role !== "auditor";
   const boards = useQuery({ queryKey: ["dashboards"], queryFn: api.dashboards });
@@ -60,6 +75,9 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
   const [picked, setPicked] = useState<string | null>(currentDashboard);
   const [editing, setEditing] = useState(false);
   const [win, setWin] = useState<PageWindow>(readWindow);
+  useLayoutEffect(() => {
+    if (visit.current) setPageLoadWindow(visit.current, win);
+  }, [win]);
   // Back from a drill-through returns to where the reader was (ADR-0039 row 6): the page
   // grows as sections load, so try for up to two seconds.
   useEffect(() => {
@@ -165,10 +183,32 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
 
   return (
     <div className="flex min-w-0 flex-1 flex-col">
-      {/* Compact header (F62): title, picker, New dashboard, Edit layout, and when it was
-          updated, on one row; no band under the title. */}
+      {/* The title is the page's name; a board's own name is in the picker and the note at
+          the right of the row below. Dashboard has no primary action (ADR-0052 3.7). */}
+      <PageHeader
+        title="Dashboard"
+        secondary={[
+          ...(board?.can_edit
+            ? [
+                {
+                  label: editing ? "Done editing" : "Edit layout",
+                  onClick: () => setEditing((v) => !v),
+                  pressed: editing,
+                },
+              ]
+            : []),
+          ...(canCreate
+            ? [
+                {
+                  label: "New dashboard",
+                  onClick: () => create.mutate(),
+                  disabled: create.isPending,
+                },
+              ]
+            : []),
+        ]}
+      />
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-5 pt-3">
-        <h1 className="mr-2 text-lg font-semibold">{board?.name ?? "Dashboard"}</h1>
         {/* One time window for the page (ADR-0038 edit 10). */}
         <div
           role="group"
@@ -201,7 +241,7 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
             aria-label="Dashboard"
             value={board?.dashboard_id ?? ""}
             onChange={(e) => pick(e.target.value)}
-            className="h-8 rounded border border-border-strong bg-inset px-2 text-sm"
+            className="h-8 rounded border border-border-control bg-inset px-2 text-sm"
           >
             {list.map((d) => (
               <option key={d.dashboard_id} value={d.dashboard_id}>
@@ -210,26 +250,6 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
               </option>
             ))}
           </select>
-        ) : null}
-        {canCreate ? (
-          <button
-            type="button"
-            onClick={() => create.mutate()}
-            disabled={create.isPending}
-            className="h-8 rounded px-2 text-sm text-accent-text hover:bg-surface-head"
-          >
-            New dashboard
-          </button>
-        ) : null}
-        {board?.can_edit ? (
-          <button
-            type="button"
-            aria-pressed={editing}
-            onClick={() => setEditing((v) => !v)}
-            className={`h-8 rounded border px-2 text-sm ${editing ? "border-accent bg-accent-subtle" : "border-border hover:bg-surface-head"}`}
-          >
-            {editing ? "Done editing" : "Edit layout"}
-          </button>
         ) : null}
         {board ? (
           <span
@@ -240,6 +260,7 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
                 2026-11-02: "Last 24 hours" here read as the page's range); each panel says
                 its range. */}
             {[
+              board.name !== "Dashboard" ? board.name : null,
               `${board.panels.length} saved-search ${board.panels.length === 1 ? "panel" : "panels"}`,
               board.shared ? "shared" : null,
             ]
@@ -249,16 +270,13 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
         ) : null}
       </div>
       <div className="flex flex-col gap-3 px-5 py-3">
-        {/* Order (F62): Health problems (only when there are any), what needs me (only
-            when something does), AI Watch, my panels, then sources in one line. */}
-        <ErrorBoundary label="Health">
-          <HealthBanner />
+        {/* Order (DESIGN.md 6.3): what needs you (blind states pinned first; hidden when
+            nothing does), the key numbers for the window, the sections, then the panels. */}
+        <ErrorBoundary label="Needs you">
+          <NeedsYou />
         </ErrorBoundary>
-        <ErrorBoundary label="Needs attention">
-          <DashboardAttention window={win} days={daysOf(win)} />
-        </ErrorBoundary>
-        <ErrorBoundary label="Alerts needing attention">
-          <AttentionBanner />
+        <ErrorBoundary label="Key numbers">
+          <KpiStrip window={win} days={daysOf(win)} />
         </ErrorBoundary>
         <ErrorBoundary label="AI Watch">
           <AiWatch days={daysOf(win)} isAdmin={isAdmin} />
@@ -281,20 +299,12 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
           />
         ) : null}
         {boards.isSuccess && (!board || board.panels.length === 0) ? (
-          <div className="rounded-card border border-border bg-surface px-3 py-8 text-center text-sm">
-            <p className="font-semibold">No panels yet</p>
-            <p className="text-text-secondary">
-              Each scheduled saved search or rule can be a panel here. Schedule one, or use Add to
-              dashboard on Logs.
-            </p>
-            <button
-              type="button"
-              className="mt-2 rounded px-2 py-1 text-accent-text hover:bg-surface-head"
-              onClick={() => navigate("schedules")}
-            >
-              Go to Schedules
-            </button>
-          </div>
+          <EmptyState
+            kind="not-set-up"
+            title="No panels yet."
+            detail="Each scheduled saved search or rule can be a panel here."
+            action={{ label: "Go to Schedules", onClick: () => navigate("schedules") }}
+          />
         ) : null}
         {board
           ? layout
@@ -389,7 +399,6 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
                 );
               })
           : null}
-        <SourcesLine />
       </div>
     </div>
   );
@@ -460,7 +469,7 @@ function BoardSettings({ board, schedules, onAddSection, onDeleted }: BoardSetti
               value={name}
               maxLength={80}
               onChange={(e) => setName(e.target.value)}
-              className="h-8 w-56 rounded border border-border-strong bg-inset px-2"
+              className="h-8 w-56 rounded border border-border-control bg-inset px-2"
             />
           </label>
           <button
@@ -486,7 +495,7 @@ function BoardSettings({ board, schedules, onAddSection, onDeleted }: BoardSetti
             aria-label="Schedule to add"
             value={adding}
             onChange={(e) => setAdding(e.target.value)}
-            className="h-8 min-w-56 rounded border border-border-strong bg-inset px-2"
+            className="h-8 min-w-56 rounded border border-border-control bg-inset px-2"
           >
             <option value="">
               {available.length ? "Pick a schedule" : "Every schedule you can see is here"}
@@ -522,7 +531,7 @@ function BoardSettings({ board, schedules, onAddSection, onDeleted }: BoardSetti
               maxLength={60}
               placeholder="For example Identity"
               onChange={(e) => setSection(e.target.value)}
-              className="h-8 w-48 rounded border border-border-strong bg-inset px-2"
+              className="h-8 w-48 rounded border border-border-control bg-inset px-2"
             />
           </label>
           <button
@@ -608,7 +617,7 @@ function SectionHeader(props: SectionHeaderProps) {
             maxLength={60}
             autoFocus
             onChange={(e) => setText(e.target.value)}
-            className="h-7 w-48 rounded border border-border-strong bg-inset px-2 text-sm"
+            className="h-7 w-48 rounded border border-border-control bg-inset px-2 text-sm"
           />
           <button type="submit" className="h-7 rounded border border-border px-2 text-sm">
             Save

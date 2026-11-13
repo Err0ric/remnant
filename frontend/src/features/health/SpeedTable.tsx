@@ -1,3 +1,4 @@
+import { About } from "@/components/About";
 import { useQuery } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
 
@@ -24,7 +25,7 @@ function Refreshes() {
         <span className="font-mono tabular-nums text-text-primary">{total}</span> in 24 hours
         {failed ? (
           <>
-            , <span className="font-mono tabular-nums text-sev-medium-text">{failed}</span> failed
+            , <span className="font-mono tabular-nums text-warn">{failed}</span> failed
           </>
         ) : null}
         . <span className="font-mono tabular-nums text-text-primary">{data.views}</span>{" "}
@@ -40,7 +41,7 @@ function Refreshes() {
               key={h.hour}
               title={label}
               aria-label={label}
-              className={`flex-1 ${h.failed ? "bg-sev-medium-text" : "bg-accent"}`}
+              className={`flex-1 ${h.failed ? "bg-warn" : "bg-accent"}`}
               style={{ height: n ? `${Math.max(8, (100 * n) / top)}%` : "1px" }}
             />
           );
@@ -63,8 +64,7 @@ export function SpeedTable() {
   return (
     <section aria-label="Speed" className="rounded-card border border-border bg-surface">
       <p className="border-b border-border px-3 py-2 text-sm text-text-secondary">
-        Pages that read data, over the last 24 hours or since the server started. Wait is time
-        queued for a query slot; DuckDB is time reading data.
+        Pages that read data, over the last 24 hours or since the server started.
       </p>
       <Refreshes />
       {q.isLoading ? (
@@ -76,19 +76,23 @@ export function SpeedTable() {
           <table className="w-full text-sm" aria-label="Page speed by route">
             <thead>
               <tr className="border-b border-border text-left text-text-secondary">
-                <th className="px-3 py-2 font-semibold">Route</th>
-                <th className="px-3 py-2 text-right font-semibold">Requests</th>
-                <th className="px-3 py-2 text-right font-semibold">p50</th>
-                <th className="px-3 py-2 text-right font-semibold">p95</th>
-                <th className="hidden px-3 py-2 text-right font-semibold md:table-cell">
-                  DuckDB p50
+                <th className="px-3 py-2">Route</th>
+                <th className="px-3 py-2 text-right">Requests</th>
+                <th className="px-3 py-2 text-right">p50</th>
+                <th className="px-3 py-2 text-right">p95</th>
+                <th aria-label="DuckDB p50" className="hidden px-3 py-2 text-right md:table-cell">
+                  <span className="flex items-center justify-end gap-1.5">
+                    DuckDB p50
+                    <About align="end" lead="About this" text="Time reading data." />
+                  </span>
                 </th>
-                <th className="hidden px-3 py-2 text-right font-semibold md:table-cell">
-                  Wait p95
+                <th aria-label="Wait p95" className="hidden px-3 py-2 text-right md:table-cell">
+                  <span className="flex items-center justify-end gap-1.5">
+                    Wait p95
+                    <About align="end" lead="About this" text="Time queued for a query slot." />
+                  </span>
                 </th>
-                <th className="hidden px-3 py-2 text-right font-semibold md:table-cell">
-                  From cache
-                </th>
+                <th className="hidden px-3 py-2 text-right md:table-cell">From cache</th>
               </tr>
             </thead>
             <tbody>
@@ -99,7 +103,7 @@ export function SpeedTable() {
                   <td className="px-3 py-2 text-right font-mono tabular-nums">{ms(r.p50_ms)}</td>
                   <td
                     className={`px-3 py-2 text-right font-mono tabular-nums ${
-                      r.p95_ms >= SLOW_MS ? "font-semibold text-sev-medium-text" : ""
+                      r.p95_ms >= SLOW_MS ? "font-semibold text-warn" : ""
                     }`}
                   >
                     {ms(r.p95_ms)}

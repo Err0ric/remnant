@@ -51,7 +51,7 @@ export function OneTimeLink({ title, username, link, onDone }: OneTimeLinkProps)
           aria-label="One-time link"
           value={link}
           onFocus={(e) => e.currentTarget.select()}
-          className="h-8 min-w-0 flex-1 rounded border border-border-strong bg-inset px-2 font-mono text-sm text-text"
+          className="h-8 min-w-0 flex-1 rounded border border-border-control bg-inset px-2 font-mono text-sm text-text"
         />
         <button
           type="button"

@@ -26,7 +26,7 @@ export function LokiSummary({ loki, behind }: LokiSummaryProps) {
   return (
     <div className="flex flex-col gap-0.5">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="rounded-badge bg-sev-info-bg px-2 py-px text-xs font-normal text-text-secondary">
+        <span className="rounded-badge bg-info-bg px-2 py-px text-xs font-normal text-text-secondary">
           Loki
         </span>
         {host ? <span>{host}</span> : null}

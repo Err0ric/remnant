@@ -1,6 +1,8 @@
+import { About } from "@/components/About";
+import { Skeleton } from "@/components/Skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { EntityLink } from "@/components/EntityLink";
-import { LoadFailed } from "@/components/LoadFailed";
+import { InlineError } from "@/components/InlineError";
 import { api, type AccountTier } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { navigate } from "@/lib/route";
@@ -63,17 +65,16 @@ export function AccountsCard() {
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-surface-head px-3 py-2">
         <SectionTitle>Claude accounts</SectionTitle>
         <span className="text-sm text-text-muted">
-          Reported by the hooks plugin on each device, last 30 days. A company email is confirmed by
-          an Entra sign-in to Claude by the same person.
+          Reported by the hooks plugin on each device, last 30 days.
           {d?.masked
             ? " Names are hidden. An admin can turn on View people in AI usage for you."
             : null}
         </span>
       </div>
       {q.isLoading ? (
-        <div aria-busy="true" className="h-40 animate-pulse" />
+        <Skeleton label="accounts" rows={4} className="rounded-none border-0" />
       ) : q.isError ? (
-        <LoadFailed
+        <InlineError
           what="Claude accounts"
           error={q.error}
           onRetry={() => void q.refetch()}
@@ -114,12 +115,20 @@ export function AccountsCard() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border text-left text-text-secondary">
-                    <th className="px-3 py-2 font-semibold">Account</th>
-                    <th className="px-3 py-2 font-semibold">Tier</th>
-                    <th className="px-3 py-2 font-semibold">Evidence</th>
-                    <th className="px-3 py-2 font-semibold">Devices</th>
-                    <th className="px-3 py-2 text-right font-semibold">Sessions</th>
-                    <th className="px-3 py-2 font-semibold">Last seen</th>
+                    <th className="px-3 py-2">Account</th>
+                    <th aria-label="Tier" className="px-3 py-2">
+                      <span className="flex items-center gap-1.5">
+                        Tier
+                        <About
+                          lead="About this"
+                          text="A company email is confirmed by an Entra sign-in to Claude by the same person."
+                        />
+                      </span>
+                    </th>
+                    <th className="px-3 py-2">Evidence</th>
+                    <th className="px-3 py-2">Devices</th>
+                    <th className="px-3 py-2 text-right">Sessions</th>
+                    <th className="px-3 py-2">Last seen</th>
                   </tr>
                 </thead>
                 <tbody>

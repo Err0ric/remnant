@@ -102,8 +102,12 @@ class AuthService:
             raise SetupClosedError("Setup is closed: an administrator already exists")
         # Per address only: a global key would let anyone on the network lock setup out (S7).
         keys = [f"setup-ip:{ip}"]
-        self._reserve(keys)
+        # The link is checked first (constant-time compare of its hash): a valid, unexpired
+        # link passes the per-address limit, so wrong links sent from an address everyone
+        # shares (a proxy without trusted_proxies) cannot keep the real setup out. It is 256
+        # random bits; a wrong or expired one is counted and limited as before (D245).
         if not self._setup.consume(token, self.clock()):
+            self._reserve(keys)
             self.audit.write("setup.admin_created", "failure", None, ip, {"reason": "bad_link"})
             raise SetupInvalidError("This setup link is invalid, expired, or already used")
         adopted: dict[str, int] = {}

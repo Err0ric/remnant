@@ -32,7 +32,7 @@ export function OptionalSection({
         >
           ›
         </span>
-        <span className="rounded-badge bg-surface-head px-1.5 py-px text-xs font-semibold uppercase tracking-wide text-text-secondary">
+        <span className="rounded-badge bg-surface-head px-1.5 py-px text-xs font-semibold text-text-secondary">
           Optional
         </span>
         <span className="font-semibold">{title}</span>

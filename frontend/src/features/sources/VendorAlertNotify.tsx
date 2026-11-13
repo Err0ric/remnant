@@ -96,7 +96,7 @@ function NotifyEditor({ sourceId, onClose }: NotifyEditorProps) {
           value={min}
           disabled={!on}
           onChange={(e) => setLevel(e.target.value as VendorSeverity)}
-          className="h-7 rounded border border-border-strong bg-surface px-1 disabled:opacity-50"
+          className="h-7 rounded border border-border-control bg-surface px-1 disabled:opacity-50"
         >
           {LEVELS.map((l) => (
             <option key={l.value} value={l.value}>

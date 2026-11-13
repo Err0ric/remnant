@@ -66,11 +66,11 @@ export function RecommendedRules({ isAdmin }: RecommendedRulesProps) {
           <thead>
             <tr className="border-b border-border text-left text-text-secondary">
               {isAdmin ? <th className="w-8 px-3 py-1.5" aria-label="Select" /> : null}
-              <th className="px-3 py-1.5 font-semibold">Title</th>
-              <th className="px-3 py-1.5 font-semibold">Level</th>
-              <th className="px-3 py-1.5 font-semibold">Log source</th>
-              <th className="px-3 py-1.5 font-semibold">Would run on</th>
-              <th className="px-3 py-1.5 font-semibold">ATT&amp;CK</th>
+              <th className="px-3 py-1.5">Title</th>
+              <th className="px-3 py-1.5">Level</th>
+              <th className="px-3 py-1.5">Log source</th>
+              <th className="px-3 py-1.5">Would run on</th>
+              <th className="px-3 py-1.5">ATT&amp;CK</th>
               {isAdmin ? <th className="px-3 py-1.5" aria-label="Actions" /> : null}
             </tr>
           </thead>

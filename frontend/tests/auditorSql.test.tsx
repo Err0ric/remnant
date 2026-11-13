@@ -32,7 +32,7 @@ describe("Auditors and SQL (D220)", () => {
     const notice = await screen.findByRole("region", { name: "SQL not available" });
     expect(notice).toHaveTextContent("Auditors cannot run SQL on this install");
     expect(within(notice).getByRole("button", { name: "Open the audit log" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Run query" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Run" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Export CSV" })).not.toBeInTheDocument();
     expect(calls(spy, "/api/query")).toHaveLength(0);
   });

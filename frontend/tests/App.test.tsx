@@ -1,3 +1,4 @@
+import { fromMore } from "./headerMenu";
 import { QueryClient } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -17,7 +18,7 @@ async function renderApp() {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   render(<App initialTheme="dark" queryClient={client} />);
-  await screen.findByRole("heading", { level: 1, name: "Investigate" });
+  await screen.findByRole("heading", { level: 1, name: "Logs" });
   return fetchSpy;
 }
 
@@ -30,41 +31,50 @@ function queryBodies(
 }
 
 describe("App shell", () => {
-  it("shows the product name from the API and the page hierarchy", async () => {
+  it("shows the product name from the API and titles the page by its own name", async () => {
     await renderApp();
     expect(screen.getByText("Codename")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 1, name: "Investigate" })).toBeInTheDocument();
-    // The area's tabs say where you are (ADR-0038); no breadcrumb.
-    const tabs = screen.getByRole("navigation", { name: "Investigate tabs" });
-    expect(within(tabs).getByRole("link", { name: "Logs" })).toHaveAttribute(
+    expect(screen.getByRole("heading", { level: 1, name: "Logs" })).toBeInTheDocument();
+    // The page's own tabs, which never repeat the rail (ADR-0052 3.2); no breadcrumb.
+    const tabs = screen.getByRole("navigation", { name: "Logs tabs" });
+    expect(within(tabs).getByRole("link", { name: "Search" })).toHaveAttribute(
       "aria-current",
       "page",
     );
-    expect(within(tabs).getByRole("link", { name: "Ask AI" })).toHaveAttribute("href", "/ask-ai");
-    expect(within(tabs).getByRole("link", { name: "People & devices" })).toHaveAttribute(
+    expect(within(tabs).getByRole("link", { name: "Saved searches" })).toHaveAttribute(
       "href",
-      "/investigate/people",
+      "/investigate/saved",
     );
+    expect(within(tabs).queryByRole("link", { name: "Ask AI" })).toBeNull();
     expect(window.location.pathname).toBe("/investigate/logs");
   });
 
-  it("uses plain, grouped navigation labels", async () => {
+  it("lists pages only: three labeled groups and a pinned cluster (ADR-0052 3.2)", async () => {
     await renderApp();
     const nav = screen.getByRole("navigation", { name: "Primary" });
-    // Five groups (owner 2026-10-31); Investigate lists its pages as rows.
     const groups = within(nav)
       .getAllByRole("region")
       .map((g) => g.getAttribute("aria-label"));
-    expect(groups).toEqual(["Monitor", "Investigate", "AI", "Connected apps", "System"]);
+    expect(groups).toEqual(["Monitor", "Investigate", "AI"]);
     const rows = (name: string) =>
-      Array.from(within(within(nav).getByRole("region", { name })).getAllByRole("listitem"))
-        .filter((li) => li.parentElement?.id === `rail-${name.toLowerCase()}`)
-        .map((li) => li.querySelector("a")?.textContent);
+      within(within(nav).getByRole("region", { name }))
+        .getAllByRole("link")
+        .map((a) => a.getAttribute("title"));
     expect(rows("Monitor")).toEqual(["Dashboard", "Alerts"]);
-    expect(rows("Investigate")).toEqual(["Logs", "Ask AI", "People & devices", "Saved searches"]);
+    expect(rows("Investigate")).toEqual(["Logs", "Ask AI", "People & devices"]);
     expect(rows("AI")).toEqual(["AI usage", "Agents"]);
-    expect(rows("System")).toEqual(["Health", "Settings"]);
-    expect(within(nav).getByRole("link", { name: "Logs" })).toHaveAttribute("aria-current", "page");
+    const pinned = within(nav).getByRole("list", { name: "Health and settings" });
+    expect(
+      within(pinned)
+        .getAllByRole("link")
+        .map((a) => a.getAttribute("title")),
+    ).toEqual(["Health", "Settings"]);
+    // At most 10 entries for an administrator, and none has children or folds.
+    expect(within(nav).getAllByRole("link").length).toBeLessThanOrEqual(10);
+    expect(nav.querySelector("ul ul")).toBeNull();
+    expect(within(nav).queryAllByRole("button")).toEqual([]);
+    expect(within(nav).queryByText("Saved searches")).toBeNull();
+    expect(within(nav).queryByText("Microsoft 365")).toBeNull();
     expect(within(nav).getByRole("link", { name: "Logs" })).toHaveAttribute(
       "href",
       "/investigate/logs",
@@ -85,63 +95,26 @@ describe("App shell", () => {
     expect(screen.queryByText(/grimoire|seance|séance|ossuary/i)).not.toBeInTheDocument();
   });
 
-  it("opens a page's sub-pages on hover only in the icon rail (owner, 2026-11-01)", async () => {
-    const icon = "(min-width: 768px) and (max-width: 1099.98px)";
-    vi.stubGlobal("matchMedia", (q: string) => ({
-      matches: q === icon,
-      media: q,
-      onchange: null,
-      addListener: () => undefined,
-      removeListener: () => undefined,
-      addEventListener: () => undefined,
-      removeEventListener: () => undefined,
-      dispatchEvent: () => false,
-    }));
-    try {
-      await renderApp();
-      const nav = screen.getByRole("navigation", { name: "Primary" });
-      await userEvent.hover(within(nav).getByRole("link", { name: /^Alerts/ }));
-      const menu = await screen.findByRole("list", { name: "Alerts pages, Alerts menu" });
-      expect(within(menu).getByRole("link", { name: "Rules" })).toHaveAttribute(
-        "href",
-        "/alerts/rules",
-      );
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
-
-  it("marks where you are with a bar and weight, not a fill (D199)", async () => {
-    window.localStorage.removeItem("app.rail.collapsed");
-    window.localStorage.removeItem("app.rail.defaults");
+  it("marks where you are with a bar and weight on exactly one link, not a fill", async () => {
     await renderApp();
     const nav = screen.getByRole("navigation", { name: "Primary" });
-    // A page with no sub-pages: the bar on its left edge, accent label, bold, no fill.
-    const search = within(nav).getByRole("link", { name: "Logs" });
-    expect(search).toHaveAttribute("aria-current", "page");
-    expect(search).toHaveClass(
+    const here = within(nav)
+      .getAllByRole("link")
+      .filter((a) => a.getAttribute("aria-current") === "page");
+    expect(here.map((a) => a.getAttribute("title"))).toEqual(["Logs"]);
+    expect(here[0]).toHaveClass(
       "before:w-0.5",
       "before:bg-accent-text",
-      "font-bold",
+      "font-semibold",
       "text-accent-text",
     );
-    expect(search).not.toHaveClass("bg-accent-subtle");
-    // Sub-pages hang on a 1px guide line in the border token.
-    const agents = within(nav).getByRole("list", { name: "Agents pages" });
-    expect(agents).toHaveClass("border-l", "border-border");
-    // Folding the group that holds the current page puts the bar on its header.
-    const group = within(nav).getByRole("button", { name: "Investigate group" });
-    expect(group).not.toHaveClass("before:bg-accent-text");
-    await userEvent.click(group);
-    expect(group).toHaveClass("before:bg-accent-text", "font-bold", "text-accent-text");
-    const ai = within(nav).getByRole("button", { name: "AI group" });
-    await userEvent.click(ai);
-    expect(ai).not.toHaveClass("before:bg-accent-text");
+    expect(here[0]).not.toHaveClass("bg-accent-subtle");
+    // Pinned entries are a lower weight; the others are medium.
+    expect(within(nav).getByRole("link", { name: /^Health/ })).toHaveClass("font-normal");
+    expect(within(nav).getByRole("link", { name: /^Alerts/ })).toHaveClass("font-medium");
   });
 
-  it("puts the bar on the current sub-page, or on its page while the list is folded", async () => {
-    window.localStorage.removeItem("app.rail.collapsed");
-    window.localStorage.removeItem("app.rail.defaults");
+  it("marks the page, not a tab, when a tab of that page is open", async () => {
     window.history.replaceState(null, "", "/agents/sessions");
     mockApi("Codename");
     vi.resetModules();
@@ -155,64 +128,16 @@ describe("App shell", () => {
       />,
     );
     const nav = await screen.findByRole("navigation", { name: "Primary" });
-    const pages = within(nav).getByRole("list", { name: "Agents pages" });
-    const sessions = within(pages).getByRole("link", { name: "Sessions" });
-    expect(sessions).toHaveAttribute("aria-current", "page");
-    expect(sessions).toHaveClass("before:bg-accent-text", "font-medium", "text-accent-text");
-    expect(sessions).not.toHaveClass("bg-accent-subtle");
-    const parent = within(nav).getByRole("link", { name: "Agents" });
-    expect(parent).toHaveClass("min-[1100px]:before:hidden");
-    await userEvent.click(within(nav).getByRole("button", { name: "Agents sub-pages" }));
-    expect(parent).not.toHaveClass("min-[1100px]:before:hidden");
-    expect(parent).toHaveClass("md:before:bg-accent-text", "min-[1100px]:text-accent-text");
-  });
-
-  it("lists every page's sub-pages and folds groups, remembered (ADR-0038 edit 10)", async () => {
-    window.localStorage.removeItem("app.rail.collapsed");
-    window.localStorage.removeItem("app.rail.defaults");
-    await renderApp();
-    const nav = screen.getByRole("navigation", { name: "Primary" });
-    // Every page with sub-pages lists them, not only the open one; Alerts starts folded
-    // (its row shows the open count). In the labelled rail nothing opens on hover.
-    const fold = within(nav).getByRole("button", { name: "Alerts sub-pages" });
-    expect(fold).toHaveAttribute("aria-expanded", "false");
-    expect(within(nav).getByRole("list", { name: "Alerts pages" })).not.toHaveClass(
-      "min-[1100px]:block",
+    expect(within(nav).getByRole("link", { name: "Agents" })).toHaveAttribute(
+      "aria-current",
+      "page",
     );
-    await userEvent.hover(within(nav).getByRole("link", { name: /^Alerts/ }));
-    expect(screen.queryByRole("list", { name: "Alerts pages, Alerts menu" })).toBeNull();
-    await userEvent.click(fold);
-    expect(fold).toHaveAttribute("aria-expanded", "true");
-    expect(within(nav).getByRole("list", { name: "Alerts pages" })).toHaveClass(
-      "min-[1100px]:block",
+    expect(within(nav).queryByRole("link", { name: "Sessions" })).toBeNull();
+    const tabs = await screen.findByRole("navigation", { name: "Agents tabs" });
+    expect(within(tabs).getByRole("link", { name: /^Sessions/ })).toHaveAttribute(
+      "aria-current",
+      "page",
     );
-    expect(within(nav).getByRole("list", { name: "Agents pages" })).toHaveTextContent(
-      "OverviewSessionsToolsMCP serversAccounts",
-    );
-    // Connected apps and System start folded, once; then the viewer's choice holds.
-    const connected = within(nav).getByRole("button", { name: "Connected apps group" });
-    const system = within(nav).getByRole("button", { name: "System group" });
-    expect(connected).toHaveAttribute("aria-expanded", "false");
-    expect(system).toHaveAttribute("aria-expanded", "false");
-    // Owner, 2026-11-01: a folded group header opens inline on click only; hovering it
-    // shows no flyout (one behavior per control).
-    await userEvent.hover(connected);
-    await userEvent.hover(system);
-    expect(screen.queryByRole("list", { name: /menu$/ })).toBeNull();
-    expect(connected).toHaveAttribute("aria-expanded", "false");
-    await userEvent.click(system);
-    expect(system).toHaveAttribute("aria-expanded", "true");
-    expect(JSON.parse(window.localStorage.getItem("app.rail.collapsed") ?? "[]")).toEqual([
-      "connected",
-    ]);
-    // Reloading keeps it: the default is applied once.
-    expect(JSON.parse(window.localStorage.getItem("app.rail.defaults") ?? "[]")).toEqual([
-      "connected",
-      "system",
-      "area:alerts",
-    ]);
-    window.localStorage.removeItem("app.rail.collapsed");
-    window.localStorage.removeItem("app.rail.defaults");
   });
 
   it("shows the install name only when an admin set one", async () => {
@@ -240,7 +165,7 @@ describe("App shell", () => {
   it("on narrow screens, the Menu button shows the nav and navigating hides it again", async () => {
     await renderApp();
     const nav = screen.getByRole("navigation", { name: "Primary" });
-    expect(nav).toHaveClass("hidden", "md:block");
+    expect(nav).toHaveClass("hidden", "md:flex");
     await userEvent.click(screen.getByRole("button", { name: "Open menu" }));
     expect(nav).not.toHaveClass("hidden");
     expect(screen.getByRole("button", { name: "Close menu" })).toHaveAttribute(
@@ -323,7 +248,7 @@ describe("Search page", () => {
     );
     await userEvent.selectOptions(picker, "paloalto_traffic");
     expect(screen.getByText("Source: paloalto_traffic")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Run query" }));
+    await userEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() =>
       expect(queryBodies(spy).some((b) => b.sources?.includes("paloalto_traffic"))).toBe(true),
     );
@@ -357,7 +282,7 @@ describe("SQL editor and raw view", () => {
     await renderApp();
     await screen.findByText("Failed password for invalid user oracle");
     await setSql("SELECT source_id, count(*) AS events FROM events GROUP BY source_id");
-    await userEvent.click(screen.getByRole("button", { name: "Run query" }));
+    await userEvent.click(screen.getByRole("button", { name: "Run" }));
     await screen.findByText("69");
     await userEvent.click(screen.getByRole("button", { name: "Raw" }));
     expect(screen.getByText(/Aggregates have no raw lines/)).toBeInTheDocument();
@@ -414,7 +339,7 @@ describe("Results table controls", () => {
 describe("Query library (ADR-0033)", () => {
   it("loads a query into the SQL tab with why and normal, saves a copy, and replaces one", async () => {
     const spy = await renderApp();
-    await userEvent.click(screen.getByRole("button", { name: "Library" }));
+    await userEvent.click(await fromMore("Library"));
     const lib = await screen.findByRole("region", { name: "Query library" });
     expect(await within(lib).findByText("Linux / SSH")).toBeVisible();
     expect(

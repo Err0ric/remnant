@@ -2,7 +2,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { localClock } from "@/lib/localTime";
 import { withChunkReload } from "@/lib/chunkReload";
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
-import { Command, PageHeader } from "@/components/shell/PageHeader";
+import { PageHeader } from "@/components/shell/PageHeader";
 import {
   api,
   type CompiledSearch,
@@ -11,7 +11,8 @@ import {
   type QueryResult,
   type SavedSearch,
 } from "@/lib/api";
-import { DEFAULT_SQL, rangeStart, sqlPlaceholders, type TimeRangeId } from "@/lib/search";
+import { DEFAULT_SQL, logsRange, rangeStart, sqlPlaceholders, type LogsRange } from "@/lib/search";
+import { localInput, windowOf } from "@/lib/timeWindow";
 import { openSavedSearch } from "@/lib/savedSeed";
 import { navigate } from "@/lib/route";
 import { seedSchedule } from "@/lib/scheduleSeed";
@@ -61,8 +62,14 @@ type Run = Pick<QueryRequest, "sql" | "params"> & { text?: string };
 const ACTION_TYPES = new Set(["string", "int", "bool"]);
 const NO_ACTIONS = new Set(["raw"]);
 
-const ALERT =
-  "rounded border border-danger bg-sev-critical-bg px-3 py-2 text-sm text-sev-critical-text";
+const ALERT = "rounded border border-danger px-3 py-2 text-sm text-danger";
+
+/** Custom on Logs: local date-times, and the exact window a drill-through came with. */
+interface LogsCustom {
+  from: string;
+  to: string;
+  exact?: { from: string; to: string };
+}
 
 /**
  * Logs (ADR-0008, ADR-0009, D206): Filters (the Simple syntax) or SQL writes the query; one
@@ -103,12 +110,35 @@ export function SearchPage({ canSave }: SearchPageProps) {
   const [sql, setSql] = useState(
     seed?.sql ?? (urlState?.tab === "sql" && urlState.q ? urlState.q : DEFAULT_SQL),
   );
-  const [range, setRange] = useState<TimeRangeId>(
-    seed?.range ?? urlState?.range ?? (sqlSeed ? "all" : "24h"),
+  // The time filter (ADR-0052 section 3.7): one of the four fixed windows, or Custom. SQL
+  // handed over by another page opens on everything kept (Custom with no dates) unless it
+  // names a range: the query often carries its own time.
+  const asked = logsRange(
+    seed?.range ?? (seed || !urlState ? (sqlSeed ? "all" : "24h") : urlState.range),
   );
-  // A page's own window from a drill-through; choosing a preset range drops it.
-  const [custom, setCustom] = useState<{ from: string; to: string } | null>(seed?.window ?? null);
-  const bounds = custom ? { start: custom.from, end: custom.to } : { start: rangeStart(range) };
+  const [range, setRange] = useState<LogsRange>(asked.range);
+  // Custom: a start and an end as local date-times. A window another page handed over (a
+  // drill-through) keeps its exact bounds until the person edits a side, so the rows are
+  // the ones the number counted.
+  const [custom, setCustom] = useState<LogsCustom | null>(
+    seed?.window
+      ? {
+          from: localInput(seed.window.from),
+          to: localInput(seed.window.to),
+          exact: seed.window,
+        }
+      : seed?.custom
+        ? seed.custom
+        : asked.open
+          ? { from: "", to: "" }
+          : (urlState?.custom ?? null),
+  );
+  const span = custom ? windowOf({ preset: "custom", from: custom.from, to: custom.to }) : null;
+  const bounds = custom?.exact
+    ? { start: custom.exact.from, end: custom.exact.to }
+    : span
+      ? { start: span.from?.toISOString(), end: span.to?.toISOString() }
+      : { start: rangeStart(range) };
   const [sources, setSources] = useState<string[]>(seed?.sources ?? []);
   const [lastRun, setLastRun] = useState<Date | null>(null);
   const [saving, setSaving] = useState(false);
@@ -128,6 +158,8 @@ export function SearchPage({ canSave }: SearchPageProps) {
   openedNow.current = opened;
   const rangeNow = useRef(range);
   rangeNow.current = range;
+  const customNow = useRef(custom);
+  customNow.current = custom;
   const [paramValues, setParamValues] = useState<Record<string, string>>({});
   const schema = useQuery({
     queryKey: ["schema-columns"],
@@ -275,17 +307,25 @@ export function SearchPage({ canSave }: SearchPageProps) {
     else lastRan.current.sql = vars.sql;
     const open = openedNow.current;
     const range = rangeNow.current;
+    const picked = customNow.current;
+    const custom = picked ?? undefined;
     const simpleOrigin = open?.origin?.simple_text;
     let state: SearchUrlState;
     if (open && (vars.text !== undefined ? vars.text === simpleOrigin : vars.sql === open.sql)) {
       const params = Object.fromEntries(
         Object.entries(vars.params ?? {}).map(([k, v]) => [k, String(v)]),
       );
-      state = { tab: vars.text !== undefined ? "simple" : "sql", saved: open.id, params, range };
+      state = {
+        tab: vars.text !== undefined ? "simple" : "sql",
+        saved: open.id,
+        params,
+        range,
+        custom,
+      };
     } else if (vars.text !== undefined) {
-      state = { tab: "simple", q: vars.text, range };
+      state = { tab: "simple", q: vars.text, range, custom };
     } else {
-      state = { tab: "sql", q: vars.sql, range };
+      state = { tab: "sql", q: vars.sql, range, custom };
     }
     recordSearch(state, !recorded.current);
     recorded.current = true;
@@ -385,91 +425,91 @@ export function SearchPage({ canSave }: SearchPageProps) {
 
   return (
     <div className="flex min-w-0 flex-1 flex-col">
+      {/* Run is the page's one filled button and sits beside what it runs, in the Filters
+          and SQL panels below (DESIGN.md 6.1), so the header has no primary. */}
       <PageHeader
-        crumbs={["Home", "Investigate", "Logs"]}
         title="Logs"
-        meta={meta}
-        commands={
-          <>
-            <Command
-              label={pending ? "Running…" : "Run query"}
-              primary
-              onClick={runCurrent}
-              disabled={pending}
-            />
-            <Command
-              label="New search"
-              title="Start over: close any open search and clear both editors"
-              onClick={() => (unsaved ? setConfirmNew(true) : startNew())}
-            />
-            <Command
-              label="Open"
-              title="Open a saved search here"
-              onClick={() => {
-                setLibraryOpen(false);
-                setOpening((v) => !v);
-              }}
-            />
-            <Command
-              label="Library"
-              title="Shipped, tested queries for the sources you have"
-              onClick={() => {
-                setOpening(false);
-                setLibraryOpen((v) => !v);
-              }}
-            />
-            {canSave ? (
-              <Command
-                label="Save"
-                onClick={() => {
-                  setSaved(null);
-                  setScheduleAfterSave(false);
-                  setSaving(true);
-                }}
-                disabled={saving || !sqlToSave.trim()}
-              />
-            ) : null}
-            {canSave ? (
-              <Command
-                label="Schedule"
-                title="Save this search, then put it on a schedule"
-                onClick={() => {
-                  if (savedId) {
-                    seedSchedule({ kind: "search", targetId: savedId });
-                    navigate("schedules");
-                    return;
-                  }
-                  setScheduleAfterSave(true);
-                  setSaving(true);
-                }}
-                disabled={saving || !sqlToSave.trim()}
-              />
-            ) : null}
-            {canSave ? (
-              <Command
-                label="Add to dashboard"
-                title="Put this search on the Dashboard: hourly, last 24 hours"
-                onClick={() => {
-                  // The search as shown: the one just saved, or the open one if unchanged.
-                  const current = saved ?? (opened && opened.sql === sql ? opened : null);
-                  if (current && tab === "sql") {
-                    setDashboardFor(current);
-                    return;
-                  }
-                  setScheduleAfterSave(false);
-                  setDashboardAfterSave(true);
-                  setSaving(true);
-                }}
-                disabled={saving || !sqlToSave.trim()}
-              />
-            ) : null}
-            <Command
-              label={exporter.isPending ? "Exporting…" : "Export CSV"}
-              onClick={() => lastRequest.current && exporter.mutate(lastRequest.current)}
-              disabled={!result || result.rows.length === 0 || exporter.isPending}
-            />
-          </>
-        }
+        // Export CSV is under More, which closes on a choice: say here that it is running.
+        count={exporter.isPending ? <span role="status">Exporting…</span> : meta}
+        secondary={[
+          ...(canSave
+            ? [
+                {
+                  label: "Save",
+                  onClick: () => {
+                    setSaved(null);
+                    setScheduleAfterSave(false);
+                    setSaving(true);
+                  },
+                  disabled: saving || !sqlToSave.trim(),
+                },
+              ]
+            : []),
+          {
+            label: "Open",
+            title: "Open a saved search here",
+            onClick: () => {
+              setLibraryOpen(false);
+              setOpening((v) => !v);
+            },
+          },
+        ]}
+        menu={[
+          {
+            label: "New search",
+            title: "Start over: close any open search and clear both editors",
+            onClick: () => (unsaved ? setConfirmNew(true) : startNew()),
+          },
+          {
+            label: "Library",
+            title: "Shipped, tested queries for the sources you have",
+            onClick: () => {
+              setOpening(false);
+              setLibraryOpen((v) => !v);
+            },
+          },
+          ...(canSave
+            ? [
+                {
+                  label: "Schedule",
+                  title: "Save this search, then put it on a schedule",
+                  onClick: () => {
+                    if (savedId) {
+                      seedSchedule({ kind: "search", targetId: savedId });
+                      navigate("schedules");
+                      return;
+                    }
+                    setScheduleAfterSave(true);
+                    setSaving(true);
+                  },
+                  disabled: saving || !sqlToSave.trim(),
+                },
+                {
+                  label: "Add to dashboard",
+                  title: "Put this search on the Dashboard: hourly, last 24 hours",
+                  onClick: () => {
+                    // The search as shown: the one just saved, or the open one if unchanged.
+                    const current = saved ?? (opened && opened.sql === sql ? opened : null);
+                    if (current && tab === "sql") {
+                      setDashboardFor(current);
+                      return;
+                    }
+                    setScheduleAfterSave(false);
+                    setDashboardAfterSave(true);
+                    setSaving(true);
+                  },
+                  disabled: saving || !sqlToSave.trim(),
+                },
+              ]
+            : []),
+          {
+            label: exporter.isPending ? "Exporting…" : "Export CSV",
+            onClick: () => {
+              if (lastRequest.current) exporter.mutate(lastRequest.current);
+            },
+            disabled: !result || result.rows.length === 0 || exporter.isPending,
+          },
+        ]}
       />
 
       <div className="flex flex-col gap-2.5 px-5 py-3">
@@ -531,6 +571,7 @@ export function SearchPage({ canSave }: SearchPageProps) {
             setCustom(null);
             setRange(r);
           }}
+          onCustom={(from, to) => setCustom({ from, to })}
           sources={sources}
           onSources={setSources}
         />
@@ -611,7 +652,7 @@ export function SearchPage({ canSave }: SearchPageProps) {
                     <input
                       value={paramValues[n] ?? ""}
                       onChange={(e) => setParamValues({ ...paramValues, [n]: e.target.value })}
-                      className="h-8 w-40 rounded border border-border-strong bg-inset px-2 font-mono text-sm"
+                      className="h-8 w-40 rounded border border-border-control bg-inset px-2 font-mono text-sm"
                     />
                   </label>
                 ))}
