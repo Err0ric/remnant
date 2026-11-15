@@ -50,6 +50,8 @@ class LakeMaintenance:
         self.after_compaction: Callable[[], object] | None = None
         # Short work every tick, bounded by its own time budget (the rollup re-check).
         self.each_tick: Callable[[], object] | None = None
+        # Runs with the daily retention: ingest forgets files not seen for 30 days (ADR-0051).
+        self.daily: Callable[[], object] | None = None
         self._sources = sources
         self._orphan_days = orphan_retention_days
         self._compaction_every = compaction_interval_s
@@ -186,6 +188,8 @@ class LakeMaintenance:
 
     def _retention_job(self) -> None:
         self.apply_retention()
+        if self.daily is not None:
+            self.daily()
 
     def _verify_job(self) -> None:
         self.verify()

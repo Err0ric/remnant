@@ -8,6 +8,7 @@ import {
 } from "@/features/dashboard/NeedsAttention";
 import { EntityLink, EntityList } from "@/components/EntityLink";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Skeleton } from "@/components/Skeleton";
 import { Fragment, useState, type ReactNode } from "react";
 import { PeoplePending } from "@/components/PeoplePending";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
@@ -29,9 +30,12 @@ import { AgentsCard } from "./AgentsCard";
 import { SessionsCard } from "./SessionsCard";
 import { AccountsCard } from "./AccountsCard";
 import { AgentsKpis, ToolRows, useBuiltInCount } from "./AgentsOverview";
-import { InventoryCard, toReview } from "./InventoryCard";
+import { InventoryCard } from "./InventoryCard";
+import { toReview } from "./review";
 import { StatusBadge, StatusPicker } from "./StatusBadge";
-import { SectionTitle } from "@/components/SectionTitle";
+import { Card as SharedCard } from "@/components/Card";
+import { StateNotice } from "@/components/StateNotice";
+import { NAMES_HIDDEN } from "@/features/alerts/kinds";
 
 type Tab = "services" | "sessions" | "mcp" | "accounts" | "people" | "inventory";
 const KIND: Record<string, string> = {
@@ -84,8 +88,8 @@ function seenTitle(p: AiPerson): string {
 function SeenSummary({ seen }: { seen: Partial<Record<"both" | "plugin" | "network", number>> }) {
   return (
     <div className="text-text-secondary tabular-nums">
-      Seen through: both {seen.both ?? 0}, plugin only {seen.plugin ?? 0}, network only{" "}
-      {seen.network ?? 0}
+      People: {seen.network ?? 0} seen only on the network, {seen.plugin ?? 0} only by the Claude
+      Code plugin, {seen.both ?? 0} by both
     </div>
   );
 }
@@ -160,9 +164,8 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
   const setService = useMutation({
     mutationFn: (v: { id: string; status: AiStatus }) => api.setAiServiceStatus(v.id, v.status),
     onSuccess: () => {
+      // Covers the Inventory, which lists the same status, and the rail's count of it.
       void client.invalidateQueries({ queryKey: ["ai-usage"] });
-      // The Inventory lists the same status and counts what is left to review.
-      void client.invalidateQueries({ queryKey: ["ai-inventory"] });
     },
   });
   const setLevel = useMutation({
@@ -175,13 +178,15 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: ["ai-usage"] });
       void client.invalidateQueries({ queryKey: ["ai-mcp-rules"] });
-      void client.invalidateQueries({ queryKey: ["ai-inventory"] });
     },
   });
   const tabs: Tab[] =
     area === "agents" ? ["sessions", "mcp", "accounts"] : ["services", "people", "inventory"];
   const [tab] = useSectionTab<Tab>(tabs);
   const data = tooBig ? fallback.data : usage.data;
+  // The first load can take seconds on a busy install: rows hold the place meanwhile, so
+  // a table is never drawn empty before its data is there.
+  const loading = !data && !(tooBig ? fallback.isError : usage.isError);
   // Services and MCP servers are said apart (owner, 2026-11-08): "2 not approved" read as
   // two services when one was an MCP server.
   const svcRefused = data?.services.filter((s) => s.service.status === "not_approved").length ?? 0;
@@ -207,7 +212,7 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
   // The card's own query, shared by key: no second request, and none on the other tabs.
   const onInventory = area === "ai" && tab === "inventory";
   const inventory = useQuery({
-    queryKey: ["ai-inventory"],
+    queryKey: ["ai-usage", "inventory"],
     queryFn: () => api.aiInventory(30),
     enabled: onInventory,
   });
@@ -271,9 +276,11 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
         }
       />
       <div className="flex flex-col gap-3 px-5 py-3">
-        {!noAccess ? (
+        {/* While loading its place is held; when the request failed, the error says so
+            and no line claims that nothing needs attention. */}
+        {!noAccess && (data || loading) ? (
           <NeedsAttention
-            loading={!data}
+            loading={loading}
             items={attentionItems(
               area === "agents"
                 ? [
@@ -375,7 +382,9 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
           {tab === "services" ? (
             <Card
               title="AI services seen in network logs"
-              note="From DNS, firewall, and proxy sources you can read. Matched by domain against the catalog."
+              loading={loading}
+              note="DNS, firewall, and proxy logs"
+              about="From DNS, firewall, and proxy sources you can read. Matched by domain against the catalog."
               empty={
                 noAccess
                   ? noAccessEmpty
@@ -518,6 +527,7 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
           {tab === "mcp" ? (
             <Card
               title="MCP servers"
+              loading={loading}
               note="Installed (endpoint inventory) and used (Claude Code telemetry)."
               empty={
                 noAccess
@@ -646,23 +656,17 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
           {tab === "people" ? (
             <Card
               title="Claude Code by person"
-              note={
-                <>
-                  From Claude Code telemetry and the hooks plugin; network rows are people seen
-                  reaching Claude on DNS, firewall, or proxy logs. Cost is Claude Code's own
-                  estimate in USD.
-                  {networkOnly ? (
-                    <span className="ml-1 tabular-nums text-text-primary">
-                      Seen on the network but no plugin: {networkOnly}.
-                    </span>
-                  ) : null}
-                  {data?.masked ? (
-                    // D242: the server sent machines in place of names.
-                    <span className="ml-1">
-                      Names are hidden. An admin can turn on View people in AI usage for you.
-                    </span>
-                  ) : null}
-                </>
+              loading={loading}
+              note="Claude Code telemetry and network logs"
+              about="From Claude Code telemetry and the hooks plugin; network rows are people seen reaching Claude on DNS, firewall, or proxy logs. Cost is Claude Code's own estimate in USD."
+              // D242: the server sent machines in place of names.
+              notice={data?.masked ? NAMES_HIDDEN : null}
+              lead={
+                networkOnly ? (
+                  <span className="tabular-nums text-text-primary">
+                    Seen on the network but no plugin: {networkOnly}.
+                  </span>
+                ) : null
               }
               empty={
                 noAccess
@@ -698,7 +702,8 @@ export function AiUsagePage({ isAdmin, canExport = false, area = "ai" }: AiUsage
                 <tbody>
                   {(data?.people ?? []).map((p) => (
                     <tr key={p.key} className="border-b border-border last:border-0">
-                      <td className={`${TD} font-mono`}>
+                      {/* 22 characters at least, so an email never breaks inside a word (D257). */}
+                      <td className={`${TD} min-w-[22ch] font-mono`}>
                         {data?.masked ? (
                           // A machine (or "Hidden"), not a person: plain text, no person link.
                           p.person
@@ -885,17 +890,10 @@ function GoToSources() {
 function GoneList({ items, before }: { items: AiGone[]; before: string }) {
   if (items.length === 0) return null;
   return (
-    <section
-      aria-label="No longer seen"
-      className="overflow-hidden rounded-card border border-border bg-surface"
-    >
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-surface-head px-3 py-2">
-        <SectionTitle>No longer seen</SectionTitle>
-        <span className="text-sm text-text-muted">
-          Seen in the {before}, not in this range. If an approved one is no longer needed, consider
-          removing its approval or access.
-        </span>
-      </div>
+    <SharedCard title="No longer seen" note={`Seen in the ${before}, not in this range`}>
+      <p className="border-b border-border px-3 py-1.5 text-sm text-text-secondary">
+        If an approved one is no longer needed, consider removing its approval or access.
+      </p>
       <ul>
         {items.map((g) => (
           <li
@@ -912,7 +910,7 @@ function GoneList({ items, before }: { items: AiGone[]; before: string }) {
           </li>
         ))}
       </ul>
-    </section>
+    </SharedCard>
   );
 }
 
@@ -922,47 +920,44 @@ function NotUsageList({ items }: { items: AiServiceUse[] }) {
   if (items.length === 0) return null;
   const events = items.reduce((n, u) => n + u.events, 0);
   return (
-    <details
-      aria-label="Not counted as AI use"
-      className="overflow-hidden rounded-card border border-border bg-surface"
+    <SharedCard
+      title="Not counted as AI use"
+      note={`${items.length} ${items.length === 1 ? "host group" : "host groups"}, ${events.toLocaleString()} events`}
     >
-      <summary className="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 bg-surface-head px-3 py-2">
-        <SectionTitle>Not counted as AI use</SectionTitle>
-        <span className="font-mono text-sm tabular-nums text-text-secondary">
-          {items.length} {items.length === 1 ? "host group" : "host groups"},{" "}
-          {events.toLocaleString()} events
-        </span>
-        <span className="text-sm text-text-muted">
-          Vendor ad and measurement tags that other websites load. They are not someone using the
-          service.
-        </span>
-      </summary>
-      <table className="w-full border-t border-border text-sm">
-        <thead>
-          <tr className="border-b border-border text-text-secondary">
-            <th className={TH}>Hosts</th>
-            <th className={`${TH} text-right`}>Machines</th>
-            <th className={`${TH} text-right`}>Events</th>
-            <th className={TH}>Last seen</th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((u) => (
-            <tr key={u.service.id} className="border-b border-border last:border-0">
-              <td className={TD}>
-                <div className="font-semibold">{u.service.name}</div>
-                <div className="font-mono text-text-muted">{u.service.domains.join(", ")}</div>
-              </td>
-              <td className={`${TD} text-right font-mono tabular-nums`}>{u.machines}</td>
-              <td className={`${TD} text-right font-mono tabular-nums`}>
-                {u.events.toLocaleString()}
-              </td>
-              <td className={`${TD} whitespace-nowrap font-mono`}>{when(u.last_seen)}</td>
+      <details aria-label="Hosts not counted as AI use">
+        <summary className="cursor-pointer px-3 py-2 text-sm text-text-secondary">
+          <span>
+            Vendor ad and measurement tags that other websites load. They are not someone using the
+            service.
+          </span>
+        </summary>
+        <table className="w-full border-t border-border text-sm">
+          <thead>
+            <tr className="border-b border-border text-text-secondary">
+              <th className={TH}>Hosts</th>
+              <th className={`${TH} text-right`}>Machines</th>
+              <th className={`${TH} text-right`}>Events</th>
+              <th className={TH}>Last seen</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </details>
+          </thead>
+          <tbody>
+            {items.map((u) => (
+              <tr key={u.service.id} className="border-b border-border last:border-0">
+                <td className={TD}>
+                  <div className="font-semibold">{u.service.name}</div>
+                  <div className="font-mono text-text-muted">{u.service.domains.join(", ")}</div>
+                </td>
+                <td className={`${TD} text-right font-mono tabular-nums`}>{u.machines}</td>
+                <td className={`${TD} text-right font-mono tabular-nums`}>
+                  {u.events.toLocaleString()}
+                </td>
+                <td className={`${TD} whitespace-nowrap font-mono`}>{when(u.last_seen)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </details>
+    </SharedCard>
   );
 }
 
@@ -976,25 +971,37 @@ interface CardEmpty {
 interface CardProps {
   title: string;
   note: ReactNode;
+  /** How the rows are counted, behind the (i) beside the title. */
+  about?: string;
+  /** A state notice above the rows (names hidden, D242). */
+  notice?: string | null;
+  /** A line above the rows: a count beside the note, or the names-hidden notice. */
+  lead?: ReactNode;
   empty: CardEmpty | null;
+  /** The data is not here yet: skeleton rows, never an empty table. */
+  loading: boolean;
   children: ReactNode;
 }
 
-function Card({ title, note, empty, children }: CardProps) {
+function Card({ title, note, about, notice, lead, empty, loading, children }: CardProps) {
   return (
-    <section
-      aria-label={title}
-      className="overflow-hidden rounded-card border border-border bg-surface"
-    >
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-surface-head px-3 py-2">
-        <SectionTitle>{title}</SectionTitle>
-        <span className="text-sm text-text-muted">{note}</span>
-      </div>
-      {empty ? (
+    <SharedCard title={title} note={note} about={about}>
+      {notice ? (
+        <div className="border-b border-border p-2">
+          <StateNotice>{notice}</StateNotice>
+        </div>
+      ) : null}
+      {lead ? (
+        <div className="border-b border-border px-3 py-1.5 text-sm text-text-secondary">{lead}</div>
+      ) : null}
+      {loading ? (
+        // The loaded card's shape: a header row and two-line rows, so nothing grows on arrival.
+        <Skeleton label={title} rows={5} header tall className="rounded-none border-0" />
+      ) : empty ? (
         <EmptyState kind={empty.kind} title={empty.title} detail={empty.detail} />
       ) : (
         <div className="overflow-x-auto">{children}</div>
       )}
-    </section>
+    </SharedCard>
   );
 }

@@ -71,6 +71,7 @@ from app.api.meta import router as meta_router
 from app.api.middleware import HostOriginMiddleware, SecurityMiddleware, TrustedProxyMiddleware
 from app.api.otlp import router as otlp_router
 from app.api.overview import router as overview_router
+from app.api.pins import router as pins_router
 from app.api.plugins import router as plugins_router
 from app.api.providers import router as providers_router
 from app.api.query import router as query_router
@@ -199,6 +200,7 @@ from app.search.live import LiveRegistry
 from app.search.m365 import source_ids as m365_source_ids
 from app.search.m365_rollup import AuthRollup, M365Rollup
 from app.search.overview import OverviewService
+from app.search.pins import PinStore
 from app.search.refusals import RefusalWatch
 from app.search.rollup_status import RunLog
 from app.search.saved import SavedSearchStore
@@ -677,6 +679,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         app.state.auth.audit,
     )
     app.state.dashboards = DashboardStore(meta, lambda: app.state.auth.clock())
+    app.state.pins = PinStore(meta, lambda: app.state.auth.clock())
     app.state.alert_items = alert_items_ = AlertItems(
         meta, app.state.auth.audit, clock=lambda: app.state.auth.clock(),
         tz=config.schedules.timezone,
@@ -755,6 +758,8 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         link=app.state.public_url,
         clock=lambda: app.state.auth.clock(),
         items=app.state.alert_items,
+        quiet_days=lambda: {s.source_id: s.quiet_ok_days for s in app.state.sources.list()},
+        last_event=lambda sid, days, now: app.state.overview.last_received(sid, days, now),
     )
     # One-time fixes (D168): each runs once per install and records that it did.
     app.state.quiet.retire_push_defaults()
@@ -958,6 +963,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     )
     # Rollup builds run at lower CPU priority on their own thread (owner, 2026-10-31).
     app.state.maintenance.hold = app.state.ingest.held
+    app.state.maintenance.daily = app.state.ingest.sweep_positions
     app.state.maintenance.after_compaction = lambda: run_low(lambda: _rollups(app))
     app.state.maintenance.each_tick = lambda: run_low(lambda: _each_tick(app))
     app.state.integrity_service = IntegrityService(
@@ -999,6 +1005,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
     app.include_router(alerts_router, prefix="/api")
     app.include_router(schedules_router, prefix="/api")
     app.include_router(dashboards_router, prefix="/api")
+    app.include_router(pins_router, prefix="/api")
     app.include_router(dashboard_sections_router, prefix="/api")
     app.include_router(m365_router, prefix="/api")
     app.include_router(overview_router, prefix="/api")

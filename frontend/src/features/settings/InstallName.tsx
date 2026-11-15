@@ -41,7 +41,7 @@ export function InstallName({ canEdit }: { canEdit: boolean }) {
           <button
             type="submit"
             disabled={save.isPending || draft === null}
-            className="h-8 rounded bg-accent px-3 font-semibold text-white disabled:opacity-50"
+            className="h-8 rounded border border-border-strong px-3 hover:bg-surface-head disabled:opacity-50"
           >
             Save
           </button>

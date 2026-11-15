@@ -13,7 +13,8 @@ async function openInvestigate(path = "/investigations") {
   const { App } = await import("@/app/App");
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(<App initialTheme="dark" queryClient={client} />);
-  await screen.findByRole("heading", { level: 1, name: "People & devices" });
+  // The landing is titled People & devices; an entity's page by the entity.
+  await screen.findByRole("heading", { level: 1 });
   return spy;
 }
 
@@ -71,8 +72,12 @@ describe("Entity pages from a link (product pass step 2)", () => {
       "title",
       "Open 0 expired in Logs",
     );
-    await userEvent.click(screen.getByRole("button", { name: /All entities/ }));
+    // A Record page: the entity is the title, and the breadcrumb leads back.
+    expect(screen.getByRole("heading", { level: 1, name: "203.0.113.9" })).toBeVisible();
+    const crumb = screen.getByRole("navigation", { name: "Breadcrumb" });
+    await userEvent.click(within(crumb).getByRole("link", { name: "People & devices" }));
     expect(window.location.hash).toBe("");
+    expect(screen.getByRole("heading", { level: 1, name: "People & devices" })).toBeVisible();
   });
 
   it("names the Proxmox guest on a host page, with Show events (ADR-0045 A5)", async () => {
@@ -105,6 +110,9 @@ describe("Investigations (ADR-0016)", () => {
     const table = await screen.findByRole("table", { name: "User" });
     expect(within(table).getByText("4 high")).toBeVisible();
     await userEvent.click(within(table).getByRole("button", { name: "root" }));
+    // A person's lanes are folded: nothing is asked for them until they are opened.
+    expect(spy.mock.calls.some(([u]) => String(u).includes("/api/entities/graph"))).toBe(false);
+    await userEvent.click(await screen.findByRole("button", { name: "How it connects" }));
     const lanes = await screen.findByRole("group", { name: /Investigation lanes/ });
     for (const lane of ["Entity", "Sources", "Activities", "Targets"])
       expect(within(lanes).getByText(lane)).toBeInTheDocument();
@@ -192,6 +200,7 @@ describe("Investigations (ADR-0016)", () => {
     const ubuntu = within(table).getByRole("button", { name: "ubuntu" }).closest("tr")!;
     expect(within(ubuntu).getAllByRole("cell")[3]).toHaveTextContent(/^$/);
     await userEvent.click(within(table).getByRole("button", { name: "minecraft" }));
+    await userEvent.click(await screen.findByRole("button", { name: "How it connects" }));
     await screen.findByRole("group", { name: /Investigation lanes/ });
     const call = spy.mock.calls.find(([u]) => String(u).includes("value=minecraft"));
     expect(String(call?.[0])).toContain("kind=user");
@@ -199,6 +208,7 @@ describe("Investigations (ADR-0016)", () => {
 
   it("highlights a card's path and hands its events to Search", async () => {
     await openInvestigate("/investigate/people#user=root");
+    await userEvent.click(await screen.findByRole("button", { name: "How it connects" }));
     const card = await screen.findByRole("button", { name: /Activities: Failed password/ });
     await userEvent.click(card);
     expect(card).toHaveAttribute("aria-pressed", "true");
@@ -261,6 +271,8 @@ describe("Investigations (ADR-0016)", () => {
     await openInvestigate(
       `/investigate/people#user=${encodeURIComponent("<img src=x onerror=alert(1)>")}`,
     );
+    expect(await screen.findByRole("heading", { level: 1 })).toHaveTextContent("<img src=x");
+    await userEvent.click(await screen.findByRole("button", { name: "How it connects" }));
     const lanes = await screen.findByRole("group", { name: /Investigation lanes/ });
     expect(lanes.querySelector("img")).toBeNull();
     expect(within(lanes).getAllByText(/<img src=x/).length).toBeGreaterThan(0);
@@ -270,7 +282,7 @@ describe("Investigations (ADR-0016)", () => {
 describe("Person timeline (ADR-0038 section 9)", () => {
   it("shows the forms of the name and rows by day, each opening its events", async () => {
     await openInvestigate("/investigate/people#user=alice");
-    await userEvent.click(await screen.findByRole("tab", { name: "Timeline" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Timeline" }));
     const box = await screen.findByRole("region", { name: "Timeline" });
     expect(await within(box).findByText(/EXAMPLE\\alice, alice@example.com/)).toBeVisible();
     const days = within(box).getByRole("list", { name: "Activity by day" });
@@ -281,47 +293,138 @@ describe("Person timeline (ADR-0038 section 9)", () => {
     expect(await screen.findByText(/From alice > Timeline/)).toBeVisible();
   });
 
-  it("is one page per person: identity, AI use, hosts, alerts, timeline (D197)", async () => {
-    await openInvestigate("/investigate/people#user=alice");
-    const tabs = await screen.findByRole("tablist", { name: "Person" });
+  it("is one Record per person: a sentence, numbers, then alerts, activity, Microsoft 365, AI use (ADR-0052)", async () => {
+    const spy = await openInvestigate("/investigate/people#user=alice");
+    expect(screen.getByRole("heading", { level: 1, name: "alice" })).toBeVisible();
+    expect(screen.queryByRole("tablist", { name: "Person" })).toBeNull();
+    // The page's one filled button.
+    const primary = await screen.findByRole("button", { name: "Open in Logs" });
+    expect(primary).toHaveAttribute("data-primary");
+    const summary = await screen.findByRole("region", { name: "Summary" });
+    const kpi = (label: string) => summary.querySelector(`[data-kpi="${label}"]`) as HTMLElement;
+    // Devices, Addresses, and AI services count whole days back from now and say so.
+    await vi.waitFor(() => expect(kpi("Devices")).toHaveTextContent("1Last 7 days"));
+    expect(kpi("Sign-ins")).not.toHaveTextContent("Last 7 days");
+    expect(kpi("Addresses")).toHaveTextContent("1");
+    expect(kpi("Sign-ins")).toHaveTextContent("2,619");
+    for (const label of ["Open alerts", "AI services"]) expect(kpi(label)).toBeVisible();
+    expect(await screen.findByRole("region", { name: "Open alerts" })).toBeVisible();
+    // Activity per day: a bar opens that day's events in Logs; an empty day opens nothing.
+    const days = within(await screen.findByRole("region", { name: "Activity per day" })).getByRole(
+      "list",
+      { name: "Events per day" },
+    );
+    expect(within(days).getByRole("button", { name: /^Oct 28: 0 events/ })).toBeDisabled();
     expect(
-      within(tabs)
-        .getAllByRole("tab")
-        .map((t) => t.textContent),
-    ).toEqual(["Identity and M365", "AI use", "Hosts and devices", "Alerts", "Timeline"]);
-    // Identity and M365 holds the summary and the sign-ins, times local with UTC on hover
-    // as Ask shows them, never the raw UTC string (review item 6).
-    const signins = await screen.findByRole("region", { name: "Sign-ins" });
-    expect(signins).toBeVisible();
-    const at = await within(signins).findByText("Oct 30, 9:58:00 AM"); // tests run in UTC; log tables keep seconds
+      within(days).getByRole("button", {
+        name: "Oct 30: 30 events, 2 failed sign-ins. Open in Logs",
+      }),
+    ).toBeEnabled();
+    // Microsoft 365: one table with a switch; times local with UTC on hover, never the raw
+    // UTC string (review item 6).
+    const m365 = await screen.findByRole("region", { name: "Microsoft 365" });
+    const at = await within(m365).findByText("Oct 30, 9:58:00 AM"); // tests run in UTC; log tables keep seconds
     expect(at.tagName).toBe("TIME");
     expect(at).toHaveAttribute("title", "2026-10-30 09:58 UTC");
-    expect(within(signins).queryByText(/2026-10-30/)).toBeNull();
-    await userEvent.click(within(tabs).getByRole("tab", { name: "Hosts and devices" }));
-    const hosts = await screen.findByRole("region", { name: "Hosts and devices" });
-    // The panels count whole days back from now and say so (owner, 2026-11-13).
-    expect(within(hosts).getAllByText(/^Last 7 days/).length).toBeGreaterThanOrEqual(2);
-    const table = within(hosts).getByRole("table", { name: "Hosts" });
-    expect(within(table).getByRole("link", { name: "ws-0042" })).toBeVisible();
-    expect(within(hosts).getByRole("table", { name: "Source addresses" })).toHaveTextContent("3");
-    await userEvent.click(within(tabs).getByRole("tab", { name: "Alerts" }));
-    expect(await screen.findByRole("region", { name: "Alerts" })).toBeVisible();
-    await userEvent.click(within(tabs).getByRole("tab", { name: "Timeline" }));
+    const pick = within(m365).getByRole("group", { name: "Microsoft 365 list" });
+    await userEvent.click(within(pick).getByRole("button", { name: "Mail" }));
+    expect(await within(m365).findByText("new-inboxrule")).toBeVisible();
+    expect(spy.mock.calls.some(([u]) => String(u).includes("/m365?name=mail&days=7"))).toBe(true);
+    await userEvent.click(within(pick).getByRole("button", { name: "Admin" }));
+    expect(
+      await within(m365).findByText(
+        "No Microsoft 365 directory changes by this person in this range.",
+      ),
+    ).toBeVisible();
+    // The side column: the names counted as the person, devices, addresses.
+    const side = screen.getByRole("complementary", { name: "Accounts, devices, and addresses" });
+    expect(within(side).getByRole("list", { name: "Accounts" })).toHaveTextContent(
+      "alice@example.com",
+    );
+    const devices = within(side).getByRole("table", { name: "Devices" });
+    expect(within(devices).getByRole("link", { name: "ws-0042" })).toBeVisible();
+    // Every row, with events, failed sign-ins, and last seen, as the old tab had.
+    const address = within(within(side).getByRole("table", { name: "Addresses" }))
+      .getByRole("link", { name: "203.0.113.10" })
+      .closest("tr")!;
+    expect(
+      within(address)
+        .getAllByRole("cell")
+        .map((c) => c.textContent),
+    ).toEqual(["203.0.113.10", "12", "3", "Oct 28, 6:00 PM"]);
+    // These lists count whole days back from now and say so (owner, 2026-11-13).
+    expect(within(side).getAllByText("Last 7 days").length).toBe(2);
+    // Another person is another page: a fold opened here is closed there, and its lanes
+    // are asked for again when opened.
+    await userEvent.click(screen.getByRole("button", { name: "How it connects" }));
+    await screen.findByRole("group", { name: /Investigation lanes/ });
+    window.location.hash = "user=bob";
+    await vi.waitFor(() =>
+      expect(screen.getByRole("button", { name: "How it connects" })).toHaveAttribute(
+        "aria-expanded",
+        "false",
+      ),
+    );
+    window.location.hash = "user=alice";
+    await screen.findByRole("heading", { level: 1, name: "alice" });
+    // The timeline is read only when opened.
+    expect(spy.mock.calls.some(([u]) => String(u).includes("/timeline?"))).toBe(false);
+    await userEvent.click(screen.getByRole("button", { name: "Timeline" }));
     const box = await screen.findByRole("region", { name: "Timeline" });
     await userEvent.click(
       await within(box).findByRole("button", { name: "Sensitive data to AI: alice" }),
     );
     expect(window.location.pathname + window.location.hash).toBe("/alerts#item=a1");
   });
+
+  it("opens a Microsoft 365 list in Logs with the page's window", async () => {
+    await openInvestigate("/investigate/people#user=alice");
+    const m365 = await screen.findByRole("region", { name: "Microsoft 365" });
+    await userEvent.click(within(m365).getByRole("button", { name: "Open in Logs" }));
+    expect(await screen.findByText(/^From alice > Sign-ins, Oct 23/)).toBeVisible();
+  });
+
+  it("opens a day in Logs, cut to the page's window", async () => {
+    await openInvestigate("/investigate/people#user=alice");
+    const days = await screen.findByRole("list", { name: "Events per day" });
+    // The window ends at 12:00 on Oct 30 (tests run in UTC): the last bar counted only
+    // that morning, so Logs gets midnight to 12:00, not the whole day.
+    await userEvent.click(within(days).getByRole("button", { name: /^Oct 30: 30 events/ }));
+    await screen.findByRole("heading", { level: 1, name: "Logs" });
+    expect(await screen.findByText(/^From alice > Activity per day/)).toBeVisible();
+    expect(screen.getByLabelText("From")).toHaveValue("2026-10-30T00:00");
+    expect(screen.getByLabelText("To")).toHaveValue("2026-10-30T12:00");
+  });
+
+  it("shows no Microsoft 365 section without a Microsoft 365 source", async () => {
+    window.history.replaceState(null, "", "/investigate/people#user=alice");
+    const spy = mockApi("Codename", { mode: "open" });
+    const base = spy.getMockImplementation()!;
+    spy.mockImplementation(async (input, init) => {
+      const res = await base(input, init);
+      if (!/\/record\?/.test(String(input))) return res;
+      return new Response(JSON.stringify({ ...(await res.json()), m365: false, m365_sql: {} }), {
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<App initialTheme="dark" queryClient={client} />);
+    expect(await screen.findByRole("region", { name: "Activity per day" })).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Microsoft 365" })).toBeNull();
+    expect(spy.mock.calls.some(([u]) => String(u).includes("/m365?"))).toBe(false);
+  });
 });
 
 describe("A person's AI activity (D189)", () => {
-  it("opens on its tab from a link that names it, with flags, sessions, and rollups", async () => {
+  it("is on the page from a link that names it, with flags, sessions, and rollups", async () => {
     const spy = await openInvestigate(
       `/investigate/people#user=${encodeURIComponent("alice@example.com")}&tab=ai`,
     );
-    const tab = await screen.findByRole("tab", { name: "AI use", selected: true });
-    expect(tab).toBeVisible();
+    expect(await screen.findByRole("heading", { level: 2, name: "AI use" })).toBeVisible();
     const page = await screen.findByRole("region", { name: "AI activity" });
     expect(within(page).getAllByText(/^Last 7 days/).length).toBeGreaterThanOrEqual(2);
     const flags = within(page).getByRole("region", { name: "Flags" });
@@ -354,10 +457,10 @@ describe("A person's AI activity (D189)", () => {
 
 describe("A person's AI activity without View people in AI usage (D242)", () => {
   const NEEDS = "Needs View people in AI usage";
-  async function open(analyst: boolean, refused = false) {
+  async function open(analyst: boolean, refused = false, viewPeople = false) {
     window.history.replaceState(null, "", "/investigate/people#user=alice%40example.com&tab=ai");
     const spy = analyst
-      ? mockApi("Codename", { mode: "login", signedIn: true, role: "analyst" })
+      ? mockApi("Codename", { mode: "login", signedIn: true, role: "analyst", viewPeople })
       : mockApi("Codename", { mode: "open" });
     const base = spy.getMockImplementation()!;
     if (refused)
@@ -375,22 +478,113 @@ describe("A person's AI activity without View people in AI usage (D242)", () => 
     const { App } = await import("@/app/App");
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<App initialTheme="dark" queryClient={client} />);
-    await screen.findByRole("heading", { level: 1, name: "People & devices" });
+    const masked = analyst && !viewPeople;
+    await screen.findByRole("heading", {
+      level: 1,
+      name: masked ? "Name hidden" : "alice@example.com",
+    });
     return spy;
   }
+
+  it("masks the title, the header, and the Accounts list", async () => {
+    await open(true);
+    const title = screen.getByRole("heading", { level: 1 });
+    expect(title).toHaveTextContent("Name hidden");
+    expect(title).not.toHaveClass("font-mono");
+    // The header row: breadcrumb, title, and the kind beside it; none names the person.
+    const header = title.closest(".grid") as HTMLElement;
+    expect(within(header).getByRole("navigation", { name: "Breadcrumb" })).toBeVisible();
+    expect(header.querySelector("[data-header-count]")).toHaveTextContent("Person");
+    expect(header).not.toHaveTextContent(/alice/i);
+    expect(document.title).not.toMatch(/alice/i);
+    const accounts = screen.getByRole("complementary", {
+      name: "Accounts, devices, and addresses",
+    });
+    expect(await within(accounts).findByText("2 names hidden")).toBeVisible();
+    expect(within(accounts).queryByRole("list", { name: "Accounts" })).toBeNull();
+    expect(within(accounts).queryByText(/EXAMPLE|alice@example\.com/)).toBeNull();
+  });
+
+  it("leaves the by-name label out of What it did, and names no one to Logs", async () => {
+    await open(true);
+    const acts = await screen.findByRole("list", { name: "Activities" });
+    // The mock's activity is by "root": the label repeats the names counted as the person.
+    expect(within(acts).queryByRole("link", { name: "root" })).toBeNull();
+    expect(within(acts).queryByText(/\bby\b/)).toBeNull();
+    const m365 = await screen.findByRole("region", { name: "Microsoft 365" });
+    await userEvent.click(within(m365).getByRole("button", { name: "Open in Logs" }));
+    expect(await screen.findByText(/^From this person > Sign-ins/)).toBeVisible();
+    expect(screen.queryByText(/^From alice/)).toBeNull();
+  });
+
+  it("shows no name in the Timeline fold", async () => {
+    const spy = await open(true);
+    await userEvent.click(screen.getByRole("button", { name: "Timeline" }));
+    const box = await screen.findByRole("region", { name: "Timeline" });
+    expect(await within(box).findByText(/2 names hidden/)).toBeVisible();
+    expect(within(box).queryByText(/Seen as/)).toBeNull();
+    expect(within(box).queryByText(/Possibly the same person/)).toBeNull();
+    expect(box).not.toHaveTextContent(/alice/i);
+    expect(spy.mock.calls.some(([u]) => String(u).includes("/timeline?days="))).toBe(true);
+  });
+
+  it("shows no name in How it connects", async () => {
+    await open(true);
+    await userEvent.click(screen.getByRole("button", { name: "How it connects" }));
+    const root = await screen.findByRole("button", { name: /^Entity: Name hidden/ });
+    expect(root).not.toHaveTextContent(/alice/i);
+    await userEvent.click(root);
+    const detail = screen.getByRole("region", { name: "Selected card" });
+    expect(detail).toHaveTextContent("Name hidden");
+    expect(detail).not.toHaveTextContent(/alice/i);
+  });
+
+  it("says this person when How it connects is empty", async () => {
+    const spy = await open(true);
+    const base = spy.getMockImplementation()!;
+    spy.mockImplementation(async (input, init) => {
+      if (!String(input).includes("/api/entities/graph")) return base(input, init);
+      const res = await base(input, init);
+      const g = (await res.json()) as { cards: { lane: number }[]; edges: unknown[] };
+      return new Response(
+        JSON.stringify({ ...g, cards: g.cards.filter((c) => c.lane === 0), edges: [] }),
+        { headers: { "content-type": "application/json" } },
+      );
+    });
+    await userEvent.click(screen.getByRole("button", { name: "How it connects" }));
+    expect(
+      await screen.findByText(
+        "No events for this person in this range, in the sources you may read.",
+      ),
+    ).toBeVisible();
+  });
+
+  it("keeps the name as the title with the permission", async () => {
+    await open(true, false, true);
+    const title = screen.getByRole("heading", { level: 1 });
+    expect(title).toHaveTextContent("alice@example.com");
+    expect(title).toHaveClass("font-mono");
+    const list = await screen.findByRole("list", { name: "Accounts" });
+    expect(within(list).getByText("EXAMPLE\\alice")).toBeVisible();
+    expect(screen.queryByRole("note")).toBeNull();
+  });
 
   it("says what is needed and never asks the server", async () => {
     const spy = await open(true);
     expect(await screen.findByText(NEEDS)).toBeVisible();
+    // The state notice sits above the summary, and the AI number reads Hidden, never 0.
+    expect(screen.getByRole("note")).toHaveTextContent(
+      "Names are hidden: this person's name and AI activity are not shown.",
+    );
+    const tile = document.querySelector('[data-kpi="AI services"]') as HTMLElement;
+    expect(tile).toHaveTextContent("Hidden");
     expect(screen.queryByRole("region", { name: "AI activity" })).toBeNull();
     expect(spy.mock.calls.some(([u]) => String(u).includes("/activity?"))).toBe(false);
   });
 
   it("still lists the person's alerts: the server leaves AI Watch items out", async () => {
     const spy = await open(true);
-    const tabs = await screen.findByRole("tablist", { name: "Person" });
-    await userEvent.click(within(tabs).getByRole("tab", { name: "Alerts" }));
-    const box = await screen.findByRole("region", { name: "Alerts" });
+    const box = await screen.findByRole("region", { name: "Open alerts" });
     expect(within(box).queryByText(NEEDS)).toBeNull();
     await vi.waitFor(() =>
       expect(spy.mock.calls.some(([u]) => String(u).includes("person=alice"))).toBe(true),
@@ -417,6 +611,7 @@ describe("People & devices: Open in Logs with a Custom range", () => {
     const { fireEvent } = await import("@testing-library/react");
     fireEvent.change(from, { target: { value: "2026-11-01T08:00" } });
     fireEvent.change(screen.getByLabelText("To"), { target: { value: "2026-11-02T08:00" } });
+    await userEvent.click(await screen.findByRole("button", { name: "How it connects" }));
     await userEvent.click(
       await screen.findByRole("button", { name: /Activities: Failed password/ }),
     );

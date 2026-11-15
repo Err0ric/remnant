@@ -9,7 +9,8 @@ import { localClock, localDate } from "@/lib/localTime";
 import { openDrill } from "@/lib/drill";
 import { navigate } from "@/lib/route";
 import { useViewer } from "@/lib/viewer";
-import { SectionTitle } from "@/components/SectionTitle";
+import { Card } from "@/components/Card";
+import { CardAction } from "@/components/CardAction";
 
 const KIND: Record<string, string> = {
   signin: "Sign-in",
@@ -33,6 +34,9 @@ function day(iso: string): string {
 /** A person's timeline (ADR-0038 section 9): one row per action across sources, newest
  * first, grouped by day; each row opens its own events in Logs. */
 export function PersonTimeline({ person }: { person: string }) {
+  // D242: with names hidden, Logs says where it came from without the name.
+  const { canViewPeople = true } = useViewer();
+  const who = canViewPeople ? person : "this person";
   const [days, setDays] = useState<(typeof DAYS)[number]>(7);
   const q = useQuery({
     queryKey: ["person-timeline", person, days],
@@ -49,15 +53,24 @@ export function PersonTimeline({ person }: { person: string }) {
     r.item_id
       ? () => navigate("alerts", `item=${r.item_id}`)
       : r.sql
-        ? () => openDrill({ sql: r.sql, from: r.start, to: r.end, origin: `${person} > Timeline` })
+        ? () => openDrill({ sql: r.sql, from: r.start, to: r.end, origin: `${who} > Timeline` })
         : undefined;
   return (
-    <section
-      aria-label="Timeline"
-      className="overflow-hidden rounded-card border border-border bg-surface"
+    <Card
+      title="Timeline"
+      action={
+        d ? (
+          <CardAction
+            onClick={() =>
+              openDrill({ sql: d.sql, from: d.start, to: d.end, origin: `${who} > Timeline` })
+            }
+          >
+            Open in Logs
+          </CardAction>
+        ) : null
+      }
     >
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border bg-surface-head px-3 py-2">
-        <SectionTitle>Timeline</SectionTitle>
+      <div className="flex border-b border-border px-3 py-2">
         <div role="group" aria-label="Time window" className="flex rounded border border-border">
           {DAYS.map((n) => (
             <button
@@ -76,25 +89,22 @@ export function PersonTimeline({ person }: { person: string }) {
             </button>
           ))}
         </div>
-        {d ? (
-          <button
-            type="button"
-            onClick={() =>
-              openDrill({ sql: d.sql, from: d.start, to: d.end, origin: `${person} > Timeline` })
-            }
-            className="ml-auto text-sm text-accent-text hover:underline"
-          >
-            Open in Logs
-          </button>
-        ) : null}
       </div>
       {d?.maybe?.length ? <MaybeSame person={d.person} maybe={d.maybe} /> : null}
-      {d && (d.forms.length || d.devices.length) ? (
+      {d && (d.forms.length || d.forms_hidden || d.devices.length) ? (
         <p className="border-b border-border px-3 py-2 text-sm text-text-secondary">
           {d.forms.length ? (
             <>
               Seen as <span className="font-mono text-text">{d.forms.join(", ")}</span>.{" "}
             </>
+          ) : d.forms_hidden ? (
+            // D242: the server sent how many names, not the names.
+            <span className="text-text-muted">
+              {d.forms_hidden === 1
+                ? "1 name hidden"
+                : `${d.forms_hidden.toLocaleString()} names hidden`}
+              .{" "}
+            </span>
           ) : null}
           {d.devices.length ? (
             <>
@@ -180,7 +190,7 @@ export function PersonTimeline({ person }: { person: string }) {
           <button
             type="button"
             onClick={() =>
-              openDrill({ sql: d.sql, from: d.start, to: d.end, origin: `${person} > Timeline` })
+              openDrill({ sql: d.sql, from: d.start, to: d.end, origin: `${who} > Timeline` })
             }
             className="h-7 rounded border border-border-strong px-2.5 text-text hover:bg-surface-head"
           >
@@ -188,7 +198,7 @@ export function PersonTimeline({ person }: { person: string }) {
           </button>
         </p>
       ) : null}
-    </section>
+    </Card>
   );
 }
 

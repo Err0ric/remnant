@@ -165,16 +165,18 @@ describe("App shell", () => {
   it("on narrow screens, the Menu button shows the nav and navigating hides it again", async () => {
     await renderApp();
     const nav = screen.getByRole("navigation", { name: "Primary" });
-    expect(nav).toHaveClass("hidden", "md:flex");
+    // The rail holds the Primary nav and the Recent region (D258); the Menu button shows it.
+    const rail = nav.closest("#primary-nav");
+    expect(rail).toHaveClass("hidden", "md:grid");
     await userEvent.click(screen.getByRole("button", { name: "Open menu" }));
-    expect(nav).not.toHaveClass("hidden");
+    expect(rail).not.toHaveClass("hidden");
     expect(screen.getByRole("button", { name: "Close menu" })).toHaveAttribute(
       "aria-expanded",
       "true",
     );
     await userEvent.click(within(nav).getByRole("link", { name: "Health" }));
     await screen.findByRole("heading", { level: 1, name: "Health" });
-    expect(nav).toHaveClass("hidden");
+    expect(rail).toHaveClass("hidden");
   });
 });
 

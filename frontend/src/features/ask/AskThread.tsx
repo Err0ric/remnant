@@ -1,15 +1,33 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
+import { FacetSelect } from "@/components/FilterBar";
 import { isAborted, ModelWait } from "@/components/ai/ModelWait";
 import { api, type AskTurn, type Cell } from "@/lib/api";
 import { closeAsk } from "@/lib/askSlideOver";
 import { setAskProvider, useAskProvider } from "@/lib/askProvider";
 import { navigate } from "@/lib/route";
 import { seedSearch } from "@/lib/searchSeed";
+import { LocalityBadge } from "@/features/providers/LocalityBadge";
+import { cn } from "@/lib/cn";
 import { AskExamples } from "./AskExamples";
 import { AskTurnBlock, type Turn } from "./AskTurnBlock";
 
 const MAX_TURNS = 3;
+/** The prompt's height in lines: one per line typed, from two to six. */
+export function promptRows(text: string): number {
+  return Math.min(6, Math.max(2, text.split("\n").length));
+}
+/** Text that reads as a KQL or SPL query rather than a sentence: a pipe into a verb, or a
+ * leading `index=` or `search`. */
+const QUERY_LIKE =
+  /\|\s*(where|stats|summarize|project|extend|count|table|sort|top|eval|rex|search)\b|^\s*(index|sourcetype)\s*=|^\s*search\s/i;
 /** The asker's time zone, so "today" means their day. */
 const TZ = (() => {
   try {
@@ -34,12 +52,21 @@ interface AskThreadProps {
   onAnswer?: (answer: { sql: string; question: string } | null) => void;
   /** Focus the question box on open (the slide-over). */
   autoFocus?: boolean;
+  /** The page's Time and Sources chips, drawn before the Model chip (D256). */
+  filters?: ReactNode;
+  /** Set by a page whose header has New question: each new value starts over, and the
+   * thread then draws no New question of its own. */
+  startOver?: number;
+  /** Whether the thread has turns, for the page's New question. */
+  onTurns?: (has: boolean) => void;
 }
 
 /**
  * Ask (ADR-0042 slice 1a): a question becomes SQL that runs at once when it passes the
- * guard on the asker's own sources, unless the install keeps click-to-run. Each turn is a
- * block; follow-ups stack below and refine the last answer (3 turns).
+ * guard on the asker's own sources, unless the install keeps click-to-run. Search first
+ * (D256): the prompt, then the chips, then the answers as blocks, newest first, directly
+ * under the prompt; a follow-up refines the newest answer (3 turns). Only the drawing
+ * order is newest first: the turns and the history sent are in the order asked.
  */
 export function AskThread({
   start,
@@ -50,6 +77,9 @@ export function AskThread({
   onEdit,
   onAnswer,
   autoFocus,
+  filters,
+  startOver: startOverSignal,
+  onTurns,
 }: AskThreadProps) {
   const providerId = useAskProvider();
   const [question, setQuestion] = useState(initialQuestion);
@@ -187,7 +217,16 @@ export function AskThread({
       .filter((t) => t.answer)
       .slice(-MAX_TURNS)
       .map((t) => ({ question: t.question, sql: t.answer!.sql }));
-    setTurns([...earlier, { id, question: q, phase: "finding" }]);
+    setTurns([
+      ...earlier,
+      {
+        id,
+        question: q,
+        phase: "finding",
+        askedAt: new Date().toISOString(),
+        locality: chosen?.locality,
+      },
+    ]);
     // Nothing on the page is this question's answer until its query runs (D192).
     onAnswer?.(null);
     ask.mutate({ id, q, history, route });
@@ -230,6 +269,13 @@ export function AskThread({
     setTurns([]);
     onAnswer?.(null);
   };
+  const startOverRef = useRef(startOver);
+  startOverRef.current = startOver;
+  useEffect(() => {
+    if (startOverSignal) startOverRef.current();
+  }, [startOverSignal]);
+  const hasTurns = turns.length > 0;
+  useEffect(() => onTurns?.(hasTurns), [hasTurns, onTurns]);
   const retry = (t: Turn) =>
     begin(
       t.question,
@@ -245,50 +291,80 @@ export function AskThread({
   const runTurn = (t: Turn) => t.answer?.ask_id && run.mutate({ id: t.id, askId: t.answer.ask_id });
 
   return (
-    <div className="flex flex-col gap-3">
-      <form aria-label="Ask a question" onSubmit={submit} className="flex flex-col gap-2">
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          <label htmlFor="ask-provider" className="text-text-secondary">
-            Model
+    <div className="flex flex-col gap-4">
+      <div className="flex max-w-[880px] flex-col gap-2">
+        {/* Only the prompt and Ask are in the form: Enter in a chip never asks (D256). */}
+        <form aria-label="Ask a question" onSubmit={submit} className="flex flex-col gap-2">
+          <label htmlFor="ask-question" className="sr-only">
+            Question
           </label>
-          <select
-            id="ask-provider"
-            value={chosen?.provider_id ?? ""}
-            onChange={(e) => setAskProvider(e.target.value)}
-            disabled={!providers.data?.length}
-            className="h-8 rounded border border-border-control bg-surface px-2 text-sm"
-          >
-            {providers.data?.length ? null : <option value="">None enabled</option>}
-            {(providers.data ?? []).map((p) => (
-              <option key={p.provider_id} value={p.provider_id}>
-                {p.name} · {p.model} · {p.locality === "local" ? "Local" : "Cloud"}
-              </option>
-            ))}
-          </select>
-          {chosen ? (
-            chosen.locality === "cloud" ? (
-              <span className="rounded-badge bg-cloud-bg px-2 py-px text-xs text-cloud-tx">
-                Cloud
-              </span>
-            ) : (
-              <span className="rounded-badge bg-local-bg px-2 py-px text-xs text-local-tx">
-                Local
-              </span>
-            )
+          <div className="flex items-end gap-2 rounded border border-border-control bg-inset py-1.5 pl-3 pr-1.5 has-[textarea:focus]:ring-2 has-[textarea:focus]:ring-focus-ring">
+            <textarea
+              id="ask-question"
+              // Two to six lines by the line breaks typed, where `field-sizing` is not supported.
+              rows={promptRows(question)}
+              maxLength={2000}
+              // The slide-over opens with the cursor in the box (it is the whole panel).
+              autoFocus={autoFocus}
+              value={question}
+              onChange={(e) => setQuestion(e.target.value)}
+              onKeyDown={onKeyDown}
+              placeholder={turns.length ? "Refine the answer below" : "Ask about your logs"}
+              title="Ask in plain words, or paste a KQL or SPL query. Ctrl+Enter asks."
+              // Two lines, growing with the text to six.
+              className="max-h-[calc(6lh+8px)] min-h-[calc(2lh+8px)] min-w-0 flex-1 resize-none bg-transparent py-1 text-md font-normal [field-sizing:content] focus:outline-none"
+            />
+            <button
+              type="submit"
+              disabled={!question.trim() || busy}
+              className={cn(
+                "h-8 shrink-0 rounded px-4 font-semibold",
+                question.trim() && !busy
+                  ? "bg-accent text-on-accent hover:brightness-110"
+                  : "border border-border-strong text-text-muted",
+              )}
+            >
+              {turns.length ? "Refine" : "Ask"}
+            </button>
+          </div>
+          {QUERY_LIKE.test(question) ? (
+            <p className="text-sm text-text-muted">
+              Reads as a KQL or SPL query: Ask turns it into SQL for your logs.
+            </p>
           ) : null}
-          {turns.length ? (
+        </form>
+        <div className="flex min-h-7 flex-wrap items-center gap-2 text-sm">
+          {filters}
+          <FacetSelect
+            name="Model"
+            value={chosen?.provider_id ?? ""}
+            onChange={setAskProvider}
+            disabled={!providers.data?.length}
+            options={
+              providers.data?.length
+                ? providers.data.map((p) => ({ id: p.provider_id, label: p.name }))
+                : [{ id: "", label: "None" }]
+            }
+            after={chosen ? <LocalityBadge locality={chosen.locality} /> : undefined}
+          />
+          {turns.length && startOverSignal === undefined ? (
             <button
               type="button"
               onClick={startOver}
-              className="ml-auto rounded px-2 py-1 text-accent-text hover:bg-surface-head"
+              className="ml-auto h-7 rounded border border-border-strong px-2.5 text-text hover:bg-surface-head"
             >
               New question
             </button>
           ) : null}
         </div>
+        {chosen?.locality === "cloud" ? (
+          <p role="note" className="text-sm text-text-muted">
+            Your question is sent to {chosen.name}.
+          </p>
+        ) : null}
         {noProviders ? (
           <p className="text-sm text-text-secondary">
-            No AI provider is set up. Logs (Filters and SQL) works without one.
+            No AI provider is set up. Logs works without one.
             {isAdmin ? (
               <>
                 {" "}
@@ -297,7 +373,7 @@ export function AskThread({
                   onClick={() => navigate("providers")}
                   className="text-accent-text hover:underline"
                 >
-                  Add one under AI providers
+                  Add a provider
                 </button>
               </>
             ) : (
@@ -305,45 +381,7 @@ export function AskThread({
             )}
           </p>
         ) : null}
-        <label htmlFor="ask-question" className="sr-only">
-          Question
-        </label>
-        <div className="flex items-start gap-2">
-          <textarea
-            id="ask-question"
-            rows={3}
-            maxLength={2000}
-            // The slide-over opens with the cursor in the box (it is the whole panel).
-            autoFocus={autoFocus}
-            value={question}
-            onChange={(e) => setQuestion(e.target.value)}
-            onKeyDown={onKeyDown}
-            placeholder={
-              turns.length
-                ? "Refine the last answer: only failures, by host, for alice"
-                : "How many failed logins on the firewall today? Or paste a KQL or SPL query."
-            }
-            className="min-w-0 flex-1 rounded border border-accent bg-inset px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-focus-ring"
-          />
-        </div>
-        {chosen?.locality === "cloud" ? (
-          <p role="note" className="text-sm text-cloud-tx">
-            Your question is sent to {chosen.name}.
-          </p>
-        ) : null}
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            type="submit"
-            disabled={!question.trim() || busy}
-            className="h-8 rounded border border-border-strong px-3 text-sm hover:bg-surface-head disabled:opacity-40"
-          >
-            {turns.length ? "Refine" : "Ask"}
-          </button>
-          <span className="text-sm text-text-muted">
-            Ctrl+Enter to ask · the query runs on your own sources; its SQL is under How I got this
-          </span>
-        </div>
-      </form>
+      </div>
       {noProviders && suggestFor !== null ? (
         <section aria-label="Library suggestions" className="flex flex-col gap-1.5 text-sm">
           <h3 className="font-semibold">Library queries that match your words</h3>
@@ -378,8 +416,9 @@ export function AskThread({
         onCancel={() => abort.current?.abort()}
       />
       {turns.length ? (
-        <div aria-label="Answers" className="flex flex-col gap-4">
-          {turns.map((t) => (
+        <div aria-label="Answers" className="mt-1 flex flex-col gap-4 border-t border-border pt-4">
+          {/* Newest first, directly under the prompt that refines it (D256). */}
+          {[...turns].reverse().map((t) => (
             <AskTurnBlock
               key={t.id}
               turn={t}

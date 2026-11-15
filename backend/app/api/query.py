@@ -273,24 +273,62 @@ INTEL_FACET = (
 )
 
 
-def facet_sql(sql: str, columns: list[str], intel: bool = False) -> str:
-    """Top values per facet column over the caller's query, in one statement. The query
-    itself is the caller's (it still goes through the guard as part of this one); the
-    rest is fixed text and column names from FACET_COLUMNS."""
-    wanted = [c for c in FACET_COLUMNS if c in set(columns)]
-    branch = (
-        "(SELECT '{c}' AS facet, CAST(\"{c}\" AS VARCHAR) AS value, count(*) AS n"
-        " FROM q GROUP BY 2 ORDER BY 3 DESC, 2 NULLS LAST LIMIT {n})"
+# The columns the threat intel facet joins on.
+INTEL_COLUMNS = ("src_endpoint_ip", "dst_endpoint_ip", "dst_endpoint_hostname",
+                 "src_endpoint_hostname")  # fmt: skip
+
+
+def _needed(wanted: list[str], intel: bool) -> str:
+    cols = list(dict.fromkeys([*wanted, *(INTEL_COLUMNS if intel else ())]))
+    return ", ".join(f'"{c}"' for c in cols)
+
+
+def _facets(base: str, wanted: list[str], intel: bool) -> str:
+    """The top FACET_VALUES values of each column in `wanted` over the rows of `base`, in
+    one grouped pass (GROUPING SETS): the same counts, order, and ties as one GROUP BY per
+    column (most first, then by value, no value last). `base` selects only the columns the
+    facets need, so nothing else is read, copied, or sorted (owner priority 2026-11-14: the
+    old statement copied every column of every row in the window, sorted them by time, and
+    grouped that ten times, and timed out on 30 days)."""
+    which = " ".join(f"WHEN grouping(\"{c}\") = 0 THEN '{c}'" for c in wanted)
+    value = " ".join(f'WHEN grouping("{c}") = 0 THEN CAST("{c}" AS VARCHAR)' for c in wanted)
+    sets = ", ".join(f'("{c}")' for c in wanted)
+    grouped = (
+        f"SELECT CASE {which} END AS facet, CASE {value} END AS value, count(*) AS n\n"
+        f"FROM q GROUP BY GROUPING SETS ({sets})"
     )
-    branches = [branch.format(c=c, n=FACET_VALUES) for c in wanted]
-    if intel:  # Simple search only, where a click on a value becomes intel:"..."
-        branches.append(INTEL_FACET.format(n=FACET_VALUES))
-    inner = _TRAILING.sub("", sql)
+    top = (
+        f"(SELECT facet, value, n FROM ({grouped}) g\nQUALIFY row_number() OVER"  # noqa: S608  # fixed text and FACET_COLUMNS names
+        f" (PARTITION BY facet ORDER BY n DESC, value NULLS LAST) <= {FACET_VALUES})"
+    )
+    branches = [top] + ([INTEL_FACET.format(n=FACET_VALUES)] if intel else [])
     return (
-        f"WITH q AS (\n{inner}\n)\nSELECT facet, value, n FROM (\n"
+        f"WITH q AS (\n{base}\n)\nSELECT facet, value, n FROM (\n"
         + "\nUNION ALL\n".join(branches)
-        + "\n) f"
+        # The answer's own order, not only the ranking inside each field: the handler and
+        # the panel keep the values as they come.
+        + "\n) f ORDER BY facet, n DESC, value NULLS LAST"
     )
+
+
+def facet_sql(sql: str, columns: list[str], intel: bool = False) -> str:
+    """Top values per facet column over the caller's query (the SQL on screen), in one
+    statement. The query itself is the caller's, kept as written (its order and limit
+    decide its rows), and still goes through the guard as part of this one; the rest is
+    fixed text and column names from FACET_COLUMNS."""
+    wanted = [c for c in FACET_COLUMNS if c in set(columns)]
+    inner = _TRAILING.sub("", sql)
+    # The caller's own query, guarded with the rest; the column names are fixed ones.
+    base = f"SELECT {_needed(wanted, intel)} FROM (\n{inner}\n) AS _search"  # noqa: S608
+    return _facets(base, wanted, intel)
+
+
+def text_facet_sql(text: str, intel: bool = False) -> tuple[str, dict[str, Any]]:
+    """Facets for a Simple search: the search compiled over the facet columns only and in
+    no order (counting needs neither the other columns nor the newest-first order)."""
+    wanted = list(FACET_COLUMNS)
+    compiled = compile_search(text, select=_needed(wanted, intel), ordered=False)
+    return _facets(compiled.sql, wanted, intel), compiled.params
 
 
 @router.post("/search/facets")
@@ -303,6 +341,7 @@ async def search_facets(body: FacetRequest, request: Request, user: SqlUser) -> 
     allowed = await run_in_threadpool(permitted_sources, meta, user)
     sources = scope_sources(allowed, body.sources)
     scope = QueryScope(sources=sources, start=body.start, end=body.end)
+    with_intel = body.text is not None and request.app.state.feeds.intel_file.is_file()
     if body.text is not None:
         compiled = compile_search(body.text, select="*")
         query, params = compiled.sql, compiled.params
@@ -321,8 +360,10 @@ async def search_facets(body: FacetRequest, request: Request, user: SqlUser) -> 
         "facets": wanted,
         "sources_in_scope": "all" if sources is None else sources,
     }
-    with_intel = body.text is not None and request.app.state.feeds.intel_file.is_file()
-    sql = facet_sql(query, wanted, intel=with_intel)
+    if body.text is not None:
+        sql, params = text_facet_sql(body.text, intel=with_intel)
+    else:
+        sql = facet_sql(query, wanted, intel=with_intel)
     try:
         result = await run_in_threadpool(
             lambda: engine.run(sql, scope, params or None, timeout_s=FACET_TIMEOUT_S)

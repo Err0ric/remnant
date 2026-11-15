@@ -350,10 +350,17 @@ def review_sql(pairs: list[tuple[str, str]], rollup: bool = False) -> str:
     watch's review items (ADR-0035 row 11). `seen` pairs each machine with no person with
     the address it was seen at, so an item names both."""
     return f"""
-WITH {_use_ctes(pairs, rollup)}
+WITH {_use_ctes(pairs, rollup)},
+-- Devices with no person, newest first: an item cut at 20 keeps the latest (owner,
+-- 2026-11-14).
+dev AS (
+  SELECT service_id, machine, max(last_t) AS last_t FROM r
+  WHERE machine IS NOT NULL AND who IS NULL GROUP BY 1, 2
+)
 SELECT service_id, list(DISTINCT source_id) AS sources,
        list(DISTINCT who) FILTER (WHERE who IS NOT NULL) AS people,
-       list(DISTINCT machine) FILTER (WHERE machine IS NOT NULL AND who IS NULL) AS devices,
+       (SELECT list(dev.machine ORDER BY dev.last_t DESC, dev.machine) FROM dev
+        WHERE dev.service_id = r.service_id) AS devices,
        list(DISTINCT machine) FILTER (WHERE machine IS NOT NULL AND who IS NOT NULL) AS matched,
        list(DISTINCT [machine, ip])
          FILTER (WHERE machine IS NOT NULL AND ip IS NOT NULL AND who IS NULL) AS seen
@@ -458,10 +465,16 @@ LIMIT 500"""  # noqa: S608  # fixed SQL text
 # without a person), for the AI watch's review items (ADR-0035 row 11, D116). Hook-only
 # servers are included, so one added through a hooks-only client is reviewed (D151).
 REVIEW_MCP_SQL = f"""
-WITH {_MCP_ROWS}
+WITH {_MCP_ROWS},
+dev AS (  -- devices with no person, newest first (as in review_sql)
+  SELECT name, machine, max(ts) AS last_t FROM t
+  WHERE machine IS NOT NULL AND who IS NULL AND lower(name) NOT IN {NO_MCP_NAMES}
+  GROUP BY 1, 2
+)
 SELECT name, list(DISTINCT source_id) AS sources,
        list(DISTINCT who) FILTER (WHERE who IS NOT NULL) AS people,
-       list(DISTINCT machine) FILTER (WHERE machine IS NOT NULL AND who IS NULL) AS devices,
+       (SELECT list(dev.machine ORDER BY dev.last_t DESC, dev.machine) FROM dev
+        WHERE dev.name = t.name) AS devices,
        list(DISTINCT machine) FILTER (WHERE machine IS NOT NULL AND who IS NOT NULL) AS matched
 FROM t WHERE lower(name) NOT IN {NO_MCP_NAMES}
 GROUP BY 1
@@ -545,8 +558,18 @@ def fact_range(scope: QueryScope, upto: datetime) -> dict[str, datetime]:
     """The hours of rollup facts a range reads (they are per hour): a day only partly in
     range keeps its hours in range, so the first day of a week is not counted whole, and
     today's build before the start is left out (2026-11-01)."""
-    lo = scope.start or datetime(1970, 1, 1, tzinfo=UTC)
+    lo = (scope.start or datetime(1970, 1, 1, tzinfo=UTC)).astimezone(UTC)
+    # The UTC hour, as the facts are kept: a start at +05:30 is not cut at its own :00.
     return {"fact_lo": lo.replace(minute=0, second=0, microsecond=0), "fact_hi": upto}
+
+
+@dataclass(slots=True)
+class Earlier:
+    """The period before a range, as `Usage.earlier` read it."""
+
+    services: list[ServiceUse]
+    mcp: list[McpUse]
+    sources: list[str]
 
 
 class Usage:
@@ -601,7 +624,7 @@ class Usage:
 
     def _all_services(self, scope: QueryScope) -> tuple[list[ServiceUse], list[str]]:
         known = {s.id: s for s in self._catalog.services()}
-        result = self._run_use(services_sql, scope, "ai_use.services")
+        result = self._run_use(services_sql, scope, "ai_use.services", head=True)
         out = []
         for sid, events, people, machines, first, last, top, top_m in result.rows:
             if sid in known:
@@ -625,33 +648,49 @@ class Usage:
         scope: QueryScope,
         name: str = "ai_use",
         params: dict[str, Any] | None = None,
+        head: bool = False,
     ) -> Any:
         """Run a use query, reading closed days from the rollup for ranges of 2 days or
         more when it has them (ADR-0035 row 8). A range with a start and no end (the AI
         usage page sends only a start) uses the rollup's closed days too, and still reads
-        everything after the start, events stamped ahead of the clock included."""
+        everything after the start, events stamped ahead of the clock included.
+
+        With `head`, the day the range starts in (inside an hour) is read from the rollup
+        too, from the next whole hour, where the rollup has it fresh with its identities
+        (`AiRollup.head`); only the rest of the start's own hour, and its identities, come
+        from events. The rollup keeps use and identities by the hour (the identities by
+        each hour's first and last time), so the answer is the one events give."""
         upto = scope.end or clock.now()
         covered: list[str] = []
         keys: list[str] = []
+        first: list[str] = []
         after = None
         if self._rollup is not None and scope.start is not None:
             if upto - scope.start >= timedelta(days=2):
                 covered = self._rollup.covered(replace(scope, end=upto))
+                if head:
+                    first = self._rollup.head(replace(scope, end=upto))
             # Today so far, for any range that reaches today (D136).
             part = self._rollup.today(replace(scope, end=upto))
-            keys = covered + (part[0] if part else [])
+            keys = covered + first + (part[0] if part else [])
             after = (part[1], part[2]) if part else None
         if keys:
+            hours = fact_range(scope, upto)
+            cut = None
+            if first:  # the start's hour is the head's; the rollup's hours begin after it
+                hours["fact_lo"] += timedelta(hours=1)
+                cut = (first, hours["fact_lo"])
             return self._engine.run(
                 build(self._catalog.domain_table(), rollup=True),
                 scope,
-                {"covered": keys, **fact_range(scope, upto), **(params or {})},
+                {"covered": keys, **hours, **(params or {})},
                 timeout_s=TIMEOUT_S,
                 rollup=True,
-                skip_days=covered,
+                skip_days=covered + first,
                 name=name,
                 after=after,
                 page=True,
+                head=cut,
             )
         return self._engine.run(
             build(self._catalog.domain_table()), scope, params or None, timeout_s=TIMEOUT_S,
@@ -703,8 +742,20 @@ class Usage:
         """Compare the range with `before`: what is new in it, and what was seen before it
         and not in it (an approved service nobody uses any more is worth a review). Returns
         the sources read for the earlier period too."""
+        return self.compare(services, mcp, self.earlier(before, ident))
+
+    def earlier(self, before: QueryScope, ident: IdentityMap | None = None) -> Earlier:
+        """What `changes` reads of the period before: on its own, so a page can read it
+        beside the range's own reads. `ident` only counts people, which `compare` never
+        uses."""
         old_services, sources = self.services(before)
-        old_mcp = self.mcp(before, ident)
+        return Earlier(old_services, self.mcp(before, ident), sources)
+
+    def compare(
+        self, services: list[ServiceUse], mcp: list[McpUse], before: Earlier
+    ) -> tuple[Changes, list[str]]:
+        """`changes`, from the period before as `earlier` read it."""
+        old_services, old_mcp, sources = before.services, before.mcp, before.sources
         now_s = {u.service.id for u in services}
         now_m = {m.name for m in mcp}
         was_s = {u.service.id for u in old_services}
@@ -751,7 +802,7 @@ SELECT who, list_sort(list_distinct(flatten(list(sids)))), sum(k), count(DISTINC
 FROM m GROUP BY 1 LIMIT 100000"""  # noqa: S608  # fixed SQL text; ids quoted
             )
 
-        result = self._run_use(build, scope, "ai_use.claude_people")
+        result = self._run_use(build, scope, "ai_use.claude_people", head=True)
         names = {s.id: s.name for s in self._catalog.services()}
         return [
             NetUse(

@@ -18,6 +18,15 @@ interface FilterBarProps {
 const SOURCES_SQL =
   "SELECT source_id, count(*) AS events FROM events GROUP BY source_id ORDER BY source_id";
 
+/** The sources the viewer may read, for a source filter (Logs and Ask AI share it). */
+export const sourceOptions = {
+  // Its own key: ["sources"] once also held api.sources (a list), and a Dashboard opened
+  // after Search read this result instead and failed on .map (owner, 2026-11-03; D194).
+  queryKey: ["search-source-filter"],
+  queryFn: () => api.query({ sql: SOURCES_SQL }),
+  staleTime: 60_000,
+};
+
 export function FilterBar({
   range,
   custom,
@@ -26,13 +35,7 @@ export function FilterBar({
   sources,
   onSources,
 }: FilterBarProps) {
-  const available = useQuery({
-    // Its own key: ["sources"] once also held api.sources (a list), and a Dashboard opened
-    // after Search read this result instead and failed on .map (owner, 2026-11-03; D194).
-    queryKey: ["search-source-filter"],
-    queryFn: () => api.query({ sql: SOURCES_SQL }),
-    staleTime: 60_000,
-  });
+  const available = useQuery(sourceOptions);
   const options = (available.data?.rows ?? []).map((r) => String(r[0]));
   const toggle = (id: string) =>
     onSources(sources.includes(id) ? sources.filter((s) => s !== id) : [...sources, id]);

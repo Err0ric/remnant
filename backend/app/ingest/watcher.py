@@ -1,9 +1,10 @@
 """Tail/watch ingest (SPEC 3.5).
 
 Polls each enabled source's files, reads only complete new lines from the last
-checkpoint, and writes them through the normal pipeline. Rotation is detected by
-inode change (rename) or a file shorter than the checkpoint (copytruncate).
-Delivery is at-least-once: the checkpoint advances after the lake write.
+position, and writes them through the normal pipeline. A text file's position belongs to
+the file, not its name (ADR-0051, `ingest/positions.py`): a renamed file keeps it, and a
+file emptied and refilled in place is read from its start with a warning.
+Delivery is at-least-once: the position advances after the lake write.
 """
 
 import errno
@@ -14,7 +15,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, BinaryIO, Literal
 
 import httpx
 import structlog
@@ -35,11 +36,19 @@ from app.ingest.connectors.loki import (
 from app.ingest.connectors.loki import poll as loki_poll
 from app.ingest.evtx import EvtxReader, file_signature
 from app.ingest.framer import Framer
+from app.ingest.handles import HeldHandles, closing
 from app.ingest.integrity import LakeEvents
 from app.ingest.labels import labels_envelope
 from app.ingest.normalizer import Normalizer, TemplateMissingNormalizer
 from app.ingest.otlp import spool_full
-from app.ingest.records import DecodedLine, Frame, decode_frame
+from app.ingest.positions import (
+    NOT_DRAINED,
+    FilePosition,
+    FilePositions,
+    content_hashes,
+    same_content,
+)
+from app.ingest.records import DecodedLine, Frame, decode_frame, mark_part_line
 from app.ingest.skew import SkewTracker
 from app.ingest.sources import (
     SPOOL_SUFFIX,
@@ -71,6 +80,10 @@ SPOOL_HEADER_MAX = 256  # bytes: a syslog spool record header is far shorter
 READ_LIMIT = 8 << 20  # bytes per file per pass, so one huge file cannot starve the rest
 UNDO_REASON = "ingest: the position was not saved, so the lines are read again"
 MAX_LINE = 65_536
+POSITION_KEEP = timedelta(days=30)  # a file not listed or read this long loses its record
+SEEN_EVERY = timedelta(days=1)  # how often an idle listed file is noted as still there
+PART_LINE_WAIT = timedelta(minutes=5)  # a last line without its newline waits this long
+RESTART_WARNING = timedelta(days=1)  # how long a refilled file stays a warning
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +173,23 @@ class IngestService:
         self._short: dict[tuple[str, str], tuple[int, datetime]] = {}
         # (source, path key) -> (gap, first seen) for .evtx files held before an id gap
         self._gaps: dict[tuple[str, str], tuple[tuple[int, int], datetime]] = {}
+        # Text files: one position per file (ADR-0051), and the files that were emptied and
+        # refilled in place, by source: (file name, when), shown as a warning for a day.
+        self._positions = FilePositions(meta, clock)
+        self._positions_copied = False
+        # Files whose position from before the update could not be taken yet (missing or
+        # unreadable then): settled before such a file is first read.
+        self._owed: set[tuple[str, str]] = set()
+        self._owed_tried = False  # in this pass
+        # Text files read from lately, kept open to follow a rename (ADR-0051 row 3).
+        self._handles = HeldHandles()
+        # Names given to a new file while the server was down (ADR-0051 row 4), by source:
+        # (file name, old file last read, noticed), shown as a warning for a day.
+        self._maybe_missed: list[tuple[str, FilePosition]] = []
+        # Inode numbers of the files each source listed since this process started.
+        self._seen_inodes: dict[str, set[int]] = {}
+        self._missed: dict[str, tuple[list[str], str, datetime]] = {}
+        self._restarted: dict[str, tuple[str, datetime, bool]] = {}
         self._lock = threading.Lock()
         # Set by the app: source id -> why its syslog listener is not listening.
         self.listener_errors: Callable[[], dict[str, str]] | None = None
@@ -182,12 +212,22 @@ class IngestService:
         """
         total = 0
         self._retry_stuck()  # every pass, not only when the next write comes
+        self._owed_tried = False
+        self._handles.expire(
+            self._clock(), {s.source_id for s in self._sources.list() if s.enabled}
+        )
+        # What the path-keyed table knows and the positions do not, at each start.
+        if not self._positions_copied:
+            self._owed = self._take_checkpoints(start=True)
+            self._positions_copied = True
+            self._owed_tried = True  # just looked at every file
         before = {sid: st.events_since_start for sid, st in self.status().items()}
         missing_at_start: dict[str, bool] = {}
         for source in self._sources.list():
             if not source.enabled:
                 continue
             missing_at_start[source.source_id] = self._missing_error(source) is not None
+            self._maybe_missed = []
             prev = self.status().get(source.source_id, SourceStatus())
             count, files, error = 0, 0, None
             skipped, waiting = prev.records_skipped, prev.files_waiting
@@ -233,6 +273,13 @@ class IngestService:
                     except Exception as exc:  # one file must not stop the rest
                         log.exception("ingest_file_failed", source_id=source.source_id)
                         failed.append(f"{display_name(path.name)[:100]}: {type(exc).__name__}")
+                if self._is_text(source):
+                    try:
+                        count += self._follow_renamed(source)
+                    except BaseException:
+                        self._undo_unsaved()  # written, but its position was not saved
+                        raise
+                    self._note_missed(source.source_id)
                 if failed:
                     error = f"Cannot read {len(failed)} of {files} files ({failed[0]})"
                 if source.kind in SPOOL_SUFFIX:
@@ -243,6 +290,10 @@ class IngestService:
                 waiting = sum(1 for key in listed if key in self._short or key in self._gaps)
             except (SourceRejectedError, ParamInvalidError) as exc:
                 error = str(exc)
+                # A single file renamed or deleted with no new file yet: the path does not
+                # exist, and the held file is still read to its end.
+                if self._is_text(source):
+                    count += self._follow_safely(source)
             except OSError as exc:
                 error = f"Cannot read: {exc.strerror or type(exc).__name__}"
             except Exception as exc:  # one source must not stop the others
@@ -262,6 +313,10 @@ class IngestService:
                     error=error,
                     records_skipped=skipped,
                     files_waiting=waiting,
+                    warnings=(
+                        *self._restart_warning(source.source_id, now),
+                        *self._missed_warning(source.source_id, now),
+                    ),
                 )
             total += count
         self._report_stops()
@@ -457,6 +512,7 @@ class IngestService:
                         "DELETE FROM checkpoints WHERE source_id = ? AND path = ?",
                         (source.source_id, key),
                     )
+                self._positions.drop_path(source.source_id, key)
                 continue
             keep.append(path)
         return keep
@@ -526,57 +582,330 @@ class IngestService:
                 out[sid] = replace(st, error="Spool full: new messages are being refused")
         return out
 
+    def _take_checkpoints(self, start: bool) -> set[tuple[str, str]]:
+        return self._positions.take_checkpoints(
+            {s.source_id for s in self._sources.list() if self._is_text(s)},
+            self._sources.read_roots(),
+            start,
+        )
+
+    def _is_text(self, source: SourceConfig) -> bool:
+        """A source whose files `_ingest_text` reads line by line: file sources and OTLP
+        spools, but not a syslog spool and not .evtx."""
+        return source.kind in ("file", "otlp") and self._framing(source) != "evtx"
+
+    def _restart_warning(self, source_id: str, now: datetime) -> tuple[str, ...]:
+        """For a day after a file was emptied and refilled in place: what happened, which
+        file, and what to change (D250). Health and Sources show a source's warnings."""
+        found = self._restarted.get(source_id)
+        if found is None or now - found[1] > RESTART_WARNING:
+            self._restarted.pop(source_id, None)
+            return ()
+        if found[2]:  # the watcher still held the file: it is the same file, emptied
+            return (
+                f"{found[0]} was emptied and refilled in place, so it was read again from its"
+                " start. Lines written during such a rotation can be lost: rotate with create,"
+                " not copytruncate.",
+            )
+        return (
+            f"{found[0]} was read again from its start: it was emptied and refilled in place,"
+            " or replaced by a new file. If it is rotated with copytruncate, lines written"
+            " during a rotation can be lost: rotate with create.",
+        )
+
     def _ingest_file(self, source: SourceConfig, path: Path) -> int:
         if source.kind == "syslog":
             return self._ingest_syslog_spool(source, path)
         if self._framing(source) == "evtx":
             return self._ingest_evtx(source, path)
-        stat = path.stat()
-        inode, size = stat.st_ino, stat.st_size
-        checkpoint = self._checkpoint(source.source_id, path_key(path))
-        offset = 0
-        csv_header = None
-        skipping = False
-        if checkpoint is not None and checkpoint["inode"] == inode and checkpoint["offset"] <= size:
-            offset = checkpoint["offset"]
-            csv_header = checkpoint["csv_header"]
-            skipping = bool(checkpoint["skip_to_newline"])
-        if offset >= size:
+        return self._ingest_text(source, path)
+
+    def _ingest_text(self, source: SourceConfig, path: Path) -> int:
+        """New complete lines of one text file, from its own position (ADR-0051, D250).
+
+        The position belongs to the file, not the name. A file whose size and modified
+        time are as they were when it was last read to its end is not opened. Any other
+        file is opened first and identified from the open handle, so a rotation between
+        listing and reading cannot mix two files; its position is used only when the
+        content matches, and otherwise it is read from its start. The handle is then kept
+        for a while (`ingest/handles.py`), so the file can be read to its end after its
+        name is given to another."""
+        sid, key = source.source_id, path_key(path)
+        seen = path.stat()
+        if (sid, key) in self._owed and not self._owed_tried:
+            # Here now: its old position first, if it has one. Once a pass, for every owed
+            # file together: one that is listed but still cannot be opened stays owed.
+            self._owed = self._take_checkpoints(start=False)
+            self._owed_tried = True
+        known = self._positions.get(sid, seen.st_dev, seen.st_ino)
+        flush = False
+        self._seen_inodes.setdefault(sid, set()).add(seen.st_ino)
+        if known is not None and (
+            not known.seen_at or self._clock() - datetime.fromisoformat(known.seen_at) >= SEEN_EVERY
+        ):
+            # Once a day a file that is listed is noted as still there (idle, or not
+            # readable just now), so the 30-day sweep leaves its record alone. Its name is
+            # left as recorded: only a file known to be unchanged is taken as renamed.
+            self._positions.seen_at(known, known.path)
+        if known is not None and (known.size, known.mtime_ns) == (seen.st_size, seen.st_mtime_ns):
+            if known.path != key:
+                self._positions.seen_at(known, key)  # renamed: only where it is changes
+            # Idle. A last line without its newline has waited long enough when the file
+            # has not grown for PART_LINE_WAIT: it is stored as it is (row 5).
+            flush = (
+                known.offset < known.size
+                and not known.skip_to_newline
+                and bool(known.updated_at)
+                and self._clock() - datetime.fromisoformat(known.updated_at) >= PART_LINE_WAIT
+            )
+            if not flush:
+                return 0
+        fh = open_regular(path, self._sources.read_roots())
+        try:
+            info = os.fstat(fh.fileno())
+            file = (sid, info.st_dev, info.st_ino)
+            # Grew or changed since it was looked at: its last line is not waiting any more.
+            flush = flush and (info.st_size, info.st_ino) == (seen.st_size, seen.st_ino)
+            self._seen_inodes.setdefault(sid, set()).add(info.st_ino)
+            pos = self._positions.get(*file)
+            moved_from: FilePosition | None = None
+            if pos is None:
+                # Not known under this device number, which a restart or remount can
+                # change: the same inode with matching content is the same file, under any
+                # name (it may have been rotated meanwhile).
+                # Saving it below moves the record to the new number.
+                pos = next(
+                    (p for p in self._positions.on_other_devices(sid, info.st_ino)
+                     if p.offset and same_content(fh, p, info.st_size)),
+                    None,
+                )  # fmt: skip
+                moved_from = pos
+            if pos is None:
+                # A new file. If its name was another file's and this process has never
+                # seen that file (not listed since the start, so not held either), it was
+                # rotated while the server was down, and what was written to it last may
+                # never be read (row 4): decided once the source's files are all listed.
+                # A file seen since the start is no such case: a rotation is followed
+                # through the held file, and a quiet file whose handle was closed had
+                # nothing unread when it was last looked at.
+                named = self._positions.at_path(sid, key)
+                before = [p for p in named if p.offset]
+                # Known under another device number with nothing read yet (D251): this
+                # very file, not a new one.
+                if before and not any(p.inode == info.st_ino for p in named):
+                    last = max(before, key=lambda p: p.updated_at)
+                    if self._handles.get((sid, last.device, last.inode)) is None:
+                        self._maybe_missed.append((display_name(path.name)[:100], last))
+            start: FilePosition | None = None
+            if pos is not None and same_content(fh, pos, info.st_size):
+                start = pos
+            elif pos is not None and pos.path == key and pos.offset:
+                # The same name and inode with other content: emptied and refilled in
+                # place (logrotate `copytruncate`), or a new file that was given the
+                # deleted one's inode number. While the watcher still holds the file the
+                # number cannot have been given away, so it is the first; otherwise the
+                # two cannot be told apart. With copytruncate, lines written between the
+                # copy and the truncate are gone before anything can read them, so Health
+                # is told.
+                held = self._handles.get(file) is not None
+                self._restarted[sid] = (display_name(path.name)[:100], self._clock(), held)
+                log.warning("ingest.file_restarted", source_id=sid, held=held)
+            n = self._advance(source, fh, key, start, flush=flush, legacy=True, replaces=moved_from)
+        except BaseException:
+            fh.close()
+            raise
+        self._handles.keep(file, fh, path, key, self._clock())
+        return n
+
+    def _advance(
+        self,
+        source: SourceConfig,
+        fh: BinaryIO,
+        key: str,
+        pos: FilePosition | None,
+        *,
+        flush: bool,
+        legacy: bool,
+        replaces: FilePosition | None = None,
+    ) -> int:
+        """Read on from `pos` (or the start), store the complete lines, and save where the
+        file is now. With `flush`, a last line without its newline is stored too, as
+        `parse_status=partial`: the file was rotated away, or has not grown for
+        PART_LINE_WAIT (row 5). `legacy`: also write the path-keyed row of the table before
+        ADR-0051, for the file its name still points to."""
+        sid = source.source_id
+        info = os.fstat(fh.fileno())
+        offset, csv_header, skipping = (
+            (pos.offset, pos.csv_header, pos.skip_to_newline) if pos else (0, None, False)
+        )
+        fh.seek(offset)
+        data = fh.read(READ_LIMIT)
+        at_end = len(data) < READ_LIMIT
+        rows, consumed, csv_header, skipping = self._lines(
+            source, data, csv_header, skipping, part_line=flush and at_end
+        )
+        if rows:
+            self._write(sid, rows)
+        offset += consumed
+        drained = at_end and not skipping
+        head, tail = content_hashes(fh, offset)
+        position = FilePosition(
+            sid, info.st_dev, info.st_ino, key, offset,
+            info.st_size if drained else NOT_DRAINED, info.st_mtime_ns, head, tail,
+            csv_header, skipping,
+        )  # fmt: skip
+        if legacy:
+            # Saved together with its row in the table before ADR-0051, which is still
+            # written so that going back a version reads on from here (row 10): both or
+            # neither, and a save that fails leaves the lines to be read again (H6).
+            self._save_checkpoint(
+                sid, key, info.st_ino, offset, csv_header, skipping, position=position,
+                replaces=replaces,
+            )  # fmt: skip
+        else:
+            self._positions.save(position)
+            self._unsaved = []
+        return len(rows)
+
+    def _note_missed(self, source_id: str) -> None:
+        """After a source's files were read: a name that went to a new file while the
+        server was down is a warning, unless the source lists the old file under another
+        name (it is then read like any file)."""
+        # By inode number alone: the device number may have changed over the restart (D251).
+        seen = self._seen_inodes.get(source_id, set())
+        missed = [(name, old) for name, old in self._maybe_missed if old.inode not in seen]
+        self._maybe_missed = []
+        if not missed:
+            return
+        names, since, _ = self._missed.get(source_id, ([], "", self._clock()))
+        names = [*names, *(n for n, _ in missed if n not in names)]
+        since = min([s for s in (since, *(old.updated_at for _, old in missed)) if s])
+        self._missed[source_id] = (names, since, self._clock())
+        log.warning("ingest.rotated_unwatched", source_id=source_id, files=len(names))
+
+    def _missed_warning(self, source_id: str, now: datetime) -> tuple[str, ...]:
+        found = self._missed.get(source_id)
+        if found is None or now - found[2] > RESTART_WARNING:
+            self._missed.pop(source_id, None)
+            return ()
+        names, since, _ = found
+        when = datetime.fromisoformat(since).astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
+        shown = ", ".join(names[:3]) + (f" and {len(names) - 3} more" if len(names) > 3 else "")
+        were = "was" if len(names) == 1 else "were"
+        return (
+            f"{shown} {were} replaced by a new file while the server was not running. Lines"
+            f" written to the old file after {when}, if there were any, were not read.",
+        )
+
+    def sweep_positions(self) -> int:
+        """The daily maintenance: forget files not listed or read for 30 days (row 8), of
+        the sources whose last pass listed their files without an error."""
+        with self._lock:
+            listed = {
+                sid for sid, st in self._status.items() if st.last_pass_at and st.error is None
+            }
+        return self._positions.sweep(self._clock() - POSITION_KEEP, listed)
+
+    def _follow_safely(self, source: SourceConfig) -> int:
+        """`_follow_renamed` for a source whose listing failed: its own failure is logged,
+        and what it wrote without saving is taken back."""
+        try:
+            return self._follow_renamed(source)
+        except Exception:
+            self._undo_unsaved()
+            log.exception("ingest_follow_failed", source_id=source.source_id)
             return 0
 
-        with open_regular(path, self._sources.read_roots()) as fh:
-            fh.seek(offset)
-            data = fh.read(READ_LIMIT)
+    def _follow_renamed(self, source: SourceConfig) -> int:
+        """Read on each held file whose name now points to another file, or to none
+        (ADR-0051 row 3): renamed by a rotation, or deleted. The handle is the file,
+        wherever it went. A program may keep writing to it until it is told to reopen its
+        log, so the handle is held for `LINGER` after the file was first read to its end
+        (D252), and what is written meanwhile is read, and `KEEP`
+        after the rename was seen at the latest. When it is closed, a last line without
+        its newline is stored (row 5)."""
+        sid, total = source.source_id, 0
+        now = self._clock()
+        for file, held in self._handles.items(sid):
+            try:
+                there = os.stat(held.path)
+                if (there.st_dev, there.st_ino) == file[1:]:
+                    # The name points to it (again): an ordinary held file, closed when
+                    # it was not read from for a while.
+                    held.gone_at = held.ended_at = None
+                    continue
+            except OSError:
+                pass  # no file of that name now
+            held.gone_at = held.gone_at or now
+            pos = self._positions.get(*file)
+            try:
+                size = os.fstat(held.fh.fileno()).st_size
+                same = pos is not None and same_content(held.fh, pos, size)
+            except OSError as exc:
+                # The file cannot be read any more (deleted on a file server, a disk
+                # error): it is given up, and the other held files are still followed.
+                self._handles.drop(file)
+                log.warning("ingest.held_file_unreadable", source_id=sid, error=type(exc).__name__)
+                continue
+            if pos is None or not same:
+                self._handles.drop(file)  # emptied before it went: nothing left to read on
+                continue
+            last = closing(held, now)
+            # A failure from here on (a write or a save that fails) keeps the handle: the
+            # lines are taken back and read again on the next pass (H6). Not past its
+            # time: then it is closed whatever happens, as every handle is.
+            try:
+                total += self._advance(source, held.fh, pos.path, pos, flush=last, legacy=False)
+            except BaseException:
+                if last:
+                    self._handles.drop(file)
+                raise
+            if last:
+                self._handles.drop(file)
+                continue
+            after = self._positions.get(*file)
+            if after is not None and after.size != NOT_DRAINED and held.ended_at is None:
+                held.ended_at = now  # first read to its end: the 30 seconds start
+        return total
 
+    def _lines(
+        self,
+        source: SourceConfig,
+        data: bytes,
+        csv_header: str | None,
+        skipping: bool,
+        part_line: bool = False,
+    ) -> tuple[list[dict[str, Any]], int, str | None, bool]:
+        """The rows of the complete lines in `data`, how many bytes they used, and the CSV
+        header and over-long-line state to carry on with. A last line without its newline
+        is not used: it is read again when the newline arrives. With `part_line` it is used
+        as it is (ADR-0051 row 5), stored as `partial` with `no_newline`."""
+        used = 0
         if skipping:
             # Still inside an over-long line already emitted as truncated: drop its tail.
             nl = data.find(b"\n")
             if nl < 0:
-                self._save_checkpoint(
-                    source.source_id, path_key(path), inode, offset + len(data), csv_header, True
-                )
-                return 0
-            offset += nl + 1
-            data = data[nl + 1 :]
+                return [], len(data), csv_header, True
+            used = nl + 1
+            data = data[used:]
             skipping = False
 
         end = data.rfind(b"\n")
         oversized: Frame | None = None
-        if end < 0:
+        # The bytes after the last newline, when they are to be stored without one.
+        part = data[end + 1 :] if part_line and len(data) < READ_LIMIT else b""
+        if end < 0 and not part:
             if len(data) < READ_LIMIT:
-                self._save_checkpoint(
-                    source.source_id, path_key(path), inode, offset, csv_header, False
-                )
-                return 0  # no complete line yet
+                return [], used, csv_header, False  # no complete line yet
             # A single line longer than one read (review finding S4): emit its start as a
             # truncated event, then skip to the next newline on later passes.
             oversized = Frame(data=data[:MAX_LINE], truncated=True)
             complete = b""
-            consumed = len(data)
+            used += len(data)
             skipping = True
         else:
             complete = data[: end + 1]
-            consumed = len(complete)
+            used += len(complete)
 
         normalizer = self._normalizer(source)
         generic_csv = source.format == "csv" and source.template_id is None
@@ -588,19 +917,20 @@ class IngestService:
         )
         if oversized is not None:
             frames.append(oversized)
+        if part:
+            frames.append(Frame(data=part[:MAX_LINE], truncated=len(part) > MAX_LINE))
+            used += len(part)
         for frame in frames:
             line = decode_frame(frame)
             if generic_csv and csv_header is None:
                 csv_header = line.text
             row = normalizer.normalize(line)
-            if row is not None:
-                rows.append(row)
-        if rows:
-            self._write(source.source_id, rows)
-        self._save_checkpoint(
-            source.source_id, path_key(path), inode, offset + consumed, csv_header, skipping
-        )
-        return len(rows)
+            if row is None:
+                continue
+            if part and frame is frames[-1]:
+                mark_part_line(row)  # the line never got its end
+            rows.append(row)
+        return rows, used, csv_header, skipping
 
     def _ingest_syslog_spool(self, source: SourceConfig, path: Path) -> int:
         """Records the syslog listener spooled (ADR-0021 row 2): a JSON header line with the
@@ -823,8 +1153,15 @@ class IngestService:
         skip_to_newline: bool,
         file_signature: str | None = None,
         content_digest: str | None = None,
+        position: FilePosition | None = None,
+        replaces: FilePosition | None = None,
     ) -> None:
+        """`position`: a text file's own position (ADR-0051), saved in the same
+        transaction."""
+        now = self._clock().isoformat()
         with self._meta.connect() as con:
+            if position is not None:
+                self._positions.save(position, con, replaces, now)
             con.execute(
                 "INSERT INTO checkpoints (source_id, path, inode, offset, csv_header,"
                 " skip_to_newline, file_signature, content_digest, updated_at)"
@@ -843,7 +1180,7 @@ class IngestService:
                     int(skip_to_newline),
                     file_signature,
                     content_digest,
-                    self._clock().isoformat(),
+                    now,
                 ),
             )
         self._unsaved = []

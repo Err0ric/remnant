@@ -67,7 +67,7 @@ from app.ingest.compaction import (
 from app.ingest.durable import publish
 from app.ingest.integrity import LakeEvents
 from app.ingest.lakelock import lake_lock
-from app.ingest.records import DecodedLine
+from app.ingest.records import NO_NEWLINE, DecodedLine, mark_part_line
 from app.ingest.sources import SourceConfig, SourceStore
 from app.ingest.watcher import template_normalizer
 from app.ingest.writer import rows_table
@@ -282,6 +282,8 @@ class Reparser:
                 truncated="truncated" in errors,
             )
             row = normalizer.normalize(line)
+            if NO_NEWLINE in errors:  # stored without its newline: still so with a template
+                mark_part_line(row)
             ingest_fills(self._kind, old, row)
             row.update({k: old[k] for k in KEEP})
             rows.append(row)

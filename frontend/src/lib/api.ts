@@ -1416,6 +1416,8 @@ export interface SourceWatch extends SourceQuiet {
 export interface Source extends SourceInput {
   /** OTLP sources: prompt and tool content kept instead of dropped (ADR-0015 row 4). */
   otlp_keep_content?: boolean;
+  /** Push sources: "Quiet is normal for up to N days" (D260); null when off. */
+  quiet_ok_days?: QuietOkDays | null;
   classification: "local_only" | "cloud_allowed";
   enabled: boolean;
   status: SourceStatus;
@@ -1723,7 +1725,10 @@ export interface TimelineRow {
 
 export interface PersonTimelineData {
   person: string;
+  /** The logged names that matched; empty without View people in AI usage. */
   forms: string[];
+  /** Without View people in AI usage: how many names the server left out (D242). */
+  forms_hidden?: number;
   devices: string[];
   start: string;
   end: string;
@@ -1731,9 +1736,31 @@ export interface PersonTimelineData {
   more: boolean;
   sql: string;
   signins_sql: string;
-  /** Other names on this person's devices that look like the same person (ADR-0018). */
+  /** Other names on this person's devices that look like the same person (ADR-0018);
+   * empty without View people in AI usage (D242). */
   maybe?: { name: string; devices: string[] }[];
 }
+
+/** The person page's Accounts, Activity per day, and Microsoft 365 lists (ADR-0052). */
+export interface PersonRecordData {
+  person: string;
+  /** The logged names counted as this person; empty without View people in AI usage. */
+  forms: string[];
+  /** Without View people in AI usage: how many names the server left out (D242). */
+  forms_hidden?: number;
+  start: string;
+  end: string;
+  /** One row per day of the viewer's, empty days too. */
+  days: { day: string; events: number; failed: number }[];
+  /** The viewer reads a Microsoft 365 source: the page shows that section. */
+  m365: boolean;
+  /** Search query templates for Open in Logs, by list. */
+  m365_sql: Record<string, string>;
+  /** The person's events as a template: what a day's bar opens. */
+  sql: string;
+}
+
+export type PersonM365List = "sign_ins" | "mail" | "admin";
 
 export interface EventAround {
   event_id: string;
@@ -1855,6 +1882,10 @@ export interface SessionStep {
   event_id: string;
   /** Delivered this many seconds after it happened (the plugin's offline queue). */
   late_s?: number | null;
+  /** Derived on the server from the record (app.ai.sessions.step_type); never stored. */
+  type?: "prompt" | "tool_call" | "tool_result" | "file_access" | "access" | "other";
+  /** False for Claude Code bookkeeping (D186): never a failed or unanswered call. */
+  counted?: boolean;
 }
 
 /** One person's AI activity (D189): metadata only, from the caller's sources. */
@@ -1901,6 +1932,37 @@ export interface SessionTimeline {
   machine: string | null;
   steps: SessionStep[];
   masked?: boolean;
+}
+
+/** One session in numbers, counted by the server over the whole session (BACKLOG P1). */
+export interface SessionSummary {
+  session_id: string;
+  /** With `masked`, the machine (or "Hidden"), D242; so is `account`. */
+  person: string | null;
+  machine: string | null;
+  account: string | null;
+  started: string;
+  last: string;
+  length_s: number;
+  state: "ended" | "idle" | "open";
+  prompts: number;
+  tool_calls: number;
+  failed: number;
+  /** Tool calls with no result: blocked, interrupted, or still running. */
+  unanswered: number;
+  /** Null when no token metrics arrived for this session: "Not reported", never 0. */
+  tokens_in: number | null;
+  tokens_out: number | null;
+  files: number;
+  files_outside: number;
+  new_mcp: string[];
+  types: Record<NonNullable<SessionStep["type"]>, number>;
+  steps: number;
+  /** The steps list stops before the session's end. */
+  steps_cut: boolean;
+  /** The session's records for Logs, the window as placeholders (server-built). */
+  sql: string;
+  masked: boolean;
 }
 
 export interface AskProvider {
@@ -2160,9 +2222,18 @@ export interface OverviewSourceHealth {
   rate_per_min: number;
   /** server_events: events only when the server is used or probed; never quiet. */
   quiet_expected?: boolean;
+  /** "Quiet is normal for up to N days" (D260), and whether the newest event is inside. */
+  quiet_ok_days?: number | null;
+  quiet_ok?: boolean;
+  /** Healthy and silent now inside those days: Health says "Idle". */
+  idle?: boolean;
   /** The one state Health and the Dashboard footer show (server-side, handoff item 4). */
   condition: SourceCondition;
 }
+
+/** The choices for "Quiet is normal for up to" (D260). */
+export const QUIET_OK_DAYS = [1, 3, 7, 14, 30] as const;
+export type QuietOkDays = (typeof QUIET_OK_DAYS)[number];
 
 export type SourceCondition = "healthy" | "quiet" | "gap" | "attention" | "error" | "paused";
 
@@ -2183,6 +2254,8 @@ export interface SourceSummary {
   gaps: number;
   /** Over sources that are not quiet, leaving out sources with events only on a refusal. */
   longest_wait: SourceWait | null;
+  /** Healthy sources silent inside their "Quiet is normal" days (D260). */
+  idle?: number;
 }
 
 /** Hours with nothing from a source that normally sends every hour (F55). */
@@ -2411,6 +2484,8 @@ export interface AlertItem {
   /** Who and which devices the rows that fired are about (ADR-0038 row 28). */
   people?: string[];
   devices?: string[];
+  /** How many devices and addresses there were when `devices` was cut at 20; else null. */
+  devices_total?: number | null;
   /** An AI Watch alert for a viewer without View people in AI usage (D242): its text
    * names no one, `people` is empty, and `people_hidden` is how many it is about. */
   masked?: boolean;
@@ -2478,6 +2553,40 @@ export interface AlertLines extends AlertCount {
   gap_sources: string[];
   /** Of `items`, the AI Watch ones still not reviewed: review tasks, after other alerts. */
   review?: string[];
+}
+
+/** Alert severity as the Queue counts it: "other" is no severity (shown as None). */
+export type AlertSeverityKey = "high" | "medium" | "other";
+
+export interface AlertSpread {
+  /** Closes by a person in the range. */
+  count: number;
+  median_s: number | null;
+  p90_s: number | null;
+}
+
+/** How alerts are handled (D261): numbers only, never an item, so not audited. */
+export interface AlertMetrics {
+  start: string;
+  end: string;
+  /** The install's zone, which the days are drawn in. */
+  timezone: string;
+  /** Overdue after this many days; alerts with no severity use `low`. */
+  thresholds: { critical: number; high: number; medium: number; low: number };
+  time_to_close: AlertSpread;
+  time_to_close_by_severity: Record<AlertSeverityKey, AlertSpread>;
+  /** Closed in the range by the server or with no close time kept: not in time to close. */
+  closed_not_timed: number;
+  days: { day: string; opened: number; closed: number }[];
+  opened: number;
+  closed: number;
+  open: number;
+  open_by_severity: Record<AlertSeverityKey, number>;
+  open_by_kind: Record<AlertKind, number>;
+  overdue: number;
+  overdue_by_severity: Record<AlertSeverityKey, number>;
+  /** As AlertList.restricted: a flag, never a count (D243). */
+  restricted: boolean;
 }
 
 export interface AlertMute {
@@ -2585,6 +2694,14 @@ export interface AiWatchSummary {
     first_seen: string;
     item_id: string | null;
   }[];
+}
+
+/** One of the viewer's pins for the rail's Pinned region (D259), listed only while the
+ * viewer may open its target. */
+export interface Pin {
+  kind: "search" | "dashboard";
+  id: string;
+  name: string;
 }
 
 /** A named dashboard (ADR-0034): personal or shared, with its panels and the flagged runs
@@ -2723,8 +2840,13 @@ export const api = {
     ),
   /** Open alerts as numbers only, for counts: no item, so no AI view is recorded (D242). */
   alertCount: () => request<AlertCount>("/api/alerts/count"),
+  /** Alerts > Handling (D261): numbers only, so no AI view is recorded. */
+  alertMetrics: (bounds: { start?: string; end?: string }) =>
+    request<AlertMetrics>(`/api/alerts/metrics${queryString(bounds)}`),
   /** How many of the viewer's sources are not healthy: numbers only, for the rail's dot. */
   healthCount: () => request<{ total: number; not_healthy: number }>("/api/health/count"),
+  /** The Inventory's "to review" number for the rail (D258): numbers only, not audited. */
+  aiInventoryCount: () => request<{ to_review: number }>("/api/ai/inventory/count"),
   /** Only the open alert lines a summary shows, most severe or newest first. */
   alertLines: (limit: number, by: "severity" | "newest" = "severity") =>
     request<AlertLines>(`/api/alerts/lines?limit=${limit}&by=${by}`),
@@ -2802,6 +2924,11 @@ export const api = {
     request<string>(`/api/audit/${log}/export${queryString({ ...f })}`, undefined, true),
   createSchedule: (body: ScheduleInput) => request<Schedule>("/api/schedules", post(body)),
   dashboards: () => request<Dashboard[]>("/api/dashboards"),
+  pins: () => request<Pin[]>("/api/pins"),
+  pin: (kind: Pin["kind"], id: string) =>
+    request<Pin[]>(`/api/pins/${kind}/${encodeURIComponent(id)}`, { method: "PUT" }),
+  unpin: (kind: Pin["kind"], id: string) =>
+    request<void>(`/api/pins/${kind}/${encodeURIComponent(id)}`, { method: "DELETE" }),
   createDashboard: (name: string, shared = false) =>
     request<Dashboard>("/api/dashboards", post({ name, shared })),
   updateDashboard: (id: string, body: { name?: string; shared?: boolean }) =>
@@ -3004,7 +3131,10 @@ export const api = {
     ),
   personAlerts: (person: string) =>
     request<AlertList>(`/api/alerts?state=all&person=${encodeURIComponent(person)}`),
-  aiSession: (id: string) => request<SessionTimeline>(`/api/ai/sessions/${encodeURIComponent(id)}`),
+  aiSession: (id: string, days = 30) =>
+    request<SessionTimeline>(`/api/ai/sessions/${encodeURIComponent(id)}?days=${days}`),
+  aiSessionSummary: (id: string, days = 30) =>
+    request<SessionSummary>(`/api/ai/sessions/${encodeURIComponent(id)}/summary?days=${days}`),
   plugins: () => request<PluginsInfo>("/api/plugins"),
   refusalRule: () =>
     request<{ enabled: boolean; threshold: number; window_minutes: number }>(
@@ -3054,6 +3184,9 @@ export const api = {
   /** Days to keep; the nightly retention job applies it (F44). Audited. */
   setSourceRetention: (id: string, retention_days: number) =>
     request<Source>(`/api/sources/${encodeURIComponent(id)}`, patch({ retention_days })),
+  /** Push sources: "Quiet is normal for up to N days"; null turns it off (D260). */
+  setSourceQuietOk: (id: string, quiet_ok_days: QuietOkDays | null) =>
+    request<Source>(`/api/sources/${encodeURIComponent(id)}`, patch({ quiet_ok_days })),
   /** Feeds, first-run history, or the Loki query; the stored credential is kept (F44). */
   setConnectorSettings: (id: string, connector: Record<string, unknown>) =>
     request<Source>(`/api/sources/${encodeURIComponent(id)}`, patch({ connector })),
@@ -3308,8 +3441,14 @@ export const api = {
   query: (body: QueryRequest) =>
     request<QueryResult>("/api/query", { method: "POST", body: JSON.stringify(body) }),
   // The app's own rows, with SQL the server builds (owner, 2026-11-08).
-  personSignIns: (person: string, days = 7) =>
-    request<QueryResult>(`/api/people/${encodeURIComponent(person)}/signins?days=${days}`),
+  personM365: (person: string, name: PersonM365List, days: number) =>
+    request<QueryResult>(
+      `/api/people/${encodeURIComponent(person)}/m365?name=${name}&days=${days}`,
+    ),
+  personRecord: (person: string, days: number) =>
+    request<PersonRecordData>(
+      `/api/people/${encodeURIComponent(person)}/record?days=${days}&tz=${viewerZone()}`,
+    ),
   m365List: (
     name: keyof M365Overview["lists"],
     start: string,

@@ -55,3 +55,19 @@ def test_a_value_the_script_cannot_read_never_counts_as_a_match() -> None:
     script = _script()
     css = script.TOKENS.read_text(encoding="utf-8").replace("--ok: #58c29a", "--ok: #5c9")
     assert len(script.drift(css, script.DESIGN.read_text(encoding="utf-8"))) == 1
+
+
+def test_every_chart_series_is_held_at_3_to_1_in_both_themes() -> None:
+    """The five series of DESIGN.md section 2 (the session timeline's step types) are UI
+    marks: each is checked on --surface and --surface-head in both themes."""
+    script = _script()
+    series = ["series-neutral", "series-1", "series-2", "series-3", "series-4"]
+    pairs = {(fg, bg) for fg, bg, minimum in script.pairs() if minimum == script.MARK}
+    assert {(s, g) for s in series for g in ["surface", "surface-head"]} <= pairs
+    css = script.TOKENS.read_text(encoding="utf-8")
+    lines, failures = script.check(css)
+    assert failures == []
+    assert sum(1 for line in lines if " series-" in line) == 20  # 5 series, 2 grounds, 2 themes
+    # A faint series fails in its theme.
+    _, failures = script.check(css.replace("--series-4: #2e7328", "--series-4: #1c2a1c"))
+    assert failures and all(f.startswith("dark  series-4 on ") for f in failures)

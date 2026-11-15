@@ -19,6 +19,7 @@ export type PageId =
   | "schedules"
   | "dashboard"
   | "alerts"
+  | "handling"
   | "targets"
   | "ai"
   | "investigate"
@@ -51,6 +52,8 @@ const PATHS: Record<PageId, string> = {
   schedules: "/alerts/schedules",
   dashboard: "/dashboard",
   alerts: "/alerts",
+  // Alerts > Handling (D261): how alerts are handled, as numbers.
+  handling: "/alerts/handling",
   targets: "/alert-targets",
   ai: "/ai",
   investigate: "/investigate/people",
@@ -143,6 +146,14 @@ function oldHealth(path: string, hash: string): { place: Place; type?: string } 
   // Own names only: the word comes from the address, and `constructor` is not a tab.
   const old = path === base ? hash : path.slice(base.length + 1);
   return Object.hasOwn(HEALTH_OLD, old) ? (HEALTH_OLD[old] ?? null) : null;
+}
+
+/** Health's Status filter (D255): All, Problems, Paused, Healthy; anything else is All. */
+export const HEALTH_STATUS = ["all", "problems", "paused", "healthy"] as const;
+export type HealthStatus = (typeof HEALTH_STATUS)[number];
+export function healthStatus(frag: URLSearchParams): HealthStatus {
+  const v = frag.get("status") ?? "";
+  return (HEALTH_STATUS as readonly string[]).includes(v) ? (v as HealthStatus) : "all";
 }
 
 /** Tabs that moved from AI usage to the Agents area, by their old hash. */

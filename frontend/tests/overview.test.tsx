@@ -30,14 +30,14 @@ describe("Health: the former Overview (F55, ADR-0034 row 11)", () => {
     await renderAt("/overview");
     expect(await screen.findByRole("heading", { name: "Health", level: 1 })).toBeVisible();
     expect(window.location.pathname + window.location.hash).toBe("/health");
-    const events = await screen.findByRole("button", { name: /^Events, last 24 hours/ });
+    const tile = (label: string) =>
+      document.querySelector(`[data-kpi="${label}"]`) as HTMLElement | null;
     // The tile is on screen before its number is: wait for it (failed once on a slow runner).
-    await vi.waitFor(() => expect(events).toHaveTextContent("70"));
-    expect(events).toHaveTextContent("+25% vs a usual day");
-    const sources = screen.getByRole("button", { name: /^Sources/ });
-    expect(sources).toHaveTextContent("1 gap in 24 hours");
-    const delivery = screen.getByRole("button", { name: /^Alert delivery/ });
-    expect(delivery).toHaveTextContent("Failing: SOC Slack");
+    await vi.waitFor(() => expect(tile("Events, last 24 hours")).toHaveTextContent("70"));
+    expect(tile("Events, last 24 hours")).toHaveTextContent("+25% vs a usual day");
+    expect(tile("Sources healthy")).toHaveTextContent("1 gap in 24 hours");
+    expect(tile("Alert delivery, last 24 hours")).toHaveTextContent("2 failed");
+    expect(tile("Alert delivery, last 24 hours")).toHaveTextContent("Failing: SOC Slack");
     const flow = await screen.findByRole("list", { name: "Sources" });
     const row = within(flow).getByText("linux_sshd").closest("li") as HTMLElement;
     expect(row).toHaveTextContent("30"); // 24 h total, printed
@@ -65,8 +65,8 @@ describe("Health: the former Overview (F55, ADR-0034 row 11)", () => {
 
   it("shows alert delivery to admins only", async () => {
     await renderAt("/health", { mode: "login", signedIn: true, role: "analyst" });
-    await screen.findByRole("button", { name: /^Events, last 24 hours/ });
-    expect(screen.queryByRole("button", { name: /^Alert delivery/ })).toBeNull();
+    await screen.findByRole("link", { name: /^Events, last 24 hours/ });
+    expect(document.querySelector('[data-kpi^="Alert delivery"]')).toBeNull();
   });
 
   it("opens a source's Health row from a link, then its settings with the same gap (F61)", async () => {
@@ -125,7 +125,7 @@ describe("Health: the former Overview (F55, ADR-0034 row 11)", () => {
 
   it("keeps the setup checklist in Settings, not on Health", async () => {
     await renderAt("/health");
-    await screen.findByRole("button", { name: /^Events, last 24 hours/ });
+    await screen.findByRole("link", { name: /^Events, last 24 hours/ });
     expect(screen.queryByRole("region", { name: "Required steps" })).toBeNull();
   });
 

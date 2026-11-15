@@ -14,7 +14,9 @@ export function ViewerProvider({ user, children }: ViewerProviderProps) {
   const isAdmin = !user || user.role === "admin";
   const canViewPeople = isAdmin || user?.view_ai_people === true;
   return (
-    <ViewerContext.Provider value={{ isAdmin, canAsk: canRunSql, canRunSql, canViewPeople }}>
+    <ViewerContext.Provider
+      value={{ isAdmin, userId: user?.user_id ?? "", canAsk: canRunSql, canRunSql, canViewPeople }}
+    >
       {children}
     </ViewerContext.Provider>
   );

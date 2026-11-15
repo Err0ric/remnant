@@ -1,3 +1,4 @@
+import { Card } from "@/components/Card";
 import { FilterBar } from "@/components/FilterBar";
 import { Skeleton } from "@/components/Skeleton";
 import { localStamp } from "@/lib/localTime";
@@ -16,16 +17,18 @@ import {
 } from "@/lib/api";
 import {
   fragmentValues,
+  healthStatus,
   navigate,
   setFragment,
   useSection,
   useSectionTab,
+  type HealthStatus,
   type PageId,
 } from "@/lib/route";
 import { SpeedTable } from "./SpeedTable";
 import { BackgroundFailures } from "./BackgroundFailures";
 import { EntityLink } from "@/components/EntityLink";
-import { openGaps, quietWord } from "./flow";
+import { idleText, openGaps, quietWord } from "./flow";
 import { heldText } from "@/features/sources/VendorAlertNotify";
 import { SourceFlow } from "./SourceFlow";
 import { StatusLine } from "./StatusLine";
@@ -52,6 +55,8 @@ interface Row {
   word?: string;
   /** Hover text for the detail line (a UTC time). */
   detailTitle?: string;
+  /** The reason is only the quiet sentence, left out under a gap's own sentence (D255). */
+  quietNote?: boolean;
 }
 
 const LEVELS: { id: Level; label: string; color: string }[] = [
@@ -65,6 +70,24 @@ const BADGE: Record<Level, string> = {
   attention: "border border-warn text-warn",
   paused: "bg-info-bg text-info-tx",
   healthy: "bg-local-bg text-local-tx",
+};
+/** The Status filter (D255): Problems is Unhealthy and Needs attention together. */
+const STATUSES: { id: HealthStatus; label: string; levels: Level[] }[] = [
+  { id: "all", label: "All", levels: ["unhealthy", "attention", "paused", "healthy"] },
+  { id: "problems", label: "Problems", levels: ["unhealthy", "attention"] },
+  { id: "paused", label: "Paused", levels: ["paused"] },
+  { id: "healthy", label: "Healthy", levels: ["healthy"] },
+];
+/** What the bar's count counts, one and many. */
+const NOUN: Record<TabId, [string, string]> = {
+  sources: ["source", "sources"],
+  enrichment: ["feed", "feeds"],
+  agents: ["agent", "agents"],
+  devices: ["device", "devices"],
+  alerts: ["target or schedule", "targets and schedules"],
+  backups: ["backup", "backups"],
+  rollups: ["rollup", "rollups"],
+  speed: ["route", "routes"],
 };
 const TABS: { id: TabId; label: string }[] = [
   { id: "sources", label: "Sources" },
@@ -126,6 +149,7 @@ function sourceRow(s: Source): Row {
       ...base,
       level: "unhealthy",
       reason: `No events for over ${human(s.quiet.quiet_after_s)}`,
+      quietNote: true,
     };
   if (s.alert_pause)
     return {
@@ -178,7 +202,7 @@ const HEALTH_VIEWS = ["sources", "collectors", "delivery"] as const;
 type View = (typeof HEALTH_VIEWS)[number] | "system";
 const TYPES: Partial<Record<View, { id: TabId; label: string }[]>> = {
   sources: [
-    { id: "sources", label: "Log sources" },
+    { id: "sources", label: "Events" },
     { id: "enrichment", label: "Enrichment feeds" },
   ],
   collectors: [
@@ -191,23 +215,12 @@ const TYPES: Partial<Record<View, { id: TabId; label: string }[]>> = {
     { id: "speed", label: "Speed" },
   ],
 };
-/** The view a kind of row is on: where the strip's tiles and the old tabs lead. */
-const VIEW_OF: Record<TabId, View> = {
-  sources: "sources",
-  enrichment: "sources",
-  agents: "collectors",
-  devices: "collectors",
-  alerts: "delivery",
-  backups: "system",
-  rollups: "system",
-  speed: "system",
-};
 
 /** Health (ADR-0019): is every source, connector, agent, watched device, alert target,
  * and schedule working, on one page. */
 export function HealthPage({ isAdmin, scope = "health" }: HealthPageProps) {
   const client = useQueryClient();
-  const [healthView, setView] = useSectionTab<View>(HEALTH_VIEWS);
+  const [healthView] = useSectionTab<View>(HEALTH_VIEWS);
   const view: View = scope === "system" ? "system" : healthView;
   // `#source=<id>` (alert messages, the Dashboard, Settings) opens Sources at that row.
   const section = useSection();
@@ -228,12 +241,20 @@ export function HealthPage({ isAdmin, scope = "health" }: HealthPageProps) {
     else next.set("type", id);
     setFragment(next.toString());
   };
-  const go = (kind: TabId) => {
-    const to = VIEW_OF[kind];
-    if (to === "system") navigate("system");
-    else setView(to);
+  // The Status filter, in the address too (`#status=problems`); All is left out (D255).
+  const status = healthStatus(frag);
+  const levels = STATUSES.find((x) => x.id === status)?.levels ?? [];
+  const setStatus = (id: HealthStatus) => {
+    const next = fragmentValues(section);
+    if (id === "all") next.delete("status");
+    else next.set("status", id);
+    setFragment(next.toString());
   };
-  const [filter, setFilter] = useState<Level | null>(null);
+  const resetFilters = () => {
+    const next = fragmentValues(section);
+    for (const k of ["type", "status", "source"]) next.delete(k);
+    setFragment(next.toString());
+  };
   const [adding, setAdding] = useState(false);
   // Settings > System shows only what the checks report: none of Health's other reads
   // (the Overview is audited when it computes).
@@ -307,7 +328,15 @@ export function HealthPage({ isAdmin, scope = "health" }: HealthPageProps) {
       case "attention":
         return { ...r, level: "attention", reason: r.reason ?? "Needs a look" };
       default:
-        return { ...r, level: "healthy", reason: null };
+        // Marked "Quiet is normal" and silent inside its days (D260): healthy, said in a word.
+        return h.idle
+          ? {
+              ...r,
+              level: "healthy",
+              word: "Idle",
+              reason: idleText(h.last_event_at, overview.data.generated_at),
+            }
+          : { ...r, level: "healthy", reason: null };
     }
   };
   const rows: Record<TabId, Row[]> = {
@@ -442,52 +471,60 @@ export function HealthPage({ isAdmin, scope = "health" }: HealthPageProps) {
   const tally: SourceTally | undefined = o?.source_summary
     ? { summary: o.source_summary, openGaps: openGaps(o) }
     : undefined;
-  const count = (l: Level) => rows[tab].filter((r) => r.level === l).length;
-  const shown = rows[tab].filter((r) => !filter || r.level === filter);
-  const loading = sources.isLoading || checks.isLoading;
-  const error = sources.error ?? checks.error;
+  // A part shows its number once its own data is there (D255): a query that has answered,
+  // or is not asked for on this page. A failed read is not data: its counts stay absent, as
+  // while loading, and the error is said instead.
+  const settled = (q: {
+    isPending: boolean;
+    fetchStatus: string;
+    isError: boolean;
+    data?: unknown;
+  }) => (!q.isPending || q.fetchStatus === "idle") && (q.data !== undefined || !q.isError);
+  // Listed: the rows are there. Levelled: their levels are too (a source's level is the
+  // overview's condition).
+  const listed: Record<TabId, boolean> = {
+    sources: settled(sources) && settled(checks),
+    enrichment: settled(enrichment),
+    agents: settled(checks),
+    devices: settled(checks),
+    alerts: settled(schedules) && settled(targets),
+    backups: settled(checks),
+    rollups: settled(checks),
+    speed: true,
+  };
+  const levelled: Record<TabId, boolean> = {
+    ...listed,
+    sources: listed.sources && settled(overview),
+  };
+  const real = (k: TabId) => rows[k].filter((r) => r.key !== "lake-quarantine");
+  const bad = (rs: Row[]) =>
+    rs.filter((r) => r.level === "unhealthy" || r.level === "attention").length;
+  // The damaged-files notice is a state notice: counted under Problems, never filtered away.
+  const shown = rows[tab].filter((r) => r.key === "lake-quarantine" || levels.includes(r.level));
+  const error =
+    sources.error ??
+    checks.error ??
+    (onHealth ? (overview.error ?? alerts.error ?? enrichment.error ?? schedules.error) : null);
+  const loading = !listed[tab] && !error;
+  // Problems per tab, only once every type on it is judged; a problem on any type of a tab
+  // shows on the tab. No totals (DESIGN.md 6.0: a count only where something needs action).
+  const tabProblems: Record<string, number> = {};
+  for (const [label, kinds] of [
+    ["Sources", ["sources", "enrichment"]],
+    ["Collectors", ["agents", "devices"]],
+    ["Delivery", ["alerts"]],
+  ] as [string, TabId[]][])
+    if (kinds.every((k) => levelled[k])) tabProblems[label] = bad(kinds.flatMap((k) => rows[k]));
+  const total = real(tab).length;
+  // A tab with nothing listed has nothing to filter: no Status row of zeros (D255).
+  const hasStatus = tab !== "speed" && (!levelled[tab] || total > 0);
+  const showing = shown.filter((r) => r.key !== "lake-quarantine").length;
 
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       <PageHeader
         title={scope === "system" ? "System" : "Health"}
-        tabExtras={
-          scope === "system"
-            ? {}
-            : Object.fromEntries(
-                (
-                  [
-                    // Log sources only, as the Dashboard's Sources tile counts them; the
-                    // Type filter carries the count of enrichment feeds.
-                    ["Sources", ["sources"]],
-                    ["Collectors", ["agents", "devices"]],
-                    ["Delivery", ["alerts"]],
-                  ] as [string, TabId[]][]
-                ).map(([label, kinds]) => {
-                  // The Data folder row (quarantined files) is listed with the sources but is
-                  // not one: the count is of sources, as the Dashboard's tile counts them.
-                  const all = kinds
-                    .flatMap((k) => rows[k])
-                    .filter((r) => r.key !== "lake-quarantine");
-                  // A problem on any type of the tab shows on the tab.
-                  const watched = label === "Sources" ? [...all, ...rows.enrichment] : all;
-                  const bad = watched.filter(
-                    (r) => r.level === "unhealthy" || r.level === "attention",
-                  ).length;
-                  return [
-                    label,
-                    <>
-                      {all.length}
-                      {bad ? (
-                        <span className="ml-1 rounded-badge border border-warn px-1 text-xs font-semibold text-warn">
-                          {bad}
-                        </span>
-                      ) : null}
-                    </>,
-                  ];
-                }),
-              )
-        }
+        tabProblems={scope === "system" ? undefined : tabProblems}
         count={
           scope === "system"
             ? null
@@ -502,17 +539,55 @@ export function HealthPage({ isAdmin, scope = "health" }: HealthPageProps) {
             {error instanceof ApiError ? error.message : "Could not load health"}
           </p>
         ) : null}
+        {types || hasStatus ? (
+          <FilterBar
+            label={scope === "system" ? "Choose what to show" : "Filter health"}
+            facets={
+              types
+                ? [
+                    {
+                      name: "Type",
+                      value: tab,
+                      options: types,
+                      onChange: (id) => setType(id as TabId),
+                    },
+                  ]
+                : []
+            }
+            state={
+              !hasStatus
+                ? undefined
+                : {
+                    label: "Status",
+                    value: status,
+                    onChange: setStatus,
+                    options: STATUSES.map((x) => ({
+                      id: x.id,
+                      label: x.label,
+                      count: levelled[tab]
+                        ? rows[tab].filter((r) => x.levels.includes(r.level)).length
+                        : undefined,
+                    })),
+                  }
+            }
+            count={
+              !hasStatus || !levelled[tab]
+                ? null
+                : `${showing === total ? "" : `${showing.toLocaleString()} of `}${total.toLocaleString()} ${NOUN[tab][total === 1 ? 0 : 1]}`
+            }
+            onReset={resetFilters}
+            isDefault={status === "all" && (!types || tab === types[0]?.id)}
+          />
+        ) : null}
         {scope === "system" ? null : (
           <SystemStrip
             overview={o}
             tally={tally}
             alerts={alerts.data}
+            overviewFailed={overview.isError && !o ? () => void overview.refetch() : undefined}
+            alertsFailed={alerts.isError && !alerts.data ? () => void alerts.refetch() : undefined}
             isAdmin={isAdmin}
             now={now}
-            onEvents={() => navigate("logs")}
-            onSources={() => go("sources")}
-            onAttention={() => navigate("alerts")}
-            onDelivery={() => go("alerts")}
           />
         )}
         {o && scope !== "system" ? <StatusLine overview={o} now={now} /> : null}
@@ -523,25 +598,6 @@ export function HealthPage({ isAdmin, scope = "health" }: HealthPageProps) {
           <BrowserErrors rows={checks.data.client_errors} now={now} />
         ) : null}
 
-        {types ? (
-          <FilterBar
-            label={scope === "system" ? "Choose what to show" : "Filter by type"}
-            state={{
-              label: "Type",
-              value: tab,
-              onChange: setType,
-              options: types.map((t) => ({
-                id: t.id,
-                label: t.label,
-                count:
-                  t.id === "speed"
-                    ? undefined
-                    : rows[t.id].filter((r) => r.key !== "lake-quarantine").length,
-              })),
-            }}
-            isDefault
-          />
-        ) : null}
         {tab === "speed" ? (
           isAdmin ? (
             <SpeedTable />
@@ -550,34 +606,7 @@ export function HealthPage({ isAdmin, scope = "health" }: HealthPageProps) {
           )
         ) : (
           <>
-            <div
-              role="group"
-              aria-label="Show"
-              className="flex flex-wrap items-center gap-1 text-sm text-text-secondary"
-            >
-              <span className="mr-1">Show</span>
-              {[{ id: null, label: "All", color: "" }, ...LEVELS].map((l) => (
-                <button
-                  key={l.id ?? "all"}
-                  type="button"
-                  aria-pressed={filter === l.id}
-                  onClick={() => setFilter(l.id as Level | null)}
-                  className={`rounded px-2 py-0.5 ${
-                    filter === l.id ? "bg-surface-head font-semibold text-text" : "hover:text-text"
-                  }`}
-                >
-                  {l.label}{" "}
-                  <span className="font-mono tabular-nums text-text-muted">
-                    {loading ? "·" : l.id ? count(l.id as Level) : rows[tab].length}
-                  </span>
-                </button>
-              ))}
-            </div>
-
-            <section
-              aria-label={TABS.find((t) => t.id === tab)?.label}
-              className="rounded-card border border-border bg-surface"
-            >
+            <Card title={TABS.find((t) => t.id === tab)?.label ?? ""}>
               {tab === "devices" ? (
                 <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 text-sm">
                   <span className="text-text-secondary">
@@ -621,6 +650,7 @@ export function HealthPage({ isAdmin, scope = "health" }: HealthPageProps) {
                       level: r.level,
                       word: r.word,
                       reason: r.reason,
+                      quietNote: r.quietNote,
                       last: r.last,
                       // Its settings, at the same row (F61): one more click from Health.
                       onOpen: r.page
@@ -635,7 +665,11 @@ export function HealthPage({ isAdmin, scope = "health" }: HealthPageProps) {
                 <Skeleton label="health" rows={5} className="rounded-none border-0" />
               ) : shown.length === 0 ? (
                 <p className="p-4 text-sm text-text-muted">
-                  {filter ? "Nothing in this state here." : EMPTY[tab]}
+                  {!listed[tab]
+                    ? "This list did not load."
+                    : status !== "all" && rows[tab].length
+                      ? "Nothing in this state here."
+                      : EMPTY[tab]}
                 </p>
               ) : (
                 <div className="overflow-x-auto">
@@ -757,7 +791,7 @@ export function HealthPage({ isAdmin, scope = "health" }: HealthPageProps) {
                       : null
                 }
               />
-            </section>
+            </Card>
           </>
         )}
       </div>

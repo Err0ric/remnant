@@ -83,6 +83,8 @@ export interface MockAuth {
   mode: "open" | "setup" | "login";
   signedIn?: boolean;
   role?: "admin" | "analyst" | "auditor";
+  /** The signed-in non-admin has View people in AI usage (D242); admins always do. */
+  viewPeople?: boolean;
   /** No accounts yet: the user list starts empty (a fresh loopback install). */
   noAccounts?: boolean;
   /** The sign-out request fails on the server. */
@@ -93,6 +95,12 @@ export interface MockAuth {
   auditorSql?: boolean;
   /** What `/api/health/count` answers; every source healthy when left out. */
   healthCount?: { total: number; not_healthy: number };
+  /** What `/api/ai/inventory/count` answers; nothing to review when left out. */
+  aiToReview?: number;
+  /** The signed-in user's id; "u1" when left out. */
+  userId?: string;
+  /** The viewer's pins (D259); none when left out. */
+  pins?: { kind: "search" | "dashboard"; id: string; name: string }[];
 }
 
 export const SOURCE = {
@@ -467,7 +475,14 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
   const DRAFT_YAML = "schema_version: 1\nid: ID\nname: Widget\nversion: 0.1.0\n";
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-    const user = { user_id: "u1", username: "jordan", role: state.role ?? "admin" };
+    const user = {
+      user_id: state.userId ?? "u1",
+      username: "jordan",
+      role: state.role ?? "admin",
+      view_ai_people: (state.role ?? "admin") === "admin" || state.viewPeople === true,
+    };
+    // D242: without View people in AI usage the server sends no names, only how many.
+    const namesHidden = state.mode === "login" && state.signedIn === true && !user.view_ai_people;
     const method = (init?.method ?? "GET").toUpperCase();
     const draftMatch = /\/api\/templates\/drafts\/([^/]+)(\/preview|\/approve|\/ai-draft)?$/.exec(
       url,
@@ -982,6 +997,27 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         ],
         alias_suggestions: [{ alias: "carol", person: "carol@example.com", hosts: ["ws-0311"] }],
       });
+    if (/\/api\/people\/[^/]+\/record\?/.test(url))
+      return json({
+        person: "alice",
+        forms: namesHidden ? [] : ["EXAMPLE\\alice", "alice@example.com"],
+        forms_hidden: namesHidden ? 2 : 0,
+        start: "2026-10-23T12:00:00+00:00",
+        end: "2026-10-30T12:00:00+00:00",
+        days: [
+          { day: "2026-10-28", events: 0, failed: 0 },
+          { day: "2026-10-29", events: 12, failed: 0 },
+          { day: "2026-10-30", events: 30, failed: 2 },
+        ],
+        m365: true,
+        m365_sql: {
+          sign_ins: "SELECT 'signins' FROM events WHERE time >= {from} AND time < {to}",
+          mail: "SELECT 'mail' FROM events WHERE time >= {from} AND time < {to}",
+          admin: "SELECT 'admin' FROM events WHERE time >= {from} AND time < {to}",
+        },
+        sql: "SELECT 'person' FROM events WHERE time >= {from} AND time < {to}",
+        sources: ["m365_signin"],
+      });
     if (/\/api\/people\/[^/]+\/hosts\?/.test(url))
       return json({
         person: "alice",
@@ -1134,7 +1170,32 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
           state: "idle",
         },
       ]);
-    if (url.endsWith("/api/ai/sessions/s-77") && method === "GET")
+    if (url.includes("/api/ai/sessions/s-77/summary") && method === "GET")
+      return json({
+        session_id: "s-77",
+        person: "dana@example.com",
+        machine: "ws-0042",
+        account: "dana@example.com",
+        started: "2026-10-22T18:00:00+00:00",
+        last: "2026-10-22T18:04:00+00:00",
+        length_s: 240,
+        state: "ended",
+        prompts: 1,
+        tool_calls: 2,
+        failed: 0,
+        unanswered: 2,
+        tokens_in: null,
+        tokens_out: null,
+        files: 1,
+        files_outside: 0,
+        new_mcp: ["github"],
+        types: { prompt: 1, tool_call: 0, tool_result: 0, file_access: 1, access: 1, other: 2 },
+        steps: 5,
+        steps_cut: false,
+        sql: "SELECT time FROM events WHERE template_id = 'claude_hooks'",
+        masked: false,
+      });
+    if (url.includes("/api/ai/sessions/s-77?") && method === "GET")
       return json({
         session_id: "s-77",
         person: "dana@example.com",
@@ -1154,6 +1215,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
             input_chars: null,
             output_chars: null,
             event_id: "e1",
+            type: "other",
           },
           {
             time: "2026-10-22T18:00:05+00:00",
@@ -1169,6 +1231,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
             input_chars: null,
             output_chars: null,
             event_id: "e2",
+            type: "prompt",
           },
           {
             time: "2026-10-22T18:00:09+00:00",
@@ -1184,6 +1247,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
             input_chars: 41,
             output_chars: null,
             event_id: "e3",
+            type: "file_access",
           },
           {
             time: "2026-10-22T18:01:00+00:00",
@@ -1199,6 +1263,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
             input_chars: 13,
             output_chars: null,
             event_id: "e4",
+            type: "access",
           },
           {
             time: "2026-10-22T18:04:00+00:00",
@@ -1214,6 +1279,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
             input_chars: null,
             output_chars: null,
             event_id: "e5",
+            type: "other",
           },
         ],
       });
@@ -1706,7 +1772,8 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
     if (url.includes("/timeline?days=")) {
       return json({
         person: "alice",
-        forms: ["EXAMPLE\\alice", "alice@example.com"],
+        forms: namesHidden ? [] : ["EXAMPLE\\alice", "alice@example.com"],
+        forms_hidden: namesHidden ? 2 : 0,
         devices: ["ws-0042"],
         start: "2026-10-23T12:00:00+00:00",
         end: "2026-10-30T12:00:00+00:00",
@@ -1714,6 +1781,8 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         sql: "SELECT 1 FROM events WHERE time >= {from} AND time < {to}",
         signins_sql:
           "SELECT time FROM events WHERE template_id = 'm365_signin' AND time >= {from} AND time < {to}",
+        maybe: [],
+        // Without View people in AI usage the server leaves AI rows out (D242).
         rows: [
           {
             kind: "alert",
@@ -1749,7 +1818,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
             tone: "neutral",
             sql: "SELECT 3 FROM events WHERE time >= {from} AND time < {to}",
           },
-        ],
+        ].filter((r) => !namesHidden || (r.kind !== "session" && r.source !== "alerts")),
       });
     }
     if (url.includes("/around?at=")) {
@@ -1801,6 +1870,42 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         start: "2026-10-09T22:59:36+00:00",
         end: "2026-10-09T23:09:36+00:00",
       });
+    }
+    if (url.endsWith("/api/pins") && method === "GET") {
+      // As the server: only targets the viewer may still see, under their current names.
+      const admin = (state.role ?? "admin") === "admin";
+      const live = (state.pins ?? []).flatMap((p) => {
+        if (p.kind === "search") {
+          const found = searches.find((x) => x.id === p.id);
+          return found ? [{ ...p, name: String(found.name) }] : [];
+        }
+        const d = dashboards.find((x) => x.dashboard_id === p.id);
+        return d && (admin || d.mine || d.shared) ? [{ ...p, name: d.name }] : [];
+      });
+      return json(live);
+    }
+    const pinAt = /\/api\/pins\/(search|dashboard)\/([^/?]+)$/.exec(url);
+    if (pinAt) {
+      const kind = pinAt[1] as "search" | "dashboard";
+      const id = decodeURIComponent(pinAt[2] ?? "");
+      const list = state.pins ?? [];
+      const has = list.some((p) => p.kind === kind && p.id === id);
+      if (method === "DELETE") {
+        if (!has) return json({ detail: "Not pinned", code: "not_found" }, 404);
+        state.pins = list.filter((p) => p.kind !== kind || p.id !== id);
+        return new Response(null, { status: 204 });
+      }
+      if (!has && list.length >= 5)
+        return json({ detail: "At most 5 pins. Unpin one first.", code: "conflict" }, 409);
+      const name =
+        kind === "search"
+          ? String(searches.find((x) => x.id === id)?.name ?? id)
+          : (dashboards.find((d) => d.dashboard_id === id)?.name ?? id);
+      if (!has) state.pins = [...list, { kind, id, name }];
+      return json(state.pins ?? []);
+    }
+    if (url.endsWith("/api/ai/inventory/count")) {
+      return json({ to_review: state.aiToReview ?? 0 });
     }
     if (url.includes("/api/ai/inventory/export")) {
       return new Response("type,name\nMCP server,github\n", { status: 200 });
@@ -2466,6 +2571,8 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
     if (/\/api\/ai\/services\/[^/]+\/status$/.test(url) && method === "PUT") {
       const id = decodeURIComponent(url.split("/api/ai/services/")[1]?.split("/")[0] ?? "");
       const body = JSON.parse(String(init?.body ?? "{}")) as { status: string };
+      // A review leaves one item fewer to review (the rail's AI usage count).
+      if (body.status !== "unreviewed" && state.aiToReview) state.aiToReview = state.aiToReview - 1;
       return json({
         id,
         name: id,
@@ -3659,12 +3766,21 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         schema_version: 1,
       });
     // The app's own rows, with SQL the server builds (owner, 2026-11-08).
-    if (/\/api\/people\/[^/]+\/signins/.test(url))
+    if (/\/api\/people\/[^/]+\/m365\?/.test(url))
       return json(
-        result({
-          columns: ["time", "actor_user_name", "status_id"],
-          rows: [["2026-10-30T09:58:00+00:00", "alice@example.com", 2]],
-        }),
+        result(
+          url.includes("name=mail")
+            ? {
+                columns: ["time", "actor_user_name", "operation"],
+                rows: [["2026-10-29T08:00:00+00:00", "alice@example.com", "new-inboxrule"]],
+              }
+            : url.includes("name=admin")
+              ? { columns: ["time", "actor_user_name", "operation"], rows: [] }
+              : {
+                  columns: ["time", "actor_user_name", "status_id"],
+                  rows: [["2026-10-30T09:58:00+00:00", "alice@example.com", 2]],
+                },
+        ),
       );
     if (url.includes("/api/m365/list?")) return json(result(RESULTS));
     if (url.endsWith("/api/sources/event-counts"))

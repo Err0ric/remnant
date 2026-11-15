@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState, type MouseEvent } from "react";
-import { api, type FacetRequest } from "@/lib/api";
+import { Truncate } from "@/components/Truncate";
+import { ApiError, api, type FacetRequest } from "@/lib/api";
 import { columnLabel, SEVERITY } from "@/lib/search";
 import { filterTerm } from "@/lib/simpleSearch";
 
@@ -123,9 +124,22 @@ export function FacetSidebar({ request, onTerm, onRefine = null }: FacetSidebarP
         <p className="px-3 py-2 text-sm text-text-muted">Counting…</p>
       ) : null}
       {facets.isError ? (
-        <p role="alert" className="px-3 py-2 text-sm text-danger">
-          {facets.error instanceof Error ? facets.error.message : "Could not count fields"}
-        </p>
+        <div role="alert" className="flex items-start gap-2 px-3 py-2 text-sm">
+          <p className="min-w-0 flex-1 text-danger">
+            {facets.error instanceof ApiError && facets.error.status === 408
+              ? "Counting fields took too long for this range. The results are not affected."
+              : facets.error instanceof Error
+                ? facets.error.message
+                : "Could not count fields"}
+          </p>
+          <button
+            type="button"
+            onClick={() => void facets.refetch()}
+            className="shrink-0 text-text-secondary underline hover:text-text"
+          >
+            Retry
+          </button>
+        </div>
       ) : null}
       {facets.data && facets.data.facets.length === 0 ? (
         <p className="px-3 py-2 text-sm text-text-muted">
@@ -156,6 +170,8 @@ export function FacetSidebar({ request, onTerm, onRefine = null }: FacetSidebarP
                           disabled={!clickable}
                           onClick={(e: MouseEvent) => pick(f.field, v.value, e.altKey)}
                           title={clickable ? `Filter to ${text}` : text}
+                          // The value whole, however it is cut (D257), then its count.
+                          aria-label={`${text} ${v.count.toLocaleString()}`}
                           className="relative flex min-w-0 flex-1 items-center gap-2 rounded px-1.5 py-0.5 text-left text-sm enabled:hover:bg-surface-head disabled:cursor-default"
                         >
                           <span
@@ -163,11 +179,23 @@ export function FacetSidebar({ request, onTerm, onRefine = null }: FacetSidebarP
                             className="absolute inset-y-0 left-0 rounded bg-accent-subtle"
                             style={{ width: `${Math.max(4, (v.count / top) * 100)}%` }}
                           />
-                          <span
-                            className={`relative min-w-0 flex-1 truncate ${v.value ? "font-mono" : "italic text-text-secondary"}`}
-                          >
-                            {text}
-                          </span>
+                          {v.value && text === v.value ? (
+                            // A long source id or name is cut in the middle (D257); the
+                            // button's title holds it whole. Labels ("Authentication") are not.
+                            <span className="relative min-w-0 flex-1 font-mono">
+                              <Truncate
+                                value={text}
+                                kind={text.includes("@") ? "email" : "name"}
+                                inLink
+                              />
+                            </span>
+                          ) : (
+                            <span
+                              className={`relative min-w-0 flex-1 truncate ${v.value ? "font-mono" : "italic text-text-secondary"}`}
+                            >
+                              {text}
+                            </span>
+                          )}
                           <span className="relative shrink-0 font-mono tabular-nums text-text-secondary">
                             {v.count.toLocaleString()}
                           </span>

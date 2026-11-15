@@ -30,6 +30,8 @@ def _detect(monkeypatch: pytest.MonkeyPatch) -> dashboard.Detections:
     def run(sql: str, sources: list[str], **kw: Any) -> list[list[Any]]:
         return []
 
+    run.since = lambda sql, sources, start, **kw: run(sql, sources, **kw)  # type: ignore[attr-defined]  # the narrowed lookup of the same fake
+
     buckets = [START + timedelta(days=i) for i in range(7)]
     out = dashboard._detections(
         run,  # type: ignore[arg-type]  # a fake runner: no events are read here
@@ -85,6 +87,8 @@ def test_involved_rows_say_how_many_rules_and_the_last_match(
     def run(sql: str, sources: list[str], **kw: Any) -> list[list[Any]]:
         # event id, who, host
         return [["e1", "alice", "web-01"], ["e2", "alice", "web-01"], ["e3", None, "bastion"]]
+
+    run.since = lambda sql, sources, start, **kw: run(sql, sources, **kw)  # type: ignore[attr-defined]  # the narrowed lookup of the same fake
 
     buckets = [START + timedelta(days=i) for i in range(7)]
     d = dashboard._detections(

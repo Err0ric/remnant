@@ -21,7 +21,85 @@ import {
 import { EventDetail } from "./EventDetail";
 import { RawLines } from "./RawLines";
 
-const PAGE = 50;
+const PAGE_SIZES = [50, 100, 500] as const;
+const SIZE_KEY = "results.pageSize";
+
+/** The viewer's rows per page, kept in this browser. */
+function storedSize(): number {
+  try {
+    const n = Number(window.localStorage.getItem(SIZE_KEY));
+    return (PAGE_SIZES as readonly number[]).includes(n) ? n : PAGE_SIZES[0];
+  } catch {
+    return PAGE_SIZES[0];
+  }
+}
+
+const PAGE_BUTTON =
+  "h-7 rounded border border-border-strong px-2.5 text-text hover:bg-surface-head disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent";
+
+interface PagerProps {
+  page: number;
+  pages: number;
+  size: number;
+  total: number;
+  /** The result holds only the newest rows of what matched. */
+  truncated: boolean;
+  onPage: (page: number) => void;
+  onSize: (size: number) => void;
+}
+
+/** Previous and Next beside the count, and the rows per page (owner, 2026-11-13). Drawn
+ * above and below the rows, so the way to row 51 is never only under row 50. */
+function Pager({ page, pages, size, total, truncated, onPage, onSize }: PagerProps) {
+  return (
+    <nav
+      aria-label="Result pages"
+      data-pager=""
+      data-page={page + 1}
+      data-pages={pages}
+      className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3.5 py-2 text-sm text-text-secondary"
+    >
+      <button
+        type="button"
+        data-pager-previous=""
+        disabled={page === 0}
+        onClick={() => onPage(page - 1)}
+        className={PAGE_BUTTON}
+      >
+        Previous
+      </button>
+      <button
+        type="button"
+        data-pager-next=""
+        disabled={page >= pages - 1}
+        onClick={() => onPage(page + 1)}
+        className={PAGE_BUTTON}
+      >
+        Next
+      </button>
+      <span data-pager-range="" className="tabular-nums">
+        {(page * size + 1).toLocaleString()} to{" "}
+        {Math.min((page + 1) * size, total).toLocaleString()} of {total.toLocaleString()}
+        {truncated ? " (the newest rows; narrow the range or filters to see all)" : ""}
+      </span>
+      <label className="flex items-center gap-1.5">
+        Rows per page
+        <select
+          aria-label="Rows per page"
+          value={size}
+          onChange={(e) => onSize(Number(e.target.value))}
+          className="h-7 rounded border border-border-control bg-inset px-1.5 text-text"
+        >
+          {PAGE_SIZES.map((n) => (
+            <option key={n} value={n}>
+              {n}
+            </option>
+          ))}
+        </select>
+      </label>
+    </nav>
+  );
+}
 const HIDDEN_COLUMNS = new Set(["event_id"]);
 
 interface ResultsTableProps {
@@ -70,10 +148,22 @@ export function ResultsTable({
   };
   const keyOf = (row: Cell[], index: number) =>
     idIndex >= 0 && row[idIndex] != null ? `id:${String(row[idIndex])}` : `at:${index}`;
-  const [page, setPage] = useState(0);
+  const [wanted, setPage] = useState(0);
+  const [size, setSizeState] = useState(storedSize);
+  const setSize = (n: number) => {
+    setSizeState(n);
+    setPage(0);
+    try {
+      window.localStorage.setItem(SIZE_KEY, String(n));
+    } catch {
+      // Storage blocked: the choice lasts for this table only.
+    }
+  };
   const [sort, setSort] = useState<{ index: number; dir: SortDir } | null>(null);
-  // The table is as wide as its widest value and scrolls sideways; an open row's detail
-  // is pinned to the visible width so the raw line and actions never sit off screen.
+  // The table is as wide as its box: Message takes what the other columns leave and
+  // truncates (owner, 2026-11-13). Only when the other columns alone need more than the box
+  // does it scroll sideways, inside the box; an open row's detail is pinned to the visible
+  // width so the raw line and actions never sit off screen.
   const scroller = useRef<HTMLDivElement>(null);
   const [paneWidth, setPaneWidth] = useState<number | null>(null);
   useEffect(() => {
@@ -90,12 +180,22 @@ export function ResultsTable({
   const chosen = all.filter(({ c }) => !hidden.includes(c));
   // Columns hidden for an earlier query never leave this one with nothing to show.
   const visible = chosen.length ? chosen : all;
-  const pages = Math.max(1, Math.ceil(result.rows.length / PAGE));
+  // Another result (another query, or a rerun that returned another number of rows) opens
+  // on its first page. Not while Live adds rows to the one being read (`fresh`).
+  const shown = `${result.executed_sql}|${result.rows.length}`;
+  const [seen, setSeen] = useState(shown);
+  if (shown !== seen) {
+    setSeen(shown);
+    if (!fresh) setPage(0);
+  }
+  const pages = Math.max(1, Math.ceil(result.rows.length / size));
+  // And a shorter one never leaves the table on a page it does not have.
+  const page = Math.min(wanted, pages - 1);
   const ordered = useMemo(
     () => (sort ? sortRows(result.rows, sort.index, sort.dir) : result.rows),
     [result.rows, sort],
   );
-  const rows = ordered.slice(page * PAGE, page * PAGE + PAGE);
+  const rows = ordered.slice(page * size, page * size + size);
   // Click cycles ascending, descending, then the order the query returned.
   const toggleSort = (index: number) => {
     setOpen(null);
@@ -131,8 +231,28 @@ export function ResultsTable({
     );
   }
 
+  // More rows than the smallest page: the pager, above and below.
+  const paged = result.rows.length > PAGE_SIZES[0];
+  const pager = (
+    <Pager
+      page={page}
+      pages={pages}
+      size={size}
+      total={result.rows.length}
+      truncated={result.truncated}
+      onPage={(p) => {
+        setOpen(null);
+        setPage(p);
+      }}
+      onSize={(n) => {
+        setOpen(null);
+        setSize(n);
+      }}
+    />
+  );
   return (
     <>
+      {paged ? pager : null}
       {view === "raw" ? <RawLines result={result} rows={rows} /> : null}
       <div
         ref={scroller}
@@ -141,7 +261,12 @@ export function ResultsTable({
         style={compact ? ({ "--row-h": "30px" } as CSSProperties) : undefined}
       >
         {/* A treegrid: rows expand to show the event (aria-expanded needs this role). */}
-        <div role="treegrid" aria-label="Search results" className="w-max min-w-full">
+        <div
+          role="treegrid"
+          aria-label="Search results"
+          data-total={result.rows.length}
+          className="w-full min-w-min"
+        >
           <div
             role="row"
             className="grid border-b border-border bg-surface-head px-3.5 py-2 font-mono text-sm font-semibold text-text-secondary"
@@ -176,7 +301,7 @@ export function ResultsTable({
             ))}
           </div>
           {rows.map((row, idx) => {
-            const index = page * PAGE + idx;
+            const index = page * size + idx;
             const key = keyOf(row, index);
             const isOpen = open === key;
             return (
@@ -282,45 +407,28 @@ export function ResultsTable({
           })}
         </div>
       </div>
-      <div className="flex items-center gap-3 px-3.5 py-2 text-sm text-text-secondary">
-        <span>
-          {page * PAGE + 1} to {Math.min((page + 1) * PAGE, result.rows.length)} of{" "}
-          {result.rows.length}
+      {paged ? (
+        pager
+      ) : (
+        <p className="px-3.5 py-2 text-sm text-text-secondary">
+          {result.rows.length.toLocaleString()} {result.rows.length === 1 ? "row" : "rows"}
           {result.truncated ? " (the newest rows; narrow the range or filters to see all)" : ""}
-        </span>
-        {geo && Object.keys(geo).length ? (
-          // Attribution the DB-IP Lite license (CC BY 4.0) asks for: once, and quiet (F52).
-          <span className="text-xs text-text-muted">
-            Locations:{" "}
-            <a
-              href="https://db-ip.com"
-              target="_blank"
-              rel="noreferrer"
-              className="text-text-muted underline-offset-2 hover:underline"
-            >
-              IP Geolocation by DB-IP
-            </a>
-          </span>
-        ) : null}
-        <span className="ml-auto flex gap-3">
-          <button
-            type="button"
-            disabled={page === 0}
-            onClick={() => setPage(page - 1)}
-            className="text-accent-text disabled:opacity-40"
+        </p>
+      )}
+      {geo && Object.keys(geo).length ? (
+        // Attribution the DB-IP Lite license (CC BY 4.0) asks for: once, and quiet (F52).
+        <p className="px-3.5 pb-2 text-xs text-text-muted">
+          Locations:{" "}
+          <a
+            href="https://db-ip.com"
+            target="_blank"
+            rel="noreferrer"
+            className="text-text-muted underline-offset-2 hover:underline"
           >
-            Previous
-          </button>
-          <button
-            type="button"
-            disabled={page >= pages - 1}
-            onClick={() => setPage(page + 1)}
-            className="text-accent-text disabled:opacity-40"
-          >
-            Next
-          </button>
-        </span>
-      </div>
+            IP Geolocation by DB-IP
+          </a>
+        </p>
+      ) : null}
     </>
   );
 }

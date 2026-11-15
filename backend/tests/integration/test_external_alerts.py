@@ -192,6 +192,17 @@ def test_five_thousand_alerts_in_one_item_stay_fast(lab: dict[str, Any]) -> None
 
     paths = ("/api/alerts", f"/api/alerts/{item['item_id']}")
     before = [shape(p)[0] for p in paths]
+    events = f"/api/alerts/{item['item_id']}/events?limit=200"
+
+    def timed() -> float:
+        t0 = time.perf_counter()
+        assert lab["admin"].get(events).status_code == 200
+        return time.perf_counter() - t0
+
+    # The same call on the same machine with the item's one key, before the 5,000 come: a
+    # baseline measured in this run, so the bound follows the machine's load (handoff's
+    # standing advice for timing tests).
+    baseline = min(timed() for _ in range(3))
     at = lab["at"]
     norm = TemplateNormalizer(lab["t"], "edr", clock=lambda: at)
     lines = [ALERT.replace("A-1001", f"B-{n:05d}") for n in range(5_000)]
@@ -214,7 +225,6 @@ def test_five_thousand_alerts_in_one_item_stay_fast(lab: dict[str, Any]) -> None
     assert ids["count"] == 5_001 and len(ids["ids"]) == 50
     page = lab["admin"].get(f"/api/alerts/{item['item_id']}/alert-ids?offset=5000&limit=200")
     assert [i["alert_id"] for i in page.json()["ids"]] == ["B-04999"]
-    events = f"/api/alerts/{item['item_id']}/events?limit=200"
     # Owner, 2026-11-10: the shape is checked, not a tight wall clock (the speed check
     # covers real slowdowns): one engine query, the keys bound as one list parameter (no
     # literal IN list in the SQL), and one page of rows.
@@ -238,4 +248,8 @@ def test_five_thousand_alerts_in_one_item_stay_fast(lab: dict[str, Any]) -> None
     assert not rest, [c[0][:80] for c in rest]
     assert "B-0" not in sql and "unnest($keys)" in sql
     assert len(params["keys"]) == 5_001 and params["limit"] == 200
-    assert took < 5.0, took  # a ceiling for a hang, not a speed rule
+    # A ceiling for a hang, not a speed rule: measured at about 30 times the one-key call
+    # on a quiet machine (0.50 s against 0.016 s), so 100 times it under a load that slows
+    # both alike, and never less than the old fixed 5 s (a burst can arrive between the
+    # two timings), which failed once at a machine load of about 12. Still catches a hang.
+    assert took < max(5.0, 100 * baseline), (took, baseline)

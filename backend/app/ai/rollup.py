@@ -726,6 +726,28 @@ class AiRollup:
 
     # --- reading ------------------------------------------------------------------------
 
+    def head(self, scope: QueryScope) -> list[str]:
+        """ "source|YYYY-MM-DD" of the day a range starts in, inside an hour (`covered`
+        leaves that day out), for each source whose closed day is fresh with its identity
+        file written: its whole hours after the start can come from the rollup, and only
+        the rest of the start's hour from events (`Usage._run_use`). A day still pending,
+        stale, or not built, and today, are read from events as before."""
+        partial = _start_day(scope.start)
+        if partial is None or scope.end is None:
+            return []
+        if partial >= self._clock().astimezone(UTC).date().isoformat():
+            return []
+        if scope.end.astimezone(UTC).date().isoformat() < partial:
+            return []
+        key = self.catalog_key()
+        out = []
+        for d in self._engine.rollup_dirs(scope):
+            source = d.name.removeprefix("source=")
+            day = d / f"day={partial}"
+            if (day / IDENT_FILE).is_file() and self._fresh(source, partial, key):
+                out.append(f"{source}|{partial}")
+        return sorted(out)
+
     def covered(self, scope: QueryScope) -> list[str]:
         """ "source|YYYY-MM-DD" for every fresh rollup day in scope: those are read from the
         rollup, the rest of the range from events. Who had an address on those days comes

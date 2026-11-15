@@ -12,21 +12,30 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
+
+import structlog
 
 from app.alerts.dispatch import AlertDispatcher
 from app.alerts.items import GAP_SEVERITY, AlertItems
 from app.alerts.render import Alert
 from app.auth.users import User
 from app.core.branding import PRODUCT_NAME
-from app.core.errors import NotFoundError, ParamInvalidError
+from app.core.errors import NotFoundError, ParamInvalidError, log_detail
+from app.ingest.sources import inside_quiet_days
 from app.meta.audit import AuditLog
 from app.meta.db import MetaDB
+
+log = structlog.get_logger(__name__)
 
 MIN_QUIET_S = 300  # 5 minutes
 MAX_QUIET_S = 7 * 86400
 MAX_TARGETS = 10
+# How long a marked source's real last event is kept without a new read. It changes only when
+# an event arrives, which the watch sees and which drops it at once; this only catches events
+# the watch could not see (a reparse, a restore), and an hour is small against holds of days.
+REAL_TTL = timedelta(hours=1)
 # Alert if quiet is on for every new source (ADR-0037 owner answer 3), with a default by kind:
 # API connectors deliver late and in batches, so they get longer. Editable afterwards.
 DEFAULT_QUIET_S = 3600
@@ -72,8 +81,20 @@ class QuietWatch:
         link: str | None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         items: AlertItems | None = None,
+        quiet_days: Callable[[], dict[str, int | None]] = dict,
+        last_event: Callable[[str, int, datetime], datetime | None] | None = None,
     ) -> None:
         self._items = items
+        # Each source's "Quiet is normal for up to N days" (D260): its quiet alert is held
+        # while the silence is inside those days, and fires once they pass (D262).
+        self._quiet_days = quiet_days
+        # The newest event a source really delivered, from the lake, as Health reads it.
+        # Never the watch's own last_seen, which starts at the time the watch was turned on.
+        self._last_event = last_event or (lambda _sid, _days, _now: None)
+        # Per source: (that event, when it was read, the watch's last_seen then). Read once
+        # when a marked source's alert first becomes due, and kept until an event arrives
+        # or REAL_TTL passes. In memory: a restart reads it once again.
+        self._real: dict[str, tuple[datetime | None, datetime, datetime]] = {}
         self._meta = meta
         self._received = received
         self._source_ids = source_ids
@@ -202,6 +223,7 @@ class QuietWatch:
             watches = [w for w in watches if w.source_id in known]
         now = self._clock().astimezone(UTC)
         received = self._received()
+        days = {k: v for k, v in self._quiet_days().items() if v}
         changed = 0
         for w in watches:
             before = _parse(w.last_seen)
@@ -211,12 +233,23 @@ class QuietWatch:
             if seen is None:
                 continue
             quiet_for = (now - seen).total_seconds()
-            if w.state == "ok" and quiet_for >= w.quiet_after_s:
+            due = w.state == "ok" and quiet_for >= w.quiet_after_s
+            # Held: the source is marked "Quiet is normal" and its newest real event is inside
+            # its days (a source that never sent is never held). Nothing is stored for a hold,
+            # so a restart reads the same, and the one ok-to-quiet move below raises it once
+            # when the days pass or the mark is taken off (D262). A watch already quiet stays.
+            real = self._real_last(w.source_id, days.get(w.source_id), seen, now) if due else None
+            if real is not None and inside_quiet_days(days.get(w.source_id), real, now):
+                due = False
+            if due:
                 # One alert per source per quiet episode (owner 2026-11-02: two at the same
                 # minute): only the tick that moves the row from ok to quiet alerts.
                 if not self._move(w.source_id, "ok", state="quiet", quiet_since=now.isoformat()):
                     continue
-                self._alert(w, "quiet", f"No events received for {human(quiet_for)}", seen, now)
+                # From the real last event when it is older than the watch's own clock.
+                start = real if real is not None and real < seen else seen
+                text = f"No events received for {human((now - start).total_seconds())}"
+                self._alert(w, "quiet", text, start, now)
                 changed += 1
             elif w.state == "quiet" and before is not None and seen > before:
                 gap = (seen - before).total_seconds()
@@ -230,6 +263,34 @@ class QuietWatch:
                 self._alert(w, "resumed", text, seen)
                 changed += 1
         return changed
+
+    def _real_last(
+        self, source_id: str, days: int | None, seen: datetime, now: datetime
+    ) -> datetime | None:
+        """The newest event this marked source really delivered, or None: not marked, never
+        sent, or the read failed with nothing read earlier in this silence. Such a failed read
+        holds nothing (never silent, D236): the alert is judged by its own threshold, and the
+        other watches are checked as usual."""
+        if not days:
+            return None
+        kept = self._real.get(source_id)
+        if kept and kept[2] == seen and now - kept[1] < REAL_TTL:
+            return kept[0]
+        try:
+            # A day past its days, so the alert that fires when they pass can still name it.
+            found = self._last_event(source_id, days + 1, now)
+        except Exception as exc:
+            log.warning("quiet_watch.last_event_failed", source_id=source_id, **log_detail(exc))
+            if kept and kept[2] == seen:
+                # Read earlier in this same silence: that event is still the newest, so the
+                # hold stands on it and the days are still counted from a real event.
+                self._real[source_id] = (kept[0], now, seen)
+                return kept[0]
+            return None
+        if found is None and kept and kept[2] == seen:
+            found = kept[0]  # read earlier in this silence and since past the lookup
+        self._real[source_id] = (found, now, seen)
+        return found
 
     def _alert(
         self,

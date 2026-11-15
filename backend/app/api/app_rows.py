@@ -18,6 +18,7 @@ from app.core.errors import ParamInvalidError
 from app.core.ids import AUTO_PARSER
 from app.enrich import networks
 from app.search import m365
+from app.search.person_record import m365_sql
 from app.search.timeline import signins_sql, window
 
 router = APIRouter(tags=["search"])
@@ -76,6 +77,22 @@ async def person_signins(
     start, end = window(days, clock.now())
     sql = _fill(signins_sql(ident, person[:256]), start, end)
     return await _rows(request, user, sql, "person.signins", start, end)
+
+
+@router.get("/people/{person}/m365")
+async def person_m365(
+    person: str,
+    request: Request,
+    user: CurrentUser,
+    name: Annotated[str, Query(max_length=32)],
+    days: Annotated[int, Query(ge=1, le=30)] = 7,
+) -> QueryResponse:
+    """The person page's Microsoft 365 section (ADR-0052): `name` is `sign_ins`, `mail`
+    (mailbox rule changes), or `admin` (directory changes the person made)."""
+    ident = await run_in_threadpool(request.app.state.identities.load)
+    start, end = window(days, clock.now())
+    sql = _fill(m365_sql(ident, person[:256], name), start, end)
+    return await _rows(request, user, sql, f"person.m365_{name}", start, end)
 
 
 M365_LISTS = ("sign_ins", "mail", "dlp", "consents", "registrations", "admin")

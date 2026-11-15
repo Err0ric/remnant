@@ -4,6 +4,284 @@
 
 <!-- unreleased:start -->
 
+### A test address in a reserved form (2026-11-14)
+
+- A test used an address whose first part read as a real domain to the publish allowlist scan; it is written with a hyphen now. The scan finds nothing on the tree.
+- What you will notice: nothing visible.
+- What changes for existing installs: nothing to do.
+
+### Alerts opens faster with many AI Watch alerts (2026-11-14)
+
+- When many open AI Watch alerts name devices, the Alerts list looks up who used each device once per device instead of once per device and record. On synthetic data with 200 open alerts of 20 devices each and a month of hook records, the list went from about 1 second to 0.2 seconds. Who is named on each device, and what each viewer may see, is the same.
+- Two page sections that both had to use disk space at the same time could spoil each other's temporary files, so one of them failed with a "Corrupt temporary file" error that read as a bad request. Each now keeps its own temporary files, and a page that runs out of memory always says so.
+- What you will notice: Alerts opens faster when many AI Watch alerts are open.
+- What changes for existing installs: nothing to do.
+
+### Logs counts its fields in one pass (2026-11-14)
+
+- The Fields panel beside Logs results (top values of source, host, user, addresses, severity, status, class, and parse status) now counts every field in one pass over only the columns it needs. Before, it ran the search once per field over every column and sorted the rows first. A text search over 7 days at the work install's rate took 12 seconds and timed out at 10; it now takes about 1.3 seconds, and 5 seconds over 30 days. The counts are the same.
+- If counting ever takes too long, the panel says so in plain words with a Retry button; the results stay on the page.
+- What you will notice: the Fields panel fills in quickly on long time ranges instead of showing a timeout.
+- What changes for existing installs: nothing to do.
+
+### A timeline bar for each agent session (2026-11-14)
+
+- An open session on Agents > Sessions now shows a bar of its steps from start to end, one segment per step in order, colored by kind: prompt, tool call, tool result, file access, and access (web and MCP). A failed step has a small red mark above it.
+- The legend under the bar names each kind with its count for the whole session. Choosing a segment takes you to that step in the list below. With Flagged only, steps that are not flagged are dimmed on the bar.
+- For a very long session the bar draws the first 2,000 steps and says so; the counts still cover the whole session.
+- Charts gain five calm series colors, checked for contrast in both themes; they are never used for severity or warnings.
+- What you will notice: an open session on Agents > Sessions has a colored bar of its steps under its numbers, with a legend you can read without the colors.
+- What changes for existing installs: nothing to do.
+
+### Quiet is normal now also holds the quiet alert (2026-11-14)
+
+- On a source marked "Quiet is normal for up to" some days, its quiet alert waits for those days: no alert and no message while the silence is inside them.
+- Once the days pass, the alert fires once, as it would have, with when the silence started. Taking the mark off checks the alert again at the next check, within 30 seconds.
+- An alert that is already firing stays until events resume or someone closes it. Errors and refused records are raised as before.
+- What you will notice: a marked source that is quiet for a few hours no longer sends a "stopped sending" alert; the setting says its quiet alert is held for these days.
+- What changes for existing installs: sources already marked Quiet is normal now also have their quiet alert held for their days; nothing changes for unmarked sources. Going back to the previous version sends quiet alerts as before (`docs/install/`, `update-systemd.sh --rollback`).
+
+### The speed check's lake is kept as an install keeps its data (2026-11-14)
+
+- The speed check's default lake, the one the merge queue times every change on, is now kept compacted with its daily rollups built, as the 30-day lake already was. Before, each timed server built those rollups while it was being timed, so pages read those days from raw events meanwhile.
+- A kept lake is built again once for this, and from now on once each UTC day (a lake built before midnight has a new day with no rollup after it). A build takes about three minutes longer (97 s to 279 s).
+- On the kept lake the rows read what an install's pages cost: in the first tables the Dashboard row went from 0.80 to 0.66 s, AI usage from 0.43 to 0.35 s, People & devices from 0.64 to 0.52 s, and the Person page stayed at about 4.2 s, on both sides alike.
+- What you will notice: nothing visible.
+- What changes for existing installs: nothing to do.
+
+### Alerts keep an AI Watch alert's time range and devices current (2026-11-14)
+
+- An AI Watch alert for a service or MCP server is kept current by the hourly review, and its time range now is too: it covers the last 7 days the alert counts, not the time since it was first raised. Who used a device is looked up over that range, so a person seen on the device in those 7 days is named (to viewers who may see people), and Show events in Logs opens that range.
+- Other alerts kept current keep the start of their range as before: Refused credentials covers the whole burst from its first refusal, and Sensitive data its day.
+- An alert lists at most 20 devices. It now keeps host names first, the most recently seen first, then their addresses, so a busy alert no longer loses every host name to addresses. The alert's text names its first five devices in that order too (it was alphabetical). When the list is cut, the alert says so ("20 of 85 devices and addresses").
+- What you will notice: AI Watch alerts on busy services show their devices by name, can say who used them, and say when the list is cut.
+- What changes for existing installs: nothing to do. Open AI Watch alerts take the new range and device order at their next hourly review, within an hour of the update; closed alerts stay as they were. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`); the new column is left unused.
+
+### A clearer page for one agent session (2026-11-14)
+
+- Agents > Sessions keeps the list on the left and opens the chosen session beside it. On a small window the session takes the page, with Back to sessions.
+- The open session starts with its numbers for the whole session: requests, tool calls with how many failed or were blocked, tokens in and out (or "Not reported" when Claude Code telemetry sent none), files with how many were written outside the session's folder, and flags.
+- Its steps show as Execution (every step in order, with its type: prompt, tool call, tool result, file access, or access) or Conversation (by turn, as before, with a line for what each prompt led to), all steps or only the flagged ones. The page says when a very long session shows only its first steps, and Show events in Logs opens the session's records.
+- One line says that content is not collected: the page shows sizes and names only, as before.
+- What you will notice: opening a session on Agents > Sessions shows it beside the list with its numbers at the top, and you can switch between every step in order and the session by turn.
+- What changes for existing installs: nothing to do.
+
+### One agent session in numbers, from the server (2026-11-14)
+
+- New `GET /api/ai/sessions/{session_id}/summary`: for one Claude Code or Cowork session, its prompts, tool calls with how many failed or got no result, tokens in and out when Claude Code telemetry reported them for the session (otherwise empty, never 0), files touched and how many were written outside the session's folder, what the session's flags are read from, the length, and a count per step type. It counts the whole session, also past the 2,000 steps the steps list shows, and says when that list is cut.
+- Each step of `GET /api/ai/sessions/{session_id}` now says its type: prompt, tool call, tool result, file access, access (web and MCP), or other. The server works it out from the hook record when it is read; nothing new is stored.
+- Metadata only, as before. Without View people in AI usage the machine stands in for the person and the account, and each answer writes an audit row as opening a session does.
+- What you will notice: nothing visible yet; the session page that uses it follows.
+- What changes for existing installs: nothing to do.
+
+### Alerts > Handling: how alerts are being handled (2026-11-14)
+
+- A new Handling tab on Alerts, beside the Queue, shows whether alerts are being handled (D261): the median and 90th percentile time to close (closes by a person), alerts overdue now, every alert open now (the Queue counts at most its newest 200), alerts opened against closed per day, open alerts by kind, and by severity with each severity's overdue days and times to close.
+- It follows the page's time control (30 days unless chosen); open and overdue counts are always as of now. Each open count opens the Queue with that Severity or Category filter, and the time to close opens the alerts closed in the same window.
+- It counts only the alerts the Queue shows you; alerts in sources you cannot read are never counted, and the page says some exist.
+- What you will notice: a Handling tab on Alerts with time to close, overdue and open alerts, and opened against closed by day.
+- What changes for existing installs: nothing to do. An open alert is overdue after 1 day (Critical), 3 days (High), 7 days (Medium), or 30 days (Low, and alerts with no severity); change these in `config/app.yaml` under `alerts:` (`overdue_days_high` and the others) or with `APP__ALERTS__OVERDUE_DAYS_HIGH` and the like, then restart. To go back, first remove the `alerts:` section and any `APP__ALERTS__` variables (an older version refuses to start with settings it does not know), then roll back the update (`docs/install/`, `update-systemd.sh --rollback`).
+
+### Alert handling numbers from the server (2026-11-14)
+
+- New `GET /api/alerts/metrics`: time to close (median and 90th percentile, overall and by severity), alerts opened and closed per day over a range, alerts open now by severity and by kind, and alerts overdue now by severity, with the overdue days in the answer (D261). It counts only the alerts the Alerts queue shows the caller; open now is every open alert, where the Queue counts at most the newest 200.
+- An open alert is overdue once it has been open longer than 1 day (Critical), 3 days (High), 7 days (Medium), or 30 days (Low, and alerts with no severity).
+- What you will notice: nothing visible; the Alerts page shows these numbers in a later update.
+- What changes for existing installs: nothing to do. The overdue days can be changed in `config/app.yaml` under `alerts:` (`overdue_days_critical`, `overdue_days_high`, `overdue_days_medium`, `overdue_days_low`) or with `APP__ALERTS__OVERDUE_DAYS_HIGH` and the like, then a restart. To go back, first remove the `alerts:` section from `config/app.yaml` and any `APP__ALERTS__` variables (an older version refuses to start with settings it does not know, from the file or the environment), then roll back the update (`docs/install/`, `update-systemd.sh --rollback`).
+
+### Quiet is normal for sources that send only while people work (2026-11-14)
+
+- An OpenTelemetry or syslog listener source can be set to "Quiet is normal for up to" 1, 3, 7, 14, or 30 days, under its status on Settings > Sources (administrators).
+- Inside those days a silent source counts as healthy. Health and Sources say "Idle" with how long it has been, and the Dashboard does not list it under Needs you.
+- Errors, a listener that is down, refused records, and quiet or gap alerts still count. A source silent for longer than its days, or one that never sent, reads as quiet as before.
+- A quiet alert still fires inside those days. Collector OpenTelemetry sources and syslog listener sources get a 1-hour quiet alert when they are added, so marking one of them changes nothing after an hour of silence until you turn that alert off or lengthen it; the setting says so when the source has a quiet alert on.
+- New Claude Code sources start at 7 days.
+- What you will notice: Claude Code sources nobody used for a day read "Idle" and no longer lower Sources healthy, once marked.
+- What changes for existing installs: nothing until an administrator marks a source; you may want to set your existing Claude Code sources to 7 days on Settings > Sources. Going back to the previous version leaves the new setting unused (`docs/install/`, `update-systemd.sh --rollback`).
+
+### AI usage opens faster on large installs (2026-11-14)
+
+- AI usage reads the period before the chosen range at the same time as the range itself, instead of after it.
+- The first day of a range is read from the daily AI summary for its whole hours after the start, and only the rest of the start's own hour from the raw events, when that day's summary is complete with who had which address. A day whose summary is not ready yet is still read from the events. The AI inventory, which asks the same question, reads it the same way. Every number on both stays the same.
+- A start sent with a time zone offset of half or three quarters of an hour (for example +05:30) is now cut at the UTC hour the summaries are kept by; before, a start on such a zone's hour could leave out up to an hour of use after it.
+- What you will notice: AI usage and the AI inventory open faster on large installs.
+- What changes for existing installs: nothing to do.
+
+### Pinned saved searches and dashboards in the left menu (2026-11-14)
+
+- Pin a saved search from its row or when it is open, and a dashboard beside the dashboard picker. The left menu lists your pins under Pinned, above Recent; each opens its search or dashboard.
+- Pins are yours only and kept on the server, so they follow you to any browser. A pin disappears when its search or dashboard is deleted or no longer shared with you.
+- Up to five pins; unpin one to pin another. On short windows the menu shows fewer Recent and then fewer Pinned rows.
+- What you will notice: a Pin button on saved searches and dashboards, and a Pinned list in the left menu.
+- What changes for existing installs: nothing to do. Going back to the previous version leaves the pins table unused (`docs/install/`, `update-systemd.sh --rollback`).
+
+### The Dashboard's Detections and Agents read less on large installs (2026-11-14)
+
+- Detections on the Dashboard looks up the person and host of each matched event in the sources those matches came from, from the first match on, instead of in every source over the window and the window before. On 30 days of synthetic data at the work install's rate that lookup took 1.7 seconds and now takes a few milliseconds, with the same events.
+- Agents (on the Dashboard's AI Watch and on Agents) reads only the sources whose files can hold Claude Code telemetry, hook records, MCP inventories, or usage reports, decided by each file's own statistics, so a new or custom source that receives such records is still read. The answers are the same.
+- What you will notice: the Dashboard and Agents open faster on large installs.
+- What changes for existing installs: nothing to do.
+
+### Recent and counts in the left menu (2026-11-14)
+
+- The left menu lists the last five people, hosts, and addresses you opened under Recent, newest first; each opens its page. It is hidden until you open one, and on short windows it shows fewer rows.
+- Recent is kept in your browser for your account only, not on the server, and cleared when you sign out. Without View people in AI usage it lists and keeps no people.
+- AI usage shows how many items are still to review, and then opens the Inventory.
+- Health shows how many sources need attention in place of the dot; nothing when all is well.
+- What you will notice: the left menu shows what you opened recently and how many AI items and sources need a look.
+- What changes for existing installs: nothing to do.
+
+### An exact copy of the raw event (2026-11-14)
+
+- The raw event in an expanded Logs row has a Copy button that copies the line exactly as stored, with its line breaks, tabs, and spaces.
+- Copy as JSON, and every other Copy button (tokens, links, signing keys, setup blocks), copies its value exactly; tests now hold them to it.
+- A long name with a line break or tab is still drawn on one line in tables and lists; the raw event and Copy as JSON are where to copy it exactly.
+- What you will notice: a Copy button beside the raw event in an expanded Logs row.
+- What changes for existing installs: nothing to do.
+
+### The speed check can time a lake the size of production (2026-11-13)
+
+- `scripts/bench_compare.py --real-days N` sets how many days the real-shaped part of the lake holds (7 by default), so a lake of 30 days at the work install's rate is one command: `--lake ../data/bench/lake-prod30 --real-shape 0.313 --real-days 30`. The days are kept with the lake, and a kept lake of other days is built again. The real-shaped sign-ins, DNS queries, and hook records are now configured sources of that lake, as they are on an install, so the Dashboard's sections and the Alerts lookup read them, and the lake is kept with its closed days compacted and rolled up, as on an install: before, each timed server built the rollups while it was being timed, which made the Dashboard on 30 days look about 4 seconds slower than it is (6.7 s against 2.3 s).
+- The bench lake now holds open AI Watch alerts for AI services that name machines, with Claude hooks records saying who used most of them, so the Alerts row times the people lookup the install runs. Kept lakes are built again once for it. A build whose AI Watch check did not raise those alerts, or (for a large lake) whose rollups did not finish within an hour, now fails instead of keeping the lake, and a large lake built on an earlier UTC day is built again.
+- CLAUDE.md section 9 says when to run the large lake by hand: before a release, and when a change touches the Dashboard sections, AI usage, or People & devices.
+- What you will notice: nothing visible.
+- What changes for existing installs: nothing to do.
+
+### Long names and emails cut where they hurt least (2026-11-14)
+
+- An email address keeps the part before the "@" for as long as it can: the domain is greyed and is cut first.
+- Long names such as source ids, hosts, apps, and networks are cut in the middle and keep their last 8 characters, so `m365_management_activity` reads as its start, "…", and "activity". Hover shows the whole value (and keyboard focus does, on values that are not links), and copying gives each value whole, on one line, however much you select.
+- On the Dashboard, Needs you reads severity, kind, who or what, what happened, then when, with no wide gap before the name. Alert titles there and in the Alerts queue use up to two lines before they are cut.
+- The Network column of Top sources and the App column of "Apps signed in to" get the free space of their card; the Person column on AI usage > People is wide enough that an email never breaks inside a word.
+- While AI usage and Agents load, the grey placeholder rows have the shape of the table, and the "Needs attention" line keeps its place, so the page no longer jumps when the data arrives. If AI usage cannot be loaded, the error shows without a placeholder above it.
+- Not done yet: hiding your organization's own domain in emails.
+- What you will notice: long names and emails are cut in the middle or at the domain with the full value on hover, and AI usage no longer jumps while it loads.
+- What changes for existing installs: nothing to do.
+
+### Ask AI starts with the question (2026-11-14)
+
+- Ask AI opens with one large question box at the top, "Ask about your logs", with the Ask button inside it.
+- Time, Sources, and Model are three small buttons in one row under the box; Model shows the provider's name and whether it is Local or Cloud.
+- Answers appear right under the question box, newest first; each answer's heading shows when it was asked and its Local or Cloud badge. A follow-up still refines the answer directly under the box.
+- New question is in the page header. Example questions show only before the first question.
+- A KQL or SPL query can still be pasted in; the box's tooltip says so.
+- What you will notice: Ask AI looks like a search page, with the newest answer at the top.
+- What changes for existing installs: nothing to do.
+
+### Health: one filter row and calmer rows (2026-11-14)
+
+- Health has one filter row: Status (All, Problems, Paused, Healthy, with counts) and Type, with the number of rows at the right. Problems holds what was Unhealthy and Needs attention.
+- A tab shows a number only when something on it needs attention, outlined in orange; there are no totals beside the tabs.
+- The four numbers at the top look like the Dashboard's, in one strip; Alert delivery reads "0 failed" with "All delivered" under it. The sentence "No detections in 24 hours..." is gone; the detections and paused schedules card shows only when it has something to list.
+- The Sources list has Status and Peak columns, and Last received shows the time in your local format (UTC on hover). A source that is only quiet is drawn in grey; a gap keeps its red shading and sentence.
+- While Health loads, the numbers show grey bars instead of zeros or "All delivered".
+- Old Health addresses (the former tabs) still open the same view.
+- If part of Health cannot be read, its numbers say "Could not load" with Retry instead of showing zeros.
+- What you will notice: Health has one filter row, tab numbers only for problems, and no all-clear before it has checked.
+- What changes for existing installs: nothing to do.
+
+### Cards share one title row (2026-11-14)
+
+- Every card on the Dashboard, AI usage, Agents, and a person's page has the same title row: the title, an optional (i), a short muted note, and one link at the top right. No card title row has a fill of its own any more.
+- Needs you: the "N more on Alerts" link at the bottom is now **View all** at the top right; the count stays beside the title.
+- Identity, Attacks and access, and Detections each get **View all** (the Microsoft 365 Sign-ins view, Logs, and Alerts > Rules); "Changes against the previous 7 days" moves beside the title.
+- AI Watch's "AI use" chart and "Top services" are panels of one height side by side.
+- On AI usage and Agents, "Names are hidden" is a notice above the list instead of part of the title row; the Inventory's Group by and Export buttons and the Sessions "Hide sessions with no tool calls or prompts" box sit in their filter rows; how a list is counted (for example, that cost is Claude Code's own estimate) is behind the (i) beside its title.
+- Attacks and access **View all** opens its external sign-in failures in Logs for the page window. A person's Timeline, What it did, and the Hosts and Users lists on an address or host use the same title row.
+- What you will notice: card headers line up across the pages, and each card's link to its full list is at the top right.
+- What changes for existing installs: nothing to do.
+
+### Person page: the name is hidden in the title, Accounts, and Timeline without View people in AI usage (2026-11-14)
+
+- D242 (owner, 2026-11-14). For someone without View people in AI usage, a person's page is titled "Name hidden" (still marked Person), and the Accounts box and the Timeline say how many names are hidden ("2 names hidden") in place of the names. The Entity card in How it connects reads "Name hidden", and an empty How it connects says "this person".
+- The names counted as the person are not sent to the browser for those viewers: `GET /api/people/{person}/record` and `GET /api/people/{person}/timeline` send `forms` empty with the count in `forms_hidden`, and the timeline's "Possibly the same person" list empty.
+- Opening Logs from the page says "From this person > ..." in place of the name.
+- In "What it did", the "by <name>" label is left out for those viewers; the example log line under it is log data and is unchanged.
+- The notice above the summary now reads "Names are hidden: this person's name and AI activity are not shown." and says an admin can turn on the permission.
+- The page address still names the person, and the identity rows on the page (sign-ins, alerts, devices, addresses, and the Logs queries) still name the account, since that is log data the viewer may read in Logs.
+- What you will notice: without View people in AI usage, a person's page shows "Name hidden" as its title and a count of hidden names in Accounts and the Timeline; with the permission, nothing visible.
+- What changes for existing installs: nothing to do. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`).
+
+### Two flaky tests made steady; a quick quit of the terminal app no longer shows an error (2026-11-14)
+
+- `remnant tui`: when the list of sources arrived while the app was closing, filling it could fail and print an error on exit. A list that arrives at that moment is now ignored, as one that arrives after the app has closed already was.
+- The merge queue's lock (developer tooling): where `mkdir` lets two takers in at once, the taker that had just written the lock could see the other one enter the guard as it left it, report the guard as changed, and give up, so neither queue held the lock. Leaving the guard is now not counted as a change; the lock is still checked to be its own.
+- Both tests now hold the moment that went wrong still, so they fail every time the fault comes back instead of once in a while on a busy machine.
+- What you will notice: quitting `remnant tui` quickly no longer prints an error; nothing else visible.
+- What changes for existing installs: nothing to do.
+
+### Log rotation: a rotated file is watched for 30 seconds more (2026-11-13)
+
+- D252 (ADR-0051 row 3). After a rotation, a program often keeps writing to the old file for a moment, until it is told to reopen its log. The server now keeps the renamed file open for 30 seconds after it has read it to its end, and reads what is still written to it in that time. Before, it closed the file as soon as it had read it to its end, so those lines were lost on a source that watches a single file.
+- A last line without a line ending in the renamed file is stored when the file is closed, not at the moment of the rotation. A line the program finishes within those 30 seconds is stored whole.
+- The file is closed 5 minutes after the rotation at the latest, as before.
+- What you will notice: nothing in the app. The last lines before a rotation arrive up to 30 seconds later when they had no line ending yet.
+- What changes for existing installs: nothing to do. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`).
+
+### Log rotation: the read position follows the file, part 3 (2026-11-13)
+
+- ADR-0051 (D250), the last part. Read positions of files that have not been listed or read for 30 days are removed by the daily maintenance. Before, they stayed for ever. A position is removed only when its file is known to be gone: the folder is there, on the same disk, without the file. A share that is not mounted, or a folder that is away, keeps its positions, so nothing is read twice when it returns.
+- After a restart, when a log file was rotated while the server was not running, the source shows a warning on Health and Sources for a day: lines written to the old file after the time named, if there were any, were not read. There is no warning when the source's pattern also matches the rotated file, since it is then read like any file, and none for rotations while the server runs.
+- The rotation guide (`docs/ingest/README.md`, "Rotating log files") describes the new behaviour: rotate with `create`; rotated files that are not compressed and that a source's pattern matches are not read twice; with `copytruncate` keep the copies out; what can still be missed.
+- What you will notice: nothing, unless a file was rotated while the server was down; then a warning on that source says so.
+- What changes for existing installs: nothing to do. Do not delete and re-add a source to change its file pattern: a source added again reads its files from the start. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`).
+
+### Log rotation: the read position follows the file, part 2 (2026-11-13)
+
+- ADR-0051 (D250), audit 2026-11 finding H5. The server keeps each log file it read from in the last 5 minutes open (at most 256 files). When a file is renamed or deleted by a rotation, what was written to it just before is still read, through that open file, also for a source that watches a single file, and also while no new file has the name yet. The file is closed as soon as it is read to its end, and 5 minutes after the rename at the latest.
+- A last line that has no line ending yet is held, as before, so a line still being written is stored whole. New: when the file is rotated, or has not grown for 5 minutes, that line is stored as it is and marked `parse_status` `partial` (reason `no_newline`), also when it does not parse (a cut JSON line), and with `truncated` when it is longer than a line may be. It is never dropped. If its rest arrives later, the rest is stored as a line of its own.
+- The warning for a file emptied and refilled in place (`copytruncate`) is exact while the server still holds the file open: it no longer says "or replaced by a new file" then.
+- Limits that remain: after a restart of the server there are no open files, so lines written to a file just before a rename that happened while the server was down are read only if the source also lists the renamed file; the same holds for a file that had not been read from for 5 minutes. And the renamed file is closed as soon as it is read to its end: a program that keeps writing to the old file after the rotation (before it is told to reopen its log) loses those lines unless the source also lists the renamed file. If it was in the middle of a line, the first half is stored as `partial`.
+- What you will notice: nothing in the app. Rotated logs no longer lose their last lines, and an unfinished last line shows up after 5 minutes instead of never.
+- What changes for existing installs: nothing to do. No data or settings change; the server holds up to 256 more open files. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`).
+
+### Log rotation: the read position follows the file, part 1 (2026-11-13)
+
+- ADR-0051 (D250), audit 2026-11 finding H5. A text file's read position now belongs to the file itself, not to its name. A rotated copy that a folder source also lists is no longer read a second time, and a new file is never continued from an older file's position.
+- A file that was emptied and refilled in place (logrotate `copytruncate`) is read again from its start, also when it had already grown past the old position. The source then shows a warning on Health and Sources for a day, naming the file: lines written during such a rotation can be lost before anything reads them, so rotate with `create`. The same warning can appear once when a correctly rotated file's replacement was given the old file's number by the file system; nothing is lost then.
+- A file that has not changed is not opened at all.
+- A disk whose device number changes after a restart or a remount does not cause files to be read again: the same file number with the same content is the same file, also when it was renamed meanwhile.
+- Deleting a source and adding it again under the same id reads its files from the start, as before.
+- Not in this part: lines written to a single-file source just before a rename are still lost, as before. Following the renamed file is part 2.
+- What you will notice: nothing, unless a source rotates with `copytruncate`; then a warning on Health and Sources says so.
+- What changes for existing installs: nothing to do. At the first start the server copies its read positions into a new table (`file_positions`, migration 77), so nothing is read twice; a file that is missing or cannot be opened then (a folder not mounted yet, a permission) keeps its old position until it can be read, for up to 7 days. The spool files of push sources are covered too. The old table is still written: to go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`) and the older version reads on from where this one stopped. Updating again after that picks up from where the older version stopped.
+
+### Logs results: a pager you cannot miss, and a table that fits (2026-11-13)
+
+- A results table with more than 50 rows has Previous and Next as buttons right beside the count ("1 to 50 of 10,000"), above the rows and again below them, and a Rows per page choice of 50, 100, or 500 that the browser remembers. Before, Previous and Next were two small links at the far right under row 50, easy to miss; they were never removed, and nothing in the redesign changed them.
+- The results table is as wide as its box. Message takes the width the other columns leave and is cut with the full text on hover and in the expanded row. Before, a long message made the table wider than its box, so Message ran off the right edge and the table scrolled sideways. It still scrolls sideways inside its box when the chosen columns alone need more room.
+- The same table is used by the Microsoft 365 views, a person's Microsoft 365 list, and saved search runs, so they get both changes.
+- The smoke test now fails when a results list of more than one page has no pager, a pager whose Next button is off screen or disabled, or a Next that does not show other rows.
+- What you will notice: Previous, Next, and Rows per page at the top left of the results, and no sideways scrolling for long messages.
+- What changes for existing installs: nothing to do.
+
+### AI usage: rows hold the place while it loads, and a plainer line (2026-11-13)
+
+- While AI usage (and Agents > MCP servers) loads, each table shows placeholder rows, as other pages do. Before, the table headings were drawn with nothing under them for as long as the load took.
+- On the Claude row, "Seen through: both 0, plugin only 1, network only 7" now reads "People: 7 seen only on the network, 1 only by the Claude Code plugin, 0 by both".
+- What you will notice: AI usage no longer looks empty while it loads.
+- What changes for existing installs: nothing to do.
+
+### Design: the page pattern is checked on every change (2026-11-13)
+
+- Console redesign, build row 24 (ADR-0052, DESIGN.md 6.0). The layout check that opens every page in both themes at 1280px now also fails when a page has more than 10 rail entries, more than 5 tabs, or more than one filled button. It opens every tab at its own address and a person, address, and host page.
+- Three pages had more than one filled button and now have none: the Save buttons on Settings > About, Download plugin on Settings > Plugins, and Add domain and Add alias on Settings > Identities are outlined buttons. They do the same thing.
+- What you will notice: a few Settings buttons are outlined instead of filled.
+- What changes for existing installs: nothing to do.
+
+### Design: the person page is one page (2026-11-13)
+
+- Console redesign, build row 22 (ADR-0052, DESIGN.md 6.3). A person's page no longer has tabs. It leads with one sentence and five numbers (Open alerts, Sign-ins, Devices, Addresses, AI services), then Open alerts, Activity per day, Microsoft 365, AI use, and What it did, with Accounts, Devices, and Addresses at the side.
+- Activity per day is new: one bar per day with failed sign-ins marked (real failures only; a sign-in that was interrupted or expired is not a failure), and a bar opens that day's events in Logs.
+- Devices and Addresses list every row with events, failed sign-ins, and last seen, as the old Hosts and devices tab did, in the side column.
+- Microsoft 365 is one table with a Sign-ins, Mail, Admin switch and Open in Logs. It is shown only when you can read a Microsoft 365 source. The server builds and runs each list with your own source access.
+- The pages of a person, an address, and a host have the entity as the title, "People & devices" above it to go back, and Open in Logs as the one filled button.
+- How it connects and the Timeline are folded at the foot of a person's page and are read only when opened, so the page loads faster.
+- Without View people in AI usage, a notice above the summary says the person's AI activity is not shown, and the AI services number reads "Hidden".
+- New read-only API: `GET /api/people/{person}/record` and `GET /api/people/{person}/m365` (in `docs/api.md`). `GET /api/people/{person}/signins` is unchanged.
+- What you will notice: a person's page is one scrolling page instead of five tabs, with a chart of activity per day and Mail and Admin rows beside the sign-ins.
+- What changes for existing installs: nothing to do. Links to a person's page work as before; a link that named the AI use tab opens the page at AI use.
+
 ### Design: the Dashboard's Detections section (2026-11-13)
 
 - Console redesign, build row 18 (ADR-0052, DESIGN.md 6.3). The table of hosts and people involved also shows how many rules matched each one and when its last match was. The fourth number reads "People involved".

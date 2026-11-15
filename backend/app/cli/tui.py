@@ -157,9 +157,11 @@ class Tui(App[None]):
     def fill_sources(self, sources: list[str]) -> None:
         try:
             select = self.query_one("#tail-source", Select)
+            select.set_options((clean(s), s) for s in sources)
         except NoMatches:
-            return  # the list arrived after the screen closed (a quick exit): nothing to fill
-        select.set_options((clean(s), s) for s in sources)
+            # The list arrived after the screen closed (a quick exit), or while it is being
+            # taken down: the Select can still be there with its option list already gone.
+            return
         if self.tail_source in sources:
             select.value = self.tail_source
         elif self.tail_source:

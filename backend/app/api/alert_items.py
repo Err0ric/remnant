@@ -8,7 +8,7 @@ counted: the viewer only learns that some exist (`restricted`, owner 2026-11-12)
 
 import ipaddress
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Query, Request, Response, status
@@ -20,8 +20,10 @@ from app.ai.host_people import Asked, DevicePerson, for_alerts
 from app.ai.people_view import audit_ai_view, can_view_people
 from app.alerts.external import MAX_PAGE, SHOWN_IDS, alert_ids, is_external, item_events
 from app.alerts.items import MAX_NOTE, REASONS, AlertItem, AlertItems, Mute, label
+from app.alerts.metrics import Spread, Thresholds, handling
 from app.api.access import AdminUser, CurrentUser, client_ip, require_role
 from app.auth.users import User
+from app.core import clock
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError, ParamInvalidError
 from app.engine.views import permitted_sources
 
@@ -91,6 +93,8 @@ class ItemOut(BaseModel):
     severity: str | None  # high | medium as stored on the item; the only severity it has
     people: list[str] = []
     devices: list[str] = []
+    # How many devices and addresses there were when `devices` is a cut list; else None.
+    devices_total: int | None = None
     # An AI Watch item for a viewer without View people in AI usage (D242): no names in
     # any text and no people listed; `people_hidden` is how many it is about.
     masked: bool = False
@@ -309,6 +313,7 @@ def _out(
         severity=i.severity,
         people=i.people,
         devices=i.devices,
+        devices_total=i.devices_total,
         masked=masked,
         people_hidden=hidden,
         muted_until=until,
@@ -467,6 +472,131 @@ async def count_alerts(request: Request, user: CurrentUser) -> CountOut:
         return _tally(_store(request).items(user, "open"), _readable(request, user))
 
     return await run_in_threadpool(run)
+
+
+class SpreadOut(BaseModel):
+    count: int  # closes by a person in the range
+    median_s: int | None  # seconds; None with no closes
+    p90_s: int | None
+
+
+class DayOut(BaseModel):
+    day: str  # YYYY-MM-DD in the install's time zone
+    opened: int
+    closed: int
+
+
+class MetricsOut(BaseModel):
+    """How alerts are handled (D261); every number is defined on `alert_metrics`."""
+
+    start: str
+    end: str
+    timezone: str  # the zone the days are drawn in
+    thresholds: dict[str, int]  # overdue days: critical, high, medium, low
+    time_to_close: SpreadOut
+    time_to_close_by_severity: dict[str, SpreadOut]  # high, medium, other
+    # Closed in the range but not in time to close: by the server (Resolved, Superseded) or
+    # with no close time recorded.
+    closed_not_timed: int
+    days: list[DayOut]
+    opened: int
+    closed: int
+    open: int
+    open_by_severity: dict[str, int]
+    open_by_kind: dict[str, int]
+    overdue: int
+    overdue_by_severity: dict[str, int]
+    # The D243 flag, never a count: an open alert reads a source the viewer may not read.
+    # Over every open alert, where ListOut.restricted reads the newest 200, so above 200
+    # open alerts the two can differ; this one is the flag as D243 defines it.
+    restricted: bool
+
+
+MAX_METRIC_DAYS = 366
+DEFAULT_METRIC_DAYS = 30  # a fixed default: never derived from rows the caller cannot see
+RANGE_YEARS = "Choose a range between the years 1970 and 9998"
+
+
+def _spread_out(s: Spread) -> SpreadOut:
+    return SpreadOut(count=s.count, median_s=s.median_s, p90_s=s.p90_s)
+
+
+def _metrics(request: Request, user: User, start: datetime, end: datetime) -> MetricsOut:
+    cfg = request.app.state.config.alerts
+    meta = request.app.state.meta
+    t = Thresholds(
+        cfg.overdue_days_critical, cfg.overdue_days_high, cfg.overdue_days_medium,
+        cfg.overdue_days_low,
+    )  # fmt: skip
+    store = _store(request)
+    try:
+        h = handling(
+            meta, user, permitted_sources(meta, user), start, end, clock.now(), store.day_of, t
+        )
+    except OverflowError as exc:  # a range at the very edge of the calendar
+        raise ParamInvalidError(RANGE_YEARS) from exc
+    return MetricsOut(
+        start=h.start.astimezone(UTC).isoformat(),
+        end=h.end.astimezone(UTC).isoformat(),
+        timezone=request.app.state.config.schedules.timezone,
+        thresholds={"critical": t.critical, "high": t.high, "medium": t.medium, "low": t.low},
+        time_to_close=_spread_out(h.time_to_close),
+        time_to_close_by_severity={
+            k: _spread_out(v) for k, v in h.time_to_close_by_severity.items()
+        },
+        closed_not_timed=h.closed_not_timed,
+        days=[DayOut(day=d, opened=o, closed=c) for d, o, c in h.days],
+        opened=h.opened,
+        closed=h.closed,
+        open=h.open,
+        open_by_severity=h.open_by_severity,
+        open_by_kind=h.open_by_kind,
+        overdue=h.overdue,
+        overdue_by_severity=h.overdue_by_severity,
+        restricted=h.restricted,
+    )
+
+
+@router.get("/alerts/metrics")
+async def alert_metrics(
+    request: Request,
+    user: CurrentUser,
+    start: Annotated[datetime | None, Query()] = None,
+    end: Annotated[datetime | None, Query()] = None,
+) -> MetricsOut:
+    """How alerts are handled (Alerts > Handling, D261), over a range of at most 366 days
+    (`end` defaults to now; `start` to 30 days before `end`) and now. Only alerts the viewer
+    may know of and read every source of are counted, as on the Queue; others are never
+    counted, and `restricted` is the D243 flag: an open alert reads a source the viewer may
+    not read, whatever the range.
+
+    - Alerts closed as Muted or Merged are left out of every number.
+    - `opened`: alerts first raised in the range (a grouped or reopened alert once).
+    - `closed`: alerts closed now whose latest close is in the range, by a person or by the
+      server; one closed before close times were kept counts on the day it was raised.
+    - `time_to_close`: first raised to latest close, for those closed by a person with a
+      close time; median and 90th percentile, interpolated between ranks, in seconds.
+      `closed_not_timed` counts the other closes (by the server, or no close time kept).
+    - `days`: opened and closed per day of the install's time zone, every day listed.
+    - `open`: every alert open now, whatever the range, by severity (high, medium, other)
+      and kind. The Queue and `/alerts/count` read the newest 200 open alerts, so they agree
+      up to 200; above that this is the full count and theirs is lower.
+    - `overdue`: open now and raised longer ago than `thresholds` days for its severity;
+      an alert with no severity uses `low`. No alert is stored as Critical today.
+
+    Numbers only, like `/alerts/count`: no item, so no audit row (D242)."""
+    stop = _aware(end) or clock.now()
+    try:
+        begin = _aware(start) or stop - timedelta(days=DEFAULT_METRIC_DAYS)
+    except OverflowError as exc:
+        raise ParamInvalidError(RANGE_YEARS) from exc
+    if not (1970 <= begin.year and stop.year <= 9998):
+        raise ParamInvalidError(RANGE_YEARS)
+    if begin >= stop:
+        raise ParamInvalidError("The start must be before the end")
+    if stop - begin > timedelta(days=MAX_METRIC_DAYS):
+        raise ParamInvalidError(f"Choose a range of at most {MAX_METRIC_DAYS} days")
+    return await run_in_threadpool(_metrics, request, user, begin, stop)
 
 
 def in_list_order[T](top: list[tuple[T, int]], review: set[str]) -> list[tuple[T, int]]:

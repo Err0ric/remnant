@@ -35,7 +35,12 @@ interface SegmentedProps<T extends string> {
 }
 
 /** A segmented control: one of a few choices, the pressed one on the pressed fill. */
-function Segmented<T extends string>({ label, value, options, onChange }: SegmentedProps<T>) {
+export function Segmented<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: SegmentedProps<T>) {
   return (
     <div role="group" aria-label={label} className="flex rounded border border-border-strong">
       {options.map((o) => (
@@ -87,6 +92,55 @@ function CustomTime({ label, value, min, max, onChange }: CustomTimeProps) {
       onChange={(e) => onChange(e.target.value)}
       className="h-7 rounded border border-border-control bg-inset px-1.5 font-mono text-text"
     />
+  );
+}
+
+interface CustomRangeProps {
+  from: string;
+  to: string;
+  onChange: (from: string, to: string) => void;
+}
+
+/** Custom's two sides, From and To, shown while Custom is chosen. */
+export function CustomRange({ from, to, onChange }: CustomRangeProps) {
+  return (
+    <span className="flex items-center gap-1.5 text-text-secondary">
+      <CustomTime label="From" value={from} max={to} onChange={(v) => onChange(v, to)} />
+      to
+      <CustomTime label="To" value={to} min={from} onChange={(v) => onChange(from, v)} />
+    </span>
+  );
+}
+
+interface FacetSelectProps extends Facet {
+  disabled?: boolean;
+  /** Drawn inside the button after the value (Ask's Model chip: the Local or Cloud badge). */
+  after?: ReactNode;
+}
+
+/** A facet button that reads "Name Value" and opens its list (DESIGN.md 6.0). */
+export function FacetSelect({ name, value, options, onChange, disabled, after }: FacetSelectProps) {
+  return (
+    <label className="flex h-7 items-center gap-1.5 rounded border border-border-strong pl-2.5 text-text-secondary focus-within:outline focus-within:outline-2 focus-within:outline-focus-ring">
+      {name}
+      <select
+        aria-label={name}
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+        className={cn(
+          "h-full rounded-r bg-transparent font-semibold text-text focus:outline-none",
+          after ? "pr-0" : "pr-1",
+        )}
+      >
+        {options.map((o) => (
+          <option key={o.id} value={o.id}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+      {after ? <span className="flex items-center pr-1.5">{after}</span> : null}
+    </label>
   );
 }
 
@@ -142,23 +196,7 @@ export function FilterBar<S extends string>({
           onChange={time.onChange}
         />
       ) : null}
-      {time?.custom && time.value === "custom" ? (
-        <span className="flex items-center gap-1.5 text-text-secondary">
-          <CustomTime
-            label="From"
-            value={time.custom.from}
-            max={time.custom.to}
-            onChange={(v) => time.custom?.onChange(v, time.custom.to)}
-          />
-          to
-          <CustomTime
-            label="To"
-            value={time.custom.to}
-            min={time.custom.from}
-            onChange={(v) => time.custom?.onChange(time.custom.from, v)}
-          />
-        </span>
-      ) : null}
+      {time?.custom && time.value === "custom" ? <CustomRange {...time.custom} /> : null}
       {state ? (
         <Segmented
           label={state.label ?? "State"}
@@ -168,24 +206,7 @@ export function FilterBar<S extends string>({
         />
       ) : null}
       {facets.map((f) => (
-        <label
-          key={f.name}
-          className="flex h-7 items-center gap-1.5 rounded border border-border-strong pl-2.5 text-text-secondary focus-within:outline focus-within:outline-2 focus-within:outline-focus-ring"
-        >
-          {f.name}
-          <select
-            aria-label={f.name}
-            value={f.value}
-            onChange={(e) => f.onChange(e.target.value)}
-            className="h-full rounded-r bg-transparent pr-1 font-semibold text-text focus:outline-none"
-          >
-            {f.options.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </label>
+        <FacetSelect key={f.name} {...f} />
       ))}
       {text ? (
         <input

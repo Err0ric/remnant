@@ -6,6 +6,7 @@ import { api, type M365Overview, type PageWindow } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { navigate, useTab } from "@/lib/route";
 import { EmptyState } from "@/components/EmptyState";
+import { Truncate } from "@/components/Truncate";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { InlineError } from "@/components/InlineError";
 import { AdminChanges } from "./AdminChanges";
@@ -340,8 +341,10 @@ function Overview({ m }: { m: M365Overview }) {
             <Top
               title="Apps signed in to"
               columns={["App", "Sign-ins"]}
+              // The app name gets the card's free space, cut in the middle (D257).
+              widths={["", "w-24"]}
               rows={m.apps}
-              cells={(r) => [<RowLink key="a" row={r} />, r.count.toLocaleString()]}
+              cells={(r) => [<RowLink key="a" row={r} cut />, r.count.toLocaleString()]}
               empty="No sign-ins in this window."
             />
           </div>
@@ -351,21 +354,29 @@ function Overview({ m }: { m: M365Overview }) {
   );
 }
 
-function RowLink({ row }: { row: M365Overview["reasons"][number] }) {
+interface RowLinkProps {
+  row: M365Overview["reasons"][number];
+  /** A long name is cut in the middle, the whole one in the title (D257). */
+  cut?: boolean;
+}
+
+function RowLink({ row, cut = false }: RowLinkProps) {
   const drill = useDrill();
   const open = drill(row.drill, row.label);
+  const text = cut ? <Truncate value={row.label} kind="name" inLink={!!open} /> : row.label;
   return open ? (
     <button
       type="button"
       data-drill=""
       onClick={open}
-      title={`Open ${row.count.toLocaleString()} events in Logs`}
+      title={`${cut ? `${row.label}\n` : ""}Open ${row.count.toLocaleString()} events in Logs`}
+      aria-label={cut ? row.label : undefined}
       className={cn(DRILL, "max-w-full truncate text-left")}
     >
-      {row.label}
+      {text}
     </button>
   ) : (
-    <>{row.label}</>
+    <>{text}</>
   );
 }
 

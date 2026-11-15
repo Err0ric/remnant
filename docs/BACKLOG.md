@@ -63,6 +63,9 @@ Ranked 2026-11-08 by value to one security person running this at a company of a
 | 55 | Dashboard time: 1 hour and Custom | ADR-0052 3.7 wants the same five time choices on every page; the Dashboard's sections, AI Watch, the Microsoft 365 views, and the Agents numbers are computed by the server for 24 hours, 7 days, or 30 days (or whole days). The owner deferred it (2026-11-13): the Dashboard keeps its three windows | L | Needs the sections API, `/api/m365/overview`, and `/api/agents/overview` to take a start and an end, and a decision on points and comparisons: suggested 5-minute points for 1 hour against the hour before; hourly points up to 3 days and daily beyond for Custom, against the period of the same length before; AI Watch keeps counting by day and says so | Later | 2026-11-13 |
 | 56 | Days-based panels respect a Custom end | The Agents strip, sessions list and tool rows, and a person's AI activity and devices panels count whole days back from now; with Custom they do not stop at its end. They are labeled "Last N days" (owner, 2026-11-13) | M | `/api/agents/overview`, `/api/ai/sessions`, and the person panels take `days`; give them a start and an end | Later | 2026-11-13 |
 | 57 | Per-tool rows inside an MCP server's row | ADR-0052 3.3 puts a server's tools in its expanded row; the overview groups hook records by server, so the row shows the server's totals. Only the Built-in group lists tools one by one | M | Split `/api/agents/overview` tools by `mcp_tool` within a server; then list them under the server row on Agents > MCP servers | Later | 2026-11-13 |
+| 58 | Still working and Cancel on slow queries | Console redesign row 23 (ADR-0052): a slow page says it is still working and offers Cancel. The owner moved it to the backlog (2026-11-13) | M | First confirm the server can cancel a running query (DuckDB interrupt on the query's connection, with an audit line); only then the button. Without server cancel no button ships | Later | Owner, 2026-11-13 |
+| 59 | Content match for `copytruncate` copies | ADR-0051 row 6: a rotated copy the watched pattern matches is read again. The owner chose the guide plus truncation detection (2026-11-13); skipping a listed file whose content equals an already read one is not built | M | Compare a new file's start hash and length with records of the same source; needs its own tests for files that share a first block | Later | Owner, 2026-11-13 |
+| 60 | AI governance mapped to NIST AI RMF in the monthly report | The monthly report would show the AI governance numbers (inventory reviewed, unapproved use, sensitive data to AI, agents and MCP servers) under the functions of the NIST AI Risk Management Framework (Govern, Map, Measure, Manage), so a reader can see which parts the install covers | M | Needs Reports first (redesign row 13, deferred) and its PDF dependency decision; then a mapping table reviewed by the owner, kept in SPEC section 7 beside ATLAS | Later | Owner, 2026-11-13: backlog, not now |
 
 ## Morning answer: admin grants and app consents in "New in 24 hours"
 
@@ -88,6 +91,18 @@ The plan assumes all company AI use goes through one AI gateway with single sign
 5. **Laptop-local models**: a note in the guide on finding models that run on a laptop through software inventory, since they never reach the gateway.
 
 When built, map the feature in SPEC section 7 to MITRE ATLAS AML.T0057 (LLM data leakage) and AML.T0040 (AI model inference API access), per security rule 12.
+
+## Product review 2026-11-13 (owner; ranked; P1 and P2 built, listed under Done)
+
+From the owner's review of how other tools present agent activity and alert reporting. No enforcement features: everything here observes and reports. Ranked; P1 and P2 are high.
+
+| # | Item | Why | Size | Needs first |
+|---|---|---|---|---|
+| P3 | Event types for agent telemetry: prompt, tool call, tool result, file access, access (web and MCP) as a stored type on hook and telemetry events | P1's bar and views, and filters in Logs and saved searches, need one name per kind of step; today the browser reads it off the raw event name | S to M | Where it is stored: an existing OCSF column (activity) or `unmapped`; never a renamed column (rule 9) |
+| P4 | Inventory types from endpoint software inventory: browser extension, IDE extension, agentic coding tool, chatbot | The Inventory has four types; AI that arrives as an extension is not listed today | M | A software inventory source and its template; a catalog of known AI extensions; SPEC section 7 mapping |
+| P5 | Admin action "Redact session content", audited | Where content is collected (ADR-0015 opt-in), an administrator needs a way to remove what should not have been kept | M | An ADR: `raw` is stored as decoded (rule 5), so removing content from stored events is a new kind of change; the audit row and what stays (metadata, sizes) |
+| P6 | Report builder pattern for the Reports page: choose a type, a scope (time, sources, people or groups), and an export | A plain way to make the monthly report and others without a page per report | M | Reports (redesign row 13) and its PDF dependency decision |
+| P7 | Optional session titles from a local model, from metadata only, labeled AI-generated | Makes the session list scannable | M | A new LLM surface: an ADR, the gate (`llm/gate.py`), local-only models, the label in the UI, SPEC section 7 (ATLAS) mapping; off by default |
 
 ## Audit 2026-11: other findings (owner, 2026-11-12; none built)
 
@@ -136,6 +151,8 @@ Checked in the code on 2026-11-08.
 
 | Item | Done by | Target slice | Noted |
 |---|---|---|---|
+| P1 Agents session detail: list-detail with a KPI row (requests, tool calls, tokens, files, flags), a timeline bar colored by step type, and the steps in an Execution and a Conversation view | Agents > Sessions with `GET /api/ai/sessions/{id}/summary` and a server-derived step `type` (PRs 607, 608) and the timeline bar with the five series colors (D263). Opening content (ADR-0015) stays a later item with its own review, as the mock says; P3 (a stored type) stays open | 9 | Product review, 2026-11-13 |
+| P2 Alert metrics for the monthly report: time to close (median and 90th percentile), opened against closed over time, overdue by severity, open by severity and by kind | Alerts > Handling and `GET /api/alerts/metrics`, with the overdue days as `alerts.overdue_days_*` settings (D261); the Reports page itself stays deferred (redesign row 13) | 9 | Product review, 2026-11-13 |
 | Flaky eval test: fake provider names repeat | Test-only fix (uuid names) | Tooling | Queue, 2026-11-08 |
 | Bump certifi past PYSEC-2026-4320 and drop its CI ignore | #448 (D223, with Dependabot security updates) | Maintenance | CI, 2026-10-20 |
 | Pin Docker base images by digest | Base images pinned by digest and enforced in `check-architecture.sh` (#177, Slice 6) | 6 | Slice 1 skeleton |

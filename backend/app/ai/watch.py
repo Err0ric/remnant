@@ -77,11 +77,23 @@ class _Review:
     label: str
     status: str
     people: set[str] = field(default_factory=set)
-    devices: set[str] = field(default_factory=set)  # seen with no person named
+    # Seen with no person named, in the order seen (the review lists the newest first);
+    # a dict as an ordered set.
+    devices: dict[str, None] = field(default_factory=dict)
     matched: set[str] = field(default_factory=set)  # devices seen with a person
     sources: set[str] = field(default_factory=set)
     # The addresses each device with no person was seen at (owner review, item 8).
     seen: dict[str, set[str]] = field(default_factory=dict)
+
+    def add_device(self, machine: str) -> None:
+        """Add a device, or move it to the end when seen again: rows come oldest first."""
+        self.devices.pop(machine, None)
+        self.devices[machine] = None
+
+    def newest_first(self) -> None:
+        """Devices added oldest first (the 30-second check reads rows by time observed),
+        listed newest first, the order the hourly review lists them in."""
+        self.devices = dict.fromkeys(reversed(list(self.devices)))
 
     def saw(self, machine: str, ip: object) -> None:
         if ip:
@@ -94,6 +106,19 @@ def _is_ip(value: str) -> bool:
     except ValueError:
         return False
     return True
+
+
+def device_list(devices: list[str], seen: dict[str, set[str]]) -> list[str]:
+    """What an item lists of its devices, in the order kept when it is cut at 20 (owner,
+    2026-11-14): host names first, newest first as the review lists them, since a host
+    name can name its person (the hooks plugin) and an address cannot; then the addresses
+    those hosts were seen at, in the same order; then devices known only by an address."""
+    hosts = [d for d in devices if not _is_ip(d)]
+    out = dict.fromkeys(hosts)
+    for d in hosts:
+        out.update(dict.fromkeys(sorted(seen.get(d, set()) - {d})))
+    out.update(dict.fromkeys(d for d in devices if _is_ip(d)))
+    return list(out)
 
 
 def _device_words(device: str, ips: set[str]) -> str:
@@ -338,7 +363,7 @@ class AiWatch:
                 if machine:
                     r.matched.add(str(machine))
             elif machine:
-                r.devices.add(str(machine))
+                r.add_device(str(machine))
                 r.saw(str(machine), ip)
             r.sources.add(str(src))
             if status == "unreviewed" and not s.include_unreviewed:
@@ -349,6 +374,7 @@ class AiWatch:
                     + (" (not approved)" if status == "not_approved" else "")
                 )
         for (kind, name), r in review.items():
+            r.newest_first()
             self._raise_use(kind, name, r, since, now)
         if not sensitive_ok:
             sensitive = {}
@@ -389,7 +415,7 @@ class AiWatch:
                 continue
             r = _Review(svc.name, svc.status)
             r.people = {str(p) for p in people or []}
-            r.devices = {str(d) for d in devices or []}
+            r.devices = dict.fromkeys(str(d) for d in devices or [])
             r.matched = {str(m) for m in matched or []}
             r.sources = {str(x) for x in sources or []}
             for machine, ip in seen or []:
@@ -404,7 +430,7 @@ class AiWatch:
                 continue
             r = _Review(f"MCP {name}", str(status))
             r.people = {str(p) for p in people or []}
-            r.devices = {str(d) for d in devices or []}
+            r.devices = dict.fromkeys(str(d) for d in devices or [])
             r.matched = {str(m) for m in matched or []}
             r.sources = {str(x) for x in sources or []}
             self._raise_use("mcp", str(name), r, since, now, refresh=True)
@@ -455,7 +481,7 @@ class AiWatch:
         not_approved = r.status == "not_approved"
         state = "not approved" if not_approved else "not reviewed"
         people = sorted(r.people)
-        devices = sorted(r.devices - r.matched)
+        devices = [d for d in r.devices if d not in r.matched]
         # People and devices are never added into one number (owner, 2026-10-22).
         parts = []
         if people:
@@ -465,17 +491,18 @@ class AiWatch:
                 + (" and more" if len(people) > 5 else "")
             )
         if devices:
+            # The text names host names before address-only devices, newest first within
+            # each, as the stored list does: a host name can name its person.
+            first = [d for d in devices if not _is_ip(d)] + [d for d in devices if _is_ip(d)]
             parts.append(
                 f"{len(devices)} {'device' if len(devices) == 1 else 'devices'} not matched to a"
                 " person: "
-                + ", ".join(_device_words(d, r.seen.get(d, set())) for d in devices[:5])
+                + ", ".join(_device_words(d, r.seen.get(d, set())) for d in first[:5])
                 + (" and more" if len(devices) > 5 else "")
             )
         # Each device by its host name and the addresses it was seen at, every one a link on
         # Alerts (told apart by shape there): a device known only by its address is that.
-        named = sorted(
-            {d for d in devices[:20]} | {ip for d in devices[:20] for ip in r.seen.get(d, set())}
-        )
+        named = device_list(devices, r.seen)
         self._raise(
             f"{kind}:{name}",
             # Waiting for a decision, not necessarily new: the title says which decision.
@@ -487,6 +514,7 @@ class AiWatch:
             ref_id=f"{kind}:{name}",
             people=list(people),
             devices=named,
+            devices_total=len(named),
             why="Not approved" if not_approved else "Not reviewed yet",
             detail=". ".join(parts),
             count=len(people),
@@ -498,6 +526,8 @@ class AiWatch:
             # Only the hourly 7-day check sees all of a service's use; a 30-second check
             # sees a slice, so it raises but never rewrites (owner, 2026-10-23).
             refresh=refresh,
+            # The hourly review's 7 days are all the item counts: its range is replaced.
+            window=refresh,
         )
 
     def _raise_sensitive(
@@ -528,6 +558,8 @@ class AiWatch:
             range_end=now.isoformat(),
             severity="high",
             refresh=refresh,
+            # A person's day: the review's 7 days are not its evidence, so it keeps its start.
+            window=False,
         )
 
     def _agents(self, s: WatchSettings, now: datetime) -> int:
@@ -677,6 +709,7 @@ class AiWatch:
             range_end=now.isoformat(),
             severity="medium",
             refresh=refresh,
+            window=False,  # no start given: an agent's item keeps when it was first raised
             group=(f"agent:{agent}", rule) if rule else None,
             change=line,
         )

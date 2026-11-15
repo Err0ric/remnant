@@ -6,9 +6,9 @@ import os
 import secrets
 import stat
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, BinaryIO, Literal, get_args
+from typing import Any, BinaryIO, Literal, cast, get_args
 
 import structlog
 from pydantic import (
@@ -67,6 +67,30 @@ def quiet_expected(source: "SourceConfig") -> bool:
     return built_in(source)
 
 
+# "Quiet is normal for up to N days" on push sources (D260): the choices, and the start for
+# Claude Code sources, which send only while people use Claude Code.
+QUIET_OK_DAYS = (1, 3, 7, 14, 30)
+QuietOkDays = Literal[1, 3, 7, 14, 30]
+CLAUDE_QUIET_OK_DAYS: QuietOkDays = 7
+
+
+def inside_quiet_days(days: int | None, last: datetime | None, now: datetime) -> bool:
+    """The one rule for "Quiet is normal for up to N days" (D260, D262): marked, and the
+    newest event is less than N days old. Health reads it for the source's condition, and
+    the quiet watch holds the source's quiet alert while it holds. Never sent is not
+    inside: a source that never delivered may not be set up right."""
+    if not days or last is None:
+        return False
+    last = last if last.tzinfo else last.replace(tzinfo=UTC)
+    return now - last < timedelta(days=days)
+
+
+def quiet_ok(source: "SourceConfig", last_event_at: str | None, now: datetime) -> bool:
+    """Marked "Quiet is normal" and its newest event is inside those days."""
+    last = datetime.fromisoformat(last_event_at) if last_event_at else None
+    return inside_quiet_days(source.quiet_ok_days, last, now)
+
+
 # Settings that can change after a source is added (F44). Tenant, app, cloud, key type, and
 # the Loki address and sign-in stay: they go with the stored credential.
 EDITABLE_SETTINGS: dict[str, frozenset[str]] = {
@@ -104,6 +128,9 @@ class SourceConfig(BaseModel):
     template_id: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]{1,63}$")
     # OTLP sources: keep prompt text and tool content instead of dropping it (ADR-0015 row 4).
     otlp_keep_content: bool = False
+    # Push sources (OTLP, the syslog listener): silence up to this many days is normal and not
+    # a problem on Health or the Dashboard (D260). None: off, quiet after 24 hours as before.
+    quiet_ok_days: QuietOkDays | None = None
 
     @field_validator("source_id")
     @classmethod
@@ -128,6 +155,8 @@ class SourceConfig(BaseModel):
     def _kind_fields(self) -> "SourceConfig":
         if self.kind != "otlp" and self.otlp_keep_content:
             raise ValueError("Keeping prompt and tool content applies to OTLP sources only")
+        if self.quiet_ok_days is not None and self.kind not in SPOOL_SUFFIX:
+            raise ValueError("Quiet is normal applies to OTLP and syslog listener sources only")
         settings = {
             "loki": self.loki,
             "m365": self.m365,
@@ -178,6 +207,10 @@ class SourceConfig(BaseModel):
 
 def _loaded[M: BaseModel](cls: type[M], kind: str, row_kind: str, text: str | None) -> M | None:
     return cls.model_validate_json(text) if row_kind == kind and text else None
+
+
+def _quiet_days(value: int | None) -> QuietOkDays | None:
+    return cast(QuietOkDays, value) if value in QUIET_OK_DAYS else None
 
 
 def resolve_source_path(path: Path | str, allowed_roots: list[Path]) -> Path:
@@ -344,8 +377,8 @@ class SourceStore:
             con.execute(
                 "INSERT INTO sources (source_id, format, path, glob, timezone, classification,"
                 " retention_days, enabled, template_id, created_at, kind, connector,"
-                " connector_secret_enc, otlp_keep_content)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " connector_secret_enc, otlp_keep_content, quiet_ok_days)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     source.source_id,
                     source.format,
@@ -361,6 +394,7 @@ class SourceStore:
                     connector,
                     secret_enc,
                     int(source.otlp_keep_content),
+                    source.quiet_ok_days,
                 ),
             )
         return source
@@ -405,6 +439,7 @@ class SourceStore:
                 proxmox=_loaded(ProxmoxSettings, "proxmox", r["kind"], r["connector"]),
                 syslog=_loaded(SyslogSettings, "syslog", r["kind"], r["connector"]),
                 otlp_keep_content=bool(r["otlp_keep_content"]),
+                quiet_ok_days=_quiet_days(r["quiet_ok_days"]),
             )
             for r in rows
         ]
@@ -476,6 +511,26 @@ class SourceStore:
             )
         (source,) = [s for s in self.list() if s.source_id == source_id]
         return found[0].otlp_keep_content, source
+
+    def set_quiet_ok_days(
+        self, source_id: str, days: QuietOkDays | None
+    ) -> tuple[int | None, SourceConfig]:
+        """The previous "Quiet is normal" days and the source after the change (D260)."""
+        found = [s for s in self.list() if s.source_id == source_id]
+        if not found:
+            raise NotFoundError("No such source")
+        if built_in(found[0]):
+            raise SourceRejectedError("This built-in source is always allowed to be quiet")
+        if found[0].kind not in SPOOL_SUFFIX:
+            raise SourceRejectedError(
+                "Quiet is normal applies to OTLP and syslog listener sources only"
+            )
+        with self._meta.connect() as con:
+            con.execute(
+                "UPDATE sources SET quiet_ok_days = ? WHERE source_id = ?", (days, source_id)
+            )
+        (source,) = [s for s in self.list() if s.source_id == source_id]
+        return found[0].quiet_ok_days, source
 
     def set_loki_label_map(
         self, source_id: str, label_map: Mapping[str, Sequence[str]]
@@ -639,4 +694,6 @@ class SourceStore:
             cur = con.execute("DELETE FROM sources WHERE source_id = ?", (source_id,))
             # A source added again under this id starts its Loki position afresh.
             con.execute("DELETE FROM connector_checkpoints WHERE source_id = ?", (source_id,))
+            # And reads its files afresh (ADR-0051: positions are keyed by the file).
+            con.execute("DELETE FROM file_positions WHERE source_id = ?", (source_id,))
             return cur.rowcount > 0

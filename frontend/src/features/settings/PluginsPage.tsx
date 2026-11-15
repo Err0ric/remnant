@@ -243,7 +243,7 @@ export function PluginsPage() {
                       type="button"
                       disabled={download.isPending}
                       onClick={() => download.mutate({ platform: v.platform, managed: false })}
-                      className="h-8 rounded bg-accent px-3 font-semibold text-white disabled:opacity-60"
+                      className="h-8 rounded border border-border-strong px-3 hover:bg-surface-head disabled:opacity-50"
                     >
                       Download plugin
                     </button>

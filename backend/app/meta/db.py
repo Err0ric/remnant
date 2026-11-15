@@ -1309,6 +1309,46 @@ MIGRATIONS: tuple[Migration, ...] = (
         expires_at TEXT NOT NULL
     );
     """,
+    # 77: one read position per text file, keyed by the file and not its path (ADR-0051,
+    # D250). `checkpoints` stays and is still written, so going back a version reads on.
+    """
+    CREATE TABLE file_positions (
+        source_id       TEXT NOT NULL,
+        device          INTEGER NOT NULL,
+        inode           INTEGER NOT NULL,
+        path            TEXT NOT NULL,
+        offset          INTEGER NOT NULL,
+        size            INTEGER NOT NULL,
+        mtime_ns        INTEGER NOT NULL,
+        head            TEXT NOT NULL,
+        tail            TEXT NOT NULL,
+        csv_header      TEXT,
+        skip_to_newline INTEGER NOT NULL DEFAULT 0,
+        updated_at      TEXT NOT NULL,
+        seen_at         TEXT NOT NULL,
+        PRIMARY KEY (source_id, device, inode)
+    );
+    """,
+    # 78: each user's pins of saved searches and dashboards for the rail (D259). The target
+    # is named by kind and id only; the API lists a pin only while the user may see it.
+    """
+    CREATE TABLE pins (
+        user_id   TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+        kind      TEXT NOT NULL CHECK (kind IN ('search', 'dashboard')),
+        target_id TEXT NOT NULL,
+        pinned_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, kind, target_id)
+    );
+    """,
+    # 79: "Quiet is normal for up to N days" on push sources (D260). NULL: off, as before.
+    """
+    ALTER TABLE sources ADD COLUMN quiet_ok_days INTEGER;
+    """,
+    # 80: how many devices and addresses an alert named before its list was cut at 20, so
+    # the pane can say "20 of N" (owner, 2026-11-14). NULL: not said (older items).
+    """
+    ALTER TABLE alert_items ADD COLUMN devices_total INTEGER;
+    """,
 )
 
 

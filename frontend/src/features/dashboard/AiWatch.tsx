@@ -21,7 +21,8 @@ import { When } from "@/components/When";
 import { StatusBadge, STATUS_LABEL } from "@/features/ai/StatusBadge";
 import { TrendChart, TrendLegend } from "./TrendChart";
 import { compareLine } from "./History";
-import { SectionTitle } from "@/components/SectionTitle";
+import { Card as Panel } from "@/components/Card";
+import { CardAction } from "@/components/CardAction";
 import { PanelTitle } from "@/components/PanelTitle";
 
 const ORDER: AiStatus[] = ["not_approved", "unreviewed", "approved"];
@@ -76,8 +77,7 @@ export function AiWatch({ days = 7, isAdmin = false }: { days?: number; isAdmin?
   if (q.isLoading) return <Skeleton label="AI Watch" block="h-48" />;
   if (q.isError && !q.data)
     return (
-      <section aria-label="AI Watch" className="rounded-card border border-border bg-surface">
-        <h2 className="border-b border-border px-3 py-2 text-base font-semibold">AI Watch</h2>
+      <Panel title="AI Watch">
         <AiWatchFailing isAdmin={isAdmin} />
         <InlineError
           what="AI Watch"
@@ -85,7 +85,7 @@ export function AiWatch({ days = 7, isAdmin = false }: { days?: number; isAdmin?
           onRetry={() => void q.refetch()}
           retrying={q.isFetching}
         />
-      </section>
+      </Panel>
     );
   const s = q.data;
   if (!s) return null;
@@ -99,24 +99,15 @@ export function AiWatch({ days = 7, isAdmin = false }: { days?: number; isAdmin?
   const dataUntil = lasts.length ? (lasts.sort().slice(-1)[0] ?? null) : null;
   const missing = s.cards.filter((c) => c.needs);
   return (
-    <section aria-label="AI Watch" className="rounded-card border border-border bg-surface">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-3 py-2">
-        <SectionTitle>AI Watch</SectionTitle>
-        <span className="text-sm text-text-muted">
-          {compareLine(
-            s.compared ?? true,
-            s.since ?? null,
-            days === 1 ? "the previous 24 hours" : `the previous ${days} days`,
-          )}
-        </span>
-        <button
-          type="button"
-          onClick={() => navigate("ai", "services")}
-          className="ml-auto text-sm text-accent-text hover:underline"
-        >
-          Open AI usage
-        </button>
-      </div>
+    <Panel
+      title="AI Watch"
+      note={compareLine(
+        s.compared ?? true,
+        s.since ?? null,
+        days === 1 ? "the previous 24 hours" : `the previous ${days} days`,
+      )}
+      action={<CardAction onClick={() => navigate("ai", "services")}>Open AI usage</CardAction>}
+    >
       <AiWatchFailing isAdmin={isAdmin} />
       {s.people_pending_days ? (
         <div className="border-b border-border px-3 py-1.5">
@@ -163,7 +154,7 @@ export function AiWatch({ days = 7, isAdmin = false }: { days?: number; isAdmin?
         />
         <Top summary={s} />
       </div>
-    </section>
+    </Panel>
   );
 }
 
@@ -460,64 +451,63 @@ export function Chart({ chart: all, days = 30, dataUntil = null, onOpenDay }: Ch
   const lastDay = dataUntil ? dataUntil.slice(0, 10) : null;
   const stopped = lastDay && chart.some((d) => d.day > lastDay) ? lastDay : null;
   const lastWithData = stopped ? chart.filter((d) => d.day <= stopped).length - 1 : undefined;
+  const title =
+    chart.length < windowed.length
+      ? `AI use since ${dayLabel(chart[0]?.day ?? "")}`
+      : `AI use, last ${days} days`;
+  const note = `events per day${stopped ? `; no data after ${dayLabel(stopped)}` : ""}`;
   return (
-    <TrendChart
-      title={
-        chart.length < windowed.length
-          ? `AI use since ${dayLabel(chart[0]?.day ?? "")}`
-          : `AI use, last ${days} days`
-      }
-      note={`events per day${stopped ? `; no data after ${dayLabel(stopped)}` : ""}`}
-      stacked
-      series={STACK.map((st) => ({
-        key: st,
-        label: STATUS_LABEL[st],
-        values: chart.map((d) => d[st]),
-        color: COLOR[st],
-      }))}
-      lastWithData={lastWithData}
-      partial={stopped ? undefined : "so far"}
-      onOpen={onOpenDay ? (i) => chart[i] && onOpenDay(chart[i].day) : undefined}
-      pointLabel={(i) => dayLabel(chart[i]?.day ?? "")}
-      axisLabel={(i) => dayLabel(chart[i]?.day ?? "")}
-      summary={`AI use per day over ${chart.length} days by review status: ${summary}${
-        stopped ? `. No data after ${dayLabel(stopped)}` : ""
-      }`}
-      legend={
-        <TrendLegend
-          items={[...STACK].reverse().map((st) => ({
-            label: (
-              <>
-                {STATUS_LABEL[st]}{" "}
-                <span className="font-mono tabular-nums">{sums[st].toLocaleString()}</span>
-              </>
-            ),
+    <Panel title={title} level="panel" note={note}>
+      <div className="px-3 py-2">
+        <TrendChart
+          title={title}
+          bare
+          stacked
+          series={STACK.map((st) => ({
+            key: st,
+            label: STATUS_LABEL[st],
+            values: chart.map((d) => d[st]),
             color: COLOR[st],
           }))}
+          lastWithData={lastWithData}
+          partial={stopped ? undefined : "so far"}
+          onOpen={onOpenDay ? (i) => chart[i] && onOpenDay(chart[i].day) : undefined}
+          pointLabel={(i) => dayLabel(chart[i]?.day ?? "")}
+          axisLabel={(i) => dayLabel(chart[i]?.day ?? "")}
+          summary={`AI use per day over ${chart.length} days by review status: ${summary}${
+            stopped ? `. No data after ${dayLabel(stopped)}` : ""
+          }`}
+          legend={
+            <TrendLegend
+              items={[...STACK].reverse().map((st) => ({
+                label: (
+                  <>
+                    {STATUS_LABEL[st]}{" "}
+                    <span className="font-mono tabular-nums">{sums[st].toLocaleString()}</span>
+                  </>
+                ),
+                color: COLOR[st],
+              }))}
+            />
+          }
         />
-      }
-    />
+      </div>
+    </Panel>
   );
 }
 
 function Top({ summary }: { summary: AiWatchSummary }) {
   return (
-    <div className="min-w-0">
-      <div className="mb-2 flex items-baseline gap-2">
-        <PanelTitle>Top services</PanelTitle>
-        <span className="text-sm text-text-muted">last {summary.days} days</span>
-        <button
-          type="button"
-          onClick={() => navigate("ai", "services")}
-          className="ml-auto text-sm text-accent-text hover:underline"
-        >
-          View all
-        </button>
-      </div>
+    <Panel
+      title="Top services"
+      level="panel"
+      note={`last ${summary.days} days`}
+      action={<CardAction onClick={() => navigate("ai", "services")}>View all</CardAction>}
+    >
       {summary.top.length === 0 ? (
-        <p className="text-sm text-text-secondary">No AI use in this range.</p>
+        <p className="px-3 py-2 text-sm text-text-secondary">No AI use in this range.</p>
       ) : (
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto px-3 py-1">
           <table aria-label="Top AI services" className="w-full text-sm">
             <thead>
               <tr className="text-left text-text-muted">
@@ -557,6 +547,6 @@ function Top({ summary }: { summary: AiWatchSummary }) {
           </table>
         </div>
       )}
-    </div>
+    </Panel>
   );
 }

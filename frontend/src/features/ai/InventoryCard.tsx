@@ -8,7 +8,10 @@ import { FilterBar } from "@/components/FilterBar";
 import { useFilters } from "@/lib/filters";
 import { since, stamp } from "@/features/overview/time";
 import { STATUS_LABEL, StatusBadge, StatusPicker } from "./StatusBadge";
-import { SectionTitle } from "@/components/SectionTitle";
+import { Card } from "@/components/Card";
+import { StateNotice } from "@/components/StateNotice";
+import { NAMES_HIDDEN } from "@/features/alerts/kinds";
+import { toReview } from "./review";
 
 const TYPE_LABEL: Record<InventoryType, string> = {
   service: "AI services",
@@ -34,10 +37,6 @@ const FILTER_VALUES = {
 };
 type StatusFilter = "all" | AiStatus;
 
-/** Active items of the inventory still to review: the "N to review" count (ADR-0052 3.3). */
-export function toReview(items: InventoryItem[]): number {
-  return items.filter((i) => i.excluded === null && i.status === "unreviewed").length;
-}
 const TH = "px-3 py-2";
 const TD = "px-3 py-1.5";
 
@@ -58,14 +57,14 @@ function statusText(i: InventoryItem): string {
  * type, Active or Excluded, grouped as asked; the view exports as CSV or JSON, audited. */
 export function InventoryCard({ isAdmin, canExport }: { isAdmin: boolean; canExport: boolean }) {
   const client = useQueryClient();
-  const q = useQuery({ queryKey: ["ai-inventory"], queryFn: () => api.aiInventory(30) });
+  const q = useQuery({ queryKey: ["ai-usage", "inventory"], queryFn: () => api.aiInventory(30) });
   const filters = useFilters(FILTER_DEFAULTS, FILTER_VALUES);
   const type = (filters.values.type || null) as InventoryType | null;
   const excludedView = filters.values.state === "excluded";
   const [group, setGroup] = useState<Group>("none");
   const [excluding, setExcluding] = useState<InventoryItem | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
-  const refresh = () => void client.invalidateQueries({ queryKey: ["ai-inventory"] });
+  const refresh = () => void client.invalidateQueries({ queryKey: ["ai-usage", "inventory"] });
   const include = useMutation({
     mutationFn: (i: InventoryItem) => api.includeInventory(i.type, i.key),
     onSuccess: refresh,
@@ -125,51 +124,16 @@ export function InventoryCard({ isAdmin, canExport }: { isAdmin: boolean; canExp
   };
   const now = new Date().toISOString();
   return (
-    <section
-      aria-label="AI inventory"
-      className="overflow-hidden rounded-card border border-border bg-surface"
+    <Card
+      title="Inventory"
+      label="AI inventory"
+      note="Everything AI seen in the last 30 days, from the sources you can read."
     >
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border bg-surface-head px-3 py-2">
-        <SectionTitle>Inventory</SectionTitle>
-        <span className="text-sm text-text-muted">
-          Everything AI seen in the last 30 days, from the sources you can read.
-          {q.data?.masked
-            ? " Names are hidden. An admin can turn on View people in AI usage for you."
-            : null}
-        </span>
-        <span className="ml-auto flex flex-wrap items-center gap-2">
-          <label className="flex items-center gap-1.5 text-sm">
-            <span className="text-text-secondary">Group by</span>
-            <select
-              value={group}
-              onChange={(e) => setGroup(e.target.value as Group)}
-              className="h-8 rounded border border-border bg-surface px-2 text-sm"
-            >
-              <option value="none">None</option>
-              <option value="type">Type</option>
-              <option value="status">Status</option>
-            </select>
-          </label>
-          {canExport ? (
-            <>
-              <button
-                type="button"
-                onClick={() => void doExport("csv")}
-                className="h-8 rounded border border-border px-3 text-sm hover:bg-surface"
-              >
-                Export CSV
-              </button>
-              <button
-                type="button"
-                onClick={() => void doExport("json")}
-                className="h-8 rounded border border-border px-3 text-sm hover:bg-surface"
-              >
-                Export JSON
-              </button>
-            </>
-          ) : null}
-        </span>
-      </div>
+      {q.data?.masked ? (
+        <div className="border-b border-border p-2">
+          <StateNotice>{NAMES_HIDDEN}</StateNotice>
+        </div>
+      ) : null}
       <div className="border-b border-border px-3 py-1">
         <FilterBar
           label="Filter the inventory"
@@ -212,6 +176,40 @@ export function InventoryCard({ isAdmin, canExport }: { isAdmin: boolean; canExp
                 ? `${inView.length} ${word(inView.length)}`
                 : `${rows.length} of ${inView.length} ${word(inView.length)}`
               : undefined
+          }
+          columns={
+            <span className="flex flex-wrap items-center gap-2">
+              <label className="flex items-center gap-1.5 text-sm">
+                <span className="text-text-secondary">Group by</span>
+                <select
+                  value={group}
+                  onChange={(e) => setGroup(e.target.value as Group)}
+                  className="h-8 rounded border border-border bg-surface px-2 text-sm"
+                >
+                  <option value="none">None</option>
+                  <option value="type">Type</option>
+                  <option value="status">Status</option>
+                </select>
+              </label>
+              {canExport ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void doExport("csv")}
+                    className="h-8 rounded border border-border px-3 text-sm hover:bg-surface"
+                  >
+                    Export CSV
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void doExport("json")}
+                    className="h-8 rounded border border-border px-3 text-sm hover:bg-surface"
+                  >
+                    Export JSON
+                  </button>
+                </>
+              ) : null}
+            </span>
           }
           onReset={filters.reset}
           isDefault={filters.values.state === "active" && !type && status === usual}
@@ -360,7 +358,7 @@ export function InventoryCard({ isAdmin, canExport }: { isAdmin: boolean; canExp
           </table>
         </div>
       )}
-    </section>
+    </Card>
   );
 }
 

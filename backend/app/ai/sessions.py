@@ -10,14 +10,42 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from app.ai.internal_tools import counted
-from app.ai.test_records import HOOKS
+from app.ai.internal_tools import counted, is_counted
+from app.ai.test_records import HOOKS, NOT_TEST
 from app.core.errors import NotFoundError, ParamInvalidError
 from app.engine.duckdb import QueryEngine, QueryScope
 
 TIMEOUT_S = 20.0
 MAX_SESSIONS = 100
 MAX_STEPS = 2000
+
+# What kind of step a hook record is (BACKLOG P1, the session detail): derived here, at read
+# time, from what the record already carries, and nowhere else; nothing is stored (P3 stays
+# in the backlog). The event names are the hooks plugin's; one it does not send is "other".
+STEP_TYPES = ("prompt", "tool_call", "tool_result", "file_access", "access", "other")
+
+
+def has(expr: str) -> str:
+    """SQL true when a field is there for step_type: not null and not empty."""
+    return f"coalesce({expr}, '') <> ''"
+
+
+def step_type(event: str, mcp_server: str | None, web_host: str | None, path: str | None) -> str:
+    """One of STEP_TYPES. A prompt; a tool's result (failed or not); a tool call, which is
+    an access when it names an MCP server or a web host, a file access when it names a
+    path, and a plain tool call otherwise. A session start, a turn end, and a session end
+    are "other", as is anything unknown: never a guess. A field is there when it is not
+    empty; `has()` is the same test in SQL, for counts per type."""
+    e = event.removeprefix("claude_hooks.")
+    if e == "user_prompt_submit":
+        return "prompt"
+    if e in ("post_tool_use", "post_tool_use_failure"):
+        return "tool_result"
+    if e != "pre_tool_use":
+        return "other"
+    if mcp_server or web_host:
+        return "access"
+    return "file_access" if path else "tool_call"
 
 
 def _a(key: str) -> str:
@@ -26,12 +54,20 @@ def _a(key: str) -> str:
 
 # A queued batch can be sent twice when an answer is lost; the install id and sequence
 # number name a record, so the copy is left out (ADR-0026 offline queue).
-_ONE_COPY = f"""hooks AS (
+def one_copy(name: str = "hooks", where: str | None = None) -> str:
+    """The CTE of hook records with each resent copy left out. With `where` (fixed SQL that
+    every copy of a record matches alike, such as its session), only those records, and
+    `template_id` is pinned at the top level so the engine can narrow by template."""
+    cond = f"template_id = 'claude_hooks' AND {NOT_TEST} AND {where}" if where else HOOKS
+    return f"""{name} AS (
   SELECT * FROM events
-  WHERE {HOOKS}
+  WHERE {cond}
   QUALIFY {_a("seq")} IS NULL OR row_number() OVER (
     PARTITION BY {_a("install_id")}, {_a("seq")} ORDER BY time_observed, event_id) = 1
 )"""  # noqa: S608  # fixed SQL text
+
+
+_ONE_COPY = one_copy()
 
 SESSIONS_SQL = f"""
 WITH {_ONE_COPY},
@@ -150,6 +186,10 @@ class Step:
     output_chars: int | None
     event_id: str
     late_s: int | None = None  # delivered this long after it happened, when over 5 minutes
+    type: str = "other"  # step_type()
+    # False for Claude Code's own bookkeeping (D186): not a tool call in any count, so never
+    # a failed or unanswered call either. The same names as `counted()` in the SQL.
+    counted: bool = True
 
 
 @dataclass(slots=True)
@@ -243,6 +283,8 @@ def timeline(
             oc,
             str(eid),
             int(late) if late is not None and late > 300 else None,
+            step_type(str(msg), srv, host, path),
+            is_counted(tool),
         )
         for t, msg, role, tool, srv, mtool, path, host, prog, pc, ic, oc, eid, _, _, late in rows
     ]

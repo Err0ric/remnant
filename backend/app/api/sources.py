@@ -57,6 +57,8 @@ from app.ingest.quiet import MAX_QUIET_S, MIN_QUIET_S, QuietWatch, Watch, defaul
 from app.ingest.reparse import ReparseJob, ReparseJobs
 from app.ingest.skew import skew_text
 from app.ingest.sources import (
+    CLAUDE_QUIET_OK_DAYS,
+    QuietOkDays,
     SourceConfig,
     SourceStore,
     built_in,
@@ -346,18 +348,25 @@ class SourceCreated(SourceConfig):
 CLAUDE_TEMPLATES = ("claude_hooks", "claude_code_otel")
 
 
+def claude_source(source: SourceConfig, sender: str | None) -> bool:
+    """Claude Code telemetry or the hooks plugin: they send only while people use it."""
+    return source.kind == "otlp" and (sender == "claude" or source.template_id in CLAUDE_TEMPLATES)
+
+
 def quiet_off_by_default(source: SourceConfig, sender: str | None) -> bool:
     """Claude Code telemetry and hooks sources, and the Proxmox inventory, start with no
     source-level quiet alert."""
     if source.kind == "proxmox":
         return True  # writes only on a change, plus one heartbeat a day (ADR-0045 A3b)
-    return source.kind == "otlp" and (sender == "claude" or source.template_id in CLAUDE_TEMPLATES)
+    return claude_source(source, sender)
 
 
 @router.post("/sources", status_code=status.HTTP_201_CREATED)
 async def add_source(body: SourceCreate, request: Request, user: AdminUser) -> SourceCreated:
     store = _store(request)
     config = SourceConfig(**body.model_dump(exclude={"loki_secret", "credentials", "sender"}))
+    if "quiet_ok_days" not in body.model_fields_set and claude_source(config, body.sender):
+        config.quiet_ok_days = CLAUDE_QUIET_OK_DAYS  # quiet is normal for a week (D260)
     secret = body.loki_secret.get_secret_value() if body.loki_secret else None
     if config.kind in API_KINDS:
         secret = (body.credentials or ApiCredentials()).secret_for(config)
@@ -819,6 +828,8 @@ class SourcePatch(BaseModel):
     timezone: str | None = Field(default=None, min_length=1, max_length=64)
     # Days to keep; the nightly retention job applies it (install finding F44).
     retention_days: int | None = Field(default=None, ge=1, le=3650)
+    # Push sources: "Quiet is normal for up to N days" (D260); null turns it off.
+    quiet_ok_days: QuietOkDays | None = None
     # API and Loki settings that do not depend on the stored credential (F44): feeds,
     # first-run history, the Loki query. Only the keys given change.
     connector: dict[str, Any] | None = Field(default=None, max_length=5)
@@ -833,6 +844,7 @@ class SourcePatch(BaseModel):
             "timezone",
             "retention_days",
             "connector",
+            "quiet_ok_days",
         }:
             raise ValueError("Nothing to change")
         if "otlp_keep_content" in self.model_fields_set and self.otlp_keep_content is None:
@@ -933,6 +945,20 @@ async def update_source(
             client_ip(request),
             {"source_id": source_id, "from": before_days, "to": days},
         )
+    if "quiet_ok_days" in body.model_fields_set:
+        quiet_days = body.quiet_ok_days
+        before_qd, source = await run_in_threadpool(store.set_quiet_ok_days, source_id, quiet_days)
+        request.app.state.overview.forget()  # the source's condition changes now, not in 5 min
+        await run_in_threadpool(
+            _audit(request).audit.write,
+            "source.quiet_ok_change",
+            "success",
+            user.user_id,
+            client_ip(request),
+            {"source_id": source_id, "from": before_qd, "to": quiet_days},
+        )
+        # The quiet watch's next check (every 30 s) applies the change: taking the mark off
+        # judges a held alert by its own threshold then (D262). Nothing waits on the lake here.
     if body.connector is not None:
         changes = body.connector
         old, new, source = await run_in_threadpool(store.set_connector_settings, source_id, changes)

@@ -24,7 +24,7 @@ from app.auth.users import User
 from app.detect.runner import RuleRunner
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.engine.views import permitted_sources
-from app.ingest.sources import SourceStore, quiet_expected
+from app.ingest.sources import SourceConfig, SourceStore, quiet_expected, quiet_ok
 from app.ingest.watcher import IngestService, source_state
 from app.meta.db import MetaDB
 from app.search.gaps import Gap, find_gaps
@@ -44,6 +44,7 @@ VOLUME_SQL = (
     " count(*) AS n FROM events GROUP BY 1, 2 ORDER BY 1, 2 LIMIT 100000"
 )
 LAST_SEEN_SQL = "SELECT source_id, max(time_observed) AS last FROM events GROUP BY 1 LIMIT 10000"
+LAST_EVENT_TIMEOUT_S = 10.0  # the quiet watch's one read per quiet episode (D262)
 RATE_MINUTES = 15  # "current rate": events received in the last 15 minutes, per minute
 RATE_SQL = (
     "SELECT source_id, count(*) FROM events"
@@ -71,6 +72,9 @@ class SourceHealth:
     error: str | None
     rate_per_min: float = 0.0  # received over the last RATE_MINUTES
     quiet_expected: bool = False  # server_events: quiet when nobody uses the server
+    # "Quiet is normal for up to N days" (D260), and whether the newest event is inside them.
+    quiet_ok_days: int | None = None
+    quiet_ok: bool = False
     # Warnings, retries, a time offset, or reading far behind: what /api/sources shows
     # admins in words. Used for the source's condition (app.search.source_state) only.
     reading_issue: bool = False
@@ -164,6 +168,13 @@ class OverviewService:
             tuple[str, str, tuple[str, ...] | None], tuple[float, Overview]
         ] = {}
 
+    def forget(self) -> None:
+        """Drop every cached answer and count, after a change to how sources are judged
+        (D260), so Health, the Dashboard, and the rail show it on their next read."""
+        with self._lock:
+            self._cache = {}
+            self._count_cache = {}
+
     def get(self, user: User) -> tuple[Overview, bool]:
         """The Overview for this viewer, and whether it was computed now (not cached)."""
         allowed = permitted_sources(self._meta, user)
@@ -208,6 +219,7 @@ class OverviewService:
         ]
         volume, read, usual = self._volume(allowed, first, now, hours)
         last_seen = self._last_seen(allowed, now)
+        last_seen |= self._last_seen_marked(configured, last_seen, now)
         rates = self._rates(allowed, now)
         statuses = self._ingest().status()
         health = []
@@ -228,6 +240,8 @@ class OverviewService:
                     error=error,
                     rate_per_min=rates.get(s.source_id, 0.0),
                     quiet_expected=quiet_expected(s),
+                    quiet_ok_days=s.quiet_ok_days,
+                    quiet_ok=quiet_ok(s, last_seen.get(s.source_id), now),
                     reading_issue=bool(
                         st
                         and (
@@ -295,6 +309,37 @@ class OverviewService:
     def _last_seen(self, allowed: list[str] | None, now: datetime) -> dict[str, str]:
         scope = QueryScope(sources=allowed, start=now - timedelta(days=LAST_SEEN_DAYS), end=now)
         result = self._engine.run(LAST_SEEN_SQL, scope, page=True)
+        return {str(r[0]): _utc(r[1]).isoformat() for r in result.rows if r[1] is not None}
+
+    def last_received(self, source_id: str, days: int, now: datetime) -> datetime | None:
+        """When one source's newest event was received (`time_observed`), looked up over its
+        own days: the time "Quiet is normal" is measured from, as Health reads it, for the
+        quiet watch's hold (D262). Reads only that source's day folders, as the system, on
+        the background slot (never a page query's) with a short timeout; raises on failure."""
+        scope = QueryScope(sources=[source_id], start=now - timedelta(days=days), end=now)
+        result = self._engine.run(
+            LAST_SEEN_SQL, scope, timeout_s=LAST_EVENT_TIMEOUT_S, background=True
+        )
+        found = [_utc(r[1]) for r in result.rows if r[1] is not None]
+        return found[0] if found else None
+
+    def _last_seen_marked(
+        self, configured: list[SourceConfig], seen: dict[str, str], now: datetime
+    ) -> dict[str, str]:
+        """The newest event of sources marked "Quiet is normal" for longer than the 7 days
+        looked up above (D260), when nothing came in those 7 days. Reads only those sources'
+        folders, so most loads run nothing more."""
+        days = {
+            s.source_id: s.quiet_ok_days or 0
+            for s in configured
+            if (s.quiet_ok_days or 0) > LAST_SEEN_DAYS and s.source_id not in seen
+        }
+        if not days:
+            return {}
+        start = now - timedelta(days=max(days.values()))
+        result = self._engine.run(
+            LAST_SEEN_SQL, QueryScope(sources=sorted(days), start=start, end=now), page=True
+        )
         return {str(r[0]): _utc(r[1]).isoformat() for r in result.rows if r[1] is not None}
 
     def _detections(

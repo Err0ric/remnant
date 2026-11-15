@@ -25,7 +25,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import duckdb
 import pyarrow as pa
@@ -214,6 +214,10 @@ def _operators(node: dict[str, Any], out: list[dict[str, Any]]) -> list[dict[str
 MB = 1 << 20
 
 
+# (["source|day", ...], cutoff): days read from events before the cutoff only (`run`).
+Head = tuple[list[str], datetime]
+
+
 @dataclass(frozen=True, slots=True)
 class QueryScope:
     """Computed server-side. `sources=None` means every source in the lake."""
@@ -329,6 +333,7 @@ class QueryEngine:
         background: bool = False,
         large: bool = False,
         page: bool = False,
+        head: Head | None = None,
     ) -> QueryResult:
         """Run guarded SQL. `params` are bound by the driver ($name), never formatted in.
         `row_cap` lowers both the implicit and the maximum LIMIT (Ask previews use 5), and
@@ -342,7 +347,11 @@ class QueryEngine:
         (Search, export, saved and scheduled searches): the free query memory, leaving two
         shares for page sections; one share when others hold it. `page`: the app's own
         fixed page-section SQL, which may use a kept instance when `server.query_pool` is
-        on; never set for user, saved, scheduled, exported, or model-written SQL (D146)."""
+        on; never set for user, saved, scheduled, exported, or model-written SQL (D146).
+        `head` (days, cutoff): of those "source|day" folders, also in `skip_days`, `events`
+        keeps the rows before the cutoff, and `ai_ident` only their identities from it on:
+        the rest of each day comes from the AI rollup's whole hours (a range starting inside
+        a closed day, `AiRollup.head`)."""
         limit_s = min(self._timeout_s, timeout_s) if timeout_s else self._timeout_s
         default = min(self._default_limit, row_cap) if row_cap else self._default_limit
         cap = min(self._max_limit, row_cap) if row_cap else self._max_limit
@@ -373,7 +382,7 @@ class QueryEngine:
                         return self._execute(
                             guarded, scope, params, intel, limit_s, cap, rollup,
                             frozenset(skip_days), name, after, upto, background, grant,
-                            waited, page and not large,
+                            waited, page and not large, head,
                         )  # fmt: skip
                     except (QueryFailedError, FileNotFoundError, duckdb.IOException) as exc:
                         # A file listed when the views were made was swapped out before
@@ -443,6 +452,7 @@ class QueryEngine:
         grant: Grant | None = None,
         waited: float = 0.0,
         page: bool = False,
+        head: Head | None = None,
     ) -> QueryResult:
         limit_mb = grant.mb if grant is not None else self._memory_mb
         spill_mb = self._spill_for(limit_mb) if limit_mb else None
@@ -458,11 +468,11 @@ class QueryEngine:
             con = kept[1]
             kept[2]()  # lookups: fresh caches and the Internal list in force now
             _drop_temp(con)
-            self._define(con, scope, intel, rollup, skip, after, upto, temp=True)
+            self._define(con, scope, intel, rollup, skip, after, upto, temp=True, head=head)
         else:
             con = self._connect(
                 scope, intel=intel, rollup=rollup, skip=skip, after=after, upto=upto,
-                background=background, memory_mb=limit_mb, spill_mb=spill_mb,
+                background=background, memory_mb=limit_mb, spill_mb=spill_mb, head=head,
             )  # fmt: skip
         if not self._track(con):  # shutting down: no new query starts
             if kept is not None:
@@ -825,6 +835,19 @@ class QueryEngine:
             dirs = [d for d in dirs if d.name.removeprefix("source=") in wanted]
         return [d for d in dirs if any(d.glob(ROLLUP_FILES))]
 
+    def _head_files(self, scope: QueryScope, head: Head | None) -> list[str]:
+        """The lake files of `head`'s days, of the sources in scope only."""
+        if head is None or not head[0]:
+            return []
+        out: list[str] = []
+        for d in self._source_dirs(scope):
+            source = d.name.removeprefix("source=")
+            for key in head[0]:
+                src, _, day = key.partition("|")
+                if src == source:
+                    out.extend(str(f) for f in lake_files.visible(d / f"day={day}"))
+        return sorted(out)
+
     def _lake_globs(self, dirs: list[Path], scope: QueryScope, skip: frozenset[str]) -> list[str]:
         """Files for `events`, listed by name: only the day folders the time range touches
         (the writer files events by their UTC day), so a 7-day query never opens the other
@@ -874,9 +897,10 @@ class QueryEngine:
         background: bool = False,
         memory_mb: int | None = None,
         spill_mb: int | None = None,
+        head: Head | None = None,
     ) -> duckdb.DuckDBPyConnection:
         con = self._open(background, memory_mb, spill_mb)
-        files = self._define(con, scope, intel, rollup, skip, after, upto, temp=False)
+        files = self._define(con, scope, intel, rollup, skip, after, upto, temp=False, head=head)
         if self._lookups is not None:
             register(con, self._lookups)
         self._lock(con, paths=files)
@@ -1002,7 +1026,12 @@ class QueryEngine:
                 mem = max(128, mem // 2)
             config["memory_limit"] = f"{int(mem)}MB"
         if self._temp_dir is not None:
-            config["temp_directory"] = str(self._temp_dir)
+            # A folder of its own inside the overflow folder: DuckDB names its overflow
+            # files the same in every instance, so instances sharing one folder wrote and
+            # read each other's files ("Corrupt temporary file"). DuckDB makes the folder
+            # on the first overflow and removes it at close; the start-up sweep takes any
+            # left by a stopped server.
+            config["temp_directory"] = str(self._temp_dir / uuid4().hex)
         con = duckdb.connect(":memory:", config=config)
         con.execute("SET TimeZone = 'UTC'")
         if spill_mb:  # SET, not config: DuckDB 1.5 ignores this one at connect (tested)
@@ -1040,6 +1069,7 @@ class QueryEngine:
         after: tuple[Collection[str], datetime] | None,
         upto: datetime | None,
         temp: bool,
+        head: Head | None = None,
     ) -> list[str]:
         """The query's views: `events` from the scope's files, and the rollup and intel
         tables. `temp` (a kept instance): connection-local objects, dropped before the next
@@ -1062,12 +1092,15 @@ class QueryEngine:
         cut_files: list[str] = []
         if after is not None and after[0]:
             files, cut_files = _split_today(files, after)
-        if files or cut_files:
+        # The first hours of a closed day whose later hours come from the AI rollup, by the
+        # time the lake files and filters rows by (the folder is in `skip`, so not above).
+        head_files = self._head_files(scope, head)
+        if files or cut_files or head_files:
             globs = ", ".join(_sql_str(f) for f in files)
             # Every schema column exists in `events`, typed, even when no file in scope has
             # it yet: a column added later (additive migrations, CLAUDE.md rule 9) reads as
             # NULL in files written before it.
-            missing = self._missing_columns(files + cut_files)
+            missing = self._missing_columns(files + cut_files + head_files)
             extra = "".join(
                 f", CAST(NULL AS {COLUMNS_BY_NAME[c].duckdb_type}) AS {c}" for c in missing
             )
@@ -1084,6 +1117,13 @@ class QueryEngine:
                     f"read_parquet([{listed}], hive_partitioning = false, union_by_name = true)"
                     f" WHERE time_observed > {_ts(after[1])}"
                 )
+            if head_files and head is not None:
+                listed = ", ".join(_sql_str(f) for f in head_files)
+                parts.append(
+                    f"SELECT *{extra} FROM "  # noqa: S608  # schema names, escaped server paths, datetime literal
+                    f"read_parquet([{listed}], hive_partitioning = false, union_by_name = true)"
+                    f" WHERE coalesce(time, time_observed) < {_ts(head[1])}"
+                )
             base = "(" + " UNION ALL BY NAME ".join(parts) + ")"
         else:
             con.execute(table(duckdb_create_table_sql("_empty_events")))
@@ -1093,7 +1133,7 @@ class QueryEngine:
             cut = f"time_observed <= {_ts(upto)}"
             where = f"{where} AND {cut}" if where else f" WHERE {cut}"
         con.execute(f"{view} events AS SELECT * FROM {base}{where}")  # noqa: S608  # built from escaped server paths and datetime literals only
-        readable = files + cut_files
+        readable = files + cut_files + head_files
         if rollup:
             rdirs = self.rollup_dirs(scope)
             rfiles = [str(f) for d in rdirs for f in sorted(d.glob(ROLLUP_FILES))]
@@ -1155,9 +1195,16 @@ class QueryEngine:
                 con.execute(table(f"CREATE TABLE ai_mcp ({MCP_COLUMNS})"))
             if idents:
                 listed = ", ".join(_sql_str(f) for f in idents)
+                # A head day's identities before its cutoff are read from events instead.
+                cut = (
+                    f" WHERE NOT (list_contains([{', '.join(_sql_str(k) for k in head[0])}],"
+                    f" src || '|' || day) AND t < {_ts(head[1])})"
+                    if head is not None and head[0]
+                    else ""
+                )
                 con.execute(
-                    f"{view} ai_ident AS SELECT * FROM"  # noqa: S608  # escaped server paths only
-                    f" read_parquet([{listed}], hive_partitioning = false)"
+                    f"{view} ai_ident AS SELECT * FROM"  # noqa: S608  # escaped server paths, escaped keys, datetime literal
+                    f" read_parquet([{listed}], hive_partitioning = false){cut}"
                 )
                 readable += idents
             else:

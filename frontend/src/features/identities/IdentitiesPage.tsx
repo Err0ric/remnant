@@ -8,8 +8,6 @@ import { SectionTitle } from "@/components/SectionTitle";
 const INPUT =
   "h-8 min-w-0 rounded border border-border-control bg-inset px-2 font-mono text-sm text-text";
 const BTN = "h-8 rounded border border-border-strong px-3 text-sm hover:bg-surface-head";
-const PRIMARY =
-  "h-8 rounded bg-accent px-3 text-sm font-semibold text-white hover:brightness-110 disabled:opacity-50";
 
 function errorText(e: unknown): string | null {
   return e instanceof ApiError ? e.message : e ? "That did not work" : null;
@@ -125,7 +123,7 @@ export function IdentitiesPage() {
             <button
               type="submit"
               disabled={!domain.trim() || domains.isPending}
-              className={PRIMARY}
+              className={`${BTN} disabled:opacity-50`}
             >
               Add domain
             </button>
@@ -226,7 +224,7 @@ export function IdentitiesPage() {
             <button
               type="submit"
               disabled={!name.trim() || !person.trim() || alias.isPending}
-              className={PRIMARY}
+              className={`${BTN} disabled:opacity-50`}
             >
               Add alias
             </button>

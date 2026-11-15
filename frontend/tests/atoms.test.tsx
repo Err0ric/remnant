@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ChangePill } from "@/components/ChangePill";
 import { EventIdChip } from "@/components/EventIdChip";
 import { OutcomeBadge } from "@/features/audit/OutcomeBadge";
-import { badgeKind } from "@/features/investigate/LaneGraph";
+import { badgeKind, clipMiddle } from "@/features/investigate/LaneGraph";
 import { SeverityBadge } from "@/components/SeverityBadge";
 import { SeverityMark, severityTone } from "@/components/SeverityMark";
 import { STATUS_LABEL, StatusBadge, StatusPicker } from "@/features/ai/StatusBadge";
@@ -258,5 +258,14 @@ describe("State tags (DESIGN.md 2 and 7)", () => {
       expect(screen.getByText(outcome).className).not.toMatch(/\bbg-/);
     }
     expect(screen.getByText("success")).toHaveClass("bg-info-bg");
+  });
+});
+
+describe("Lane box labels (D257)", () => {
+  it("cut a long name in the middle, keeping its last 8 characters", () => {
+    expect(clipMiddle("Office 365 SharePoint Online", 20)).toBe("Office 365 …t Online");
+    expect(clipMiddle("Office 365 SharePoint Online", 20)).toHaveLength(20);
+    expect(clipMiddle("claude", 20)).toBe("claude");
+    expect(clipMiddle("m365_management_activity", 6)).toMatch(/^m…/);
   });
 });

@@ -7,6 +7,7 @@ import { FieldActionsContext } from "./fieldActions";
 import { AddressHolders } from "./AddressHolders";
 import { AroundEvent } from "./AroundEvent";
 import { FieldButton } from "./FieldButton";
+import { CopyRaw } from "./CopyRaw";
 import { ENTITY_COLUMNS, type InvestigateSeed } from "@/lib/investigateSeed";
 import { EntityLink } from "@/components/EntityLink";
 import { kindForColumn, openEntity, type EntityKind } from "@/lib/entity";
@@ -81,7 +82,13 @@ export function EventDetail({ columns, row, selection, geo, intel }: EventDetail
       )
       .sort(),
   ];
-  const raw = record.raw;
+  // With an event id, the raw event is only ever the stored line from the full event: a
+  // query's own `raw` column may be something else under that name (`left(raw, 40) AS raw`).
+  // Without one there is nothing to look up, and the result's column is shown as such.
+  const stored = full.data?.rows[0]
+    ? full.data.rows[0][full.data.columns.indexOf("raw")]
+    : undefined;
+  const raw = sql !== null ? stored : record.raw;
   // The full event's lookup covers every field; the row's covers the columns shown.
   const places = geo ? { ...geo, ...(full.data?.geo ?? {}) } : undefined;
   const placeOf = (v: Cell | undefined) =>
@@ -229,11 +236,18 @@ export function EventDetail({ columns, row, selection, geo, intel }: EventDetail
         </dl>
         {typeof raw === "string" ? (
           <div className="min-w-0 flex-[1_1_380px]">
-            <div className="mb-1 text-sm text-text-secondary">Raw event</div>
+            <div className="mb-1 flex items-center gap-2 text-sm text-text-secondary">
+              {sql !== null ? "Raw event" : "raw column of this result"}
+              <CopyRaw raw={raw} />
+            </div>
             <pre className="m-0 whitespace-pre-wrap break-all rounded border border-border bg-inset px-3 py-2.5 font-mono text-sm">
               {raw}
             </pre>
           </div>
+        ) : sql !== null && full.isError ? (
+          <p className="min-w-0 flex-[1_1_380px] text-sm text-text-secondary">
+            The stored raw event could not be loaded, so it cannot be shown or copied here.
+          </p>
         ) : null}
       </div>
     </div>

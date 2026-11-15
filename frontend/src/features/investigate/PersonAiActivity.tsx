@@ -9,7 +9,7 @@ import { ApiError, api, type PersonAiCount } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { navigateTab } from "@/lib/route";
 import { useViewer } from "@/lib/viewer";
-import { Box } from "./PersonLists";
+import { Card } from "@/components/Card";
 
 const TH = "px-3 py-2";
 const TD = "px-3 py-1.5";
@@ -26,7 +26,7 @@ function Counts({
   empty: string;
 }) {
   return (
-    <Box label={label}>
+    <Card title={label}>
       {rows.length ? (
         <ul className="flex flex-col py-1 text-sm">
           {rows.map((r) => (
@@ -43,7 +43,7 @@ function Counts({
       ) : (
         <p className="px-3 py-3 text-sm text-text-muted">{empty}</p>
       )}
-    </Box>
+    </Card>
   );
 }
 
@@ -76,7 +76,7 @@ export function PersonAiActivity({ person, days }: { person: string; days: numbe
   const range = lastDays(days);
   return (
     <div aria-label="AI activity" role="region" className="flex flex-col gap-3">
-      <Box label="Flags" note={range}>
+      <Card title="Flags" note={range}>
         {a.flags.length ? (
           <ul className="flex flex-col gap-1 px-3 py-2 text-sm">
             {a.flags.map((f) => (
@@ -97,9 +97,9 @@ export function PersonAiActivity({ person, days }: { person: string; days: numbe
         ) : (
           <p className="px-3 py-3 text-sm text-text-secondary">Nothing flagged in this range.</p>
         )}
-      </Box>
+      </Card>
       <div className="grid gap-3 lg:grid-cols-2">
-        <Box label="Accounts and devices">
+        <Card title="Accounts and devices">
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 px-3 py-2 text-sm">
             <dt className="text-text-secondary">Claude accounts</dt>
             <dd>
@@ -130,8 +130,11 @@ export function PersonAiActivity({ person, days }: { person: string; days: numbe
               )}
             </dd>
           </dl>
-        </Box>
-        <Box label="AI services on the network" note="DNS, firewall, and proxy logs">
+        </Card>
+        <Card
+          title="AI services on the network"
+          about="Lookups seen in DNS, firewall, and proxy logs."
+        >
           {a.services.length ? (
             <table className="w-full text-sm">
               <thead>
@@ -162,9 +165,9 @@ export function PersonAiActivity({ person, days }: { person: string; days: numbe
               No AI services seen for this person on the network in this range.
             </p>
           )}
-        </Box>
+        </Card>
       </div>
-      <Box label="Claude Code sessions" note={`${range}, newest first`}>
+      <Card title="Claude Code sessions" note={`${range}, newest first`}>
         {a.sessions.length ? (
           <ul className="flex flex-col text-sm">
             {a.sessions.map((s) => (
@@ -193,7 +196,7 @@ export function PersonAiActivity({ person, days }: { person: string; days: numbe
             No Claude Code sessions from the hooks plugin in this range.
           </p>
         )}
-      </Box>
+      </Card>
       {a.cut ? (
         <p role="note" className="text-sm text-text-muted">
           More activity than one page counts: the rollups cover the earliest records in the range.

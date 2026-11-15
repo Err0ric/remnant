@@ -23,8 +23,9 @@ from app.ai.inventory import Exclusions, inventory
 from app.ai.inventory import export as inventory_export
 from app.ai.people_view import HIDDEN, audit_ai_view, can_view_people, mask_person, tie
 from app.ai.person_ai import activity as person_activity
+from app.ai.session_summary import summary as session_summary
 from app.ai.sessions import sessions, timeline
-from app.ai.usage import ServiceUse, Usage, merge_people, seen_through
+from app.ai.usage import Earlier, ServiceUse, Usage, merge_people, seen_through
 from app.ai.watch import AiWatch, describe
 from app.ai.watch_summary import source_classes
 from app.ai.watch_summary import summary as watch_summary
@@ -208,15 +209,29 @@ async def ai_usage(
         )  # fmt: skip
         return out  # type: ignore[no-any-return]  # a UsageOut this route stored
     full = await run_in_threadpool(request.app.state.identities.load)
-    # The independent reads at once: a page load waits for the slowest, not the sum.
-    # MCP people are counted with `full`: a count over names the caller's rows show
-    # adds up only names those rows link (T70); nothing from the map is shown.
-    (found, sources), mcp, rows, (pending, of), network = await asyncio.gather(
+    # With a start, the period of the same length before it, compared with the range below.
+    earlier: datetime | None = None
+    before: QueryScope | None = None
+    if start is not None:
+        stop = end or app_now(request)
+        earlier = start - (stop - start)
+        # The scope's end is inclusive; stop just short of `start` so no event is in both.
+        before = await _scope(request, user, earlier, start - timedelta(microseconds=1))
+
+    async def earlier_reads() -> Earlier | None:
+        return None if before is None else await run_in_threadpool(usage.earlier, before, full)
+
+    # The independent reads at once, the period before included: a page load waits for the
+    # slowest, not the sum. MCP people are counted with `full`: a count over names the
+    # caller's rows show adds up only names those rows link (T70); nothing from the map is
+    # shown. The comparison uses only service and MCP server names, never people.
+    (found, sources), mcp, rows, (pending, of), network, old = await asyncio.gather(
         run_in_threadpool(usage.all_services, scope),
         run_in_threadpool(usage.mcp, scope, full),
         run_in_threadpool(usage.people, scope),
         run_in_threadpool(usage.people_pending, scope),
         run_in_threadpool(usage.claude_network_people, scope),
+        earlier_reads(),
     )
     # The shown names: the whole map for an administrator (D223); for anyone else only
     # the links and organization domains the page's own names show (T70, D219), so a
@@ -228,12 +243,8 @@ async def ai_usage(
     services = [u for u in found if u.service.kind != NON_USAGE]
     other = [u for u in found if u.service.kind == NON_USAGE]
     changes, compared_from = None, None
-    if start is not None:
-        stop = end or app_now(request)
-        earlier = start - (stop - start)
-        # The scope's end is inclusive; stop just short of `start` so no event is in both.
-        before = await _scope(request, user, earlier, start - timedelta(microseconds=1))
-        changes, read_before = await run_in_threadpool(usage.changes, services, mcp, before, ident)
+    if old is not None and earlier is not None:
+        changes, read_before = usage.compare(services, mcp, old)
         sources = sorted(set(sources) | set(read_before))
         if changes.earlier:
             compared_from = earlier.isoformat()
@@ -865,6 +876,10 @@ class StepOut(BaseModel):
     output_chars: int | None
     event_id: str
     late_s: int | None = None  # delivered this long after it happened (offline queue)
+    # prompt | tool_call | tool_result | file_access | access | other, derived on the server
+    # from the record (app.ai.sessions.step_type), never stored
+    type: Literal["prompt", "tool_call", "tool_result", "file_access", "access", "other"] = "other"
+    counted: bool = True  # False: Claude Code bookkeeping (D186), never a failed or open call
 
 
 class TimelineOut(BaseModel):
@@ -946,6 +961,67 @@ async def ai_session(
         steps=[StepOut(**_slots(x)) for x in t.steps],
         masked=not named_ok,
     )
+
+
+class SessionSummaryOut(BaseModel):
+    session_id: str
+    person: str | None
+    machine: str | None
+    account: str | None  # the Claude account the plugin reported
+    started: str
+    last: str
+    length_s: int
+    state: Literal["ended", "idle", "open"]
+    prompts: int  # requests
+    tool_calls: int
+    failed: int
+    unanswered: int  # tool calls with no result (blocked, interrupted, or still running)
+    # Null when no token metrics arrived for this session ("Not reported", never 0).
+    tokens_in: int | None
+    tokens_out: int | None
+    files: int  # distinct paths touched
+    files_outside: int  # distinct paths written outside the session's folder
+    new_mcp: list[str]  # MCP servers first used in this session (in the range)
+    types: dict[str, int]  # steps per type, every type listed
+    steps: int  # every step, also those the steps list leaves out
+    steps_cut: bool  # the steps list stops before the session's end
+    sql: str = ""  # the session's records for Logs, the window as placeholders
+    masked: bool = False  # `person` and `account` are the machine (or "Hidden"), D242
+
+
+@router.get("/ai/sessions/{session_id}/summary")
+async def ai_session_summary(
+    session_id: str,
+    request: Request,
+    user: CurrentUser,
+    days: Annotated[int, Query(ge=1, le=90)] = 30,
+) -> SessionSummaryOut:
+    """One session in numbers, counted over the whole session: prompts, tool calls with
+    how many failed or got no result, tokens in and out (null when Claude Code telemetry
+    sent none), files touched and how many were written outside the session's folder, the
+    flags' inputs, and the steps per type. Metadata only. Without View people in AI usage,
+    the machine stands in for the person and the account (D242). Audited as one session:
+    ai.view_people when a name is shown, else ai.view, with the session id."""
+    meta: MetaDB = request.app.state.meta
+    allowed = await run_in_threadpool(permitted_sources, meta, user)
+    engine: QueryEngine = request.app.state.engine
+    idle = request.app.state.config.agents.session_idle_minutes
+    at = app_now(request)
+    s = await run_in_threadpool(session_summary, engine, allowed, session_id, at, days, idle)
+    named_ok = can_view_people(user)
+    await run_in_threadpool(
+        audit_ai_view, _audit(request).audit, user, client_ip(request), "ai.session_summary",
+        at - timedelta(days=days), at, allowed,
+        named_ok and (s.person is not None or s.account is not None),
+        session_id=session_id[:200],
+    )  # fmt: skip
+    out = SessionSummaryOut(**_slots(s))
+    if named_ok:
+        return out
+    return out.model_copy(
+        update={"person": mask_person(s.person, s.machine),
+                "account": mask_person(s.account, s.machine), "masked": True}
+    )  # fmt: skip
 
 
 class AccountRowOut(BaseModel):
@@ -1206,6 +1282,30 @@ async def ai_inventory(
         sources_in_scope=sources,
         masked=not named_ok,
     )
+
+
+class InventoryCountOut(BaseModel):
+    to_review: int
+
+
+@router.get("/ai/inventory/count")
+async def ai_inventory_count(request: Request, user: CurrentUser) -> InventoryCountOut:
+    """How many items of the viewer's Inventory are still to review, for the rail's AI
+    usage count (D258): active items nobody has marked Approved or Not approved, as the
+    Inventory's header counts them, on the viewer's own sources over its 30 days. Numbers
+    only: it names nothing, so like `/health/count` it writes no audit row. Kept in the
+    page cache for 60 s, which any change in the app empties, so a review shows at once;
+    the audited Inventory read never comes from this answer."""
+    meta: MetaDB = request.app.state.meta
+    allowed = await run_in_threadpool(permitted_sources, meta, user)
+    cache: PageCache = request.app.state.page_cache
+    key = ("ai_inventory_count", scope_key(allowed), can_view_people(user))
+    hit = cache.get(key)
+    if hit is None:
+        items, _ = await _inventory(request, user, 30)
+        hit = sum(1 for i in items if i.excluded is None and i.status == "unreviewed")
+        cache.put(key, hit)
+    return InventoryCountOut(to_review=int(hit))
 
 
 @router.get("/ai/inventory/export")

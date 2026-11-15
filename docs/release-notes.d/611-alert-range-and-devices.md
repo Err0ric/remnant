@@ -1,0 +1,7 @@
+### Alerts keep an AI Watch alert's time range and devices current (2026-11-14)
+
+- An AI Watch alert for a service or MCP server is kept current by the hourly review, and its time range now is too: it covers the last 7 days the alert counts, not the time since it was first raised. Who used a device is looked up over that range, so a person seen on the device in those 7 days is named (to viewers who may see people), and Show events in Logs opens that range.
+- Other alerts kept current keep the start of their range as before: Refused credentials covers the whole burst from its first refusal, and Sensitive data its day.
+- An alert lists at most 20 devices. It now keeps host names first, the most recently seen first, then their addresses, so a busy alert no longer loses every host name to addresses. The alert's text names its first five devices in that order too (it was alphabetical). When the list is cut, the alert says so ("20 of 85 devices and addresses").
+- What you will notice: AI Watch alerts on busy services show their devices by name, can say who used them, and say when the list is cut.
+- What changes for existing installs: nothing to do. Open AI Watch alerts take the new range and device order at their next hourly review, within an hour of the update; closed alerts stay as they were. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`); the new column is left unused.

@@ -6,6 +6,7 @@ import { ParserMix } from "./ParserMix";
 import { Fragment, useEffect, useState } from "react";
 import { useSection } from "@/lib/route";
 import { GapNote } from "@/features/health/GapNote";
+import { idleText, shownGaps } from "@/features/health/flow";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { ApiError, api, type Source, type SourceInput } from "@/lib/api";
 import { AddSourceForm } from "./AddSourceForm";
@@ -18,6 +19,7 @@ import { LokiSummary } from "./LokiSummary";
 import { OtlpControls } from "./OtlpSetup";
 import { MappingChanges } from "./MappingChanges";
 import { QuietAlert } from "./QuietAlert";
+import { QuietOkEditor } from "./QuietOkEditor";
 import { VendorAlertNotify } from "./VendorAlertNotify";
 import { ReparseControl } from "./ReparseControl";
 import { ReparseRulesControl } from "./ReparseRulesControl";
@@ -75,6 +77,7 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
   // Gaps in the last 24 hours, as Health shows them (F61), and the source a link opened.
   const overview = useQuery({ queryKey: ["overview"], queryFn: api.overview });
   const gapsOf = new Map((overview.data?.volume ?? []).map((v) => [v.source_id, v.gaps]));
+  const judged = new Map((overview.data?.sources ?? []).map((h) => [h.source_id, h]));
   const section = useSection();
   const focus = section.startsWith("source=") ? decodeURIComponent(section.slice(7)) : null;
   useEffect(() => {
@@ -299,6 +302,22 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
                               quiet={s.quiet}
                               canManage={canManage}
                             />
+                            {(s.kind === "otlp" || s.kind === "syslog") && !s.built_in ? (
+                              <QuietOkEditor
+                                sourceId={s.source_id}
+                                value={s.quiet_ok_days ?? null}
+                                quietAlert={Boolean(s.quiet)}
+                                canManage={canManage}
+                                idle={
+                                  judged.get(s.source_id)?.idle && overview.data
+                                    ? idleText(
+                                        judged.get(s.source_id)?.last_event_at ?? null,
+                                        overview.data.generated_at,
+                                      )
+                                    : null
+                                }
+                              />
+                            ) : null}
                             {s.emits_alerts || s.alert_pause ? (
                               <VendorAlertNotify
                                 sourceId={s.source_id}
@@ -319,7 +338,7 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
                             />
                             <GapNote
                               sourceId={s.source_id}
-                              gaps={gapsOf.get(s.source_id) ?? []}
+                              gaps={shownGaps(judged.get(s.source_id), gapsOf.get(s.source_id))}
                               now={overview.data?.generated_at ?? new Date().toISOString()}
                             />
                           </div>

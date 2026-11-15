@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type ReactNode } from "react";
 import { SetupPage } from "./SetupPage";
 import { SignInPage } from "./SignInPage";
+import { forgetAllRecent } from "@/lib/recentEntities";
 import { api, setAuthLostHandler, setCsrfToken, type AuthState, type User } from "@/lib/api";
 
 export const AUTH_KEY = ["auth-state"] as const;
@@ -33,6 +34,12 @@ export function AuthGate({ children }: AuthGateProps) {
   }, [client]);
 
   const data = state.data;
+  const signedOut = data?.mode === "login" && !data.user;
+  // Signed out, or the session found ended: the rail's Recent kept in this browser goes
+  // (D258), so the next person at a shared browser cannot read it.
+  useEffect(() => {
+    if (signedOut) forgetAllRecent();
+  }, [signedOut]);
 
   const signedIn = (next: { user: User; csrf_token?: string }) => {
     setCsrfToken(next.csrf_token ?? null);

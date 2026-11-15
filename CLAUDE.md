@@ -131,6 +131,8 @@ Users are internal and not technical: nothing breaks, nothing gets slower, and s
 
 By hand: `cd backend && uv run python ../scripts/bench_compare.py --before origin/main --after HEAD` (commit first), then `cd frontend && pnpm build` and `cd backend && uv run python ../scripts/smoke.py --lake ../data/bench/lake` (once per machine: `uv run playwright install chromium`).
 
+Large lake, by hand before a release and when a PR touches the Dashboard sections, AI usage, or People & devices: the same table on 30 days at the work install's rate (about 10.7 million events), in its own folder, through `scripts/dev/heavy.sh`: `cd backend && uv run python ../scripts/bench_compare.py --before origin/main --after HEAD --lake ../data/bench/lake-prod30 --real-shape 0.313 --real-days 30`. The queue and `smoke.py` keep the default lake. Every bench lake is kept compacted with its rollups built, as an install runs, and is built again each UTC day.
+
 ## 10. Local development workflow
 
 Roles and standing orders for development sessions, when present: @.claude/factory.md

@@ -8,13 +8,22 @@ describe("columnTemplate", () => {
       ["203.0.113.9", 278, "short"],
       ["198.51.100.200", 264, "a much longer message here"],
     ];
-    expect(columnTemplate(cols, rows, [0, 1, 2])).toBe("32px 17ch 16ch minmax(29ch, 1fr)");
+    // Message takes what is left and may shrink to 16ch: it truncates, the others do not.
+    expect(columnTemplate(cols, rows, [0, 1, 2])).toBe("32px 17ch 16ch minmax(16ch, 1fr)");
+    // Wherever it stands.
+    expect(columnTemplate(["message", "n"], [["some text here", 5]], [0, 1])).toBe(
+      "32px minmax(16ch, 1fr) 4ch",
+    );
   });
 
   it("caps very long values and gives severity a fixed width", () => {
     const cols = ["severity_id", "raw"];
     const rows = [[3, "x".repeat(500)]];
-    expect(columnTemplate(cols, rows, [0, 1], 48)).toBe("32px 12ch minmax(51ch, 1fr)");
+    // Without a message column the last one takes what is left.
+    expect(columnTemplate(cols, rows, [0, 1], 48)).toBe("32px 12ch minmax(16ch, 1fr)");
+    expect(columnTemplate(["host", "n"], [["bastion", 5]], [0, 1])).toBe(
+      "32px 10ch minmax(4ch, 1fr)",
+    );
   });
 });
 

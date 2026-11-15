@@ -111,8 +111,12 @@ export const SEVERITY: Record<number, { label: string; tone: string }> = {
 /**
  * Shared grid template for the results table. Every row uses the same column widths,
  * sized from the header and the values on the current page (in ch, since values are
- * monospace), capped so one long value cannot push the rest off screen.
+ * monospace), capped so one long value cannot push the rest off screen. One column takes
+ * the width that is left and may shrink to `FLEX_MIN_CH` (its values truncate; the full
+ * text is in the expanded row): `message` when the result has it, else the last column.
  */
+export const FLEX_MIN_CH = 16;
+
 export function columnTemplate(
   columns: string[],
   rows: Cell[][],
@@ -121,9 +125,11 @@ export function columnTemplate(
   /** Characters shown after a value (the GeoIP label), counted into its width. */
   extra?: (value: Cell) => number,
 ): string {
+  const message = indexes.findIndex((i) => columns[i] === "message");
+  const flex = message >= 0 ? message : indexes.length - 1;
   const widths = indexes.map((i, pos) => {
     const name = columns[i] ?? "";
-    if (name === "severity_id") return 12;
+    if (name === "severity_id" && pos !== flex) return 12;
     let longest = columnLabel(name).length;
     for (const row of rows) {
       const value = row[i] ?? null;
@@ -132,7 +138,7 @@ export function columnTemplate(
       if (longest >= maxCh) break;
     }
     const ch = Math.min(longest, maxCh) + 3; // room for cell padding
-    return pos === indexes.length - 1 ? -ch : ch;
+    return pos === flex ? -Math.min(ch, FLEX_MIN_CH) : ch;
   });
   const parts = widths.map((w) => (w < 0 ? `minmax(${-w}ch, 1fr)` : `${w}ch`));
   return ["32px", ...parts].join(" ");

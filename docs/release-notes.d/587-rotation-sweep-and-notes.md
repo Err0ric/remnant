@@ -1,0 +1,7 @@
+### Log rotation: the read position follows the file, part 3 (2026-11-13)
+
+- ADR-0051 (D250), the last part. Read positions of files that have not been listed or read for 30 days are removed by the daily maintenance. Before, they stayed for ever. A position is removed only when its file is known to be gone: the folder is there, on the same disk, without the file. A share that is not mounted, or a folder that is away, keeps its positions, so nothing is read twice when it returns.
+- After a restart, when a log file was rotated while the server was not running, the source shows a warning on Health and Sources for a day: lines written to the old file after the time named, if there were any, were not read. There is no warning when the source's pattern also matches the rotated file, since it is then read like any file, and none for rotations while the server runs.
+- The rotation guide (`docs/ingest/README.md`, "Rotating log files") describes the new behaviour: rotate with `create`; rotated files that are not compressed and that a source's pattern matches are not read twice; with `copytruncate` keep the copies out; what can still be missed.
+- What you will notice: nothing, unless a file was rotated while the server was down; then a warning on that source says so.
+- What changes for existing installs: nothing to do. Do not delete and re-add a source to change its file pattern: a source added again reads its files from the start. To go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`).

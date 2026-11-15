@@ -145,9 +145,16 @@ def for_alerts(
     if not seen:
         return {}
     scoped = ident if whole_map else ident.seen_in(s.name for s in seen)
+    # Each host's records once (findings 2026-11, alerts load): matching every host of every
+    # alert against every record took 0.8 s of a 1.2 s list with 200 alerts of 20 hosts.
+    by_host: dict[str, list[Seen]] = {}
+    for s in seen:
+        by_host.setdefault(s.host, []).append(s)
     out: dict[str, list[DevicePerson]] = {}
     for a in asked:
-        found = [resolve(seen, scoped, h, a.start, a.end) for h in a.hosts]
+        found = [
+            resolve(by_host.get(h.strip().lower(), []), scoped, h, a.start, a.end) for h in a.hosts
+        ]
         kept = [f for f in found if f is not None]
         if kept:
             out[a.key] = kept

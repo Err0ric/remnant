@@ -47,10 +47,10 @@ describe("rows the server builds", () => {
     }
   });
 
-  it("a person's sign-ins", async () => {
+  it("a person's Microsoft 365 rows", async () => {
     const spy = await renderAt("/investigate/people#user=alice%40example.com");
     await vi.waitFor(() =>
-      expect(called(spy, "/api/people/alice%40example.com/signins")).toBe(true),
+      expect(called(spy, "/api/people/alice%40example.com/m365?name=sign_ins")).toBe(true),
     );
     expect(called(spy, "/api/query")).toBe(false);
   });

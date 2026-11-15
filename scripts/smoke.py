@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Smoke test (owner rule, 2026-11-08): open every page in headless Chromium as an Admin,
 an Analyst, and an Auditor, and fail on any console error, any 4xx or 5xx response the
-role is not expected to get, and any blank panel.
+role is not expected to get, any blank panel, and any list with more rows than it shows
+that has no working pager.
 
     cd backend && uv run python ../scripts/smoke.py --url http://127.0.0.1:8090  # a demo install
     cd backend && uv run python ../scripts/smoke.py --lake ../data/bench/lake    # this checkout
@@ -16,7 +17,10 @@ The three roles run at once, one browser each.
 
 A blank panel is: the page's main region showing under 40 characters of text, a loading
 placeholder (aria-busy, "Loading...") still there 20 s after the page loaded, or a page or
-card that says it could not be shown. Needs Python Playwright with Chromium.
+card that says it could not be shown. A working pager (owner, 2026-11-13): a results list
+of more than one page has its Next button on screen and enabled, and Next shows other rows;
+a results list that is full (as many rows as the smallest page) with no pager at all is a
+failure too. Needs Python Playwright with Chromium.
 """
 
 from __future__ import annotations
@@ -95,6 +99,72 @@ def expected(role: str, method: str, url: str) -> bool:
     return any(r == role and m == method and path.startswith(p) for r, m, p in EXPECTED)
 
 
+# What a page shows of paged lists: each results list with the rows it shows, the rows
+# its result holds, its first row, and the pager drawn with it (same parent), if any.
+PAGERS_JS = """() => ({
+  view: document.documentElement.clientWidth,
+  lists: [...document.querySelectorAll('[role=treegrid]')].map((g) => {
+    const box = g.closest('[data-scroll-x]') ?? g;
+    const nav = box.parentElement?.querySelector(':scope > [data-pager]') ?? null;
+    const next = nav?.querySelector('[data-pager-next]') ?? null;
+    const r = next ? next.getBoundingClientRect() : null;
+    return {
+      rows: g.querySelectorAll('[role=row][aria-level="1"]').length,
+      total: +(g.dataset.total ?? 0),
+      first: g.querySelector('[role=row][aria-level="1"]')?.textContent ?? "",
+      pager: nav && {page: +nav.dataset.page, pages: +nav.dataset.pages, next: !!next,
+                     disabled: next ? next.disabled : true, left: r ? r.left : -1,
+                     right: r ? r.right : -1, width: r ? r.width : 0},
+    };
+  }),
+})"""
+
+
+def pager_problems(state: dict) -> list[str]:  # type: ignore[type-arg]  # the JSON of PAGERS_JS
+    """What is wrong with the paged lists a page shows, in words; empty when nothing is.
+    Each list is judged with its own pager."""
+    out: list[str] = []
+    for one in state["lists"]:
+        p = one["pager"]
+        if p is None:
+            if one["total"] > one["rows"]:
+                out.append("pager: a results list holds more rows than it shows and has no pager")
+            continue
+        if p["pages"] < 2:
+            continue
+        if not p["next"] or p["width"] <= 0:
+            out.append("pager: more than one page but no Next button is drawn")
+        elif p["left"] < 0 or p["right"] > state["view"]:
+            out.append("pager: the Next button is off screen sideways")
+        elif p["disabled"] and p["page"] < p["pages"]:
+            out.append("pager: Next is disabled before the last page")
+    return out
+
+
+def pager_works(page) -> list[str]:  # type: ignore[no-untyped-def]  # a Playwright page
+    """The static checks, then a click on the first list of more than one page: its own
+    Next must show other rows in that list and say page 2."""
+    state = page.evaluate(PAGERS_JS)
+    problems = pager_problems(state)
+    at = next(
+        (i for i, one in enumerate(state["lists"]) if one["pager"] and one["pager"]["pages"] > 1),
+        None,
+    )
+    if problems or at is None:
+        return problems
+    grid = page.locator("[role=treegrid]").nth(at)
+    grid.locator("xpath=ancestor-or-self::*[@data-scroll-x][1]/..").locator(
+        ":scope > [data-pager] [data-pager-next]"
+    ).first.click()
+    page.wait_for_timeout(300)
+    after = page.evaluate(PAGERS_JS)["lists"]
+    if at >= len(after) or not after[at]["pager"] or after[at]["pager"]["page"] != 2:
+        return ["pager: Next did not move to page 2"]
+    if after[at]["first"] == state["lists"][at]["first"]:
+        return ["pager: Next shows the same rows"]
+    return []
+
+
 def main_text(page) -> str:  # type: ignore[no-untyped-def]  # a Playwright page
     """The page's main region as a reader sees it; empty when there is none."""
     return str(page.inner_text("main")) if page.locator("main").count() else ""
@@ -152,6 +222,7 @@ def check(base: str, roles: tuple[tuple[str, str], ...] = ROLES) -> list[str]:
                 if page.locator(BUSY).count() or "Loading…" in text:
                     seen.append(f"blank: still loading after {SETTLE_S} s")
                 seen += [f"blank: says '{b}'" for b in BROKEN if b in text]
+                seen += pager_works(page)
                 problems += [f"{role} {path}: {s}" for s in dict.fromkeys(seen)]
             ctx.close()
         browser.close()

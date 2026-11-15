@@ -342,6 +342,17 @@ class SourcesConfig(_Strict):
     gap_max_notify_per_day: int = Field(default=3, ge=1, le=100)
 
 
+class AlertsConfig(_Strict):
+    """Alert handling numbers (Alerts > Handling, D261): an open alert is overdue once it
+    has been open longer than this many days for its severity. Alerts with no severity
+    use `overdue_days_low`. Observed and reported only; nothing is enforced."""
+
+    overdue_days_critical: int = Field(default=1, ge=1, le=365)
+    overdue_days_high: int = Field(default=3, ge=1, le=365)
+    overdue_days_medium: int = Field(default=7, ge=1, le=365)
+    overdue_days_low: int = Field(default=30, ge=1, le=365)
+
+
 class EnrichmentConfig(_Strict):
     # Treat documentation addresses (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24,
     # 2001:db8::/32) as public so a GeoIP file can place them. For the demo install only
@@ -364,6 +375,7 @@ class AppConfig(_Strict):
     m365: M365Config = Field(default_factory=M365Config)
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
     sources: SourcesConfig = Field(default_factory=SourcesConfig)
+    alerts: AlertsConfig = Field(default_factory=AlertsConfig)
     ask: AskConfig = Field(default_factory=AskConfig)
 
 

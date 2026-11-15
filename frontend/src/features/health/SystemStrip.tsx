@@ -1,9 +1,8 @@
-import type { ReactNode } from "react";
 import type { AlertList, Overview, SourceSummary } from "@/lib/api";
+import { KpiTile } from "@/components/KpiTile";
 import { since, stamp } from "@/features/overview/time";
 import { eventsChange, sourcesSummaryText, type OpenGap } from "./flow";
 import { COUNTED } from "@/features/dashboard/counted";
-import { About } from "@/features/dashboard/Sections";
 
 export interface SourceTally {
   /** Counted once on the server, the same the Dashboard footer shows (handoff item 4). */
@@ -12,134 +11,96 @@ export interface SourceTally {
   openGaps?: OpenGap[];
 }
 
-interface TileProps {
-  label: string;
-  value: ReactNode;
-  lines: ReactNode[];
-  tone?: "ok" | "warn" | "danger";
-  onClick: () => void;
-  title?: string;
-  /** How the number is counted; required for every tile (owner 2026-11-02). */
-  about: string;
-}
-
-// Benign values are muted, never green: status colors are for what needs action (DESIGN.md).
-const TONE = { ok: "text-text-muted", warn: "text-warn", danger: "text-danger" };
-
-function Tile({ label, value, lines, tone, onClick, title, about }: TileProps) {
-  return (
-    <button
-      type="button"
-      data-kpi={label}
-      onClick={onClick}
-      title={title}
-      className="flex min-w-0 flex-col items-start gap-0.5 rounded-card border border-border bg-surface px-4 py-3 text-left hover:bg-surface-head"
-    >
-      <span className="flex items-center gap-1.5 text-sm text-text-secondary">
-        {label}
-        <About text={about} />
-      </span>
-      <span className={`text-kpi tabular-nums ${tone ? TONE[tone] : ""}`}>{value}</span>
-      {lines.map((l, i) => (
-        <span key={i} className="w-full text-sm text-text-secondary [overflow-wrap:anywhere]">
-          {l}
-        </span>
-      ))}
-    </button>
-  );
-}
-
 interface SystemStripProps {
   overview: Overview | undefined;
-  /** Not yet loaded: the tile shows a dot. */
+  /** Not counted (an overview without a summary): the tile shows a dot. */
   tally: SourceTally | undefined;
   /** Open alerts the viewer may read (ADR-0037). */
   alerts: Pick<AlertList, "items" | "open"> | undefined;
+  /** The overview read failed: its tiles say so, with Retry, instead of loading for ever. */
+  overviewFailed?: () => void;
+  /** The newest-alert read failed. */
+  alertsFailed?: () => void;
   isAdmin: boolean;
   now: string;
-  onEvents: () => void;
-  onSources: () => void;
-  onAttention: () => void;
-  onDelivery: () => void;
 }
 
 /** Health's four answers (F55): is data arriving, is every source flowing, is anything
- * flagged, and do alerts get out. Each tile opens the detail behind it. */
+ * flagged, and do alerts get out. One strip of Dashboard tiles (D255): each leads with a
+ * number in the text color, the Sources count in the warn color when not all are healthy,
+ * and a tile whose data is still loading shows bars, never a zero or an all-clear. */
 export function SystemStrip(p: SystemStripProps) {
   const o = p.overview;
-  const change = o ? eventsChange(o) : null;
   const newest = p.alerts?.items[0];
-  const open = p.alerts?.open ?? 0;
   const failed = o?.alerts?.failed_deliveries ?? 0;
   const failing = (o?.alerts?.targets ?? []).filter((t) => t.failing);
   const sum = p.tally?.summary;
   const sourcesOk = !sum || (sum.healthy === sum.total && sum.gaps === 0);
-  // The same words as the Dashboard footer: "2 quiet: ...", the gaps, the longest wait.
-  const sourceLines = sum
-    ? sourcesSummaryText(sum, o?.generated_at ?? p.now).details.map(
-        (d) => d.charAt(0).toUpperCase() + d.slice(1),
-      )
-    : [""];
+  // The same words as the Dashboard footer, on one line: "2 quiet: ...; no gaps in 24 hours".
+  const sourceLine = sum
+    ? sourcesSummaryText(sum, o?.generated_at ?? p.now).details.join("; ")
+    : "";
   return (
-    <div
-      className={`grid grid-cols-1 gap-3 sm:grid-cols-2 ${p.isAdmin ? "xl:grid-cols-4" : "xl:grid-cols-3"}`}
+    <section
+      aria-label="Health numbers"
+      className={`grid grid-cols-1 gap-px overflow-hidden rounded-card border border-border bg-border sm:grid-cols-2 ${p.isAdmin ? "xl:grid-cols-4" : "xl:grid-cols-3"}`}
     >
-      <Tile
+      <KpiTile
         label="Events, last 24 hours"
         about={COUNTED.events24h}
-        value={o ? o.events_24h.toLocaleString() : "·"}
-        lines={[change ?? ""]}
+        loading={!o && !p.overviewFailed}
+        failed={o ? undefined : p.overviewFailed}
+        value={o?.events_24h.toLocaleString()}
+        context={o ? eventsChange(o) : null}
         title={o ? `Up to ${stamp(o.generated_at)} UTC` : undefined}
-        onClick={p.onEvents}
+        page="logs"
+        opens="Logs"
       />
-      <Tile
-        label="Sources"
+      <KpiTile
+        label="Sources healthy"
         about={COUNTED.sourcesHealthy}
-        value={
-          sum ? (
-            <>
-              {sum.healthy}
-              <span className="text-base font-normal text-text-secondary">
-                {" "}
-                of {sum.total} healthy
-              </span>
-            </>
-          ) : (
-            "·"
-          )
-        }
-        tone={sourcesOk ? undefined : "warn"}
-        lines={sourceLines}
-        onClick={p.onSources}
+        loading={!o && !p.overviewFailed}
+        failed={o ? undefined : p.overviewFailed}
+        value={sum ? `${sum.healthy.toLocaleString()} of ${sum.total.toLocaleString()}` : "·"}
+        tone={sourcesOk ? "text" : "warn"}
+        context={sourceLine.charAt(0).toUpperCase() + sourceLine.slice(1)}
+        page="health"
+        tab="sources"
+        opens="the Sources tab"
       />
-      <Tile
+      <KpiTile
         label="Open alerts"
         about={COUNTED.openAlerts}
-        value={p.alerts ? open : "·"}
-        tone={open ? "warn" : undefined}
-        lines={[
+        loading={!p.alerts && !p.alertsFailed}
+        failed={p.alerts ? undefined : p.alertsFailed}
+        value={(p.alerts?.open ?? 0).toLocaleString()}
+        context={
           newest
             ? `Newest: ${newest.title}, ${since(newest.created_at, p.now)}`
-            : "Nothing needs a decision",
-        ]}
-        onClick={p.onAttention}
+            : "Nothing needs a decision"
+        }
+        page="alerts"
+        opens="Alerts"
       />
       {p.isAdmin ? (
-        <Tile
+        <KpiTile
           label="Alert delivery, last 24 hours"
           about={COUNTED.delivery}
-          value={failed ? failed : "All delivered"}
-          tone={failed || failing.length ? "danger" : undefined}
-          lines={[
+          loading={!o && !p.overviewFailed}
+          failed={o ? undefined : p.overviewFailed}
+          value={`${failed.toLocaleString()} failed`}
+          context={
             failing.length
               ? `Failing: ${failing.map((t) => t.name).join(", ")}`
               : failed
                 ? "Retried; check the targets"
-                : "No failed deliveries",
-          ]}
-          onClick={p.onDelivery}
+                : "All delivered"
+          }
+          page="health"
+          tab="delivery"
+          opens="the Delivery tab"
         />
       ) : null}
-    </div>
+    </section>
   );
 }

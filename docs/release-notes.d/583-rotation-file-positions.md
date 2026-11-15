@@ -1,0 +1,10 @@
+### Log rotation: the read position follows the file, part 1 (2026-11-13)
+
+- ADR-0051 (D250), audit 2026-11 finding H5. A text file's read position now belongs to the file itself, not to its name. A rotated copy that a folder source also lists is no longer read a second time, and a new file is never continued from an older file's position.
+- A file that was emptied and refilled in place (logrotate `copytruncate`) is read again from its start, also when it had already grown past the old position. The source then shows a warning on Health and Sources for a day, naming the file: lines written during such a rotation can be lost before anything reads them, so rotate with `create`. The same warning can appear once when a correctly rotated file's replacement was given the old file's number by the file system; nothing is lost then.
+- A file that has not changed is not opened at all.
+- A disk whose device number changes after a restart or a remount does not cause files to be read again: the same file number with the same content is the same file, also when it was renamed meanwhile.
+- Deleting a source and adding it again under the same id reads its files from the start, as before.
+- Not in this part: lines written to a single-file source just before a rename are still lost, as before. Following the renamed file is part 2.
+- What you will notice: nothing, unless a source rotates with `copytruncate`; then a warning on Health and Sources says so.
+- What changes for existing installs: nothing to do. At the first start the server copies its read positions into a new table (`file_positions`, migration 77), so nothing is read twice; a file that is missing or cannot be opened then (a folder not mounted yet, a permission) keeps its old position until it can be read, for up to 7 days. The spool files of push sources are covered too. The old table is still written: to go back, roll back the update (`docs/install/`, `update-systemd.sh --rollback`) and the older version reads on from where this one stopped. Updating again after that picks up from where the older version stopped.

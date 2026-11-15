@@ -132,6 +132,8 @@ RECORDED: frozenset[tuple[str, str]] = frozenset(
         ("POST", "/api/library/{pack_id}/{query_id}/copy"),
         ("POST", "/api/library/{pack_id}/{query_id}/replace"),
         ("PUT", "/api/mcp/settings"),
+        ("DELETE", "/api/pins/{kind}/{target_id}"),
+        ("PUT", "/api/pins/{kind}/{target_id}"),
         ("POST", "/api/providers"),
         ("DELETE", "/api/providers/{provider_id}"),
         ("PATCH", "/api/providers/{provider_id}"),

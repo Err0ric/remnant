@@ -7,6 +7,7 @@ import {
   type EntityTab,
 } from "@/lib/entity";
 import { cn } from "@/lib/cn";
+import { Truncate } from "@/components/Truncate";
 import { kindOf } from "@/features/investigate/entityKind";
 
 interface EntityLinkProps {
@@ -33,6 +34,7 @@ export function EntityLink({ kind, value, label, className, tab }: EntityLinkPro
   if (!isEntityValue(value))
     return <span className={className}>{label ?? String(value ?? "")}</span>;
   const entity = { kind, value };
+  const text = label ?? String(value);
   const open = (e: MouseEvent<HTMLAnchorElement>) => {
     if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     e.preventDefault();
@@ -47,13 +49,18 @@ export function EntityLink({ kind, value, label, className, tab }: EntityLinkPro
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") e.stopPropagation();
       }}
-      title={`Investigate this ${NOUN[kind]}`}
-      className={cn(
-        "text-accent-text [overflow-wrap:anywhere] hover:underline focus-visible:underline",
-        className,
-      )}
+      // The full value first: a long one is cut in the cell (DESIGN.md section 7, D257).
+      title={`${text}\nInvestigate this ${NOUN[kind]}`}
+      aria-label={text}
+      className={cn("group text-accent-text hover:underline focus-visible:underline", className)}
     >
-      {label ?? value}
+      <Truncate
+        value={text}
+        kind={kind === "user" && text.includes("@") ? "email" : "name"}
+        inLink
+        // An underline does not reach into the row's two parts from the link.
+        className="group-hover:underline group-focus-visible:underline"
+      />
     </a>
   );
 }
@@ -76,9 +83,13 @@ export function EntityList({ people = [], machines = [], empty = "·", tab }: En
   return (
     <>
       {items.map((e, i) => (
+        // The comma stays with the value before it: a line never starts with one.
         <span key={`${e.kind}:${e.value}`}>
-          {i ? ", " : ""}
-          <EntityLink kind={e.kind} value={e.value} tab={e.kind === "user" ? tab : undefined} />
+          {i ? " " : ""}
+          <span className="whitespace-nowrap">
+            <EntityLink kind={e.kind} value={e.value} tab={e.kind === "user" ? tab : undefined} />
+            {i < items.length - 1 ? "," : ""}
+          </span>
         </span>
       ))}
     </>

@@ -111,3 +111,10 @@
     min-width: 720px;
   }
 }
+
+/* While a copy reads the selection (lib/copyWhole.ts), a cut value is plain inline text,
+   so it is copied whole and on one line (D257). */
+:root[data-copying] [data-truncate],
+:root[data-copying] [data-truncate] [data-part] {
+  display: inline;
+}

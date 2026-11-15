@@ -1,106 +1,42 @@
 import { Skeleton } from "@/components/Skeleton";
 import { useQuery } from "@tanstack/react-query";
-import type { ReactNode } from "react";
+import { useState } from "react";
 import { InlineError } from "@/components/InlineError";
 import { When } from "@/components/When";
-import { api, type QueryResult } from "@/lib/api";
+import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { openDrill } from "@/lib/drill";
 import { navigate } from "@/lib/route";
-import { ResultsTable } from "@/features/search/ResultsTable";
-import { SectionTitle } from "@/components/SectionTitle";
+import { Card } from "@/components/Card";
 
-export function Box({
-  label,
-  note,
-  action,
-  children,
-}: {
-  label: string;
-  note?: string;
-  action?: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <section
-      aria-label={label}
-      className="overflow-hidden rounded-card border border-border bg-surface"
-    >
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-border bg-surface-head px-3 py-2">
-        <SectionTitle>{label}</SectionTitle>
-        {note ? <span className="text-sm text-text-muted">{note}</span> : null}
-        {action ? <span className="ml-auto">{action}</span> : null}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-/** The person's Microsoft 365 sign-ins, last 7 days, as rows (ADR-0038 row 27). */
-export function PersonSignIns({ person }: { person: string }) {
-  const t = useQuery({
-    queryKey: ["person-timeline", person, 7],
-    queryFn: () => api.personTimeline(person, 7),
-  });
-  const d = t.data;
-  // The server builds and runs the sign-ins query (owner, 2026-11-08).
-  const q = useQuery<QueryResult>({
-    queryKey: ["person-signins", person, 7],
-    queryFn: () => api.personSignIns(person, 7),
-  });
-  const err = t.error ?? q.error;
-  return (
-    <Box
-      label="Sign-ins"
-      note="Microsoft 365, last 7 days"
-      action={
-        d ? (
-          <button
-            type="button"
-            onClick={() =>
-              openDrill({
-                sql: d.signins_sql,
-                from: d.start,
-                to: d.end,
-                origin: `${person} > Sign-ins`,
-              })
-            }
-            className="text-sm text-accent-text hover:underline"
-          >
-            Open in Logs
-          </button>
-        ) : null
-      }
-    >
-      {t.isLoading || q.isLoading ? (
-        <Skeleton label="this list" rows={3} className="rounded-none border-0" />
-      ) : err ? (
-        <InlineError
-          what="sign-ins"
-          error={err}
-          onRetry={() => void (t.isError ? t.refetch() : q.refetch())}
-          retrying={t.isFetching || q.isFetching}
-        />
-      ) : q.data && q.data.row_count === 0 ? (
-        <p className="px-3 py-4 text-sm text-text-secondary">
-          No Microsoft 365 sign-ins by this person in the last 7 days.
-        </p>
-      ) : q.data ? (
-        <ResultsTable result={q.data} view="parsed" compact geo={q.data.geo} localTimes />
-      ) : null}
-    </Box>
-  );
-}
-
-/** Alerts about the person, any state (ADR-0038 row 27). Without View people in AI usage
- * the server leaves AI Watch items out (D242, amended 2026-11-11). */
+/** Alerts about the person (ADR-0038 row 27): the open ones first on the Record page
+ * (ADR-0052), the closed ones behind "Show closed". Without View people in AI usage the
+ * server leaves AI Watch items out (D242, amended 2026-11-11). */
 export function PersonAlerts({ person }: { person: string }) {
   const q = useQuery({
     queryKey: ["person-alerts", person],
     queryFn: () => api.personAlerts(person),
   });
+  const [closedToo, setClosedToo] = useState(false);
+  const all = q.data?.items ?? [];
+  const closed = all.filter((i) => i.state !== "open").length;
+  const items = closedToo ? all : all.filter((i) => i.state === "open");
   return (
-    <Box label="Alerts" note="Alerts that name this person, newest first">
+    <Card
+      title="Open alerts"
+      note="Alerts that name this person, newest first"
+      action={
+        closed ? (
+          <button
+            type="button"
+            aria-pressed={closedToo}
+            onClick={() => setClosedToo((v) => !v)}
+            className="text-sm text-accent-text hover:underline"
+          >
+            {closedToo ? "Hide closed" : `Show ${closed.toLocaleString()} closed`}
+          </button>
+        ) : null
+      }
+    >
       {q.isLoading ? (
         <Skeleton label="this list" rows={3} className="rounded-none border-0" />
       ) : q.isError ? (
@@ -110,13 +46,13 @@ export function PersonAlerts({ person }: { person: string }) {
           onRetry={() => void q.refetch()}
           retrying={q.isFetching}
         />
-      ) : !q.data?.items.length ? (
+      ) : !items.length ? (
         <p className="px-3 py-4 text-sm text-text-secondary">
-          No alerts name this person. Alerts raised before this version record no people.
+          {closed ? "No open alerts name this person." : "No alerts name this person."}
         </p>
       ) : (
         <ul className="flex flex-col">
-          {q.data.items.map((i) => (
+          {items.map((i) => (
             <li
               key={i.item_id}
               className="grid grid-cols-[8rem_minmax(0,1fr)_auto] items-baseline gap-x-3 border-b border-border px-3 py-1.5 text-sm last:border-0"
@@ -141,6 +77,6 @@ export function PersonAlerts({ person }: { person: string }) {
           ))}
         </ul>
       )}
-    </Box>
+    </Card>
   );
 }

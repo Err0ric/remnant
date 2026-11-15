@@ -22,12 +22,14 @@ import { cn } from "@/lib/cn";
 import { navigate } from "@/lib/route";
 import { openDrill } from "@/lib/drill";
 import { EntityLink } from "@/components/EntityLink";
+import { Truncate } from "@/components/Truncate";
 import { InlineError } from "@/components/InlineError";
 import { useViewer } from "@/lib/viewer";
 import { comparisonLabel, comparisonTime, previousPhrase } from "./pageWindow";
 import { startIndex, TrendChart, TrendLegend } from "./TrendChart";
 import { compareLine } from "./History";
-import { SectionTitle } from "@/components/SectionTitle";
+import { Card } from "@/components/Card";
+import { CardAction } from "@/components/CardAction";
 import { PanelTitle } from "@/components/PanelTitle";
 import { notCountedExtra, useSignInAbout } from "@/features/m365/signInCounting";
 import { COUNTED } from "./counted";
@@ -239,7 +241,10 @@ interface SectionProps {
   s: Bounds;
   window: PageWindow;
   history: SectionHistory;
+  /** The first row of the body: a sentence about the counting, or a state notice. */
   note?: ReactNode;
+  /** The full list behind the section ("View all"). */
+  action?: ReactNode;
   kpis: ReactNode;
   count: number;
   chart: ReactNode;
@@ -254,22 +259,17 @@ function Section({
   window,
   history,
   note,
+  action,
   kpis,
   count,
   chart,
   table,
 }: SectionProps) {
   const before = previousPhrase(window);
+  const compare = compareLine(history.compared, history.since, before);
   return (
     <Compare.Provider value={{ history, before, title, s, area: "Dashboard" }}>
-      <section aria-label={title} className="rounded-card border border-border bg-surface">
-        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 border-b border-border px-3 py-2">
-          <SectionTitle>{title}</SectionTitle>
-          {from ? <span className="text-sm text-text-muted">from {from}</span> : null}
-          <span className="ml-auto text-sm text-text-muted">
-            {compareLine(history.compared, history.since, before)}
-          </span>
-        </div>
+      <Card title={title} note={from ? `from ${from}. ${compare}` : compare} action={action}>
         {note ? <div className="border-b border-border px-3 py-1.5 text-sm">{note}</div> : null}
         <div
           className={cn(
@@ -285,7 +285,7 @@ function Section({
           <div className="min-w-0">{chart}</div>
           <div className="min-w-0">{table}</div>
         </div>
-      </section>
+      </Card>
     </Compare.Provider>
   );
 }
@@ -490,17 +490,35 @@ interface TopProps {
   rows: SectionRow[];
   cells: (r: SectionRow) => ReactNode[];
   empty: string;
+  /** Column widths (Tailwind classes, "" for the rest of the row); the column left without
+   * one gets the free space. Fixed by default; with `fit`, the table lays out by content,
+   * so a "w-px" column takes exactly its content's width and is never cut. */
+  widths?: string[];
+  fit?: boolean;
 }
 
-export function Top({ title, columns, rows, cells, empty }: TopProps) {
+export function Top({ title, columns, rows, cells, empty, widths, fit = false }: TopProps) {
   return (
     <div className="min-w-0">
       <PanelTitle className="mb-2">{title}</PanelTitle>
       {rows.length === 0 ? (
         <p className="text-sm text-text-secondary">{empty}</p>
       ) : (
-        <div className="overflow-x-auto">
-          <table aria-label={title} className="w-full text-sm">
+        // A fixed layout never scrolls, so a focused cut value can show itself whole. A table
+        // that fits its content scrolls sideways only on a phone-width card, where its
+        // uncut columns and the cut column's minimum may not fit (D257).
+        <div className={widths ? (fit ? "max-md:overflow-x-auto" : undefined) : "overflow-x-auto"}>
+          <table
+            aria-label={title}
+            className={cn("w-full text-sm", widths && !fit && "table-fixed")}
+          >
+            {widths ? (
+              <colgroup>
+                {widths.map((w, i) => (
+                  <col key={i} className={w || undefined} />
+                ))}
+              </colgroup>
+            ) : null}
             <thead>
               <tr className="border-b border-border text-left text-text-secondary">
                 {columns.map((c, i) => (
@@ -524,7 +542,16 @@ export function Top({ title, columns, rows, cells, empty }: TopProps) {
                     <td
                       key={i}
                       className={cn(
-                        "max-w-0 truncate py-1.5 pr-3",
+                        // A column that fits its content is never cut; the others are. A cut
+                        // value clips itself, and its focus note may leave the cell.
+                        fit && widths?.[i] === "w-px"
+                          ? "whitespace-nowrap py-1.5 pr-3"
+                          : cn(
+                              // In a fitted table the cut column keeps its value's minimum
+                              // width; `max-w-0` would let the table take it all away.
+                              !fit && "max-w-0",
+                              "truncate py-1.5 pr-3 has-[[data-truncate]]:overflow-visible",
+                            ),
                         i === all.length - 1 && "pr-0 text-right font-mono tabular-nums",
                       )}
                     >
@@ -617,6 +644,7 @@ function Identity({ s }: { s: DashboardSections }) {
       from="Microsoft 365"
       window={s.window}
       history={id.history}
+      action={<CardAction onClick={() => navigate("m365", "sign-ins")}>View all</CardAction>}
       kpis={kpis}
       count={kpis.length}
       chart={<FailedTrend s={s} />}
@@ -677,6 +705,7 @@ function Attacks({ s }: { s: DashboardSections }) {
       s={s}
       window={s.window}
       history={a.history}
+      action={<ViewRows sql={a.failures?.drill} label="External sign-in failures" />}
       note={
         !s.has_public ? (
           <span className="text-text-secondary">
@@ -710,6 +739,13 @@ function Attacks({ s }: { s: DashboardSections }) {
   );
 }
 
+/** View all for a section whose list is a search: the section's own drill, opened in Logs
+ * over the page window (ADR-0039), as its numbers are. Nothing when the server sent none. */
+function ViewRows({ sql, label }: { sql: string | null | undefined; label: string }) {
+  const open = useDrill()(sql, label);
+  return open ? <CardAction onClick={open}>View all</CardAction> : null;
+}
+
 // Why an address has no country (app.search.dashboard.unplaced).
 const NOT_IN_GEOIP = "Not in GeoIP file";
 const UNPLACED = new Set(["Not an address", "Not a public address", NOT_IN_GEOIP, "No GeoIP file"]);
@@ -733,6 +769,10 @@ function TopSources({ s, rows }: { s: DashboardSections; rows: SectionRow[] }) {
       <Top
         title="Top sources"
         columns={["Country", "Network", "Addresses", "Failures"]}
+        // Country and the numbers take their content's width and are never cut; the
+        // network gets what is left and is the column that is cut (D257).
+        widths={["w-px", "", "w-px", "w-px"]}
+        fit
         rows={rows}
         cells={(r) => {
           const [network = "", addresses = ""] = r.detail.split("|");
@@ -768,9 +808,14 @@ function TopSources({ s, rows }: { s: DashboardSections; rows: SectionRow[] }) {
             ) : (
               place
             ),
-            <span key="n" className="font-mono" title={network}>
-              {network || (why ? "" : "Unknown")}
-            </span>,
+            network ? (
+              // Never narrower than 96px: the column the table cuts, not one it drops.
+              <Truncate key="n" value={network} kind="name" className="min-w-24 font-mono" />
+            ) : (
+              <span key="n" className="font-mono">
+                {why ? "" : "Unknown"}
+              </span>
+            ),
             <span key="a" className="font-mono tabular-nums">
               {addresses}
             </span>,
@@ -815,16 +860,13 @@ function Detections({ s }: { s: DashboardSections }) {
     // No rule is enabled: only someone who can enable one is told.
     if (!s.no_rules || !isAdmin) return null;
     return (
-      <section aria-label="Detections" className="rounded-card border border-border bg-surface">
-        <div className="border-b border-border px-3 py-2">
-          <SectionTitle>Detections</SectionTitle>
-        </div>
+      <Card title="Detections">
         <EmptyState
           kind="not-set-up"
           title="No rules are enabled."
           action={{ label: "Enable rules", onClick: () => navigate("rules") }}
         />
-      </section>
+      </Card>
     );
   }
   const kpis = [
@@ -885,6 +927,7 @@ function Detections({ s }: { s: DashboardSections }) {
       s={s}
       window={s.window}
       history={d.history}
+      action={<CardAction onClick={() => navigate("rules")}>View all</CardAction>}
       note={
         blind ? (
           <StateNotice blind>

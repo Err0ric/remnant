@@ -1,0 +1,7 @@
+### The speed check can time a lake the size of production (2026-11-13)
+
+- `scripts/bench_compare.py --real-days N` sets how many days the real-shaped part of the lake holds (7 by default), so a lake of 30 days at the work install's rate is one command: `--lake ../data/bench/lake-prod30 --real-shape 0.313 --real-days 30`. The days are kept with the lake, and a kept lake of other days is built again. The real-shaped sign-ins, DNS queries, and hook records are now configured sources of that lake, as they are on an install, so the Dashboard's sections and the Alerts lookup read them, and the lake is kept with its closed days compacted and rolled up, as on an install: before, each timed server built the rollups while it was being timed, which made the Dashboard on 30 days look about 4 seconds slower than it is (6.7 s against 2.3 s).
+- The bench lake now holds open AI Watch alerts for AI services that name machines, with Claude hooks records saying who used most of them, so the Alerts row times the people lookup the install runs. Kept lakes are built again once for it. A build whose AI Watch check did not raise those alerts, or (for a large lake) whose rollups did not finish within an hour, now fails instead of keeping the lake, and a large lake built on an earlier UTC day is built again.
+- CLAUDE.md section 9 says when to run the large lake by hand: before a release, and when a change touches the Dashboard sections, AI usage, or People & devices.
+- What you will notice: nothing visible.
+- What changes for existing installs: nothing to do.

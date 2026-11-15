@@ -367,6 +367,11 @@ class _Run:
     def __call__(self, sql: str, sources: list[str], **extra: Any) -> list[list[Any]]:
         return self._go(sql, sources, self.skip, extra)
 
+    def since(self, sql: str, sources: list[str], start: datetime, **extra: Any) -> list[list[Any]]:
+        """Run on events from `start` (never before the scope's own start) to the scope's
+        end: a narrower read of the same view, for lookups whose rows are known to be later."""
+        return self._go(sql, sources, self.skip, extra, start=start)
+
     def _go(
         self,
         sql: str,
@@ -374,10 +379,14 @@ class _Run:
         skip: list[str],
         extra: dict[str, Any],
         fresh: bool = False,
+        start: datetime | None = None,
     ) -> list[list[Any]]:
         if not sources:
             return []
-        scope = QueryScope(sources=sources, start=self.scope.start, end=self.scope.end)
+        lo = self.scope.start
+        if start is not None:
+            lo = start if lo is None else max(lo, start)
+        scope = QueryScope(sources=sources, start=lo, end=self.scope.end)
         # DuckDB takes exactly the parameters a statement names.
         params = {k: v for k, v in {**self.params, **extra}.items() if re.search(rf"\${k}\b", sql)}
         res = self.engine.run(
@@ -725,6 +734,23 @@ def rule_conditions(meta: MetaDB, shas: set[str]) -> dict[str, str]:
     return {s: _CONDITIONS[s] for s in shas if _CONDITIONS.get(s)}
 
 
+def involved_events(
+    run: _Run, readable: list[str], now: list[tuple[Any, ...]], start: datetime
+) -> list[list[Any]]:
+    """(event id, person, host) of the matched events `now` (rows of `_matches`), on the
+    caller's view. Each matched event lives in the source its match names and at the time
+    it records (`coalesce(time, time_observed)`, the column the lake is filed and filtered
+    by; a reparse keeps both, D233), so only those of the caller's sources are read, from
+    the first match on: not every source over the window before as well."""
+    ids = sorted({m[2] for m in now})
+    if not ids:
+        return []
+    matched = {m[4] for m in now}
+    # A second earlier: the recorded time is text, so rounding never drops a row.
+    first = min((m[3] for m in now if m[3] is not None), default=start) - timedelta(seconds=1)
+    return run.since(INVOLVED_SQL, [s for s in readable if s in matched], first, ids=ids)
+
+
 def _detections(
     run: _Run,
     meta: MetaDB,
@@ -751,8 +777,7 @@ def _detections(
             by_rule[title][i] += 1
         levels[title] = level
     ranked = sorted(by_rule.items(), key=lambda kv: (-sum(kv[1]), kv[0]))[:SMALL_MULTIPLES]
-    ids = sorted({m[2] for m in now})
-    involved_rows = run(INVOLVED_SQL, readable, ids=ids) if ids else []
+    involved_rows = involved_events(run, readable, now, start)
     per_event = {str(e): (who, host) for e, who, host in involved_rows}
     hosts: Counter[str] = Counter()
     users: Counter[str] = Counter()

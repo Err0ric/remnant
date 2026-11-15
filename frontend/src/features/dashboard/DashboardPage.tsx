@@ -1,3 +1,4 @@
+import { PinButton } from "@/components/PinButton";
 import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { KpiStrip } from "./KpiStrip";
@@ -18,10 +19,11 @@ import {
   type Schedule,
   type User,
 } from "@/lib/api";
-import { navigate } from "@/lib/route";
+import { navigate, setFragment, useSection } from "@/lib/route";
 import { takeDashboardScroll } from "@/lib/drill";
 import { stamp } from "@/features/overview/time";
 import { currentDashboard, rememberDashboard } from "./choice";
+import { targetIn } from "@/lib/pins";
 import { AddPack } from "./AddPack";
 import { AiWatch } from "./AiWatch";
 import { Sections } from "./Sections";
@@ -94,11 +96,25 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
     return () => window.cancelAnimationFrame(frame);
   }, []);
   const list = boards.data ?? [];
-  const board = list.find((d) => d.dashboard_id === picked) ?? list[0] ?? null;
+  // A pinned dashboard opens by its address (`#board=<id>`, D259): it becomes the picked and
+  // remembered one, out of Edit layout; picking another clears the address. An id that is
+  // not in the list (deleted, or no longer shared) is said once and the picked one shows.
+  const linked = targetIn(useSection(), "board");
+  const linkedBoard = list.find((d) => d.dashboard_id === linked) ?? null;
+  const missing = linked !== null && boards.isSuccess && !linkedBoard;
+  const linkedId = linkedBoard?.dashboard_id;
+  useEffect(() => {
+    if (!linkedId) return;
+    setPicked(linkedId);
+    rememberDashboard(linkedId);
+    setEditing(false);
+  }, [linkedId]);
+  const board = linkedBoard ?? list.find((d) => d.dashboard_id === picked) ?? list[0] ?? null;
   const byId = new Map((schedules.data ?? []).map((s) => [s.schedule_id, s]));
   const pick = (id: string) => {
     setPicked(id);
     rememberDashboard(id);
+    if (linked) setFragment("", true);
     setEditing(false);
   };
   const refresh = () => client.invalidateQueries({ queryKey: ["dashboards"] });
@@ -208,6 +224,11 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
             : []),
         ]}
       />
+      {missing ? (
+        <p role="status" className="px-5 pt-3 text-sm text-text-secondary">
+          That dashboard is gone or no longer shared with you.
+        </p>
+      ) : null}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-5 pt-3">
         {/* One time window for the page (ADR-0038 edit 10). */}
         <div
@@ -250,6 +271,11 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
               </option>
             ))}
           </select>
+        ) : null}
+        {board ? (
+          <span className="text-sm">
+            <PinButton kind="dashboard" id={board.dashboard_id} name={board.name} />
+          </span>
         ) : null}
         {board ? (
           <span

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import type { EntityGraph, GraphCard } from "@/lib/api";
+import { characters, TAIL } from "@/components/Truncate";
 
 // Layout (ADR-0016 row 5, the data-access lane layout the owner preferred): each lane is a column
 // of group boxes ("MCP servers", "Built-in tools"), cards inside, joined left to right
@@ -50,6 +51,16 @@ export function plural(n: number, one: string, many = `${one}s`): string {
 
 function clip(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+/** A name cut in the middle, keeping its last 8 characters (D257): SVG text cannot use
+ * `Truncate`, so the box's label is cut here; its `<title>` holds it whole. */
+export function clipMiddle(text: string, max: number): string {
+  const chars = characters(text); // never half an emoji
+  if (chars.length <= max) return text;
+  const tail = Math.min(TAIL, Math.max(0, max - 2));
+  const head = chars.slice(0, Math.max(1, max - 1 - tail)).join("");
+  return `${head}…${chars.slice(chars.length - tail).join("")}`;
 }
 
 /** Cards reachable from `id` going left and going right: the path a click highlights. */
@@ -365,7 +376,7 @@ export function LaneGraph({ graph, selected, onSelect }: LaneGraphProps) {
                 <GlyphPath glyph={glyphFor(graph, card)} />
               </g>
               <text x={46} y={22} className="fill-text font-mono text-sm">
-                {clip(card.label, chars)}
+                {clipMiddle(card.label, chars)}
               </text>
               <text x={46} y={39} className="fill-text-muted text-xs">
                 {clip(detail, chars + 6)}

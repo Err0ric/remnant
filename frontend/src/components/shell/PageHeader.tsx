@@ -16,6 +16,7 @@ import {
   navigateTab,
   pathFor,
   usePage,
+  type PageId,
   useSection,
   useTab,
 } from "@/lib/route";
@@ -44,8 +45,15 @@ interface PageHeaderProps {
   menu?: HeaderAction[];
   /** The page's one filled button, last on the right. One object, so never two. */
   primary?: HeaderAction;
+  /** A Record page (DESIGN.md 6.0): the page it was reached from, above the title, which
+   * is then the record's own name at `text-xl`. */
+  breadcrumb?: { label: string; page: PageId };
+  /** The title is a logged value (an address, a host, a user name): mono. */
+  mono?: boolean;
   /** Counts or flags beside tab labels, by tab label ("Sessions": 214). */
   tabExtras?: Record<string, ReactNode>;
+  /** Problems on a tab, by tab label: an outlined warn tag, drawn only above zero (D255). */
+  tabProblems?: Record<string, number>;
 }
 
 function key(t: AreaTab): string {
@@ -175,7 +183,10 @@ export function PageHeader({
   secondary = [],
   menu = [],
   primary,
+  breadcrumb,
+  mono = false,
   tabExtras,
+  tabProblems,
 }: PageHeaderProps) {
   const page = usePage();
   const tab = useTab();
@@ -222,17 +233,46 @@ export function PageHeader({
     shown.length > 0 || more.length > 0 || views.length > 0 || primary !== undefined;
   return (
     <div className="grid grid-cols-[minmax(0,1fr)_auto] border-b border-border bg-surface px-5">
-      <div className="col-start-1 row-start-1 flex min-h-11 min-w-0 items-center gap-2">
-        <h1 className="shrink-0 whitespace-nowrap text-lg">
-          {withTabs && place ? place.area.label : title}
-        </h1>
+      {breadcrumb ? (
+        <nav aria-label="Breadcrumb" className="col-span-2 row-start-1 pt-2 text-sm">
+          <a
+            href={pathFor(breadcrumb.page)}
+            onClick={(e: ReactMouseEvent) => {
+              if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+              e.preventDefault();
+              navigate(breadcrumb.page);
+            }}
+            className="text-accent-text no-underline hover:underline"
+          >
+            {breadcrumb.label}
+          </a>
+          <span aria-hidden className="px-1.5 text-text-muted">
+            /
+          </span>
+        </nav>
+      ) : null}
+      <div
+        className={cn(
+          "col-start-1 flex min-h-11 min-w-0 items-center gap-2",
+          breadcrumb ? "row-start-2" : "row-start-1",
+        )}
+      >
+        {breadcrumb ? (
+          <h1 className={cn("min-w-0 text-xl [overflow-wrap:anywhere]", mono && "font-mono")}>
+            {title}
+          </h1>
+        ) : (
+          <h1 className="shrink-0 whitespace-nowrap text-lg">
+            {withTabs && place ? place.area.label : title}
+          </h1>
+        )}
         {count !== undefined && count !== null ? (
           <span data-header-count="" className="min-w-0 truncate text-text-secondary">
             {count}
           </span>
         ) : null}
       </div>
-      {withTabs && place ? (
+      {withTabs && place && !breadcrumb ? (
         <nav
           aria-label={`${place.area.label} tabs`}
           className="col-span-2 row-start-2 -mb-px flex h-9 items-end gap-5 overflow-x-auto"
@@ -261,6 +301,15 @@ export function PageHeader({
                 {tabExtras?.[t.label] !== undefined ? (
                   <span className="ml-1 font-normal text-text-muted">{tabExtras[t.label]}</span>
                 ) : null}
+                {(tabProblems?.[t.label] ?? 0) > 0 ? (
+                  <span
+                    data-problems=""
+                    title={`${tabProblems?.[t.label]} need attention`}
+                    className="ml-1 rounded-badge border border-warn px-1 text-xs font-semibold tabular-nums text-warn"
+                  >
+                    {tabProblems?.[t.label]}
+                  </span>
+                ) : null}
               </a>
             );
           })}
@@ -270,7 +319,10 @@ export function PageHeader({
         <div
           data-header-actions=""
           // On a phone the buttons take their own row under the title and tabs.
-          className="col-start-2 row-start-1 flex flex-wrap items-center justify-end gap-2 py-1.5 pl-3 max-sm:col-span-2 max-sm:col-start-1 max-sm:row-start-3 max-sm:justify-start max-sm:pl-0"
+          className={cn(
+            "col-start-2 flex flex-wrap items-center justify-end gap-2 py-1.5 pl-3 max-sm:col-span-2 max-sm:col-start-1 max-sm:row-start-3 max-sm:justify-start max-sm:pl-0",
+            breadcrumb ? "row-start-2" : "row-start-1",
+          )}
         >
           {shown.map((a) => (
             <button

@@ -1,6 +1,5 @@
 import { Skeleton } from "@/components/Skeleton";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useState } from "react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { navigate } from "@/lib/route";
@@ -8,30 +7,13 @@ import { PageHeader } from "@/components/shell/PageHeader";
 import { InlineError } from "@/components/InlineError";
 import { since } from "@/features/overview/time";
 import { SectionTitle } from "@/components/SectionTitle";
+import { CopyValue } from "./CopyValue";
 
 const STATUS = {
   off: { text: "Off", tone: "text-text-secondary" },
   on: { text: "On", tone: "text-ok" },
   misconfigured: { text: "Not working", tone: "text-warn" },
 } as const;
-
-function Copy({ value }: { value: string }) {
-  const [done, setDone] = useState(false);
-  return (
-    <button
-      type="button"
-      onClick={() => {
-        navigator.clipboard
-          ?.writeText(value)
-          .then(() => setDone(true))
-          .catch(() => setDone(false));
-      }}
-      className="text-sm text-accent-text hover:underline"
-    >
-      {done ? "Copied" : "Copy"}
-    </button>
-  );
-}
 
 /** Settings > Single sign-on (F64): the OIDC setup is server-side (ADR-0013, the secret
  * in the environment); this page says whether it works, what it uses, the redirect URI to
@@ -107,7 +89,7 @@ export function SsoPage() {
                   {d.redirect_uri ? (
                     <>
                       <span className="break-all font-mono">{d.redirect_uri}</span>
-                      <Copy value={d.redirect_uri} />
+                      <CopyValue value={d.redirect_uri} />
                     </>
                   ) : (
                     <span className="text-warn">Set APP__SERVER__PUBLIC_URL first</span>

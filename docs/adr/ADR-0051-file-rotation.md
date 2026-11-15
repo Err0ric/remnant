@@ -1,6 +1,6 @@
 # ADR-0051: One read position per file, not per path
 
-Status: **Draft** 2026-11-12, for the owner's review. Nothing here is built. Follows audit 2026-11 finding H5 and the parked fix (#529). If accepted it amends the SPEC 3.5 "Idempotency" row and gets a decision row. Not AI-facing: no ATLAS mapping; the one threat it touches is a file swapped in under a source (SPEC 5 rule 6, row 9 below).
+Status: **Accepted** 2026-11-13 by the owner (D250), with the owner's answers written into rows 3, 5, and 6. Drafted 2026-11-12. Follows audit 2026-11 finding H5 and the parked fix (#529). It amends the SPEC 3.5 "Idempotency" row. Not AI-facing: no ATLAS mapping; the one threat it touches is a file swapped in under a source (SPEC 5 rule 6, row 9 below).
 
 ## Context
 
@@ -20,13 +20,13 @@ A text file's read position is one row per `(source, path)` in `checkpoints`, ho
 | # | Topic | Proposed default | Why | Alternative |
 |---|---|---|---|---|
 | 1 | Key | One position record per file: `(source, device, inode)` plus two content checks, a hash of the first 256 bytes and a hash of the 256 bytes before the offset. The path is a column that says where the file was last seen, never the key | A rename changes only the column. Two files can never share a record, and one file never has two | Keep the path key and add rules (what #529 tried) |
-| 2 | Using a record | A file is opened first, then identified from the open handle (`fstat`, then both hashes). The record is used only when all match; otherwise the file is new and starts at 0 with its own record | The name is never trusted, so a rotation between listing and reading cannot mix two files. A reused inode number fails the hashes | Identify by name and inode before opening (the race in #529 round 3) |
-| 3 | Following a rename | The watcher keeps the handle of each file it read from in the last 10 minutes (at most 256 handles, oldest closed first). When the name stops pointing at that file, it reads the held handle to its end, then keeps it 30 seconds more for a late write before closing | No folder scan and no guess about the new name: the handle is the file, wherever it moved, even if it is compressed or deleted meanwhile. The old file's record moves forward on its own, so an empty or unreadable new file cannot cause a repeat | Scan the folder for the old inode (limits, and wrong when the copy is compressed first) |
+| 2 | Using a record | A file is opened first, then identified from the open handle (`fstat`, then both hashes). The record is used only when all match; otherwise the file is new and starts at 0 with its own record. One exception (D251, owner 2026-11-13): when no record has the file's device number, a record of the same source and inode under another device number is used if both hashes match, under any name, and is moved to the new number. A device number changes across restarts and remounts on Linux (LVM, NVMe, NFS, container bind mounts) | The name is never trusted, so a rotation between listing and reading cannot mix two files. A reused inode number fails the hashes | Identify by name and inode before opening (the race in #529 round 3) |
+| 3 | Following a rename | The watcher keeps the handle of each file it read from in the last 5 minutes (at most 256 handles, oldest closed first). When the name stops pointing at that file, it reads the held handle to its end and keeps it 30 seconds after it was first read to its end, reading what a program still writes to it until it is told to reopen its log (owner, 2026-11-13, D252); every handle is closed 5 minutes after the rename is seen at the latest (owner, 2026-11-13: yes to held handles, capped) | No folder scan and no guess about the new name: the handle is the file, wherever it moved, even if it is compressed or deleted meanwhile. The old file's record moves forward on its own, so an empty or unreadable new file cannot cause a repeat | Scan the folder for the old inode (limits, and wrong when the copy is compressed first) |
 | 4 | After a restart | Handles are gone. Each listed file is matched to a record by row 2. A file renamed while the server was down is found only if the source lists it; otherwise its unread tail is not read, and the source page says so once | States the limit instead of guessing | Scan sibling files after every start (reads files the source does not cover unless every check is right) |
-| 5 | Last line without a newline | When a held handle is closed (row 3), a remaining part line is stored as a line, `parse_status=partial` | The writer has moved on; dropping it loses data silently | Drop it |
-| 6 | `copytruncate` | A file shorter than its offset, or whose hashes no longer match, starts again at 0 under a new record. A copy the source lists is a new file and is read from 0. The guide says to use `create` | The truncate cannot be seen reliably from outside, and logrotate itself loses lines between copy and truncate | Treat a listed file with the same content as an already read one as a copy and skip it (content match; needs its own tests, later) |
+| 5 | Last line without a newline | It is held, not stored, until its newline arrives. Only when the file is rotated (its held handle is closed, row 3) or it has not grown for 5 minutes is the part line stored as a line with `parse_status=partial`. It is never dropped (owner, 2026-11-13) | A writer in the middle of a line gets time to finish it; once the writer has moved on, dropping the rest loses data silently | Drop it; or store it at once |
+| 6 | `copytruncate` | A file shorter than its offset, or whose hashes no longer match, starts again at 0 under a new record, and Health shows a warning that names the source. A copy the source lists is a new file and is read from 0. The guide says to use `create` and that the watched pattern must not match rotated copies (owner, 2026-11-13) | The truncate cannot be seen reliably from outside, and logrotate itself loses lines between copy and truncate; the warning tells the admin that this source rotates in a way that can lose lines | Treat a listed file with the same content as an already read one as a copy and skip it (content match: BACKLOG 59, not built) |
 | 7 | Idle files | A file whose size, modified time and inode equal the record is not opened or hashed | #529 opened and hashed every file each pass: about 13% slower on 3,000 idle files | Hash every pass |
-| 8 | Old records | Records of files not seen for 30 days are removed by the daily maintenance sweep | Today they stay for ever, which is what lets a reused inode number find one | Keep them |
+| 8 | Old records | Records of files not seen for 30 days are removed by the daily maintenance sweep, when the file is known to be gone (its folder is there, on the file's device, without it) and its source lists without an error; a share that is not mounted keeps its records, so nothing is read twice when it returns (owner, 2026-11-14, D253) | Today they stay for ever, which is what lets a reused inode number find one | Keep them |
 | 9 | Files outside the source | Only files the source lists, or handles it already held, are ever read. No file is picked by inode number alone | #529 round 1: an unrelated file with a reused inode was stored under the source, with its classification and access scope | n/a |
 | 10 | Update and rollback | New table `file_positions` (additive). At first start each `checkpoints` row is copied when its path still has the recorded inode; other rows are left. `checkpoints` keeps being written for text files, so a rollback reads on from it | Nothing is read twice at the update, and going back needs no step | Convert in place (no way back) |
 
@@ -36,8 +36,12 @@ Scope: text files only. EVTX, syslog spools, Loki, and connectors keep their own
 
 - Lines written between copy and truncate under `copytruncate` (lost before Remnant can read them).
 - A file renamed out of the source's pattern while the server is down (row 4).
-- More than 256 files written to within 10 minutes in one process: the oldest handles are closed, and a rename of one of those is handled as row 4.
-- A held handle keeps a deleted file's disk space until it is closed (at most 30 seconds after the rename is seen).
+- More than 256 files written to within 5 minutes in one process: the oldest handles are closed, and a rename of one of those is handled as row 4.
+- A held handle keeps a deleted file's disk space until it is closed (30 seconds after it was first read to its end, at most 5 minutes after the rename is seen).
+- A copy made by `copytruncate` that the watched pattern matches is read again (row 6; the guide says how to avoid it).
+- A file that was not read from for 5 minutes has no held handle. A line written to it and followed by a rename before the next pass (a couple of seconds) is then handled as row 4.
+- A last line stored as `partial` after 5 minutes whose rest arrives later: the rest is stored as a line of its own.
+- A program that keeps writing to a renamed file for more than 30 seconds after the server read it to its end (D252) loses the later lines on a source that watches a single file. The 30 seconds do not restart when the file grows (owner, 2026-11-14).
 
 ## Tests (written first)
 
@@ -49,8 +53,8 @@ The 10 tests of #529 plus one for each review finding: empty new file, unreadabl
 2. Held handles: rename following, the part line, the handle limit.
 3. The 30-day sweep, the source page note for row 4, SPEC 3.5 row, guide text.
 
-## Questions for the owner
+## The owner's answers (2026-11-13)
 
-1. Accept row 3 (held file handles)? It is the part that makes rename handling exact; without it the design falls back to row 4 for every rename.
-2. Row 5: store the part line as `partial`, or drop it?
-3. Row 6: is "use `create`; a listed copy is read again" enough, or should the content match for copies be built too?
+1. Held file handles: yes, capped. A handle is closed once it is read to its end after a rename, or after 5 minutes, whichever comes first (row 3).
+2. The last line without a newline is held until the newline arrives; it is stored with `parse_status=partial` only on rotation or after 5 minutes without growth, and never dropped (row 5).
+3. `copytruncate`: the guide (use `create`; the watched pattern must not match rotated copies) plus truncation detection: a file that shrank starts again at 0 and Health warns, naming the source. No content matching; that is BACKLOG 59 (row 6).

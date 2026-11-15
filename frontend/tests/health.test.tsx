@@ -50,21 +50,18 @@ describe("Health (ADR-0019)", () => {
     expect(within(agents).getByText("ws-0042")).toBeVisible();
     expect(within(agents).getByText("Last reported 2 d ago")).toBeVisible();
 
-    // The Type filter of the tab, in the address.
-    const type = screen.getByRole("group", { name: "Type" });
-    expect(within(type).getByRole("button", { name: /^Endpoint agents/ })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
-    await userEvent.click(within(type).getByRole("button", { name: /^Watched devices/ }));
+    // The Type filter of the tab, a facet of the one filter row, in the address (D255).
+    const type = screen.getByRole("combobox", { name: "Type" });
+    expect(type).toHaveValue("agents");
+    await userEvent.selectOptions(type, "devices");
     expect(window.location.pathname + window.location.hash).toBe("/health/collectors#type=devices");
     const devices = await screen.findByRole("table", { name: "Watched devices" });
     expect(within(devices).getByText("Site B network sensor")).toBeVisible();
     expect(within(devices).getByText("Silent 47 min (allowed 15 min)")).toBeVisible();
-    // The filter counts the open type: here, the silent sensor.
-    const show = screen.getByRole("group", { name: "Show" });
-    const unhealthy = within(show).getByRole("button", { name: /Unhealthy/ });
-    expect(within(unhealthy).getByText("1")).toBeVisible();
+    // The Status filter counts the open type: here, the silent sensor is a problem.
+    const status = screen.getByRole("group", { name: "Status" });
+    const problems = within(status).getByRole("button", { name: /^Problems/ });
+    expect(within(problems).getByText("1")).toBeVisible();
   });
 
   it("shows each page rollup with days still to build and the last today build", async () => {
@@ -191,10 +188,12 @@ function pulledOnly(spy: ReturnType<typeof mockApi>) {
 describe("Health with pulled sources only (F59, F60)", () => {
   it("lists Loki and Microsoft 365 on the Sources tab with their flow and gaps", async () => {
     await renderAt("/health#sources", undefined, pulledOnly);
-    const tab = await within(
-      await screen.findByRole("navigation", { name: "Health tabs" }),
-    ).findByRole("link", { name: /^Sources/ });
-    await within(tab).findByText("4");
+    // The bar counts the log sources; the tab carries only the problem (the gap).
+    expect(await screen.findByText("4 sources")).toBeVisible();
+    const tab = within(screen.getByRole("navigation", { name: "Health tabs" })).getByRole("link", {
+      name: /^Sources/,
+    });
+    expect(tab.querySelector("[data-problems]")).toHaveTextContent("1");
     const flow = await screen.findByRole("list", { name: "Sources" });
     for (const id of ["paloalto_fw", "unifi", "dns", "m365"])
       expect(within(flow).getByText(id)).toBeVisible();
@@ -203,14 +202,14 @@ describe("Health with pulled sources only (F59, F60)", () => {
       within(fw).getByText(/^No events .+\(5 h\)\. Other sources kept flowing\.$/),
     ).toBeVisible();
     expect(screen.queryByText(/No sources yet/)).toBeNull();
-    // Enrichment feeds are a Type of Sources, with their own count; the tab counts log
-    // sources only, as the Dashboard's Sources tile does.
-    const type = screen.getByRole("group", { name: "Type" });
-    expect(within(type).getByRole("button", { name: /^Log sources/ })).toHaveTextContent(/4$/);
-    expect(within(type).getByRole("button", { name: /^Enrichment feeds/ })).not.toHaveTextContent(
-      /4$/,
-    );
-    const events = screen.getByRole("button", { name: /^Events, last 24 hours/ });
+    // Enrichment feeds are a Type of Sources.
+    const type = screen.getByRole("combobox", { name: "Type" });
+    expect(
+      within(type)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["Events", "Enrichment feeds"]);
+    const events = document.querySelector('[data-kpi="Events, last 24 hours"]');
     expect(events).toHaveTextContent("Not enough history yet (2 of 7 days)");
   });
 });
@@ -242,31 +241,27 @@ describe("Health in three tabs, and Settings > System (ADR-0052 section 3.3, red
 
   it("lists enrichment feeds as a Type of Sources", async () => {
     await renderAt("/health/enrichment");
-    const type = await screen.findByRole("group", { name: "Type" });
-    expect(within(type).getByRole("button", { name: /^Enrichment feeds/ })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    const type = await screen.findByRole("combobox", { name: "Type" });
+    await vi.waitFor(() => expect(type).toHaveValue("enrichment"));
     expect(await screen.findByRole("region", { name: "Enrichment feeds" })).toBeVisible();
-    await userEvent.click(within(type).getByRole("button", { name: /^Log sources/ }));
+    await userEvent.selectOptions(type, "sources");
     expect(window.location.pathname + window.location.hash).toBe("/health");
   });
 
   it("puts System in Settings for administrators only, with Backups first", async () => {
     await renderAt("/system");
     expect(await screen.findByRole("heading", { name: "System", level: 1 })).toBeVisible();
-    const type = screen.getByRole("group", { name: "Type" });
+    const type = screen.getByRole("combobox", { name: "Type" });
     expect(
       within(type)
-        .getAllByRole("button")
-        .map((b) => b.textContent?.replace(/\d+$/g, "").trim()),
+        .getAllByRole("option")
+        .map((o) => o.textContent),
     ).toEqual(["Backups", "Page rollups", "Speed"]);
-    expect(within(type).getByRole("button", { name: /^Backups/ })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
-    // No Health strip here.
-    expect(screen.queryByRole("button", { name: /^Events, last 24 hours/ })).toBeNull();
+    expect(type).toHaveValue("backups");
+    // One filter row with the Status filter, and no Health strip here.
+    expect(screen.getAllByRole("group", { name: "Choose what to show" })).toHaveLength(1);
+    expect(screen.getByRole("group", { name: "Status" })).toBeVisible();
+    expect(document.querySelector("[data-kpi]")).toBeNull();
     const settings = screen.getByRole("navigation", { name: "Settings" });
     expect(within(settings).getByRole("link", { name: "System" })).toHaveAttribute(
       "aria-current",
@@ -286,7 +281,7 @@ describe("Health in three tabs, and Settings > System (ADR-0052 section 3.3, red
       expect(box).toHaveAttribute("data-empty", "restricted");
       expect(box).toHaveTextContent("A failed backup raises an alert that everyone sees.");
       // None of the lists, no way in from the menus, and nothing asked of the server for them.
-      expect(screen.queryByRole("group", { name: "Type" })).toBeNull();
+      expect(screen.queryByRole("combobox", { name: "Type" })).toBeNull();
       expect(screen.queryByRole("link", { name: "System" })).toBeNull();
       expect(spy.mock.calls.some(([u]) => String(u).endsWith("/api/health-checks"))).toBe(false);
     },
@@ -336,18 +331,12 @@ describe("Health in three tabs, and Settings > System (ADR-0052 section 3.3, red
       });
     });
     const flow = await screen.findByRole("list", { name: "Sources" });
-    const tab = within(await screen.findByRole("navigation", { name: "Health tabs" })).getByRole(
-      "link",
-      { name: /^Sources/ },
-    );
-    const type = within(screen.getByRole("group", { name: "Type" })).getByRole("button", {
-      name: /^Log sources/,
-    });
     // The count is of sources: the quarantine notice is not one.
     await vi.waitFor(() => {
       const listed = within(flow).getAllByRole("listitem").length;
-      expect(type.textContent).toBe(`Log sources ${listed}`);
-      expect(tab.textContent).toMatch(new RegExp(`^Sources${listed}`));
+      expect(document.querySelector("[data-filter-count]")?.textContent).toBe(
+        `${listed} ${listed === 1 ? "source" : "sources"}`,
+      );
     });
   });
 });

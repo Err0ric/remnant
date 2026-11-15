@@ -7,7 +7,9 @@ import { api, type AccountTier } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { navigate } from "@/lib/route";
 import { since, stamp } from "@/features/overview/time";
-import { SectionTitle } from "@/components/SectionTitle";
+import { Card } from "@/components/Card";
+import { StateNotice } from "@/components/StateNotice";
+import { NAMES_HIDDEN } from "@/features/alerts/kinds";
 
 /** The row labels ADR-0030's amendment names, in its order. */
 export const TIER_LABEL: Record<AccountTier, string> = {
@@ -58,19 +60,12 @@ export function AccountsCard() {
   const now = new Date().toISOString();
   const d = q.data;
   return (
-    <section
-      aria-label="Claude accounts"
-      className="overflow-hidden rounded-card border border-border bg-surface"
-    >
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-surface-head px-3 py-2">
-        <SectionTitle>Claude accounts</SectionTitle>
-        <span className="text-sm text-text-muted">
-          Reported by the hooks plugin on each device, last 30 days.
-          {d?.masked
-            ? " Names are hidden. An admin can turn on View people in AI usage for you."
-            : null}
-        </span>
-      </div>
+    <Card title="Claude accounts" note="Reported by the hooks plugin on each device, last 30 days.">
+      {d?.masked ? (
+        <div className="border-b border-border p-2">
+          <StateNotice>{NAMES_HIDDEN}</StateNotice>
+        </div>
+      ) : null}
       {q.isLoading ? (
         <Skeleton label="accounts" rows={4} className="rounded-none border-0" />
       ) : q.isError ? (
@@ -180,6 +175,6 @@ export function AccountsCard() {
           )}
         </>
       ) : null}
-    </section>
+    </Card>
   );
 }

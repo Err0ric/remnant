@@ -35,6 +35,7 @@ ROUTES = {
     "ai.agents": "/api/ai/agents",
     "ai.sessions": "/api/ai/sessions",
     "ai.session": "/api/ai/sessions/s-0042",
+    "ai.session_summary": "/api/ai/sessions/s-0042/summary",
     "agents.accounts": "/api/agents/accounts",
     "ai.inventory": "/api/ai/inventory",
     "ai.watch.summary": "/api/ai/watch/summary",
@@ -361,6 +362,34 @@ def test_sessions_and_accounts_audit_names_only_when_shown(ai_lab: dict[str, Any
     assert [r["surface"] for r in _audit(ai_lab, "ai.view_people")] == [
         "ai.sessions", "ai.session", "agents.accounts",
     ]  # fmt: skip
+
+
+def test_a_session_summary_shows_the_machine_and_the_same_numbers(
+    ai_lab: dict[str, Any],
+) -> None:
+    """ana (an analyst without View people) and aud (an Auditor) read the claude source:
+    the person and account are the machine, every number as the administrator sees it,
+    and the audit row says no names were shown."""
+    path = "/api/ai/sessions/s-0042/summary"
+    named = ai_lab["admin"].get(path).json()
+    assert (named["person"], named["account"], named["masked"]) == (PERSON, PERSON, False)
+    for who in ("ana", "aud"):
+        res = ai_lab[who].get(path)
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert (body["person"], body["account"], body["machine"], body["masked"]) == (
+            "ws-0042", "ws-0042", "ws-0042", True,
+        )  # fmt: skip
+        assert NAME not in res.text
+        same = ("person", "account", "masked")
+        assert {k: v for k, v in body.items() if k not in same} == {
+            k: v for k, v in named.items() if k not in same
+        }
+    rows = [r for r in _audit(ai_lab, "ai.view") if r.get("surface") == "ai.session_summary"]
+    assert [(r["session_id"], r["sources_in_scope"]) for r in rows] == [
+        ("s-0042", ["claude", "dns"]), ("s-0042", ["claude", "dns"]),
+    ]  # fmt: skip
+    assert [r["surface"] for r in _audit(ai_lab, "ai.view_people")] == ["ai.session_summary"]
 
 
 def test_person_refusals_are_audited_and_read_nothing(ai_lab: dict[str, Any]) -> None:

@@ -1,5 +1,5 @@
 import { QueryClient } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -243,7 +243,9 @@ describe("Dashboard sections (ADR-0038 edit 10)", () => {
     window.localStorage.removeItem("dashboard.window");
     const spy = await renderAt("/dashboard");
     const identity = await screen.findByRole("region", { name: "Identity" });
-    expect(within(identity).getByText("from Microsoft 365")).toBeVisible();
+    // The comparison note sits beside the title; the action place holds View all (D254).
+    const head = identity.querySelector<HTMLElement>("[data-card-header]")!;
+    expect(within(head).getByText(/^from Microsoft 365\. Changes against/)).toBeVisible();
     expect(within(identity).getByText("Failed sign-ins")).toBeVisible();
     // Not set: an admin gets the link instead of a number.
     expect(within(identity).getByRole("button", { name: "Set approved countries" })).toBeVisible();
@@ -260,7 +262,24 @@ describe("Dashboard sections (ADR-0038 edit 10)", () => {
     const attacks = screen.getByRole("region", { name: "Attacks and access" });
     expect(within(attacks).getByText(/office addresses count as external/)).toBeVisible();
     expect(within(attacks).getByRole("img", { name: "bastion: peak 9, total 14" })).toBeVisible();
-    expect(within(attacks).getByText("AS64500 Example Net")).toBeVisible();
+    // A network name is cut in the middle (D257); its title is the whole name.
+    expect(within(attacks).getByTitle("AS64500 Example Net")).toBeVisible();
+    // Country and the numbers fit their content and are never cut; Network takes the rest.
+    const top = within(attacks).getByRole("table", { name: "Top sources" });
+    expect(top).not.toHaveClass("table-fixed");
+    expect([...top.querySelectorAll("col")].map((c) => c.className)).toEqual([
+      "w-px",
+      "",
+      "w-px",
+      "w-px",
+    ]);
+    // A phone-width card scrolls sideways rather than overflow, and Network keeps 96px.
+    expect(top.parentElement).toHaveClass("max-md:overflow-x-auto");
+    expect(top.parentElement).not.toHaveClass("overflow-x-auto");
+    const net = top.querySelector<HTMLElement>("tbody td:nth-child(2)")!;
+    expect(net).not.toHaveClass("max-w-0");
+    expect(net.querySelector("[data-truncate]")).toHaveClass("min-w-24");
+    expect(top.querySelector("tbody td:nth-child(1)")).toHaveClass("whitespace-nowrap");
     expect(within(attacks).getByText("No VPN logs")).toBeVisible();
     // The week before is only partly there: no change pills, and one line for the section
     // saying when comparisons start, not a note under every number (owner, 2026-11-02).
@@ -291,6 +310,25 @@ describe("Dashboard sections (ADR-0038 edit 10)", () => {
       ).toBe(true),
     );
     expect(window.localStorage.getItem("dashboard.window")).toBe("24h");
+    // Each section's View all opens its full list: Sign-ins, Logs, Alerts > Rules.
+    for (const [name, path] of [
+      ["Identity", "/investigate/views"],
+      ["Attacks and access", "/investigate/logs"],
+      ["Detections", "/alerts/rules"],
+    ] as const) {
+      const region = await screen.findByRole("region", { name });
+      const top = region.querySelector<HTMLElement>("[data-card-header]")!;
+      const all = within(top).getByRole("button", { name: "View all" });
+      expect(top.lastElementChild).toContainElement(all);
+      // The sentence about company egress is a body row, not in the header.
+      expect(within(top).queryByText(/office addresses/)).toBeNull();
+      await userEvent.click(all);
+      expect(window.location.pathname).toBe(path);
+      act(() => {
+        window.history.pushState(null, "", "/dashboard");
+        window.dispatchEvent(new PopStateEvent("popstate"));
+      });
+    }
     window.localStorage.removeItem("dashboard.window");
   });
 });

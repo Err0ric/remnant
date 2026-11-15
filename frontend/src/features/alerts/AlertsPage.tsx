@@ -416,12 +416,20 @@ function ListRow({ item, current, onPick, selectable, checked, onCheck }: ListRo
         type="button"
         aria-current={current ? "true" : undefined}
         onClick={onPick}
+        title={item.title}
         className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-0.5 text-left text-sm"
       >
-        <span className="flex min-w-0 items-center gap-2">
+        <span className="flex min-w-0 items-start gap-2">
           <SevBadge value={item.severity} />
           <LateBadge late={item.late} start={item.late_start} end={item.late_end} />
-          <span className={cn("truncate font-semibold", !open && "text-text-secondary")}>
+          {/* A sentence, not an identity: two lines, then cut, whole in the title (D257). */}
+          <span
+            data-alert-title=""
+            className={cn(
+              "line-clamp-2 min-w-0 font-semibold [overflow-wrap:anywhere]",
+              !open && "text-text-secondary",
+            )}
+          >
             {item.title}
           </span>
         </span>
@@ -679,12 +687,15 @@ function AlertDetail({ item, canClose, isAdmin, reasons }: DetailProps) {
             <dd className="font-mono">
               {item.people.map((p, i) => (
                 <span key={p}>
-                  {i ? ", " : ""}
-                  <EntityLink
-                    kind="user"
-                    value={p}
-                    tab={categoryOf(item) === "ai" ? "ai" : undefined}
-                  />
+                  {i ? " " : ""}
+                  <span className="whitespace-nowrap">
+                    <EntityLink
+                      kind="user"
+                      value={p}
+                      tab={categoryOf(item) === "ai" ? "ai" : undefined}
+                    />
+                    {i < (item.people?.length ?? 0) - 1 ? "," : ""}
+                  </span>
                 </span>
               ))}
             </dd>
@@ -695,7 +706,7 @@ function AlertDetail({ item, canClose, isAdmin, reasons }: DetailProps) {
             <dd className="text-text-secondary">{NAMES_HIDDEN}</dd>
           </>
         ) : null}
-        <DeviceRows devices={item.devices ?? []} />
+        <DeviceRows devices={item.devices ?? []} total={item.devices_total} />
         <DevicePeople found={item.device_people ?? []} masked={item.masked} />
         <dt className="text-text-muted">When</dt>
         <dd>

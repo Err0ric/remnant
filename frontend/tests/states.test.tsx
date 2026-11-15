@@ -37,7 +37,7 @@ describe("Loading placeholders and empty lists (DESIGN.md 6.0, redesign build ro
     expect(uses(/animate-pulse/g)).toEqual({
       "EntitySummary.tsx": 2,
       "InvestigatePage.tsx": 1,
-      "Skeleton.tsx": 3,
+      "Skeleton.tsx": 8,
     });
   });
 
@@ -86,15 +86,12 @@ describe("Help text (ADR-0052 section 3.7, redesign build rows 15 and 16)", () =
         "ai/AiSettings.tsx: Alerts the first time an AI service or M", // Settings: what it does
         "ai/AiSettings.tsx: Every service the network view recognize", // Settings: what it lists
         "ai/AiSettings.tsx: No alert targets yet; add one under Aler", // state
-        "ai/AiUsagePage.tsx: Names are hidden. An admin can turn on V", // masking notice
         "ai/AiUsagePage.tsx: Vendor ad and measurement tags that othe", // why not counted
         "alerts/AlertsPage.tsx: Not reviewed yet. Closing an alert does ", // who reviews
-        "ask/AskThread.tsx: No AI provider is set up. Logs (Filters ", // not set up
+        "ask/AskThread.tsx: No AI provider is set up. Logs works wit", // not set up
         "dashboard/DashboardPage.tsx: Delete this dashboard? Its schedules kee", // confirmation
-        "health/StatusLine.tsx: No detections in 24 hours. No paused sch", // status
         "investigate/InvestigatePage.tsx: Names are hidden. An admin can turn on V", // masking notice
         "investigate/InvestigatePage.tsx: No users, IP addresses, or hosts in this", // empty state
-        "investigate/PersonLists.tsx: No alerts name this person. Alerts raise", // empty state
         "schedules/ScheduleForm.tsx: Runs as you, with your access checked ev", // access
         "search/FacetSidebar.tsx: No countable fields in this result. Face", // empty state
         "search/HandoffPanel.tsx: Webhooks get each event with its raw lin", // where data goes

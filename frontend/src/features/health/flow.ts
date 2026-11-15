@@ -118,6 +118,23 @@ export function openGapsText(gaps: OpenGap[], max = 3): string {
   return `${gaps.length} ${gaps.length === 1 ? "gap" : "gaps"}: ${named.join(", ")}${more}`;
 }
 
+/** The gaps to draw and say for a source. A source marked "Quiet is normal" and inside its
+ * days (`quiet_ok`, from the server) has none: gap hours are normal for it (D260). Health
+ * and Sources both use this. */
+export function shownGaps<G>(
+  h: Pick<Overview["sources"][number], "quiet_ok"> | undefined,
+  gaps: G[] | undefined,
+): G[] {
+  return h?.quiet_ok ? [] : (gaps ?? []);
+}
+
+/** "No events for 2 d (normal for this source)": an idle source, one marked "Quiet is
+ * normal" that is silent inside its days (D260). Health and Sources say it alike. */
+export function idleText(last: string | null, now: string): string {
+  const q = lag(last, now);
+  return `No events for ${q ?? "a while"} (normal for this source)`;
+}
+
 /** "quiet 4 d" or "never sent": a quiet source in the words both pages use. */
 export function quietWord(last: string | null, now: string): string {
   const q = lag(last, now);
@@ -143,6 +160,7 @@ export function sourcesSummaryText(
     details: [
       s.quiet.length ? `${s.quiet.length} quiet: ${named.join(", ")}${more}` : null,
       s.gaps ? `${s.gaps} ${s.gaps === 1 ? "gap" : "gaps"} in 24 hours` : "no gaps in 24 hours",
+      s.idle ? `${s.idle} idle (normal)` : null,
       !s.quiet.length && s.longest_wait && wait
         ? `longest wait ${wait} (${s.longest_wait.source_id})`
         : null,

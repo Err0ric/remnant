@@ -149,3 +149,19 @@ def test_a_source_list_that_arrives_after_exit_is_ignored(api: Api) -> None:
     app.fill_sources(["lin_auth"])  # the screen is gone: no error
     app.tail_note("late")
     app.set_status("late")
+
+
+def test_a_source_list_that_arrives_while_the_screen_closes_is_ignored(api: Api) -> None:
+    """The flake in test_banner_shown_in_the_tui (2026-11-14): the list came back while the
+    screen was being taken down, when the Select was still there but its option list was
+    already removed, and filling it raised NoMatches. That moment, held still."""
+
+    async def go() -> None:
+        app = Tui(api)
+        async with app.run_test(size=(140, 40)):
+            await app.workers.wait_for_complete()
+            select = app.query_one("#tail-source", Select)
+            await select.query_one("SelectOverlay").remove()
+            app.fill_sources(["lin_auth"])  # no error
+
+    asyncio.run(go())

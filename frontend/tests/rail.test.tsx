@@ -90,13 +90,15 @@ describe("Rail (ADR-0052 section 3.2, redesign build row 4)", () => {
     );
   });
 
-  it("shows a warn dot beside Health only when a source is not healthy", async () => {
+  it("shows no count beside Health when every source is healthy", async () => {
     const calm = await rail("/alerts", { mode: "login", signedIn: true, role: "admin" });
     await screen.findByRole("heading", { level: 1, name: "Alerts" });
+    await new Promise((r) => setTimeout(r, 3000)); // past the rail's first read
+    expect(calm.querySelector("[data-health-count]")).toBeNull();
     expect(calm.querySelector("[data-health-dot]")).toBeNull();
   });
 
-  it("says how many sources need attention beside Health, never by color alone", async () => {
+  it("says how many sources need attention beside Health, outlined in warn, in place of the dot", async () => {
     const nav = await rail("/alerts", {
       mode: "login",
       signedIn: true,
@@ -105,8 +107,11 @@ describe("Rail (ADR-0052 section 3.2, redesign build row 4)", () => {
     });
     const health = within(nav).getByRole("link", { name: /^Health/ });
     expect(await within(health).findByText("2 sources need attention")).toHaveClass("sr-only");
-    const dot = health.querySelector("[data-health-dot] [aria-hidden]");
-    expect(dot).toHaveClass("bg-warn", "rounded-full");
+    const count = health.querySelector("[data-health-count]");
+    expect(count).toHaveClass("border", "border-warn", "text-warn");
+    expect(count).toHaveAttribute("title", "2 sources need attention");
+    expect(count?.querySelector("[aria-hidden]")).toHaveTextContent(/^2$/);
+    expect(health.querySelector("[data-health-dot]")).toBeNull();
   });
 
   it("puts the open alert count on the solid High pair", async () => {
@@ -143,7 +148,7 @@ describe("Rail (ADR-0052 section 3.2, redesign build row 4)", () => {
       name: /^Health/,
     });
     if (n) expect(within(health).getByText(/need(s)? attention$/)).toHaveTextContent(`${n} `);
-    else expect(health.querySelector("[data-health-dot]")).toBeNull();
+    else expect(health.querySelector("[data-health-count]")).toBeNull();
   });
 
   it("does not count a source paused on purpose, as the server's count does not", async () => {

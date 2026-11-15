@@ -1,4 +1,6 @@
 import { EventIdChip } from "@/components/EventIdChip";
+import { When } from "@/components/When";
+import { LocalityBadge } from "@/features/providers/LocalityBadge";
 import {
   ApiError,
   type AskResponse,
@@ -18,6 +20,9 @@ export interface Turn {
   id: number;
   question: string;
   phase: Phase;
+  /** When it was asked, and where the chosen model is, for the heading line (D256). */
+  askedAt?: string;
+  locality?: "local" | "cloud";
   answer?: AskResponse;
   result?: AskRunResult;
   error?: unknown;
@@ -105,7 +110,7 @@ interface AskTurnBlockProps {
 }
 
 /** One question and what came of it, as a block, never a chat bubble (DESIGN.md 6.1): the
- * question as a heading, what the model said about its query, the rows, and a collapsed
+ * question as a heading with its time and the Local or Cloud badge on the same line, what the model said about its query, the rows, and a collapsed
  * "How I got this" with the SQL, where it came from, the sources read, and the time. */
 export function AskTurnBlock({
   turn,
@@ -119,13 +124,26 @@ export function AskTurnBlock({
 }: AskTurnBlockProps) {
   const a = turn.answer;
   const route = a?.route ?? null;
+  const locality = a?.provider.locality ?? turn.locality;
   const working = turn.phase === "finding" || turn.phase === "running" || turn.phase === "writing";
   return (
     <section
       aria-label={`Question: ${turn.question}`}
       className="flex flex-col gap-2.5 border-t border-border pt-3 first:border-t-0 first:pt-0"
     >
-      <h3 className="text-base font-semibold [overflow-wrap:anywhere]">{turn.question}</h3>
+      <div data-turn-head="" className="flex items-baseline gap-3">
+        <h3 className="min-w-0 flex-1 text-base font-semibold [overflow-wrap:anywhere]">
+          {turn.question}
+        </h3>
+        {turn.askedAt ? (
+          <When iso={turn.askedAt} className="shrink-0 text-sm text-text-muted" />
+        ) : null}
+        {locality ? (
+          <span className="shrink-0 self-center">
+            <LocalityBadge locality={locality} />
+          </span>
+        ) : null}
+      </div>
       {working ? <Progress phase={turn.phase} writing={Boolean(turn.willSummarize)} /> : null}
       {turn.phase === "guidance" ? (
         <div role="status" className="flex flex-col gap-1 text-sm">

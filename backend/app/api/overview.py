@@ -12,7 +12,7 @@ from app.api.access import CurrentUser, client_ip
 from app.engine.views import permitted_sources
 from app.meta.page_loads import PageLoadAudit, declared
 from app.search.overview import OverviewService
-from app.search.source_state import Condition, SourceInput, assess, needing_attention
+from app.search.source_state import Condition, SourceInput, assess, idle, needing_attention
 
 router = APIRouter(tags=["overview"])
 
@@ -50,6 +50,11 @@ class SourceHealthOut(BaseModel):
     gap_alert: str | None = None
     # server_events has events only when someone uses or probes the server: quiet is fine.
     quiet_expected: bool = False
+    # "Quiet is normal for up to N days" (D260); quiet_ok while the newest event is inside
+    # them, and idle when it is also silent now (counted healthy, Health says "Idle").
+    quiet_ok_days: int | None = None
+    quiet_ok: bool = False
+    idle: bool = False
     # One state for Health and the Dashboard footer (handoff item 4, app.search.source_state):
     # healthy, quiet, gap, attention, error, or paused.
     condition: Condition = "healthy"
@@ -68,6 +73,7 @@ class SourceSummaryOut(BaseModel):
     quiet: list[WaitOut]
     gaps: int
     longest_wait: WaitOut | None
+    idle: int = 0  # healthy sources silent inside their "Quiet is normal" days
 
 
 class DetectionOut(BaseModel):
@@ -162,9 +168,11 @@ async def _assessed(request: Request, result: Any) -> tuple[dict[str, Any], Any]
         if gap is not None and (last is None or _instant(last) <= _instant(gap[1])):
             s["gap_alert"] = gap[0]
     volume = {v["source_id"]: v for v in data["volume"]}
-    conditions, summary = assess([_input(s, volume.get(s["source_id"])) for s in data["sources"]])
+    inputs = {s["source_id"]: _input(s, volume.get(s["source_id"])) for s in data["sources"]}
+    conditions, summary = assess(list(inputs.values()))
     for s in data["sources"]:
         s["condition"] = conditions[s["source_id"]]
+        s["idle"] = idle(inputs[s["source_id"]], s["condition"])
         s.pop("reading_issue", None)
     return data, summary
 
@@ -201,6 +209,7 @@ def _input(s: dict[str, Any], v: dict[str, Any] | None) -> SourceInput:
         quiet_since=s.get("quiet_since"),
         gap_alert=s.get("gap_alert"),
         quiet_expected=bool(s.get("quiet_expected")),
+        quiet_ok=bool(s.get("quiet_ok")),
         reading_issue=bool(s.get("reading_issue")),
         records_skipped=int(s.get("records_skipped") or 0),
         files_waiting=int(s.get("files_waiting") or 0),

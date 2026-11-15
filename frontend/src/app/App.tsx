@@ -89,6 +89,11 @@ const AlertsPage = lazy(
     import("@/features/alerts/AlertsPage").then((m) => ({ default: m.AlertsPage })),
   ),
 );
+const HandlingPage = lazy(
+  withChunkReload(() =>
+    import("@/features/alerts/HandlingPage").then((m) => ({ default: m.HandlingPage })),
+  ),
+);
 const AlertTargetsPage = lazy(
   withChunkReload(() =>
     import("@/features/alerts/AlertTargetsPage").then((m) => ({ default: m.AlertTargetsPage })),
@@ -290,6 +295,8 @@ export function App({ initialTheme, queryClient }: AppProps) {
                             canClose={!user || user.role !== "auditor"}
                             isAdmin={!user || user.role === "admin"}
                           />
+                        ) : page === "handling" ? (
+                          <HandlingPage />
                         ) : page === "dashboard" ? (
                           <DashboardPage me={user} />
                         ) : page === "schedules" ? (

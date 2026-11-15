@@ -1,6 +1,6 @@
 import { Skeleton } from "@/components/Skeleton";
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { ApiError, api, type EntityRisk, type GraphCard, type GraphKind } from "@/lib/api";
 import { navigate, useSection } from "@/lib/route";
@@ -12,14 +12,13 @@ import { seedSearch } from "@/lib/searchSeed";
 import { CardDetail } from "./CardDetail";
 import { LaneGraph } from "./LaneGraph";
 import { EntitySummary } from "./EntitySummary";
-import { PersonTimeline } from "./PersonTimeline";
-import { PersonAiActivity } from "./PersonAiActivity";
-import { PersonAlerts, PersonSignIns } from "./PersonLists";
-import { PersonHosts } from "./PersonHosts";
+import { PersonRecord } from "./PersonRecord";
 import { RiskTable } from "./RiskTable";
 import { TargetedTable } from "./TargetedTable";
 import { kindOf, type EntityKind } from "./entityKind";
 import { SectionTitle } from "@/components/SectionTitle";
+import { useViewer } from "@/lib/viewer";
+import { rememberEntity } from "@/lib/recentEntities";
 
 type Mode = "entity" | "ai";
 interface Focus {
@@ -27,7 +26,7 @@ interface Focus {
   value: string;
 }
 
-const KIND_LABEL: Record<EntityKind, string> = { user: "User", ip: "IP address", host: "Host" };
+const KIND_LABEL: Record<EntityKind, string> = { user: "Person", ip: "IP address", host: "Host" };
 /** The landing tabs: the three kinds, then usernames only ever tried from outside (D212). */
 type RiskTab = EntityKind | "targeted";
 const RISK_TABS: [RiskTab, string][] = [
@@ -35,20 +34,6 @@ const RISK_TABS: [RiskTab, string][] = [
   ["ip", "IP addresses"],
   ["host", "Hosts"],
   ["targeted", "Targeted usernames"],
-];
-
-/** Investigations (ADR-0016 rows 4 and 5): risky entities, and lanes showing how one
- * entity, or the organization's AI use, connects to everything it touched. */
-type PersonTab = "summary" | "ai" | "hosts" | "alerts" | "timeline";
-/** A person's page, one per person (ADR-0038 row 27, D197): identity and Microsoft 365
- * (the summary, lanes, and sign-ins), AI use, hosts and devices, alerts, and the timeline.
- * AI usage, Agents, and People and devices all open this page. */
-const PERSON_TABS: [PersonTab, string][] = [
-  ["summary", "Identity and M365"],
-  ["ai", "AI use"],
-  ["hosts", "Hosts and devices"],
-  ["alerts", "Alerts"],
-  ["timeline", "Timeline"],
 ];
 
 /** The page's range in days for the panels that count whole days back from now (1 to 30).
@@ -62,6 +47,11 @@ function rangeDays(choice: TimeChoice, start: string | undefined): number {
   return choice.preset === "24h" || choice.preset === "1h" ? 1 : choice.preset === "30d" ? 30 : 7;
 }
 
+/** Investigations (ADR-0016 rows 4 and 5): risky entities, and lanes showing how one
+ * entity, or the organization's AI use, connects to everything it touched. An entity's page
+ * is a Record (ADR-0052): a breadcrumb back here, its name as the title, and Open in Logs.
+ * A person's page (ADR-0038 row 27, D197) is `PersonRecord`; AI usage, Agents, and this
+ * page all open it. */
 export function InvestigatePage() {
   // Kept in the page, not the address: the fragment names what is open and every pivot
   // rewrites it.
@@ -72,6 +62,15 @@ export function InvestigatePage() {
   const section = useSection();
   const linked = parseEntity(section);
   const linkedTab = parseEntityTab(section);
+  // The rail's Recent (D258): every way here (a link, the top bar search, Back) passes
+  // through this address, so an entity is kept here and nowhere else.
+  const { userId = "", canViewPeople = true } = useViewer();
+  const linkedKind = linked?.kind;
+  const linkedValue = linked?.value;
+  useEffect(() => {
+    if (linkedKind && linkedValue)
+      rememberEntity(userId, { kind: linkedKind, value: linkedValue }, canViewPeople);
+  }, [userId, linkedKind, linkedValue, canViewPeople]);
   const [modeChoice, setMode] = useState<Mode>("entity");
   const mode: Mode = linked?.kind === "service" ? "ai" : modeChoice;
   const entity: Focus | null = linked && linked.kind !== "service" ? linked : null;
@@ -80,13 +79,8 @@ export function InvestigatePage() {
     linked?.kind === "service" ? { kind: "service", value: linked.value } : aiChoice;
   const [selected, setSelected] = useState<GraphCard | null>(null);
   const [riskTab, setRiskTab] = useState<RiskTab>("user");
-  const [personTab, setPersonTab] = useState<PersonTab>(linkedTab ?? "summary");
-  // A link that names a tab opens it (AI usage and Agents open AI activity).
-  const [seenSection, setSeenSection] = useState(section);
-  if (section !== seenSection) {
-    setSeenSection(section);
-    if (linkedTab) setPersonTab(linkedTab);
-  }
+  // A person's lanes are folded and read only once opened (the page loads without them).
+  const [connects, setConnects] = useState<string | null>(null);
   const { start, end } = time.bounds();
   const rangeWords = time.words;
 
@@ -99,14 +93,14 @@ export function InvestigatePage() {
   const graph = useQuery({
     queryKey: ["entity-graph", mode, focus?.kind, focus?.value, range],
     queryFn: () => api.entityGraph({ mode, kind: focus?.kind, value: focus?.value, start, end }),
-    enabled: mode === "ai" || entity !== null,
+    enabled:
+      mode === "ai" || (entity !== null && (entity.kind !== "user" || connects === entity.value)),
     staleTime: 60_000,
   });
 
   const investigate = (next: Focus) => {
     setSelected(null);
     setMode("entity");
-    setPersonTab("summary");
     navigate("investigate", entitySection({ kind: next.kind as EntityKind, value: next.value }));
   };
   const pick = (row: EntityRisk) => investigate({ kind: row.kind, value: row.value });
@@ -160,7 +154,16 @@ export function InvestigatePage() {
     !risk.data.ips.length &&
     !risk.data.hosts.length &&
     !targeted.length;
-  const g = graph.data;
+  // D242 (owner, 2026-11-14): without View people in AI usage a person's page shows no
+  // name: not in the title, not in the lanes' Entity card (display only).
+  const nameHidden = mode === "entity" && entity?.kind === "user" && !canViewPeople;
+  const g =
+    nameHidden && graph.data
+      ? {
+          ...graph.data,
+          cards: graph.data.cards.map((c) => (c.lane === 0 ? { ...c, label: "Name hidden" } : c)),
+        }
+      : graph.data;
   const followFn = selected ? follow(selected) : null;
 
   const kindTabs = RISK_TABS.map(([k, name]) => (
@@ -190,7 +193,7 @@ export function InvestigatePage() {
   ) : g && g.cards.length <= (mode === "entity" ? 1 : 0) ? (
     <p className="p-6 text-sm text-text-secondary">
       {mode === "entity"
-        ? `No events for ${entity?.value ?? "this entity"} in this range, in the sources you may read.`
+        ? `No events for ${nameHidden ? "this person" : (entity?.value ?? "this entity")} in this range, in the sources you may read.`
         : "No AI activity in this range, in the sources you may read. Claude Code telemetry, the MCP inventory, and DNS or firewall logs feed this view."}
     </p>
   ) : g ? (
@@ -218,17 +221,46 @@ export function InvestigatePage() {
   ) : null;
 
   const landing = mode === "entity" && !entity;
+  const shown = mode === "entity" ? entity : null;
+  // The entity's own summary (the same read its body makes) gives Open in Logs its query.
+  const summary = useQuery({
+    queryKey: ["entity-summary", shown?.kind, shown?.value, range],
+    queryFn: () =>
+      api.entitySummary({
+        kind: shown!.kind as "user" | "ip" | "host",
+        value: shown!.value,
+        start,
+        end,
+      }),
+    enabled: shown !== null,
+    staleTime: 60_000,
+  });
 
   return (
     <div className="flex min-w-0 flex-1 flex-col">
-      <PageHeader
-        title="People &amp; devices"
-        count={
-          risk.data
-            ? `${risk.data.matches_considered.toLocaleString()} rule matches considered`
-            : null
-        }
-      />
+      {shown ? (
+        <PageHeader
+          // The masked title is a fixed label, not a logged value, so not mono.
+          title={nameHidden ? "Name hidden" : shown.value}
+          mono={!nameHidden}
+          count={KIND_LABEL[shown.kind as EntityKind]}
+          breadcrumb={{ label: "People & devices", page: "investigate" }}
+          primary={{
+            label: "Open in Logs",
+            onClick: () => summary.data && openSearch(summary.data.search_sql),
+            disabled: !summary.data,
+          }}
+        />
+      ) : (
+        <PageHeader
+          title="People &amp; devices"
+          count={
+            risk.data
+              ? `${risk.data.matches_considered.toLocaleString()} rule matches considered`
+              : null
+          }
+        />
+      )}
       <div className="flex flex-col gap-4 px-5 py-3">
         <FilterBar
           label="Filter people and devices by time"
@@ -302,26 +334,6 @@ export function InvestigatePage() {
           </>
         ) : (
           <>
-            {mode === "entity" && entity ? (
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelected(null);
-                    navigate("investigate");
-                  }}
-                  className="text-sm text-accent-text hover:underline"
-                >
-                  ← All entities
-                </button>
-                <div className="flex min-w-0 items-baseline gap-2">
-                  <span className="text-sm text-text-secondary">
-                    {KIND_LABEL[entity.kind as EntityKind] ?? "Entity"}
-                  </span>
-                  <span className="break-all font-mono text-lg">{entity.value}</span>
-                </div>
-              </div>
-            ) : null}
             {mode === "ai" && aiFocus ? (
               <div className="flex flex-wrap items-center gap-2 text-sm">
                 <span className="text-text-secondary">Showing AI flow for</span>
@@ -341,66 +353,47 @@ export function InvestigatePage() {
               </div>
             ) : null}
             {mode === "entity" && entity?.kind === "user" ? (
-              <div role="tablist" aria-label="Person" className="flex border-b border-border">
-                {PERSON_TABS.map(([t, label]) => (
-                  <button
-                    key={t}
-                    type="button"
-                    role="tab"
-                    aria-selected={personTab === t}
-                    onClick={() => setPersonTab(t)}
-                    className={`-mb-px border-b-2 px-3 py-2 text-sm ${
-                      personTab === t
-                        ? "border-accent font-semibold text-text"
-                        : "border-transparent text-text-secondary hover:text-text"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-            {mode === "entity" && entity?.kind === "user" && personTab === "ai" ? (
-              <PersonAiActivity person={entity.value} days={rangeDays(time.choice, start)} />
-            ) : null}
-            {mode === "entity" && entity?.kind === "user" && personTab === "timeline" ? (
-              <PersonTimeline person={entity.value} />
-            ) : null}
-            {mode === "entity" && entity?.kind === "user" && personTab === "hosts" ? (
-              <PersonHosts person={entity.value} days={rangeDays(time.choice, start)} />
-            ) : null}
-            {mode === "entity" && entity?.kind === "user" && personTab === "alerts" ? (
-              <PersonAlerts person={entity.value} />
-            ) : null}
-            {mode === "entity" && entity && !(entity.kind === "user" && personTab !== "summary") ? (
-              <EntitySummary
-                kind={entity.kind as "user" | "ip" | "host"}
-                value={entity.value}
+              <PersonRecord
+                // A new person is a new page: nothing stays open from the one before.
+                key={entity.value}
+                person={entity.value}
                 start={start}
                 end={end}
                 range={range}
                 rangeWords={rangeWords}
+                days={rangeDays(time.choice, start)}
+                toAi={linkedTab === "ai"}
                 onSearch={openSearch}
+                connects={canvas}
+                onConnects={() => setConnects(entity.value)}
               />
-            ) : null}
-            {mode === "entity" &&
-            entity?.kind === "user" &&
-            personTab !== "summary" ? null : mode === "entity" && entity ? (
-              // The summary answers first; the lanes sit below it and fold away (owner critique).
-              <details open className="group rounded-card border border-border bg-surface">
-                <summary className="cursor-pointer px-3 py-2 text-sm font-semibold">
-                  How it connects{" "}
-                  <span className="font-normal text-text-muted">
-                    sources, activities, and targets as lanes
-                  </span>
-                </summary>
-                <section
-                  aria-label="Investigation graph"
-                  className="overflow-hidden border-t border-border bg-inset"
-                >
-                  {canvas}
-                </section>
-              </details>
+            ) : mode === "entity" && entity ? (
+              <>
+                <EntitySummary
+                  kind={entity.kind as "ip" | "host"}
+                  value={entity.value}
+                  start={start}
+                  end={end}
+                  range={range}
+                  rangeWords={rangeWords}
+                  onSearch={openSearch}
+                />
+                {/* The summary answers first; the lanes sit below it and fold away. */}
+                <details open className="group rounded-card border border-border bg-surface">
+                  <summary className="cursor-pointer px-3 py-2 text-sm font-semibold">
+                    How it connects{" "}
+                    <span className="font-normal text-text-muted">
+                      sources, activities, and targets as lanes
+                    </span>
+                  </summary>
+                  <section
+                    aria-label="Investigation graph"
+                    className="overflow-hidden border-t border-border bg-inset"
+                  >
+                    {canvas}
+                  </section>
+                </details>
+              </>
             ) : (
               <section
                 aria-label="Investigation graph"
@@ -409,9 +402,6 @@ export function InvestigatePage() {
                 {canvas}
               </section>
             )}
-            {mode === "entity" && entity?.kind === "user" && personTab === "summary" ? (
-              <PersonSignIns person={entity.value} />
-            ) : null}
           </>
         )}
       </div>

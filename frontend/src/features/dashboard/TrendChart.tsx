@@ -36,6 +36,8 @@ interface TrendChartProps {
   height?: number;
   /** Opens a point's rows (ADR-0039): click, or Enter on the focused point. */
   onOpen?: (i: number) => void;
+  /** The title and note are drawn by the card around the chart: no caption here. */
+  bare?: boolean;
   /** Extra lines for a point's tooltip ("Top user: erin@example.com (12)"). */
   details?: (i: number) => { label: string; value: string }[];
 }
@@ -135,6 +137,7 @@ export function TrendChart({
   height = 140,
   onOpen,
   details,
+  bare = false,
 }: TrendChartProps) {
   const n = Math.max(0, ...series.map((s) => s.values.length));
   const last = Math.min(n - 1, lastWithData ?? n - 1);
@@ -221,10 +224,12 @@ export function TrendChart({
 
   return (
     <figure className="min-w-0">
-      <figcaption className="mb-1 flex flex-wrap items-baseline gap-x-2">
-        <PanelTitle as="span">{title}</PanelTitle>
-        {note ? <span className="text-sm text-text-muted">{note}</span> : null}
-      </figcaption>
+      {bare ? null : (
+        <figcaption className="mb-1 flex flex-wrap items-baseline gap-x-2">
+          <PanelTitle as="span">{title}</PanelTitle>
+          {note ? <span className="text-sm text-text-muted">{note}</span> : null}
+        </figcaption>
+      )}
       {legend ? <div className="mb-1.5">{legend}</div> : null}
       <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2">
         <div

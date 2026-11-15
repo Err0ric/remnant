@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { Skeleton } from "@/components/Skeleton";
 import { api, type SectionKpi } from "@/lib/api";
 import { navigate, type PageId } from "@/lib/route";
 
@@ -57,9 +58,10 @@ export function useOpenAlertsItem(): AttentionItem | null {
 }
 
 /** One line at the top of a page: what needs someone, as counts that open the place to act
- * (owner, 2026-11-02). "Nothing needs attention" when nothing does; hidden while loading. */
+ * (owner, 2026-11-02). "Nothing needs attention" when nothing does. While loading a block of
+ * the line's height holds its place, so the page does not move when it arrives. */
 export function NeedsAttention({ items, loading }: { items: AttentionItem[]; loading?: boolean }) {
-  if (loading) return null;
+  if (loading) return <Skeleton label="what needs attention" block="h-[34px]" />;
   return (
     <section
       aria-label="Needs attention"

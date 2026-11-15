@@ -1,9 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { EntityLink } from "@/components/EntityLink";
 import { InlineError } from "@/components/InlineError";
-import { PanelTitle } from "@/components/PanelTitle";
+import { Card } from "@/components/Card";
+import { CardAction } from "@/components/CardAction";
 import { SeverityMark } from "@/components/SeverityMark";
 import { StateNotice } from "@/components/StateNotice";
+import { Truncate } from "@/components/Truncate";
 import { When } from "@/components/When";
 import { RESTRICTED_NOTE } from "@/features/alerts/kinds";
 import { api, type AlertItem, type AlertLines, type Overview, type Source } from "@/lib/api";
@@ -11,7 +13,7 @@ import { cn } from "@/lib/cn";
 import { navigate, pathFor, type PageId } from "@/lib/route";
 import { listOf, sourceStates } from "./Attention";
 
-/** Alert rows shown after the blind rows; the rest are "N more on Alerts". */
+/** Alert rows shown after the blind rows; the rest are behind "View all", which opens Alerts. */
 export const SHOWN = 5;
 
 /** The order of ADR-0052 section 3.9: blind states, High alerts, other alerts, AI review. */
@@ -212,6 +214,32 @@ export function shownRows(rows: NeedsYouRow[]): NeedsYouRow[] {
   return [...blind, ...rows.filter((r) => r.order !== 1).slice(0, SHOWN)];
 }
 
+/** Who or what a row is about: a source opens Health, anyone else their page. At most
+ * 220px wide; `w-max` makes the column take the value's width up to that. */
+function Subject({ subject }: { subject: NeedsYouRow["subject"] }) {
+  if (!subject) return null;
+  // Inline: a row copies as one line of cells.
+  const box = "inline-block w-max max-w-55 align-bottom font-mono text-data";
+  if (subject.kind !== "source")
+    return <EntityLink kind={subject.kind} value={subject.value} className={box} />;
+  const tab = `source=${encodeURIComponent(subject.value)}`;
+  return (
+    <a
+      href={`${pathFor("health")}#${tab}`}
+      onClick={(e) => {
+        if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+        e.preventDefault();
+        navigate("health", tab);
+      }}
+      title={subject.value}
+      aria-label={subject.value}
+      className={cn("group text-accent-text hover:underline", box)}
+    >
+      <Truncate value={subject.value} kind="name" inLink className="group-hover:underline" />
+    </a>
+  );
+}
+
 const href = (r: NeedsYouRow) => `${pathFor(r.page)}${r.tab ? `#${r.tab}` : ""}`;
 
 /** The one list of what needs the viewer (ADR-0052 section 3.9, DESIGN.md 6.3). A blind
@@ -259,26 +287,30 @@ export function NeedsYou() {
   if (!rows.length && !more && !restricted) return null;
   const count = rows.length + unsent;
   return (
-    <section aria-label="Needs you" className="rounded-card border border-border bg-surface">
-      <div className="flex items-baseline gap-2 px-3 pb-1 pt-2.5">
-        <PanelTitle as="h2">Needs you</PanelTitle>
-        {count ? <span className="text-sm tabular-nums text-text-secondary">{count}</span> : null}
-      </div>
+    <Card
+      title="Needs you"
+      note={count ? <span className="tabular-nums text-text-secondary">{count}</span> : undefined}
+      action={
+        more > 0 ? (
+          <CardAction
+            onClick={() => navigate("alerts")}
+            title={`${more.toLocaleString()} more on Alerts`}
+          >
+            View all
+          </CardAction>
+        ) : undefined
+      }
+    >
       {shown.length ? (
-        <table className="w-full table-fixed text-base">
-          <colgroup>
-            <col className="w-24" />
-            <col className="w-40 max-md:hidden" />
-            <col />
-            <col className="w-48 max-lg:hidden" />
-            <col className="w-40" />
-          </colgroup>
+        // Badge, kind, subject, title, time (D257): kind and subject take their content (the
+        // subject at most 220px, cut by `Truncate`), the title the rest of the row in two lines.
+        <table className="w-full text-base">
           <thead className="sr-only">
             <tr>
               <th>Severity</th>
               <th className="max-md:hidden">Kind</th>
-              <th>What</th>
               <th className="max-lg:hidden">Who or what</th>
+              <th>What</th>
               <th>When</th>
             </tr>
           </thead>
@@ -289,11 +321,11 @@ export function NeedsYou() {
                 <tr
                   key={r.key}
                   data-needs-you={blind ? "blind" : "alert"}
-                  className={cn("border-t border-border", blind && "bg-warn-tint")}
+                  className={cn("border-t border-border first:border-t-0", blind && "bg-warn-tint")}
                 >
                   <td
                     className={cn(
-                      "py-1.5 pl-3 pr-2 align-middle",
+                      "w-px whitespace-nowrap py-1.5 pl-3 pr-3 align-middle",
                       // The bar is a shape, so a blind row never reads as an alert row.
                       blind && "border-l-2 border-l-warn pl-2.5",
                     )}
@@ -311,10 +343,13 @@ export function NeedsYou() {
                       <span className="text-text-muted">·</span>
                     )}
                   </td>
-                  <td className="truncate py-1.5 pr-2 text-text-secondary max-md:hidden">
+                  <td className="w-px whitespace-nowrap py-1.5 pr-4 text-text-secondary max-md:hidden">
                     {r.kind}
                   </td>
-                  <td className="py-1.5 pr-2">
+                  <td className="w-px py-1.5 pr-4 max-lg:hidden">
+                    <Subject subject={r.subject} />
+                  </td>
+                  <td className="py-1.5 pr-4">
                     <a
                       href={href(r)}
                       onClick={(e) => {
@@ -322,34 +357,15 @@ export function NeedsYou() {
                         e.preventDefault();
                         navigate(r.page, r.tab);
                       }}
-                      className="block truncate text-text hover:underline"
+                      data-needs-you-title=""
+                      className="line-clamp-2 text-text [overflow-wrap:anywhere] hover:underline"
                       title={r.title}
                     >
                       <span className="md:hidden">{r.kind}: </span>
                       {r.title}
                     </a>
                   </td>
-                  <td className="truncate py-1.5 pr-2 max-lg:hidden">
-                    {r.subject?.kind === "source" ? (
-                      <a
-                        href={`${pathFor("health")}#source=${encodeURIComponent(r.subject.value)}`}
-                        onClick={(e) => {
-                          if (e.metaKey || e.ctrlKey || e.shiftKey) return;
-                          e.preventDefault();
-                          navigate(
-                            "health",
-                            `source=${encodeURIComponent(r.subject?.value ?? "")}`,
-                          );
-                        }}
-                        className="font-mono text-data text-accent-text hover:underline"
-                      >
-                        {r.subject.value}
-                      </a>
-                    ) : r.subject ? (
-                      <EntityLink kind={r.subject.kind} value={r.subject.value} />
-                    ) : null}
-                  </td>
-                  <td className="whitespace-nowrap py-1.5 pr-3 text-right align-middle">
+                  <td className="w-px whitespace-nowrap py-1.5 pr-3 text-right align-middle">
                     {r.at ? <When iso={r.at} className="text-text-muted" /> : null}
                   </td>
                 </tr>
@@ -358,22 +374,11 @@ export function NeedsYou() {
           </tbody>
         </table>
       ) : null}
-      {more > 0 ? (
-        <p className="border-t border-border px-3 py-1.5 text-sm">
-          <button
-            type="button"
-            onClick={() => navigate("alerts")}
-            className="text-accent-text hover:underline"
-          >
-            {more} more on Alerts
-          </button>
-        </p>
-      ) : null}
       {restricted ? (
-        <div className="border-t border-border p-2">
+        <div className={cn("p-2", shown.length > 0 && "border-t border-border")}>
           <StateNotice>{RESTRICTED_NOTE}</StateNotice>
         </div>
       ) : null}
-    </section>
+    </Card>
   );
 }

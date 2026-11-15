@@ -87,6 +87,53 @@ describe("Alerts (ADR-0037, ADR-0043)", () => {
     expect(document.querySelector(".max-w-5xl")).toBeNull();
   });
 
+  it("lets an alert title use two lines, then cut, with the whole title on hover (D257)", async () => {
+    await renderAt("/alerts");
+    const list = await screen.findByRole("list", { name: "Alert list" });
+    const title = (await within(list).findByText("New AI service: DeepSeek")) as HTMLElement;
+    expect(title).toHaveAttribute("data-alert-title");
+    expect(title).toHaveClass("line-clamp-2");
+    expect(title).not.toHaveClass("truncate");
+    expect(title.closest("button")).toHaveAttribute("title", "New AI service: DeepSeek");
+  });
+
+  it("keeps each comma of the pane's People with the person before it (D257)", async () => {
+    const spy = mockApi("Codename", { mode: "login", signedIn: true, role: "admin" });
+    const base = spy.getMockImplementation()!;
+    spy.mockImplementation(async (input, init) => {
+      const res = await base(input, init);
+      if (!String(input).includes("/api/alerts") || !res.ok) return res;
+      const body = await res
+        .clone()
+        .json()
+        .catch(() => null);
+      if (!body || !Array.isArray(body.items)) return res;
+      for (const i of body.items) if (i.item_id === "w1") i.people = ["ana", "bob", "carol"];
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    window.history.replaceState(null, "", "/alerts#item=w1");
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    render(
+      <App
+        initialTheme="dark"
+        queryClient={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      />,
+    );
+    const pane = await screen.findByRole("region", { name: "This alert" });
+    const people = (await within(pane).findByText("People")).nextElementSibling as HTMLElement;
+    expect([...people.querySelectorAll(".whitespace-nowrap")].map((k) => k.textContent)).toEqual([
+      "ana,",
+      "bob,",
+      "carol",
+    ]);
+  });
+
   it("closes with a required note for False positive", async () => {
     const spy = await renderAt("/alerts");
     await userEvent.click(await listRow(/Failed logons/));

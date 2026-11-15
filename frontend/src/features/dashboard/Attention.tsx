@@ -32,7 +32,8 @@ export function sourceStates(sources: Source[], o: Overview | undefined): Source
       const s = byId.get(id);
       const h = health.get(id);
       const gaps = volume.get(id) ?? [];
-      const ongoing = gaps.find((g) => g.ongoing);
+      // Marked "Quiet is normal" and inside its days (D260): silence is not being blind.
+      const ongoing = h?.quiet_ok ? undefined : gaps.find((g) => g.ongoing);
       const problem =
         s?.status.state === "error" || h?.state === "error"
           ? "has errors"

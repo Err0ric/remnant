@@ -22,6 +22,8 @@ TOKENS = ROOT / "frontend" / "src" / "styles" / "tokens.css"
 DESIGN = ROOT / "docs" / "DESIGN.md"
 
 TEXT, MARK = 4.5, 3.0
+# Chart series (DESIGN.md section 2): the neutral and the four categorical colors.
+SERIES = ["series-neutral", "series-1", "series-2", "series-3", "series-4"]
 Color = tuple[float, float, float, float]
 
 # What text and marks sit on. A pair of names is a translucent token over its backdrop.
@@ -102,7 +104,7 @@ def pairs() -> list[tuple[str, str | tuple[str, str], float]]:
     out += [("border-control", g, MARK) for g in grounds if g in ("surface", "inset", TINTS[0])]
     out += [("focus-ring", g, MARK) for g in [*grounds, PRESSED]]
     out += [("focus-ring-top", "top", MARK)]
-    out += [("series-neutral", g, MARK) for g in ["surface", "surface-head"]]
+    out += [(s, g, MARK) for s in SERIES for g in ["surface", "surface-head"]]
     # State tags are outlined, not filled: the state color is text on a plain surface, and
     # the neutral tag is secondary text on the Info fill.
     out += [(s, g, TEXT) for s in ["warn", "danger"] for g in ["surface-expand", "inset"]]

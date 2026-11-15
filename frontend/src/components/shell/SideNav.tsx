@@ -1,4 +1,4 @@
-import { useEffect, useState, type MouseEvent } from "react";
+import { useEffect, useState, useSyncExternalStore, type MouseEvent } from "react";
 import {
   Activity,
   Bell,
@@ -11,8 +11,9 @@ import {
   Users,
   type LucideIcon,
 } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { api, type AiInventory, type Overview } from "@/lib/api";
+import { toReview } from "@/features/ai/review";
 import { needingAttention } from "@/features/health/flow";
 import { cn } from "@/lib/cn";
 import {
@@ -26,6 +27,8 @@ import {
 } from "@/lib/nav";
 import { navigate, pathFor, type PageId } from "@/lib/route";
 import { useViewer } from "@/lib/viewer";
+import { PinnedNav } from "./PinnedNav";
+import { RecentNav } from "./RecentNav";
 
 interface SideNavProps {
   active: string;
@@ -88,21 +91,31 @@ function OpenAlerts() {
   );
 }
 
-// The count's first read waits until the page's own requests are out.
+// A count's first read waits until the page's own requests are out.
 const FIRST_READ_MS = 2500;
 const EVERY_MS = 300_000;
-/** An Overview a page loaded this recently is the dot's answer; the Dashboard and Health
- * refresh theirs every minute. */
+/** A page answer this recent is the count's answer; the pages refresh theirs themselves. */
 const PAGE_FRESH_MS = 90_000;
 
-/** A warn dot beside Health, only when one of the viewer's sources needs attention. Its
- * text for screen readers says so; nothing is drawn when all is well or nothing is known.
- * While a page shows the Overview (Dashboard, Health) the dot follows that page's own data
- * as it changes, and asks for nothing. On other pages it asks a numbers-only count every
- * five minutes, so it can be up to five minutes behind there. */
-function HealthDot() {
-  // Listens to the Overview a page loads; never loads it from here.
-  const page = useQuery({ queryKey: ["overview"], queryFn: api.overview, enabled: false });
+/** A rail count that follows a page's own data (`pageKey`) while a page shows it, and
+ * asks for nothing then. On other pages it asks a numbers-only count every five minutes,
+ * so it can be up to five minutes behind there. Never loads the page's data itself. Keep
+ * `countKey` under `pageKey`: a change that invalidates the page's data then refreshes the
+ * count at once, and page data so invalidated is never the answer. */
+function useRailCount<P, C>(
+  pageKey: string[],
+  pageFn: () => Promise<P>,
+  countKey: string[],
+  countFn: () => Promise<C>,
+  fromPage: (p: P) => number,
+  fromCount: (c: C) => number,
+): number {
+  const page = useQuery({ queryKey: pageKey, queryFn: pageFn, enabled: false });
+  const client = useQueryClient();
+  const invalidated = useSyncExternalStore(
+    (cb) => client.getQueryCache().subscribe(cb),
+    () => client.getQueryState(pageKey)?.isInvalidated ?? false,
+  );
   const [now, setNow] = useState(() => Date.now());
   const [ready, setReady] = useState(false);
   useEffect(() => {
@@ -113,28 +126,85 @@ function HealthDot() {
       window.clearInterval(tick);
     };
   }, []);
-  const pageFresh = Boolean(page.data) && now - page.dataUpdatedAt < PAGE_FRESH_MS;
+  const usable = page.data !== undefined && !invalidated;
+  const pageFresh = usable && now - page.dataUpdatedAt < PAGE_FRESH_MS;
   const count = useQuery({
-    queryKey: ["health", "count"],
-    queryFn: api.healthCount,
-    // Not while a page is loading or has just loaded the same assessment.
+    queryKey: countKey,
+    queryFn: countFn,
+    // Not while a page is loading or has just loaded the same answer.
     enabled: ready && !page.isFetching && !pageFresh,
     refetchInterval: EVERY_MS,
     staleTime: 60_000,
   });
-  // Whichever answer is newer: the page's Overview or the count.
-  const fromPage = page.data && page.dataUpdatedAt >= count.dataUpdatedAt;
-  const n = fromPage ? needingAttention(page.data) : (count.data?.not_healthy ?? 0);
+  // Whichever answer is newer: the page's or the count.
+  if (usable && page.data !== undefined && page.dataUpdatedAt >= count.dataUpdatedAt)
+    return fromPage(page.data);
+  return count.data === undefined ? 0 : fromCount(count.data);
+}
+
+/** Outlined counts (D258): shown only above zero, beside the label from 1100px. */
+const OUTLINED = "ml-auto rounded-badge border px-1.5 font-mono text-xs tabular-nums";
+
+/** The Inventory's items still to review, for AI usage's count: follows the Inventory a
+ * page loaded; elsewhere `/api/ai/inventory/count`, which is not audited. Both keys sit
+ * under ["ai-usage"], which every review invalidates (AI usage, AI settings, Alerts). */
+function useAiToReview(): number {
+  return useRailCount<AiInventory, { to_review: number }>(
+    ["ai-usage", "inventory"],
+    () => api.aiInventory(30),
+    ["ai-usage", "inventory", "count"],
+    api.aiInventoryCount,
+    (p) => toReview(p.items),
+    (c) => c.to_review,
+  );
+}
+
+interface CountProps {
+  n: number;
+}
+
+/** Beside AI usage, outlined and neutral; the row then opens the Inventory. */
+function AiToReview({ n }: CountProps) {
   if (!n) return null;
   return (
     <span
-      data-health-dot=""
-      className="ml-auto flex items-center md:absolute md:right-1.5 md:top-1.5 min-[1100px]:static"
+      data-ai-count=""
+      aria-label={`${n} to review`}
+      className={cn(
+        OUTLINED,
+        "border-border-strong text-text-secondary md:hidden min-[1100px]:inline",
+      )}
     >
-      <span className="h-2 w-2 rounded-full bg-warn" aria-hidden />
-      <span className="sr-only">
-        {n} {n === 1 ? "source needs" : "sources need"} attention
-      </span>
+      {n}
+    </span>
+  );
+}
+
+/** Beside Health: how many of the viewer's sources need attention, outlined in warn; its
+ * words for screen readers and as the tooltip. Nothing when all is well or nothing is
+ * known. Follows the Overview of the Dashboard and Health; elsewhere `/api/health/count`. */
+function HealthCount() {
+  const n = useRailCount<Overview, { not_healthy: number }>(
+    ["overview"],
+    api.overview,
+    ["health", "count"],
+    api.healthCount,
+    needingAttention,
+    (c) => c.not_healthy,
+  );
+  if (!n) return null;
+  const words = `${n} ${n === 1 ? "source needs" : "sources need"} attention`;
+  return (
+    <span
+      data-health-count=""
+      title={words}
+      className={cn(
+        OUTLINED,
+        "border-warn text-warn md:absolute md:right-0.5 md:top-0.5 min-[1100px]:static",
+      )}
+    >
+      <span aria-hidden>{n}</span>
+      <span className="sr-only">{words}</span>
     </span>
   );
 }
@@ -150,7 +220,9 @@ interface Row {
 }
 
 /** The rail (ADR-0052 section 3.2, DESIGN.md 5): pages only, in three labeled groups, with
- * Health and Settings pinned at the bottom under a hairline at a lower weight. No entry has
+ * Health and Settings pinned at the bottom under a hairline at a lower weight, and between
+ * them the viewer's Recent entities in a region of its own (D258). Counts: open alerts
+ * solid, AI items to review outlined, sources needing attention outlined in warn. No entry has
  * children and nothing collapses; a page's tabs are in its header. An entry the viewer
  * cannot open is not shown. 208px from 1100px; between 768 and 1100px icons only, with the
  * label as the tooltip; on phones it opens from the Menu button. */
@@ -171,11 +243,15 @@ export function SideNav({
   const firstSetting = (items.find((i) => i.id === "sources") ?? items[0])?.page;
   const inSettings = SETTINGS_IDS.has(active);
   const place = areaOf(active as PageId, activeTab);
+  const aiReview = useAiToReview();
 
   const rowsOf = (ids: string[], pinned: boolean): Row[] =>
     ids.flatMap((id): Row[] => {
       const area = AREAS.find((a) => a.id === id);
-      const first = area ? visibleTabs(area, isAdmin, canAsk, canRunSql)[0] : undefined;
+      const tabs = area ? visibleTabs(area, isAdmin, canAsk, canRunSql) : [];
+      // With something to review AI usage opens its Inventory, as the Dashboard's tile does.
+      const review = id === "ai" && aiReview ? tabs.find((t) => t.tab === "inventory") : undefined;
+      const first = review ?? tabs[0];
       if (!area || !first) return [];
       return [
         {
@@ -203,7 +279,8 @@ export function SideNav({
           <Icon size={16} aria-hidden className="shrink-0" />
           <span className="md:sr-only min-[1100px]:not-sr-only">{row.label}</span>
           {row.key === "alerts" ? <OpenAlerts /> : null}
-          {row.key === "health" ? <HealthDot /> : null}
+          {row.key === "ai" ? <AiToReview n={aiReview} /> : null}
+          {row.key === "health" ? <HealthCount /> : null}
         </a>
       </li>
     );
@@ -215,49 +292,60 @@ export function SideNav({
   const pinned = RAIL_GROUPS.filter((g) => g.pinned).flatMap((g) => rowsOf(g.areas, true));
 
   return (
-    <nav
+    // The rail is a grid of four rows: the page groups, Recent, the space left, and Health
+    // and Settings. The Primary nav spans them all on a subgrid, so Recent sits between its
+    // groups and its bottom cluster as a region of its own (D258), never one of its links.
+    <div
       id="primary-nav"
-      aria-label="Primary"
       className={cn(
         // From md up the rail stays in view under the top bar; it fits without scrolling.
-        "w-full shrink-0 flex-col border-b border-border bg-nav px-2 py-3 md:sticky md:top-12 md:h-[calc(100dvh-3rem)] md:w-14 md:self-start md:overflow-y-auto md:border-b-0 md:border-r min-[1100px]:w-52",
-        open ? "flex" : "hidden md:flex",
+        "w-full shrink-0 grid-cols-1 grid-rows-[auto_auto_1fr_auto] border-b border-border bg-nav px-2 py-3 md:sticky md:top-12 md:h-[calc(100dvh-3rem)] md:w-14 md:self-start md:overflow-y-auto md:border-b-0 md:border-r min-[1100px]:w-52",
+        open ? "grid" : "hidden md:grid",
       )}
     >
-      {groups.map(({ group, rows }) => (
-        <section key={group.id} aria-label={group.label} className="mb-3">
-          {/* Group labels show where the row labels do: on phones and from 1100px. */}
-          <div
-            aria-hidden="true"
-            className="px-2.5 pb-1 text-xs text-text-muted md:hidden min-[1100px]:block"
-          >
-            {group.label}
-          </div>
-          <ul className="flex flex-col gap-px">{rows.map(link)}</ul>
-        </section>
-      ))}
-      {pinned.length || firstSetting ? (
-        <ul
-          aria-label="Health and settings"
-          className="mt-auto flex flex-col gap-px border-t border-border pt-2"
-        >
-          {pinned.map(link)}
-          {firstSetting ? (
-            <li>
-              <a
-                href={pathFor(firstSetting)}
-                onClick={go(firstSetting)}
-                aria-current={inSettings ? "page" : undefined}
-                title="Settings"
-                className={rowClass(inSettings, true)}
+      <nav aria-label="Primary" className="col-start-1 row-span-full grid grid-rows-subgrid">
+        <div>
+          {groups.map(({ group, rows }) => (
+            <section key={group.id} aria-label={group.label} className="mb-3">
+              {/* Group labels show where the row labels do: on phones and from 1100px. */}
+              <div
+                aria-hidden="true"
+                className="px-2.5 pb-1 text-xs text-text-muted md:hidden min-[1100px]:block"
               >
-                <Settings size={16} aria-hidden className="shrink-0" />
-                <span className="md:sr-only min-[1100px]:not-sr-only">Settings</span>
-              </a>
-            </li>
-          ) : null}
-        </ul>
-      ) : null}
-    </nav>
+                {group.label}
+              </div>
+              <ul className="flex flex-col gap-px">{rows.map(link)}</ul>
+            </section>
+          ))}
+        </div>
+        {pinned.length || firstSetting ? (
+          <ul
+            aria-label="Health and settings"
+            className="row-start-4 flex flex-col gap-px border-t border-border pt-2"
+          >
+            {pinned.map(link)}
+            {firstSetting ? (
+              <li>
+                <a
+                  href={pathFor(firstSetting)}
+                  onClick={go(firstSetting)}
+                  aria-current={inSettings ? "page" : undefined}
+                  title="Settings"
+                  className={rowClass(inSettings, true)}
+                >
+                  <Settings size={16} aria-hidden className="shrink-0" />
+                  <span className="md:sr-only min-[1100px]:not-sr-only">Settings</span>
+                </a>
+              </li>
+            ) : null}
+          </ul>
+        ) : null}
+      </nav>
+      {/* Pinned saved searches and dashboards, then Recent (D258, D259). */}
+      <div className="col-start-1 row-start-2 min-w-0">
+        <PinnedNav />
+        <RecentNav />
+      </div>
+    </div>
   );
 }

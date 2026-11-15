@@ -1,10 +1,12 @@
+import { PinButton } from "@/components/PinButton";
 import { About } from "@/components/About";
 import { EmptyState } from "@/components/EmptyState";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { ApiError, api, type SavedSearch, type Schedule, type User } from "@/lib/api";
-import { navigate, pathFor } from "@/lib/route";
+import { navigate, pathFor, setFragment, useSection } from "@/lib/route";
+import { targetIn } from "@/lib/pins";
 import { cronLabel } from "@/features/schedules/schedule";
 import { seedSchedule } from "@/lib/scheduleSeed";
 import { seedSearch } from "@/lib/searchSeed";
@@ -74,9 +76,17 @@ export function SavedSearchesPage({ me }: SavedSearchesPageProps) {
   });
 
   const list = searches.data ?? [];
+  // A pinned search opens by its address (`#open=<id>`, D259), in a new tab too.
+  const linked = targetIn(useSection(), "open");
+  const opened = linked ?? seeded;
+  // A pin opened while another search is open replaces it.
+  useEffect(() => {
+    if (linked) setRunning(null);
+  }, [linked]);
+  const missing = linked !== null && searches.isSuccess && !list.some((s) => s.id === linked);
   const running = !canRunSql
     ? null
-    : (chosen ?? (seeded ? (list.find((s) => s.id === seeded) ?? null) : null));
+    : (chosen ?? (opened ? (list.find((s) => s.id === opened) ?? null) : null));
   const error = [remove.error, importer.error, exporter.error, verifier.error].find(Boolean);
 
   return (
@@ -106,6 +116,11 @@ export function SavedSearchesPage({ me }: SavedSearchesPageProps) {
             {AUDITOR_SQL_OFF}
           </p>
         ) : null}
+        {missing ? (
+          <p role="status" className="text-sm text-text-secondary">
+            That saved search is gone or no longer shared with you.
+          </p>
+        ) : null}
         {notice ? (
           <p role="status" className="text-sm text-text-secondary">
             {notice}
@@ -130,6 +145,7 @@ export function SavedSearchesPage({ me }: SavedSearchesPageProps) {
             onClose={() => {
               setRunning(null);
               setSeeded(null);
+              if (linked) setFragment("", true);
             }}
           />
         ) : null}
@@ -276,6 +292,7 @@ export function SavedSearchesPage({ me }: SavedSearchesPageProps) {
                                 Schedule
                               </button>
                             ) : null}
+                            <PinButton kind="search" id={s.id} name={s.name} />
                             <button
                               type="button"
                               aria-label={`Export ${s.name}`}

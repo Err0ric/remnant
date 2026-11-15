@@ -23,7 +23,7 @@ from typing import Any
 
 from app.ai.internal_tools import counted
 from app.ai.people_view import tie
-from app.ai.test_records import HOOKS
+from app.ai.test_records import NOT_TEST
 from app.ai.usage import MCP_EXPR, NO_MCP_NAMES, WHO_EXPR
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.search.entities import CLIENT_NAMES
@@ -42,6 +42,11 @@ _CLIENT = (
 HOOK_MCP = "json_extract_string(unmapped, '$.attr.mcp_server_name')"
 
 # One row per (agent, item) use: kind, agent key, label, owner, machine, item kind, item.
+# Each read of `events` below pins `template_id` at the top level of its WHERE (`=` or
+# `IN`, ANDed): the engine then reads only the sources whose files can hold those templates,
+# by their Parquet statistics (`narrow.pinned_templates`, `QueryEngine._holding`), instead
+# of 30 days of every source. Written so on purpose: a pin inside parentheses or an OR is
+# not one the engine can read, and the query would scan every source again.
 ITEMS_SQL = f"""
 WITH u AS (
   SELECT 'Claude Code' AS kind,
@@ -69,7 +74,7 @@ WITH u AS (
          coalesce(time, time_observed)
   -- Every hook record is Claude Code use: a session start or a prompt alone makes the agent
   -- (owner, 2026-11-02); only tool calls name items.
-  FROM events WHERE {HOOKS}
+  FROM events WHERE template_id = 'claude_hooks' AND {NOT_TEST}
   UNION ALL
   SELECT 'MCP client',
          'mcp|' || coalesce(device_hostname, '?') || '|'
@@ -117,16 +122,17 @@ LIMIT 2000"""  # noqa: S608  # fixed SQL text
 
 HOURLY_SQL = f"""
 WITH u AS (
-  SELECT CASE template_id
-           WHEN 'claude_code_otel' THEN 'cc|'
-             || coalesce(nullif(actor_user_name, ''), device_hostname, '?')
-           WHEN 'claude_hooks' THEN 'cc|'
-             || coalesce(nullif(actor_user_name, ''), device_hostname, '?')
-           WHEN 'anthropic_reports' THEN 'key|' || json_extract_string(unmapped, '$.api_key_id')
-         END AS agent, date_trunc('hour', coalesce(time, time_observed)) AS h
-  FROM events
-  WHERE template_id = 'claude_code_otel' OR {HOOKS}
-     OR (template_id = 'anthropic_reports' AND message = 'anthropic.usage')
+  SELECT 'cc|' || coalesce(nullif(actor_user_name, ''), device_hostname, '?') AS agent,
+         date_trunc('hour', coalesce(time, time_observed)) AS h
+  FROM events WHERE template_id = 'claude_code_otel'
+  UNION ALL
+  SELECT 'cc|' || coalesce(nullif(actor_user_name, ''), device_hostname, '?'),
+         date_trunc('hour', coalesce(time, time_observed))
+  FROM events WHERE template_id = 'claude_hooks' AND {NOT_TEST}
+  UNION ALL
+  SELECT 'key|' || json_extract_string(unmapped, '$.api_key_id'),
+         date_trunc('hour', coalesce(time, time_observed))
+  FROM events WHERE template_id = 'anthropic_reports' AND message = 'anthropic.usage'
 )
 SELECT agent,
        max(n) FILTER (WHERE h < $recent) AS usual,

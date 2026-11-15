@@ -16,9 +16,22 @@ emptied before every timed page, so every load is computed in the request on bot
 The lake is built once with the `--before` code (scripts/demo data,
 the demo lab's rules and detections, Claude Code telemetry, a loggen volume, Identities
 with organization domains and aliases, two saved searches using {{person:...}} and
-{{org_domains}}) and kept in `--lake` for a day; each server runs on its own copy. Ask is
+{{org_domains}}) and kept in `--lake` for the UTC day it was built; each server runs on its own copy. Ask is
 timed on its library route with a scripted router that answers at once (not an LLM), so
-only the server's own work is timed.
+only the server's own work is timed. The lake also holds open AI Watch service alerts
+that name machines, with Claude hooks records for most of them, so the Alerts list call
+runs its device lookup as on the install (`ai_alert_feed`).
+
+Every lake is kept as an install keeps its data, its closed days compacted and rolled up
+(owner, 2026-11-14; a few more minutes to build), so no timed server builds rollups while
+it is timed; a lake counts for the UTC day it was built. The queue and smoke.py use the
+default lake. A lake the size of production (30 days at the work install's rate, about
+10.7 million events and 3.8 GB, built in about 6 minutes; each run copies its data folder
+twice) goes in its own folder, by hand before a release and when a change touches the
+Dashboard sections, AI usage, or People & devices:
+
+    cd backend && uv run python ../scripts/bench_compare.py --before origin/main \\
+        --after HEAD --lake ../data/bench/lake-prod30 --real-shape 0.313 --real-days 30
 
 Prints a Markdown table and exits 1 when a page is flagged (owner, 2026-11-08: more than
 10% AND at least 100 ms slower, or more than 200 ms slower regardless, in the median,
@@ -30,6 +43,7 @@ Standard library only, plus the backend's packages for the demo GeoIP file.
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import os
 import shutil
@@ -181,15 +195,19 @@ class Api:
         except (OSError, ValueError, subprocess.SubprocessError):
             return 0.0
 
-    def call(self, method: str, path: str, body: Any = None, timeout: float = 300) -> Any:
+    def call(
+        self, method: str, path: str, body: Any = None, timeout: float = 300, token: str = ""
+    ) -> Any:
         session = SESSIONS.get(self.base)
-        if session is None and not self.csrf:
+        if session is None and not self.csrf and not token:
             with urllib.request.urlopen(self.base + "/api/auth/state", timeout=10) as r:  # noqa: S310  # loopback
                 self.csrf = json.loads(r.read()).get("csrf_token") or "-"
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(self.base + path, data=data, method=method)  # noqa: S310  # loopback
         req.add_header("Content-Type", "application/json")
-        for name, value in (session.headers() if session else {"X-CSRF-Token": self.csrf}).items():
+        # An OTLP source's own token, or the signed-in administrator.
+        signed = session.headers() if session else {"X-CSRF-Token": self.csrf}
+        for name, value in ({"Authorization": f"Bearer {token}"} if token else signed).items():
             req.add_header(name, value)
         with urllib.request.urlopen(req, timeout=timeout) as res:  # noqa: S310  # loopback
             out = res.read()
@@ -263,7 +281,7 @@ WRONG_APP = 70
 
 def serve(
     code: Path, data: Path, lake: Path, port: int, log: Path, python: str = sys.executable,
-    static: Path | None = None, refresh: bool = True,
+    static: Path | None = None, refresh: bool = True, extra: dict[str, str] | None = None,
 ) -> subprocess.Popen[bytes]:  # fmt: skip
     roots = ",".join(str(lake / d) for d in ("logs", "vol", "lab"))
     # The same environment for every server: nothing inherited from APP__ variables.
@@ -277,6 +295,7 @@ def serve(
     }  # fmt: skip
     if static is not None:
         env["APP__SERVER__STATIC_DIR"] = str(static)
+    env |= extra or {}
     cmd = [python, "-c", BOOT]
     with log.open("ab") as out:
         proc = subprocess.Popen(cmd, cwd=code / "backend", env=env, stdout=out, stderr=out)  # noqa: S603  # fixed command
@@ -336,7 +355,175 @@ def settle(api: Api, name: str, limit_s: int = SETTLE_LIMIT_S) -> int:
     )
 
 
-def build(code: Path, lake: Path, events: int, router: int, log: Path, shape: float = 0.0) -> int:
+ROLLUP_LIMIT_S = 3600
+BUILD_ENV = {"APP__MAINTENANCE__COMPACTION_INTERVAL_S": "60"}
+
+
+COMPACT_SETTLE_S = 60.0  # compaction leaves files younger than this (maintenance.SETTLE_S)
+
+
+def rolled_up(runs: list[datetime], pending: int | None, since: datetime) -> bool:
+    """No closed day left to build, in a rollup run whose compaction saw every file.
+    Compaction leaves files younger than COMPACT_SETTLE_S, and `settle` proves only 30 s
+    of quiet, so one run after `since` is not enough: its compaction may have started
+    before the last files were old enough. Runs follow one another on one loop, so the
+    compaction before the second run seen after `since + COMPACT_SETTLE_S` started after
+    the first ended: past that moment, when every file was old enough."""
+    after = sorted({t for t in runs if t >= since + timedelta(seconds=COMPACT_SETTLE_S)})
+    return pending == 0 and len(after) >= 2
+
+
+def built_rollups(api: Api, limit_s: int = ROLLUP_LIMIT_S) -> bool:
+    """Wait until the page rollups have built every closed day (Settings > System) after
+    everything was ingested and compacted (`rolled_up`), as on an install that has run
+    for a while: a lake kept without them made each timed server build them while it was
+    timed, and its pages read those days from events. False past `limit_s`."""
+    since = datetime.now(UTC)
+    runs: dict[str, list[datetime]] = {}
+    start = said = time.monotonic()
+    while time.monotonic() - start < limit_s:
+        rollups = api.call("GET", "/api/health-checks").get("rollups") or []
+        left = {}
+        for r in rollups:
+            seen = runs.setdefault(r["name"], [])
+            if r["last_run"]:
+                seen.append(datetime.fromisoformat(r["last_run"]))
+            if not rolled_up(seen, r["pending"], since):
+                left[r["name"]] = r["pending"]
+        if rollups and not left:
+            return True
+        if time.monotonic() - said >= 60:
+            print(f"rollups still to build: {left}", file=sys.stderr)
+            said = time.monotonic()
+        time.sleep(10)
+    return False
+
+
+AI_SERVICES = ("gemini", "deepseek", "smithery")  # the catalog ids of AI_SITES
+
+
+def check_ai_alerts(api: Api, checked: Any) -> None:
+    """The AI Watch check worked and raised the alerts the Alerts row is for: one open
+    service alert per AI_SERVICES naming at least one of the proxy's machines. Otherwise
+    the lake is not kept (RuntimeError)."""
+    failed = [s.get("step") for s in checked or [] if not s.get("ok")]
+    if failed or not checked:
+        raise RuntimeError(f"AI Watch check failed: {failed or checked}")
+    items = api.call("GET", "/api/alerts?state=open").get("items") or []
+    hosts = set(AI_PROXY_HOSTS)
+    named = {
+        i["subject"].removeprefix("service:") for i in items
+        if i.get("kind") == "ai_watch" and hosts & set(i.get("devices") or [])
+    }  # fmt: skip
+    missing = [s for s in AI_SERVICES if s not in named]
+    if missing:
+        raise RuntimeError(f"no open AI Watch alert naming the proxy's machines for {missing}")
+
+
+# What build() puts in a lake; a kept lake of another version is built again. 2: the AI
+# Watch alerts with machines and their hooks records (ai_alert_feed), configured
+# real-shaped sources, and built rollups; 3: built only when the alerts and rollups
+# are checked (check_ai_alerts, built_rollups); 4: the default lake is compacted and
+# rolled up too (owner, 2026-11-14).
+LAKE_VERSION = 4
+
+
+def is_fresh(kept: dict[str, Any], events: int, shape: float, days: int, now: float) -> bool:
+    """A kept lake counts only if it is of this version and the size asked for; the days of the real-shaped part count only when it has one (a lake from
+    before --real-days has 7). A lake counts only on the UTC day it was built: after
+    midnight it has a closed day with no rollup, which each timed server would build."""
+    built = datetime.fromtimestamp(kept.get("at", 0), UTC).date()
+    today = built == datetime.fromtimestamp(now, UTC).date()
+    return (
+        now - kept.get("at", 0) < 86400 and kept.get("version") == LAKE_VERSION
+        and kept.get("loggen") == events and kept.get("shape", 0.0) == shape
+        and (not shape or kept.get("days", 7) == days) and today
+    )  # fmt: skip
+
+
+# What scripts/fixtures/real_shape.py writes: (source, format, template).
+REAL_SHAPE_SOURCES = (
+    ("win_auth", "json", "windows_nxlog_json"), ("win_dns", "syslog", "dns_windows"),
+    ("hooks", "json", "claude_hooks"),
+)  # fmt: skip
+
+
+def real_shape_cmd(lake: Path, shape: float, days: int) -> list[str]:
+    gen = ROOT / "scripts" / "fixtures" / "real_shape.py"
+    return [
+        sys.executable, str(gen), "--lake", str(lake), "--scale", str(shape), "--days", str(days)
+    ]  # fmt: skip
+
+
+# Web proxy rows (CEF) from named machines with no person, to AI services that are not
+# approved or not reviewed, and Claude hooks records over OTLP saying who used most of
+# them: what makes AI Watch raise service alerts naming machines, so the Alerts list call
+# looks up the people on them (`_device_people`, PR 466) as it does on the install.
+# ws-0040 and ws-0043 also have the demo's own hooks records; ws-0080 has none. The proxy
+# logs host names only, and with the demo's addresses each alert stays within the 20
+# devices an item keeps (addresses sort first, so more hosts would be cut).
+AI_HOOK_PEOPLE: dict[str, list[str]] = {
+    "ws-0060": ["carol"], "ws-0061": ["erin"], "ws-0062": ["frank"], "ws-0063": ["grace"],
+    "ws-0064": ["heidi"], "ws-0065": ["bob", "carol"], "ws-0066": ["erin", "frank"],
+    "ws-0067": ["mallory"],
+}  # fmt: skip
+AI_PROXY_HOSTS = ["ws-0040", "ws-0043", *AI_HOOK_PEOPLE, "ws-0080"]
+AI_SITES = ("gemini.google.com", "chat.deepseek.com", "smithery.ai")
+PROXY_LINE = (
+    "<134>1 {at} proxy01 webproxy - - - CEF:0|ExampleCorp|WebProxy|1.0|web-1|Web request"
+    " allowed|3|shost={host} dst=203.0.113.{k} dpt=443 dhost={site}"
+)
+
+
+def otlp_strings(values: dict[str, str]) -> list[dict[str, Any]]:
+    return [{"key": k, "value": {"stringValue": v}} for k, v in values.items()]
+
+
+def ai_alert_feed(api: Api, folder: Path, now: datetime) -> int:
+    """Send the hooks records over OTLP and add the proxy file as a source; returns the
+    proxy lines. AI Watch raises the alerts when it checks (POST /api/ai/watch/check)."""
+    otlp = {"source_id": "bench_hooks", "kind": "otlp", "format": "json", "template_id": "auto"}
+    token = api.call("POST", "/api/sources", otlp)["otlp_token"]
+    for host, people in AI_HOOK_PEOPLE.items():
+        recs = []
+        for d, (k, user), j in itertools.product(range(7), enumerate(people), range(4)):
+            t = now - timedelta(days=d, hours=2 + 3 * k, minutes=10 * j)
+            attrs = {
+                "event_name": "claude_hooks.pre_tool_use", "role": "tool_call",
+                "session_id": f"bench-{user}-{d}", "user": f"{user}@example.com",
+                "os_user": user, "install_id": f"bench-{user}", "seq": str(j),
+                "plugin_variant": "posix", "tool_name": "Bash",
+            }  # fmt: skip
+            recs.append({
+                "timeUnixNano": str(int(t.timestamp()) * 10**9),
+                "body": {"stringValue": "claude_hooks.pre_tool_use"},
+                "attributes": otlp_strings(attrs),
+            })  # fmt: skip
+        names = {"service.name": "claude-hooks", "host.name": host}
+        resource = {"attributes": otlp_strings(names)}
+        scope = {"scope": {"name": "claude-hooks"}, "logRecords": recs}
+        logs = {"resource": resource, "scopeLogs": [scope]}
+        api.call("POST", "/api/otlp/v1/logs", {"resourceLogs": [logs]}, token=token)
+    lines = [
+        PROXY_LINE.format(
+            at=f"{now - timedelta(days=d, hours=1 + i % 9, minutes=k):%Y-%m-%dT%H:%M:%SZ}",
+            host=host, k=80 + k, site=site,
+        )
+        for d in range(6)
+        for i, host in enumerate(AI_PROXY_HOSTS)
+        for k, site in enumerate(AI_SITES)
+    ]  # fmt: skip
+    out = folder / "bench_ai_proxy"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "proxy.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    proxy = {"source_id": "bench_ai_proxy", "format": "syslog", "path": str(out)}
+    api.call("POST", "/api/sources", proxy | {"glob": "*.log", "template_id": "cef_generic"})
+    return len(lines)
+
+
+def build(
+    code: Path, lake: Path, events: int, router: int, log: Path, shape: float = 0.0, days: int = 7
+) -> int:
     shutil.rmtree(lake, ignore_errors=True)
     for d in ("data", "logs", "vol", "lab", "rules"):
         (lake / d).mkdir(parents=True)
@@ -349,7 +536,10 @@ def build(code: Path, lake: Path, events: int, router: int, log: Path, shape: fl
     run(scripts / "demo/generate.py", lake / "logs")
     run(scripts / "loggen.py", "--out", lake / "vol", "--backfill", events, "--rate", 0, "--seed", 7)  # fmt: skip
     port = free_port()
-    proc = serve(code, lake / "data", lake, port, log)
+    # Compaction, and the rollups after it, every minute instead of hourly, so the lake is
+    # kept with its closed days compacted and rolled up (built_rollups), the default lake
+    # too (owner, 2026-11-14): the timed servers run what an install runs.
+    proc = serve(code, lake / "data", lake, port, log, extra=BUILD_ENV)
     try:
         url = f"http://127.0.0.1:{port}"
         # Both sign in with the account `serve` made, which is in this lake's data folder,
@@ -369,15 +559,30 @@ def build(code: Path, lake: Path, events: int, router: int, log: Path, shape: fl
             api.call("POST", "/api/searches", {"id": sid, "name": name, "sql": sql, "visibility": "shared"})  # fmt: skip
         api.call("POST", "/api/providers", {"name": ROUTER, "base_url": f"http://127.0.0.1:{router}/v1", "model": "bench-router"})  # fmt: skip
         point_router(api, router)
-        if shape:  # opt-in: a real-shaped week of sign-ins and DNS beside it (owner item 2)
+        ai_alert_feed(api, lake / "lab", datetime.now(UTC))
+        if shape:  # opt-in: real-shaped days of sign-ins and DNS beside it (owner item 2)
             env = {**os.environ, "PYTHONPATH": str(code / "backend")}
-            gen = ROOT / "scripts" / "fixtures" / "real_shape.py"
-            cmd = [sys.executable, str(gen), "--lake", str(lake / "data" / "lake"), "--scale", str(shape)]  # fmt: skip
+            cmd = real_shape_cmd(lake / "data" / "lake", shape, days)
             subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, cwd=code / "backend", env=env)  # noqa: S603  # fmt: skip
+            # Its sources are sources of the install, as on the install: the Dashboard's
+            # sections and the Alerts lookup read only configured sources (an empty
+            # folder each, since the rows are already in the lake).
+            for sid, fmt, tid in REAL_SHAPE_SOURCES:
+                empty = lake / "lab" / "real_shape" / sid
+                empty.mkdir(parents=True)
+                body = {"source_id": sid, "format": fmt, "template_id": tid, "path": str(empty)}
+                api.call("POST", "/api/sources", body)
         n = settle(api, "build", BUILD_SETTLE_LIMIT_S)
+        # Every AI Watch step now (Health > Check now), the 7-day review included, so the
+        # alerts name the proxy's machines before the lake is kept.
+        check_ai_alerts(api, api.call("POST", "/api/ai/watch/check", timeout=600))
+        if not built_rollups(api):
+            raise RuntimeError(
+                f"rollups not built after {ROLLUP_LIMIT_S // 60} min; the lake is not kept"
+            )
     finally:
         stop(proc)
-    kept = {"events": n, "loggen": events, "shape": shape, "at": time.time()}
+    kept = {"events": n, "loggen": events, "shape": shape, "days": days if shape else 0, "version": LAKE_VERSION, "at": time.time()}  # fmt: skip
     (lake / "built.json").write_text(json.dumps(kept))
     return n
 
@@ -511,9 +716,12 @@ def main() -> int:
     ap.add_argument("--lake", type=Path, default=ROOT / "data" / "bench" / "lake")
     # Off by default, so the queue's lake stays the documented one. 1 adds about 1.9M
     # sign-ins and 5.7M DNS queries over 7 days (scripts/fixtures/real_shape.py, 2.7 GB);
-    # use its own --lake, since each side copies the data folder.
+    # use its own --lake, since each side copies the data folder. 0.313 with 30 days is
+    # the work install's rate (about 340,000 events a day).
     ap.add_argument("--real-shape", type=float, default=0.0, metavar="SCALE",
-                    help="add a real-shaped week of sign-ins and DNS at this scale")  # fmt: skip
+                    help="add real-shaped days of sign-ins and DNS at this scale")  # fmt: skip
+    ap.add_argument("--real-days", type=int, default=7, metavar="N",
+                    help="days of the --real-shape part (default 7)")  # fmt: skip
     ap.add_argument("--rebuild", action="store_true", help="build the lake even if one is kept")
     ap.add_argument("--only", action="append", default=[], help="pages to time (default all)")
     ap.add_argument("--json", type=Path, help="also write the medians here")
@@ -532,17 +740,13 @@ def main() -> int:
         print(f"before: {args.before} at {before_sha[:12]}; after: {args.after} at {after_sha[:12]}", file=sys.stderr)  # fmt: skip
         built = lake / "built.json"
         kept = json.loads(built.read_text()) if built.is_file() else {}
-        # A kept lake counts only if it is a day old at most and the size asked for.
-        fresh = (
-            time.time() - kept.get("at", 0) < 86400 and kept.get("loggen") == args.events
-            and kept.get("shape", 0.0) == args.real_shape
-        )  # fmt: skip
+        fresh = is_fresh(kept, args.events, args.real_shape, args.real_days, time.time())
         router = ThreadingHTTPServer(("127.0.0.1", 0), Router)
         router_port = int(router.server_address[1])
         threading.Thread(target=router.serve_forever, daemon=True).start()
         if args.rebuild or not fresh:
             t = time.monotonic()
-            n = build(before, lake, args.events, router_port, log, args.real_shape)
+            n = build(before, lake, args.events, router_port, log, args.real_shape, args.real_days)
             print(f"lake: {n:,} events, built in {time.monotonic() - t:.0f} s", file=sys.stderr)
         sides: dict[str, Api] = {}
         for name, code in (("before", before), ("after", after)):

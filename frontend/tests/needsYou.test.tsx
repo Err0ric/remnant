@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NeedsYou, needsYouRows, SHOWN, shownRows } from "@/features/dashboard/NeedsYou";
 import type { AlertItem, AlertLines, Overview } from "@/lib/api";
@@ -139,7 +140,7 @@ describe("Needs you list (ADR-0052 section 3.9, redesign build row 17)", () => {
     }
   });
 
-  it("never folds a blind row under N more: the cap is for alerts only", () => {
+  it("never folds a blind row under N more: the cap is for alerts only", async () => {
     const many = Array.from({ length: 8 }, (_, n) => high(n));
     const paused = [
       {
@@ -182,7 +183,14 @@ describe("Needs you list (ADR-0052 section 3.9, redesign build row 17)", () => {
     expect(list.querySelectorAll('[data-needs-you="blind"]')).toHaveLength(5);
     expect(list.querySelectorAll('[data-needs-you="alert"]')).toHaveLength(SHOWN);
     // 8 alerts sent, 5 shown, and 4 more the server counted but did not send.
-    expect(within(list).getByRole("button", { name: "7 more on Alerts" })).toBeVisible();
+    // The rest are behind View all at the top right of the card, which opens Alerts (D254).
+    const head = list.querySelector<HTMLElement>("[data-card-header]")!;
+    const all = within(head).getByRole("button", { name: "View all" });
+    expect(all).toHaveAttribute("title", "7 more on Alerts");
+    expect(head.lastElementChild).toContainElement(all);
+    await userEvent.click(all);
+    expect(window.location.pathname).toBe("/alerts");
+    window.history.replaceState(null, "", "/");
   });
 
   it("orders High alerts, then other alerts, then AI review items", () => {
@@ -273,7 +281,7 @@ describe("Needs you list (ADR-0052 section 3.9, redesign build row 17)", () => {
     });
     const list = screen.getByRole("region", { name: "Needs you" });
     expect(list.querySelectorAll("tbody tr")).toHaveLength(6);
-    expect(within(list).queryByRole("button", { name: /more on Alerts/ })).toBeNull();
+    expect(within(list).queryByRole("button", { name: "View all" })).toBeNull();
     expect(within(list).getByRole("heading", { name: "Needs you" }).nextSibling).toHaveTextContent(
       "6",
     );
@@ -417,5 +425,43 @@ describe("Needs you list (ADR-0052 section 3.9, redesign build row 17)", () => {
     expect(rows.map((r) => [r.order, r.kind, r.title])).toEqual([
       [1, "Detection paused", "Failed SSH daily: Paused after 3 failed runs"],
     ]);
+  });
+});
+
+describe("Needs you columns (D257)", () => {
+  it("reads badge, kind, subject, title, time, with the subject cut and the title on two lines", () => {
+    const person = item({
+      item_id: "p1",
+      kind: "ai_watch",
+      subject: "svc",
+      title: "AI agent seen: Claude Code, owner grace@example.com on a long line of words",
+      severity: "high",
+      people: ["grace@example.com"],
+    });
+    show({ lines: lines([person]), overview: DOWN });
+    const list = screen.getByRole("region", { name: "Needs you" });
+    const headers = within(list)
+      .getAllByRole("columnheader")
+      .map((h) => h.textContent);
+    expect(headers).toEqual(["Severity", "Kind", "Who or what", "What", "When"]);
+    const [blind, alert] = within(list).getAllByRole("row").slice(1) as HTMLElement[];
+    // Blind row: the source id, cut in the middle, links to Health; then the title.
+    const cells = [...blind!.querySelectorAll("td")];
+    expect(cells[1]).toHaveTextContent("Source down");
+    const source = within(cells[2]!).getByRole("link", { name: "fw_main" });
+    expect(source.getAttribute("href")).toBe("/health#source=fw_main");
+    expect(source.querySelector("[data-truncate]")).toHaveAttribute("data-truncate", "name");
+    expect(cells[3]).toHaveTextContent("fw_main stopped sending");
+    expect(cells[4]?.querySelector("time")).not.toBeNull();
+    // Alert row: the person's email keeps its local part; the title wraps to two lines.
+    const acells = [...alert!.querySelectorAll("td")];
+    expect(acells[0]?.querySelector("[data-severity]")).toHaveAttribute("data-severity", "high");
+    const who = within(acells[2]!).getByRole("link", { name: "grace@example.com" });
+    expect(who.querySelector('[data-part="head"]')?.textContent).toBe("grace");
+    const title = acells[3]!.querySelector<HTMLElement>("[data-needs-you-title]")!;
+    expect(title).toHaveClass("line-clamp-2");
+    expect(title).not.toHaveClass("truncate");
+    expect(title).toHaveAttribute("title", person.title);
+    expect(title.getAttribute("href")).toBe("/alerts#item=p1");
   });
 });

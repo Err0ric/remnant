@@ -33,6 +33,89 @@ async function openAiAt(auth: MockAuth = { mode: "open" }) {
 
 afterEach(() => vi.restoreAllMocks());
 
+/** The names-hidden line is a state notice in the card's body, never in its title row (D254). */
+function namesHiddenInBody(card: HTMLElement) {
+  const note = within(card)
+    .getAllByRole("note")
+    .find((n) => /^Names are hidden\. An admin can turn on/.test(n.textContent ?? ""));
+  expect(note).toBeDefined();
+  expect(note).toHaveAttribute("data-state-notice");
+  expect(note).toBeVisible();
+  const head = card.querySelector<HTMLElement>("[data-card-header]")!;
+  expect(head).not.toContainElement(note!);
+  expect(head).not.toHaveTextContent(/Names are hidden/);
+}
+
+describe("AI usage while it loads (owner, 2026-11-13)", () => {
+  it.each([
+    ["/ai", "AI services seen in network logs"],
+    ["/ai/people", "Claude Code by person"],
+    ["/agents/mcp", "MCP servers"],
+  ])("holds the place with skeleton rows on %s, never an empty table", async (path, title) => {
+    window.history.replaceState(null, "", path);
+    const spy = mockApi("Codename", { mode: "open" });
+    const base = spy.getMockImplementation()!;
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    spy.mockImplementation(async (input, init) => {
+      if (String(input).includes("/api/ai/usage")) await held;
+      return base(input, init);
+    });
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<App initialTheme="dark" queryClient={client} />);
+    const card = await screen.findByRole("region", { name: title });
+    const status = within(card).getByRole("status", { name: `Loading ${title}` });
+    expect(status).toHaveAttribute("aria-busy", "true");
+    expect(within(card).queryByRole("table")).toBeNull();
+    // The loaded card's shape: a column header row and two-line rows (D257).
+    expect(status.querySelector("[data-skeleton-header]")).not.toBeNull();
+    expect(status.querySelectorAll('[data-skeleton-row="tall"]')).toHaveLength(5);
+    // The Needs attention line holds its place meanwhile.
+    expect(screen.getByRole("status", { name: "Loading what needs attention" })).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Needs attention" })).toBeNull();
+    release();
+    expect(await within(card).findByRole("table")).toBeVisible();
+    expect(within(card).queryByRole("status")).toBeNull();
+    expect(await screen.findByRole("region", { name: "Needs attention" })).toBeVisible();
+    expect(screen.queryByRole("status", { name: "Loading what needs attention" })).toBeNull();
+  });
+});
+
+describe("AI usage when its request fails (D257)", () => {
+  it("leaves no loading placeholder above the error", async () => {
+    window.history.replaceState(null, "", "/ai");
+    const spy = mockApi("Codename", { mode: "open" });
+    const base = spy.getMockImplementation()!;
+    spy.mockImplementation(async (input, init) =>
+      String(input).includes("/api/ai/usage")
+        ? new Response(JSON.stringify({ detail: "The lake is not readable" }), {
+            status: 500,
+            headers: { "content-type": "application/json" },
+          })
+        : base(input, init),
+    );
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<App initialTheme="dark" queryClient={client} />);
+    await screen.findByRole("heading", { level: 1 });
+    const errors = await screen.findAllByRole("alert");
+    expect(errors.length).toBeGreaterThan(0);
+    expect(screen.queryByRole("status", { name: "Loading what needs attention" })).toBeNull();
+    expect(document.querySelector('[aria-busy="true"]')).toBeNull();
+    // No line claims that nothing needs attention when nothing could be read.
+    expect(screen.queryByRole("region", { name: "Needs attention" })).toBeNull();
+  });
+});
+
 describe("AI usage cost with no cost metrics (owner, 2026-11-08)", () => {
   it("says there is no cost data instead of 0.00", async () => {
     window.history.replaceState(null, "", "/ai");
@@ -59,7 +142,9 @@ describe("AI usage cost with no cost metrics (owner, 2026-11-08)", () => {
     await screen.findByRole("heading", { level: 1 });
     await goTo("AI usage", "People");
     const people = await screen.findByRole("region", { name: "Claude Code by person" });
-    const row = within(people).getByText("alice@example.com").closest("tr") as HTMLElement;
+    const row = within(people)
+      .getByRole("link", { name: "alice@example.com" })
+      .closest("tr") as HTMLElement;
     expect(within(row).getAllByText("No cost data")).toHaveLength(2);
     expect(within(row).queryByText("0.00")).toBeNull();
   });
@@ -99,11 +184,7 @@ describe("AI usage without View people in AI usage (D242)", () => {
     expect(within(services).queryByText("alice")).toBeNull();
     await goTo("AI usage", "People");
     const people = await screen.findByRole("region", { name: "Claude Code by person" });
-    expect(
-      within(people).getByText(
-        "Names are hidden. An admin can turn on View people in AI usage for you.",
-      ),
-    ).toBeVisible();
+    namesHiddenInBody(people);
     const rows = within(people).getAllByText("ws-0042");
     expect(rows).toHaveLength(2); // two people on one machine stay two rows
     for (const cell of rows) expect(cell.closest("a")).toBeNull();
@@ -156,7 +237,7 @@ describe("AI usage (ADR-0015)", () => {
     await openAi();
     const table = await screen.findByRole("region", { name: "AI services seen in network logs" });
     expect(within(table).queryByText("OpenAI ad and measurement tags")).toBeNull();
-    const apart = screen.getByRole("group", { name: "Not counted as AI use" });
+    const apart = screen.getByRole("region", { name: "Not counted as AI use" });
     expect(within(apart).getByText("1 host group, 900 events")).toBeInTheDocument();
     expect(within(apart).getByText("bzr.openai.com, bzrcdn.openai.com")).toBeInTheDocument();
   });
@@ -201,7 +282,9 @@ describe("AI usage (ADR-0015)", () => {
     expect(within(mcp).getByText("inventory, telemetry")).toBeVisible();
     await goTo("AI usage", "People");
     const people = await screen.findByRole("region", { name: "Claude Code by person" });
-    const row = within(people).getByText("alice@example.com").closest("tr") as HTMLElement;
+    const row = within(people)
+      .getByRole("link", { name: "alice@example.com" })
+      .closest("tr") as HTMLElement;
     expect(within(row).getByText("12.50")).toBeVisible();
     expect(within(row).getByText("1 signal")).toBeVisible();
     expect(within(row).getByText("Both")).toBeVisible();
@@ -215,17 +298,27 @@ describe("AI usage (ADR-0015)", () => {
       name: "AI services seen in network logs",
     });
     expect(
-      within(services).getByText(/Seen through: both 1, plugin only 1, network only 1/),
+      within(services).getByText(
+        "People: 1 seen only on the network, 1 only by the Claude Code plugin, 1 by both",
+      ),
     ).toBeVisible();
     await goTo("AI usage", "People");
     const people = await screen.findByRole("region", { name: "Claude Code by person" });
     expect(within(people).getByText(/Seen on the network but no plugin: 1/)).toBeVisible();
-    const erin = within(people).getByText("erin@example.com").closest("tr") as HTMLElement;
+    const erin = within(people)
+      .getByRole("link", { name: "erin@example.com" })
+      .closest("tr") as HTMLElement;
+    // At least 22 characters wide, so an email never breaks inside a word (D257).
+    expect(
+      within(people).getByRole("link", { name: "erin@example.com" }).closest("td"),
+    ).toHaveClass("min-w-[22ch]");
     expect(within(erin).getByText("Plugin")).toHaveAttribute(
       "title",
       "The hooks only: not seen on the network",
     );
-    const dana = within(people).getByText("dana@example.com").closest("tr") as HTMLElement;
+    const dana = within(people)
+      .getByRole("link", { name: "dana@example.com" })
+      .closest("tr") as HTMLElement;
     expect(within(dana).getByText("Network")).toBeVisible();
     // D190: cost and tokens only from telemetry; network rows say what the network saw,
     // and a name that reads as a plugin person links to Identities, filled in.
@@ -235,7 +328,9 @@ describe("AI usage (ADR-0015)", () => {
     expect(dana).toHaveTextContent("Unmatched: may be dana.lee@example.com.");
     const link = within(dana).getByRole("link", { name: "Link in Identities" });
     expect(link.getAttribute("href")).toMatch(/#alias=dlee&person=dana\.lee%40example\.com$/);
-    const alice = within(people).getByText("alice@example.com").closest("tr") as HTMLElement;
+    const alice = within(people)
+      .getByRole("link", { name: "alice@example.com" })
+      .closest("tr") as HTMLElement;
     expect(within(alice).getByText("12.50")).toBeVisible(); // telemetry reports cost
   });
 
@@ -422,14 +517,31 @@ describe("Agent sessions from the hooks plugin (ADR-0026)", () => {
     const list = await within(card).findByRole("list", { name: "Sessions" });
     await userEvent.click(within(list).getAllByRole("button", { name: /^dana@example\.com/ })[0]!);
     expect(window.location.hash).toMatch(/^#session=/);
-    const detail = await within(card).findByRole("region", { name: "Session detail" });
-    expect(within(detail).getByText("Claude account")).toBeVisible();
+    // Beside the list, not inside its card (list-detail, DESIGN.md 6.0).
+    const detail = await screen.findByRole("region", { name: "Session detail" });
+    expect(card.contains(detail)).toBe(false);
+    expect(within(detail).getByRole("heading", { name: "Session on ws-0042" })).toBeVisible();
+    // Execution by default: every step in order with its type from the server.
+    const exec = await within(detail).findByRole("list", { name: "Session steps" });
+    expect(
+      within(exec)
+        .getAllByRole("listitem")
+        .map((r) => r.textContent?.replace(/^\d{1,2}:\d{2}:\d{2}\s[AP]M/, "")),
+    ).toEqual([
+      expect.stringMatching(/^Session started/),
+      expect.stringMatching(/^Prompt42 chars/),
+      expect.stringMatching(/^File accessRead \/home\/dana\/app\/auth\.py41 chars in, Flagged/),
+      expect.stringMatching(/^AccessMCP github create_issue13 chars in, Flagged/),
+      expect.stringMatching(/^Turn end/),
+    ]);
+    // Conversation: by turn (D187): the prompt with what it led to, its calls, the end.
+    await userEvent.click(within(detail).getByRole("button", { name: "Conversation" }));
+    expect(window.location.hash).toMatch(/view=conversation/);
     const steps = await within(detail).findByRole("list", { name: "Session timeline" });
-    // By turn (D187): the prompt, its tool calls each with its result, then the end.
     const turn = within(steps).getByRole("list", { name: "Turn 1" });
     const rows = within(turn).getAllByRole("listitem");
     expect(rows.map((r) => r.textContent?.replace(/^\d{1,2}:\d{2}:\d{2}\s[AP]M/, ""))).toEqual([
-      expect.stringMatching(/^Prompt42 chars/),
+      expect.stringMatching(/^Prompt 2 tool calls: github 1, Read 142 chars/),
       expect.stringMatching(
         /^Read No result \(blocked, interrupted, or still running\) \/home\/dana\/app\/auth\.py/,
       ),
@@ -443,6 +555,9 @@ describe("Agent sessions from the hooks plugin (ADR-0026)", () => {
     expect(t.getAttribute("title")).toMatch(/ UTC$/);
     const around = within(turn).getAllByRole("button", { name: /^Around this step/ })[0]!;
     expect(around).toHaveClass("opacity-0", "group-hover:opacity-100", "focus:opacity-100");
+    // Execution again: the default leaves the address.
+    await userEvent.click(within(detail).getByRole("button", { name: "Execution" }));
+    expect(window.location.hash).not.toMatch(/view=/);
   });
 
   it("hides empty sessions by default and names a quiet one ended (owner 2026-11-02)", async () => {
@@ -495,7 +610,7 @@ describe("Agent sessions from the hooks plugin (ADR-0026)", () => {
     expect(alice).toHaveTextContent("1 h 5 min");
     expect(within(alice).queryByText("Blocked or failed call")).toBeNull();
     // Nothing is open yet: one plain line, not a centered paragraph.
-    expect(within(card).getByText("Pick a session.").closest("[data-empty]")).toHaveAttribute(
+    expect(screen.getByText("Pick a session.").closest("[data-empty]")).toHaveAttribute(
       "data-empty",
       "default-empty",
     );
@@ -533,12 +648,12 @@ describe("Agent sessions from the hooks plugin (ADR-0026)", () => {
     await userEvent.click(
       within(within(card).getByRole("list", { name: "Sessions" })).getByText("dana@example.com"),
     );
-    expect(await within(card).findByRole("region", { name: "Session detail" })).toBeVisible();
+    expect(await screen.findByRole("region", { name: "Session detail" })).toBeVisible();
     expect(window.location.hash).toBe("#tool=github&session=s-77");
     window.history.back();
     await waitFor(() => expect(window.location.hash).toBe(""));
     await waitFor(() =>
-      expect(within(card).queryByRole("region", { name: "Session detail" })).toBeNull(),
+      expect(screen.queryByRole("region", { name: "Session detail" })).toBeNull(),
     );
     expect(within(filters).getByRole("combobox", { name: "Tool" })).toHaveValue("");
   });
@@ -583,9 +698,15 @@ describe("Agent sessions from the hooks plugin (ADR-0026)", () => {
     );
     const card = await screen.findByRole("region", { name: "Agent sessions" });
     const list = await within(card).findByRole("list", { name: "Sessions" });
-    expect(within(card).getByText(/Names are hidden\. An admin can turn on/)).toBeVisible();
+    namesHiddenInBody(card);
     // No person filter: it would list machines as people.
     const filters = within(card).getByRole("group", { name: "Filter sessions" });
+    // Hiding empty sessions is a filter: it sits in the filter bar, not the title row.
+    expect(
+      within(filters).getByRole("checkbox", {
+        name: /Hide sessions with no tool calls or prompts/,
+      }),
+    ).toBeVisible();
     expect(within(filters).queryByRole("combobox", { name: "Person" })).toBeNull();
     expect(within(filters).getByRole("combobox", { name: "Machine" })).toBeVisible();
     // A person in the address filters nothing here and shows no Reset.
@@ -597,10 +718,523 @@ describe("Agent sessions from the hooks plugin (ADR-0026)", () => {
     expect(within(filters).queryByRole("button", { name: "Reset" })).toBeNull();
     expect(within(list).queryByText(/example\.com/)).toBeNull();
     await userEvent.click(within(list).getAllByRole("button", { name: /^ws-0042/ })[0]!);
-    const detail = await within(card).findByRole("region", { name: "Session detail" });
+    const detail = await screen.findByRole("region", { name: "Session detail" });
     expect(within(detail).queryByRole("link", { name: /dana|Hidden/ })).toBeNull();
     // A machine is not looked up as an account: no other account's tier.
-    expect(within(detail).getByText("Hidden")).toBeVisible();
+    expect(within(detail).getByText("Claude account hidden")).toBeVisible();
+    // The numbers are the same; the person is the machine the server sent.
+    const kpis = within(detail).getByRole("group", { name: "This session in numbers" });
+    expect(kpis).toHaveTextContent(/Requests1.*Tool calls2/);
+    expect(await within(detail).findByRole("img", { name: /^Session timeline:/ })).toBeVisible();
+    expect(within(detail).queryByText(/example\.com/)).toBeNull();
+  });
+});
+
+/** Agents > Sessions with one session open, the summary changed by `summary`. */
+type Json = Record<string, unknown>;
+
+interface Changes {
+  summary?: Json;
+  /** The steps answer's steps, changed. */
+  steps?: (steps: Json[]) => Json[];
+  /** Leave the session out of the list, as a sent link to a session the list does not show. */
+  unlisted?: boolean;
+}
+
+/** Agents > Sessions with one session open, the answers changed by `changes`. */
+async function openSession(changes: Changes = {}, hash = "session=s-77") {
+  window.history.replaceState(null, "", `/agents/sessions#${hash}`);
+  const spy = mockApi("Codename", { mode: "open" });
+  const base = spy.getMockImplementation()!;
+  const reply = (body: unknown) =>
+    new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  spy.mockImplementation(async (input, init) => {
+    const res = await base(input, init);
+    const url = String(input);
+    if (url.includes("/s-77/summary")) return reply({ ...(await res.json()), ...changes.summary });
+    if (url.includes("/s-77?") && changes.steps) {
+      const body = await res.json();
+      return reply({ ...body, steps: changes.steps(body.steps) });
+    }
+    if (url.includes("/api/ai/sessions?") && changes.unlisted)
+      return reply((await res.json()).filter((r: Json) => r.session_id !== "s-77"));
+    return res;
+  });
+  vi.resetModules();
+  const { loadBranding } = await import("@/lib/branding");
+  await loadBranding();
+  const { App } = await import("@/app/App");
+  render(
+    <App
+      initialTheme="dark"
+      queryClient={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+    />,
+  );
+  const detail = await screen.findByRole("region", { name: "Session detail" });
+  const kpis = within(detail).getByRole("group", { name: "This session in numbers" });
+  await within(kpis).findByText("Requests");
+  await waitFor(() => expect(kpis.querySelector("[aria-busy], [data-skeleton]")).toBeNull());
+  return { detail, kpis, spy };
+}
+
+/** A step of s-77 at 18:00 plus `sec` seconds, every field empty. */
+const stepAt = (sec: number) => ({
+  time: new Date(Date.UTC(2026, 9, 22, 18, 0, sec)).toISOString(),
+  role: null,
+  tool: null,
+  mcp_server: null,
+  mcp_tool: null,
+  path: null,
+  web_host: null,
+  program: null,
+  prompt_chars: null,
+  input_chars: null,
+  output_chars: null,
+});
+
+const stepRows = (detail: HTMLElement) =>
+  within(within(detail).getByRole("list", { name: "Session steps" }))
+    .queryAllByRole("listitem")
+    .map((r) => r.textContent ?? "");
+
+const tile = (kpis: HTMLElement, label: string) =>
+  kpis.querySelector(`[data-kpi="${label}"]`) as HTMLElement;
+
+describe("Agents session detail (BACKLOG P1)", () => {
+  it("shows the whole session's numbers, Not reported for tokens, zeros muted", async () => {
+    const { detail, kpis, spy } = await openSession({ summary: { files: 0 } });
+    await waitFor(() => expect(tile(kpis, "Requests")).toHaveTextContent("Requests1"));
+    // The list reads its own days; the session's reads hold the whole session (30 days).
+    const urls = spy.mock.calls.map(([u]) => String(u));
+    expect(urls.some((u) => /\/api\/ai\/sessions\?days=7$/.test(u))).toBe(true);
+    expect(urls.filter((u) => /\/s-77(\/summary)?\?days=30$/.test(u))).toHaveLength(2);
+    // Blocked as the flags read it: no result in an ended session.
+    expect(tile(kpis, "Tool calls")).toHaveTextContent("Tool calls22 failed or blocked");
+    const tokens = within(tile(kpis, "Tokens")).getByText("Not reported");
+    expect(tokens).toHaveClass("text-text-muted");
+    expect(within(tile(kpis, "Files")).getByText("0")).toHaveClass("text-text-muted");
+    expect(tile(kpis, "Flags")).toHaveTextContent("Blocked or failed call, New MCP server");
+    // Content: one line saying none is collected, and no way to open it.
+    expect(
+      within(detail).getByText("Content is not collected. Sizes and names only."),
+    ).toBeVisible();
+    expect(within(detail).getByRole("button", { name: "Show events in Logs" })).toBeVisible();
+  });
+
+  it("shows tokens in and out when telemetry reported them", async () => {
+    const { kpis } = await openSession({
+      summary: { tokens_in: 1500, tokens_out: 300, files_outside: 1 },
+    });
+    await waitFor(() => expect(tile(kpis, "Tokens")).toHaveTextContent("1,800In 1,500, out 300"));
+    expect(tile(kpis, "Files")).toHaveTextContent("1 outside the folder");
+  });
+
+  it("shows flagged steps only, in the address, and says when the steps are cut", async () => {
+    const { detail } = await openSession({ summary: { steps_cut: true, steps: 9000 } });
+    expect(await within(detail).findByText(/Showing the first 5 of 9,000 steps/)).toBeVisible();
+    await userEvent.click(within(detail).getByRole("button", { name: "Flagged only" }));
+    expect(window.location.hash).toMatch(/show=flagged/);
+    const rows = within(within(detail).getByRole("list", { name: "Session steps" })).getAllByRole(
+      "listitem",
+    );
+    expect(rows.map((r) => r.textContent)).toEqual([
+      expect.stringMatching(/File access/),
+      expect.stringMatching(/Access/),
+    ]);
+    await userEvent.click(within(detail).getByRole("button", { name: "All" }));
+    expect(window.location.hash).not.toMatch(/show=/);
+  });
+
+  it("goes back to the list on a narrow window, focus on the session's row", async () => {
+    const { detail } = await openSession();
+    const list = screen.getByRole("region", { name: "Agent sessions" });
+    // The list gives way to the pane below 1024px; the Back link is for that width only.
+    expect(list).toHaveClass("max-lg:hidden");
+    const back = within(detail).getByRole("button", { name: "Back to sessions" });
+    expect(back).toHaveClass("lg:hidden");
+    await userEvent.click(back);
+    await waitFor(() => expect(window.location.hash).not.toMatch(/session=/));
+    expect(list).not.toHaveClass("max-lg:hidden");
+    await waitFor(() =>
+      expect(document.activeElement).toBe(list.querySelector('[data-session="s-77"]')),
+    );
+    // A row opens with Enter.
+    await userEvent.keyboard("{Enter}");
+    expect(window.location.hash).toMatch(/session=s-77/);
+  });
+
+  it("flags from the whole rule: failures, no result, new MCP servers, never bookkeeping", async () => {
+    const failure = {
+      time: "2026-10-22T18:00:10+00:00",
+      event: "post_tool_use_failure",
+      role: "tool_result",
+      tool: "Read",
+      mcp_server: null,
+      mcp_tool: null,
+      path: "/home/dana/app/auth.py",
+      web_host: null,
+      program: null,
+      prompt_chars: null,
+      input_chars: null,
+      output_chars: null,
+      event_id: "e3f",
+      type: "tool_result",
+    };
+    const bookkeeping = { ...failure, event: "pre_tool_use", tool: "SubagentHandback" };
+    const { detail } = await openSession({
+      unlisted: true,
+      summary: { new_mcp: [], failed: 1, unanswered: 1 },
+      steps: (steps) => [
+        ...steps.slice(0, 3),
+        failure,
+        {
+          ...bookkeeping,
+          time: "2026-10-22T18:02:00+00:00",
+          event_id: "e9",
+          type: "tool_call",
+          counted: false,
+        },
+        ...steps.slice(3),
+      ],
+    });
+    await userEvent.click(within(detail).getByRole("button", { name: "Flagged only" }));
+    // The failed Read (call and result) and the MCP call with no result in an ended session;
+    // the bookkeeping call with no result is not a call the server counts (D186).
+    expect(stepRows(detail)).toEqual([
+      expect.stringMatching(/^.*File accessRead \/home/),
+      expect.stringMatching(/^.*Tool resultRead Failed/),
+      expect.stringMatching(/^.*AccessMCP github/),
+    ]);
+    // Conversation keeps the same steps, by turn.
+    await userEvent.click(within(detail).getByRole("button", { name: "Conversation" }));
+    const turn = within(detail).getByRole("list", { name: "Turn 1" });
+    const rows = within(turn)
+      .getAllByRole("listitem")
+      .map((r) => r.textContent);
+    expect(rows).toEqual([
+      expect.stringMatching(/^.*Prompt 3 tool calls/),
+      expect.stringMatching(/Read Failed/),
+      expect.stringMatching(/MCP No result/),
+      expect.stringMatching(/Finished, 3 tool calls, 1 failed$/),
+    ]);
+    expect(within(detail).queryByText("Session started")).toBeNull();
+  });
+
+  it("says when no step is flagged, with Show all", async () => {
+    const { detail } = await openSession(
+      { unlisted: true, summary: { new_mcp: [], state: "open" } },
+      "session=s-77&show=flagged",
+    );
+    expect(await within(detail).findByText("No flagged steps in this session.")).toBeVisible();
+    await userEvent.click(within(detail).getByRole("button", { name: "Show all" }));
+    expect(window.location.hash).not.toMatch(/show=/);
+  });
+
+  it("on a cut list never flags a call whose result may be past the cut", async () => {
+    // Cut before the turn ended: the calls' results may come after step 4.
+    const cut = await openSession(
+      {
+        unlisted: true,
+        summary: { new_mcp: [], steps_cut: true, steps: 9000 },
+        steps: (steps) => steps.slice(0, 4),
+      },
+      "session=s-77&show=flagged",
+    );
+    expect(
+      await within(cut.detail).findByText("None of the first 4 steps is flagged."),
+    ).toBeVisible();
+    expect(
+      within(cut.detail).getByText(
+        "The whole session has 2 failed or blocked calls, past the steps shown.",
+      ),
+    ).toBeVisible();
+  });
+
+  it("opens a sent link to a session the list does not show, with its own numbers", async () => {
+    const { detail, kpis } = await openSession({ unlisted: true });
+    expect(within(detail).getByRole("heading", { name: "Session on ws-0042" })).toBeVisible();
+    await waitFor(() => expect(tile(kpis, "Flags")).toHaveTextContent("New MCP server"));
+  });
+
+  it("starts another session on its own defaults", async () => {
+    const { detail } = await openSession({}, "session=s-77&view=conversation&show=flagged");
+    expect(within(detail).getByRole("button", { name: "Conversation" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    const list = screen.getByRole("list", { name: "Sessions" });
+    await userEvent.click(within(list).getByText("alice@example.com"));
+    expect(window.location.hash).toBe("#session=s-79");
+  });
+
+  it("opens the session's records in Logs with its window", async () => {
+    const { detail } = await openSession();
+    await userEvent.click(within(detail).getByRole("button", { name: "Show events in Logs" }));
+    await waitFor(() => expect(window.location.pathname).toBe("/investigate/logs"));
+    // A minute either side of the first and last records.
+    const local = (iso: string) =>
+      new Date(iso).toLocaleString("en-US", {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      });
+    expect(
+      await screen.findByText(
+        `From Agents > Session on ws-0042, ${local("2026-10-22T17:59:00Z")} to ${local("2026-10-22T18:05:00Z")}`,
+        { exact: false },
+      ),
+    ).toBeVisible();
+    await userEvent.click(screen.getByRole("tab", { name: "SQL" }));
+    await waitFor(() =>
+      expect(document.body.textContent).toContain("template_id = 'claude_hooks'"),
+    );
+  });
+
+  it("says flagged steps need the numbers when they did not load", async () => {
+    window.history.replaceState(null, "", "/agents/sessions#session=s-77&show=flagged");
+    const spy = mockApi("Codename", { mode: "open" });
+    const base = spy.getMockImplementation()!;
+    spy.mockImplementation(async (input, init) =>
+      String(input).includes("/summary")
+        ? new Response(JSON.stringify({ detail: "Not Found" }), { status: 404 })
+        : base(input, init),
+    );
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    render(
+      <App
+        initialTheme="dark"
+        queryClient={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      />,
+    );
+    const detail = await screen.findByRole("region", { name: "Session detail" });
+    expect(
+      await within(detail).findByText(
+        "Flagged steps could not be worked out: this session's numbers did not load.",
+      ),
+    ).toBeVisible();
+    // The bar claims nothing about flags it cannot know: no segment says "not flagged".
+    const drawn = await within(detail).findByRole("img", { name: /^Session timeline:/ });
+    for (const el of drawn.querySelectorAll<HTMLElement>("[data-segment]")) {
+      expect(el.getAttribute("title")).not.toMatch(/not flagged/);
+    }
+    const box = within(detail)
+      .getByText("Flagged steps could not be worked out: this session's numbers did not load.")
+      .closest("[data-empty]") as HTMLElement;
+    expect(within(box).getByRole("button", { name: "Retry" })).toBeVisible();
+  });
+
+  it("draws the session as a bar of its steps, with a legend counted by the server", async () => {
+    const { detail } = await openSession({
+      summary: {
+        types: { prompt: 3, tool_call: 0, tool_result: 7, file_access: 1, access: 1, other: 2 },
+        failed: 1,
+      },
+    });
+    const bar = await within(detail).findByRole("img", { name: /^Session timeline:/ });
+    // One graphic with a spoken summary of the whole session's counts.
+    expect(bar).toHaveAccessibleName(
+      "Session timeline: 3 prompt, 0 tool call, 7 tool result, 1 file access, 1 access, 2 other, 1 failed",
+    );
+    // One segment per step in order, colored by the server's type; other is an outline.
+    expect(
+      [...bar.querySelectorAll("[data-segment]")].map((s) => s.getAttribute("data-segment")),
+    ).toEqual(["other", "prompt", "file_access", "access", "other"]);
+    expect(bar.querySelector('[data-segment="file_access"]')).toHaveClass("bg-series-3");
+    expect(bar.querySelector('[data-segment="other"]')).toHaveClass("border-text-muted");
+    // Between the numbers and the View switch, as in the mock.
+    const kpis = within(detail).getByRole("group", { name: "This session in numbers" });
+    const view = within(detail).getByRole("group", { name: "View" });
+    expect(kpis.compareDocumentPosition(bar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(bar.compareDocumentPosition(view) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The legend names every type with the whole session's count, and the failed mark.
+    const legend = within(detail).getByRole("list", { name: "Step types" });
+    expect(
+      within(legend)
+        .getAllByRole("listitem")
+        .map((li) => li.textContent),
+    ).toEqual([
+      "Prompt3",
+      "Tool call0",
+      "Tool result7",
+      "File access1",
+      "Access1",
+      "Other2",
+      "Failed1",
+    ]);
+    // No tab stops of its own: the steps are reached in the list.
+    expect(bar.querySelectorAll("[tabindex], button, a")).toHaveLength(0);
+  });
+
+  it("opens a segment's step below: scrolled to and focused", async () => {
+    const { detail } = await openSession();
+    const bar = await within(detail).findByRole("img", { name: /^Session timeline:/ });
+    await userEvent.click(bar.querySelector('[data-segment="access"]')!);
+    const row = document.activeElement as HTMLElement;
+    expect(row.dataset.steps).toBe("e4");
+    expect(row).toHaveTextContent(/AccessMCP github/);
+    expect(row).toHaveClass("bg-row-selected");
+    // In Conversation the same step is its call row; the turn end is its own row.
+    await userEvent.click(within(detail).getByRole("button", { name: "Conversation" }));
+    await userEvent.click(bar.querySelectorAll('[data-segment="other"]')[1]!);
+    expect(document.activeElement).toHaveTextContent(/^.*Finished, 2 tool calls/);
+  });
+
+  it("says the bar shows the loaded steps of a cut session, and dims what is not flagged", async () => {
+    const { detail } = await openSession(
+      { summary: { steps_cut: true, steps: 9000 } },
+      "session=s-77&show=flagged",
+    );
+    const bar = await within(detail).findByRole("img", {
+      name: /the bar shows the first 5 steps$/,
+    });
+    expect(
+      within(detail).getByText(
+        "The bar shows the first 5 steps; the counts are for the whole session.",
+      ),
+    ).toBeVisible();
+    // Flagged only: the unanswered calls stay, the rest is dimmed.
+    expect(bar.querySelector('[data-segment="prompt"]')).toHaveClass("opacity-25");
+    expect(bar.querySelector('[data-segment="access"]')).not.toHaveClass("opacity-25");
+  });
+
+  it("opens a flagged step from a run whose first step is not flagged (Flagged only)", async () => {
+    // Two parallel Bash calls; the one result goes to the first, so the second has none.
+    const bash = (id: string, event: string, type: string, sec: number) => ({
+      ...stepAt(sec),
+      event,
+      tool: "Bash",
+      program: "git",
+      event_id: id,
+      type,
+    });
+    const { detail } = await openSession(
+      {
+        unlisted: true,
+        summary: { new_mcp: [], unanswered: 1 },
+        steps: (steps) => [
+          steps[0]!,
+          steps[1]!,
+          bash("b1", "pre_tool_use", "tool_call", 20),
+          bash("b2", "pre_tool_use", "tool_call", 21),
+          bash("r1", "post_tool_use", "tool_result", 22),
+          steps[4]!,
+        ],
+      },
+      "session=s-77&show=flagged",
+    );
+    const bar = await within(detail).findByRole("img", { name: /^Session timeline:/ });
+    const run = bar.querySelector('[data-segment="tool_call"]') as HTMLElement;
+    expect(run).not.toHaveClass("opacity-25");
+    expect(run).toHaveAttribute("data-opens", "b2");
+    await userEvent.click(run);
+    expect((document.activeElement as HTMLElement).dataset.steps).toBe("b2");
+    // Everything else is dimmed, says why, and does nothing.
+    const result = bar.querySelector('[data-segment="tool_result"]') as HTMLElement;
+    expect(result).toHaveClass("opacity-25");
+    expect(result.getAttribute("title")).toMatch(/\(not flagged\)$/);
+    expect(result).not.toHaveAttribute("data-opens");
+  });
+
+  it("opens the flagged step of a slice in a long session (Flagged only)", async () => {
+    const many = Array.from({ length: 1200 }, (_, i) => ({
+      ...stepAt(i),
+      event: i % 2 ? (i === 801 ? "post_tool_use_failure" : "post_tool_use") : "pre_tool_use",
+      tool: "Bash",
+      event_id: `x${i}`,
+      type: i % 2 ? "tool_result" : "tool_call",
+    }));
+    const { detail } = await openSession(
+      { unlisted: true, summary: { new_mcp: [], state: "open", failed: 1 }, steps: () => many },
+      "session=s-77&show=flagged",
+    );
+    const bar = await within(detail).findByRole("img", { name: /^Session timeline:/ });
+    const lit = [...bar.querySelectorAll<HTMLElement>("[data-segment]")].filter(
+      (el) => !el.classList.contains("opacity-25"),
+    );
+    // A sliced bar leaves no gaps and sets no minimum widths, so it fits a phone-width pane.
+    const row = bar.querySelector<HTMLElement>('[data-bar="segments"]')!;
+    expect(row.className).toMatch(/overflow-hidden/);
+    expect(row.className).not.toMatch(/gap-px/);
+    expect(bar.querySelector(".min-w-px")).toBeNull();
+    // Only the slices holding the failed call or its result are lit, each opening that step.
+    expect(lit.map((el) => el.dataset.opens)).toEqual(
+      lit.length === 1 ? ["x800"] : ["x800", "x801"],
+    );
+    for (const el of lit) {
+      await userEvent.click(el);
+      expect((document.activeElement as HTMLElement).dataset.steps).toBe(el.dataset.opens);
+    }
+  });
+
+  it("never marks a failed bookkeeping call on the bar, as the server never counts it", async () => {
+    const { detail } = await openSession({
+      steps: (steps) => [
+        ...steps.slice(0, 4),
+        {
+          ...stepAt(30),
+          event: "post_tool_use_failure",
+          tool: "SubagentHandback",
+          event_id: "h1",
+          type: "tool_result",
+          counted: false,
+        },
+        steps[4]!,
+      ],
+    });
+    const bar = await within(detail).findByRole("img", { name: /^Session timeline:/ });
+    expect(bar.querySelector("[data-failed]")).toBeNull();
+    expect(bar.getAttribute("aria-label")).not.toMatch(/failed/);
+    const legend = within(detail).getByRole("list", { name: "Step types" });
+    expect(within(legend).queryByText("Failed")).toBeNull();
+  });
+
+  it("opens the turn that follows a step Conversation does not list (a second session start)", async () => {
+    const { detail } = await openSession({
+      steps: (steps) => [
+        steps[0]!,
+        steps[1]!,
+        { ...steps[0]!, time: "2026-10-22T18:00:07+00:00", event_id: "s2" },
+        ...steps.slice(2),
+      ],
+    });
+    await userEvent.click(within(detail).getByRole("button", { name: "Conversation" }));
+    const bar = await within(detail).findByRole("img", { name: /^Session timeline:/ });
+    const second = bar.querySelectorAll<HTMLElement>('[data-segment="other"]')[1]!;
+    expect(second).toHaveAttribute("data-opens", "e3");
+    await userEvent.click(second);
+    expect((document.activeElement as HTMLElement).dataset.steps).toBe("e3");
+  });
+
+  it("says the numbers did not load, with Retry, and no zeros", async () => {
+    window.history.replaceState(null, "", "/agents/sessions#session=s-77");
+    const spy = mockApi("Codename", { mode: "open" });
+    const base = spy.getMockImplementation()!;
+    spy.mockImplementation(async (input, init) =>
+      String(input).includes("/summary")
+        ? new Response(JSON.stringify({ detail: "Not Found" }), { status: 404 })
+        : base(input, init),
+    );
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    render(
+      <App
+        initialTheme="dark"
+        queryClient={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      />,
+    );
+    const detail = await screen.findByRole("region", { name: "Session detail" });
+    expect(await within(detail).findByText(/This session's numbers did not load/)).toBeVisible();
+    expect(within(detail).getByRole("button", { name: "Retry Requests" })).toBeVisible();
+    expect(within(detail).queryByText("Not reported")).toBeNull();
   });
 });
 
@@ -652,7 +1286,14 @@ describe("AI inventory (ADR-0038 section 7)", () => {
     await userEvent.click(within(card).getByRole("button", { name: /^Excluded/ }));
     const row = (await within(card).findByText("Lab Notes App")).closest("tr") as HTMLElement;
     expect(row).toHaveTextContent("Pilot app");
-    expect(within(card).getByRole("button", { name: "Export CSV" })).toBeVisible();
+    // Group by and Export sit in the filter bar, not in the card's title row (D254).
+    const bar = within(card).getByRole("group", { name: "Filter the inventory" });
+    expect(within(bar).getByRole("button", { name: "Export CSV" })).toBeVisible();
+    expect(within(bar).getByRole("button", { name: "Export JSON" })).toBeVisible();
+    expect(within(bar).getByLabelText("Group by")).toBeVisible();
+    const head = card.querySelector<HTMLElement>("[data-card-header]")!;
+    expect(within(head).queryByRole("button")).toBeNull();
+    expect(within(head).queryByRole("combobox")).toBeNull();
   });
 
   async function openInventory(role: "admin" | "analyst") {
@@ -829,7 +1470,7 @@ describe("Agents overview and tools (ADR-0038 section 6)", () => {
     expect(screen.getAllByText(/^Last 7 days\./).length).toBeGreaterThanOrEqual(1);
     expect(
       await within(await screen.findByRole("region", { name: "Agent sessions" })).findByText(
-        /^Last 7 days\. Claude Code and Cowork sessions/,
+        /^Last 7 days, from the hooks plugin$/,
       ),
     ).toBeVisible();
     // The note about devices that sent nothing, and a number opening its rows in Logs.
@@ -1065,7 +1706,8 @@ describe("Claude accounts (ADR-0030 amendment)", () => {
       />,
     );
     const card = await screen.findByRole("region", { name: "Claude accounts" });
-    expect(await within(card).findByText(/Names are hidden\. An admin can turn on/)).toBeVisible();
+    await within(card).findByText(/Names are hidden\. An admin can turn on/);
+    namesHiddenInBody(card);
     const rows = within(card).getAllByRole("row").slice(1);
     expect(rows.length).toBeGreaterThan(1); // two accounts on one device stay two rows
     for (const row of rows) {
@@ -1127,7 +1769,7 @@ describe("Agents and the inventory without View people in AI usage (D242)", () =
     expect(within(table).queryByText(/alice/)).toBeNull();
     expect(within(table).queryByRole("link", { name: /example\.com/ })).toBeNull();
     const card = screen.getByRole("region", { name: "Agents" });
-    expect(within(card).getByText(/Names are hidden\. An admin can turn on/)).toBeVisible();
+    namesHiddenInBody(card);
   });
 
   it("says names are hidden on the inventory", async () => {
@@ -1146,7 +1788,7 @@ describe("Agents and the inventory without View people in AI usage (D242)", () =
     );
     const card = await screen.findByRole("region", { name: "AI inventory" });
     await within(card).findByText("ChatGPT");
-    expect(within(card).getByText(/Names are hidden\. An admin can turn on/)).toBeVisible();
+    namesHiddenInBody(card);
   });
 });
 

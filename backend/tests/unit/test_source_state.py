@@ -2,7 +2,9 @@
 
 from typing import Any
 
-from app.search.source_state import SourceInput, assess
+import pytest
+
+from app.search.source_state import SourceInput, assess, condition, idle
 
 
 def src(source_id: str, **kw: Any) -> SourceInput:
@@ -83,3 +85,66 @@ def test_an_ongoing_gap_or_open_gap_alert_is_quiet() -> None:
     conditions, summary = assess([src("a", ongoing_gap=True, gaps=1), src("b", gap_alert="g")])
     assert conditions == {"a": "quiet", "b": "quiet"}
     assert summary.gaps == 0  # the quiet line says so; not counted twice
+
+
+# --- Quiet is normal for up to N days (D260, owner 2026-11-14) -------------------------------
+# `quiet_ok`: an admin marked this push source and it last received an event inside that
+# period. The server computes it (app.search.overview); here it is given.
+
+QUIET_OK_CASES = [
+    # (case, overrides, condition, idle)
+    ("unmarked, silent a day", {"total_24h": 0}, "quiet", False),
+    ("unmarked, ongoing gap", {"ongoing_gap": True, "gaps": 1}, "quiet", False),
+    ("unmarked, a gap that ended", {"gaps": 1}, "gap", False),
+    ("marked, silent a day", {"total_24h": 0, "quiet_ok": True}, "healthy", True),
+    ("marked, ongoing gap", {"ongoing_gap": True, "gaps": 1, "quiet_ok": True}, "healthy", True),
+    ("marked, a gap that ended", {"gaps": 1, "quiet_ok": True}, "healthy", False),
+    ("marked, sending", {"quiet_ok": True}, "healthy", False),
+    # Past the period the server sends quiet_ok false: quiet as before.
+    ("marked, silent longer than its days", {"total_24h": 0}, "quiet", False),
+    ("marked, never sent", {"total_24h": 0, "last_event_at": None}, "quiet", False),
+    ("marked, in error", {"total_24h": 0, "quiet_ok": True, "state": "error"}, "error", False),
+    # A listener that is down or a full spool is an ingest error: still raised.
+    ("marked, receiver down", {"quiet_ok": True, "state": "error", "total_24h": 0}, "error", False),
+    ("marked, not read yet", {"quiet_ok": True, "state": "waiting"}, "attention", False),
+    ("marked, records refused", {"quiet_ok": True, "records_skipped": 3}, "attention", False),
+    ("marked, reading problem", {"quiet_ok": True, "reading_issue": True}, "attention", False),
+    # An alert someone set up still counts: the quiet alert or an open gap alert.
+    ("marked, quiet alert firing", {"quiet_ok": True, "quiet_since": "x"}, "quiet", False),
+    ("marked, open gap alert", {"quiet_ok": True, "gap_alert": "g"}, "quiet", False),
+    ("marked, paused", {"quiet_ok": True, "state": "disabled"}, "paused", False),
+]
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected", "idle_now"),
+    [c[1:] for c in QUIET_OK_CASES],
+    ids=[c[0] for c in QUIET_OK_CASES],
+)
+def test_quiet_is_normal_for_a_marked_source_inside_its_period(
+    overrides: dict[str, Any], expected: str, idle_now: bool
+) -> None:
+    s = src("claude_hooks", **overrides)
+    assert condition(s) == expected
+    assert idle(s, condition(s)) is idle_now
+
+
+def test_an_idle_source_counts_as_healthy_and_is_neither_quiet_nor_the_longest_wait() -> None:
+    sources = [
+        *six(),
+        src("claude_hooks", last_event_at="2026-11-07T09:00:00+00:00", total_24h=0, quiet_ok=True),
+        src("claude_code_otel", last_event_at="2026-11-01T09:00:00+00:00", total_24h=0),
+    ]
+    conditions, summary = assess(sources)
+    assert conditions["claude_hooks"] == "healthy"
+    assert conditions["claude_code_otel"] == "quiet"  # past its days: quiet as before
+    assert summary.total == 8 and summary.healthy == 5
+    assert summary.idle == 1
+    assert [q.source_id for q in summary.quiet] == ["claude_code_otel", "win_dc", "vpn"]
+    assert summary.longest_wait is not None
+    assert summary.longest_wait.source_id == "fw_main"
+
+
+def test_the_gaps_of_an_idle_source_are_not_counted() -> None:
+    _, summary = assess([src("a", gaps=2), src("b", gaps=3, quiet_ok=True)])
+    assert summary.gaps == 2 and summary.idle == 0  # b sent in the last hours: not idle

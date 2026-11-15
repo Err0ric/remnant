@@ -504,7 +504,7 @@ def test_an_item_with_no_person_names_the_device_and_its_address(
     assert chatgpt["people"] == [] and chatgpt["count"] == 0
     assert chatgpt["detail"] == "1 device not matched to a person: ws-0101 at 10.20.1.5"
     # Both are on the item, for the host and address links on Alerts.
-    assert chatgpt["devices"] == ["10.20.1.5", "ws-0101"]
+    assert chatgpt["devices"] == ["ws-0101", "10.20.1.5"]  # host names first (owner, 2026-11-14)
 
 
 def test_new_in_24_hours_is_first_seen_not_a_review_decision(lab: dict[str, Any]) -> None:
@@ -706,3 +706,66 @@ def test_windows_and_unbound_dns_lookups_of_ai_services_count(
     got = {u["service"]["id"]: u for u in usage(a)["services"]}
     assert "gemini" in got, sorted(got)
     assert got["gemini"]["events"] == 2 and got["gemini"]["machines"] == 2
+
+
+def test_the_period_before_is_read_beside_the_range_and_its_failure_is_the_page_s(
+    lab: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.ai.usage import Usage
+    from app.core.errors import QueryTimeoutError
+
+    start, end = (NOW - timedelta(minutes=30)).isoformat(), NOW.isoformat()
+    want = lab["admin"].get("/api/ai/usage", params={"start": start, "end": end}).json()
+    calls: list[str] = []
+    real = Usage.earlier
+
+    def earlier(self: Usage, *a: Any, **kw: Any) -> Any:
+        calls.append("earlier")
+        return real(self, *a, **kw)
+
+    monkeypatch.setattr(Usage, "earlier", earlier)
+    lab["app"].state.page_cache.clear()
+    got = lab["admin"].get("/api/ai/usage", params={"start": start, "end": end}).json()
+    # MCP servers tied on use come in no fixed order (as before this change): by name here.
+    for body in (got, want):
+        body["mcp"].sort(key=lambda m: m["name"])
+    assert got == want and calls == ["earlier"]
+    # Beside, not after: the period before and one of the range's reads each wait for the
+    # other to have started. Run one after the other, the first would wait in vain.
+    import threading
+
+    began, range_began = threading.Event(), threading.Event()
+    met: list[bool] = []
+    pending = Usage.people_pending
+
+    def earlier_meets(self: Usage, *a: Any, **kw: Any) -> Any:
+        began.set()
+        met.append(range_began.wait(timeout=10))
+        return real(self, *a, **kw)
+
+    def range_meets(self: Usage, *a: Any, **kw: Any) -> Any:
+        range_began.set()
+        met.append(began.wait(timeout=10))
+        return pending(self, *a, **kw)
+
+    monkeypatch.setattr(Usage, "earlier", earlier_meets)
+    monkeypatch.setattr(Usage, "people_pending", range_meets)
+    lab["app"].state.page_cache.clear()
+    lab["app"].state.ai_usage.cache = None
+    beside = lab["admin"].get("/api/ai/usage", params={"start": start, "end": end})
+    assert beside.status_code == 200 and met and all(met)
+    monkeypatch.setattr(Usage, "people_pending", pending)
+    # A failing read of the period before fails the page as a failing range read does.
+
+    def timeout(self: Usage, *a: Any, **kw: Any) -> Any:
+        raise QueryTimeoutError("the query took too long")
+
+    lab["app"].state.page_cache.clear()
+    monkeypatch.setattr(Usage, "earlier", timeout)
+    before = lab["admin"].get("/api/ai/usage", params={"start": start, "end": end})
+    monkeypatch.setattr(Usage, "earlier", real)
+    lab["app"].state.page_cache.clear()
+    monkeypatch.setattr(Usage, "all_services", timeout)
+    now = lab["admin"].get("/api/ai/usage", params={"start": start, "end": end})
+    assert before.status_code == now.status_code >= 400
+    assert before.json() == now.json()

@@ -112,7 +112,7 @@ describe("Simple search", () => {
     const host = within(detail).getAllByRole("link", { name: "bastion" })[0] as HTMLElement;
     expect(host).toHaveAttribute("href", "/investigate/people#host=bastion");
     await userEvent.click(host);
-    await screen.findByRole("heading", { level: 1, name: "People & devices" });
+    await screen.findByRole("heading", { level: 1, name: "bastion" });
     expect(window.location.pathname + window.location.hash).toBe(
       "/investigate/people#host=bastion",
     );
@@ -249,6 +249,30 @@ describe("Simple search", () => {
     );
   });
 
+  it("keeps a field value with a line break or tab on one line (D257)", async () => {
+    const { spy } = await renderAt("/investigate/logs");
+    const base = spy.getMockImplementation()!;
+    const odd = "linux\nsshd\tbastion_auth";
+    await screen.findByText("Failed password for invalid user oracle");
+    spy.mockImplementation(async (input, init) => {
+      if (!String(input).endsWith("/api/search/facets")) return base(input, init);
+      return new Response(
+        JSON.stringify({ facets: [{ field: "source_id", values: [{ value: odd, count: 7 }] }] }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    await userEvent.type(screen.getByLabelText("Search text"), "oracle{Enter}");
+    const fields = await screen.findByRole("complementary", { name: "Fields" });
+    const src = await within(fields).findByRole("region", { name: /^source$/i });
+    const button = await within(src).findByRole("button", {
+      name: /^linux\s+sshd\s+bastion_auth 7$/,
+    });
+    expect(button).toHaveAttribute("title", `Filter to ${odd}`);
+    expect(button).toHaveAttribute("aria-label", `${odd} 7`);
+    // Drawn on one line: the break and the tab as spaces.
+    expect(button.querySelector("[data-truncate]")?.textContent).toBe("linux sshd bastion_auth");
+  });
+
   it("in SQL mode, a field click adds the filter to the SQL and runs it", async () => {
     const { spy } = await renderAt("/investigate/logs");
     await screen.findByText("Failed password for invalid user oracle");
@@ -257,7 +281,12 @@ describe("Simple search", () => {
     const fields = await screen.findByRole("complementary", { name: "Fields" });
     expect(await within(fields).findByText("click to filter")).toBeVisible();
     const src = await within(fields).findByRole("region", { name: /^source$/i });
-    await userEvent.click(within(src).getByRole("button", { name: /^linux_sshd/ }));
+    const sshd = within(src).getByRole("button", { name: /^linux_sshd/ });
+    // A raw value is cut in the middle (D257); the button's title and name hold it whole.
+    expect(sshd.querySelector("[data-truncate]")).toHaveAttribute("data-truncate", "name");
+    expect(sshd.querySelector('[data-part="tail"]')?.textContent).toBe("nux_sshd");
+    expect(sshd).toHaveAttribute("title", "Filter to linux_sshd");
+    await userEvent.click(sshd);
     await vi.waitFor(() =>
       expect(posts(spy, "/api/query").at(-1)?.sql).toMatch(/WHERE source_id = 'linux_sshd'$/),
     );

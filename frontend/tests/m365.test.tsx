@@ -51,6 +51,17 @@ describe("Microsoft 365 as views of Logs (ADR-0052 section 3.3, redesign build r
     ).toBeVisible();
   });
 
+  it("gives an app name the card's free space, cut in the middle, whole in its title (D257)", async () => {
+    await renderAt("/investigate/views");
+    const apps = await screen.findByRole("table", { name: "Apps signed in to" });
+    expect(apps).toHaveClass("table-fixed");
+    expect([...apps.querySelectorAll("col")].map((c) => c.className)).toEqual(["", "w-24"]);
+    const teams = within(apps).getByRole("button", { name: "Microsoft Teams" });
+    expect(teams).toHaveAttribute("title", "Microsoft Teams\nOpen 200 events in Logs");
+    expect(teams.querySelector("[data-truncate]")).toHaveAttribute("data-truncate", "name");
+    expect(teams.querySelector('[data-part="tail"]')?.textContent).toBe("ft Teams");
+  });
+
   it("opens the views from one Views menu, on every tab of Logs", async () => {
     await renderAt("/investigate/saved");
     await screen.findByRole("heading", { level: 1, name: "Logs" });

@@ -1,7 +1,9 @@
 import { useEffect } from "react";
+import { When } from "@/components/When";
 import type { Overview, SourceGap } from "@/lib/api";
+import { cn } from "@/lib/cn";
 import { stamp } from "@/features/overview/time";
-import { gapText, lag, localHour, zoneName } from "./flow";
+import { gapText, lag, localHour, shownGaps, zoneName } from "./flow";
 
 export type FlowLevel = "unhealthy" | "attention" | "paused" | "healthy";
 
@@ -10,6 +12,8 @@ export interface FlowSource {
   level: FlowLevel;
   word?: string;
   reason?: string | null;
+  /** The reason is only the quiet sentence ("No events for over 1 h"). */
+  quietNote?: boolean;
   last: string | null;
   onOpen?: () => void;
 }
@@ -38,8 +42,9 @@ const WORD: Record<FlowLevel, string> = {
   paused: "Paused",
   healthy: "Flowing",
 };
+// Source, Status, the line, Peak, 24 hours, Per minute, Last received (D255).
 const COLS =
-  "grid grid-cols-1 gap-x-4 gap-y-1 md:grid-cols-[minmax(9rem,13rem)_minmax(8rem,1fr)_5.5rem_5.5rem_6rem]";
+  "grid grid-cols-1 gap-x-4 gap-y-1 md:grid-cols-[minmax(8rem,12rem)_minmax(6rem,9rem)_minmax(6rem,1fr)_3.5rem_4.5rem_4.5rem_9rem] min-[1400px]:grid-cols-[minmax(8rem,12rem)_minmax(6rem,9rem)_minmax(6rem,1fr)_3.5rem_4.5rem_4.5rem_14rem]";
 
 function compact(n: number): string {
   if (n < 1000) return n.toLocaleString();
@@ -53,11 +58,13 @@ interface SparkProps {
   gaps: SourceGap[];
   name: string;
   timeZone?: string;
+  /** Only quiet: the line in the neutral series color. */
+  quiet?: boolean;
 }
 
-/** Events per hour as a line, the source's own peak printed, gap hours shaded (F55). The
+/** Events per hour as a line, gap hours shaded (F55); the peak is its own column. The
  * reading for each hour is in a tooltip; the totals beside it are printed. */
-function Spark({ counts, hours, gaps, name, timeZone }: SparkProps) {
+function Spark({ counts, hours, gaps, name, timeZone, quiet = false }: SparkProps) {
   const n = Math.max(1, counts.length);
   const peak = Math.max(0, ...counts);
   const top = Math.max(1, peak);
@@ -78,7 +85,7 @@ function Spark({ counts, hours, gaps, name, timeZone }: SparkProps) {
       />
     );
   return (
-    <div className="relative h-8 min-w-0">
+    <div className="h-8 min-w-0">
       <svg
         viewBox="0 0 100 28"
         preserveAspectRatio="none"
@@ -100,7 +107,7 @@ function Spark({ counts, hours, gaps, name, timeZone }: SparkProps) {
         )}
         <path
           d={line.join(" ")}
-          className="fill-none stroke-accent-text"
+          className={quiet ? "fill-none stroke-series-neutral" : "fill-none stroke-accent-text"}
           strokeWidth={1.5}
           vectorEffect="non-scaling-stroke"
         />
@@ -117,9 +124,6 @@ function Spark({ counts, hours, gaps, name, timeZone }: SparkProps) {
           </rect>
         ))}
       </svg>
-      <span className="pointer-events-none absolute right-0 top-0 font-mono text-xs tabular-nums text-text-muted">
-        peak {compact(peak)}/h
-      </span>
     </div>
   );
 }
@@ -155,6 +159,7 @@ export function SourceFlow({
         className={`${COLS} border-b border-border px-3 py-2 text-xs font-medium text-text-secondary max-md:hidden`}
       >
         <span>Source</span>
+        <span>Status</span>
         <span className="relative h-4 min-w-0" aria-label={`Hour axis, ${zone}`}>
           {ticks.map(({ h, i }) => (
             <span
@@ -175,6 +180,7 @@ export function SourceFlow({
             </span>
           ))}
         </span>
+        <span className="text-right">Peak</span>
         <span className="text-right">24 hours</span>
         <span className="text-right">Per minute</span>
         <span className="text-right">Last received</span>
@@ -184,15 +190,26 @@ export function SourceFlow({
           const v = volume.get(s.source_id);
           const h = health.get(s.source_id);
           const counts = v?.counts ?? hours.map(() => 0);
-          const gaps = v?.gaps ?? [];
+          // Inside its "Quiet is normal" days no gap is drawn or said (D260).
+          const gaps = shownGaps(h, v?.gaps);
           const last = h?.last_event_at ?? s.last;
           const ago = lag(last, now);
+          const peak = Math.max(0, ...counts);
+          // Only quiet (no gap hours in the 24 hours, not in error) is drawn greyed with one
+          // sentence; a gap keeps its danger shading and sentence (D255). Drawing only: the
+          // level and the counts stay the server's. Every quiet source has a gap alert open,
+          // so the gap hours, not the alert, tell a real gap from a source that is only quiet.
+          // An idle source is drawn the same way, though it counts as healthy (D260).
+          const gapped = gaps.length > 0;
+          const quiet = (!gapped && h?.condition === "quiet") || Boolean(h?.idle);
+          const num = cn("font-mono tabular-nums md:text-right", quiet && "text-text-secondary");
           return (
             <li
               key={s.source_id}
               id={`flow-${s.source_id}`}
+              data-quiet={quiet ? "" : undefined}
               aria-current={focused === s.source_id ? "true" : undefined}
-              className={`border-b border-border px-3 py-2 last:border-0 ${focused === s.source_id ? "bg-accent-subtle" : ""}`}
+              className={`border-b border-border px-3 py-1.5 last:border-0 ${focused === s.source_id ? "bg-accent-subtle" : ""}`}
             >
               <div className={`${COLS} items-center`}>
                 <div className="min-w-0">
@@ -200,20 +217,31 @@ export function SourceFlow({
                     <button
                       type="button"
                       onClick={s.onOpen}
-                      className="text-left font-mono text-accent-text [overflow-wrap:anywhere] hover:underline"
+                      className={cn(
+                        "text-left font-mono [overflow-wrap:anywhere] hover:underline",
+                        quiet ? "text-text-secondary" : "text-accent-text",
+                      )}
                     >
                       {s.source_id}
                     </button>
                   ) : (
-                    <span className="font-mono [overflow-wrap:anywhere]">{s.source_id}</span>
-                  )}
-                  <div className="flex items-center gap-1.5 text-xs text-text-secondary">
                     <span
-                      aria-hidden
-                      className={`inline-block size-2 rounded-full ${DOT[s.level]}`}
-                    />
-                    {s.word ?? WORD[s.level]}
-                  </div>
+                      className={cn(
+                        "font-mono [overflow-wrap:anywhere]",
+                        quiet && "text-text-secondary",
+                      )}
+                    >
+                      {s.source_id}
+                    </span>
+                  )}
+                </div>
+                <div className="flex min-w-0 items-center gap-1.5 text-text-secondary">
+                  <span
+                    aria-hidden
+                    data-dot=""
+                    className={`inline-block size-2 shrink-0 rounded-full ${quiet ? "bg-text-muted" : DOT[s.level]}`}
+                  />
+                  <span className="truncate">{s.word ?? WORD[s.level]}</span>
                 </div>
                 <Spark
                   counts={counts}
@@ -221,20 +249,34 @@ export function SourceFlow({
                   gaps={gaps}
                   name={s.source_id}
                   timeZone={timeZone}
+                  quiet={quiet}
                 />
-                <span className="font-mono tabular-nums md:text-right">
+                <span data-peak="" className={num}>
+                  {compact(peak)}/h
+                  <span className="text-text-muted md:hidden"> at the busiest hour</span>
+                </span>
+                <span className={num}>
                   {(v?.total ?? 0).toLocaleString()}
                   <span className="text-text-muted md:hidden"> events in 24 h</span>
                 </span>
-                <span className="font-mono tabular-nums md:text-right">
+                <span className={num}>
                   {(h?.rate_per_min ?? 0).toLocaleString()}
                   <span className="text-text-muted md:hidden"> per minute</span>
                 </span>
-                <span
-                  className="font-mono tabular-nums md:text-right"
-                  title={last ? `${stamp(last)} UTC` : undefined}
-                >
-                  {ago ? `${ago} ago` : "never"}
+                <span className={cn(num, "whitespace-nowrap")}>
+                  {last ? (
+                    <>
+                      <When iso={last} timeZone={timeZone} />
+                      {ago ? (
+                        <span className="hidden text-text-muted min-[1400px]:inline">
+                          {" "}
+                          {ago} ago
+                        </span>
+                      ) : null}
+                    </>
+                  ) : (
+                    "never"
+                  )}
                 </span>
               </div>
               {gaps.map((g) => (
@@ -242,8 +284,17 @@ export function SourceFlow({
                   {gapText(g, now, timeZone)}
                 </p>
               ))}
-              {s.reason ? (
-                <p className={`mt-1 ${s.level === "unhealthy" ? "text-danger" : "text-warn"}`}>
+              {s.reason && !(gapped && s.quietNote) ? (
+                <p
+                  className={cn(
+                    "mt-1",
+                    quiet
+                      ? "text-text-secondary"
+                      : s.level === "unhealthy"
+                        ? "text-danger"
+                        : "text-warn",
+                  )}
+                >
                   {s.reason}
                 </p>
               ) : null}
@@ -253,8 +304,8 @@ export function SourceFlow({
       </ul>
       {hours.length ? (
         <p className="px-3 py-2 text-xs text-text-muted">
-          Times in {zone}; hover for UTC. Each line is scaled to its own busiest hour, printed at
-          the right. Shaded hours are gaps.
+          Times in {zone}; hover for UTC. Each line is scaled to its own busiest hour, the Peak
+          column. Shaded hours are gaps.
         </p>
       ) : null}
     </div>

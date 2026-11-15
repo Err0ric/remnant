@@ -14,3 +14,8 @@ def counted(expr: str) -> str:
     """SQL true when `expr` (a tool name) is a real tool call: not Claude Code bookkeeping.
     NULL stays NULL-safe: a row with no tool name is not a tool call either way."""
     return f"lower(coalesce({expr}, '')) NOT IN {_IN}"
+
+
+def is_counted(name: str | None) -> bool:
+    """`counted()` for one value in Python: the same names, compared without case."""
+    return (name or "").lower() not in {n.lower() for n in INTERNAL_TOOLS}

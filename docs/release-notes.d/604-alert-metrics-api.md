@@ -1,0 +1,6 @@
+### Alert handling numbers from the server (2026-11-14)
+
+- New `GET /api/alerts/metrics`: time to close (median and 90th percentile, overall and by severity), alerts opened and closed per day over a range, alerts open now by severity and by kind, and alerts overdue now by severity, with the overdue days in the answer (D261). It counts only the alerts the Alerts queue shows the caller; open now is every open alert, where the Queue counts at most the newest 200.
+- An open alert is overdue once it has been open longer than 1 day (Critical), 3 days (High), 7 days (Medium), or 30 days (Low, and alerts with no severity).
+- What you will notice: nothing visible; the Alerts page shows these numbers in a later update.
+- What changes for existing installs: nothing to do. The overdue days can be changed in `config/app.yaml` under `alerts:` (`overdue_days_critical`, `overdue_days_high`, `overdue_days_medium`, `overdue_days_low`) or with `APP__ALERTS__OVERDUE_DAYS_HIGH` and the like, then a restart. To go back, first remove the `alerts:` section from `config/app.yaml` and any `APP__ALERTS__` variables (an older version refuses to start with settings it does not know, from the file or the environment), then roll back the update (`docs/install/`, `update-systemd.sh --rollback`).

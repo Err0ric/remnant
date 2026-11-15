@@ -8,8 +8,8 @@ interface StatusLineProps {
   now: string;
 }
 
-/** Detections, paused schedules, and alert delivery (F55): one line when all is clear,
- * a short list for whichever has something. */
+/** Detections, paused schedules, and alert delivery (F55): a three-column card, shown only
+ * when one of them has something to list. */
 export function StatusLine({ overview: o, now }: StatusLineProps) {
   // One line per detection: runs of the same rule or search grouped, newest first.
   const grouped = new Map<
@@ -27,13 +27,8 @@ export function StatusLine({ overview: o, now }: StatusLineProps) {
   const failing = (o.alerts?.targets ?? []).filter((t) => t.failing);
   const failed = o.alerts?.failed_deliveries ?? 0;
   const delivery = o.alerts ? failed > 0 || failing.length > 0 : false;
-  if (!o.detections.length && !o.paused.length && !delivery)
-    return (
-      <p className="rounded-card border border-border bg-surface px-3 py-2 text-sm text-text-secondary">
-        No detections in 24 hours. No paused schedules.
-        {o.alerts ? " Every alert was delivered." : ""}
-      </p>
-    );
+  // Nothing to list: no card at all; the tiles already say so (D255).
+  if (!o.detections.length && !o.paused.length && !delivery) return null;
   return (
     <section
       aria-label="Detections and schedules"

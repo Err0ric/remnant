@@ -160,3 +160,35 @@ def test_a_smaller_page_reservation_fits_more_sections() -> None:
     alone = small.take(True, 0)
     assert alone.mb == small.large_max  # a search alone is unchanged
     assert MemoryLedger(4096, 4, page_mb=10_000).page == 819  # never more than a share
+
+
+@pytest.mark.usefixtures("small")
+def test_queries_spilling_at_once_each_have_their_own_files(tmp_path: Path) -> None:
+    """Each query is its own DuckDB instance, and DuckDB names its overflow files the same
+    in every instance: in one shared folder, two queries spilling at once wrote and read
+    each other's files ("IO Error: Corrupt temporary file", "Could not read enough
+    bytes"; Linux CI, the AI usage page at 16 MB). Each instance spills to its own folder
+    inside the overflow folder, which DuckDB removes when the instance closes."""
+    engine = _engine(tmp_path, 200)
+    folder = tmp_path / "tmp" / "duckdb"
+    errors: list[BaseException] = []
+
+    def run(start: threading.Barrier) -> None:
+        start.wait()
+        try:
+            engine.run(SPILLS, QueryScope(None), name="query.run", large=False)
+        except BaseException as exc:  # recorded and asserted below
+            errors.append(exc)
+
+    for _ in range(3):
+        start = threading.Barrier(2)
+        with capture_logs() as logs:
+            threads = [threading.Thread(target=run, args=(start,)) for _ in range(2)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(60)
+        assert errors == []
+        spilled = [e for e in logs if e["event"] == "query.memory" and e["outcome"] == "spilled"]
+        assert len(spilled) == 2  # both overflowed to disk at once
+        assert list(folder.iterdir()) == []  # each instance's folder went with it

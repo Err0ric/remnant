@@ -72,3 +72,55 @@ def test_csv_cells_from_logs_cannot_be_formulas() -> None:
 
     row = Item("m365_app", "=HYPERLINK(1)", "=HYPERLINK(1)", None, 1, None, None, None, [])
     assert "'=HYPERLINK(1)" in export([row], "csv")
+
+
+def _rows(db: Path, action: str | None = None) -> int:
+    where, args = ("WHERE action = ?", (action,)) if action else ("", ())
+    with MetaDB(db).connect() as con:
+        return int(con.execute(f"SELECT count(*) FROM audit_log {where}", args).fetchone()[0])
+
+
+def _to_review(items: list[dict[str, object]]) -> int:
+    return sum(1 for i in items if i["excluded"] is None and i["status"] == "unreviewed")
+
+
+def test_the_rail_count_is_numbers_only_on_the_callers_sources_and_unaudited(
+    tmp_path: Path, pin_now: Callable[[datetime], None]
+) -> None:
+    """D258: the rail's AI usage count, like `/health/count`: the Inventory's own "to
+    review" number on the caller's sources, naming nothing, with no audit row; the
+    Inventory read itself is still recorded."""
+    pin_now(datetime(2026, 11, 1, 12, 0, tzinfo=UTC))
+    lab = make_lab(tmp_path)
+    engine, admin, ana = lab["app"].state.engine, lab["admin"], lab["ana"]
+    _write(engine, [])
+    LakeWriter(engine._lake).write(
+        [
+            _hook(
+                "claude_hooks.pre_tool_use", "s-9", "2026-10-29T11:00:00+00:00",
+                tool_name="mcp__github__create_issue", mcp_server_name="github",
+            )
+        ]
+    )  # fmt: skip
+
+    before = _rows(lab["db"])
+    res = admin.get("/api/ai/inventory/count")
+    assert res.status_code == 200
+    assert res.json() == {"to_review": res.json()["to_review"]}  # one number, no names
+    assert _rows(lab["db"]) == before  # no audit row
+    assert ana.get("/api/ai/inventory/count").json()["to_review"] >= 0
+    assert _rows(lab["db"]) == before
+
+    # The same number as the Inventory's header, read by each caller on their own sources.
+    seen = _rows(lab["db"], "ai.view") + _rows(lab["db"], "ai.view_people")
+    mine = _to_review(admin.get("/api/ai/inventory?days=30").json()["items"])
+    assert mine >= 1 and res.json()["to_review"] == mine
+    assert _rows(lab["db"], "ai.view") + _rows(lab["db"], "ai.view_people") == seen + 1
+    hers = _to_review(ana.get("/api/ai/inventory?days=30").json()["items"])
+    assert ana.get("/api/ai/inventory/count").json() == {"to_review": hers}
+    assert hers < mine  # ana reads the Linux source only
+
+    # A review shows at once: any change empties the short cache the count keeps.
+    body = {"type": "mcp", "key": "github", "reason": "IT's own server"}
+    assert admin.put("/api/ai/inventory/exclusions", json=body, headers=lab["h"]).status_code == 200
+    assert admin.get("/api/ai/inventory/count").json() == {"to_review": mine - 1}

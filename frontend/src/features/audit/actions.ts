@@ -66,6 +66,8 @@ const ACTIONS: Record<string, string> = {
   "schedule.run": "Schedule ran",
   "schedule.run_now": "Ran a schedule now",
   "schedule.update": "Changed a schedule",
+  "pin.add": "Pinned to the left menu",
+  "pin.remove": "Unpinned from the left menu",
   "search.create": "Saved a search",
   "search.delete": "Deleted a saved search",
   "search.export": "Exported saved searches",

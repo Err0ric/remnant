@@ -102,6 +102,9 @@ class AlertItem:
     # Who and which devices the item is about, from the rows that fired (ADR-0038 row 28).
     people: list[str] = field(default_factory=list)
     devices: list[str] = field(default_factory=list)
+    # How many devices and addresses the raise named, when it said (more than `devices`
+    # when the list was cut at MAX_NAMES); None for items that never said.
+    devices_total: int | None = None
     history: list[ItemEvent] = field(default_factory=list)
     # The group (ADR-0043 row 1): one open item per entity, rule, and day; repeats add to
     # `count` and `changes` and move `last_seen`.
@@ -189,8 +192,10 @@ class AlertItems:
         range_end: str | None = None,
         severity: str | None = None,
         refresh: bool = False,
+        window: bool = False,
         people: list[str] | None = None,
         devices: list[str] | None = None,
+        devices_total: int | None = None,
         group: tuple[str, str] | None = None,
         change: str | None = None,
         follows: str | None = None,
@@ -198,7 +203,11 @@ class AlertItems:
         late: tuple[str, str] | None = None,
     ) -> AlertItem:
         """Write an item (once per kind and ref id). A muted subject closes it at once.
-        With `refresh`, an existing open item takes the new wording and counts.
+        With `refresh`, an existing open item takes the new wording and counts, and its
+        range's end; with `window` too, also its range's start: the raise's range is the
+        item's whole evidence (AI Watch's hourly review of a service or MCP server, owner
+        2026-11-14), not a slice of it, so the item's range is replaced. Without `window`
+        the item keeps its first start (a sliding check, a day's item, a grouped item).
 
         With `group` (entity, rule), at most one item per kind, entity, rule, and day is
         open (ADR-0043): a repeat adds its count and `change` line to that item instead of
@@ -225,12 +234,16 @@ class AlertItems:
                 ).fetchone()
                 if had and refresh:
                     # An open item is kept current (who used it, its wording, its sources);
-                    # a closed one stays as it was decided (owner, 2026-10-23).
+                    # a closed one stays as it was decided (owner, 2026-10-23). Its end moves;
+                    # its start moves too only when the raise's range is the item's whole
+                    # evidence (`window`, owner 2026-11-14).
                     con.execute(
                         "UPDATE alert_items SET title = ?, detail = ?, why = ?, count = ?,"
-                        " sources = ?, range_end = coalesce(?, range_end),"
+                        " sources = ?, range_start = coalesce(?, range_start),"
+                        " range_end = coalesce(?, range_end),"
                         " severity = coalesce(?, severity),"
-                        " people = coalesce(?, people), devices = coalesce(?, devices)"
+                        " people = coalesce(?, people), devices = coalesce(?, devices),"
+                        " devices_total = CASE WHEN ? IS NULL THEN devices_total ELSE ? END"
                         " WHERE item_id = ? AND state = 'open'",
                         (
                             title[:300],
@@ -238,10 +251,13 @@ class AlertItems:
                             (why or "")[:500] or None,
                             count,
                             json.dumps(sorted(set(sources or []))),
+                            range_start if window else None,
                             range_end,
                             severity,
                             who,
                             dev,
+                            dev,
+                            devices_total,
                             had["item_id"],
                         ),
                     )
@@ -288,8 +304,8 @@ class AlertItems:
             con.execute(
                 "INSERT INTO alert_items (item_id, kind, subject, ref_id, title, detail, why,"
                 " count, sources, owner_id, shared, range_start, range_end, created_at, severity,"
-                " people, devices, entity, rule, day, last_seen, changes, follows)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " people, devices, entity, rule, day, last_seen, changes, follows, devices_total)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     item_id,
                     kind,
@@ -314,6 +330,7 @@ class AlertItems:
                     now if group is not None else None,
                     json.dumps({"lines": [line], "more": 0}) if group is not None else None,
                     follows if before is not None else None,
+                    devices_total if dev is not None else None,
                 ),
             )
             mute = con.execute(
@@ -547,12 +564,7 @@ class AlertItems:
 
     def sees(self, item: AlertItem, user: User) -> bool:
         """May the viewer know the item exists (before the Restricted check)?"""
-        return (
-            item.owner_id is None
-            or item.shared
-            or user.role == "admin"
-            or item.owner_id == user.user_id
-        )
+        return can_see(item.owner_id, item.shared, user)
 
     def items(
         self,
@@ -936,6 +948,11 @@ class AlertItems:
         )
 
 
+def can_see(owner_id: str | None, shared: bool, user: User) -> bool:
+    """Items the system raised, shared ones, the viewer's own, and every one for an admin."""
+    return owner_id is None or shared or user.role == "admin" or owner_id == user.user_id
+
+
 def _item(r: sqlite3.Row) -> AlertItem:
     return AlertItem(
         item_id=r["item_id"],
@@ -962,6 +979,7 @@ def _item(r: sqlite3.Row) -> AlertItem:
         severity=r["severity"],
         people=json.loads(r["people"] or "[]"),
         devices=json.loads(r["devices"] or "[]"),
+        devices_total=r["devices_total"],
         entity=r["entity"],
         rule=r["rule"],
         day=r["day"],

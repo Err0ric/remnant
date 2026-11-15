@@ -165,21 +165,32 @@ def uutils_mkdir(folder: Path) -> str:
 
 
 @pytest.mark.parametrize("flavor", ["exclusive-mkdir", "uutils-mkdir"])
+# The paused variants take over 8 s each: `slow`, so the queue's local suite runs them (D216).
+@pytest.mark.parametrize("pace", ["as-is", pytest.param("slow-rm", marks=pytest.mark.slow)])
 def test_two_queues_taking_the_lock_at_once_exactly_one_wins(
-    repo: Path, tmp_path: Path, flavor: str
+    repo: Path, tmp_path: Path, flavor: str, pace: str
 ) -> None:
     """The take is atomic: two takers released at the same moment, each for its own live
     queue, and exactly one holds the lock, round after round, from free and from stale. Also
     where `mkdir` lets both in: the exclusive `.owner` file decides. (Until 2026-11-13 the
     guard was `mkdir` alone, and on GitHub's runners both takers got in, saw each other, and
-    backed off: safe, but nobody held the lock.)"""
+    backed off: safe, but nobody held the lock.)
+
+    `slow-rm` pauses 0.3 s after every `rm`, as a loaded machine can: the winner has let go
+    of `.owner` and not yet removed the guard, so where `mkdir` lets both in, the other taker
+    enters the guard in that moment. The winner still holds the lock. (Until 2026-11-14 it
+    took that for a guard changed under it and gave up, so nobody won.)"""
     # Stand-in queues that outlive the test on the slowest runner: once they are gone their
     # locks are stale, and both takers would be right to win.
     queues = [subprocess.Popen(["sleep", "3600"]) for _ in range(2)]
     a, b = (q.pid for q in queues)
     go = tmp_path / "go"
     env = {"PATH": uutils_mkdir(tmp_path / "bin")} if flavor == "uutils-mkdir" else {}
+    # The real rm by its path: in a background job, macOS sh (bash 3.2) runs
+    # `command <program>` in place of the job's shell, which then never returns.
+    slow = f'rm() {{ {shutil.which("rm")} "$@"; sleep 0.3; }}' if pace == "slow-rm" else ":"
     script = f"""
+      {slow}
       take() {{ until [ -f "{go}" ]; do :; done; queue_lock_take "$1" "$2" >&2; }}
       take 601 {a} & pa=$!
       take 602 {b} & pb=$!

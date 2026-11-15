@@ -1,3 +1,4 @@
+import { PinButton } from "@/components/PinButton";
 import { useMutation } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { ResultsTable } from "@/features/search/ResultsTable";
@@ -44,7 +45,10 @@ export function SearchRunner({ search, onClose }: SearchRunnerProps) {
         <div className="flex flex-wrap items-baseline gap-2">
           <SectionTitle>{search.name}</SectionTitle>
           <span className="font-mono text-sm text-text-muted">{search.id}</span>
-          <button type="button" onClick={onClose} className="ml-auto text-sm text-text-secondary">
+          <span className="ml-auto text-sm">
+            <PinButton kind="search" id={search.id} name={search.name} />
+          </span>
+          <button type="button" onClick={onClose} className="text-sm text-text-secondary">
             Close
           </button>
         </div>

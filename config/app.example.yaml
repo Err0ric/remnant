@@ -43,6 +43,15 @@ schedules:
 #   session_idle_minutes: 120
 #   queue_stuck_days: 3
 
+# Alerts > Handling counts an open alert as overdue once it has been open longer than
+# this many days for its severity; alerts with no severity use the low value (D261).
+# Each can also be set with APP__ALERTS__OVERDUE_DAYS_HIGH and the like.
+# alerts:
+#   overdue_days_critical: 1
+#   overdue_days_high: 3
+#   overdue_days_medium: 7
+#   overdue_days_low: 30
+
 # Ask runs its query at once when it passes the guard, on the asker's own sources, and
 # shows the SQL under "How I got this" (ADR-0042). false: Ask waits for Run query.
 # ask:

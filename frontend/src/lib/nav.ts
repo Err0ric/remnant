@@ -83,6 +83,11 @@ export const AREAS: Area[] = [
     tabs: [
       // Open, Closed, and Muted are the Queue's State filter (ADR-0052 section 3.3).
       { label: "Queue", page: "alerts" },
+      {
+        label: "Handling",
+        page: "handling",
+        aliases: ["alert metrics", "time to close", "overdue alerts"],
+      },
       { label: "Rules", page: "rules", aliases: ["detection rules", "sigma"] },
       { label: "Schedules", page: "schedules", aliases: ["scheduled searches"] },
     ],

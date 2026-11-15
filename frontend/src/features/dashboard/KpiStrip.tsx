@@ -1,74 +1,7 @@
 import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChangePill } from "@/components/ChangePill";
-import { PanelTitle } from "@/components/PanelTitle";
+import { KpiTile } from "@/components/KpiTile";
 import { api, type PageWindow } from "@/lib/api";
-import { cn } from "@/lib/cn";
-import { navigate, pathFor, type PageId } from "@/lib/route";
-import { About } from "./Sections";
-
-interface TileProps {
-  label: string;
-  /** The headline; a string for "7 of 8". */
-  value: ReactNode;
-  /** Zero reads muted; a problem reads in the warn color with its words beside it. */
-  tone?: "text" | "muted" | "warn";
-  /** This window minus the one before; left out when the window before is unknown. */
-  change?: number | null;
-  context?: ReactNode;
-  page: PageId;
-  tab?: string;
-  opens: string;
-  /** How the number is counted, behind the (i) (owner, 2026-11-02). */
-  about: string;
-}
-
-function Tile({
-  label,
-  value,
-  tone = "text",
-  change,
-  context,
-  page,
-  tab,
-  opens,
-  about,
-}: TileProps) {
-  return (
-    <div data-kpi={label} className="flex min-w-0 flex-col gap-0.5 bg-surface px-3 py-2.5">
-      <span className="flex min-w-0 items-start gap-1.5">
-        <PanelTitle as="span" className="line-clamp-2 min-w-0" title={label}>
-          {label}
-        </PanelTitle>
-        <About text={about} />
-      </span>
-      <span className="flex flex-wrap items-center gap-x-2">
-        <a
-          href={`${pathFor(page)}${tab ? `#${tab}` : ""}`}
-          onClick={(e) => {
-            if (e.metaKey || e.ctrlKey || e.shiftKey) return;
-            e.preventDefault();
-            navigate(page, tab);
-          }}
-          aria-label={`${label}: ${typeof value === "string" || typeof value === "number" ? value : ""}. Open ${opens}`}
-          className={cn(
-            "text-kpi tabular-nums no-underline hover:underline min-[1500px]:text-kpi-lg",
-            tone === "muted" ? "text-text-muted" : tone === "warn" ? "text-warn" : "text-text",
-          )}
-        >
-          {value}
-        </a>
-        {change !== null && change !== undefined ? (
-          <ChangePill
-            change={change}
-            spoken={`${change === 0 ? "same as" : `${change > 0 ? "up" : "down"} ${Math.abs(change).toLocaleString()} from`} the window before`}
-          />
-        ) : null}
-      </span>
-      {context ? <span className="line-clamp-2 text-sm text-text-muted">{context}</span> : null}
-    </div>
-  );
-}
 
 const num = (n: number) => n.toLocaleString();
 
@@ -103,7 +36,7 @@ export function KpiStrip({ window, days }: { window: PageWindow; days: number })
   if (count.data) {
     const open = count.data.open;
     tiles.push(
-      <Tile
+      <KpiTile
         key="alerts"
         label="Open alerts"
         value={num(open)}
@@ -117,7 +50,7 @@ export function KpiStrip({ window, days }: { window: PageWindow; days: number })
   }
   if (id) {
     tiles.push(
-      <Tile
+      <KpiTile
         key="failed"
         label="Failed sign-ins"
         value={num(id.failed.value)}
@@ -131,7 +64,7 @@ export function KpiStrip({ window, days }: { window: PageWindow; days: number })
     );
     tiles.push(
       id.outside ? (
-        <Tile
+        <KpiTile
           key="outside"
           label="Sign-ins outside approved countries"
           value={num(id.outside.value)}
@@ -143,7 +76,7 @@ export function KpiStrip({ window, days }: { window: PageWindow; days: number })
           about="Successful Microsoft 365 sign-ins in the window from a country that is not in your approved countries, placed by the GeoIP file on this server."
         />
       ) : (
-        <Tile
+        <KpiTile
           key="outside"
           label="Sign-ins outside approved countries"
           value="Not set"
@@ -158,7 +91,7 @@ export function KpiStrip({ window, days }: { window: PageWindow; days: number })
   }
   if (inUse) {
     tiles.push(
-      <Tile
+      <KpiTile
         key="ai"
         label="AI services in use"
         value={num(inUse)}
@@ -173,16 +106,22 @@ export function KpiStrip({ window, days }: { window: PageWindow; days: number })
   if (summary?.total) {
     const all = summary.healthy === summary.total;
     tiles.push(
-      <Tile
+      <KpiTile
         key="sources"
         label="Sources healthy"
         value={`${num(summary.healthy)} of ${num(summary.total)}`}
         tone={all ? "text" : "warn"}
-        context={all ? null : "Not all sending; open Health"}
+        context={
+          !all
+            ? "Not all sending; open Health"
+            : summary.idle
+              ? `${summary.idle} idle (normal)`
+              : null
+        }
         page="health"
         tab="sources"
         opens="Health"
-        about="Sources you can read that are sending and being read without a problem, of all your sources. The same count as the Sources tile on Health."
+        about="Sources you can read that are sending and being read without a problem, of all your sources. A source marked Quiet is normal counts as healthy while it is idle inside its days. The same count as the Sources tile on Health."
       />,
     );
   }

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Overview, OverviewSourceHealth } from "@/lib/api";
 import { KpiStrip } from "@/features/dashboard/KpiStrip";
@@ -80,10 +80,6 @@ describe("one healthy count on Health and the Dashboard (handoff item 4)", () =>
           alerts={undefined}
           isAdmin={false}
           now={NOW}
-          onEvents={() => {}}
-          onSources={() => {}}
-          onAttention={() => {}}
-          onDelivery={() => {}}
         />
       </QueryClientProvider>,
     );
@@ -94,10 +90,13 @@ describe("one healthy count on Health and the Dashboard (handoff item 4)", () =>
     expect(top).toHaveClass("text-warn");
     expect(screen.queryByRole("region", { name: "Health needs attention" })).toBeNull();
     expect(screen.queryByRole("link", { name: /^Sources:/ })).toBeNull();
-    const tile = screen.getByRole("button", { name: /^Sources/ });
-    expect(tile).toHaveTextContent("4 of 6 healthy");
-    expect(tile).toHaveTextContent("2 quiet: win_dc 2 d, vpn 6 h");
-    expect(tile).not.toHaveTextContent("server_events");
+    // Health's tile is the same tile, with the same value (D255).
+    const strip = screen.getByRole("region", { name: "Health numbers" });
+    const tile = within(strip).getByRole("link", { name: /^Sources healthy: 4 of 6\. Open/ });
+    expect(tile).toHaveClass("text-warn");
+    expect(tile.closest("[data-kpi]")).toHaveTextContent("4 of 6");
+    expect(tile.closest("[data-kpi]")).toHaveTextContent("2 quiet: win_dc 2 d, vpn 6 h");
+    expect(tile.closest("[data-kpi]")).not.toHaveTextContent("server_events");
   });
 
   it("names the longest wait only when nothing is quiet, never a refusal-only source", () => {

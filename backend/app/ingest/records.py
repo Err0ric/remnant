@@ -34,3 +34,16 @@ def decode_frame(frame: Frame, encoding: str = "utf-8") -> DecodedLine:
         text = frame.data.decode(encoding, errors="replace")
         invalid = True
     return DecodedLine(text=text, bytes_invalid=invalid, truncated=frame.truncated)
+
+
+NO_NEWLINE = "no_newline"
+
+
+def mark_part_line(row: dict[str, object]) -> None:
+    """A last line stored without its newline (ADR-0051 row 5): `partial` whatever the
+    parser made of it (a cut JSON object does not parse), except that a missing template
+    stays said, with `no_newline` first among its reasons."""
+    if row["parse_status"] != "template_missing":
+        row["parse_status"] = "partial"
+    errors = [e for e in str(row.get("parse_errors") or "").split(",") if e and e != NO_NEWLINE]
+    row["parse_errors"] = ",".join([NO_NEWLINE, *errors])

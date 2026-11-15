@@ -1,3 +1,4 @@
+import { Card } from "@/components/Card";
 import { PanelTitle } from "@/components/PanelTitle";
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
@@ -85,7 +86,7 @@ function tone(kind: string, outcome: string): string {
 
 /** This entity's sign-ins by outcome (D158): real failures, interrupted, expired, other,
  * and all, each one click from its rows in Logs. Shown only when there are sign-ins. */
-function SignInSlices({ s, onSearch }: { s: Summary; onSearch: (sql: string) => void }) {
+export function SignInSlices({ s, onSearch }: { s: Summary; onSearch: (sql: string) => void }) {
   const about = useSignInAbout();
   const slices = s.sign_in_slices ?? [];
   if (!slices.some((x) => x.key === "all" && x.count > 0)) return null;
@@ -121,6 +122,77 @@ function SignInSlices({ s, onSearch }: { s: Summary; onSearch: (sql: string) => 
         i
       </span>
     </div>
+  );
+}
+
+/** What the entity did, grouped by outcome, each with a real line and its rows in Logs. */
+export function Activities({
+  s,
+  kind,
+  onSearch,
+  hideWho = false,
+}: {
+  s: Summary;
+  kind: "user" | "ip" | "host";
+  onSearch: (sql: string) => void;
+  /** Names hidden on a person's page (D242): the "by <name>" label, which repeats the
+   * names counted as the person, is left out. */
+  hideWho?: boolean;
+}) {
+  if (!s.activities.length) return null;
+  return (
+    <Card title="What it did" note="by outcome">
+      <ul aria-label="Activities">
+        {s.activities.map((a, i) => (
+          <li
+            key={i}
+            className="grid grid-cols-1 gap-x-3 gap-y-1 border-b border-border px-3 py-2 text-sm last:border-0 md:grid-cols-[6rem_minmax(0,1fr)_7rem_auto]"
+          >
+            <span>
+              <span
+                className={`rounded-badge px-1.5 py-px text-xs font-semibold ${tone(kind, a.outcome)}`}
+              >
+                {OUTCOME[a.outcome] ?? a.outcome}
+              </span>
+            </span>
+            <span className="min-w-0">
+              <span className="text-text-secondary">{a.kind}</span>
+              {a.user && !hideWho ? (
+                <>
+                  {" "}
+                  by <EntityLink kind="user" value={a.user} className="font-mono" />
+                </>
+              ) : null}
+              {a.target ? (
+                <>
+                  {" "}
+                  on <EntityLink kind="host" value={a.target} className="font-mono" />
+                </>
+              ) : null}
+              <span
+                title={a.example}
+                className="mt-0.5 block truncate font-mono text-xs text-text-muted"
+              >
+                {a.example}
+              </span>
+            </span>
+            <span className="font-mono tabular-nums md:text-right">
+              {plural(a.events, "event", "events")}
+              <span className="block text-xs text-text-muted">
+                last <When iso={a.last} />
+              </span>
+            </span>
+            <button
+              type="button"
+              onClick={() => onSearch(a.search_sql)}
+              className="h-7 self-start rounded border border-border-strong px-2 text-sm hover:bg-surface-head"
+            >
+              View in Logs
+            </button>
+          </li>
+        ))}
+      </ul>
+    </Card>
   );
 }
 
@@ -224,63 +296,7 @@ export function EntitySummary({
         ) : null}
       </div>
       <SignInSlices s={s} onSearch={onSearch} />
-      {s.activities.length ? (
-        <div className="overflow-hidden rounded-card border border-border bg-surface">
-          <h2 className="border-b border-border px-3 py-2 text-sm font-semibold">
-            What it did <span className="font-normal text-text-muted">by outcome</span>
-          </h2>
-          <ul aria-label="Activities">
-            {s.activities.map((a, i) => (
-              <li
-                key={i}
-                className="grid grid-cols-1 gap-x-3 gap-y-1 border-b border-border px-3 py-2 text-sm last:border-0 md:grid-cols-[6rem_minmax(0,1fr)_7rem_auto]"
-              >
-                <span>
-                  <span
-                    className={`rounded-badge px-1.5 py-px text-xs font-semibold ${tone(kind, a.outcome)}`}
-                  >
-                    {OUTCOME[a.outcome] ?? a.outcome}
-                  </span>
-                </span>
-                <span className="min-w-0">
-                  <span className="text-text-secondary">{a.kind}</span>
-                  {a.user ? (
-                    <>
-                      {" "}
-                      by <EntityLink kind="user" value={a.user} className="font-mono" />
-                    </>
-                  ) : null}
-                  {a.target ? (
-                    <>
-                      {" "}
-                      on <EntityLink kind="host" value={a.target} className="font-mono" />
-                    </>
-                  ) : null}
-                  <span
-                    title={a.example}
-                    className="mt-0.5 block truncate font-mono text-xs text-text-muted"
-                  >
-                    {a.example}
-                  </span>
-                </span>
-                <span className="font-mono tabular-nums md:text-right">
-                  {plural(a.events, "event", "events")}
-                  <span className="block text-xs text-text-muted">
-                    last <When iso={a.last} />
-                  </span>
-                </span>
-                <button
-                  type="button"
-                  onClick={() => onSearch(a.search_sql)}
-                  className="h-7 self-start rounded border border-border-strong px-2 text-sm hover:bg-surface-head"
-                >
-                  View in Logs
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
+      <Activities s={s} kind={kind} onSearch={onSearch} />
       {hosts.length || users.length ? (
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           {[
@@ -288,10 +304,7 @@ export function EntitySummary({
             { title: kind === "ip" ? "Users tried" : "Users", list: users, k: "user" as const },
           ].map((col) =>
             col.list.length ? (
-              <div key={col.k} className="rounded-card border border-border bg-surface">
-                <h2 className="border-b border-border px-3 py-2 text-sm font-semibold">
-                  {col.title} <span className="font-normal text-text-muted">{col.list.length}</span>
-                </h2>
+              <Card key={col.k} title={col.title} note={col.list.length.toLocaleString()}>
                 <ul className="px-3 py-1 text-sm">
                   {col.list.slice(0, 10).map((t) => (
                     <li key={t.value} className="flex gap-2 py-0.5">
@@ -302,7 +315,7 @@ export function EntitySummary({
                     </li>
                   ))}
                 </ul>
-              </div>
+              </Card>
             ) : null,
           )}
         </div>

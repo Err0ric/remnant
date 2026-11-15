@@ -15,11 +15,14 @@ import { isChunkError, reloadOnce } from "./lib/chunkReload";
 import { loadBranding } from "./lib/branding";
 import { applyTheme, initialTheme } from "./lib/theme";
 import { applyDensity, DEFAULT_DENSITY } from "./lib/density";
+import { installCopyWhole } from "./lib/copyWhole";
 
 const theme = initialTheme();
 applyTheme(theme);
 // The signed-in user's own choice replaces this once the user menu loads.
 applyDensity("", DEFAULT_DENSITY);
+// A cut name or email copies on one line, whatever the selection (D257).
+installCopyWhole();
 
 // Errors outside React's rendering (event handlers, timers, a failed chunk preload) still
 // reach the server, and a missing chunk after an update reloads once.

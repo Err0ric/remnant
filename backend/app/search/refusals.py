@@ -123,5 +123,7 @@ class RefusalWatch:
             range_end=str(last) if last else now.isoformat(),
             severity="high",
             refresh=True,
+            # Each check sees a sliding 10 minutes: the item keeps the burst's first start.
+            window=False,
             group=(f"refusals:{ip}", "refusals"),
         )

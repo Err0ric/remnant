@@ -94,8 +94,12 @@ def on_the_hour(t: datetime | None) -> bool:
     """Facts are per hour, so a range read from them must start on an hour. A start inside
     an hour (a half-hour zone's midnight, a range that is not a page window) reads that
     day from events instead: the hour would otherwise count events from before the start
-    (a 20-hour AI usage range counted one more use than events did; 2026-11-01)."""
-    return t is None or t == t.replace(minute=0, second=0, microsecond=0)
+    (a 20-hour AI usage range counted one more use than events did; 2026-11-01). The hour is
+    the UTC hour the facts are kept by: 17:00 at +05:30 is inside one."""
+    if t is None:
+        return True
+    u = t.astimezone(UTC)
+    return u == u.replace(minute=0, second=0, microsecond=0)
 
 
 def _start_day(t: datetime | None) -> str | None:

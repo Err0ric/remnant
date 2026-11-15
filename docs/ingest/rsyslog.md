@@ -101,4 +101,4 @@ Rotate by rename (logrotate's default, `create`), not with `copytruncate`: see [
 }
 ```
 
-Keep `delaycompress` so the most recent rotated file stays readable while Remnant finishes it. Retention inside Remnant is set per source and is independent of how long rsyslog keeps the files.
+Keep `delaycompress` so the most recent rotated file stays readable while Remnant finishes it (it reads the renamed file to its end, see the link above). Retention inside Remnant is set per source and is independent of how long rsyslog keeps the files.

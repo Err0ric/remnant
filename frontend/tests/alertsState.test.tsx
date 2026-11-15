@@ -73,13 +73,13 @@ async function stateButton(name: string): Promise<HTMLElement> {
 }
 
 describe("Alerts tabs and the State filter", () => {
-  it("has three tabs, Queue, Rules, Schedules, with the open count on Queue", async () => {
+  it("has four tabs, Queue, Handling, Rules, Schedules, with the open count on Queue", async () => {
     await renderAt("/alerts");
     const tabs = await screen.findByRole("navigation", { name: "Alerts tabs" });
     const names = within(tabs)
       .getAllByRole("link")
       .map((a) => a.textContent?.replace(/\d+$/, "").trim());
-    expect(names).toEqual(["Queue", "Rules", "Schedules"]);
+    expect(names).toEqual(["Queue", "Handling", "Rules", "Schedules"]);
     const queue = within(tabs).getByRole("link", { name: /^Queue/ });
     expect(queue).toHaveAttribute("aria-current", "page");
     await waitFor(() => expect(queue).toHaveTextContent(/Queue\s*2/));

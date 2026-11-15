@@ -557,3 +557,23 @@ def test_the_integrity_report_counts_reparsed_files_and_rows(api: dict[str, Any]
     report = admin.get("/api/integrity/report", params={"days": 30}).json()
     assert report["reparsed"] == {"files": job["files_rewritten"], "rows": job["rows_rewritten"]}
     assert report["reparsed"]["rows"] > 0
+
+
+def test_a_line_stored_without_its_newline_stays_marked(lake: dict[str, Any]) -> None:
+    """ADR-0051 row 5: a part line stored while the template was missing is `partial` with
+    `no_newline` after the reparse too, however well the template reads what there is."""
+    rows = missing_rows("auth", LINES[:3])
+    rows[1]["parse_errors"] = "no_newline"
+    lake["writer"].write(rows)
+    run(lake)
+    res = QueryEngine(lake["lake"]).run(
+        "SELECT parse_status, parse_errors FROM events WHERE event_id = $id",
+        QueryScope(None),
+        {"id": rows[1]["event_id"]},
+    )
+    status, errors = res.rows[0]
+    assert status == "partial" and str(errors).split(",")[0] == "no_newline"
+    others = QueryEngine(lake["lake"]).run(
+        "SELECT count(*) FROM events WHERE parse_errors LIKE '%no_newline%'", QueryScope(None)
+    )
+    assert others.rows[0][0] == 1

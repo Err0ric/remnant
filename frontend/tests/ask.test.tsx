@@ -117,7 +117,7 @@ describe("Ask (ADR-0042 slice 1a)", () => {
     expect(within(block).getByText(/about the query, not the rows/)).toBeVisible();
   });
 
-  it("stacks follow-ups below, sends earlier turns, and starts over on New question", async () => {
+  it("draws answers newest first, sends earlier turns in asked order, and starts over on New question", async () => {
     const spy = await renderAt("/ask-ai");
     await askQuestion("failed logins");
     await screen.findByRole("region", { name: "Question: failed logins" });
@@ -127,7 +127,8 @@ describe("Ask (ADR-0042 slice 1a)", () => {
     expect(second?.history.map((t) => t.question)).toEqual(["failed logins"]);
     const answers = screen.getByLabelText("Answers");
     const heads = within(answers).getAllByRole("heading", { level: 3 });
-    expect(heads.map((h) => h.textContent)).toEqual(["failed logins", "only from 203.0.113.9"]);
+    // D256: the newest answer is directly under the prompt; the follow-up refined it.
+    expect(heads.map((h) => h.textContent)).toEqual(["only from 203.0.113.9", "failed logins"]);
 
     await userEvent.click(screen.getByRole("button", { name: "New question" }));
     expect(screen.queryByLabelText("Answers")).toBeNull();
@@ -138,7 +139,7 @@ describe("Ask (ADR-0042 slice 1a)", () => {
 
   it("says where a question goes when the model is in the cloud, and explains a block", async () => {
     await renderAt("/ask-ai");
-    await screen.findByRole("option", { name: /Cloud · gpt-x/ });
+    await screen.findByRole("option", { name: "Cloud" });
     expect(screen.queryByRole("note")).toBeNull();
     await userEvent.selectOptions(screen.getByLabelText("Model"), "p2");
     expect(screen.getByRole("note")).toHaveTextContent("Your question is sent to Cloud.");
@@ -150,8 +151,7 @@ describe("Ask (ADR-0042 slice 1a)", () => {
 
   it("asks over a Custom range, start and end, and hands it on to Logs", async () => {
     const spy = await renderAt("/ask-ai");
-    const time = await screen.findByRole("group", { name: "Time" });
-    await userEvent.click(within(time).getByRole("button", { name: "Custom" }));
+    await userEvent.selectOptions(await screen.findByLabelText("Time"), "custom");
     const { fireEvent } = await import("@testing-library/react");
     fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-11-01T08:00" } });
     fireEvent.change(screen.getByLabelText("To"), { target: { value: "2026-11-02T08:00" } });
@@ -175,11 +175,7 @@ describe("Ask (ADR-0042 slice 1a)", () => {
 
   it("Open in Logs opens the answer's SQL in the SQL mode, and Save keeps the question (D206)", async () => {
     const spy = await renderAt("/ask-ai");
-    await userEvent.click(
-      within(await screen.findByRole("group", { name: "Time" })).getByRole("button", {
-        name: "7 days",
-      }),
-    );
+    await userEvent.selectOptions(await screen.findByLabelText("Time"), "7d");
     await askQuestion("failed logins");
     const block = await screen.findByRole("region", { name: "Question: failed logins" });
     await within(block).findByRole("table", { name: "Results" });
@@ -234,6 +230,175 @@ describe("Ask (ADR-0042 slice 1a)", () => {
     expect(posts(spy, "/api/ask")).toHaveLength(1);
     await userEvent.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "Ask AI" })).toBeNull();
+  });
+});
+
+describe("Ask AI, search first (D256)", () => {
+  it("puts the prompt first in the page body, then the Time, Sources, and Model chips", async () => {
+    await renderAt("/ask-ai");
+    const title = await screen.findByRole("heading", { name: "Ask AI", level: 1 });
+    const prompt = await screen.findByLabelText("Question");
+    expect(prompt).toHaveAttribute("placeholder", "Ask about your logs");
+    expect(prompt).toHaveAttribute("title", expect.stringMatching(/KQL or SPL/));
+    // The first control after the page title is the prompt.
+    const after = [
+      ...document.querySelectorAll("main textarea, main select, main input, main button"),
+    ].filter((n) => title.compareDocumentPosition(n) & Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(after[0]).toBe(prompt);
+    const time = screen.getByLabelText("Time");
+    const sources = screen.getByRole("button", { name: /^Sources/ });
+    const model = screen.getByLabelText("Model");
+    for (const chip of [time, sources, model])
+      expect(prompt.compareDocumentPosition(chip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // "Name Value": the same five presets, all sources, and the model with its badge.
+    expect(
+      within(time)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["1 hour", "24 hours", "7 days", "30 days", "Custom"]);
+    expect(time).toHaveValue("24h");
+    await vi.waitFor(() => expect(sources).toHaveTextContent(/^Sources\s*All \d+$/));
+    await within(model).findByRole("option", { name: "Local Ollama", selected: true });
+    expect(model.closest("label")).toHaveTextContent(/^Model\s*Local Ollama.*Local$/);
+    // The Logs controls are gone from this page: no segmented time strip, no source select.
+    expect(screen.queryByRole("group", { name: "Time" })).toBeNull();
+    expect(screen.queryByLabelText("Add source filter")).toBeNull();
+    // The Ask button is disabled until there is text, then the page's one filled button.
+    const ask = screen.getByRole("button", { name: "Ask" });
+    expect(ask).toBeDisabled();
+    expect(ask.className).not.toMatch(/bg-accent|opacity/);
+    await userEvent.type(prompt, "failed logins");
+    expect(ask).toBeEnabled();
+    expect(ask.className).toMatch(/bg-accent/);
+  });
+
+  it("sends the chosen sources, and says when the text reads as a query", async () => {
+    const spy = await renderAt("/ask-ai");
+    await userEvent.click(await screen.findByRole("button", { name: /^Sources/ }));
+    const list = screen.getByRole("group", { name: "Sources" });
+    await userEvent.click(await within(list).findByRole("checkbox", { name: "linux_sshd" }));
+    expect(screen.getByRole("button", { name: /^Sources/ })).toHaveTextContent("linux_sshd");
+    await userEvent.type(screen.getByLabelText("Question"), "index=main | stats count by host");
+    expect(screen.getByText(/Reads as a KQL or SPL query/)).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+    await screen.findByRole("region", { name: /^Question: index=main/ });
+    expect((posts(spy, "/api/ask") as { sources?: string[] }[]).at(-1)?.sources).toEqual([
+      "linux_sshd",
+    ]);
+  });
+
+  it("draws a second answer above the first, each heading line with its badge, never a bubble", async () => {
+    const spy = await renderAt("/ask-ai");
+    const examples = await screen.findByRole("region", { name: "Example questions" });
+    await userEvent.click(within(examples).getAllByRole("button")[0] as HTMLElement);
+    const first = await screen.findByRole("region", { name: "Question: Who logged in over SSH?" });
+    // Suggestions are for the empty page only.
+    expect(screen.queryByRole("region", { name: "Example questions" })).toBeNull();
+    await within(first).findByRole("table", { name: "Results" });
+    const firstSql = within(first).getByLabelText("Generated SQL").textContent;
+    await askQuestion("only for dana");
+    const second = await screen.findByRole("region", { name: "Question: only for dana" });
+    expect(second.compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The follow-up is the request the page always sent: the earlier turn, oldest first.
+    const [one, two] = posts(spy, "/api/ask") as Record<string, unknown>[];
+    expect(Object.keys(two ?? {}).sort()).toEqual(
+      ["history", "provider_id", "question", "start", "tz"].sort(),
+    );
+    expect(two).toMatchObject({
+      question: "only for dana",
+      provider_id: one?.provider_id,
+      tz: one?.tz,
+      history: [{ question: "Who logged in over SSH?", sql: firstSql }],
+    });
+    for (const block of [first, second]) {
+      const head = block.querySelector("[data-turn-head]") as HTMLElement;
+      expect(within(head).getByText("Local")).toBeVisible();
+      expect(within(head).getByRole("heading", { level: 3 })).toBeVisible();
+      expect(head.querySelector("time")).not.toBeNull();
+      // A block, never a chat bubble: no pill, no tinted or filled box around the turn.
+      expect(block.className).not.toMatch(/rounded|bg-/);
+      expect(head.className).not.toMatch(/rounded|bg-/);
+    }
+    const answers = screen.getByLabelText("Answers");
+    expect(
+      answers.querySelectorAll(".rounded-full, .rounded-chip, .bg-accent-subtle"),
+    ).toHaveLength(0);
+  });
+
+  it("asks only from the prompt: Enter in a chip sends nothing and keeps the text", async () => {
+    const spy = await renderAt("/ask-ai");
+    const prompt = await screen.findByLabelText("Question");
+    await userEvent.type(prompt, "failed logins");
+    await userEvent.selectOptions(screen.getByLabelText("Time"), "custom");
+    await userEvent.click(screen.getByLabelText("From"));
+    await userEvent.keyboard("{Enter}");
+    await userEvent.click(screen.getByRole("button", { name: /^Sources/ }));
+    const box = await within(screen.getByRole("group", { name: "Sources" })).findByRole(
+      "checkbox",
+      { name: "linux_sshd" },
+    );
+    box.focus();
+    await userEvent.keyboard("{Enter}");
+    await userEvent.keyboard(" ");
+    expect(box.closest("form")).toBeNull();
+    expect(screen.getByLabelText("From").closest("form")).toBeNull();
+    expect(posts(spy, "/api/ask")).toHaveLength(0);
+    expect(prompt).toHaveValue("failed logins");
+  });
+
+  it("grows the prompt from two lines to six with the lines typed", async () => {
+    const { promptRows } = await import("@/features/ask/AskThread");
+    expect([promptRows(""), promptRows("a\nb\nc"), promptRows("1\n2\n3\n4\n5\n6\n7\n8")]).toEqual([
+      2, 3, 6,
+    ]);
+    await renderAt("/ask-ai");
+    const prompt = await screen.findByLabelText("Question");
+    expect(prompt).toHaveAttribute("rows", "2");
+    await userEvent.type(
+      prompt,
+      "one{Shift>}{Enter}{/Shift}two{Shift>}{Enter}{/Shift}three{Shift>}{Enter}{/Shift}four",
+    );
+    expect(prompt).toHaveAttribute("rows", "4");
+  });
+
+  it("stacks answers newest first in the slide-over, and its New question starts over", async () => {
+    await renderAt("/dashboard");
+    await userEvent.keyboard("{Control>}k{/Control}");
+    await userEvent.type(
+      await screen.findByRole("combobox", { name: /^Search pages/ }),
+      "failed logins today",
+    );
+    await userEvent.click(
+      await screen.findByRole("option", { name: /Ask AI: failed logins today/ }),
+    );
+    const over = await screen.findByRole("dialog", { name: "Ask AI" });
+    await userEvent.click(within(over).getByRole("button", { name: "Ask" }));
+    const first = await within(over).findByRole("region", {
+      name: "Question: failed logins today",
+    });
+    await within(first).findByRole("table", { name: "Results" });
+    await userEvent.type(within(over).getByLabelText("Question"), "only from 203.0.113.9");
+    await userEvent.click(within(over).getByRole("button", { name: "Refine" }));
+    const second = await within(over).findByRole("region", {
+      name: "Question: only from 203.0.113.9",
+    });
+    expect(second.compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await userEvent.click(within(over).getByRole("button", { name: "New question" }));
+    expect(within(over).queryByLabelText("Answers")).toBeNull();
+    expect(within(over).queryByRole("button", { name: "New question" })).toBeNull();
+  });
+
+  it("starts over from the page header's New question", async () => {
+    await renderAt("/ask-ai");
+    await screen.findByLabelText("Question");
+    expect(screen.queryByRole("button", { name: "New question" })).toBeNull();
+    await askQuestion("failed logins");
+    await screen.findByRole("region", { name: "Question: failed logins" });
+    const header = screen.getByRole("heading", { name: "Ask AI", level: 1 }).parentElement!
+      .parentElement as HTMLElement;
+    await userEvent.click(within(header).getByRole("button", { name: "New question" }));
+    expect(screen.queryByLabelText("Answers")).toBeNull();
+    expect(await screen.findByRole("region", { name: "Example questions" })).toBeVisible();
   });
 });
 
@@ -321,7 +486,13 @@ describe("Ask routing (ADR-0042 slice 1b)", () => {
         queryClient={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
       />,
     );
-    await screen.findByText(/No AI provider is set up/);
+    expect(await screen.findByText(/No AI provider is set up/)).toHaveTextContent(
+      "No AI provider is set up. Logs works without one.",
+    );
+    // D256: the Model chip reads "Model None".
+    const model = screen.getByLabelText("Model");
+    expect(model).toBeDisabled();
+    expect(within(model).getByRole("option", { selected: true })).toHaveTextContent("None");
     await askQuestion("failed ssh logins by source");
     const found = await screen.findByRole("region", { name: "Library suggestions" });
     const open = within(found).getByRole("button", { name: "SSH failures by source address" });

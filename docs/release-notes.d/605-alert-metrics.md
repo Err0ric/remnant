@@ -1,0 +1,7 @@
+### Alerts > Handling: how alerts are being handled (2026-11-14)
+
+- A new Handling tab on Alerts, beside the Queue, shows whether alerts are being handled (D261): the median and 90th percentile time to close (closes by a person), alerts overdue now, every alert open now (the Queue counts at most its newest 200), alerts opened against closed per day, open alerts by kind, and by severity with each severity's overdue days and times to close.
+- It follows the page's time control (30 days unless chosen); open and overdue counts are always as of now. Each open count opens the Queue with that Severity or Category filter, and the time to close opens the alerts closed in the same window.
+- It counts only the alerts the Queue shows you; alerts in sources you cannot read are never counted, and the page says some exist.
+- What you will notice: a Handling tab on Alerts with time to close, overdue and open alerts, and opened against closed by day.
+- What changes for existing installs: nothing to do. An open alert is overdue after 1 day (Critical), 3 days (High), 7 days (Medium), or 30 days (Low, and alerts with no severity); change these in `config/app.yaml` under `alerts:` (`overdue_days_high` and the others) or with `APP__ALERTS__OVERDUE_DAYS_HIGH` and the like, then restart. To go back, first remove the `alerts:` section and any `APP__ALERTS__` variables (an older version refuses to start with settings it does not know), then roll back the update (`docs/install/`, `update-systemd.sh --rollback`).
