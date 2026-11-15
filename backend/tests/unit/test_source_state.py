@@ -148,3 +148,20 @@ def test_an_idle_source_counts_as_healthy_and_is_neither_quiet_nor_the_longest_w
 def test_the_gaps_of_an_idle_source_are_not_counted() -> None:
     _, summary = assess([src("a", gaps=2), src("b", gaps=3, quiet_ok=True)])
     assert summary.gaps == 2 and summary.idle == 0  # b sent in the last hours: not idle
+
+
+def test_the_quiet_list_counts_from_the_newest_dated_event() -> None:
+    # Old events delivered just now (a queue, an import): quiet for 2 days, not a minute.
+    _, summary = assess(
+        [
+            src(
+                "otel_collector",
+                total_24h=0,
+                last_event_at="2026-11-09T11:59:00+00:00",
+                newest_event_at="2026-11-07T12:00:00+00:00",
+            )
+        ]
+    )
+    assert [(q.source_id, q.last_event_at) for q in summary.quiet] == [
+        ("otel_collector", "2026-11-07T12:00:00+00:00")
+    ]

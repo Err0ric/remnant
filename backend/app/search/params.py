@@ -16,12 +16,13 @@ model writes may not name them (T70, D219), so the expansion is the only way to 
 """
 
 import re
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from app.core.errors import ParamInvalidError, QueryRejectedError, SearchInvalidError
+from app.core.times import utc
 
 PLACEHOLDER = re.compile(r"\{\{\s*([a-z_][a-z0-9_]{0,31})\s*\}\}")
 PERSON = re.compile(r"\{\{\s*person:([a-z_][a-z0-9_]{0,63})\s*\}\}")
@@ -130,10 +131,8 @@ def coerce(defn: ParamDef, value: Any) -> Any:
                 return value.lower() == "true"
             raise ValueError
         if defn.type == "timestamp":
-            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-            if parsed.tzinfo is None:
-                raise ValueError
-            return parsed.astimezone(UTC)
+            # A time without a zone is UTC, as every API time (core.times).
+            return utc(datetime.fromisoformat(str(value).replace("Z", "+00:00")))
         if not isinstance(value, str) or len(value) > MAX_STRING:
             raise ValueError
         return value

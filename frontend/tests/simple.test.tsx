@@ -2,6 +2,7 @@ import { QueryClient } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { fromMore } from "./headerMenu";
 import { mockApi, type MockAuth } from "./mockApi";
 
 async function renderAt(path: string, auth: MockAuth = { mode: "open" }) {
@@ -53,6 +54,25 @@ describe("Simple search", () => {
     expect(posts(spy, "/api/query").at(-1)?.sql).toContain("ILIKE $p0");
     await userEvent.click(screen.getByRole("button", { name: "Show SQL" }));
     expect(screen.getByLabelText("SQL for this search")).toHaveTextContent('$p0 = "%oracle%"');
+  });
+
+  it("sends its text with the query and the export, and edited SQL without it", async () => {
+    const { spy } = await renderAt("/investigate/logs");
+    Object.assign(URL, { createObjectURL: vi.fn(() => "blob:x"), revokeObjectURL: vi.fn() });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    await screen.findByText("Failed password for invalid user oracle");
+    await userEvent.type(screen.getByLabelText("Search text"), "oracle{Enter}");
+    // The server reads a Simple search newest day first only when it has the text.
+    await vi.waitFor(() => expect(posts(spy, "/api/query").at(-1)?.text).toBe("oracle"));
+    await vi.waitFor(async () => expect(await fromMore("Export CSV")).toBeEnabled());
+    await userEvent.click(screen.getByRole("menuitem", { name: "Export CSV" }));
+    await vi.waitFor(() => expect(posts(spy, "/api/query/export").at(-1)?.text).toBe("oracle"));
+    await userEvent.click(await screen.findByRole("button", { name: "Edit as SQL" }));
+    await screen.findByLabelText("SQL query");
+    const before = posts(spy, "/api/query").length;
+    await userEvent.click(screen.getByRole("button", { name: "Run" }));
+    await vi.waitFor(() => expect(posts(spy, "/api/query").length).toBeGreaterThan(before));
+    expect(posts(spy, "/api/query").at(-1)).not.toHaveProperty("text");
   });
 
   it("opens the search in the SQL tab with the values written in", async () => {

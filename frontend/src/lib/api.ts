@@ -236,6 +236,8 @@ export interface QueryRequest {
   sources?: string[];
   /** Values for $name placeholders, bound by the server (Simple search sends these). */
   params?: Record<string, string | number | boolean | null>;
+  /** The Simple search text `sql` was compiled from: the server then reads newest first. */
+  text?: string;
 }
 
 /** POST /api/search/compile (ADR-0009): Simple search text as SQL plus parameters. */
@@ -2210,7 +2212,11 @@ export interface ScheduleRunDetail extends ScheduleRunSummary {
 export interface OverviewSourceHealth {
   source_id: string;
   state: SourceStatus["state"];
+  /** When a record last arrived ("Last received"). */
   last_event_at: string | null;
+  /** The newest time its events are dated, at most when they arrived: what "Quiet", "Idle",
+   * and "No events for" count from. */
+  newest_event_at?: string | null;
   files_waiting: number;
   records_skipped: number;
   error: string | null;
@@ -2240,6 +2246,7 @@ export type SourceCondition = "healthy" | "quiet" | "gap" | "attention" | "error
 /** A source and when it last sent; null when it never did. */
 export interface SourceWait {
   source_id: string;
+  /** In the quiet list: the newest dated event; as the longest wait: last received. */
   last_event_at: string | null;
 }
 

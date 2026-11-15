@@ -79,3 +79,107 @@ def test_bad_searches_and_params_are_refused(lab: dict[str, Any]) -> None:
         headers=lab["h"],
     )
     assert res.status_code == 422
+
+
+def test_the_logs_page_s_search_reads_newest_first_with_the_same_answer(
+    lab: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With its text, a Simple search reads newest day first (search/newest.py) and gives
+    what the SQL alone gives; one audit row per search; SQL not compiled from the text
+    sent, or typed SQL, runs as written."""
+    from app.api import query as q_mod
+
+    calls: list[str] = []
+    real = q_mod.newest_first
+
+    def spy(*a: Any, **k: Any) -> Any:
+        calls.append(a[1])
+        return real(*a, **k)
+
+    monkeypatch.setattr(q_mod, "newest_first", spy)
+    a, h = lab["admin"], lab["h"]
+    c = a.post("/api/search/compile", json={"text": "failed"}, headers=h).json()
+    body = {"sql": c["sql"], "params": c["params"], "start": "2020-01-01T00:00:00Z"}
+
+    def audited() -> int:
+        with lab["app"].state.meta.connect() as con:
+            sql = "SELECT count(*) FROM audit_log WHERE action = 'query.run'"
+            return int(con.execute(sql).fetchone()[0])
+
+    before = audited()
+    plain = a.post("/api/query", json=body, headers=h).json()
+    assert calls == []
+    stepped = a.post("/api/query", json={**body, "text": "failed"}, headers=h).json()
+    assert calls == ["failed"]
+    keys = ("columns", "row_count", "truncated", "executed_sql", "sources")
+    assert {k: stepped[k] for k in keys} == {k: plain[k] for k in keys}
+    assert sorted(map(str, stepped["rows"])) == sorted(map(str, plain["rows"]))
+    assert plain["row_count"] > 0
+    assert audited() == before + 2  # one row per search, not one per read
+    other = a.post("/api/query", json={**body, "text": "accepted"}, headers=h)
+    assert other.status_code == 200 and calls == ["failed"]
+    edited = {**body, "sql": c["sql"] + " LIMIT 5", "text": "failed"}
+    assert a.post("/api/query", json=edited, headers=h).json()["row_count"] <= 5
+    assert calls == ["failed"]
+
+
+def test_the_export_of_a_simple_search_reads_newest_first_with_the_same_rows(
+    lab: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.api import query as q_mod
+
+    calls: list[str] = []
+    real = q_mod.newest_first
+    monkeypatch.setattr(
+        q_mod, "newest_first", lambda *a, **k: (calls.append(a[1]), real(*a, **k))[1]
+    )
+    a, h = lab["admin"], lab["h"]
+    c = a.post("/api/search/compile", json={"text": "failed"}, headers=h).json()
+    body = {"sql": c["sql"], "params": c["params"], "start": "2020-01-01T00:00:00Z"}
+    plain = a.post("/api/query/export", json=body, headers=h)
+    stepped = a.post("/api/query/export", json={**body, "text": "failed"}, headers=h)
+    assert plain.status_code == stepped.status_code == 200 and calls == ["failed"]
+    lines = plain.text.splitlines()
+    assert len(lines) > 1 and lines[0] == stepped.text.splitlines()[0]
+    assert sorted(lines[1:]) == sorted(stepped.text.splitlines()[1:])
+
+
+def _as_browser(value: Any) -> Any:
+    """What JSON.stringify makes of a value: 100.0 goes out as 100."""
+    return int(value) if isinstance(value, float) and value.is_integer() else value
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["device_hostname:>100", "some_field:>=5", "device_hostname:>2.5", "severity:>-3",
+     'user:"100"', "severity_id:>3", "failed"],
+)  # fmt: skip
+def test_values_posted_back_by_a_browser_still_read_newest_first(
+    lab: dict[str, Any], monkeypatch: pytest.MonkeyPatch, text: str
+) -> None:
+    from app.api import query as q_mod
+
+    calls: list[str] = []
+    real = q_mod.newest_first
+    monkeypatch.setattr(
+        q_mod, "newest_first", lambda *a, **k: (calls.append(a[1]), real(*a, **k))[1]
+    )
+    a, h = lab["admin"], lab["h"]
+    c = a.post("/api/search/compile", json={"text": text}, headers=h).json()
+    params = {k: _as_browser(v) for k, v in c["params"].items()}
+    body = {"sql": c["sql"], "params": params, "start": "2020-01-01T00:00:00Z"}
+    plain = a.post("/api/query", json=body, headers=h).json()
+    stepped = a.post("/api/query", json={**body, "text": text}, headers=h).json()
+    assert calls == [text]
+    assert stepped["row_count"] == plain["row_count"]
+    assert sorted(map(str, stepped["rows"])) == sorted(map(str, plain["rows"]))
+
+
+def test_a_posted_value_must_be_the_same_value() -> None:
+    from app.api.query import _same_value
+
+    assert _same_value(100.0, 100) and _same_value(-2.5, -2.5) and _same_value("100", "100")
+    assert not _same_value(100.0, "100") and not _same_value("100", 100)
+    assert not _same_value(1, True) and not _same_value(True, 1) and _same_value(True, True)
+    assert not _same_value(float("nan"), float("nan"))
+    assert not _same_value(float("inf"), float("inf")) and not _same_value(100.0, 100.5)

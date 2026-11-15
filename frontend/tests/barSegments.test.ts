@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { SessionStep } from "@/lib/api";
-import { MAX_SEGMENTS, segments } from "@/features/ai/barSegments";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import {
+  hasTick,
+  markStyle,
+  MAX_SEGMENTS,
+  segmentMark,
+  segments,
+  TYPES,
+} from "@/features/ai/barSegments";
 
 let id = 0;
 function step(type: SessionStep["type"] | undefined, event = "pre_tool_use"): SessionStep {
@@ -76,5 +85,80 @@ describe("The session timeline bar's segments", () => {
     expect(got[0]!.types).toEqual({ prompt: 5, tool_result: 1, tool_call: 1 });
     expect(got.filter((s) => s.failed)).toHaveLength(1);
     expect(got.every((s) => s.count >= 7 && s.count <= 8)).toBe(true);
+  });
+
+  it("draws two colors and the neutral, and hatches what reached outside the session", () => {
+    const by = Object.fromEntries(TYPES.map((t) => [t.type, t]));
+    // Solid marks are an inline background from the series variable, never a class the
+    // built CSS might not hold.
+    expect(
+      [by.prompt, by.tool_call, by.tool_result].map((t) => markStyle(t!).style.background),
+    ).toEqual(["var(--series-ice)", "var(--series-graphite)", "var(--series-neutral)"]);
+    expect(TYPES.every((t) => markStyle(t).className === "" || t.type === "other")).toBe(true);
+    // Hatched: solid top half over diagonal stripes, so a 2px segment still differs by shape.
+    for (const [type, color] of [
+      ["file_access", "series-graphite"],
+      ["access", "series-ice"],
+    ] as const) {
+      const bg = markStyle(by[type]!).style.background ?? "";
+      expect(bg).toContain(
+        `linear-gradient(var(--${color}), var(--${color})) top / 100% 50% no-repeat`,
+      );
+      expect(bg).toContain(`repeating-linear-gradient(135deg, var(--${color}) 0 1.5px`);
+    }
+    expect(markStyle(by.other!)).toEqual({ className: "border border-text-muted", style: {} });
+    // No type has a color of its own outside the three series.
+    expect(new Set(TYPES.map((t) => t.color))).toEqual(
+      new Set(["series-ice", "series-graphite", "series-neutral", null]),
+    );
+  });
+
+  it("draws a slice exactly as the legend shows its majority type, and ticks any outside step", () => {
+    // 2,000 steps, so 280 slices of 7 or 8; slice 0 is steps 0 to 6.
+    const slice = (major: SessionStep["type"], withOutside: boolean) => {
+      // Alternating filler, so there are far more runs than segments and the bar slices.
+      const steps = Array.from({ length: 2000 }, (_, i) =>
+        i % 2 ? step("tool_result", "post_tool_use") : step("tool_call"),
+      );
+      for (let i = 0; i < 5; i++) steps[i] = step(major, "pre_tool_use");
+      steps[5] = withOutside
+        ? step(major === "access" ? "file_access" : "access")
+        : step("tool_result", "post_tool_use");
+      return segments(steps)[0]!;
+    };
+    for (const t of TYPES) {
+      for (const withOutside of [false, true]) {
+        const seg = slice(t.type, withOutside);
+        expect(seg.count).toBeGreaterThan(1); // a slice, not a run
+        expect(seg.type).toBe(t.type);
+        // The fill is the legend's own mark for that type, through the same function.
+        expect(markStyle(segmentMark(seg))).toEqual(markStyle(t));
+        expect(hasTick(seg)).toBe(withOutside || t.type === "file_access" || t.type === "access");
+      }
+    }
+    // A slice drawn as Other that holds an outside step: a hollow outline, and the tick.
+    const other = slice("other", true);
+    expect(markStyle(segmentMark(other))).toEqual({
+      className: "border border-text-muted",
+      style: {},
+    });
+    expect(hasTick(other)).toBe(true);
+    // A run of one file access or access carries the tick too: it always means "here".
+    expect(hasTick(segments([step("access")])[0]!)).toBe(true);
+    expect(hasTick(segments([step("tool_call")])[0]!)).toBe(false);
+  });
+
+  it("keeps fills when printed and leaves forced colors to the system", () => {
+    const style = markStyle(TYPES[0]!).style;
+    expect(style).not.toHaveProperty("forcedColorAdjust");
+    expect(style.printColorAdjust).toBe("exact");
+    const css = readFileSync(resolve(__dirname, "../src/styles/globals.css"), "utf8");
+    const forced = css.slice(css.lastIndexOf("@media (forced-colors: active)"));
+    // Scoped to the bar: other charts that draw the neutral series keep their colors.
+    expect(forced).toMatch(/\[data-session-bar\] \{/);
+    expect(forced).not.toMatch(/html:root/);
+    expect(forced).toMatch(/--series-ice: CanvasText;/);
+    expect(forced).toMatch(/--series-graphite: CanvasText;/);
+    expect(forced).toMatch(/--series-neutral: CanvasText;/);
   });
 });

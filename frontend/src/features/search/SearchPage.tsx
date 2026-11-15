@@ -56,7 +56,8 @@ interface SearchPageProps {
   canSave: boolean;
 }
 
-// `text` marks a run that came from a Simple search (for the facet counts); not sent.
+// `text` marks a run that came from a Simple search: sent with the query (the server reads
+// it newest day first) and used for the facet counts.
 type Run = Pick<QueryRequest, "sql" | "params"> & { text?: string };
 // Field actions apply to text, number, and true/false columns; never to the raw line.
 const ACTION_TYPES = new Set(["string", "int", "bool"]);
@@ -175,6 +176,7 @@ export function SearchPage({ canSave }: SearchPageProps) {
       const body: QueryRequest = {
         sql: req.sql,
         params: req.params,
+        text: req.text,
         ...bounds,
         sources: sources.length ? sources : undefined,
       };

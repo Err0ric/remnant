@@ -18,6 +18,7 @@ from app.auth.service import AuthService
 from app.auth.users import User
 from app.core import clock
 from app.core.errors import SearchInvalidError
+from app.core.times import UtcDateTime
 from app.core.timing import phase
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.engine.views import permitted_sources
@@ -207,8 +208,8 @@ async def _audit(
 async def risk(
     request: Request,
     user: CurrentUser,
-    start: datetime | None = None,
-    end: datetime | None = None,
+    start: UtcDateTime | None = None,
+    end: UtcDateTime | None = None,
 ) -> RiskResponse:
     """Users, source IPs, and hosts seen in the range, ranked by a score whose parts are
     shown: rule matches, flagged runs, failed sign-ins, risky inbox rules, app consents, AI
@@ -276,8 +277,8 @@ async def graph(
     mode: Literal["entity", "ai"] = "entity",
     kind: Literal["user", "ip", "host", "mcp", "service"] | None = None,
     value: str | None = Query(default=None, max_length=512),
-    start: datetime | None = None,
-    end: datetime | None = None,
+    start: UtcDateTime | None = None,
+    end: UtcDateTime | None = None,
 ) -> GraphOut:
     """Entity mode: Entity, Sources, Activities, Targets. AI flow: People, AI clients,
     Tools and MCP servers, Destinations; optionally for one person, MCP server, or service.
@@ -326,8 +327,8 @@ async def summary(
     user: CurrentUser,
     kind: Literal["user", "ip", "host"],
     value: str = Query(min_length=1, max_length=512),
-    start: datetime | None = None,
-    end: datetime | None = None,
+    start: UtcDateTime | None = None,
+    end: UtcDateTime | None = None,
 ) -> SummaryOut:
     """The top of an entity's page: counts, sign-in outcomes, who and what it touched,
     first and last seen, and activities by outcome with a real example line."""
@@ -367,8 +368,8 @@ async def entity_lookup(
     request: Request,
     user: CurrentUser,
     q: str = Query(min_length=2, max_length=100),
-    start: datetime | None = None,
-    end: datetime | None = None,
+    start: UtcDateTime | None = None,
+    end: UtcDateTime | None = None,
 ) -> LookupOut:
     """The top bar search (ADR-0038 edit 10): addresses, users, and hosts seen in the
     caller's own sources (the last 30 days unless a range is given), and AI services by

@@ -8,9 +8,11 @@ import { mockApi, type MockAuth } from "./mockApi";
 async function renderAt(
   path: string,
   auth: MockAuth = { mode: "login", signedIn: true, role: "admin" },
+  tweak?: (spy: ReturnType<typeof mockApi>) => void,
 ) {
   window.history.replaceState(null, "", path);
   const spy = mockApi("Codename", auth);
+  tweak?.(spy);
   vi.resetModules();
   const { loadBranding } = await import("@/lib/branding");
   await loadBranding();
@@ -330,5 +332,32 @@ describe("Dashboard sections (ADR-0038 edit 10)", () => {
       });
     }
     window.localStorage.removeItem("dashboard.window");
+  });
+});
+
+describe("AI Watch: no data after the newest event's own date", () => {
+  it("does not claim data until now for old events that arrived just now", async () => {
+    await renderAt("/dashboard", undefined, (spy) => {
+      const base = spy.getMockImplementation() as typeof fetch;
+      spy.mockImplementation(async (input, init) => {
+        const res = await base(input, init);
+        if (!String(input).endsWith("/api/overview")) return res;
+        const o = await res.json();
+        // linux_sshd (the source AI Watch read) received records just now, dated Oct 8.
+        o.sources = o.sources.map((x: { source_id: string }) =>
+          x.source_id === "linux_sshd"
+            ? {
+                ...x,
+                last_event_at: "2026-10-10T12:29:30+00:00",
+                newest_event_at: "2026-10-08T09:00:00+00:00",
+              }
+            : x,
+        );
+        return new Response(JSON.stringify(o), {
+          headers: { "Content-Type": "application/json" },
+        });
+      });
+    });
+    expect(await screen.findByText(/no data after Oct 8/)).toBeVisible();
   });
 });

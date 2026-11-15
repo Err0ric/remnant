@@ -30,6 +30,7 @@ from app.core.errors import (
     RuleRejectedError,
 )
 from app.core.ids import AUTO_PARSER, new_id
+from app.core.times import zoned
 from app.detect.logsource import LogSource, applies
 from app.detect.rules import compile_rule
 from app.detect.store import RuleRow, RuleStore
@@ -232,8 +233,7 @@ class RuleRunner:
         from the job, never from a request); the caller's permitted sources still apply.
         `only_events` narrows it further to those event ids, one query per list (each bound
         as one parameter). `on_save` runs in the transaction that stores the run."""
-        if start.tzinfo is None or end.tzinfo is None:
-            raise ParamInvalidError("Start and end need a time zone")
+        start, end = zoned(start), zoned(end)  # a time without a zone is UTC (core.times)
         if not start < end or end - start > MAX_RANGE:
             raise ParamInvalidError("End must be after start, at most 366 days apart")
         row, text = self._rules.get(rule_id)

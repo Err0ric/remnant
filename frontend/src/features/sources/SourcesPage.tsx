@@ -6,7 +6,7 @@ import { ParserMix } from "./ParserMix";
 import { Fragment, useEffect, useState } from "react";
 import { useSection } from "@/lib/route";
 import { GapNote } from "@/features/health/GapNote";
-import { idleText, shownGaps } from "@/features/health/flow";
+import { idleText, quietFrom, shownGaps } from "@/features/health/flow";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { ApiError, api, type Source, type SourceInput } from "@/lib/api";
 import { AddSourceForm } from "./AddSourceForm";
@@ -311,7 +311,7 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
                                 idle={
                                   judged.get(s.source_id)?.idle && overview.data
                                     ? idleText(
-                                        judged.get(s.source_id)?.last_event_at ?? null,
+                                        quietFrom(judged.get(s.source_id)),
                                         overview.data.generated_at,
                                       )
                                     : null

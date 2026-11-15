@@ -1,8 +1,6 @@
 """Who had an address at a time (ADR-0020 row 1), from logon, User-ID, and GlobalProtect
 events in the caller's sources. Audited as address.lookup. Router only."""
 
-from datetime import UTC, datetime
-
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
@@ -11,6 +9,7 @@ from app.api.access import CurrentUser, client_ip
 from app.auth.service import AuthService
 from app.core import clock
 from app.core.errors import AppError
+from app.core.times import UtcDateTime, utc
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.engine.views import permitted_sources
 from app.search.addresses import MAX_AGE_HOURS, Span, spans
@@ -49,14 +48,12 @@ class AddressOut(BaseModel):
 
 @router.get("/addresses/{ip}")
 async def address(
-    ip: str, request: Request, user: CurrentUser, at: datetime | None = None
+    ip: str, request: Request, user: CurrentUser, at: UtcDateTime | None = None
 ) -> AddressOut:
     """The spans that held this address at `at` (default now), newest first: logons,
     User-ID, GlobalProtect, DHCP leases, and the sign-ins that name a machine's person
     (ADR-0029)."""
-    # A time without a zone is UTC, like every other time in the API.
-    when = (at or clock.now()) if (at is None or at.tzinfo) else at.replace(tzinfo=UTC)
-    when = when.astimezone(UTC)
+    when = utc(at or clock.now())  # a time without a zone was read as UTC (UtcDateTime)
     allowed = await run_in_threadpool(permitted_sources, request.app.state.meta, user)
     engine: QueryEngine = request.app.state.engine
     auth: AuthService = request.app.state.auth

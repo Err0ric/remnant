@@ -4,6 +4,51 @@
 
 <!-- unreleased:start -->
 
+### Clearer quiet alerts, and AI Watch's "no data after" follows the events' dates (2026-11-15)
+
+- When a source's newest event is much older than its last delivery (an offline queue, an import), its quiet alert now reads "No new events for 7 d. Newest event dated ... UTC; last data arrived ... UTC." In the ordinary case it still reads "No events received for 7 d".
+- AI Watch's chart on the Dashboard says "no data after" the newest event's own date, so old events that arrived just now no longer make it look complete up to today.
+- What you will notice: clearer quiet alert text in that case, and AI Watch's chart marks the days with no data yet correctly.
+- What changes for existing installs: nothing to do.
+
+### How long a source has been quiet counts from its newest event (2026-11-14)
+
+- "Quiet", "Idle", and "No events for" on Health, Sources, and the Sources healthy line now count from the newest event's own time, the same time the status is judged from.
+- Before, they counted from when a record last arrived, so old events delivered now (a Claude plugin's offline queue, a history import) read "Quiet 7 s" for a source with nothing newer than two days. "Last received" still shows when a record last arrived.
+- What you will notice: a source that just received old events reads "Quiet 2 d" (or "Idle, No events for 2 d"), not a few seconds.
+- What changes for existing installs: nothing to do.
+
+### A time without a zone means UTC everywhere (2026-11-14)
+
+- An API or CLI request whose start, end, or other time has no zone (`2026-11-14T08:00:00`) is now read as UTC in every step: which days of data are read, the row filter, the rollups AI usage and Microsoft 365 read, and the Proxmox guest lookup. Before, on a server whose own zone was not UTC, such a window near midnight could leave out the events of a day or read a day it did not need.
+- The audit log filters, a rule run, and a saved search's time parameters now read such a time as UTC too, where they used to refuse it.
+- What you will notice: nothing in the web pages, which always send times with a zone; API scripts that send times without one now get the days they asked for.
+- What changes for existing installs: nothing to do.
+
+### Logs reads the newest day first (2026-11-14)
+
+- A Logs search over a long window reads the newest day's files first and goes back only as far as it must to fill the page, so a 30-day search with matches on the newest day costs about what a one-day search costs.
+- The rows, their order, and the count are the same as before; when two events have the same time, the one with the higher event id comes first, every time.
+- A search with no match in the newest day reads that day first and then the rest, so it can take slightly longer: on a 30-day lake at the size of a production install, a search with no match at all took 2.4 s instead of 2.1 s.
+- SQL typed in the SQL tab, saved searches written as SQL, and SQL another page hands over run as written. The Fields panel and the field check still count over the whole window.
+- What you will notice: long Logs searches show their results sooner.
+- What changes for existing installs: nothing to do.
+
+### Calmer colors for the session timeline (2026-11-14)
+
+- The timeline bar on Agents > Sessions now uses two quiet colors and gray: prompts in ice (a light cyan), tool calls in graphite, tool results in gray.
+- File access and access (web and MCP) are drawn with stripes, in graphite and ice: these are the steps that reach outside the session (a file, the web, or an MCP server). The stripes read without any color.
+- A small tick under the bar marks every place where a step reached outside the session, also in a very long session where several steps share one part of the bar; the legend explains it.
+- No color on the bar is one used elsewhere for health, warnings, severities, links, or the Cloud badge.
+- What you will notice: the session timeline bar is ice, graphite, and gray, with stripes on file and web steps and a tick under the bar wherever a step reached outside the session.
+- What changes for existing installs: nothing to do.
+
+### The merge queue checks each pull request for real-looking names (2026-11-14)
+
+- The merge queue now runs the allowlist scan (the synthetic-only rule) on the files a pull request adds or changes, renamed files under their new names, leaving out what is never published. A pull request that changes the scan's own rules (the export rules, the allowlist, the reviewed binaries, or the scanner) gets the whole tree scanned instead. A real-looking domain, address, or file name stops the queue at merge instead of at publish, and so does a scan that could not run. The publish step still scans the whole tree.
+- What you will notice: nothing visible.
+- What changes for existing installs: nothing to do.
+
 ### A test address in a reserved form (2026-11-14)
 
 - A test used an address whose first part read as a real domain to the publish allowlist scan; it is written with a hyphen now. The scan finds nothing on the tree.

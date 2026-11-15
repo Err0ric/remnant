@@ -39,6 +39,7 @@ from app.auth.service import AuthService
 from app.auth.users import User
 from app.core.errors import NotFoundError
 from app.core.job_status import Failure
+from app.core.times import UtcDateTime
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.engine.views import permitted_sources, scope_sources
 from app.meta.db import MetaDB
@@ -181,7 +182,10 @@ async def _scope(
 
 @router.get("/ai/usage")
 async def ai_usage(
-    request: Request, user: CurrentUser, start: datetime | None = None, end: datetime | None = None
+    request: Request,
+    user: CurrentUser,
+    start: UtcDateTime | None = None,
+    end: UtcDateTime | None = None,
 ) -> UsageOut:
     """Services, MCP servers, and Claude usage per person, from the sources the caller
     may read; with a start, also what is new and what is no longer seen against the

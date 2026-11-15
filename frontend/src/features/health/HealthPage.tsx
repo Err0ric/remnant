@@ -28,7 +28,7 @@ import {
 import { SpeedTable } from "./SpeedTable";
 import { BackgroundFailures } from "./BackgroundFailures";
 import { EntityLink } from "@/components/EntityLink";
-import { idleText, openGaps, quietWord } from "./flow";
+import { idleText, openGaps, quietFrom, quietWord } from "./flow";
 import { heldText } from "@/features/sources/VendorAlertNotify";
 import { SourceFlow } from "./SourceFlow";
 import { StatusLine } from "./StatusLine";
@@ -316,7 +316,7 @@ export function HealthPage({ isAdmin, scope = "health" }: HealthPageProps) {
       case "error":
         return { ...r, level: "unhealthy" };
       case "quiet": {
-        const word = quietWord(h.last_event_at, overview.data.generated_at);
+        const word = quietWord(quietFrom(h), overview.data.generated_at);
         return {
           ...r,
           level: h.quiet_since ? "unhealthy" : "attention",
@@ -334,7 +334,7 @@ export function HealthPage({ isAdmin, scope = "health" }: HealthPageProps) {
               ...r,
               level: "healthy",
               word: "Idle",
-              reason: idleText(h.last_event_at, overview.data.generated_at),
+              reason: idleText(quietFrom(h), overview.data.generated_at),
             }
           : { ...r, level: "healthy", reason: null };
     }

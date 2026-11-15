@@ -6,7 +6,6 @@ and matches are shown only to callers who may read every source the run read.
 """
 
 import hashlib
-from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -16,6 +15,7 @@ from starlette.concurrency import run_in_threadpool
 from app.api.access import AdminUser, CurrentUser, client_ip, require_role
 from app.auth.users import User
 from app.core.errors import PayloadTooLargeError, RuleRejectedError
+from app.core.times import UtcDateTime
 from app.detect import sigmahq
 from app.detect.logsource import LogSource
 from app.detect.runner import MatchRow, RuleRunner, RunRow
@@ -104,8 +104,8 @@ class ImportSummary(BaseModel):
 
 
 class RunIn(BaseModel):
-    start: datetime
-    end: datetime
+    start: UtcDateTime
+    end: UtcDateTime
 
 
 class RunOut(BaseModel):

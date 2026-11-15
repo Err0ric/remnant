@@ -37,7 +37,10 @@ class SourceVolumeOut(BaseModel):
 class SourceHealthOut(BaseModel):
     source_id: str
     state: str
-    last_event_at: str | None
+    last_event_at: str | None  # when a record last arrived ("Last received")
+    # The newest time its events are dated, at most when they arrived: what "Quiet 2 d",
+    # "Idle", and "No events for" measure (a queue or an import may deliver old events now).
+    newest_event_at: str | None = None
     files_waiting: int
     records_skipped: int
     error: str | None
@@ -203,6 +206,7 @@ def _input(s: dict[str, Any], v: dict[str, Any] | None) -> SourceInput:
         source_id=s["source_id"],
         state=s["state"],
         last_event_at=s.get("last_event_at"),
+        newest_event_at=s.get("newest_event_at"),
         total_24h=int((v or {}).get("total") or 0),
         gaps=len(gaps),
         ongoing_gap=any(g.get("ongoing") for g in gaps),

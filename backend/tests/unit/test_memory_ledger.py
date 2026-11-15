@@ -83,7 +83,10 @@ def test_disk_overflow_is_logged_with_peak_memory(tmp_path: Path) -> None:
 @pytest.mark.usefixtures("small")
 def test_a_full_disk_overflow_fails_plainly(tmp_path: Path) -> None:
     engine = _engine(tmp_path, 200, spill_mb=5)
-    with capture_logs() as logs, pytest.raises(QueryMemoryError, match="shorter time range"):
+    with (
+        capture_logs() as logs,
+        pytest.raises(QueryMemoryError, match=r"^Out of disk overflow space"),
+    ):
         engine.run(SPILLS, QueryScope(None), name="query.export", large=False)
     failed = [e for e in logs if e["event"] == "query.memory"]
     assert failed[0]["outcome"] == "failed" and failed[0]["reason"] == "disk"

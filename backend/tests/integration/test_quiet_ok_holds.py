@@ -313,3 +313,59 @@ def test_a_failed_read_later_in_the_same_silence_keeps_the_hold(push: dict[str, 
     at(push, 8 * DAY)  # and the days still end: it fires, never silent
     tick(push)
     assert len(sent(push)) == 1
+
+
+def test_old_events_received_now_are_held_and_said_from_their_own_date(
+    push: dict[str, Any],
+) -> None:
+    """A queue delivers events dated 2 days ago, now: the watch saw a record now, Health and
+    the hold count from the 2-day-old event, and the alert, when the days pass, says so."""
+    from tests.integration.test_quiet_ok import _dated
+
+    sid = "otel_queue"
+    _another(push, sid, None)
+    _dated(push, sid, timedelta(days=2), timedelta(minutes=1))
+    push["received"][sid] = NOW - timedelta(minutes=1)
+    mark(push, 7, sid)
+    at(push, 2 * HOUR)
+    tick(push)
+    assert sent(push, sid) == []  # due by its 1-hour alert, held: 2 d 2 h of its 7 days
+    at(push, 5 * DAY + 60)
+    tick(push)
+    (doc,) = sent(push, sid)  # the newest event is now 7 days old
+    assert doc["range_start"] == (NOW - timedelta(days=2)).isoformat()  # Logs opens there
+    # A record arrived 5 days ago, so the text names both times instead of "received".
+    assert doc["detail"] == (
+        "No new events for 7 d. Newest event dated 2026-10-08 12:00 UTC;"
+        " last data arrived 2026-10-10 11:59 UTC."
+    )
+    with push["app"].state.meta.connect() as con:  # the alert item on the Alerts page says it too
+        (item_detail,) = con.execute(
+            "SELECT detail FROM alert_items WHERE kind = 'gap' AND subject = ?", (sid,)
+        ).fetchone()
+    assert item_detail == doc["detail"]
+    (row,) = _quiet_audit(push, sid)
+    assert row == {
+        "source_id": sid,
+        "last_received": (NOW - timedelta(minutes=1)).isoformat(),
+        "newest_event": (NOW - timedelta(days=2)).isoformat(),
+    }
+
+
+def _quiet_audit(env: dict[str, Any], sid: str) -> list[dict[str, Any]]:
+    with env["app"].state.meta.connect() as con:
+        rows = con.execute("SELECT detail FROM audit_log WHERE action = 'source.quiet'").fetchall()
+    return [d for d in (json.loads(r[0]) for r in rows) if d["source_id"] == sid]
+
+
+def test_when_the_newest_event_arrived_on_its_date_the_alert_says_it_the_short_way(
+    push: dict[str, Any],
+) -> None:
+    _another(push, "otel_old", 6)  # dated and received 6 days ago
+    mark(push, 7, "otel_old")
+    at(push, DAY + 60)
+    tick(push)
+    (doc,) = sent(push, "otel_old")
+    assert doc["detail"] == "No events received for 7 d"
+    (row,) = _quiet_audit(push, "otel_old")
+    assert row["last_received"] == row["newest_event"] == (NOW - timedelta(days=6)).isoformat()

@@ -1,6 +1,5 @@
 """Around this event (ADR-0038 section 8). Router only."""
 
-from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -9,6 +8,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.api.access import CurrentUser, client_ip
 from app.auth.service import AuthService
+from app.core.times import UtcDateTime, zoned
 from app.engine.views import permitted_sources
 from app.search.around import around
 
@@ -37,12 +37,12 @@ async def event_around(
     event_id: str,
     request: Request,
     user: CurrentUser,
-    at: datetime,
+    at: UtcDateTime,
 ) -> AroundOut:
     """Rows within 5 minutes of the event by the same person or device, from every source
     the caller may read; at most 50, newest last, with a Likely cause hint. Audited
     `search.around`."""
-    when = at if at.tzinfo else at.replace(tzinfo=UTC)
+    when = zoned(at)
     allowed = await run_in_threadpool(permitted_sources, request.app.state.meta, user)
     out = await run_in_threadpool(around, request.app.state.engine, allowed, event_id[:64], when)
     auth: AuthService = request.app.state.auth

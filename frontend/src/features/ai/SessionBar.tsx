@@ -1,7 +1,17 @@
 import { When } from "@/components/When";
 import type { SessionStep, SessionSummary } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { isFailed, segments, TYPES, type Segment } from "./barSegments";
+import {
+  HATCH_MEANS,
+  isFailed,
+  hasTick,
+  markStyle,
+  segmentMark,
+  TICK_MEANS,
+  segments,
+  TYPES,
+  type Segment,
+} from "./barSegments";
 
 interface SessionBarProps {
   steps: SessionStep[];
@@ -16,6 +26,13 @@ interface SessionBarProps {
 
 const n = (v: number | undefined) => (v ?? 0).toLocaleString();
 const LABEL = Object.fromEntries(TYPES.map((t) => [t.type, t.label])) as Record<string, string>;
+
+/** True for a run and for a mixed slice alike. */
+function outsideNote(seg: Segment): string {
+  if (seg.outside === 0) return "";
+  if (seg.outside === seg.count) return "; reached outside the session";
+  return `; ${n(seg.outside)} of these steps reached outside the session`;
+}
 
 function hover(seg: Segment): string {
   const parts = Object.entries(seg.types).map(([t, c]) => `${LABEL[t]} ${n(c ?? 0)}`);
@@ -49,6 +66,9 @@ export function SessionBar({ steps, summary, flagged, shown, onPick }: SessionBa
     ? TYPES.map((t) => `${n(counts[t.type] ?? 0)} ${t.label.toLowerCase()}`).join(", ")
     : `${n(steps.length)} steps`;
   const failed = summary?.failed ?? steps.filter(isFailed).length;
+  const outside = counts
+    ? (counts.file_access ?? 0) + (counts.access ?? 0)
+    : steps.filter((s) => s.type === "file_access" || s.type === "access").length;
   const listed = new Set(shown.map((s) => s.event_id));
   const order = new Map(steps.map((s, i) => [s.event_id, i]));
   const after = (id: string) =>
@@ -56,13 +76,14 @@ export function SessionBar({ steps, summary, flagged, shown, onPick }: SessionBa
     null;
   // A 1px gap between segments only while there is room for it: a sliced session has up to
   // 280 segments, and gaps plus a minimum width would make the bar wider than a phone-width
-  // pane. Both rows share the rule, so a failed notch always sits over its segment.
+  // pane. The three rows share the rule, so a failed notch above and a tick below always
+  // line up with their segment.
   const row = cn("flex min-w-0 overflow-hidden", segs.length <= 140 && "gap-px");
   return (
-    <figure className="grid min-w-0 gap-1" aria-label="Session timeline bar">
+    <figure className="grid min-w-0 gap-1" aria-label="Session timeline bar" data-session-bar>
       <div
         role="img"
-        aria-label={`Session timeline: ${spoken}${failed ? `, ${n(failed)} failed` : ""}${summary?.steps_cut ? `; the bar shows the first ${n(steps.length)} steps` : ""}`}
+        aria-label={`Session timeline: ${spoken}${failed ? `, ${n(failed)} failed` : ""}${outside ? `, ${n(outside)} reached outside the session` : ""}${summary?.steps_cut ? `; the bar shows the first ${n(steps.length)} steps` : ""}`}
         className="grid min-w-0 gap-px"
       >
         <div className={cn(row, "h-1")} aria-hidden="true">
@@ -79,22 +100,39 @@ export function SessionBar({ steps, summary, flagged, shown, onPick }: SessionBa
           {segs.map((s) => {
             const target = targetOf(s, flagged, listed, after);
             const off = target === null;
+            const mark = segmentMark(s);
+            const drawn = markStyle(mark);
             return (
               <span
                 key={s.first}
                 data-segment={s.type}
+                data-hatched={mark.hatch || undefined}
                 data-opens={target ?? undefined}
-                title={`${hover(s)}${off ? (flagged !== null ? " (not flagged)" : " (not listed in this view)") : ""}`}
-                style={{ flexGrow: s.count, flexBasis: 0 }}
+                title={`${hover(s)}${outsideNote(s)}${off ? (flagged !== null ? " (not flagged)" : " (not listed in this view)") : ""}`}
+                style={{ ...drawn.style, flexGrow: s.count, flexBasis: 0 }}
                 onClick={off ? undefined : () => onPick(target)}
                 className={cn(
                   "min-w-0",
-                  TYPES.find((t) => t.type === s.type)?.fill,
+                  drawn.className,
                   off ? "opacity-25" : "cursor-pointer hover:opacity-80",
                 )}
               />
             );
           })}
+        </div>
+        <div className={cn(row, "h-1")} data-bar="ticks" aria-hidden="true">
+          {segs.map((s) => (
+            <span
+              key={s.first}
+              data-tick={hasTick(s) || undefined}
+              style={{
+                flexGrow: s.count,
+                flexBasis: 0,
+                ...(hasTick(s) ? { background: "var(--text-secondary)" } : {}),
+              }}
+              className="min-w-0"
+            />
+          ))}
         </div>
       </div>
       <div className="flex justify-between text-xs text-text-muted">
@@ -105,7 +143,12 @@ export function SessionBar({ steps, summary, flagged, shown, onPick }: SessionBa
         <ul aria-label="Step types" className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
           {TYPES.map((t) => (
             <li key={t.type} className="flex items-center gap-1.5">
-              <span aria-hidden="true" className={cn("inline-block h-3 w-3 rounded-sm", t.fill)} />
+              <span
+                aria-hidden="true"
+                data-mark={t.type}
+                className={cn("inline-block h-4 w-4", markStyle(t).className)}
+                style={markStyle(t).style}
+              />
               <span className="text-text-secondary">{t.label}</span>
               <span className="tabular-nums">
                 {counts
@@ -116,12 +159,26 @@ export function SessionBar({ steps, summary, flagged, shown, onPick }: SessionBa
           ))}
           {failed ? (
             <li className="flex items-center gap-1.5">
-              <span aria-hidden="true" className="inline-block h-1 w-3 bg-danger" />
+              <span
+                aria-hidden="true"
+                data-failed="legend"
+                className="inline-block h-1 w-3 bg-danger"
+              />
               <span className="text-text-secondary">Failed</span>
               <span className="tabular-nums">{n(failed)}</span>
             </li>
           ) : null}
         </ul>
+        <p className="text-xs text-text-muted">{HATCH_MEANS}.</p>
+        <p className="flex items-center gap-1.5 text-xs text-text-muted">
+          <span
+            aria-hidden="true"
+            data-tick="legend"
+            className="inline-block h-1 w-3"
+            style={{ background: "var(--text-secondary)" }}
+          />
+          {TICK_MEANS}.
+        </p>
         {summary?.steps_cut ? (
           <p className="text-xs text-text-muted">
             The bar shows the first {n(steps.length)} steps; the counts are for the whole session.

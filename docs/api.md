@@ -15,6 +15,7 @@ spec is served at `GET /api/openapi.json`; import it into Postman, Insomnia, or 
 | Rate limits | Sign-in, link redemption, and single sign-on starts are limited per address; `429` carries `Retry-After` |
 | Audit | Every query, export, sign-in, admin change, and AI call is written to the audit log under the caller |
 | Read-only queries | `POST /api/query` accepts `SELECT` and `WITH` only, through the server's guard, over the sources you may read |
+| Times | Every `date-time` parameter is ISO 8601; a time without a zone (`2026-11-14T08:00:00`) is read as UTC, the same as `2026-11-14T08:00:00Z`. A time with a zone keeps it |
 
 ```bash
 curl -s https://siem.example.internal:8080/api/query \
@@ -293,8 +294,8 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 
 | Method | Path | What it does | Query | JSON body (`?` optional) |
 |---|---|---|---|---|
-| `POST` | `/api/query` | Run Query |  | `sql`: string<br>`start`?: date-time<br>`end`?: date-time<br>`sources`?: list of string<br>`params`?: object |
-| `POST` | `/api/query/export` | The same query as /query, returned as CSV and audited as an export (T18). |  | `sql`: string<br>`start`?: date-time<br>`end`?: date-time<br>`sources`?: list of string<br>`params`?: object |
+| `POST` | `/api/query` | Run Query |  | `sql`: string<br>`start`?: date-time<br>`end`?: date-time<br>`sources`?: list of string<br>`params`?: object<br>`text`?: string |
+| `POST` | `/api/query/export` | The same query as /query, returned as CSV and audited as an export (T18). |  | `sql`: string<br>`start`?: date-time<br>`end`?: date-time<br>`sources`?: list of string<br>`params`?: object<br>`text`?: string |
 | `POST` | `/api/query/refine` | The SQL on screen with one facet filter added (ADR-0016 row 2). Reads no data; the caller runs the result like any query, through the guard and the audit log. |  | `sql`: string<br>`field`: string<br>`value`?: string<br>`exclude`?: boolean |
 | `POST` | `/api/search/compile` | Simple search text to SQL and parameters (ADR-0009). Reads no data; the query that follows goes through /query, its guard, and its audit like any other. |  | `text`: string<br>`top`?: string |
 | `POST` | `/api/search/facets` | Counts of the top values of a few fixed fields for the search on screen, over the whole result (not just the page). Same scope, guard, and audit as /query. |  | `text`?: string<br>`sql`?: string<br>`params`?: object<br>`columns`?: list of string<br>`start`?: date-time<br>`end`?: date-time<br>`sources`?: list of string |

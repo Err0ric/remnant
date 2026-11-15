@@ -47,7 +47,12 @@ def test_filters_and_paging(lab: dict[str, Any]) -> None:
     assert more.json()[0]["audit_id"] < first[-1]["audit_id"]
     none = aud.get("/api/audit/events", params={"since": "2999-01-01T00:00:00Z"}).json()
     assert none == []
-    assert aud.get("/api/audit/events", params={"since": "2026-10-10T00:00:00"}).status_code == 400
+    # A time without a zone is UTC, as everywhere in the API (owner, 2026-11-14; it was refused).
+    bare = aud.get("/api/audit/events", params={"since": "2026-10-10T00:00:00"})
+    with_z = aud.get("/api/audit/events", params={"since": "2026-10-10T00:00:00Z"})
+    ids = [r["audit_id"] for r in bare.json()]
+    assert bare.status_code == 200 and ids  # the same rows, apart from the bare call's own
+    assert [r["audit_id"] for r in with_z.json()][1:] == ids
     assert aud.get("/api/audit/events", params={"action": "%"}).json() == []  # literal %
 
 

@@ -24,6 +24,7 @@ from app.auth.users import User
 from app.detect.runner import RuleRunner
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.engine.views import permitted_sources
+from app.ingest.quiet import LastEvent
 from app.ingest.sources import SourceConfig, SourceStore, quiet_expected, quiet_ok
 from app.ingest.watcher import IngestService, source_state
 from app.meta.db import MetaDB
@@ -43,7 +44,14 @@ VOLUME_SQL = (
     "SELECT source_id, date_trunc('hour', coalesce(time, time_observed)) AS hour,"
     " count(*) AS n FROM events GROUP BY 1, 2 ORDER BY 1, 2 LIMIT 100000"
 )
-LAST_SEEN_SQL = "SELECT source_id, max(time_observed) AS last FROM events GROUP BY 1 LIMIT 10000"
+# When each source last received a record, and the newest time its events are dated (an
+# event's own time, never later than when it arrived): a queue or an import delivers old
+# events now, and "Quiet 2 d" is about the second, "Last received" about the first.
+LAST_SEEN_SQL = (
+    "SELECT source_id, max(time_observed) AS last,"
+    " max(least(coalesce(time, time_observed), time_observed)) AS newest"
+    " FROM events GROUP BY 1 LIMIT 10000"
+)
 LAST_EVENT_TIMEOUT_S = 10.0  # the quiet watch's one read per quiet episode (D262)
 RATE_MINUTES = 15  # "current rate": events received in the last 15 minutes, per minute
 RATE_SQL = (
@@ -78,6 +86,9 @@ class SourceHealth:
     # Warnings, retries, a time offset, or reading far behind: what /api/sources shows
     # admins in words. Used for the source's condition (app.search.source_state) only.
     reading_issue: bool = False
+    # The newest time its events are dated, at most when they arrived: what "Quiet 2 d",
+    # "Idle", and "No events for" measure, and "Quiet is normal" days count from.
+    newest_event_at: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,8 +229,10 @@ class OverviewService:
             s for s in self._sources.list() if allowed is None or s.source_id in set(allowed)
         ]
         volume, read, usual = self._volume(allowed, first, now, hours)
-        last_seen = self._last_seen(allowed, now)
-        last_seen |= self._last_seen_marked(configured, last_seen, now)
+        last_seen, newest = self._last_seen(allowed, now)
+        more_seen, more_newest = self._last_seen_marked(configured, last_seen, now)
+        last_seen |= more_seen
+        newest |= more_newest
         rates = self._rates(allowed, now)
         statuses = self._ingest().status()
         health = []
@@ -235,13 +248,14 @@ class OverviewService:
                     source_id=s.source_id,
                     state=source_state(s.enabled, st),
                     last_event_at=last_seen.get(s.source_id),
+                    newest_event_at=newest.get(s.source_id),
                     files_waiting=st.files_waiting if st else 0,
                     records_skipped=st.records_skipped if st else 0,
                     error=error,
                     rate_per_min=rates.get(s.source_id, 0.0),
                     quiet_expected=quiet_expected(s),
                     quiet_ok_days=s.quiet_ok_days,
-                    quiet_ok=quiet_ok(s, last_seen.get(s.source_id), now),
+                    quiet_ok=quiet_ok(s, newest.get(s.source_id), now),
                     reading_issue=bool(
                         st
                         and (
@@ -306,26 +320,32 @@ class OverviewService:
         result = self._engine.run(RATE_SQL, scope, {"since": since}, page=True)
         return {str(r[0]): round(int(r[1]) / RATE_MINUTES, 1) for r in result.rows}
 
-    def _last_seen(self, allowed: list[str] | None, now: datetime) -> dict[str, str]:
+    def _last_seen(
+        self, allowed: list[str] | None, now: datetime
+    ) -> tuple[dict[str, str], dict[str, str]]:
         scope = QueryScope(sources=allowed, start=now - timedelta(days=LAST_SEEN_DAYS), end=now)
-        result = self._engine.run(LAST_SEEN_SQL, scope, page=True)
-        return {str(r[0]): _utc(r[1]).isoformat() for r in result.rows if r[1] is not None}
+        return _seen(self._engine.run(LAST_SEEN_SQL, scope, page=True).rows)
 
-    def last_received(self, source_id: str, days: int, now: datetime) -> datetime | None:
-        """When one source's newest event was received (`time_observed`), looked up over its
-        own days: the time "Quiet is normal" is measured from, as Health reads it, for the
-        quiet watch's hold (D262). Reads only that source's day folders, as the system, on
-        the background slot (never a page query's) with a short timeout; raises on failure."""
+    def newest_event(self, source_id: str, days: int, now: datetime) -> LastEvent | None:
+        """The newest time one source's events are dated (at most when they arrived), and
+        when its last record arrived, looked up over its own days: the first is what "Quiet
+        is normal" is measured from, as Health reads it, for the quiet watch's hold (D262).
+        Reads only that source's day folders, as the system, on the background slot (never a
+        page query's) with a short timeout; raises on failure."""
         scope = QueryScope(sources=[source_id], start=now - timedelta(days=days), end=now)
         result = self._engine.run(
             LAST_SEEN_SQL, scope, timeout_s=LAST_EVENT_TIMEOUT_S, background=True
         )
-        found = [_utc(r[1]) for r in result.rows if r[1] is not None]
+        found = [
+            LastEvent(newest=_utc(r[2]), received=_utc(r[1]))
+            for r in result.rows
+            if r[1] is not None and r[2] is not None
+        ]
         return found[0] if found else None
 
     def _last_seen_marked(
         self, configured: list[SourceConfig], seen: dict[str, str], now: datetime
-    ) -> dict[str, str]:
+    ) -> tuple[dict[str, str], dict[str, str]]:
         """The newest event of sources marked "Quiet is normal" for longer than the 7 days
         looked up above (D260), when nothing came in those 7 days. Reads only those sources'
         folders, so most loads run nothing more."""
@@ -335,12 +355,12 @@ class OverviewService:
             if (s.quiet_ok_days or 0) > LAST_SEEN_DAYS and s.source_id not in seen
         }
         if not days:
-            return {}
+            return {}, {}
         start = now - timedelta(days=max(days.values()))
         result = self._engine.run(
             LAST_SEEN_SQL, QueryScope(sources=sorted(days), start=start, end=now), page=True
         )
-        return {str(r[0]): _utc(r[1]).isoformat() for r in result.rows if r[1] is not None}
+        return _seen(result.rows)
 
     def _detections(
         self, user: User, allowed: list[str] | None, since: datetime
@@ -401,6 +421,13 @@ class OverviewService:
             if t.consecutive_failures > 0
         ]
         return AlertHealth(targets, self._dispatcher.failed_since(since))
+
+
+def _seen(rows: list[list[Any]]) -> tuple[dict[str, str], dict[str, str]]:
+    """Last received and newest dated time per source, from LAST_SEEN_SQL's rows."""
+    last = {str(r[0]): _utc(r[1]).isoformat() for r in rows if r[1] is not None}
+    newest = {str(r[0]): _utc(r[2]).isoformat() for r in rows if r[2] is not None}
+    return last, newest
 
 
 def _baseline(earlier: dict[datetime, int], hours: list[datetime]) -> list[float | None]:

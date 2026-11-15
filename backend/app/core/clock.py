@@ -20,3 +20,8 @@ def pin(at: datetime | None) -> None:
         raise ValueError("a pinned time must be timezone-aware")
     global _pinned
     _pinned = at
+
+
+def utc_words(at: datetime) -> str:
+    """'2026-10-27 09:00 UTC': a time in an alert's text and its messages."""
+    return at.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")

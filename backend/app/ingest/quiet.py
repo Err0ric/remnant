@@ -22,6 +22,7 @@ from app.alerts.items import GAP_SEVERITY, AlertItems
 from app.alerts.render import Alert
 from app.auth.users import User
 from app.core.branding import PRODUCT_NAME
+from app.core.clock import utc_words
 from app.core.errors import NotFoundError, ParamInvalidError, log_detail
 from app.ingest.sources import inside_quiet_days
 from app.meta.audit import AuditLog
@@ -47,6 +48,15 @@ def default_quiet_s(kind: str) -> int:
 
 
 @dataclass(frozen=True, slots=True)
+class LastEvent:
+    """A source's newest event, from the lake: the time it is dated (at most when it
+    arrived), which "Quiet is normal" counts from, and when its last record arrived."""
+
+    newest: datetime
+    received: datetime
+
+
+@dataclass(frozen=True, slots=True)
 class Watch:
     source_id: str
     quiet_after_s: int
@@ -56,6 +66,24 @@ class Watch:
     last_seen: str | None
     updated_at: str
     updated_by: str | None
+
+
+def _iso(at: datetime | None) -> str | None:
+    return at.isoformat() if at else None
+
+
+def quiet_text(real: LastEvent | None, seen: datetime, now: datetime) -> str:
+    """What a quiet alert says. Usually the newest event arrived when it was dated (or the
+    lake was not read): "No events received for 7 d", from the older of that event and the
+    watch's own clock. When records arrived well after the newest event's date (an offline
+    queue, an import), both times are named, so neither reads as the other."""
+    if real is None or real.received - real.newest < timedelta(hours=1):
+        start = real.newest if real is not None and real.newest < seen else seen
+        return f"No events received for {human((now - start).total_seconds())}"
+    return (
+        f"No new events for {human((now - real.newest).total_seconds())}. Newest event dated"
+        f" {utc_words(real.newest)}; last data arrived {utc_words(real.received)}."
+    )
 
 
 def human(seconds: float) -> str:
@@ -82,7 +110,7 @@ class QuietWatch:
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         items: AlertItems | None = None,
         quiet_days: Callable[[], dict[str, int | None]] = dict,
-        last_event: Callable[[str, int, datetime], datetime | None] | None = None,
+        last_event: Callable[[str, int, datetime], LastEvent | None] | None = None,
     ) -> None:
         self._items = items
         # Each source's "Quiet is normal for up to N days" (D260): its quiet alert is held
@@ -94,7 +122,7 @@ class QuietWatch:
         # Per source: (that event, when it was read, the watch's last_seen then). Read once
         # when a marked source's alert first becomes due, and kept until an event arrives
         # or REAL_TTL passes. In memory: a restart reads it once again.
-        self._real: dict[str, tuple[datetime | None, datetime, datetime]] = {}
+        self._real: dict[str, tuple[LastEvent | None, datetime, datetime]] = {}
         self._meta = meta
         self._received = received
         self._source_ids = source_ids
@@ -239,17 +267,25 @@ class QuietWatch:
             # so a restart reads the same, and the one ok-to-quiet move below raises it once
             # when the days pass or the mark is taken off (D262). A watch already quiet stays.
             real = self._real_last(w.source_id, days.get(w.source_id), seen, now) if due else None
-            if real is not None and inside_quiet_days(days.get(w.source_id), real, now):
+            if real is not None and inside_quiet_days(days.get(w.source_id), real.newest, now):
                 due = False
             if due:
                 # One alert per source per quiet episode (owner 2026-11-02: two at the same
                 # minute): only the tick that moves the row from ok to quiet alerts.
                 if not self._move(w.source_id, "ok", state="quiet", quiet_since=now.isoformat()):
                     continue
-                # From the real last event when it is older than the watch's own clock.
-                start = real if real is not None and real < seen else seen
-                text = f"No events received for {human((now - start).total_seconds())}"
-                self._alert(w, "quiet", text, start, now)
+                # The range starts at the newest event when it is known and older than the
+                # watch's own clock (the watch's clock starts when the watch is turned on).
+                start = real.newest if real is not None and real.newest < seen else seen
+                self._alert(
+                    w,
+                    "quiet",
+                    quiet_text(real, seen, now),
+                    start,
+                    now,
+                    received=real.received if real is not None else None,
+                    newest=real.newest if real is not None else None,
+                )
                 changed += 1
             elif w.state == "quiet" and before is not None and seen > before:
                 gap = (seen - before).total_seconds()
@@ -266,7 +302,7 @@ class QuietWatch:
 
     def _real_last(
         self, source_id: str, days: int | None, seen: datetime, now: datetime
-    ) -> datetime | None:
+    ) -> LastEvent | None:
         """The newest event this marked source really delivered, or None: not marked, never
         sent, or the read failed with nothing read earlier in this silence. Such a failed read
         holds nothing (never silent, D236): the alert is judged by its own threshold, and the
@@ -299,7 +335,11 @@ class QuietWatch:
         detail: str,
         seen: datetime | None,
         now: datetime | None = None,
+        received: datetime | None = None,
+        newest: datetime | None = None,
     ) -> None:
+        """`seen` starts the alert's range (the newest event when known). The audit row keeps
+        `last_received` as when a record last arrived and, when known, `newest_event`."""
         action = "source.quiet" if kind == "quiet" else "source.resumed"
         link = f"{self._link}/health#source={w.source_id}" if self._link else None
         severity: str | None = None
@@ -327,7 +367,11 @@ class QuietWatch:
             "success",
             None,
             None,
-            {"source_id": w.source_id, "last_received": seen.isoformat() if seen else None},
+            {
+                "source_id": w.source_id,
+                "last_received": _iso(received or seen),
+                **({"newest_event": newest.isoformat()} if newest else {}),
+            },
         )
         if not w.target_ids or kind == "muted":
             return

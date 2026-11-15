@@ -83,6 +83,15 @@ export interface OpenGap {
   quiet: string | null;
 }
 
+/** The time "Quiet", "Idle", and "No events for" count from: the newest time a source's
+ * events are dated (at most when they arrived), the time its condition is judged from. Not
+ * when a record last arrived: a queue or an import can deliver old events now. */
+export function quietFrom(
+  h: Pick<Overview["sources"][number], "newest_event_at" | "last_event_at"> | undefined,
+): string | null {
+  return h?.newest_event_at ?? h?.last_event_at ?? null;
+}
+
 /** How many sources have something wrong, for the rail's Health dot: every condition but
  * healthy and paused (a source someone paused on purpose is not a problem to flag). The
  * same rule as the server's `needing_attention` behind `/api/health/count`. */
@@ -100,11 +109,11 @@ export function openGaps(o: Overview | undefined): OpenGap[] {
     rows
       // server_events is quiet whenever nobody uses the server: expected (handoff items 4, 9).
       .filter((s) => (s.gap_alert || s.quiet_since) && !s.quiet_expected)
-      .sort((a, b) => (a.last_event_at ?? "").localeCompare(b.last_event_at ?? ""))
+      .sort((a, b) => (quietFrom(a) ?? "").localeCompare(quietFrom(b) ?? ""))
       .map((s) => ({
         source_id: s.source_id,
         item_id: s.gap_alert ?? null,
-        quiet: o ? lag(s.last_event_at, o.generated_at) : null,
+        quiet: o ? lag(quietFrom(s), o.generated_at) : null,
       }))
   );
 }

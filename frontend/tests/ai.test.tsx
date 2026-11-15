@@ -1040,13 +1040,29 @@ describe("Agents session detail (BACKLOG P1)", () => {
     const bar = await within(detail).findByRole("img", { name: /^Session timeline:/ });
     // One graphic with a spoken summary of the whole session's counts.
     expect(bar).toHaveAccessibleName(
-      "Session timeline: 3 prompt, 0 tool call, 7 tool result, 1 file access, 1 access, 2 other, 1 failed",
+      "Session timeline: 3 prompt, 0 tool call, 7 tool result, 1 file access, 1 access, 2 other, 1 failed, 2 reached outside the session",
     );
     // One segment per step in order, colored by the server's type; other is an outline.
     expect(
       [...bar.querySelectorAll("[data-segment]")].map((s) => s.getAttribute("data-segment")),
     ).toEqual(["other", "prompt", "file_access", "access", "other"]);
-    expect(bar.querySelector('[data-segment="file_access"]')).toHaveClass("bg-series-3");
+    // Ice and graphite, the neutral for results; reaching outside the session is hatched.
+    // Filled inline from the series variables, so the built CSS cannot leave a type empty.
+    expect((bar.querySelector('[data-segment="prompt"]') as HTMLElement).style.background).toBe(
+      "var(--series-ice)",
+    );
+    const file = bar.querySelector('[data-segment="file_access"]') as HTMLElement;
+    expect(file).toHaveAttribute("data-hatched", "true");
+    expect(file.style.background).toContain("var(--series-graphite)");
+    expect(file.getAttribute("title")).toMatch(/reached outside the session/);
+    const access = bar.querySelector('[data-segment="access"]') as HTMLElement;
+    expect(access.style.background).toContain("var(--series-ice)");
+    expect(bar.querySelector('[data-segment="prompt"]')).not.toHaveAttribute("data-hatched");
+    expect(
+      within(detail).getByText(
+        "Hatched: a file access or an access, the steps that reach outside the session (a file, the web, or an MCP server).",
+      ),
+    ).toBeVisible();
     expect(bar.querySelector('[data-segment="other"]')).toHaveClass("border-text-muted");
     // Between the numbers and the View switch, as in the mock.
     const kpis = within(detail).getByRole("group", { name: "This session in numbers" });
@@ -1210,6 +1226,43 @@ describe("Agents session detail (BACKLOG P1)", () => {
     expect(second).toHaveAttribute("data-opens", "e3");
     await userEvent.click(second);
     expect((document.activeElement as HTMLElement).dataset.steps).toBe("e3");
+  });
+
+  it("draws a slice as its majority type and ticks it when any step reached outside", async () => {
+    const many = Array.from({ length: 1200 }, (_, i) => ({
+      ...stepAt(i),
+      event: i % 2 ? "post_tool_use" : "pre_tool_use",
+      tool: "Bash",
+      event_id: `m${i}`,
+      type: i === 3 ? "file_access" : i % 2 ? "tool_result" : "tool_call",
+      ...(i === 3 ? { tool: "Read", path: "/home/dana/app/a.py" } : {}),
+    }));
+    const { detail } = await openSession({ unlisted: true, steps: () => many });
+    const bar = await within(detail).findByRole("img", { name: /^Session timeline:/ });
+    const segs = bar.querySelectorAll<HTMLElement>("[data-bar=segments] > span");
+    const ticks = bar.querySelectorAll<HTMLElement>("[data-bar=ticks] > span");
+    // The three rows line up: one cell per segment.
+    expect(ticks).toHaveLength(segs.length);
+    // Drawn exactly as the legend's Tool call (no hatch), and ticked below.
+    const legendCall = within(detail)
+      .getByRole("list", { name: "Step types" })
+      .querySelector('[data-mark="tool_call"]') as HTMLElement;
+    expect(segs[0]).toHaveAttribute("data-segment", "tool_call");
+    expect(segs[0]!.style.background).toBe(legendCall.style.background);
+    expect(segs[0]).not.toHaveAttribute("data-hatched");
+    expect(ticks[0]).toHaveAttribute("data-tick", "true");
+    expect(ticks[0]!.style.background).toBe("var(--text-secondary)");
+    expect(segs[0]!.getAttribute("title")).toMatch(
+      /; 1 of these steps reached outside the session$/,
+    );
+    // The next slice holds no outside step: no tick, nothing about outside on hover.
+    expect(ticks[1]).not.toHaveAttribute("data-tick");
+    expect(segs[1]!.getAttribute("title")).not.toMatch(/outside/);
+    expect(
+      within(detail).getByText(
+        "Tick below: at least one step in this part of the bar reached outside the session (a file, the web, or an MCP server).",
+      ),
+    ).toBeVisible();
   });
 
   it("says the numbers did not load, with Retry, and no zeros", async () => {

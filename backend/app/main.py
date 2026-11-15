@@ -759,7 +759,7 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         clock=lambda: app.state.auth.clock(),
         items=app.state.alert_items,
         quiet_days=lambda: {s.source_id: s.quiet_ok_days for s in app.state.sources.list()},
-        last_event=lambda sid, days, now: app.state.overview.last_received(sid, days, now),
+        last_event=lambda sid, days, now: app.state.overview.newest_event(sid, days, now),
     )
     # One-time fixes (D168): each runs once per install and records that it did.
     app.state.quiet.retire_push_defaults()

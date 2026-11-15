@@ -36,6 +36,7 @@ spec is served at `GET /api/openapi.json`; import it into Postman, Insomnia, or 
 | Rate limits | Sign-in, link redemption, and single sign-on starts are limited per address; `429` carries `Retry-After` |
 | Audit | Every query, export, sign-in, admin change, and AI call is written to the audit log under the caller |
 | Read-only queries | `POST /api/query` accepts `SELECT` and `WITH` only, through the server's guard, over the sources you may read |
+| Times | Every `date-time` parameter is ISO 8601; a time without a zone (`2026-11-14T08:00:00`) is read as UTC, the same as `2026-11-14T08:00:00Z`. A time with a zone keeps it |
 
 ```bash
 curl -s https://siem.example.internal:8080/api/query \\

@@ -42,6 +42,7 @@ from app.core.errors import (
     QueryTimeoutError,
 )
 from app.core.schema import COLUMN_NAMES, COLUMNS_BY_NAME, duckdb_create_table_sql
+from app.core.times import utc
 from app.engine import signin_classes
 from app.engine.guard import DEFAULT_LIMIT, MAX_LIMIT, guard
 from app.engine.lookups import Lookups, register
@@ -51,6 +52,8 @@ from app.engine.narrow import pinned_sources, pinned_templates
 ALLOWED_TABLES = frozenset({"events"})
 LAKE_FILES = "day=*/part-*.parquet"  # under each source=<id> folder
 DAY_FILES = "part-*.parquet"  # under each day=<date> folder
+VANISHED = "A file the query needed is gone; run it again"
+NO_TIME = datetime.min.replace(tzinfo=UTC)  # `_time_max` of a file with no time at all
 # Threat intel lists (ADR-0023 row 7) are readable in SQL, but never by a model: Ask's
 # previews and the MCP server run with intel=False, so feed text cannot reach a prompt.
 INTEL_TABLES = ALLOWED_TABLES | {"threat_intel"}
@@ -225,6 +228,17 @@ class QueryScope:
     sources: list[str] | None
     start: datetime | None = None
     end: datetime | None = None
+    # Of the lake files the scope reads, only these (`newest_files` listed them once):
+    # a narrower read, never a wider one. A newest-first search reads them a few at a time.
+    files: frozenset[str] | None = None
+
+    def __post_init__(self) -> None:
+        # Start and end in UTC, a time without a zone taken as UTC (`core.times`): the day
+        # folders, rollup days, and row filter all derive from these, so they agree.
+        for name in ("start", "end"):
+            value = getattr(self, name)
+            if value is not None:
+                object.__setattr__(self, name, utc(value))
 
 
 @dataclass(slots=True)
@@ -266,6 +280,7 @@ class QueryEngine:
         # Per lake file: its version and template_id ranges per row group (None: unknown).
         self._tpl_cache: dict[Path, tuple[int, list[tuple[str, str]] | None]] = {}
         self._time_cache: dict[Path, tuple[int, datetime | None]] = {}
+        self._tmax_cache: dict[Path, tuple[int, datetime | None]] = {}
         # Where a query spills when it needs more than its memory share (F46). DuckDB's
         # default is ".tmp" in the working directory, which a read-only container or a
         # sandboxed service cannot write: the query then fails instead of spilling.
@@ -361,17 +376,7 @@ class QueryEngine:
             tables = tables | ROLLUP_TABLES
         sql, params = _fast_lists(sql, params)
         guarded = guard(sql, tables, default + 1, cap + 1)
-        pinned = pinned_sources(guarded.sql, params)
-        if pinned is not None:  # read only the sources the query can use; never widen
-            keep = pinned if scope.sources is None else pinned & set(scope.sources)
-            scope = replace(scope, sources=sorted(keep))
-        templates = pinned_templates(guarded.sql, params)
-        if templates is not None:  # and only sources whose files can hold those templates
-            try:
-                held = self._holding(scope, templates, skip_days)
-            except FileNotFoundError:  # a file went while its footer was read: once more
-                held = self._holding(scope, templates, skip_days)
-            scope = replace(scope, sources=held)
+        scope = self._narrowed(guarded.sql, scope, params, skip_days)
         started = time.monotonic()
         with self._background_slot(limit_s) if background else self._slot(limit_s):
             grant = self._grant(background, large, limit_s - (time.monotonic() - started))
@@ -399,9 +404,7 @@ class QueryEngine:
                                 raise
                             if not gone:
                                 raise QueryFailedError(str(exc)) from exc
-                            failed = QueryFailedError(
-                                "A file the query needed is gone; run it again"
-                            )
+                            failed = QueryFailedError(VANISHED)
                             failed.engine_error = type(exc).__name__
                             raise failed from exc
                         log.info("query.retry_vanished_file", query=name)
@@ -412,6 +415,47 @@ class QueryEngine:
                 t = timing.current()
                 if t is not None and not background:
                     t.query(waited, time.monotonic() - started - waited)
+
+    @property
+    def default_limit(self) -> int:
+        return self._default_limit
+
+    @property
+    def timeout_s(self) -> float:
+        return self._timeout_s
+
+    def _narrowed(
+        self, sql: str, scope: QueryScope, params: Mapping[str, Any] | None, skip: Collection[str]
+    ) -> QueryScope:
+        pinned = pinned_sources(sql, params)
+        if pinned is not None:  # read only the sources the query can use; never widen
+            keep = pinned if scope.sources is None else pinned & set(scope.sources)
+            scope = replace(scope, sources=sorted(keep))
+        templates = pinned_templates(sql, params)
+        if templates is not None:  # and only sources whose files can hold those templates
+            try:
+                held = self._holding(scope, templates, skip)
+            except FileNotFoundError:  # a file went while its footer was read: once more
+                held = self._holding(scope, templates, skip)
+            scope = replace(scope, sources=held)
+        return scope
+
+    def newest_files(
+        self, sql: str, scope: QueryScope, params: Mapping[str, Any] | None = None
+    ) -> list[tuple[str, datetime | None]]:
+        """The lake files a run of `sql` in `scope` would read, listed once, each with the
+        latest `coalesce(time, time_observed)` it can hold, from its Parquet statistics
+        (cached per file version; None: unknown). Lists and footers only, no rows."""
+        sql, params = _fast_lists(sql, params)
+        guarded = guard(sql, INTEL_TABLES, self._default_limit + 1, self._max_limit + 1)
+        scope = self._narrowed(guarded.sql, scope, params, ())
+        files = self._lake_globs(self._source_dirs(scope), scope, frozenset())
+        return [(f, self._time_max(Path(f))) for f in files]
+
+    def shown_sql(self, sql: str) -> str:
+        """What a run of `sql` reports as executed: its guarded text, with its LIMIT."""
+        return _shown(guard(_fast_lists(sql, None)[0], INTEL_TABLES, self._default_limit + 1,
+                            self._max_limit + 1))  # fmt: skip
 
     def _busy(self) -> dict[str, int | None]:
         """Queries running and memory reserved now, for traces (a wait with nothing
@@ -541,15 +585,12 @@ class QueryEngine:
         if len(rows) > cap:  # a literal LIMIT just above the cap is left alone by the guard
             rows = rows[:cap]
             truncated = True
-        shown_sql = guarded.sql
-        if guarded.applied_limit is not None:
-            shown_sql = shown_sql.rsplit("LIMIT", 1)[0] + f"LIMIT {guarded.applied_limit - 1}"
         return QueryResult(
             columns=columns,
             rows=[[_json_safe(v) for v in row] for row in rows],
             truncated=truncated,
             elapsed_ms=int((time.perf_counter() - started) * 1000),
-            executed_sql=shown_sql,
+            executed_sql=_shown(guarded),
             sources=[d.name.removeprefix("source=") for d in self._source_dirs(scope)],
             rows_read=rows_read,
         )
@@ -784,6 +825,43 @@ class QueryEngine:
         self._time_cache[path] = (stamp, low)
         return low
 
+    def _time_max(self, path: Path) -> datetime | None:
+        """The latest `coalesce(time, time_observed)` a file can hold, over its row groups.
+        In a row group whose `time` has no NULL, every row sorts by its `time`, so the
+        maximum of `time` bounds it alone (old events ingested today do not count as new);
+        otherwise some rows sort by `time_observed` and the higher of both maxima bounds it.
+        None: unknown (no statistics). NO_TIME: the file holds no time at all."""
+        try:
+            stamp = path.stat().st_mtime_ns
+        except OSError:
+            return None
+        hit = self._tmax_cache.get(path)
+        if hit is not None and hit[0] == stamp:
+            return hit[1]
+        high: datetime | None = NO_TIME
+        try:
+            meta = pq.read_metadata(path)
+            names = meta.schema.names
+            cols = [names.index(c) for c in ("time", "time_observed") if c in names]
+            best = NO_TIME
+            for g in range(meta.num_row_groups):
+                group = meta.row_group(g)
+                st = group.column(cols[0]).statistics if "time" in names else None
+                timed = st is not None and st.has_min_max and st.null_count == 0
+                for i in cols[:1] if timed else cols:
+                    st = group.column(i).statistics
+                    if st is not None and st.has_min_max and isinstance(st.max, datetime):
+                        best = max(best, st.max if st.max.tzinfo else st.max.replace(tzinfo=UTC))
+                    elif st is None or st.null_count != group.num_rows:
+                        raise ValueError("no statistics")
+            high = best
+        except (OSError, ValueError, pa.ArrowException):
+            high = None
+        if len(self._tmax_cache) > 50_000:
+            self._tmax_cache.clear()
+        self._tmax_cache[path] = (stamp, high)
+        return high
+
     def first_days(self, scope: QueryScope) -> dict[str, str]:
         """Each source in scope -> its earliest day folder with files, inside the range."""
         first = scope.start.astimezone(UTC).date().isoformat() if scope.start else ""
@@ -858,6 +936,23 @@ class QueryEngine:
         first = scope.start.astimezone(UTC).date().isoformat() if scope.start else ""
         last = scope.end.astimezone(UTC).date().isoformat() if scope.end else "9999-12-31"
         out: list[str] = []
+        if scope.files is not None:
+            # Only listed files in the scope's own folders and days. One retired since it
+            # was listed is still read (it stays on disk, D183); one deleted fails the read.
+            roots = {str(d): d.name.removeprefix("source=") for d in dirs}
+            for f in scope.files:
+                p = Path(f)
+                source, folder = roots.get(str(p.parent.parent)), p.parent.name
+                day = folder.removeprefix("day=")
+                if (
+                    source is not None
+                    and folder.startswith("day=")
+                    and p.match(DAY_FILES)
+                    and first <= day <= last
+                    and f"{source}|{day}" not in skip
+                ):
+                    out.append(f)
+            return sorted(out)
         for d in dirs:
             source = d.name.removeprefix("source=")
             for day_dir in d.glob("day=*"):
@@ -1312,10 +1407,16 @@ def _split_today(
     return rest, cut
 
 
+def _shown(guarded: Any) -> str:
+    """The guarded SQL as a result reports it: with the LIMIT the caller sees."""
+    if guarded.applied_limit is None:
+        return str(guarded.sql)
+    return str(guarded.sql).rsplit("LIMIT", 1)[0] + f"LIMIT {guarded.applied_limit - 1}"
+
+
 def _ts(value: datetime) -> str:
     # Formatted from a datetime object, never from user text.
-    aware = value if value.tzinfo else value.replace(tzinfo=UTC)
-    return f"TIMESTAMPTZ '{aware.astimezone(UTC).isoformat()}'"
+    return f"TIMESTAMPTZ '{utc(value).isoformat()}'"
 
 
 def _sql_str(value: str) -> str:

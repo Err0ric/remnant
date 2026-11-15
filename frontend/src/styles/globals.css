@@ -118,3 +118,25 @@
 :root[data-copying] [data-truncate] [data-part] {
   display: inline;
 }
+
+/* The session timeline on a forced-colors display: every series is the system's text color
+   on its background, so contrast holds; types then differ by the hatch, and the notch and
+   tick rows keep showing. Set on the bar itself, so other charts that use the neutral
+   series (the Microsoft 365 trend, a quiet source's line) keep their own colors. */
+@media (forced-colors: active) {
+  [data-session-bar] {
+    --series-ice: CanvasText;
+    --series-graphite: CanvasText;
+    --series-neutral: CanvasText;
+  }
+  [data-segment],
+  [data-mark],
+  [data-tick],
+  [data-failed] {
+    forced-color-adjust: none;
+  }
+  [data-tick],
+  [data-failed] {
+    background: CanvasText !important;
+  }
+}

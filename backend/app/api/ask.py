@@ -25,6 +25,7 @@ from app.auth.users import User
 from app.core import clock
 from app.core.config import AppConfig
 from app.core.errors import AppError, ParamInvalidError, ProviderConfigError, RateLimitedError
+from app.core.times import UtcDateTime
 from app.engine.duckdb import QueryScope
 from app.engine.views import permitted_sources, scope_sources
 from app.llm import gate
@@ -56,8 +57,8 @@ class Turn(BaseModel):
 class AskRequest(BaseModel):
     question: Text
     provider_id: str | None = Field(default=None, max_length=64)
-    start: datetime | None = None
-    end: datetime | None = None
+    start: UtcDateTime | None = None
+    end: UtcDateTime | None = None
     # A filter only: intersected with the sources the caller may read, never a grant.
     sources: list[str] | None = Field(default=None, max_length=200)
     history: list[Turn] = Field(default_factory=list, max_length=3)
@@ -109,8 +110,8 @@ class AskResponse(BaseModel):
     call_ids: list[str]
     route: RouteOut | None = None
     # The time range the query reads, when the question named one.
-    start: datetime | None = None
-    end: datetime | None = None
+    start: UtcDateTime | None = None
+    end: UtcDateTime | None = None
 
 
 _running: set[str] = set()

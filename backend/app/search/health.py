@@ -147,7 +147,7 @@ def normalize(value: str) -> str:
 def _utc(value: Any) -> str:
     """'2026-10-27 09:00 UTC', for a sentence."""
     t = _parse(value)
-    return t.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC") if t else str(value)
+    return clock.utc_words(t) if t else str(value)
 
 
 def _iso_or_none(value: Any) -> str | None:

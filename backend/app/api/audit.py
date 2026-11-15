@@ -14,7 +14,6 @@ name it hides.
 
 import json
 from dataclasses import asdict
-from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Query, Request, Response
@@ -25,7 +24,7 @@ from app.ai.audit_mask import has_names, mask_detail
 from app.ai.people_view import can_view_people
 from app.api.access import client_ip, require_role
 from app.auth.users import User
-from app.core.errors import ParamInvalidError
+from app.core.times import UtcDateTime
 from app.engine.export import to_csv
 from app.meta.audit import MAX_PAGE, AuditFilter, AuditReader, AuditRow
 
@@ -82,12 +81,9 @@ class Filters:
         outcome: Annotated[
             Literal["success", "failure", "denied", "blocked"] | None, Query()
         ] = None,
-        since: datetime | None = None,
-        until: datetime | None = None,
+        since: UtcDateTime | None = None,
+        until: UtcDateTime | None = None,
     ) -> None:
-        for value in (since, until):
-            if value is not None and value.tzinfo is None:
-                raise ParamInvalidError("since and until need a time zone, for example Z")
         self.value = AuditFilter(action, user_id, outcome, since, until)
 
     def detail(self) -> dict[str, Any]:

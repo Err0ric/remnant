@@ -214,3 +214,72 @@ def test_a_change_shows_on_the_next_read_without_waiting_for_the_caches(
     assert _patch(lab, "otel_collector", 7).status_code == 200
     after, wrong_after = judged()  # no cache cleared by hand
     assert after == "healthy" and wrong_after == wrong - 1
+
+
+# --- How long a source has been quiet: from its newest dated event, not its last receipt ---
+
+
+def _dated(
+    lab: dict[str, Any], source_id: str, dated_ago: timedelta, received_ago: timedelta
+) -> None:
+    """Events dated `dated_ago` that arrived `received_ago` (a queue or an import)."""
+    from app.ingest.normalizer import Normalizer, SourceSpec
+    from app.ingest.records import DecodedLine
+
+    received = NOW - received_ago
+    norm = Normalizer(SourceSpec(source_id=source_id, format="json"), clock=lambda: received)
+    when = (NOW - dated_ago).isoformat()
+    row = norm.normalize(DecodedLine(f'{{"time": "{when}", "message": "x"}}', False, False))
+    assert row is not None
+    LakeWriter(lab["app"].state.engine._lake).write([{**row, "template_id": "generic_json"}])
+
+
+MIN = timedelta(minutes=1)
+DURATION_CASES = [
+    # (case, marked days, dated ago, received ago, condition, idle, quiet-from ago)
+    ("old and received long ago, unmarked", None, timedelta(days=2), timedelta(days=2),
+     "quiet", False, timedelta(days=2)),
+    ("old and received long ago, marked", 7, timedelta(days=2), timedelta(days=2),
+     "healthy", True, timedelta(days=2)),
+    ("old but received just now, unmarked", None, timedelta(days=2), MIN,
+     "quiet", False, timedelta(days=2)),
+    ("old but received just now, marked", 7, timedelta(days=2), MIN,
+     "healthy", True, timedelta(days=2)),
+    ("old but received just now, past a 1-day mark", 1, timedelta(days=2), MIN,
+     "quiet", False, timedelta(days=2)),
+    ("recent, unmarked", None, timedelta(hours=1), timedelta(hours=1),
+     "healthy", False, timedelta(hours=1)),
+    ("recent, marked", 7, timedelta(hours=1), timedelta(hours=1),
+     "healthy", False, timedelta(hours=1)),
+    ("never sent, unmarked", None, None, None, "quiet", False, None),
+    ("never sent, marked", 7, None, None, "quiet", False, None),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("days", "dated", "received", "cond", "is_idle", "quiet_from"),
+    [c[1:] for c in DURATION_CASES],
+    ids=[c[0] for c in DURATION_CASES],
+)
+def test_quiet_and_idle_count_from_the_newest_dated_event(
+    lab: dict[str, Any],
+    days: int | None,
+    dated: timedelta | None,
+    received: timedelta | None,
+    cond: str,
+    is_idle: bool,
+    quiet_from: timedelta | None,
+) -> None:
+    _add(lab, "otel_collector", sender="collector", quiet_ok_days=days)
+    if dated is not None and received is not None:
+        _dated(lab, "otel_collector", dated, received)
+    o = _overview(lab)
+    row = _rows(o)["otel_collector"]
+    assert (row["condition"], row["idle"]) == (cond, is_idle)
+    expect = (NOW - quiet_from).isoformat() if quiet_from is not None else None
+    assert row["newest_event_at"] == expect
+    # "Last received" stays when a record last arrived.
+    assert row["last_event_at"] == ((NOW - received).isoformat() if received else None)
+    waits = {q["source_id"]: q["last_event_at"] for q in o["source_summary"]["quiet"]}
+    if cond == "quiet":
+        assert waits["otel_collector"] == expect  # "1 quiet: otel_collector 2 d"

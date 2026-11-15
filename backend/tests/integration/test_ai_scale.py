@@ -4,7 +4,6 @@ small groups before any join. The full-size run (300k a day for 30 days) is `-m 
 
 import json
 import shutil
-import sys
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -103,17 +102,18 @@ def test_full_size_300k_a_day_for_30_days(tmp_path: Path) -> None:
         assert res.json()["top"], "AI use in the data"
 
 
-@pytest.mark.skipif(
-    sys.platform == "darwin",
-    reason="DuckDB 1.5 can crash when this query runs out of memory at 16 MB (Linux arm64:"
-    " 20% of runs on 1.5.5, 12% on 1.5.6; more on macOS); Linux CI runs it (owner, 2026-11-10)",
-)
 def test_too_little_memory_is_a_server_limit_with_its_own_code(tmp_path: Path) -> None:
     """A server-side memory limit is not a bad request: 503 with its own code, logged at
     WARN with the request id and which query it was (F63)."""
     lake = tmp_path / "lake"
     write_dns(lake, per_day=50_000, days=2, end=datetime.now(UTC))
-    c = _app(tmp_path, lake, memory_mb=16, spill=True)
+    # The budget pinned, so the disk share (overflow limit x 16 / budget) is the same on
+    # every machine: 10240 x 16 / 4096 = 40 MB. Left to detection it was 11 MB on an
+    # 18 GB Mac and 27 MB on an 8 GB Linux VM, and a small share fills the disk before
+    # memory runs out (the disk message, tested in test_memory_ledger.py).
+    pinned = {"APP__SERVER__MEMORY_LIMIT_MB": "4096", "APP__SERVER__QUERY_SPILL_LIMIT_MB": "10240"}
+    c = _app(tmp_path, lake, memory_mb=16, spill=True, env=pinned)
+    assert c.app.state.engine._spill_for(16) == 40  # type: ignore[attr-defined]  # the app under test
     start = (datetime.now(UTC) - timedelta(days=2)).isoformat()
     with capture_logs() as logs:
         res = c.get("/api/ai/usage", params={"start": start})

@@ -22,8 +22,9 @@ TOKENS = ROOT / "frontend" / "src" / "styles" / "tokens.css"
 DESIGN = ROOT / "docs" / "DESIGN.md"
 
 TEXT, MARK = 4.5, 3.0
-# Chart series (DESIGN.md section 2): the neutral and the four categorical colors.
-SERIES = ["series-neutral", "series-1", "series-2", "series-3", "series-4"]
+# Chart series (DESIGN.md section 2): the neutral, ice, and graphite. A hatched mark is the
+# same color over the surface, so its solid part is held by the same pair.
+SERIES = ["series-neutral", "series-ice", "series-graphite"]
 Color = tuple[float, float, float, float]
 
 # What text and marks sit on. A pair of names is a translucent token over its backdrop.

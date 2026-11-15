@@ -122,7 +122,13 @@ def pages() -> dict[str, list[Call]]:
             (
                 "POST",
                 "/api/query",
-                {"sql": LOGS_SQL, "params": {"p0": "%failed%"}, "start": "{start}"},
+                # The page sends the text too (newest day first); an older server ignores it.
+                {
+                    "sql": LOGS_SQL,
+                    "params": {"p0": "%failed%"},
+                    "text": "failed",
+                    "start": "{start}",
+                },
             ),
             ("POST", "/api/search/facets", {"text": "failed", "start": "{start}"}),
         ],

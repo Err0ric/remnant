@@ -1,8 +1,6 @@
 """One person under several names (ADR-0018): organization domains, aliases, and
 suggestions. Administrators only; changes audited `identity.change`. Router only."""
 
-from datetime import datetime
-
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
@@ -10,6 +8,7 @@ from starlette.concurrency import run_in_threadpool
 from app.api.access import AdminUser, client_ip
 from app.auth.service import AuthService
 from app.auth.users import User
+from app.core.times import UtcDateTime
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.search.entities import to_json
 from app.search.identity import IdentityMap, IdentityStore, suggestions
@@ -78,7 +77,7 @@ async def _audit(request: Request, user: AdminUser, detail: dict[str, object]) -
 
 @router.get("/identities")
 async def identities(
-    request: Request, user: AdminUser, start: datetime | None = None
+    request: Request, user: AdminUser, start: UtcDateTime | None = None
 ) -> IdentitiesOut:
     """Current domains and aliases, and suggestions from the events in range (all sources:
     administrators only)."""

@@ -3,7 +3,7 @@
 Runs use the caller's source scope and the caller's audit identity, never the author's.
 """
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Annotated, Any
 
 import yaml
@@ -17,6 +17,7 @@ from app.auth.service import AuthService
 from app.auth.users import User
 from app.core import clock, safeyaml
 from app.core.errors import AppError, PayloadTooLargeError, SearchInvalidError
+from app.core.times import UtcDateTime
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.engine.views import permitted_sources, scope_sources
 from app.meta.db import MetaDB
@@ -35,8 +36,8 @@ SERVER_FIELDS = ("schema_version", "owner_id", "created_at", "updated_at", "veri
 
 class RunRequest(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict, max_length=20)
-    start: datetime | None = None
-    end: datetime | None = None
+    start: UtcDateTime | None = None
+    end: UtcDateTime | None = None
     sources: list[str] | None = Field(default=None, max_length=200)
 
 

@@ -27,7 +27,8 @@ BEHIND_S = 3600  # reading more than this far behind needs attention (as Health 
 class SourceInput:
     source_id: str
     state: str  # waiting | reading | error | disabled
-    last_event_at: str | None = None
+    last_event_at: str | None = None  # last received: the longest wait
+    newest_event_at: str | None = None  # newest dated event: how long it has been quiet
     total_24h: int = 0
     gaps: int = 0  # gaps in the 24 hours
     ongoing_gap: bool = False
@@ -45,7 +46,8 @@ class SourceInput:
 @dataclass(frozen=True, slots=True)
 class Wait:
     source_id: str
-    last_event_at: str | None  # None: never sent
+    # Quiet: the newest dated event; the longest wait: last received. None: never sent.
+    last_event_at: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,14 +88,19 @@ def needing_attention(conditions: Iterable[Condition]) -> int:
     return sum(1 for c in conditions if c not in ("healthy", "paused"))
 
 
+def _quiet_from(s: SourceInput) -> str | None:
+    """What "quiet 2 d" counts from: the newest dated event, else the last received."""
+    return s.newest_event_at or s.last_event_at
+
+
 def assess(sources: list[SourceInput]) -> tuple[dict[str, Condition], SourceSummary]:
     """Each source's condition, and the one summary both pages print."""
     conditions = {s.source_id: condition(s) for s in sources}
     on = [s for s in sources if conditions[s.source_id] != "paused"]
     oldest_first = sorted(on, key=lambda s: s.last_event_at or "")
     quiet = [
-        Wait(s.source_id, s.last_event_at)
-        for s in oldest_first
+        Wait(s.source_id, _quiet_from(s))
+        for s in sorted(on, key=lambda s: _quiet_from(s) or "")
         if conditions[s.source_id] == "quiet"
     ]
     waits = [

@@ -11,6 +11,7 @@ import { RESTRICTED_NOTE } from "@/features/alerts/kinds";
 import { api, type AlertItem, type AlertLines, type Overview, type Source } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { navigate, pathFor, type PageId } from "@/lib/route";
+import { quietFrom } from "@/features/health/flow";
 import { listOf, sourceStates } from "./Attention";
 
 /** Alert rows shown after the blind rows; the rest are behind "View all", which opens Alerts. */
@@ -104,7 +105,9 @@ export function needsYouRows(
       severity: null,
       ...blindSource(s.id, s.problem, h),
       subject: { kind: "source", value: s.id },
-      at: h?.quiet_since ?? item?.created_at ?? h?.last_event_at ?? null,
+      // When it went quiet: the quiet alert, the gap alert, or else its newest dated event
+      // (not when a record last arrived: old events can arrive now).
+      at: h?.quiet_since ?? item?.created_at ?? quietFrom(h),
       // The open gap alert when there is one (close it there); otherwise the source on Health.
       page: alertId ? "alerts" : "health",
       tab: alertId ? `item=${alertId}` : `source=${encodeURIComponent(s.id)}`,

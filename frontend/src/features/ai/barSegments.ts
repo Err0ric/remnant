@@ -19,7 +19,12 @@ export interface Segment {
   failed: boolean;
   /** Steps per type, for the hover text of a slice. */
   types: Partial<Record<StepType, number>>;
+  /** Steps that reached outside the session (file access, access): any of them puts a tick
+   * under the segment, whatever type it is drawn in (D264). */
+  outside: number;
 }
+
+const OUTSIDE: ReadonlySet<StepType> = new Set(["file_access", "access"]);
 
 const typeOf = (s: SessionStep): StepType => s.type ?? "other";
 /** A failed call, by the rule the server's failed count uses: Claude Code bookkeeping
@@ -40,6 +45,7 @@ export function segments(steps: SessionStep[]): Segment[] {
       last.count += 1;
       last.ids.push(s.event_id);
       last.types[t] = (last.types[t] ?? 0) + 1;
+      last.outside += OUTSIDE.has(t) ? 1 : 0;
     } else {
       runs.push({
         type: t,
@@ -48,7 +54,9 @@ export function segments(steps: SessionStep[]): Segment[] {
         ids: [s.event_id],
         failed: isFailed(s),
         types: { [t]: 1 },
+        outside: 0,
       });
+      runs[runs.length - 1]!.outside = OUTSIDE.has(t) ? 1 : 0;
     }
   }
   if (runs.length <= MAX_SEGMENTS) return runs;
@@ -69,18 +77,70 @@ export function segments(steps: SessionStep[]): Segment[] {
       ids: part.map((s) => s.event_id),
       failed: part.some(isFailed),
       types,
+      outside: part.filter((s) => OUTSIDE.has(typeOf(s))).length,
     });
   }
   return out;
 }
 
-/** The five step types and their series colors (DESIGN.md section 2); other is a hollow
- * outline in --text-muted, never a sixth color. */
-export const TYPES: { type: StepType; label: string; fill: string }[] = [
-  { type: "prompt", label: "Prompt", fill: "bg-series-1" },
-  { type: "tool_call", label: "Tool call", fill: "bg-series-2" },
-  { type: "tool_result", label: "Tool result", fill: "bg-series-neutral" },
-  { type: "file_access", label: "File access", fill: "bg-series-3" },
-  { type: "access", label: "Access", fill: "bg-series-4" },
-  { type: "other", label: "Other", fill: "border border-text-muted" },
+export interface TypeMark {
+  type: StepType;
+  label: string;
+  /** The series token the mark is drawn in; none for other, a hollow outline. */
+  color: "series-ice" | "series-graphite" | "series-neutral" | null;
+  /** Hatched: the step reached outside the session (a file, the web, an MCP server). */
+  hatch: boolean;
+}
+
+/** The step types and their marks (DESIGN.md section 2 and 6.2b, D264): prompts ice, tool
+ * calls graphite, tool results the neutral; a file access is hatched graphite and an access
+ * hatched ice, since both reached outside the session; other is a hollow --text-muted
+ * outline. The hatch works with no color at all. */
+export const TYPES: TypeMark[] = [
+  { type: "prompt", label: "Prompt", color: "series-ice", hatch: false },
+  { type: "tool_call", label: "Tool call", color: "series-graphite", hatch: false },
+  { type: "tool_result", label: "Tool result", color: "series-neutral", hatch: false },
+  { type: "file_access", label: "File access", color: "series-graphite", hatch: true },
+  { type: "access", label: "Access", color: "series-ice", hatch: true },
+  { type: "other", label: "Other", color: null, hatch: false },
 ];
+
+export const HATCH_MEANS =
+  "Hatched: a file access or an access, the steps that reach outside the session (a file, the web, or an MCP server)";
+
+export const TICK_MEANS =
+  "Tick below: at least one step in this part of the bar reached outside the session (a file, the web, or an MCP server)";
+
+type Mark = Pick<TypeMark, "color" | "hatch">;
+
+/** How a type's mark is drawn, the same in the bar and the legend, always as an inline
+ * background from the series variable (never a generated class the build may not emit).
+ * A hatched mark is solid in its top half and diagonal stripes in its bottom half, so it
+ * differs from its solid sibling at every width. `print-color-adjust: exact` keeps the fills
+ * when printed (browsers drop backgrounds by default). On a forced-colors display the series
+ * variables become CanvasText (globals.css), so the marks keep system contrast and differ by
+ * the hatch and the tick only. Other is a hollow outline. */
+export function markStyle(t: Mark): { className: string; style: Record<string, string> } {
+  if (t.color === null) return { className: "border border-text-muted", style: {} };
+  const c = `var(--${t.color})`;
+  return {
+    className: "",
+    style: {
+      printColorAdjust: "exact",
+      WebkitPrintColorAdjust: "exact",
+      background: t.hatch
+        ? `linear-gradient(${c}, ${c}) top / 100% 50% no-repeat, repeating-linear-gradient(135deg, ${c} 0 1.5px, transparent 1.5px 4px)`
+        : c,
+    },
+  };
+}
+
+export const markOf = (type: StepType): TypeMark => TYPES.find((t) => t.type === type) ?? TYPES[5]!;
+
+/** A segment is drawn exactly as the legend shows its type (a slice: its majority type),
+ * nothing else; whether anything in it reached outside is the tick's to say. */
+export const segmentMark = (seg: Segment): Mark => markOf(seg.type);
+
+/** The tick under a segment: at least one of its steps reached outside the session, for a
+ * slice whatever its majority type, and for a run of file accesses or accesses alike. */
+export const hasTick = (seg: Segment): boolean => seg.outside > 0;

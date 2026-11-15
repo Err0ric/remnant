@@ -3,7 +3,14 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { needsYouRows } from "@/features/dashboard/NeedsYou";
-import { idleText, shownGaps, sourcesSummaryText } from "@/features/health/flow";
+import {
+  idleText,
+  openGaps,
+  quietFrom,
+  quietWord,
+  shownGaps,
+  sourcesSummaryText,
+} from "@/features/health/flow";
 import { SourceFlow, type FlowSource } from "@/features/health/SourceFlow";
 import { QuietOkEditor } from "@/features/sources/QuietOkEditor";
 import type { Overview } from "@/lib/api";
@@ -201,5 +208,41 @@ describe("Quiet is normal (D260): a source with a quiet alert on", () => {
     unmount();
     editor({ value: 7 });
     expect(document.querySelector("[data-quiet-alert-note]")).toBeNull();
+  });
+});
+
+describe("How long a source has been quiet: from its newest dated event", () => {
+  const AGO = (s: number) => new Date(Date.parse(NOW) - s * 1000).toISOString();
+  const CASES: [string, string | null, string | null, string | null][] = [
+    // case, newest dated event, last received, what Quiet and Idle say
+    ["old, received long ago", AGO(2 * 86400), AGO(2 * 86400), "quiet 2 d"],
+    ["old, received just now (a queue or an import)", AGO(2 * 86400), AGO(60), "quiet 2 d"],
+    ["recent", AGO(3600), AGO(3600), "quiet 60 min"],
+    ["never sent", null, null, "never sent"],
+  ];
+  it.each(CASES)("%s", (_case, newest, received, word) => {
+    const h = { newest_event_at: newest, last_event_at: received };
+    expect(quietWord(quietFrom(h), NOW)).toBe(word);
+    if (newest) expect(idleText(quietFrom(h), NOW)).toMatch(/^No events for (2 d|60 min) \(/);
+  });
+
+  it("names the gap by the newest event too", () => {
+    const o = {
+      generated_at: NOW,
+      sources: [
+        {
+          source_id: "collector_unmarked",
+          gap_alert: "g1",
+          newest_event_at: AGO(2 * 86400),
+          last_event_at: AGO(25),
+        },
+      ],
+    } as unknown as Overview;
+    expect(openGaps(o)).toEqual([{ source_id: "collector_unmarked", item_id: "g1", quiet: "2 d" }]);
+  });
+
+  it("falls back to the last received time from a server that sends no dated time", () => {
+    expect(quietFrom({ last_event_at: AGO(60) } as never)).toBe(AGO(60));
+    expect(quietFrom(undefined)).toBeNull();
   });
 });

@@ -1,3 +1,4 @@
+import { quietFrom } from "@/features/health/flow";
 import { Skeleton } from "@/components/Skeleton";
 import { ChangePill } from "@/components/ChangePill";
 import { useQuery } from "@tanstack/react-query";
@@ -92,10 +93,12 @@ export function AiWatch({ days = 7, isAdmin = false }: { days?: number; isAdmin?
   const used = s.chart.some((d) => d.approved + d.unreviewed + d.not_approved > 0);
   if (!used && !s.cards.some((c) => (c.value ?? 0) > 0)) return null;
   const shown = s.cards.filter((c) => !c.needs);
-  // The newest event of the sources AI Watch read: the chart shades the days after it.
+  // The newest event of the sources AI Watch read, by its own date (never when a record
+  // arrived: a queue or an import delivers old events now): the chart says no data after it.
   const lasts = (overview.data?.sources ?? [])
-    .filter((x) => s.sources.includes(x.source_id) && x.last_event_at)
-    .map((x) => x.last_event_at as string);
+    .filter((x) => s.sources.includes(x.source_id))
+    .map((x) => quietFrom(x))
+    .filter((t): t is string => Boolean(t));
   const dataUntil = lasts.length ? (lasts.sort().slice(-1)[0] ?? null) : null;
   const missing = s.cards.filter((c) => c.needs);
   return (

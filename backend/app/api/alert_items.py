@@ -25,6 +25,7 @@ from app.api.access import AdminUser, CurrentUser, client_ip, require_role
 from app.auth.users import User
 from app.core import clock
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError, ParamInvalidError
+from app.core.times import UtcDateTime, zoned
 from app.engine.views import permitted_sources
 
 router = APIRouter(tags=["alerts"])
@@ -369,7 +370,7 @@ def _unreviewed(request: Request, item: AlertItem) -> bool:
 
 def _aware(at: datetime | None) -> datetime | None:
     """A time from the address; one with no offset is read as UTC."""
-    return at if at is None or at.tzinfo else at.replace(tzinfo=UTC)
+    return None if at is None else zoned(at)
 
 
 def _list(
@@ -443,8 +444,8 @@ async def list_alerts(
     state: Annotated[State, Query()] = "open",
     unreviewed: Annotated[bool, Query()] = False,
     person: Annotated[str | None, Query(max_length=256)] = None,
-    closed_from: Annotated[datetime | None, Query()] = None,
-    closed_to: Annotated[datetime | None, Query()] = None,
+    closed_from: Annotated[UtcDateTime | None, Query()] = None,
+    closed_to: Annotated[UtcDateTime | None, Query()] = None,
 ) -> ListOut:
     """The viewer's alerts, newest first: open by default, or closed, or all. Closed ones
     are newest closed first, and `closed_from` and `closed_to` keep those closed in that
@@ -561,8 +562,8 @@ def _metrics(request: Request, user: User, start: datetime, end: datetime) -> Me
 async def alert_metrics(
     request: Request,
     user: CurrentUser,
-    start: Annotated[datetime | None, Query()] = None,
-    end: Annotated[datetime | None, Query()] = None,
+    start: Annotated[UtcDateTime | None, Query()] = None,
+    end: Annotated[UtcDateTime | None, Query()] = None,
 ) -> MetricsOut:
     """How alerts are handled (Alerts > Handling, D261), over a range of at most 366 days
     (`end` defaults to now; `start` to 30 days before `end`) and now. Only alerts the viewer
@@ -718,8 +719,8 @@ def _audit_view(
 async def list_mutes(
     request: Request,
     user: CurrentUser,
-    since: Annotated[datetime | None, Query(alias="from")] = None,
-    before: Annotated[datetime | None, Query(alias="to")] = None,
+    since: Annotated[UtcDateTime | None, Query(alias="from")] = None,
+    before: Annotated[UtcDateTime | None, Query(alias="to")] = None,
     ended: Annotated[bool, Query()] = False,
 ) -> list[MuteOut]:
     """Active mutes, soonest to expire first. Everyone may see what is muted. With `ended`

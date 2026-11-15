@@ -16,6 +16,7 @@ from app.api.query import QueryRequest, QueryResponse, _geo, _intel, _run_audite
 from app.core import clock
 from app.core.errors import ParamInvalidError
 from app.core.ids import AUTO_PARSER
+from app.core.times import UtcDateTime
 from app.enrich import networks
 from app.search import m365
 from app.search.person_record import m365_sql
@@ -103,8 +104,8 @@ async def m365_list(
     request: Request,
     user: CurrentUser,
     name: Annotated[str, Query(max_length=32)],
-    start: datetime,
-    end: datetime,
+    start: UtcDateTime,
+    end: UtcDateTime,
     cls: Annotated[str | None, Query(max_length=32)] = None,
     mode: Annotated[str | None, Query(max_length=32)] = None,
 ) -> QueryResponse:

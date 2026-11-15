@@ -7,7 +7,7 @@ import asyncio
 import json
 import time
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Query, Request, Response, status
@@ -20,6 +20,7 @@ from app.auth.service import AuthService
 from app.auth.users import User
 from app.core import clock
 from app.core.errors import AppError, NotFoundError
+from app.core.times import UtcDateTime, utc
 from app.engine.duckdb import QueryEngine
 from app.engine.views import permitted_sources, scope_sources
 from app.search import live as lv
@@ -71,7 +72,7 @@ async def live(
     q: Annotated[str, Query(min_length=1, max_length=MAX_SQL)],
     client: lv.Client = "browser",
     sources: Annotated[list[str] | None, Query(max_length=200)] = None,
-    since: datetime | None = None,
+    since: UtcDateTime | None = None,
     after: Annotated[list[str] | None, Query(max_length=1000)] = None,
     fill_minutes: Annotated[int, Query(ge=0, le=60)] = 0,
 ) -> StreamingResponse:
@@ -91,7 +92,7 @@ async def live(
     resumed = since is not None
     start = now - timedelta(minutes=fill_minutes)
     cursor = lv.Cursor(
-        (since if since.tzinfo else since.replace(tzinfo=UTC)).astimezone(UTC) if since else start,
+        utc(since) if since else start,
         set(after or []),
     )
     kinds = {s.source_id: s.kind or "file" for s in request.app.state.sources.list()}

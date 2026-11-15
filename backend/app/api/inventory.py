@@ -11,6 +11,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.api.access import CurrentUser, client_ip
 from app.auth.service import AuthService
+from app.core.times import UtcDateTime
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.engine.views import permitted_sources
 from app.ingest.sources import SourceStore
@@ -94,8 +95,8 @@ async def matches(
     request: Request,
     user: CurrentUser,
     value: Annotated[list[str], Query(min_length=1, max_length=MAX_VALUES)],
-    start: datetime | None = None,
-    end: datetime | None = None,
+    start: UtcDateTime | None = None,
+    end: UtcDateTime | None = None,
 ) -> MatchesOut:
     """The Proxmox guests that held each IP, MAC, or host name (exact matches only)."""
     first, last = _window(request, start, end)
@@ -118,8 +119,8 @@ async def address_coverage(
     request: Request,
     user: CurrentUser,
     value: str = Query(min_length=1, max_length=256),
-    start: datetime | None = None,
-    end: datetime | None = None,
+    start: UtcDateTime | None = None,
+    end: UtcDateTime | None = None,
 ) -> CoverageOut:
     """For an address with no events: per category of the caller's sources, what was
     searched and whether each source could have recorded it (ADR-0045 B2 to B4)."""

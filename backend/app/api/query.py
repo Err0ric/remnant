@@ -1,5 +1,6 @@
 """POST /api/query: run guarded SQL against the caller's events view. Router only."""
 
+import math
 import re
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -14,6 +15,7 @@ from app.auth.service import AuthService
 from app.auth.users import User
 from app.core import clock
 from app.core.errors import AppError, ParamInvalidError, SearchInvalidError
+from app.core.times import UtcDateTime
 from app.engine.duckdb import QueryEngine, QueryResult, QueryScope
 from app.engine.export import to_csv
 from app.engine.views import permitted_sources, scope_sources
@@ -21,6 +23,7 @@ from app.enrich.geoip import GeoIP
 from app.enrich.intel import ThreatIntel
 from app.meta.db import MetaDB
 from app.search.identity import identity_values
+from app.search.newest import newest_first
 from app.search.params import IDENTITY_PARAMS, RESERVED, compile_sql, placeholders
 from app.search.presets import presets
 from app.search.refine import refine_sql
@@ -32,8 +35,8 @@ Scalar = Annotated[str, StringConstraints(max_length=2048)] | int | float | bool
 
 class QueryRequest(BaseModel):
     sql: str = Field(min_length=1, max_length=20_000)
-    start: datetime | None = None
-    end: datetime | None = None
+    start: UtcDateTime | None = None
+    end: UtcDateTime | None = None
     # A filter only: intersected with the sources the caller may read, never a grant.
     sources: list[str] | None = Field(default=None, max_length=200)
     # Values for $name placeholders (Simple search sends these). Bound by the driver,
@@ -41,6 +44,10 @@ class QueryRequest(BaseModel):
     params: dict[Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]{0,30}$")], Scalar] = (
         Field(default_factory=dict, max_length=100)
     )
+    # The Simple search text `sql` and `params` were compiled from, when they were: the
+    # newest events are then read newest day first (`search/newest.py`), with the same
+    # answer. Used only when the text compiles to exactly this SQL and these values.
+    text: str | None = Field(default=None, max_length=MAX_TEXT)
 
 
 class GeoOut(BaseModel):
@@ -121,6 +128,33 @@ async def _identities(request: Request, sql: str, scope: QueryScope, user: User)
     )
 
 
+def _simple_text(body: QueryRequest) -> str | None:
+    """The request's Simple search text when its SQL and values are exactly what the text
+    compiles to (server-built, newest first); otherwise None and the SQL runs as written."""
+    if body.text is None:
+        return None
+    try:
+        compiled = compile_search(body.text)
+    except SearchInvalidError:
+        return None
+
+    same = compiled.sql == body.sql and compiled.params.keys() == body.params.keys()
+    same = same and all(_same_value(v, body.params[k]) for k, v in compiled.params.items())
+    return body.text if same else None
+
+
+def _same_value(ours: Any, posted: Any) -> bool:
+    """A compiled value and the one the browser posted back after a JSON round trip: the
+    same number counts once as int and once as float (100.0 arrives as 100); strings stay
+    strings, a bool is never a number, and NaN or an infinity never matches. The search
+    then runs with the compiled values, which equal what was posted."""
+    if isinstance(ours, bool) or isinstance(posted, bool):
+        return type(ours) is type(posted) and ours == posted
+    if isinstance(ours, int | float) and isinstance(posted, int | float):
+        return math.isfinite(ours) and math.isfinite(posted) and ours == posted
+    return type(ours) is type(posted) and ours == posted
+
+
 async def _run_audited(
     body: QueryRequest,
     request: Request,
@@ -145,10 +179,15 @@ async def _run_audited(
     }
     ids = await _identities(request, body.sql, scope, user)
     sql, values = _placeholders(body.sql, body.params, body.start, body.end, ids)
+    text = _simple_text(body)
+
+    def read() -> QueryResult:
+        if text is not None:  # one search, one audit row, however many reads
+            return newest_first(engine, text, scope, name=action)
+        return engine.run(sql, scope, values or None, name=action, large=True)
+
     try:
-        result = await run_in_threadpool(
-            lambda: engine.run(sql, scope, values or None, name=action, large=True)
-        )
+        result = await run_in_threadpool(read)
     except AppError as exc:
         detail["error"] = type(exc).__name__
         await run_in_threadpool(
@@ -244,8 +283,8 @@ class FacetRequest(BaseModel):
         Field(default_factory=dict, max_length=100)
     )
     columns: list[str] = Field(default_factory=list, max_length=200)
-    start: datetime | None = None
-    end: datetime | None = None
+    start: UtcDateTime | None = None
+    end: UtcDateTime | None = None
     sources: list[str] | None = Field(default=None, max_length=200)
 
 
