@@ -15,7 +15,7 @@ make demo           # synthetic demo install on http://127.0.0.1:8090 (build the
 
 The demo turns on `enrichment.place_documentation_ranges` so its GeoIP file can place documentation addresses (D157). Never set it on a real install.
 
-`scripts/screenshots/capture.py` takes the README screenshots from a running demo (Python Playwright with Chromium) and `scripts/screenshots/social.py` builds `docs/images/social-preview.png` (upload it under the repository's Settings > Social preview). Ask and Explain are answered by `scripts/screenshots/stand_in_model.py`, a scripted stand-in that is not an LLM, added as a provider named "Scripted demo model (not an LLM)".
+`scripts/screenshots/capture.py` takes the README screenshots from a running demo (Python Playwright with Chromium), each page in the dark theme as `<name>.png` and in the light theme as `<name>-light.png`, and stops with the shot's name when a page does not draw; run it from `backend/` with `uv run python ../scripts/screenshots/capture.py`. Then `scripts/screenshots/social.py` builds `docs/images/social-preview.png` (upload it under the repository's Settings > Social preview). Ask AI and Explain are answered by `scripts/screenshots/stand_in_model.py`, a scripted stand-in that is not an LLM, added as a provider named "Scripted demo model (not an LLM)".
 
 ## Command line
 

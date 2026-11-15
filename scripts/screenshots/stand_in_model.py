@@ -8,6 +8,8 @@ for Ask and Explain on the demo data (`make demo`):
 
 - Ask: always answers the same question (QUESTION below) with the same SQL, so the page
   shows a real round trip through the gate, the guard, the preview, and Run.
+- Ask's answer: reads the rows of that query (under the `data` key) and states what they
+  show, citing the event ids of the rows it is about.
 - Explain: reads the events it was sent (under the `data` key, as every provider gets
   them) and states counts with the event ids it was given, so the citation check passes
   on real ids. It never invents an id.
@@ -33,7 +35,7 @@ WHERE source_id = 'm365_signin'
   AND src_endpoint_ip IN (SELECT src_endpoint_ip FROM events
                           WHERE source_id = 'linux_sshd' AND status_id = 2)
 ORDER BY status_id, time DESC
-LIMIT 50"""
+LIMIT 6"""
 ASK = {
     "sql": SQL,
     "explanation": (
@@ -93,6 +95,35 @@ def explain(events: list[dict[str, Any]]) -> dict[str, Any]:
     return {"claims": claims[:6] or [{"text": f"{len(events)} events.", "event_ids": [str(events[0]["event_id"])]}]}  # fmt: skip
 
 
+def summarize(messages: list[dict[str, Any]]) -> dict[str, Any]:
+    """Ask's answer step: statements about the rows of SQL above, citing their event ids."""
+    data: dict[str, Any] = {}
+    for m in messages:
+        try:
+            body = json.loads(m.get("content") or "")
+        except (ValueError, TypeError):
+            continue
+        if isinstance(body, dict) and isinstance(body.get("data"), dict):
+            data = body["data"]
+    cols = [str(c) for c in data.get("columns") or []]
+    rows = [dict(zip(cols, r, strict=False)) for r in data.get("rows") or [] if isinstance(r, list)]
+    claims = []
+    for r in [r for r in rows if r.get("status_id") == 1][:2]:
+        who, ip = r.get("actor_user_name"), r.get("src_endpoint_ip")
+        text = f"{who} signed in to Microsoft 365 from {ip}, an address that also failed SSH"
+        text += " passwords."
+        claims.append({"text": text, "event_ids": [str(r["event_id"])]})
+    failed = [r for r in rows if r.get("status_id") == 2]
+    if failed:
+        users = Counter(str(r.get("actor_user_name")) for r in failed)
+        ips = list(Counter(str(r.get("src_endpoint_ip")) for r in failed))
+        named = ", ".join(ips) if len(ips) <= 5 else "including " + ", ".join(ips[:3])
+        text = f"{len(failed)} failed Microsoft 365 sign-ins from {len(ips)} addresses that also"
+        text += f" failed SSH passwords ({named}) tried {len(users)} accounts."
+        claims.append({"text": text, "event_ids": [str(r["event_id"]) for r in failed]})
+    return {"claims": claims}
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, body: dict[str, Any]) -> None:
         data = json.dumps(body).encode()
@@ -112,7 +143,12 @@ class Handler(BaseHTTPRequestHandler):
             str(m.get("content")) for m in messages if m.get("role") == "system"
         ).lower()
         events = events_in(messages)
-        answer = ASK if "sql query" in system else explain(events)
+        if "sql query" in system:
+            answer = ASK
+        elif "summarize the result of a query" in system:
+            answer = summarize(messages)
+        else:
+            answer = explain(events)
         self._send({
             "id": "demo", "object": "chat.completion", "model": MODEL,
             "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": json.dumps(answer)}}],

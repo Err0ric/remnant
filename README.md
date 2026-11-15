@@ -52,16 +52,22 @@ All screenshots come from the demo install below: two weeks of made-up logs for 
 
 | | |
 |---|---|
-| ![Dashboard: AI Watch, top AI services, and Microsoft 365 identity signals](docs/images/dashboard.png) | ![Ask: a plain-English question, the SQL written for it, and an explanation citing event ids](docs/images/ask.png) |
-| **Dashboard.** AI Watch, AI use by review status, and Microsoft 365 signals, each against the week before | **Ask.** A question in plain English, the SQL shown before it runs, and an explanation whose every claim cites events that were sent (here a scripted stand-in, labeled as one, answers instead of a model) |
-| ![Search for failed SSH passwords from one range](docs/images/search.png) | ![Microsoft 365 Admin: role, policy, credential, and user changes first; sync cycles grouped](docs/images/m365-admin.png) |
-| **Search.** `sshd "failed password" src_ip:203.0.113.*` with field counts beside the results | **Microsoft 365 > Admin.** Role, policy, credential, and user changes first, routine updates hidden, directory sync grouped per day |
-| ![AI usage: AI services seen in network logs, with review status](docs/images/ai-usage.png) | ![Agents: Claude Code per person and a session step by step](docs/images/agents.png) |
-| **AI usage.** Services from DNS, firewall, and proxy logs, matched against the catalog, with who uses them | **Agents.** Claude Code per person and machine, and one session step by step, including a not approved MCP server |
-| ![Health: every source flowing, with per-hour lines](docs/images/health.png) | ![Command palette searching for a person](docs/images/command-palette.png) |
-| **Health.** Every source, connector, agent, and alert target, with gaps shaded | **Ctrl+K** goes to any page, person, saved search, or source |
-| ![Dashboard in the light theme](docs/images/dashboard-light.png) | |
-| A complete light theme as well as dark | |
+| ![Dashboard: alerts that need you, AI Watch, top AI services, and Microsoft 365 identity signals](docs/images/dashboard.png) | ![Ask AI: a question in plain English, a summary citing event ids, the rows, and the SQL written for it](docs/images/ask.png) |
+| **Dashboard.** What needs you, AI Watch, AI use by review status, and Microsoft 365 signals, each against the week before | **Ask AI.** A question in plain English, statements that each cite the rows they are about, the rows, and the SQL under How I got this (here a scripted stand-in, labeled as one, answers instead of a model) |
+| ![Logs: a search for failed SSH passwords from one range, with field counts and one event open](docs/images/search.png) | ![Logs, Microsoft 365 admin view: role, credential, policy, and user changes first; sync cycles grouped per day](docs/images/m365-admin.png) |
+| **Logs.** `sshd "failed password" src_ip:203.0.113.*` over 7 days, with field counts beside the results and one event open | **Logs > Views > Microsoft 365 admin.** Role, credential, policy, and user changes first, routine updates hidden, directory sync grouped per day |
+| ![AI usage: AI services seen in network logs, with review status](docs/images/ai-usage.png) | ![Agents: Claude Code sessions, with one session open step by step](docs/images/agents.png) |
+| **AI usage.** Services from DNS, firewall, and proxy logs, matched against the catalog, with who uses them | **Agents > Sessions.** Claude Code sessions per person and machine, and one open beside the list: its numbers, its timeline, and every step |
+| ![Health: every source flowing or not, with per-hour lines and gaps shaded](docs/images/health.png) | ![Command palette searching for a person](docs/images/command-palette.png) |
+| **Health.** Every source with its per-hour line, gaps shaded, and alert delivery | **Ctrl+K** goes to any page, person, saved search, or source |
+
+Light theme:
+
+| | | |
+|---|---|---|
+| ![Dashboard in the light theme](docs/images/dashboard-light.png) | ![Ask AI in the light theme](docs/images/ask-light.png) | ![Logs search in the light theme](docs/images/search-light.png) |
+| ![Microsoft 365 admin view of Logs in the light theme](docs/images/m365-admin-light.png) | ![AI usage in the light theme](docs/images/ai-usage-light.png) | ![Agents sessions in the light theme](docs/images/agents-light.png) |
+| ![Health in the light theme](docs/images/health-light.png) | ![Command palette in the light theme](docs/images/command-palette-light.png) | |
 
 ## Try the demo
 
