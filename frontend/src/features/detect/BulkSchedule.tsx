@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { ApiError, api, type SigmaRule } from "@/lib/api";
+import { Select } from "@/components/forms/Select";
 
 interface BulkScheduleProps {
   rules: SigmaRule[];
@@ -80,7 +81,6 @@ export function BulkSchedule({ rules, onDone }: BulkScheduleProps) {
     if (panels) await client.invalidateQueries({ queryKey: ["dashboards"] });
   };
 
-  const input = "h-8 rounded border border-border bg-inset px-2";
   if (done)
     return (
       <section
@@ -140,23 +140,19 @@ export function BulkSchedule({ rules, onDone }: BulkScheduleProps) {
       <div className="flex flex-wrap gap-4">
         <label className="flex flex-col gap-1">
           <span className="text-text-secondary">How often</span>
-          <select className={input} value={cron} onChange={(e) => setCron(e.target.value)}>
-            {HOW_OFTEN.map((o) => (
-              <option key={o.cron} value={o.cron}>
-                {o.label}
-              </option>
-            ))}
-          </select>
+          <Select
+            value={cron}
+            onChange={setCron}
+            options={HOW_OFTEN.map((o) => ({ value: o.cron, label: o.label }))}
+          />
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-text-secondary">Each run looks at</span>
-          <select className={input} value={lookback} onChange={(e) => setLookback(e.target.value)}>
-            {RANGES.map((r) => (
-              <option key={r.value} value={r.value}>
-                {r.label}
-              </option>
-            ))}
-          </select>
+          <Select
+            value={lookback}
+            onChange={setLookback}
+            options={RANGES.map((r) => ({ value: r.value, label: r.label }))}
+          />
         </label>
       </div>
       <fieldset className="flex flex-col gap-1">

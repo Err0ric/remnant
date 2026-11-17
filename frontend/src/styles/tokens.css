@@ -10,6 +10,7 @@
   --surface-head: #13161a;
   --surface-expand: #14171c;
   --inset: #0a0b0e;
+  --empty-fill: #1c2027;
   --border: #1f242b;
   --border-strong: #2e353f;
   --border-control: #5f6977;
@@ -57,6 +58,7 @@
   --surface-head: #f4f5f7;
   --surface-expand: #f5f8fe;
   --inset: #f1f2f4;
+  --empty-fill: #eceef1;
   --border: #e4e6ea;
   --border-strong: #c9cdd4;
   --border-control: #808896;
@@ -99,6 +101,7 @@
   --radius-badge: 3px;
   --row-h: 34px;
   --rail-row-h: 32px;
+  --rail-tab-h: 28px;
   --fs-data: 13px;
   --fs-base: 14px;
   --lh-base: 20px;
@@ -113,6 +116,7 @@
 :root[data-density="compact"] {
   --row-h: 30px;
   --rail-row-h: 28px;
+  --rail-tab-h: 24px;
   --fs-data: 12px;
   --fs-base: 13px;
   --lh-base: 18px;

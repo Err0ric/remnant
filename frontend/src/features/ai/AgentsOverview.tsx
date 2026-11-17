@@ -1,4 +1,3 @@
-import { lastDays } from "@/lib/timeWindow";
 import { Skeleton } from "@/components/Skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { COUNTED } from "@/features/dashboard/counted";
@@ -13,28 +12,29 @@ import { DrillScope, DRILL, Kpi, useDrill } from "@/features/dashboard/Sections"
 import { compareLine } from "@/features/dashboard/History";
 import { since, stamp } from "@/features/overview/time";
 import { StatusBadge } from "./StatusBadge";
+import type { AgentWindow } from "./agentWindow";
 
 /** The numbers behind the Agents page for a number of days back from now, from the hooks
  * plugin: shared by the strip on Sessions and the tool rows of MCP servers. */
-export function useAgentsOverview(days: number) {
+export function useAgentsOverview(win: AgentWindow, enabled = true) {
   return useQuery({
-    queryKey: ["agents-overview", days],
-    queryFn: () => api.agentsOverview(days),
+    queryKey: ["agents-overview", ...win.key],
+    queryFn: () => api.agentsOverview(win.days, win.bounds()),
     refetchInterval: 300_000,
+    enabled,
   });
 }
 
 interface AgentsKpisProps {
-  /** Whole days back from now, from the page's time choice. */
-  days: number;
-  /** "previous 7 days": what the changes are against. */
-  before: string;
+  /** The page's time, exactly (PR 639 review). */
+  win: AgentWindow;
 }
 
 /** The KPI strip on Agents > Sessions (ADR-0052 section 3.3; it was the Overview tab):
  * six numbers for the page's time, each opening its rows in Logs (ADR-0039). */
-export function AgentsKpis({ days, before }: AgentsKpisProps) {
-  const q = useAgentsOverview(days);
+export function AgentsKpis({ win }: AgentsKpisProps) {
+  const before = win.before;
+  const q = useAgentsOverview(win);
   const d = q.data;
   if (q.isLoading) return <Skeleton label="the agents numbers" block="h-24" />;
   if (q.isError && !d)
@@ -61,7 +61,7 @@ export function AgentsKpis({ days, before }: AgentsKpisProps) {
   return (
     <DrillScope bounds={d} area="Agents > Sessions" history={d.history} before={before}>
       <span className="text-sm text-text-muted">
-        {lastDays(days)}. {compareLine(d.history.compared, d.history.since, before)}
+        {win.words}. {compareLine(d.history.compared, d.history.starts, before)}
       </span>
       <Overview d={d} />
     </DrillScope>
@@ -69,8 +69,7 @@ export function AgentsKpis({ days, before }: AgentsKpisProps) {
 }
 
 interface ToolRowsProps {
-  days: number;
-  before: string;
+  win: AgentWindow;
   /** The tools to list: one MCP server's row, or the built-in tools. */
   pick: (t: AgentTool) => boolean;
   label: string;
@@ -78,8 +77,9 @@ interface ToolRowsProps {
 
 /** The tool rows under a row of MCP servers (ADR-0052 section 3.3; they were the Tools
  * tab): people, devices, calls, failures, and when seen, each opening its events. */
-export function ToolRows({ days, before, pick, label }: ToolRowsProps) {
-  const q = useAgentsOverview(days);
+export function ToolRows({ win, pick, label }: ToolRowsProps) {
+  const before = win.before;
+  const q = useAgentsOverview(win);
   const d = q.data;
   const now = new Date().toISOString();
   if (q.isLoading) return <Skeleton label={label} rows={2} className="rounded-none border-0" />;
@@ -94,10 +94,10 @@ export function ToolRows({ days, before, pick, label }: ToolRowsProps) {
     );
   const rows = (d?.tools ?? []).filter(pick);
   if (!d || rows.length === 0)
-    return <EmptyState kind="default-empty" title={`No tool calls. ${lastDays(days)}.`} />;
+    return <EmptyState kind="default-empty" title={`No tool calls. ${win.words}.`} />;
   return (
     <DrillScope bounds={d} area="Agents > MCP servers" history={d.history} before={before}>
-      <p className="px-3 pt-2 text-sm text-text-muted">{lastDays(days)}.</p>
+      <p className="px-3 pt-2 text-sm text-text-muted">{win.words}.</p>
       <table aria-label={label} className="w-full text-sm">
         <thead>
           <tr className="border-b border-border text-left text-text-secondary">
@@ -124,13 +124,8 @@ export function ToolRows({ days, before, pick, label }: ToolRowsProps) {
 
 /** How many built-in tools were called, for the group row; null until known. Asked only
  * where the row shows. */
-export function useBuiltInCount(days: number, enabled: boolean): number | null {
-  const q = useQuery({
-    queryKey: ["agents-overview", days],
-    queryFn: () => api.agentsOverview(days),
-    refetchInterval: 300_000,
-    enabled,
-  });
+export function useBuiltInCount(win: AgentWindow, enabled: boolean): number | null {
+  const q = useAgentsOverview(win, enabled);
   return q.data ? q.data.tools.filter((t) => !t.mcp).length : null;
 }
 

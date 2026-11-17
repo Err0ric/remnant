@@ -25,7 +25,7 @@ describe("Can't reach the server (F40)", () => {
     fetchMock.mockImplementationOnce(() => Promise.reject(new TypeError("Failed to fetch")));
     await act(() => api.searches().catch(() => undefined));
     expect(screen.getByRole("alert")).toHaveTextContent(
-      /Can't reach the server\s*Showing data from \d\d:\d\d\. Retrying in the background\./,
+      /Can't reach the server\s*Showing data from [A-Z][a-z]{2} \d{1,2}, \d{1,2}:\d\d [AP]M\. Retrying in the background\./,
     );
     fetchMock.mockImplementationOnce(() => respond(200, []));
     await act(() => api.searches());

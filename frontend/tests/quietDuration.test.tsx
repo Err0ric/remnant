@@ -112,11 +112,11 @@ describe("Quiet durations on the pages count from the newest dated event", () =>
     expect(await screen.findByText(/1 quiet: collector_unmarked 2 d/)).toBeInTheDocument();
   });
 
-  it("Sources says Idle: No events for 2 d", async () => {
+  it("Sources says Idle and No events for 2 d, as Health does", async () => {
     await renderAt("/sources");
-    expect(
-      await screen.findByText("Idle: No events for 2 d (normal for this source)"),
-    ).toBeInTheDocument();
+    const row = (await screen.findByText("collector_marked")).closest("tr") as HTMLElement;
+    expect(await within(row).findByText("Idle")).toBeInTheDocument();
+    expect(within(row).getByText("No events for 2 d (normal for this source)")).toBeVisible();
     expect(screen.queryByText(/No events for 25 s/)).toBeNull();
   });
 

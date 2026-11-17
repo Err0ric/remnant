@@ -47,7 +47,7 @@ from app.engine import signin_classes
 from app.engine.guard import DEFAULT_LIMIT, MAX_LIMIT, guard
 from app.engine.lookups import Lookups, register
 from app.engine.memory import Grant, MemoryLedger
-from app.engine.narrow import pinned_sources, pinned_templates
+from app.engine.narrow import pinned_reads, pinned_sources
 
 ALLOWED_TABLES = frozenset({"events"})
 LAKE_FILES = "day=*/part-*.parquet"  # under each source=<id> folder
@@ -277,8 +277,9 @@ class QueryEngine:
             "m365_rollup": (m365_rollup_dir, M365_ROLLUP_COLUMNS)
         }
         self._columns_cache: dict[tuple[str, int], frozenset[str]] = {}
-        # Per lake file: its version and template_id ranges per row group (None: unknown).
-        self._tpl_cache: dict[Path, tuple[int, list[tuple[str, str]] | None]] = {}
+        # Per lake file and column (template_id, class_uid): its version and the column's
+        # ranges per row group (None: unknown).
+        self._tpl_cache: dict[tuple[Path, str], tuple[int, list[tuple[Any, Any]] | None]] = {}
         self._time_cache: dict[Path, tuple[int, datetime | None]] = {}
         self._tmax_cache: dict[Path, tuple[int, datetime | None]] = {}
         # Where a query spills when it needs more than its memory share (F46). DuckDB's
@@ -431,12 +432,12 @@ class QueryEngine:
         if pinned is not None:  # read only the sources the query can use; never widen
             keep = pinned if scope.sources is None else pinned & set(scope.sources)
             scope = replace(scope, sources=sorted(keep))
-        templates = pinned_templates(sql, params)
-        if templates is not None:  # and only sources whose files can hold those templates
+        reads = pinned_reads(sql, params)
+        if reads is not None:  # and only sources whose files can hold those templates or classes
             try:
-                held = self._holding(scope, templates, skip)
+                held = self._holding(scope, reads, skip)
             except FileNotFoundError:  # a file went while its footer was read: once more
-                held = self._holding(scope, templates, skip)
+                held = self._holding(scope, reads, skip)
             scope = replace(scope, sources=held)
         return scope
 
@@ -713,11 +714,17 @@ class QueryEngine:
         # so a file dropped in another folder cannot add events (security review, D64).
         return [d for d in dirs if any(d.glob(LAKE_FILES))]
 
-    def _holding(self, scope: QueryScope, templates: set[str], skip: Collection[str]) -> list[str]:
-        """Sources in scope with a file in range whose template_id statistics allow one of
-        `templates`, and sources with days in `skip` (a rollup answers for those). Read from
-        Parquet footers, cached per file version; a file without statistics counts as
-        holding them."""
+    def _holding(
+        self,
+        scope: QueryScope,
+        reads: list[tuple[str, frozenset[str]]],
+        skip: Collection[str],
+    ) -> list[str]:
+        """Sources in scope with a file in range that one read's pins allow (`source_id` by
+        the source's name; `template_id` or `class_uid` by the file's statistics;
+        `narrow.pinned_reads`), and sources with days in `skip` (a rollup answers for
+        those). Read from Parquet footers, cached per file version; a file without
+        statistics counts as holding them."""
         out = []
         rolled = {k.split("|", 1)[0] for k in skip}
         for d in self._source_dirs(scope):
@@ -726,36 +733,51 @@ class QueryEngine:
                 # or the rollup's rows for it would be left out too (D151).
                 out.append(d.name.removeprefix("source="))
                 continue
+            name = d.name.removeprefix("source=")
+            named = any(c == "source_id" and name in v for c, v in reads)
+            by_stats = [(c, v) for c, v in reads if c != "source_id"]
             for pattern in self._lake_globs([d], scope, frozenset(skip)):
-                if any(self._may_hold(Path(f), templates) for f in glob.glob(pattern)):
-                    out.append(d.name.removeprefix("source="))
+                files = glob.glob(pattern)
+                if (named and files) or any(
+                    self._may_hold(Path(f), c, v) for c, v in by_stats for f in files
+                ):
+                    out.append(name)
                     break
         return out
 
-    def _may_hold(self, path: Path, templates: set[str]) -> bool:
+    def _may_hold(self, path: Path, column: str, values: Collection[str]) -> bool:
         try:
             stamp = path.stat().st_mtime_ns
         except OSError:
             return False
-        hit = self._tpl_cache.get(path)
+        hit = self._tpl_cache.get((path, column))
         if hit is None or hit[0] != stamp:
-            ranges: list[tuple[str, str]] | None = None
+            ranges: list[tuple[Any, Any]] | None = None
             try:
                 meta = pq.read_metadata(path)
-                col = meta.schema.names.index("template_id")
+                col = meta.schema.names.index(column)
                 stats = [
                     meta.row_group(i).column(col).statistics for i in range(meta.num_row_groups)
                 ]
                 if all(st is not None and st.has_min_max for st in stats):
-                    ranges = [(str(st.min), str(st.max)) for st in stats if st is not None]
+                    text = column != "class_uid"
+                    ranges = [
+                        (str(st.min), str(st.max)) if text else (st.min, st.max)
+                        for st in stats
+                        if st is not None
+                    ]
             except (OSError, ValueError, pa.ArrowException):
                 ranges = None
             if len(self._tpl_cache) > 50_000:
                 self._tpl_cache.clear()
-            self._tpl_cache[path] = hit = (stamp, ranges)
+            self._tpl_cache[(path, column)] = hit = (stamp, ranges)
         if hit[1] is None:
             return True
-        return any(lo <= t <= hi for lo, hi in hit[1] for t in templates)
+        want = [int(v) for v in values] if column == "class_uid" else list(values)
+        try:
+            return any(lo <= t <= hi for lo, hi in hit[1] for t in want)
+        except TypeError:  # statistics of another type than the column should have
+            return True
 
     def first_times(self, scope: QueryScope) -> dict[str, datetime]:
         """Each source in scope -> when its data starts, from the Parquet statistics of its

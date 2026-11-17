@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ApiError, api, type AlertItem, type CloseReason } from "@/lib/api";
+import { Select } from "@/components/forms/Select";
 
 const NOTE_REQUIRED: CloseReason[] = ["false_positive"];
 const MUTE_DAYS = [0, 7, 30] as const;
@@ -127,17 +128,15 @@ export function CloseForm({ item, reasons, isAdmin, onDone }: CloseFormProps) {
       {isAdmin ? (
         <label className="flex flex-wrap items-center gap-2 text-sm">
           <span>Mute alerts like this</span>
-          <select
-            value={days}
-            onChange={(e) => setDays(Number(e.target.value) as 0 | 7 | 30)}
-            className="h-7 rounded border border-border bg-surface px-1"
-          >
-            {MUTE_DAYS.map((d) => (
-              <option key={d} value={d}>
-                {d === 0 ? "No" : `For ${d} days`}
-              </option>
-            ))}
-          </select>
+          <Select
+            value={String(days)}
+            onChange={(v) => setDays(Number(v) as 0 | 7 | 30)}
+            options={MUTE_DAYS.map((d) => ({
+              value: String(d),
+              label: d === 0 ? "No" : `For ${d} days`,
+            }))}
+            className="h-7"
+          />
           {days > 0 ? (
             <span className="text-text-muted">
               New ones like it close themselves as Muted and stay on the Closed list.

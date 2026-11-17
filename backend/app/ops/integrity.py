@@ -204,7 +204,7 @@ class IntegrityService:
                 reason=None,
                 range_start=result.checked_at,
                 range_end=None,
-                link=f"{self._link}/health#integrity" if self._link else None,
+                link=f"{self._link}/audit/integrity" if self._link else None,
                 product=PRODUCT_NAME,
             )
             # A failed check is never silent: every alert target when none is chosen (D33).
@@ -226,7 +226,7 @@ class IntegrityService:
                 reason=result.status,
                 range_start=result.checked_at,
                 range_end=None,
-                link=f"{self._link}/health#integrity" if self._link else None,
+                link=f"{self._link}/audit/integrity" if self._link else None,
                 product=PRODUCT_NAME,
             )
         else:

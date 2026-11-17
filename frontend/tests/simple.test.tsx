@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fromMore } from "./headerMenu";
 import { mockApi, type MockAuth } from "./mockApi";
+import { choose } from "./choose";
 
 async function renderAt(path: string, auth: MockAuth = { mode: "open" }) {
   window.history.replaceState(null, "", path);
@@ -187,7 +188,7 @@ describe("Simple search", () => {
     ).toEqual(["Filters", "SQL"]);
     expect(screen.queryByLabelText("Question")).toBeNull();
     const nav = screen.getByRole("navigation", { name: "Primary" });
-    expect(within(nav).getByRole("link", { name: "Logs" })).toHaveAttribute("aria-current", "page");
+    expect(within(nav).getByRole("link", { name: "Logs" })).toHaveAttribute("aria-current", "true");
     // The rail's Ask AI opens its own page.
     await userEvent.click(within(nav).getByRole("link", { name: "Ask AI" }));
     expect(window.location.pathname).toBe("/ask-ai");
@@ -234,10 +235,7 @@ describe("Simple search", () => {
   it("fills the bar from a Suspicious preset and runs it", async () => {
     const { spy } = await renderAt("/investigate/logs");
     await screen.findByText("Failed password for invalid user oracle");
-    await userEvent.selectOptions(
-      await screen.findByLabelText("Suspicious activity presets"),
-      "failed_signins",
-    );
+    await choose(await screen.findByLabelText("Suspicious activity presets"), "failed_signins");
     expect(screen.getByLabelText("Search text")).toHaveValue('EventID:4625 OR "failed password"');
     await vi.waitFor(() =>
       expect(posts(spy, "/api/search/compile").at(-1)?.text).toBe(

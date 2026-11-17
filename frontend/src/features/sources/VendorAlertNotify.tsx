@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { ApiError, api, type AlertPause, type VendorSeverity } from "@/lib/api";
+import { Select } from "@/components/forms/Select";
 
 const LEVELS: { value: VendorSeverity; label: string }[] = [
   { value: "critical", label: "Critical" },
@@ -92,18 +93,13 @@ function NotifyEditor({ sourceId, onClose }: NotifyEditorProps) {
       </span>
       <label className="flex flex-col gap-0.5">
         <span className="text-text-secondary">Minimum severity</span>
-        <select
+        <Select
           value={min}
           disabled={!on}
-          onChange={(e) => setLevel(e.target.value as VendorSeverity)}
-          className="h-7 rounded border border-border-control bg-surface px-1 disabled:opacity-50"
-        >
-          {LEVELS.map((l) => (
-            <option key={l.value} value={l.value}>
-              {l.label}
-            </option>
-          ))}
-        </select>
+          onChange={(v) => setLevel(v as VendorSeverity)}
+          options={LEVELS.map((l) => ({ value: l.value, label: l.label }))}
+          className="h-7"
+        />
       </label>
       <div className="flex flex-col gap-0.5">
         <span className="text-text-secondary">Send to</span>

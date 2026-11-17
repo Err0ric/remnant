@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from app.search.source_state import needing_attention
+from app.search.source_state import needing_attention, problem
 from tests.integration.test_quiet_sources import lab, tick, watch  # noqa: F401  # fixture
 from tests.integration.test_schedules import NOW
 
@@ -39,12 +39,14 @@ def test_it_counts_the_sources_that_are_not_healthy_and_agrees_with_the_overview
     lab: dict[str, Any],  # noqa: F811
 ) -> None:
     calm = _count(lab)
-    assert set(calm) == {"total", "not_healthy"}  # numbers only: no source is named
+    assert set(calm) == {"total", "not_healthy", "unhealthy", "damaged_files"}  # numbers only
     summary = lab["admin"].get("/api/overview").json()["source_summary"]
     rows = lab["admin"].get("/api/overview").json()["sources"]
     assert calm == {
         "total": summary["total"],
         "not_healthy": sum(1 for r in rows if r["condition"] not in ("healthy", "paused")),
+        "unhealthy": sum(1 for r in rows if r["problem"] == "unhealthy"),
+        "damaged_files": 0,
     }
 
     # A source goes quiet past its threshold: its gap alert opens and Health needs a look.
@@ -58,6 +60,13 @@ def test_it_counts_the_sources_that_are_not_healthy_and_agrees_with_the_overview
         1 for r in rows if r["condition"] not in ("healthy", "paused")
     )
     assert after["not_healthy"] >= 1  # the quiet source is one of them
+    # One rule (fix list 2026-11-16 item 12): every source the count counts carries its
+    # problem, and the count's unhealthy is the rows' (each case built on purpose in
+    # test_quiet_ok.py, test_the_dot_is_red_only_for_what_health_draws_red).
+    assert after["not_healthy"] == sum(1 for r in rows if r["problem"])
+    lin = next(r for r in rows if r["source_id"] == "lin_auth")
+    assert lin["condition"] == "quiet" and lin["quiet_since"] and lin["problem"]
+    assert after["unhealthy"] == sum(1 for r in rows if r["problem"] == "unhealthy")
 
 
 def test_a_source_paused_on_purpose_is_not_something_wrong(
@@ -65,6 +74,17 @@ def test_a_source_paused_on_purpose_is_not_something_wrong(
 ) -> None:
     assert needing_attention(["healthy", "paused", "paused"]) == 0
     assert needing_attention(["healthy", "paused", "quiet", "error", "gap", "attention"]) == 4
+    assert [problem(c, True, True) for c in ("healthy", "paused", "gap", "attention")] == [
+        None,
+        None,
+        "attention",
+        "attention",
+    ]
+    assert problem("error", False, False) == "unhealthy"
+    # Red on Health only with gap hours on the chart: a source only quiet is drawn greyed.
+    assert problem("quiet", True, True) == "unhealthy"
+    assert problem("quiet", True, False) == "attention"
+    assert problem("quiet", False, True) == "attention"
 
     # Through the endpoint: pausing a source that counted takes it out of the count, and it
     # stays one of the viewer's sources.
@@ -77,7 +97,8 @@ def test_a_source_paused_on_purpose_is_not_something_wrong(
     after = _count(lab)
     rows = {r["source_id"]: r for r in lab["admin"].get("/api/overview").json()["sources"]}
     assert rows["win_dc"]["condition"] == "paused"
-    assert after == {"total": before["total"], "not_healthy": before["not_healthy"] - 1}
+    assert (after["total"], after["not_healthy"]) == (before["total"], before["not_healthy"] - 1)
+    assert rows["win_dc"]["problem"] is None
 
 
 def test_it_counts_only_the_sources_the_viewer_may_read(
@@ -119,3 +140,36 @@ def test_it_writes_no_audit_row_and_never_hides_the_overview_row(
 def test_it_needs_a_sign_in(lab: dict[str, Any]) -> None:  # noqa: F811
     stranger = TestClient(lab["app"])
     assert stranger.get("/api/health/count").status_code == 401
+
+
+def test_damaged_files_count_on_the_overview_and_the_count_alike(
+    lab: dict[str, Any],  # noqa: F811
+) -> None:
+    """Review of 637: the damaged-files notice is a problem on Health's Sources tab, so the
+    rail's dot must see it too; both read the one number here."""
+    folder = lab["app"].state.lake_dir.parent / "quarantine" / "lin_auth" / "2026-11-01"
+    folder.mkdir(parents=True)
+    (folder / "part-0.parquet").write_bytes(b"damaged")
+    _forget(lab)
+    assert _count(lab)["damaged_files"] == 1
+    assert lab["admin"].get("/api/overview").json()["damaged_files"] == 1
+
+
+def test_the_sources_listing_has_no_status_of_its_own_only_the_readers_fact(
+    lab: dict[str, Any],  # noqa: F811
+) -> None:
+    """Fix list 2026-11-16 item 19: Settings > Sources showed the reader's "reading" as a
+    green status while Health said quiet. The one status is the Overview's condition; the
+    listing carries the reader's own state only, which stays "reading" for a quiet file."""
+    assert watch(lab, "lin_auth").status_code == 200
+    lab["clock"].now = NOW + timedelta(hours=2)
+    tick(lab)
+    _forget(lab)
+    listed = {s["source_id"]: s for s in lab["admin"].get("/api/sources").json()}
+    judged = {s["source_id"]: s for s in lab["admin"].get("/api/overview").json()["sources"]}
+    assert set(listed) == set(judged)  # every source the page lists has the one state
+    assert listed["lin_auth"]["status"]["state"] == "reading"  # still following the file
+    assert judged["lin_auth"]["condition"] == "quiet"  # what both pages say
+    for s in listed.values():
+        assert "condition" not in s and "condition" not in s["status"]
+        assert "problem" not in s["status"]

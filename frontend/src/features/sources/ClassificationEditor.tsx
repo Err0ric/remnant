@@ -33,7 +33,7 @@ export function ClassificationEditor({ sourceId, value }: ClassificationEditorPr
 
   if (!open) {
     return (
-      <span className="flex items-center gap-2">
+      <span className="flex flex-wrap items-center gap-x-2">
         <ClassificationBadge value={value} />
         <button
           type="button"

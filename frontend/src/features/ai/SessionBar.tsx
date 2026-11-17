@@ -11,6 +11,7 @@ import {
   segments,
   TYPES,
   type Segment,
+  type TypeMark,
 } from "./barSegments";
 
 interface SessionBarProps {
@@ -25,6 +26,29 @@ interface SessionBarProps {
 }
 
 const n = (v: number | undefined) => (v ?? 0).toLocaleString();
+/** "Web or MCP access" as "web or MCP access": only the first letter, so MCP stays MCP. */
+const lower = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
+/** The step types that are tool calls: together the session's Tool calls (the server leaves
+ * Claude Code bookkeeping out of all three, D186). */
+const CALL_TYPES: ReadonlySet<string> = new Set(["tool_call", "file_access", "access"]);
+/** In the legend, under "Tool calls": a plain call is the one that stayed in the session. */
+const CALL_LABEL: Partial<Record<string, string>> = { tool_call: "In the session" };
+
+/** One legend entry: the type's mark, its name, and its count. */
+function Entry({ t, label, count }: { t: TypeMark; label: string; count: number }) {
+  return (
+    <li className="flex items-center gap-1.5">
+      <span
+        aria-hidden="true"
+        data-mark={t.type}
+        className={cn("inline-block h-4 w-4", markStyle(t).className)}
+        style={markStyle(t).style}
+      />
+      <span className="text-text-secondary">{label}</span>
+      <span className="tabular-nums">{n(count)}</span>
+    </li>
+  );
+}
 const LABEL = Object.fromEntries(TYPES.map((t) => [t.type, t.label])) as Record<string, string>;
 
 /** True for a run and for a mixed slice alike. */
@@ -63,12 +87,15 @@ export function SessionBar({ steps, summary, flagged, shown, onPick }: SessionBa
   const segs = segments(steps);
   const counts = summary?.types;
   const spoken = counts
-    ? TYPES.map((t) => `${n(counts[t.type] ?? 0)} ${t.label.toLowerCase()}`).join(", ")
+    ? TYPES.map((t) => `${n(counts[t.type] ?? 0)} ${lower(t.label)}`).join(", ")
     : `${n(steps.length)} steps`;
   const failed = summary?.failed ?? steps.filter(isFailed).length;
   const outside = counts
     ? (counts.file_access ?? 0) + (counts.access ?? 0)
     : steps.filter((s) => s.type === "file_access" || s.type === "access").length;
+  // The whole session's count from the server; the loaded steps while it is not there.
+  const of = (t: TypeMark) =>
+    counts ? (counts[t.type] ?? 0) : steps.filter((s) => (s.type ?? "other") === t.type).length;
   const listed = new Set(shown.map((s) => s.event_id));
   const order = new Map(steps.map((s, i) => [s.event_id, i]));
   const after = (id: string) =>
@@ -140,22 +167,9 @@ export function SessionBar({ steps, summary, flagged, shown, onPick }: SessionBa
         <When iso={steps[steps.length - 1]!.time} />
       </div>
       <figcaption>
-        <ul aria-label="Step types" className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
-          {TYPES.map((t) => (
-            <li key={t.type} className="flex items-center gap-1.5">
-              <span
-                aria-hidden="true"
-                data-mark={t.type}
-                className={cn("inline-block h-4 w-4", markStyle(t).className)}
-                style={markStyle(t).style}
-              />
-              <span className="text-text-secondary">{t.label}</span>
-              <span className="tabular-nums">
-                {counts
-                  ? n(counts[t.type] ?? 0)
-                  : n(steps.filter((s) => (s.type ?? "other") === t.type).length)}
-              </span>
-            </li>
+        <ul aria-label="Step types" className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+          {TYPES.filter((t) => !CALL_TYPES.has(t.type)).map((t) => (
+            <Entry key={t.type} t={t} label={t.label} count={of(t)} />
           ))}
           {failed ? (
             <li className="flex items-center gap-1.5">
@@ -168,6 +182,25 @@ export function SessionBar({ steps, summary, flagged, shown, onPick }: SessionBa
               <span className="tabular-nums">{n(failed)}</span>
             </li>
           ) : null}
+          {/* The three kinds of tool call under one total, the session's Tool calls (fix
+              list S3), on a row of their own so the group never splits or strands a type. */}
+          <li data-legend="tool_calls" className="flex w-full flex-wrap items-center gap-x-3">
+            <span className="whitespace-nowrap">
+              <span className="text-text-secondary">Tool calls</span>{" "}
+              <span className="tabular-nums">
+                {n(TYPES.filter((c) => CALL_TYPES.has(c.type)).reduce((a, c) => a + of(c), 0))}
+              </span>
+              :
+            </span>
+            <ul
+              aria-label="Tool calls by kind"
+              className="flex flex-wrap gap-x-4 gap-y-1 border-l border-border pl-3"
+            >
+              {TYPES.filter((c) => CALL_TYPES.has(c.type)).map((c) => (
+                <Entry key={c.type} t={c} label={CALL_LABEL[c.type] ?? c.label} count={of(c)} />
+              ))}
+            </ul>
+          </li>
         </ul>
         <p className="text-xs text-text-muted">{HATCH_MEANS}.</p>
         <p className="flex items-center gap-1.5 text-xs text-text-muted">

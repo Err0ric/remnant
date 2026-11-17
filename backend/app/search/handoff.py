@@ -112,7 +112,7 @@ class HandoffService:
             reason=f"{withheld} local-only events withheld" if withheld else None,
             range_start=None,
             range_end=None,
-            link=f"{self._link}/search" if self._link else None,
+            link=f"{self._link}/investigate/logs" if self._link else None,
             product=PRODUCT_NAME,
             events=tuple(allowed),
         )

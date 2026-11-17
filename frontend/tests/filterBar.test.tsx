@@ -72,7 +72,7 @@ describe("FilterBar (DESIGN.md 6.0, redesign build row 6)", () => {
       "aria-pressed",
       "true",
     );
-    const facet = within(bar).getByRole("combobox", { name: "Severity" }).closest("label");
+    const facet = within(bar).getByRole("combobox", { name: "Severity" });
     expect(facet).toHaveTextContent(/^Severity/);
     expect(within(bar).getByRole("combobox", { name: "Severity" })).toHaveValue("high");
   });

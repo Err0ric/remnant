@@ -1,5 +1,7 @@
 import { quietFrom } from "@/features/health/flow";
 import { Skeleton } from "@/components/Skeleton";
+import { Empty } from "./Sections";
+import { Slot } from "./slot";
 import { ChangePill } from "@/components/ChangePill";
 import { useQuery } from "@tanstack/react-query";
 import { AI_WATCH_COUNTED } from "./counted";
@@ -61,10 +63,29 @@ function DeltaPill({
   );
 }
 
+/** AI Watch's box on a first visit, from 1024 px, by window (days): the taller of its loaded
+ * heights on the synthetic demo and the 30-day lake at 1280 and 1440 px; later visits keep
+ * the height it had loaded (`Slot`, fix list 2026-11-16 item 27). */
+const FALLBACK: Record<number, number> = { 1: 537, 7: 537, 30: 537 };
+
 /** AI Watch (ADR-0035 Part 2): is anyone using AI we have not approved? Five cards, AI use
  * over 30 days by review status, and the top services, on the viewer's own sources.
- * Hidden on an install with no AI use and nothing to count. */
+ * The page draws it for a viewer with any source, in its box from the first paint; with
+ * no AI use and nothing to count it says so in that box. */
 export function AiWatch({ days = 7, isAdmin = false }: { days?: number; isAdmin?: boolean }) {
+  const q = useQuery({
+    queryKey: ["ai-watch", days],
+    queryFn: () => api.aiWatchSummary(days),
+    refetchInterval: 300_000,
+  });
+  return (
+    <Slot name={`ai_watch:${days}`} fallback={FALLBACK[days] ?? 544} loaded={Boolean(q.data)}>
+      <AiWatchCard days={days} isAdmin={isAdmin} />
+    </Slot>
+  );
+}
+
+function AiWatchCard({ days, isAdmin }: { days: number; isAdmin: boolean }) {
   const overview = useQuery({
     queryKey: ["overview"],
     queryFn: api.overview,
@@ -75,7 +96,42 @@ export function AiWatch({ days = 7, isAdmin = false }: { days?: number; isAdmin?
     queryFn: () => api.aiWatchSummary(days),
     refetchInterval: 300_000,
   });
-  if (q.isLoading) return <Skeleton label="AI Watch" block="h-48" />;
+  if (!q.data && !q.isError)
+    return (
+      <Panel
+        title="AI Watch"
+        action={<CardAction onClick={() => navigate("ai", "services")}>Open AI usage</CardAction>}
+        className="overflow-hidden [&>div:last-child]:flex [&>div:last-child]:flex-col"
+      >
+        <div className="grid grid-cols-2 gap-px bg-border lg:grid-cols-5">
+          {Array.from({ length: 5 }, (_, i) => (
+            <div key={i} className="flex flex-col gap-1 bg-surface px-3 py-2.5">
+              <Skeleton
+                label="AI Watch"
+                block="my-1 h-3 w-2/3 rounded bg-border-strong"
+                className="rounded-none border-0 bg-transparent"
+              />
+              <Skeleton
+                label="AI Watch"
+                block="my-1 h-7 w-1/3 rounded bg-border-strong"
+                className="rounded-none border-0 bg-transparent"
+              />
+              <Skeleton
+                label="AI Watch"
+                block="my-1 h-3 w-1/2 rounded bg-border-strong"
+                className="rounded-none border-0 bg-transparent"
+              />
+            </div>
+          ))}
+        </div>
+        <div className="flex items-baseline gap-x-3 border-t border-border px-3 py-1.5 text-sm">
+          <PanelTitle as="span">New in 24 hours</PanelTitle>
+        </div>
+        <div className="min-h-0 flex-1 border-t border-border p-3">
+          <Skeleton label="AI Watch" block="h-full" className="h-full" />
+        </div>
+      </Panel>
+    );
   if (q.isError && !q.data)
     return (
       <Panel title="AI Watch">
@@ -91,7 +147,8 @@ export function AiWatch({ days = 7, isAdmin = false }: { days?: number; isAdmin?
   const s = q.data;
   if (!s) return null;
   const used = s.chart.some((d) => d.approved + d.unreviewed + d.not_approved > 0);
-  if (!used && !s.cards.some((c) => (c.value ?? 0) > 0)) return null;
+  if (!used && !s.cards.some((c) => (c.value ?? 0) > 0))
+    return <Empty title="AI Watch">No AI use in sources you can read.</Empty>;
   const shown = s.cards.filter((c) => !c.needs);
   // The newest event of the sources AI Watch read, by its own date (never when a record
   // arrived: a queue or an import delivers old events now): the chart says no data after it.
@@ -106,7 +163,7 @@ export function AiWatch({ days = 7, isAdmin = false }: { days?: number; isAdmin?
       title="AI Watch"
       note={compareLine(
         s.compared ?? true,
-        s.since ?? null,
+        s.starts ?? null,
         days === 1 ? "the previous 24 hours" : `the previous ${days} days`,
       )}
       action={<CardAction onClick={() => navigate("ai", "services")}>Open AI usage</CardAction>}
@@ -531,11 +588,13 @@ function Top({ summary }: { summary: AiWatchSummary }) {
                   <td className="py-1 pr-3">
                     <StatusBadge status={t.status} />
                   </td>
+                  {/* A count of 0 is a number, as in the Inventory; "·" is only for a value
+                      that is not known (DESIGN.md section 7). */}
                   <td
                     className="py-1 pr-3 text-right font-mono tabular-nums"
                     title={t.people ? undefined : "No person named in these events; see Devices"}
                   >
-                    {t.people || "·"}
+                    {t.people}
                   </td>
                   <td className="py-1 pr-3 text-right font-mono tabular-nums">{t.machines}</td>
                   <td className="hidden whitespace-nowrap py-1 pr-3 2xl:table-cell">

@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@/components/Skeleton";
 import { api, type SectionKpi } from "@/lib/api";
-import { navigate, type PageId } from "@/lib/route";
+import { navigate, navigateTab, type PageId } from "@/lib/route";
 
 /** Real failed sign-ins need attention above this many in the window, and only when they
  * are more than twice the window before (when it is known). */
@@ -14,6 +14,8 @@ export interface AttentionItem {
   text: string;
   page: PageId;
   tab?: string;
+  /** Filters for the tab's address fragment ("status=unreviewed"). */
+  state?: string;
 }
 
 const plural = (n: number, one: string, many: string) =>
@@ -46,8 +48,9 @@ export function count(
   many: string,
   page: PageId,
   tab?: string,
+  state?: string,
 ): AttentionItem | null {
-  return n ? { key, count: n, text: plural(n, one, many), page, tab } : null;
+  return n ? { key, count: n, text: plural(n, one, many), page, tab, state } : null;
 }
 
 /** Open alerts the viewer may read, as an attention item: the count only, with the alert
@@ -74,7 +77,9 @@ export function NeedsAttention({ items, loading }: { items: AttentionItem[]; loa
             <button
               key={i.key}
               type="button"
-              onClick={() => navigate(i.page, i.tab)}
+              onClick={() =>
+                i.tab && i.state ? navigateTab(i.page, i.tab, i.state) : navigate(i.page, i.tab)
+              }
               className="text-accent-text hover:underline"
             >
               {i.text}

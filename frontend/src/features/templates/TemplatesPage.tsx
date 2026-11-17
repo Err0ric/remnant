@@ -1,4 +1,5 @@
 import { EmptyState } from "@/components/EmptyState";
+import { When } from "@/components/When";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { PageHeader } from "@/components/shell/PageHeader";
@@ -95,8 +96,8 @@ export function TemplatesPage() {
                           ? `${d.sample.lines} pasted lines`
                           : "None"}
                     </td>
-                    <td className="px-3 py-2 font-mono">
-                      {d.updated_at.slice(0, 19).replace("T", " ")} UTC
+                    <td className="whitespace-nowrap px-3 py-2">
+                      <When iso={d.updated_at} />
                     </td>
                     <td className="px-3 py-2 text-right">
                       <button

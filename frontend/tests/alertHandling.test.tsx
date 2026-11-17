@@ -109,6 +109,61 @@ describe("Alerts > Handling (D261)", () => {
     expect(screen.getByText("Closed 6")).toBeTruthy();
   });
 
+  it("draws the counts as bars side by side, never a curve or a value below zero (owner, 2026-11-16)", async () => {
+    show(METRICS);
+    const chart = await screen.findByRole("img", { name: /Alerts opened and closed per day/ });
+    expect(chart.querySelector("svg path")).toBeNull();
+    const bars = [...chart.querySelectorAll<HTMLElement>("[data-bar]")];
+    // Three days, an opened and a closed bar each.
+    expect(bars.map((b) => `${b.dataset.bar} ${b.dataset.value}`)).toEqual([
+      "opened 3",
+      "closed 1",
+      "opened 0",
+      "closed 4",
+      "opened 2",
+      "closed 1",
+    ]);
+    for (const b of bars) {
+      const h = parseFloat(b.style.height);
+      expect(h).toBeGreaterThanOrEqual(0);
+      expect(h).toBeLessThanOrEqual(100);
+    }
+    // The tallest bar is the real top value on an axis that starts at zero.
+    expect(within(chart.parentElement as HTMLElement).getAllByText("0").length).toBeGreaterThan(0);
+    expect(bars[3]!.style.height).toBe(`${(4 / 5) * 100}%`);
+    chart.focus();
+    fireEvent.keyDown(chart, { key: "Home" });
+    fireEvent.keyDown(chart, { key: "ArrowRight" });
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Nov 2: Closed 4, Opened 0");
+  });
+
+  it("names today's outlined bars in the legend only when today has a count", async () => {
+    show(METRICS);
+    await screen.findByRole("img", { name: /Alerts opened and closed per day/ });
+    expect(screen.getByText("Today, so far")).toBeTruthy();
+    const today = [...document.querySelectorAll<HTMLElement>("[data-bar]")].slice(-2);
+    expect(today.map((b) => b.style.background)).toEqual(["transparent", "transparent"]);
+  });
+
+  it("draws a one-day window solid and names no Today, so far (one point is never still filling)", async () => {
+    show(
+      { ...METRICS, days: [{ day: "2026-11-03", opened: 2, closed: 1 }] },
+      200,
+      "/alerts/handling#time=24h",
+    );
+    const chart = await screen.findByRole("img", { name: /Alerts opened and closed per day/ });
+    const bars = [...chart.querySelectorAll<HTMLElement>("[data-bar]")];
+    expect(bars.map((b) => b.style.background)).toEqual(["var(--text-secondary)", "var(--ok)"]);
+    expect(screen.queryByText("Today, so far")).toBeNull();
+  });
+
+  it("has no Today, so far entry when today has nothing", async () => {
+    const days = [...METRICS.days.slice(0, 2), { day: "2026-11-03", opened: 0, closed: 0 }];
+    show({ ...METRICS, days });
+    await screen.findByRole("img", { name: /Alerts opened and closed per day/ });
+    expect(screen.queryByText("Today, so far")).toBeNull();
+  });
+
   it("keeps the shape while loading, never a zero", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise<Response>(() => {}));
     window.history.replaceState(null, "", "/alerts/handling");

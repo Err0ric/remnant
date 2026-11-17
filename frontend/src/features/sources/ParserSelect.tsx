@@ -1,5 +1,9 @@
 import type { SourceFormat, TemplateInfo } from "@/lib/api";
 import { AUTO_PARSER, FORMAT_LABELS } from "@/lib/parsers";
+import { Select } from "@/components/forms/Select";
+
+const TEMPLATES = "One template (fields mapped to OCSF)";
+const GENERIC = "Generic (time, host, and message)";
 
 interface ParserSelectProps {
   id: string;
@@ -29,12 +33,12 @@ export function ParserSelect({
         ? `template:${templateId}`
         : `generic:${format}`;
   return (
-    <select
+    <Select
       id={id}
       aria-label={label}
       value={value}
-      onChange={(e) => {
-        const [kind, rest] = e.target.value.split(":") as [string, string];
+      onChange={(v) => {
+        const [kind, rest] = v.split(":") as [string, string];
         if (kind === "auto") {
           onChange(AUTO_PARSER, format === "csv" ? "syslog" : format);
         } else if (kind === "template") {
@@ -44,25 +48,14 @@ export function ParserSelect({
           onChange(null, rest as SourceFormat);
         }
       }}
-      className="h-9 rounded border border-border-control bg-inset px-2 text-sm text-text"
-    >
-      {format !== "csv" || formats.length > 1 ? (
-        <option value="auto:">Automatic: pick a template per line</option>
-      ) : null}
-      <optgroup label="One template (fields mapped to OCSF)">
-        {templates.map((t) => (
-          <option key={t.id} value={`template:${t.id}`}>
-            {t.name}
-          </option>
-        ))}
-      </optgroup>
-      <optgroup label="Generic (time, host, and message)">
-        {formats.map((f) => (
-          <option key={f} value={`generic:${f}`}>
-            {FORMAT_LABELS[f]}
-          </option>
-        ))}
-      </optgroup>
-    </select>
+      options={[
+        ...(format !== "csv" || formats.length > 1
+          ? [{ value: "auto:", label: "Automatic: pick a template per line" }]
+          : []),
+        ...templates.map((t) => ({ value: `template:${t.id}`, label: t.name, group: TEMPLATES })),
+        ...formats.map((f) => ({ value: `generic:${f}`, label: FORMAT_LABELS[f], group: GENERIC })),
+      ]}
+      className="h-9 text-sm"
+    />
   );
 }

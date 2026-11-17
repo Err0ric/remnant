@@ -12,6 +12,7 @@ import {
   type M365GraphFeed,
   type M365Settings,
 } from "@/lib/api";
+import { Select } from "@/components/forms/Select";
 
 export const M365_DEFAULTS: M365Settings = {
   tenant_id: "",
@@ -108,7 +109,6 @@ export function Checklist<T extends string>({ legend, items, value, onChange }: 
   );
 }
 
-const SELECT = "h-9 rounded border border-border-control bg-inset px-2 text-sm text-text";
 const CLOUD_LABEL: Record<M365Settings["cloud"], string> = {
   commercial: "Commercial",
   gcc: "GCC",
@@ -172,18 +172,19 @@ export function ApiSourceFields(props: ApiSourceFieldsProps) {
           <label htmlFor="m365-auth" className="text-sm font-semibold">
             Sign in with
           </label>
-          <select
+          <Select
             id="m365-auth"
             value={m365.auth}
-            onChange={(e) => {
-              setM("auth", e.target.value as M365Settings["auth"]);
+            onChange={(v) => {
+              setM("auth", v as M365Settings["auth"]);
               props.onCredentials({});
             }}
-            className={SELECT}
-          >
-            <option value="certificate">Certificate (recommended)</option>
-            <option value="secret">Client secret</option>
-          </select>
+            options={[
+              { value: "certificate", label: "Certificate (recommended)" },
+              { value: "secret", label: "Client secret" },
+            ]}
+            className="h-9 text-sm"
+          />
         </div>
         <ApiCredentialsFields
           kind="m365"
@@ -215,16 +216,17 @@ export function ApiSourceFields(props: ApiSourceFieldsProps) {
               <label htmlFor="m365-cloud" className="text-sm font-semibold">
                 Cloud
               </label>
-              <select
+              <Select
                 id="m365-cloud"
                 value={m365.cloud}
-                onChange={(e) => setM("cloud", e.target.value as M365Settings["cloud"])}
-                className={SELECT}
-              >
-                <option value="commercial">Commercial</option>
-                <option value="gcc">GCC</option>
-                <option value="gcc_high">GCC High</option>
-              </select>
+                onChange={(v) => setM("cloud", v as M365Settings["cloud"])}
+                options={[
+                  { value: "commercial", label: "Commercial" },
+                  { value: "gcc", label: "GCC" },
+                  { value: "gcc_high", label: "GCC High" },
+                ]}
+                className="h-9 text-sm"
+              />
             </div>
             <Field
               label="On first run, read back (hours)"
@@ -254,16 +256,17 @@ export function ApiSourceFields(props: ApiSourceFieldsProps) {
               <label htmlFor="anthropic-key-type" className="text-sm font-semibold">
                 Key type
               </label>
-              <select
+              <Select
                 id="anthropic-key-type"
                 value={anthropic.key_type}
-                onChange={(e) => setA("key_type", e.target.value as AnthropicSettings["key_type"])}
-                className={SELECT}
-              >
-                <option value="admin">Admin key</option>
-                <option value="analytics">Analytics key</option>
-                <option value="compliance">Compliance key</option>
-              </select>
+                onChange={(v) => setA("key_type", v as AnthropicSettings["key_type"])}
+                options={[
+                  { value: "admin", label: "Admin key" },
+                  { value: "analytics", label: "Analytics key" },
+                  { value: "compliance", label: "Compliance key" },
+                ]}
+                className="h-9 text-sm"
+              />
             </div>
             <Field
               label="On first run, read back (days)"

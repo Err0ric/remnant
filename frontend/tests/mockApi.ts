@@ -1,3 +1,4 @@
+import { screen, waitFor } from "@testing-library/react";
 import { vi } from "vitest";
 
 const ID = "01a126d0-7c4f-7012-b6b0-e17359887d5f";
@@ -94,9 +95,12 @@ export interface MockAuth {
   /** An admin has let Auditors run SQL (D220); off by default. */
   auditorSql?: boolean;
   /** What `/api/health/count` answers; every source healthy when left out. */
-  healthCount?: { total: number; not_healthy: number };
+  healthCount?: { total: number; not_healthy: number; unhealthy?: number };
   /** What `/api/ai/inventory/count` answers; nothing to review when left out. */
   aiToReview?: number;
+  /** The Inventory's items, when a test sets them: the Inventory, its count, and the
+   * review calls then all read and change this one list, as the server does. */
+  inventory?: { type: string; key: string; status: string | null; excluded: unknown }[];
   /** The signed-in user's id; "u1" when left out. */
   userId?: string;
   /** The viewer's pins (D259); none when left out. */
@@ -725,6 +729,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
           template_name: "Microsoft 365 sign-ins",
           version: "1.1.0",
           note: "New columns: resource_name and resource_uid. Earlier events have these empty.",
+          summary: "Sign-ins now show the app signed in to. Earlier events do not have it.",
           fields: ["status_detail"],
           since: new Date(Date.now() - 86400_000).toISOString(),
           current: true,
@@ -847,6 +852,16 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
             events: 30,
             first_seen: "2026-09-20T10:00:00+00:00",
             last_seen: "2026-10-10T16:00:00+00:00",
+          },
+          {
+            service_id: "gemini",
+            name: "Gemini",
+            status: "unreviewed",
+            people: 0,
+            machines: 2,
+            events: 12,
+            first_seen: "2026-09-21T10:00:00+00:00",
+            last_seen: "2026-10-10T15:00:00+00:00",
           },
         ],
         sources: ["linux_sshd"],
@@ -1170,7 +1185,8 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
           state: "idle",
         },
       ]);
-    if (url.includes("/api/ai/sessions/s-77/summary") && method === "GET")
+    // s-79 too: a test opens it, and its tiles need a whole summary (no TypeError in the log).
+    if (/\/api\/ai\/sessions\/s-7[79]\/summary/.test(url) && method === "GET")
       return json({
         session_id: "s-77",
         person: "dana@example.com",
@@ -1668,6 +1684,21 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
               }),
             ],
           },
+          {
+            id: "ai_services",
+            name: "AI services",
+            version: "1.0.0",
+            description: "",
+            queries: [
+              // Built by the server from a large AI catalog: longer than Logs takes (fix 20).
+              q(
+                "ai_big",
+                "AI services in use",
+                "AI services / In use",
+                `SELECT 1 -- ${"x".repeat(20_001)}`,
+              ),
+            ],
+          },
         ],
       });
     }
@@ -1905,6 +1936,11 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       return json(state.pins ?? []);
     }
     if (url.endsWith("/api/ai/inventory/count")) {
+      if (state.inventory)
+        return json({
+          to_review: inventoryToReview(state.inventory),
+          not_approved: inventoryCount(state.inventory, "not_approved"),
+        });
       return json({ to_review: state.aiToReview ?? 0 });
     }
     if (url.includes("/api/ai/inventory/export")) {
@@ -1912,6 +1948,15 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
     }
     if (url.includes("/api/ai/inventory/exclusions") && method === "PUT") {
       return json({ reason: "IT's own server", by: "admin", at: "2026-10-30T12:00:00Z" });
+    }
+    if (url.includes("/api/ai/inventory") && state.inventory) {
+      return json({
+        days: 30,
+        sources_in_scope: ["proxy"],
+        items: state.inventory,
+        to_review: inventoryToReview(state.inventory),
+        not_approved: inventoryCount(state.inventory, "not_approved"),
+      });
     }
     if (url.includes("/api/ai/inventory")) {
       const base = {
@@ -1921,6 +1966,8 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       return json({
         days: 30,
         sources_in_scope: ["proxy"],
+        to_review: 0,
+        not_approved: 1,
         items: [
           {
             ...base,
@@ -1980,6 +2027,10 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         failed: kpi(7, 2, "SELECT 4 FROM events WHERE time >= {from} AND time < {to}"),
         mcp_not_approved: kpi(1, null, "SELECT 5 FROM events WHERE time >= {from} AND time < {to}"),
         late_devices: kpi(0, null, "SELECT 6 FROM events WHERE time >= {from} AND time < {to}"),
+        // The Sessions tile in parts: s-77 and s-79 listed, s-78 empty, 9 telemetry only.
+        session_parts: { listed: 2, empty: 1, telemetry_only: 9 },
+        read_start: "2026-10-23T12:00:00+00:00",
+        read_end: "2026-10-30T12:00:00+00:00",
         missing_devices: ["ws-0420"],
         tools: [
           {
@@ -2212,7 +2263,11 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
               drill: q,
             },
           ],
-          history: { compared: false, since: "2026-10-21T09:00:00Z" },
+          history: {
+            compared: false,
+            since: "2026-10-21T09:00:00Z",
+            starts: "2026-11-03T12:00:00Z",
+          },
         },
         detections: {
           matches: k(20, 10, 31),
@@ -2573,6 +2628,8 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       const body = JSON.parse(String(init?.body ?? "{}")) as { status: string };
       // A review leaves one item fewer to review (the rail's AI usage count).
       if (body.status !== "unreviewed" && state.aiToReview) state.aiToReview = state.aiToReview - 1;
+      const item = state.inventory?.find((i) => i.type === "service" && i.key === id);
+      if (item) item.status = body.status;
       return json({
         id,
         name: id,
@@ -2585,6 +2642,11 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       });
     }
     if (url.endsWith("/api/ai/catalog")) return json([]);
+    if (url.endsWith("/api/ai/mcp-rules") && method === "PUT" && state.inventory) {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { pattern: string; status: string };
+      const item = state.inventory.find((i) => i.type === "mcp" && i.key === body.pattern);
+      if (item) item.status = body.status ?? "unreviewed";
+    }
     if (url.endsWith("/api/ai/mcp-rules")) return json([]);
     if (url.endsWith("/api/ai/watch") && method === "GET")
       return json({
@@ -2918,6 +2980,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
             error: null,
             rate_per_min: 2.4,
             condition: "gap",
+            problem: "attention",
           },
           {
             source_id: "win_dc",
@@ -2929,6 +2992,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
             error: "This source cannot be read right now. An administrator can see why.",
             quiet_since: "2026-10-10T11:00:00+00:00",
             condition: "error",
+            problem: "unhealthy",
           },
         ],
         // What the server counts from the rows above (app.search.source_state).
@@ -3306,6 +3370,20 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       });
     if (/\/api\/ask\/a\d+\/run$/.test(url) && method === "POST") {
       const q = askQuestions[url.split("/api/ask/")[1]!.split("/")[0]!] ?? "";
+      if (q === "which ai services are in use")
+        return json({
+          columns: ["service", "events", "people", "machines"],
+          rows: [],
+          row_count: 0,
+          truncated: false,
+          elapsed_ms: 9,
+          executed_sql: "SELECT ...",
+          sources: ["dns_bind", "linux_sshd"],
+          headline: "No matching rows in this time range.",
+          summarize: false,
+          summary_note: null,
+          counted: "Read 2 sources for the last 24 hours: no AI services.",
+        });
       if (q.includes("ssh logins for"))
         return json({
           columns: ["user", "client", "attempts"],
@@ -3344,7 +3422,8 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       return json({
         headline: "2 addresses with failures; most from 203.0.113.9 (12 failures)",
         summarize: false,
-        summary_note: "No summary: these rows have no event ids to cite.",
+        summary_note: null,
+        counted: "Read 1 source for the last 24 hours and counted failures, grouped by address.",
         columns: ["src_endpoint_ip", "failures"],
         rows: [
           ["203.0.113.9", 12],
@@ -3363,6 +3442,12 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
           name: "SSH failures by source address",
           why: "One address failing against many accounts or hosts is guessing (T1110).",
           sql: "SELECT src_endpoint_ip AS address, count(*) AS failures FROM events GROUP BY 1",
+        },
+        {
+          ref: "ai_services/ai_services_in_use",
+          name: "AI services in use",
+          why: "Which AI services people use.",
+          sql: `SELECT 1 -- ${"x".repeat(20_001)}`,
         },
       ]);
     if (url.endsWith("/api/ask/providers"))
@@ -3428,6 +3513,38 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
             kind: "knowhow",
             by: "model",
             library: null,
+            filters: [],
+            params: {},
+            time: null,
+            reason: null,
+          },
+        });
+      // A server-built library answer longer than Logs takes, with nothing found (fix 20, 21).
+      if (b.question === "which ai services are in use")
+        return json({
+          ask_id: ((askQuestions[`a${n}`] = body.question), `a${n}`),
+          auto_run: true,
+          sql: `SELECT 1 -- ${"x".repeat(20_001)}`,
+          explanation: "",
+          assumptions: [],
+          check: "library",
+          check_detail: null,
+          attempts: 0,
+          provider: {
+            provider_id: "p1",
+            name: "Local Ollama",
+            model: "llama3.1:8b",
+            locality: "local",
+          },
+          call_ids: [],
+          route: {
+            kind: "data",
+            by: "library",
+            library: {
+              ref: "ai_services/ai_services_in_use",
+              name: "AI services in use",
+              version: "1.0.0",
+            },
             filters: [],
             params: {},
             time: null,
@@ -3828,4 +3945,51 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
     }
     return json({ status: "ok" });
   });
+}
+
+/** The server's one "to review" rule (D258), for the mock's Inventory and its count. */
+function inventoryToReview(items: { status: string | null; excluded: unknown }[]): number {
+  return inventoryCount(items, "unreviewed");
+}
+
+function inventoryCount(
+  items: { status: string | null; excluded: unknown }[],
+  status: string,
+): number {
+  return items.filter((i) => i.excluded === null && i.status === status).length;
+}
+
+/** A Microsoft 365 source beside `SOURCE`: with it the Dashboard draws its sign-in tiles and
+ * Identity, since what the page draws comes from the viewer's sources (fix list item 27). */
+export const M365_SOURCE = {
+  ...SOURCE,
+  source_id: "m365_signin",
+  kind: "m365",
+  format: "json",
+  template_id: "m365_signin",
+};
+
+/** The `mockApi` spy, answering GET /api/sources with `SOURCE` and `M365_SOURCE`. */
+export function withM365(spy: ReturnType<typeof mockApi>): ReturnType<typeof mockApi> {
+  const real = spy.getMockImplementation() as typeof fetch;
+  spy.mockImplementation(async (url, init) =>
+    String(url).endsWith("/api/sources") && (init?.method ?? "GET") === "GET"
+      ? new Response(JSON.stringify([SOURCE, M365_SOURCE]), {
+          headers: { "content-type": "application/json" },
+        })
+      : real(url, init),
+  );
+  return spy;
+}
+
+/** A Dashboard section once its answer is shown, not the skeleton in its place. */
+export async function loadedRegion(name: string): Promise<HTMLElement> {
+  return waitFor(
+    () => {
+      const region = screen.getByRole("region", { name });
+      if (region.querySelector('[aria-busy="true"]')) throw new Error(`${name} is loading`);
+      return region;
+    },
+    { timeout: 3000 },
+  );
 }

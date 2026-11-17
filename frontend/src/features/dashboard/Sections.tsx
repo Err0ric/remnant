@@ -33,6 +33,9 @@ import { CardAction } from "@/components/CardAction";
 import { PanelTitle } from "@/components/PanelTitle";
 import { notCountedExtra, useSignInAbout } from "@/features/m365/signInCounting";
 import { COUNTED } from "./counted";
+import { KpiTile } from "@/components/KpiTile";
+import type { DashboardShape } from "./shape";
+import { Slot } from "./slot";
 
 /** The section around a card: its comparison state and what drill-throughs need. */
 /** The window a section counts over: its start, now, and the start of the one before. */
@@ -266,7 +269,7 @@ function Section({
   table,
 }: SectionProps) {
   const before = previousPhrase(window);
-  const compare = compareLine(history.compared, history.since, before);
+  const compare = compareLine(history.compared, history.starts, before);
   return (
     <Compare.Provider value={{ history, before, title, s, area: "Dashboard" }}>
       <Card title={title} note={from ? `from ${from}. ${compare}` : compare} action={action}>
@@ -571,7 +574,7 @@ export function Top({ title, columns, rows, cells, empty, widths, fit = false }:
 function Identity({ s }: { s: DashboardSections }) {
   const about = useSignInAbout();
   const id = s.identity;
-  if (!id) return null;
+  if (!id) return <Empty title="Identity">{EMPTY.identity}</Empty>;
   const kpis = [
     <Kpi
       key="f"
@@ -664,10 +667,29 @@ function Identity({ s }: { s: DashboardSections }) {
   );
 }
 
-function Attacks({ s }: { s: DashboardSections }) {
+/** Attacks and access asks for company egress while none is listed; the skeleton draws it
+ * too, from the Overview, so the KPI row does not move down when the answer comes. */
+function EgressNote() {
   const { isAdmin } = useViewer();
+  return (
+    <span className="text-text-secondary">
+      Company egress addresses are not listed, so office addresses count as external.{" "}
+      {isAdmin ? (
+        <button
+          type="button"
+          onClick={() => navigate("enrichment")}
+          className="text-accent-text hover:underline"
+        >
+          Add internal networks
+        </button>
+      ) : null}
+    </span>
+  );
+}
+
+function Attacks({ s }: { s: DashboardSections }) {
   const a = s.attacks;
-  if (!a) return null;
+  if (!a) return <Empty title="Attacks and access">{EMPTY.attacks}</Empty>;
   const kpis = [
     <Kpi
       key="f"
@@ -706,22 +728,7 @@ function Attacks({ s }: { s: DashboardSections }) {
       window={s.window}
       history={a.history}
       action={<ViewRows sql={a.failures?.drill} label="External sign-in failures" />}
-      note={
-        !s.has_public ? (
-          <span className="text-text-secondary">
-            Company egress addresses are not listed, so office addresses count as external.{" "}
-            {isAdmin ? (
-              <button
-                type="button"
-                onClick={() => navigate("enrichment")}
-                className="text-accent-text hover:underline"
-              >
-                Add internal networks
-              </button>
-            ) : null}
-          </span>
-        ) : undefined
-      }
+      note={!s.has_public ? <EgressNote /> : undefined}
       kpis={kpis}
       count={kpis.length}
       chart={
@@ -845,30 +852,33 @@ function TopSources({ s, rows }: { s: DashboardSections; rows: SectionRow[] }) {
   );
 }
 
+/** Detections with no rule enabled: someone who can enable one is offered Enable rules.
+ * The Overview says so before the section's answer, so the page draws this at its own
+ * height from the first paint (fix list 2026-11-16 item 27). */
+function NoRules() {
+  const { isAdmin } = useViewer();
+  return (
+    <Card title="Detections">
+      <EmptyState
+        kind="not-set-up"
+        title={EMPTY.detections}
+        action={isAdmin ? { label: "Enable rules", onClick: () => navigate("rules") } : undefined}
+      />
+    </Card>
+  );
+}
+
 /** Detections (DESIGN.md 6.3, ADR-0052): matched events, the rules that matched, and the
  * hosts and people involved. When the system paused detection (D236) the header says so and
  * a zero reads "Not running". With no rule enabled an administrator is offered Enable rules. */
 function Detections({ s }: { s: DashboardSections }) {
   const d = s.detections;
-  const { isAdmin } = useViewer();
   // The Overview the page already has (Needs you reads the same answer).
   const overview = useQuery({ queryKey: ["overview"], queryFn: api.overview, staleTime: 60_000 });
   // Only rule schedules feed this section; a paused saved-search schedule does not blind it.
   const stopped = (overview.data?.paused ?? []).filter((p) => p.kind === "rule" && !p.by_person);
   const blind = stopped.length > 0;
-  if (!d) {
-    // No rule is enabled: only someone who can enable one is told.
-    if (!s.no_rules || !isAdmin) return null;
-    return (
-      <Card title="Detections">
-        <EmptyState
-          kind="not-set-up"
-          title="No rules are enabled."
-          action={{ label: "Enable rules", onClick: () => navigate("rules") }}
-        />
-      </Card>
-    );
-  }
+  if (!d) return <NoRules />;
   const kpis = [
     <Kpi
       key="m"
@@ -985,44 +995,197 @@ const PART_NAME: Record<Part, string> = {
   detections: "Detections",
 };
 
-/** One section, loaded on its own so a slow one holds up only itself. */
-function Part({ window, part }: { window: PageWindow; part: Part }) {
+/** Each section's box on a first visit, from 1024 px, by window: the taller of its loaded
+ * heights on the synthetic demo and the synthetic 30-day lake at 1280 and 1440 px, so a
+ * first visit never moves. Later visits take the height it had loaded last time (`Slot`). */
+const FALLBACK: Record<Part, Record<PageWindow, number>> = {
+  identity: { "24h": 411, "7d": 411, "30d": 429 },
+  attacks: { "24h": 419, "7d": 419, "30d": 419 },
+  detections: { "24h": 211, "7d": 403, "30d": 403 },
+};
+
+/** The labels of each section's KPI cards, drawn while its answer is on the way. */
+/** Each section's KPI cards while its answer is on the way: label and (i), so the labels
+ * wrap as they will loaded and the values start where they will. */
+const TILES: Record<Part, [string, string | null][]> = {
+  identity: [
+    ["Failed sign-ins", null],
+    ["Sign-ins outside approved countries", COUNTED.outside],
+    ["Risky mail rules", COUNTED.mailRules],
+    ["App consents", COUNTED.consents],
+    ["Admin role grants", COUNTED.roleGrants],
+    ["Conditional Access edits", COUNTED.caEdits],
+  ],
+  attacks: [
+    ["External sign-in failures", COUNTED.externalFailures],
+    ["Attacking addresses", COUNTED.attackingAddresses],
+    ["Countries", COUNTED.countries],
+    ["VPN logins outside approved countries", COUNTED.vpnOutside],
+  ],
+  detections: [
+    ["Matched events", COUNTED.ruleMatches],
+    ["Rules that matched", COUNTED.rulesMatched],
+    ["Hosts involved", COUNTED.hostsInvolved],
+    ["People involved", COUNTED.usersInvolved],
+  ],
+};
+
+/** A section while its answer is on the way: its card, title, the header parts that do not
+ * depend on the answer, the egress note when the Overview says it will be there, and its KPI
+ * cards in their final places, then the chart and table area as one block. */
+function PartSkeleton({ part, egress }: { part: Part; egress: boolean }) {
+  const tiles = TILES[part];
+  const signIns = useSignInAbout();
+  return (
+    <Card
+      title={PART_NAME[part]}
+      note={part === "identity" ? "from Microsoft 365." : undefined}
+      action={
+        part === "identity" ? (
+          <CardAction onClick={() => navigate("m365", "sign-ins")}>View all</CardAction>
+        ) : part === "detections" ? (
+          <CardAction onClick={() => navigate("rules")}>View all</CardAction>
+        ) : undefined
+      }
+      // The chart area fills what the box leaves, so nothing is cut at its foot.
+      className="overflow-hidden [&>div:last-child]:flex [&>div:last-child]:flex-col"
+    >
+      {part === "attacks" && !egress ? (
+        <div className="border-b border-border px-3 py-1.5 text-sm">
+          <EgressNote />
+        </div>
+      ) : null}
+      <div
+        className={cn(
+          "grid gap-px bg-border",
+          tiles.length === 4
+            ? "grid-cols-2 lg:grid-cols-4"
+            : "grid-cols-2 lg:grid-cols-[repeat(auto-fit,minmax(150px,1fr))]",
+        )}
+      >
+        {tiles.map(([t, about]) => (
+          <KpiTile key={t} label={t} value="" about={about ?? signIns} loading />
+        ))}
+      </div>
+      <div className="min-h-0 flex-1 border-t border-border p-3">
+        <Skeleton label={PART_NAME[part]} block="h-full" className="h-full" />
+      </div>
+    </Card>
+  );
+}
+
+const EMPTY: Record<Part, string> = {
+  identity: "No Microsoft 365 sign-ins in this window.",
+  attacks: "No sign-in failures from external addresses in this window.",
+  detections: "No rules are enabled.",
+};
+
+/** A section whose answer has nothing to show: its message centered on a muted body, in
+ * the box it had while loading, so it reads as a state, not a gap. */
+export function Empty({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <Card
+      title={title}
+      className="[&>div:last-child]:flex [&>div:last-child]:items-center [&>div:last-child]:justify-center [&>div:last-child]:bg-empty-fill"
+    >
+      <div data-empty="good-zero" className="px-3 py-3 text-sm text-text-secondary">
+        {children}
+      </div>
+    </Card>
+  );
+}
+
+/** Attacks and access when every source it counts went quiet before the window: its
+ * compact empty card from the first paint. Its answer still loads; should it have
+ * something after all (a sign-in to this server from outside), the section shows it. */
+function QuietAttacks({ window }: { window: PageWindow }) {
+  const q = useQuery({
+    queryKey: ["dashboard-sections", window, "attacks"],
+    queryFn: () => api.dashboardSections(window, "attacks"),
+    refetchInterval: 300_000,
+  });
+  return q.data?.attacks ? (
+    <Attacks s={q.data} />
+  ) : (
+    <Empty title={PART_NAME.attacks}>{EMPTY.attacks}</Empty>
+  );
+}
+
+/** One section, loaded on its own so a slow one holds up only itself, in its `Slot`. */
+function Part({ window, part, egress }: { window: PageWindow; part: Part; egress: boolean }) {
   const q = useQuery({
     queryKey: ["dashboard-sections", window, part],
     queryFn: () => api.dashboardSections(window, part),
     refetchInterval: 300_000,
   });
-  if (q.isLoading) return <Skeleton label={PART_NAME[part]} block="h-48" />;
-  if (q.isError && !q.data)
-    return (
-      <section
-        aria-label={PART_NAME[part]}
-        className="rounded-card border border-border bg-surface"
-      >
-        <InlineError
-          what={PART_NAME[part]}
-          error={q.error}
-          onRetry={() => void q.refetch()}
-          retrying={q.isFetching}
-        />
-      </section>
-    );
   const s = q.data;
-  if (!s) return null;
-  if (part === "identity") return <Identity s={s} />;
-  if (part === "attacks") return <Attacks s={s} />;
-  return <Detections s={s} />;
+  return (
+    <Slot name={`${part}:${window}`} fallback={FALLBACK[part][window]} loaded={Boolean(s)}>
+      {s ? (
+        part === "identity" ? (
+          <Identity s={s} />
+        ) : part === "attacks" ? (
+          <Attacks s={s} />
+        ) : (
+          <Detections s={s} />
+        )
+      ) : q.isError ? (
+        <section
+          aria-label={PART_NAME[part]}
+          className="rounded-card border border-border bg-surface"
+        >
+          <InlineError
+            what={PART_NAME[part]}
+            error={q.error}
+            onRetry={() => void q.refetch()}
+            retrying={q.isFetching}
+          />
+        </section>
+      ) : (
+        <PartSkeleton part={part} egress={egress} />
+      )}
+    </Slot>
+  );
 }
 
 /** Identity, Attacks and access, and Detections (ADR-0038 edit 10), each shown only when
- * the viewer has its source, each loading on its own. */
-export function Sections({ window }: { window: PageWindow }) {
-  // Every part in DASHBOARD_PARTS, which the page also declares to the audit log.
+ * the viewer has its source (`shape`, known before any number), each loading on its own. */
+export function Sections({
+  window,
+  shape,
+  empty,
+  egress,
+}: {
+  window: PageWindow;
+  shape: DashboardShape;
+  /** What the quick reads already say is empty (`knownEmpty`): drawn at its own height. */
+  empty: { detections: boolean; attacks: boolean };
+  /** A company egress is listed (the Overview's `egress_listed`). */
+  egress: boolean;
+}) {
+  // The parts in DASHBOARD_PARTS the viewer has; the page declares all of them to the audit
+  // log, which may list more than was asked for, never less.
+  const { isAdmin } = useViewer();
+  const has: Record<Part, boolean> = {
+    identity: shape.m365,
+    attacks: shape.other,
+    detections: shape.any,
+  };
   return (
     <>
-      {DASHBOARD_PARTS.map((part) => (
+      {DASHBOARD_PARTS.filter((part) => has[part]).map((part) => (
         <ErrorBoundary key={part} label={PART_NAME[part]}>
-          <Part window={window} part={part} />
+          {part === "detections" && empty.detections ? (
+            // Only someone who can enable a rule is told (as before item 27): a section
+            // that offers nothing to do is not drawn for the others.
+            isAdmin ? (
+              <NoRules />
+            ) : null
+          ) : part === "attacks" && empty.attacks ? (
+            <QuietAttacks window={window} />
+          ) : (
+            <Part window={window} part={part} egress={egress} />
+          )}
         </ErrorBoundary>
       ))}
     </>

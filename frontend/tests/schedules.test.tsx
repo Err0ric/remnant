@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fillSql } from "@/features/schedules/schedule";
 import { mockApi, type MockAuth } from "./mockApi";
+import { choose } from "./choose";
 
 async function renderAt(
   path: string,
@@ -104,7 +105,7 @@ describe("Dashboard panels (trial finding, ADR-0034)", () => {
 
   it("offers no layout editing on a shared dashboard someone else owns", async () => {
     await renderAt("/dashboard");
-    await userEvent.selectOptions(await screen.findByLabelText("Dashboard"), "d2");
+    await choose(await screen.findByLabelText("Dashboard"), "d2");
     expect(await screen.findByText(/^Team, \d+ saved-search/)).toBeVisible();
     expect(screen.getByRole("heading", { name: "Dashboard", level: 1 })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Edit layout" })).toBeNull();
@@ -168,14 +169,8 @@ describe("Dashboards at scale (ADR-0034)", () => {
     await screen.findByRole("region", { name: "Failed SSH daily" });
     await userEvent.click(screen.getByRole("button", { name: "Edit layout" }));
     const form = await screen.findByRole("form", { name: "Headline of Failed SSH daily" });
-    await userEvent.selectOptions(
-      within(form).getByLabelText("Number shown for Failed SSH daily"),
-      "sum",
-    );
-    await userEvent.selectOptions(
-      await within(form).findByLabelText("Column for Failed SSH daily"),
-      "failures",
-    );
+    await choose(within(form).getByLabelText("Number shown for Failed SSH daily"), "sum");
+    await choose(await within(form).findByLabelText("Column for Failed SSH daily"), "failures");
     await userEvent.type(
       within(form).getByLabelText("Label for Failed SSH daily"),
       "failed logins",
@@ -199,7 +194,7 @@ describe("Dashboards at scale (ADR-0034)", () => {
     expect(await screen.findByText(/^New dashboard, \d+ saved-search/)).toBeVisible();
     expect(screen.getByRole("heading", { name: "Dashboard", level: 1 })).toBeVisible();
     const settings = screen.getByRole("region", { name: "Dashboard settings" });
-    await userEvent.selectOptions(within(settings).getByLabelText("Schedule to add"), "s1");
+    await choose(within(settings).getByLabelText("Schedule to add"), "s1");
     await userEvent.click(within(settings).getByRole("button", { name: "Add panel" }));
     expect(await screen.findByRole("region", { name: "Failed SSH daily" })).toBeVisible();
     expect(sent(spy, "POST", (u) => u.endsWith("/api/dashboards"))).toEqual([
@@ -215,7 +210,7 @@ describe("Add a pack (ADR-0033 row 5)", () => {
     await userEvent.click(screen.getByRole("button", { name: "New dashboard" }));
     const settings = await screen.findByRole("region", { name: "Dashboard settings" });
     const box = within(settings).getByRole("group", { name: "Add a pack" });
-    await userEvent.selectOptions(await within(box).findByLabelText("Pack"), "linux_auth");
+    await choose(await within(box).findByLabelText("Pack"), "linux_auth");
     const list = within(box).getByRole("list", { name: "Queries in Linux sign-ins and privilege" });
     expect(within(list).getAllByRole("checkbox")).toHaveLength(2);
     await userEvent.click(within(list).getAllByRole("checkbox")[1]!);
@@ -235,9 +230,9 @@ describe("Schedules", () => {
     const spy = await renderAt("/schedules");
     await userEvent.click(await screen.findByRole("button", { name: "New schedule" }));
     const form = await screen.findByRole("form", { name: "New schedule" });
-    await userEvent.selectOptions(within(form).getByLabelText("Saved search"), "failed_by_ip");
-    await userEvent.selectOptions(within(form).getByLabelText("When"), "hourly");
-    await userEvent.selectOptions(within(form).getByLabelText("Flag when"), "above");
+    await choose(within(form).getByLabelText("Saved search"), "failed_by_ip");
+    await choose(within(form).getByLabelText("When"), "hourly");
+    await choose(within(form).getByLabelText("Flag when"), "above");
     await userEvent.type(within(form).getByLabelText("Flag value"), "20");
     await userEvent.click(within(form).getByRole("button", { name: "Create schedule" }));
     await vi.waitFor(() =>
@@ -275,6 +270,20 @@ describe("Schedules", () => {
     expect(within(table).getByText("Since the last run")).toBeInTheDocument();
   });
 
+  it("shows last and next runs in the app's date format, with UTC on hover (owner, 2026-11-16)", async () => {
+    await renderAt("/schedules");
+    const table = await screen.findByRole("table", { name: "Schedules" });
+    const row = (await within(table).findByText("Failed SSH daily")).closest("tr") as HTMLElement;
+    const next = within(row).getByText("Oct 12, 7:00 AM");
+    expect(next.tagName).toBe("TIME");
+    expect(next).toHaveAttribute("title", "2026-10-12 07:00 UTC");
+    const last = within(row).getByText("Oct 11, 7:00 AM");
+    expect(last).toHaveAttribute("title", "2026-10-11 07:00 UTC");
+    expect(last.parentElement).toHaveTextContent("Oct 11, 7:00 AM · 12 rows · flagged");
+    // Never a raw "2026-10-12 07:00" as the visible text.
+    expect(table.textContent).not.toMatch(/2026-10-1\d \d\d:\d\d/);
+  });
+
   it("edits a schedule and sends only what changed", async () => {
     const spy = await renderAt("/schedules");
     const table = await screen.findByRole("table", { name: "Schedules" });
@@ -282,7 +291,7 @@ describe("Schedules", () => {
       await within(table).findByRole("button", { name: "Edit Failed SSH daily" }),
     );
     const form = await screen.findByRole("form", { name: "Edit Failed SSH daily" });
-    await userEvent.selectOptions(within(form).getByLabelText("Time range of each run"), "60");
+    await choose(within(form).getByLabelText("Time range of each run"), "60");
     await userEvent.click(within(form).getByRole("button", { name: "Save changes" }));
     await vi.waitFor(() =>
       expect(sent(spy, "PATCH", (u) => u.includes("/api/schedules/s1"))).toEqual([
@@ -345,10 +354,7 @@ describe("Dashboard layout (ADR-0034, owner 2026-10-22)", () => {
     await screen.findByRole("region", { name: "Failed SSH daily" });
     await userEvent.click(screen.getByRole("button", { name: "Edit layout" }));
     const panel = screen.getByRole("region", { name: "Windows failures" });
-    await userEvent.selectOptions(
-      within(panel).getByLabelText("Move Windows failures to section"),
-      "\u0000new",
-    );
+    await choose(within(panel).getByLabelText("Move Windows failures to section"), "\u0000new");
     await userEvent.type(
       within(panel).getByLabelText("New section for Windows failures"),
       "Windows{enter}",

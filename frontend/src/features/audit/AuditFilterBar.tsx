@@ -1,5 +1,6 @@
 import { X } from "lucide-react";
 import type { AuditFilters } from "@/lib/api";
+import { Select } from "@/components/forms/Select";
 
 export type AuditRange = "24h" | "7d" | "30d" | "all";
 export type AuditLog = "activity" | "ai";
@@ -36,9 +37,6 @@ interface AuditFilterBarProps {
   onChange: (next: AuditFilterState) => void;
 }
 
-const SELECT =
-  "h-8 rounded border border-border-control bg-surface px-2 text-sm focus:outline-none focus:ring-2 focus:ring-focus-ring";
-
 export function AuditFilterBar({ log, value, onChange }: AuditFilterBarProps) {
   const set = (patch: Partial<AuditFilterState>) => onChange({ ...value, ...patch });
   return (
@@ -52,57 +50,42 @@ export function AuditFilterBar({ log, value, onChange }: AuditFilterBarProps) {
             placeholder="query. or user.login"
             maxLength={100}
             spellCheck={false}
-            className={`${SELECT} w-48 font-mono`}
+            className="h-7 w-48 rounded border border-border-control bg-inset px-2 font-mono text-text"
           />
         </label>
       ) : (
-        <label className="flex items-center gap-2">
-          <span className="text-text-secondary">Purpose</span>
-          <select
-            value={value.text}
-            onChange={(e) => set({ text: e.target.value })}
-            className={SELECT}
-          >
-            <option value="">Any</option>
-            {PURPOSES.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
-        </label>
+        <Select
+          look="facet"
+          aria-label="Purpose"
+          prefix="Purpose"
+          value={value.text}
+          onChange={(v) => set({ text: v })}
+          options={[{ value: "", label: "Any" }, ...PURPOSES.map((p) => ({ value: p, label: p }))]}
+        />
       )}
-      <label className="flex items-center gap-2">
-        <span className="text-text-secondary">Outcome</span>
-        <select
-          value={value.outcome}
-          onChange={(e) => set({ outcome: e.target.value as AuditFilterState["outcome"] })}
-          className={SELECT}
-        >
-          <option value="">Any</option>
-          <option value="success">Success</option>
-          <option value="failure">Failure</option>
-          {log === "activity" ? (
-            <option value="denied">Denied</option>
-          ) : (
-            <option value="blocked">Blocked by classification</option>
-          )}
-        </select>
-      </label>
-      <label className="flex items-center gap-2">
-        <span className="text-text-secondary">Time</span>
-        <select
-          value={value.range}
-          onChange={(e) => set({ range: e.target.value as AuditRange })}
-          className={SELECT}
-        >
-          {RANGES.map((r) => (
-            <option key={r.id} value={r.id}>
-              {r.label}
-            </option>
-          ))}
-        </select>
-      </label>
+      <Select
+        look="facet"
+        aria-label="Outcome"
+        prefix="Outcome"
+        value={value.outcome ?? ""}
+        onChange={(v) => set({ outcome: v as AuditFilterState["outcome"] })}
+        options={[
+          { value: "", label: "Any" },
+          { value: "success", label: "Success" },
+          { value: "failure", label: "Failure" },
+          log === "activity"
+            ? { value: "denied", label: "Denied" }
+            : { value: "blocked", label: "Blocked by classification" },
+        ]}
+      />
+      <Select
+        look="facet"
+        aria-label="Time"
+        prefix="Time"
+        value={value.range}
+        onChange={(v) => set({ range: v as AuditRange })}
+        options={RANGES.map((r) => ({ value: r.id, label: r.label }))}
+      />
       {value.user ? (
         <span className="flex items-center gap-1 rounded-chip bg-accent-subtle py-0.5 pl-2.5 pr-1.5 text-accent-text">
           User: {value.user.name}

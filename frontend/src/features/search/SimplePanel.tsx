@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import type { CompiledSearch, SearchPreset } from "@/lib/api";
+import { Select } from "@/components/forms/Select";
 
 interface SimplePanelProps {
   text: string;
@@ -78,22 +79,18 @@ export function SimplePanel({
         </div>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-text-muted">
           {presets.length && onPreset ? (
-            <select
+            <Select
               aria-label="Suspicious activity presets"
+              look="facet"
+              placeholder="Suspicious…"
               value=""
-              onChange={(e) => {
-                const p = presets.find((x) => x.id === e.target.value);
+              onChange={(v) => {
+                const p = presets.find((x) => x.id === v);
                 if (p) onPreset(p.text);
               }}
-              className="h-7 w-auto max-w-48 rounded border border-border-control bg-surface px-1.5 text-sm text-text"
-            >
-              <option value="">Suspicious…</option>
-              {presets.map((p) => (
-                <option key={p.id} value={p.id} title={p.description}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
+              options={presets.map((p) => ({ value: p.id, label: p.name, title: p.description }))}
+              className="max-w-48"
+            />
           ) : null}
           <span>Try</span>
           {EXAMPLES.map((ex) => (

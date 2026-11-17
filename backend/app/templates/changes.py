@@ -36,6 +36,7 @@ class Change:
     fields: list[str]
     since: str | None  # when this server first loaded the version: new events from then on
     current: bool  # the version now in use
+    summary: str = ""  # the note in plain words, for the Sources page
     affected: list[Affected] = field(default_factory=list)
 
 
@@ -74,7 +75,7 @@ def report(meta: MetaDB, templates: list[Template]) -> list[Change]:
         for c in t.changes[:RECENT]:
             change = Change(
                 t.id, t.name, c.version, c.note, list(c.fields),
-                loaded.get((t.id, c.version)), c.version == t.version,
+                loaded.get((t.id, c.version)), c.version == t.version, c.summary,
             )  # fmt: skip
             if c.fields:
                 uses = {

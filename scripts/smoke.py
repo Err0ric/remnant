@@ -2,7 +2,8 @@
 """Smoke test (owner rule, 2026-11-08): open every page in headless Chromium as an Admin,
 an Analyst, and an Auditor, and fail on any console error, any 4xx or 5xx response the
 role is not expected to get, any blank panel, and any list with more rows than it shows
-that has no working pager.
+that has no working pager. As the Admin it also loads the Dashboard with its answers held
+back, at 1280 and 1440 px, and fails when anything in it moves (`dashboard_shift.py`).
 
     cd backend && uv run python ../scripts/smoke.py --url http://127.0.0.1:8090  # a demo install
     cd backend && uv run python ../scripts/smoke.py --lake ../data/bench/lake    # this checkout
@@ -41,6 +42,7 @@ ROOT = HERE.parent
 sys.path.insert(0, str(HERE))
 
 import bench_compare as bc  # noqa: E402  # sibling script, standard library only
+import dashboard_shift  # noqa: E402  # sibling script
 import devauth  # noqa: E402  # same
 
 PASSWORD = "smoke-test-password-1"  # noqa: S105  # synthetic accounts on a throwaway install only
@@ -50,6 +52,17 @@ ROLES = (("alice", "admin"), ("bob", "analyst"), ("carol", "auditor"))
 EXPECTED: tuple[tuple[str, str, str], ...] = ()
 # A person's page is the same route with a fragment, and one of the heaviest pages.
 EXTRA = ["/investigate/people#user=alice"]
+# Old addresses and an unknown one (owner, 2026-11-16): the address each must end at, by
+# role where a role's rule differs (an Auditor has no Ask AI: Logs), with no console error.
+# The full table is tested in frontend/tests/oldRoutes.test.tsx; these load the real app.
+REDIRECTS: tuple[tuple[str, str, dict[str, str]], ...] = (
+    ("/investigate", "/investigate/people", {}),
+    ("/settings", "/sources", {}),
+    ("/investigate/ask", "/ask-ai", {"auditor": "/investigate/logs"}),
+    ("/overview", "/health", {}),
+    ("/no-such-page", "/no-such-page", {}),
+)
+NOT_FOUND = "Page not found"
 SETTLE_S = 20
 MIN_TEXT = 40
 BUSY = "main [aria-busy='true']"
@@ -58,14 +71,14 @@ BROKEN = ("could not be shown", "Something went wrong on this page")
 
 def routes(route_ts: Path) -> list[str]:
     """Every page path and tab path in the route table, except the signed-out account page
-    and the old Overview address (it redirects)."""
+    (old addresses are in REDIRECTS)."""
     src = route_ts.read_text(encoding="utf-8")
     block = re.search(r"const PATHS[^{]*\{(.*?)\n\};", src, re.S)
     tabs_block = re.search(r"PAGE_TABS[^{]*\{(.*?)\n\};", src, re.S)
     if not block or not tabs_block:
         raise RuntimeError(f"route table not found in {route_ts}")
     paths = dict(re.findall(r"^\s*(\w+): \"(/[^\"]*)\"", block.group(1), re.M))
-    out = [p for k, p in paths.items() if k not in ("account", "overview")]
+    out = [p for k, p in paths.items() if k != "account"]
     for page, tabs in re.findall(r"^\s*(\w+): \[([^\]]*)\]", tabs_block.group(1), re.M):
         names = re.findall(r"\"([^\"]+)\"", tabs)
         out += [f"{paths[page]}/{t}" for t in names[1:]]
@@ -224,7 +237,27 @@ def check(base: str, roles: tuple[tuple[str, str], ...] = ROLES) -> list[str]:
                 seen += [f"blank: says '{b}'" for b in BROKEN if b in text]
                 seen += pager_works(page)
                 problems += [f"{role} {path}: {s}" for s in dict.fromkeys(seen)]
+            for old, new, by_role in REDIRECTS:
+                seen.clear()
+                page.goto(base + old)
+                want = by_role.get(role, new)
+                try:
+                    page.wait_for_url(base + want + "*", timeout=SETTLE_S * 1000)
+                    page.locator("main h1").first.wait_for(timeout=SETTLE_S * 1000)
+                except Exception:  # noqa: S110  # judged below
+                    pass
+                at = page.url.removeprefix(base).split("#")[0]
+                if at != want:
+                    seen.append(f"redirect: ended at {at}, not {want}")
+                lost = NOT_FOUND in main_text(page)
+                if lost != (old == want):
+                    seen.append("redirect: says Page not found" if lost else "no Page not found")
+                problems += [f"{role} {old}: {s}" for s in dict.fromkeys(seen)]
             ctx.close()
+            if role == "admin":  # the Dashboard loads with nothing moving (fix list item 27)
+                login = {"username": name, "password": PASSWORD}
+                shifts = dashboard_shift.check(browser, base, login)
+                problems += [f"{role} /dashboard: {p}" for p in shifts]
         browser.close()
     return problems
 

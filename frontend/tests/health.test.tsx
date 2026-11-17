@@ -3,6 +3,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SOURCE, mockApi, type MockAuth } from "./mockApi";
+import { choose, optionLabels } from "./choose";
 
 async function renderAt(
   path: string,
@@ -30,9 +31,10 @@ describe("Health (ADR-0019)", () => {
     await renderAt("/health");
     expect(await screen.findByRole("heading", { name: "Health", level: 1 })).toBeVisible();
     const nav = screen.getByRole("navigation", { name: "Primary" });
+    // A page with tabs is the current section in the rail; its open tab is the page (D268).
     expect(within(nav).getByRole("link", { name: "Health" })).toHaveAttribute(
       "aria-current",
-      "page",
+      "true",
     );
     const sources = await screen.findByRole("list", { name: "Sources" });
     expect(within(sources).getByText("linux_sshd")).toBeVisible();
@@ -53,7 +55,7 @@ describe("Health (ADR-0019)", () => {
     // The Type filter of the tab, a facet of the one filter row, in the address (D255).
     const type = screen.getByRole("combobox", { name: "Type" });
     expect(type).toHaveValue("agents");
-    await userEvent.selectOptions(type, "devices");
+    await choose(type, "devices");
     expect(window.location.pathname + window.location.hash).toBe("/health/collectors#type=devices");
     const devices = await screen.findByRole("table", { name: "Watched devices" });
     expect(within(devices).getByText("Site B network sensor")).toBeVisible();
@@ -204,11 +206,7 @@ describe("Health with pulled sources only (F59, F60)", () => {
     expect(screen.queryByText(/No sources yet/)).toBeNull();
     // Enrichment feeds are a Type of Sources.
     const type = screen.getByRole("combobox", { name: "Type" });
-    expect(
-      within(type)
-        .getAllByRole("option")
-        .map((o) => o.textContent),
-    ).toEqual(["Events", "Enrichment feeds"]);
+    expect(optionLabels(type)).toEqual(["Events", "Enrichment feeds"]);
     const events = document.querySelector('[data-kpi="Events, last 24 hours"]');
     expect(events).toHaveTextContent("Not enough history yet (2 of 7 days)");
   });
@@ -244,7 +242,7 @@ describe("Health in three tabs, and Settings > System (ADR-0052 section 3.3, red
     const type = await screen.findByRole("combobox", { name: "Type" });
     await vi.waitFor(() => expect(type).toHaveValue("enrichment"));
     expect(await screen.findByRole("region", { name: "Enrichment feeds" })).toBeVisible();
-    await userEvent.selectOptions(type, "sources");
+    await choose(type, "sources");
     expect(window.location.pathname + window.location.hash).toBe("/health");
   });
 
@@ -252,11 +250,7 @@ describe("Health in three tabs, and Settings > System (ADR-0052 section 3.3, red
     await renderAt("/system");
     expect(await screen.findByRole("heading", { name: "System", level: 1 })).toBeVisible();
     const type = screen.getByRole("combobox", { name: "Type" });
-    expect(
-      within(type)
-        .getAllByRole("option")
-        .map((o) => o.textContent),
-    ).toEqual(["Backups", "Page rollups", "Speed"]);
+    expect(optionLabels(type)).toEqual(["Backups", "Page rollups", "Speed"]);
     expect(type).toHaveValue("backups");
     // One filter row with the Status filter, and no Health strip here.
     expect(screen.getAllByRole("group", { name: "Choose what to show" })).toHaveLength(1);
@@ -310,7 +304,7 @@ describe("Health in three tabs, and Settings > System (ADR-0052 section 3.3, red
       const { canonical, pageFromPath } = await import("@/lib/route");
       window.history.replaceState(null, "", address);
       expect(() => canonical()).not.toThrow();
-      expect(["health", "ai", "overview"]).toContain(pageFromPath(address.split("#")[0] as string));
+      expect(["health", "ai", "notfound"]).toContain(pageFromPath(address.split("#")[0] as string));
       await renderAt(address);
       expect(await screen.findByRole("navigation", { name: "Primary" })).toBeVisible();
       expect(await screen.findByRole("heading", { level: 1 })).toBeVisible();
@@ -322,9 +316,9 @@ describe("Health in three tabs, and Settings > System (ADR-0052 section 3.3, red
       const real = s.getMockImplementation() as typeof fetch;
       s.mockImplementation(async (url, init) => {
         const res = await real(url, init);
-        if (!String(url).endsWith("/api/health-checks")) return res;
+        if (!String(url).endsWith("/api/overview")) return res;
         const body = await res.json();
-        return new Response(JSON.stringify({ ...body, quarantined_files: 2 }), {
+        return new Response(JSON.stringify({ ...body, damaged_files: 2 }), {
           status: 200,
           headers: { "content-type": "application/json" },
         });

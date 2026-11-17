@@ -13,7 +13,8 @@ import { SchedulesPage } from "@/features/schedules/SchedulesPage";
 import { AuthGate } from "@/features/auth/AuthGate";
 import { TopBar } from "@/components/shell/TopBar";
 import { AccountPasswordPage } from "@/features/auth/AccountPasswordPage";
-import { HomeRedirect, ToHealth, ToLogs } from "@/features/dashboard/HomeRedirect";
+import { HomeRedirect, ToLogs } from "@/features/dashboard/HomeRedirect";
+import { NotFoundPage } from "@/features/notfound/NotFoundPage";
 import { canonical, usePage, useSection, useTab } from "@/lib/route";
 import { SqlOnly, ViewerProvider } from "@/app/ViewerProvider";
 import { SqlOffNotice } from "@/features/search/SqlOffNotice";
@@ -193,7 +194,8 @@ export function App({ initialTheme, queryClient }: AppProps) {
   const page = usePage();
   const tab = useTab();
   const fragment = useSection();
-  // Old paths and `#tab` links (alert messages, bookmarks) settle on the ADR-0038 address.
+  // Old addresses and `#tab` links (alert messages, bookmarks) settle on the new address,
+  // replacing the old one in history (ADR-0052 section 3.4).
   useEffect(() => {
     const to = canonical();
     if (to) window.history.replaceState(null, "", to);
@@ -358,8 +360,8 @@ export function App({ initialTheme, queryClient }: AppProps) {
                           />
                         ) : page === "investigate" ? (
                           <InvestigatePage />
-                        ) : page === "overview" ? (
-                          <ToHealth />
+                        ) : page === "notfound" ? (
+                          <NotFoundPage />
                         ) : page === "home" ? (
                           <HomeRedirect />
                         ) : page === "ask" ? (

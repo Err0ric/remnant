@@ -10,7 +10,8 @@ import { SeverityMark } from "@/components/SeverityMark";
 import { Skeleton } from "@/components/Skeleton";
 import { StateNotice } from "@/components/StateNotice";
 import { PageHeader } from "@/components/shell/PageHeader";
-import { TrendChart, TrendLegend } from "@/features/dashboard/TrendChart";
+import { stillFilling, TrendChart, TrendLegend } from "@/features/dashboard/TrendChart";
+import { localStamp } from "@/lib/localTime";
 import { navigate } from "@/lib/route";
 import { usePageTime } from "@/lib/timeChoice";
 import { CATEGORY_LABEL, type Category } from "./guide";
@@ -47,7 +48,7 @@ export function overdueDays(m: AlertMetrics, sev: AlertSeverityKey): number {
 const known = (v: number | null | undefined): v is number => v !== null && v !== undefined;
 const days = (n: number) => `${n} ${n === 1 ? "day" : "days"}`;
 const dayLabel = (day: string) =>
-  new Date(`${day}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  new Date(`${day}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
 /** The Queue's fragment for alerts closed in the window the server used: a preset as it
  * is, and Custom always with both ends from the answer, since an open side means "every
@@ -61,13 +62,7 @@ export function closedIn(used: { start: string; end: string }, preset: string): 
   return q.toString();
 }
 
-const moment = (iso: string) =>
-  new Date(iso).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
+const moment = (iso: string) => localStamp(iso);
 
 /** "in the last 30 days", or for Custom the window the server used: "from Nov 1, 8:00 AM to
  * Nov 14, 2:00 PM", so a side left open never reads as everything kept. */
@@ -101,6 +96,12 @@ export function HandlingPage() {
   const toClosed = () => (m ? closedIn(m, time.choice.preset) : undefined);
   const span = m ? windowWords(m, time.choice.preset, time.words) : "";
   const ttc = m?.time_to_close;
+  // Today is still filling (an outlined bar) except in a Custom window; null there.
+  const today = m?.days[m.days.length - 1];
+  const partial = time.choice.preset === "custom" ? undefined : "so far";
+  // Named in the legend only when the chart draws it so (one point is drawn solid).
+  const soFar =
+    Boolean(today && today.opened + today.closed > 0) && stillFilling(m?.days.length ?? 0, partial);
   const overdueLine = m
     ? SEVERITIES.filter((s) => m.overdue_by_severity[s.key] > 0)
         .map(
@@ -191,6 +192,7 @@ export function HandlingPage() {
               {m ? (
                 <TrendChart
                   bare
+                  bars
                   title="Opened and closed"
                   summary={`Alerts opened and closed per day: ${m.opened} opened, ${m.closed} closed`}
                   series={[
@@ -209,12 +211,14 @@ export function HandlingPage() {
                   ]}
                   pointLabel={(i) => dayLabel(m.days[i]?.day ?? "")}
                   axisLabel={(i) => dayLabel(m.days[i]?.day ?? "")}
-                  partial={time.choice.preset === "custom" ? undefined : "so far"}
+                  partial={partial}
                   legend={
                     <TrendLegend
                       items={[
                         { label: `Opened ${m.opened.toLocaleString()}`, color: "text-secondary" },
                         { label: `Closed ${m.closed.toLocaleString()}`, color: "ok" },
+                        // What an outlined bar is: shown only when today has a count.
+                        ...(soFar ? [{ label: "Today, so far", outline: true }] : []),
                       ]}
                     />
                   }

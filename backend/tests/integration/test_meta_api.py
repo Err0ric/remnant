@@ -63,6 +63,48 @@ def test_web_ui_routes_fall_back_to_index(tmp_path: Path) -> None:
     assert "root" not in c.get("/api/nope").text
 
 
+def test_every_app_address_loads_the_app_and_unknown_api_paths_are_typed_404s(
+    tmp_path: Path,
+) -> None:
+    """A deep link or a refresh on any page, an old address, or an unknown one loads the app
+    (which redirects or says "Page not found"); an unknown /api path is the typed JSON 404,
+    never the app's HTML, with the app mounted and without it."""
+    from fastapi.testclient import TestClient
+
+    from app.core.config import load_config
+    from app.main import create_app
+
+    web = tmp_path / "web"
+    web.mkdir()
+    (web / "index.html").write_text("<html><head></head><div id=root></div></html>")
+    data = str(tmp_path / "data")
+    c = TestClient(create_app(load_config(Path("missing.yaml"), {
+        "APP__PATHS__DATA_DIR": data, "APP__SERVER__STATIC_DIR": str(web)
+    })))  # fmt: skip
+    for path in (
+        "/investigate",
+        "/investigate/ask",
+        "/settings",
+        "/investigate/people",
+        "/alerts/closed?x=1",
+        "/no-such-page",
+        "/" + "a" * 200,
+    ):
+        r = c.get(path)
+        assert r.status_code == 200, path
+        assert "id=root" in r.text, path
+        assert r.headers["content-type"].startswith("text/html"), path
+    bare = TestClient(create_app(load_config(Path("missing.yaml"), {
+        "APP__PATHS__DATA_DIR": str(tmp_path / "bare")
+    })))  # fmt: skip
+    for client in (c, bare):
+        for path in ("/api/nope", "/api/alerts/nope/deeper", "/api"):
+            r = client.get(path)
+            assert r.status_code == 404, path
+            assert r.headers["content-type"].startswith("application/json"), path
+            assert r.json() == {"detail": "Not found", "code": "not_found"}, path
+
+
 def test_install_name_is_set_by_admins_and_shown_only_when_signed_in(tmp_path: Path) -> None:
     import sqlite3
 

@@ -7,6 +7,7 @@ like any other, so people see only sources they may read.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
@@ -280,20 +281,20 @@ _DRILL_SELECT = {
     "services": (
         "SELECT service_id, sum(n)::BIGINT AS events, count(DISTINCT who) AS people,\n"
         "       count(DISTINCT machine) AS devices, min(first_t) AS first_seen,"
-        " max(last_t) AS last_seen\nFROM r\nWHERE {bounds}\nGROUP BY 1 ORDER BY events DESC"
+        " max(last_t) AS last_seen\nFROM r\nWHERE {bounds}\nGROUP BY 1 ORDER BY events DESC, 1"
     ),
     # One row per person: the people card.
     "people": (
         "SELECT who AS person, list(DISTINCT service_id ORDER BY service_id) AS services,\n"
         "       sum(n)::BIGINT AS events, max(last_t) AS last_seen\nFROM r\n"
-        "WHERE who IS NOT NULL AND {bounds}\nGROUP BY 1 ORDER BY events DESC"
+        "WHERE who IS NOT NULL AND {bounds}\nGROUP BY 1 ORDER BY events DESC, 1"
     ),
     # Devices seen with no person in the window: the people card's "more devices" line.
     "devices": (
         "SELECT machine AS device, list(DISTINCT service_id ORDER BY service_id) AS services,\n"
         "       sum(n)::BIGINT AS events, max(last_t) AS last_seen\nFROM r\n"
         "WHERE machine IS NOT NULL AND {bounds}\nGROUP BY 1\nHAVING count(who) = 0\n"
-        "ORDER BY events DESC"
+        "ORDER BY events DESC, 1"
     ),
 }
 
@@ -325,8 +326,41 @@ SELECT service_id, sum(n)::BIGINT AS events, count(DISTINCT who) AS people,
        list_slice(list(DISTINCT who ORDER BY who) FILTER (WHERE who IS NOT NULL), 1, 5) AS top,
        list_slice(list(DISTINCT machine ORDER BY machine) FILTER (WHERE machine IS NOT NULL), 1, 5)
 FROM r
-GROUP BY 1 ORDER BY 2 DESC
+-- Ties by id, so the 500 kept and their order are the same on every load (fix list S6).
+GROUP BY 1 ORDER BY 2 DESC, 1
 LIMIT 500"""  # noqa: S608  # fixed SQL text; domains checked against DOMAIN in _values
+
+
+def _name(text: str) -> str:
+    """A catalog name as a SQL string literal: printable characters only, quotes doubled."""
+    return "'" + "".join(c for c in text if c.isprintable())[:80].replace("'", "''") + "'"
+
+
+def answer_sql(services: Sequence[Any]) -> str:
+    """AI services in use, for the query library's "Which AI services are people using?"
+    (fix list 2026-11-16 item 20): the use rows the AI usage Services list counts
+    (`_use_ctes`, every source that names a destination host), from events, with the
+    catalog's names (columns named as the page names them: events, people, machines),
+    non-usage hosts left out as the page leaves them out, and the sources
+    each service was seen in; one row per service id, as the page lists them, so two
+    services with one name stay two rows. `services` are catalog entries (`Service` or the shipped
+    `ServiceDef`)."""
+    pairs = [(s.id, d) for s in services for d in s.domains]
+    names = ", ".join(
+        f"('{s.id}', {_name(s.name)})"
+        for s in services
+        if s.kind != NON_USAGE and s.id.replace("_", "").isalnum()
+    )
+    return f"""WITH {_use_ctes(pairs, False).strip()},
+names(service_id, service) AS (VALUES {names or "('none', 'none')"})
+SELECT any_value(names.service) AS service, sum(n)::BIGINT AS events,
+       count(DISTINCT who) AS people, count(DISTINCT machine) AS machines,
+       max(last_t) AS last_seen,
+       array_to_string(list(DISTINCT r.source_id ORDER BY r.source_id), ', ') AS sources,
+       r.service_id
+FROM r JOIN names ON r.service_id = names.service_id
+GROUP BY r.service_id
+ORDER BY events DESC, r.service_id"""  # noqa: S608  # fixed SQL text; domains checked, names quoted
 
 
 def daily_sql(pairs: list[tuple[str, str]], rollup: bool = False) -> str:
@@ -443,7 +477,8 @@ SELECT name,
        list(DISTINCT client) FILTER (WHERE client IS NOT NULL) AS clients,
        min(first_t) AS first_seen, max(last_t) AS last_seen, list(DISTINCT src) AS sources
 FROM u WHERE lower(name) NOT IN {NO_MCP_NAMES}
-GROUP BY 1 ORDER BY 2 DESC, 3 DESC
+-- Ties by name, so servers with the same calls keep their order between loads (PR 639).
+GROUP BY 1 ORDER BY 2 DESC, len(people) DESC, 1
 LIMIT 500"""  # noqa: S608  # fixed SQL text
 
 
@@ -458,7 +493,7 @@ SELECT name,
        list(DISTINCT client) FILTER (WHERE client IS NOT NULL) AS clients,
        min(ts) AS first_seen, max(ts) AS last_seen, list(DISTINCT src) AS sources
 FROM t WHERE lower(name) NOT IN {NO_MCP_NAMES}
-GROUP BY 1 ORDER BY 2 DESC, 3 DESC
+GROUP BY 1 ORDER BY 2 DESC, len(people) DESC, 1
 LIMIT 500"""  # noqa: S608  # fixed SQL text
 
 # Per MCP server: the sources it was seen in, its people, and its machines (with and
@@ -640,6 +675,9 @@ class Usage:
                         list(top_m or []),
                     )
                 )
+        # Equal counts by name, as the page lists them, never in the order rows arrived
+        # (fix list S6: services with the same events swapped places between loads).
+        out.sort(key=lambda u: (-u.events, u.service.name.lower(), u.service.id))
         return out, result.sources
 
     def _run_use(
@@ -960,7 +998,10 @@ def merge_people(rows: list[PersonUse], ident: IdentityMap) -> list[PersonUse]:
         cur.models = sorted(set(cur.models) | set(r.models))
     for key, p in merged.items():
         p.person = ident.display(key, email[key])
-    return sorted(merged.values(), key=lambda p: (-p.cost_usd, -p.tokens))
+    # Ties as PEOPLE_SQL orders them, then by name (fix list S6).
+    return sorted(
+        merged.values(), key=lambda p: (-p.cost_usd, -p.tokens, -p.sessions, p.person.lower())
+    )
 
 
 def seen_through(

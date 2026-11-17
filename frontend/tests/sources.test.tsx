@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mockApi, type MockAuth } from "./mockApi";
+import { choose, optionLabels } from "./choose";
 
 async function openSources(auth: MockAuth = { mode: "open" }) {
   window.history.replaceState(null, "", "/search");
@@ -30,14 +31,23 @@ function posts(spy: ReturnType<typeof mockApi>, path: string) {
 afterEach(() => vi.restoreAllMocks());
 
 describe("Sources page", () => {
-  it("tells an admin about recent parser updates and the searches they affect (F66)", async () => {
+  it("tells an admin about parser updates in one line, the detail closed (F66, item 23)", async () => {
     await openSources();
-    const box = await screen.findByRole("region", { name: "Parser updates" });
-    expect(within(box).getByText(/New columns: resource_name/)).toBeInTheDocument();
+    const box = await screen.findByRole("group", { name: "Parser updates" });
+    expect(box).not.toHaveAttribute("open");
     expect(
-      within(box).getByText(/saved search "Failed sign-ins" \(status_detail\)/),
+      within(box).getByText(
+        "1 parser updated in the last 30 days; earlier events keep how they were read.",
+      ),
     ).toBeInTheDocument();
+    expect(within(box).getByText("1 search to check")).toBeInTheDocument();
+    // What changed, in plain words: no column names, no decision numbers.
+    expect(within(box).getByText(/Sign-ins now show the app signed in to/)).toBeInTheDocument();
+    expect(within(box).getByText(/saved search "Failed sign-ins"$/)).toBeInTheDocument();
+    expect(box.textContent).not.toMatch(/resource_name|status_detail|\(D\d+\)/);
     expect(within(box).queryByText(/Old change/)).not.toBeInTheDocument();
+    await userEvent.click(within(box).getByText("What changed"));
+    expect(box).toHaveAttribute("open");
   });
 
   it("discovers a folder and prefills the add form from a suggestion", async () => {
@@ -62,7 +72,11 @@ describe("Sources page", () => {
     // linux_sshd is already a source in the mock, so the suggestion does not collide.
     expect(within(form).getByLabelText("Source ID")).toHaveValue("linux_sshd_2");
     expect(within(form).getByLabelText("File pattern")).toHaveValue("*/sshd.log");
-    await within(form).findByRole("option", { name: "Linux sshd authentication" });
+    await waitFor(() =>
+      expect(optionLabels(within(form).getByLabelText("Parser"))).toContain(
+        "Linux sshd authentication",
+      ),
+    );
     expect(within(form).getByLabelText("Parser")).toHaveValue("template:linux_sshd");
   });
 
@@ -88,7 +102,10 @@ describe("Sources page", () => {
     const sub = screen.getByRole("navigation", { name: "Settings" });
     expect(within(sub).getByText("Sources and connectors")).toHaveAttribute("aria-current", "page");
     const row = (await screen.findByText("linux_sshd")).closest("tr") as HTMLElement;
-    expect(within(row).getByText("Reading")).toBeInTheDocument();
+    // The status is Health's (item 19); the reader's own fact is a separate line.
+    expect(await within(row).findByText("Gap")).toBeInTheDocument(); // as Health says it
+    expect(within(row).getByText("Reader: following the files")).toBeInTheDocument();
+    expect(within(row).queryByText("Reading")).toBeNull();
     expect(within(row).getByText("Local only")).toBeInTheDocument();
     expect(await within(row).findByText("1,234")).toBeInTheDocument();
     expect(within(row).getByText("2 files · **/*.log")).toBeInTheDocument();
@@ -116,12 +133,12 @@ describe("Sources page", () => {
     const spy = await openSources();
     await userEvent.click(screen.getByRole("button", { name: "Add source" }));
     const form = screen.getByRole("form", { name: "Add source" });
-    await userEvent.selectOptions(within(form).getByLabelText("Reads from"), "loki");
+    await choose(within(form).getByLabelText("Reads from"), "loki");
     expect(within(form).queryByLabelText("File or folder")).toBeNull();
     await userEvent.type(within(form).getByLabelText("Source ID"), "loki_fw");
     await userEvent.type(within(form).getByLabelText("Loki URL"), "http://loki.internal:3100");
     await userEvent.type(within(form).getByLabelText("Query"), '{{job="syslog"}');
-    await userEvent.selectOptions(within(form).getByLabelText("Sign-in"), "bearer");
+    await choose(within(form).getByLabelText("Sign-in"), "bearer");
     await userEvent.type(within(form).getByLabelText("Token"), "tok-123");
     await userEvent.click(within(form).getByRole("button", { name: "Test connection" }));
     expect(await within(form).findByText(/Connected: 42 lines/)).toBeInTheDocument();
@@ -163,7 +180,7 @@ describe("Sources page", () => {
     const row = (await screen.findByText("linux_sshd")).closest("tr") as HTMLElement;
     await userEvent.click(within(row).getByRole("button", { name: "Change parser of linux_sshd" }));
     expect(within(row).getByText(/Only lines read from now on/)).toBeInTheDocument();
-    await userEvent.selectOptions(within(row).getByLabelText("Parser for linux_sshd"), "auto:");
+    await choose(within(row).getByLabelText("Parser for linux_sshd"), "auto:");
     await userEvent.click(within(row).getByRole("button", { name: "Save" }));
     expect(await within(row).findByText("Automatic")).toBeInTheDocument();
     const sent = spy.mock.calls.find(
@@ -181,8 +198,8 @@ describe("Sources page", () => {
     const form = screen.getByRole("form", { name: "Add source" });
     await userEvent.type(within(form).getByLabelText("Source ID"), "bastion_auth");
     const parser = within(form).getByLabelText("Parser");
-    await within(form).findByRole("option", { name: "Linux sshd authentication" });
-    await userEvent.selectOptions(parser, "template:linux_sshd");
+    await waitFor(() => expect(optionLabels(parser)).toContain("Linux sshd authentication"));
+    await choose(parser, "template:linux_sshd");
     expect(within(form).getByText(/OpenSSH server authentication/)).toBeInTheDocument();
     await userEvent.click(within(form).getByRole("button", { name: "Add source" }));
     await screen.findByText("bastion_auth");
@@ -343,7 +360,7 @@ describe("Quiet-source alert (ADR-0014)", () => {
     const row = (await screen.findByText("linux_sshd")).closest("tr") as HTMLElement;
     await userEvent.click(within(row).getByRole("button", { name: "Quiet alert for linux_sshd" }));
     const box = within(row).getByRole("group", { name: "Quiet alert for linux_sshd" });
-    await userEvent.selectOptions(within(box).getByLabelText("Alert if no events for"), "14400");
+    await choose(within(box).getByLabelText("Alert if no events for"), "14400");
     await userEvent.click(await within(box).findByRole("checkbox", { name: "SOC Slack" }));
     await userEvent.click(within(box).getByRole("button", { name: "Save" }));
     const init = puts(spy)[0]?.[1];
@@ -353,7 +370,7 @@ describe("Quiet-source alert (ADR-0014)", () => {
     await userEvent.click(within(row).getByRole("button", { name: "Quiet alert for linux_sshd" }));
     const again = within(row).getByRole("group", { name: "Quiet alert for linux_sshd" });
     expect(await within(again).findByRole("checkbox", { name: "SOC Slack" })).toBeChecked();
-    await userEvent.selectOptions(within(again).getByLabelText("Alert if no events for"), "off");
+    await choose(within(again).getByLabelText("Alert if no events for"), "off");
     await userEvent.click(within(again).getByRole("button", { name: "Save" }));
     expect(JSON.parse(String(puts(spy)[1]?.[1]?.body))).toEqual({
       quiet_after_s: null,
@@ -364,7 +381,7 @@ describe("Quiet-source alert (ADR-0014)", () => {
     ).toHaveTextContent("Alert if quiet");
   });
 
-  it("shows the quiet state to everyone and the setting only to admins", async () => {
+  it("shows the quiet alert setting only to admins; quiet itself is the status", async () => {
     const { QuietAlert } = await import("@/features/sources/QuietAlert");
     const quiet = {
       quiet_after_s: 3600,
@@ -372,11 +389,8 @@ describe("Quiet-source alert (ADR-0014)", () => {
       quiet_since: "2026-10-10T11:00:00+00:00",
       last_seen: "2026-10-10T10:00:00+00:00",
     };
-    const { rerender } = render(<QuietAlert sourceId="s" quiet={quiet} canManage={false} />);
-    expect(screen.getByText(/^Quiet: nothing received/)).toBeInTheDocument();
-    expect(screen.queryByRole("button")).toBeNull();
-    rerender(<QuietAlert sourceId="s" quiet={{ ...quiet, state: "ok" }} canManage={false} />);
-    expect(screen.queryByText(/^Quiet/)).toBeNull();
+    const { container } = render(<QuietAlert sourceId="s" quiet={quiet} canManage={false} />);
+    expect(container).toBeEmptyDOMElement();
   });
 });
 
@@ -386,7 +400,7 @@ describe("OTLP sources (ADR-0015)", () => {
     await userEvent.click(screen.getByRole("button", { name: "Add source" }));
     const form = screen.getByRole("form", { name: "Add source" });
     await userEvent.type(within(form).getByLabelText("Source ID"), "claude_code");
-    await userEvent.selectOptions(within(form).getByLabelText("Reads from"), "otlp");
+    await choose(within(form).getByLabelText("Reads from"), "otlp");
     expect(within(form).queryByLabelText("File or folder")).toBeNull();
     // Claude Code sends only while people use it: no quiet alert, and the form says why.
     expect(
@@ -429,7 +443,7 @@ describe("OTLP sources (ADR-0015)", () => {
     await userEvent.click(screen.getByRole("button", { name: "Add source" }));
     const form = screen.getByRole("form", { name: "Add source" });
     await userEvent.type(within(form).getByLabelText("Source ID"), "claude_hooks");
-    await userEvent.selectOptions(within(form).getByLabelText("Reads from"), "otlp");
+    await choose(within(form).getByLabelText("Reads from"), "otlp");
     await userEvent.click(within(form).getByRole("button", { name: "Add source" }));
     await userEvent.click(
       within(await screen.findByRole("region", { name: "Ingest token" })).getByRole("button", {
@@ -448,10 +462,10 @@ describe("OTLP sources (ADR-0015)", () => {
     await userEvent.click(screen.getByRole("button", { name: "Add source" }));
     const form = screen.getByRole("form", { name: "Add source" });
     await userEvent.type(within(form).getByLabelText("Source ID"), "firewall");
-    await userEvent.selectOptions(within(form).getByLabelText("Reads from"), "syslog");
+    await choose(within(form).getByLabelText("Reads from"), "syslog");
     expect(within(form).queryByLabelText("File or folder")).toBeNull();
     expect(within(form).getByLabelText("Port")).toHaveValue(5514);
-    await userEvent.selectOptions(within(form).getByLabelText("Protocol"), "tls");
+    await choose(within(form).getByLabelText("Protocol"), "tls");
     expect(within(form).getByLabelText("Port")).toHaveValue(6514); // follows the protocol
     await userEvent.click(within(form).getByText("Parsing and retention"));
     await userEvent.type(
@@ -483,7 +497,7 @@ describe("OTLP sources (ADR-0015)", () => {
     await userEvent.click(screen.getByRole("button", { name: "Add source" }));
     const form = screen.getByRole("form", { name: "Add source" });
     await userEvent.type(within(form).getByLabelText("Source ID"), "m365");
-    await userEvent.selectOptions(within(form).getByLabelText("Reads from"), "m365");
+    await choose(within(form).getByLabelText("Reads from"), "m365");
     expect(within(form).queryByLabelText("File or folder")).toBeNull();
     const tenant = "11111111-2222-4333-8444-555555555555";
     await userEvent.type(within(form).getByLabelText("Directory (tenant) ID"), tenant);
@@ -531,7 +545,7 @@ describe("OTLP sources (ADR-0015)", () => {
     await userEvent.click(screen.getByRole("button", { name: "Add source" }));
     const form = screen.getByRole("form", { name: "Add source" });
     await userEvent.type(within(form).getByLabelText("Source ID"), "claude_admin");
-    await userEvent.selectOptions(within(form).getByLabelText("Reads from"), "anthropic");
+    await choose(within(form).getByLabelText("Reads from"), "anthropic");
     await userEvent.type(within(form).getByLabelText("API key"), "sk-ant-admin01-x");
     await userEvent.click(within(form).getByRole("button", { name: "Add source" }));
     const row = (await screen.findByText("claude_admin")).closest("tr") as HTMLElement;
@@ -563,7 +577,7 @@ describe("OTLP sources (ADR-0015)", () => {
     await userEvent.click(screen.getByRole("button", { name: "Add source" }));
     const form = screen.getByRole("form", { name: "Add source" });
     await userEvent.type(within(form).getByLabelText("Source ID"), "pve");
-    await userEvent.selectOptions(within(form).getByLabelText("Reads from"), "proxmox");
+    await choose(within(form).getByLabelText("Reads from"), "proxmox");
     expect(within(form).getByText("Verified on Proxmox 8 and 9: pending")).toBeInTheDocument();
     await userEvent.type(within(form).getByLabelText("Proxmox host"), "pve1.example.internal");
     await userEvent.type(within(form).getByLabelText("API token ID"), "remnant@pve!inventory");
@@ -604,7 +618,7 @@ describe("OTLP sources (ADR-0015)", () => {
     ).toBeInTheDocument();
     expect(within(block).getByLabelText("Time zone")).toBeInTheDocument();
     expect(within(block).queryByLabelText("Source ID")).toBeNull();
-    await userEvent.selectOptions(within(form).getByLabelText("Reads from"), "m365");
+    await choose(within(form).getByLabelText("Reads from"), "m365");
     const blocks = within(form)
       .getAllByText("Optional")
       .map((el) => el.closest("details") as HTMLElement);
@@ -660,7 +674,7 @@ describe("Add a Loki source (F27)", () => {
         : (real as typeof fetch)(url, init),
     );
     await userEvent.click(await screen.findByRole("button", { name: "Add source" }));
-    await userEvent.selectOptions(await screen.findByLabelText("Reads from"), "loki");
+    await choose(await screen.findByLabelText("Reads from"), "loki");
     await userEvent.click(
       await screen.findByRole("button", { name: "Use http://10.20.0.40:3100" }),
     );
@@ -699,7 +713,7 @@ describe("Change a source after adding it (F44)", () => {
     await userEvent.click(screen.getByRole("button", { name: "Add source" }));
     const add = screen.getByRole("form", { name: "Add source" });
     await userEvent.type(within(add).getByLabelText("Source ID"), "m365");
-    await userEvent.selectOptions(within(add).getByLabelText("Reads from"), "m365");
+    await choose(within(add).getByLabelText("Reads from"), "m365");
     await userEvent.type(
       within(add).getByLabelText("Directory (tenant) ID"),
       "11111111-2222-4333-8444-555555555555",

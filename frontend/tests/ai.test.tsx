@@ -3,6 +3,7 @@ import { render, screen, within, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mockApi, type MockAuth } from "./mockApi";
+import { choose, optionLabels } from "./choose";
 
 /** A rail area, then one of its tabs in the page header (ADR-0038). */
 async function goTo(area: string, tab?: string) {
@@ -145,7 +146,7 @@ describe("AI usage cost with no cost metrics (owner, 2026-11-08)", () => {
     const row = within(people)
       .getByRole("link", { name: "alice@example.com" })
       .closest("tr") as HTMLElement;
-    expect(within(row).getAllByText("No cost data")).toHaveLength(2);
+    expect(within(row).getAllByText("None received")).toHaveLength(2);
     expect(within(row).queryByText("0.00")).toBeNull();
   });
 });
@@ -199,9 +200,10 @@ describe("AI usage (ADR-0015)", () => {
   it("shows services with review status and lets an admin change it", async () => {
     const spy = await openAi();
     const nav = screen.getByRole("navigation", { name: "Primary" });
+    // A page with tabs is the current section in the rail; its open tab is the page (D268).
     expect(within(nav).getByRole("link", { name: "AI usage" })).toHaveAttribute(
       "aria-current",
-      "page",
+      "true",
     );
     expect(await screen.findByText("1 service not approved in use")).toBeVisible();
     const table = screen.getByRole("region", { name: "AI services seen in network logs" });
@@ -211,7 +213,7 @@ describe("AI usage (ADR-0015)", () => {
     await userEvent.click(within(row).getByRole("button", { name: "Review ChatGPT" }));
     const picker = within(table).getByLabelText("Review status of ChatGPT");
     expect(picker).toHaveValue("not_approved");
-    await userEvent.selectOptions(picker, "approved");
+    await choose(picker, "approved");
     const put = spy.mock.calls.find(
       ([u, i]) => String(u).endsWith("/api/ai/services/chatgpt/status") && i?.method === "PUT",
     );
@@ -233,6 +235,55 @@ describe("AI usage (ADR-0015)", () => {
     expect(within(gone).getByText("Last seen Oct 1, 9:00 AM")).toBeVisible();
   });
 
+  // AI usage counts its services only; Agents draws no AI usage comparison line at all
+  // (fix list of 2026-11-16, item 14), so its MCP servers never reach that line.
+  it.each([
+    ["/ai", "Against the previous 7 days: 1 new, 1 no longer seen"],
+    ["/agents/mcp", null],
+  ])("counts on %s only what that area lists as new and no longer seen", async (path, said) => {
+    window.history.replaceState(null, "", path);
+    const spy = mockApi("Codename", { mode: "open" });
+    const base = spy.getMockImplementation()!;
+    // New and gone MCP servers beside the services: AI usage counts services, Agents MCP.
+    spy.mockImplementation(async (input, init) => {
+      const res = await base(input, init);
+      if (!/\/api\/ai\/usage(\?|$)/.test(String(input))) return res;
+      const body = (await res.json()) as Record<string, unknown>;
+      const gone = (body.gone as unknown[]) ?? [];
+      const mcp = (name: string) => ({
+        kind: "mcp",
+        id: name,
+        name,
+        status: "unreviewed",
+        last_seen: "2026-10-01T09:00:00+00:00",
+      });
+      return new Response(
+        JSON.stringify({
+          ...body,
+          new_mcp: ["github", "jira"],
+          gone: [...gone, mcp("paste-share"), mcp("notes")],
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    });
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    render(
+      <App
+        initialTheme="dark"
+        queryClient={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      />,
+    );
+    if (said) {
+      expect(await screen.findByText(/Against the previous 7 days:/)).toHaveTextContent(said);
+    } else {
+      expect((await screen.findAllByText("paste-share")).length).toBeGreaterThan(0);
+      expect(screen.queryByText(/Against the previous 7 days:/)).toBeNull();
+    }
+  });
+
   it("shows vendor ad tags apart and never as a service in use", async () => {
     await openAi();
     const table = await screen.findByRole("region", { name: "AI services seen in network logs" });
@@ -247,10 +298,7 @@ describe("AI usage (ADR-0015)", () => {
     const table = await screen.findByRole("region", { name: "AI services seen in network logs" });
     const row = within(table).getByText("ChatGPT").closest("tr") as HTMLElement;
     await userEvent.click(within(row).getByRole("button", { name: "Review ChatGPT" }));
-    await userEvent.selectOptions(
-      within(table).getByLabelText("Allowed data for ChatGPT"),
-      "internal",
-    );
+    await choose(within(table).getByLabelText("Allowed data for ChatGPT"), "internal");
     const put = spy.mock.calls.find(
       ([u, i]) => String(u).endsWith("/api/ai/services/chatgpt/data-level") && i?.method === "PUT",
     );
@@ -324,8 +372,13 @@ describe("AI usage (ADR-0015)", () => {
     // and a name that reads as a plugin person links to Identities, filled in.
     expect(within(erin).getAllByText("Not reported")).toHaveLength(2);
     expect(within(erin).queryByText("0.00")).toBeNull();
-    expect(dana).toHaveTextContent(/Network only: Claude, 40 lookups, 2 devices, last seen /);
-    expect(dana).toHaveTextContent("Unmatched: may be dana.lee@example.com.");
+    // Each value in its own column, no sentence across them (fix list 22).
+    const seen = within(dana).getByText("Network").closest("td") as HTMLElement;
+    expect(seen).toHaveTextContent(/^NetworkClaude40 lookups, 2 devicesLast seen /);
+    expect(dana.querySelector("td[colspan]")).toBeNull();
+    expect(within(dana).getAllByText("Not reported")).toHaveLength(2);
+    const name = within(dana).getByRole("link", { name: "dana@example.com" }).closest("td");
+    expect(name).toHaveTextContent("Unmatched: may be dana.lee@example.com");
     const link = within(dana).getByRole("link", { name: "Link in Identities" });
     expect(link.getAttribute("href")).toMatch(/#alias=dlee&person=dana\.lee%40example\.com$/);
     const alice = within(people)
@@ -531,7 +584,7 @@ describe("Agent sessions from the hooks plugin (ADR-0026)", () => {
       expect.stringMatching(/^Session started/),
       expect.stringMatching(/^Prompt42 chars/),
       expect.stringMatching(/^File accessRead \/home\/dana\/app\/auth\.py41 chars in, Flagged/),
-      expect.stringMatching(/^AccessMCP github create_issue13 chars in, Flagged/),
+      expect.stringMatching(/^Web or MCP accessMCP github create_issue13 chars in, Flagged/),
       expect.stringMatching(/^Turn end/),
     ]);
     // Conversation: by turn (D187): the prompt with what it led to, its calls, the end.
@@ -615,7 +668,7 @@ describe("Agent sessions from the hooks plugin (ADR-0026)", () => {
       "default-empty",
     );
     const filters = within(card).getByRole("group", { name: "Filter sessions" });
-    await userEvent.selectOptions(within(filters).getByRole("combobox", { name: "Tool" }), "Bash");
+    await choose(within(filters).getByRole("combobox", { name: "Tool" }), "Bash");
     expect(within(list).queryByText("dana@example.com")).toBeNull();
     expect(within(filters).getByText("1 of 2 sessions")).toBeVisible();
     // In the address, on the Sessions tab, and Reset clears it.
@@ -626,25 +679,16 @@ describe("Agent sessions from the hooks plugin (ADR-0026)", () => {
     expect(within(filters).getByRole("combobox", { name: "Tool" })).toHaveValue("");
     expect(within(filters).queryByRole("button", { name: "Reset" })).toBeNull();
     expect(within(filters).getByText("2 sessions")).toBeVisible();
-    await userEvent.selectOptions(
-      within(filters).getByRole("combobox", { name: "Flags" }),
-      "flagged",
-    );
+    await choose(within(filters).getByRole("combobox", { name: "Flags" }), "flagged");
     expect(within(list).queryByText("alice@example.com")).toBeNull();
     expect(within(list).getByText("dana@example.com")).toBeVisible();
-    await userEvent.selectOptions(
-      within(filters).getByRole("combobox", { name: "Machine" }),
-      "ws-0311",
-    );
+    await choose(within(filters).getByRole("combobox", { name: "Machine" }), "ws-0311");
     expect(within(card).getByText("No sessions match these filters.")).toBeVisible();
     // The open session is the one in the address: Back undoes the filter and closes it.
     await userEvent.click(within(filters).getByRole("button", { name: "Reset" }));
     window.history.replaceState(null, "", "/agents/sessions");
     window.dispatchEvent(new PopStateEvent("popstate"));
-    await userEvent.selectOptions(
-      within(filters).getByRole("combobox", { name: "Tool" }),
-      "github",
-    );
+    await choose(within(filters).getByRole("combobox", { name: "Tool" }), "github");
     await userEvent.click(
       within(within(card).getByRole("list", { name: "Sessions" })).getByText("dana@example.com"),
     );
@@ -809,12 +853,14 @@ describe("Agents session detail (BACKLOG P1)", () => {
     await waitFor(() => expect(tile(kpis, "Requests")).toHaveTextContent("Requests1"));
     // The list reads its own days; the session's reads hold the whole session (30 days).
     const urls = spy.mock.calls.map(([u]) => String(u));
-    expect(urls.some((u) => /\/api\/ai\/sessions\?days=7$/.test(u))).toBe(true);
+    expect(urls.some((u) => /\/api\/ai\/sessions\?days=90&start=[^&]+$/.test(u))).toBe(true);
     expect(urls.filter((u) => /\/s-77(\/summary)?\?days=30$/.test(u))).toHaveLength(2);
     // Blocked as the flags read it: no result in an ended session.
     expect(tile(kpis, "Tool calls")).toHaveTextContent("Tool calls22 failed or blocked");
     const tokens = within(tile(kpis, "Tokens")).getByText("Not reported");
-    expect(tokens).toHaveClass("text-text-muted");
+    expect(tokens.parentElement).toHaveClass("text-text-muted");
+    // Words on one line in the body size, never wrapped in the number font (fix list S2).
+    expect(tokens).toHaveClass("whitespace-nowrap", "text-md", "font-normal");
     expect(within(tile(kpis, "Files")).getByText("0")).toHaveClass("text-text-muted");
     expect(tile(kpis, "Flags")).toHaveTextContent("Blocked or failed call, New MCP server");
     // Content: one line saying none is collected, and no way to open it.
@@ -842,7 +888,7 @@ describe("Agents session detail (BACKLOG P1)", () => {
     );
     expect(rows.map((r) => r.textContent)).toEqual([
       expect.stringMatching(/File access/),
-      expect.stringMatching(/Access/),
+      expect.stringMatching(/Web or MCP access/),
     ]);
     await userEvent.click(within(detail).getByRole("button", { name: "All" }));
     expect(window.location.hash).not.toMatch(/show=/);
@@ -906,7 +952,7 @@ describe("Agents session detail (BACKLOG P1)", () => {
     expect(stepRows(detail)).toEqual([
       expect.stringMatching(/^.*File accessRead \/home/),
       expect.stringMatching(/^.*Tool resultRead Failed/),
-      expect.stringMatching(/^.*AccessMCP github/),
+      expect.stringMatching(/^.*Web or MCP accessMCP github/),
     ]);
     // Conversation keeps the same steps, by turn.
     await userEvent.click(within(detail).getByRole("button", { name: "Conversation" }));
@@ -1040,7 +1086,7 @@ describe("Agents session detail (BACKLOG P1)", () => {
     const bar = await within(detail).findByRole("img", { name: /^Session timeline:/ });
     // One graphic with a spoken summary of the whole session's counts.
     expect(bar).toHaveAccessibleName(
-      "Session timeline: 3 prompt, 0 tool call, 7 tool result, 1 file access, 1 access, 2 other, 1 failed, 2 reached outside the session",
+      "Session timeline: 3 prompt, 0 tool call, 7 tool result, 1 file access, 1 web or MCP access, 2 other, 1 failed, 2 reached outside the session",
     );
     // One segment per step in order, colored by the server's type; other is an outline.
     expect(
@@ -1060,7 +1106,7 @@ describe("Agents session detail (BACKLOG P1)", () => {
     expect(bar.querySelector('[data-segment="prompt"]')).not.toHaveAttribute("data-hatched");
     expect(
       within(detail).getByText(
-        "Hatched: a file access or an access, the steps that reach outside the session (a file, the web, or an MCP server).",
+        "Hatched: a file access or a web or MCP access, the steps that reach outside the session.",
       ),
     ).toBeVisible();
     expect(bar.querySelector('[data-segment="other"]')).toHaveClass("border-text-muted");
@@ -1069,21 +1115,23 @@ describe("Agents session detail (BACKLOG P1)", () => {
     const view = within(detail).getByRole("group", { name: "View" });
     expect(kpis.compareDocumentPosition(bar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(bar.compareDocumentPosition(view) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // The legend names every type with the whole session's count, and the failed mark.
+    // The legend names every type with the whole session's count, and the failed mark; the
+    // three kinds of tool call sit under one total, the Tool calls tile's number (fix list
+    // S3: "Tool call 0" read beside "Tool calls 2").
     const legend = within(detail).getByRole("list", { name: "Step types" });
-    expect(
-      within(legend)
-        .getAllByRole("listitem")
-        .map((li) => li.textContent),
-    ).toEqual([
+    expect([...legend.querySelectorAll(":scope > li")].map((li) => li.textContent)).toEqual([
       "Prompt3",
-      "Tool call0",
       "Tool result7",
-      "File access1",
-      "Access1",
       "Other2",
       "Failed1",
+      "Tool calls 2:In the session0File access1Web or MCP access1",
     ]);
+    const calls = legend.querySelector('[data-legend="tool_calls"]') as HTMLElement;
+    const kinds = within(calls).getByRole("list", { name: "Tool calls by kind" });
+    expect(within(kinds).getAllByRole("listitem")).toHaveLength(3);
+    const tiles = within(detail).getByRole("group", { name: "This session in numbers" });
+    expect(tile(tiles, "Tool calls")).toHaveTextContent(/^Tool calls2/);
+    expect(calls.textContent).toMatch(/^Tool calls 2:/);
     // No tab stops of its own: the steps are reached in the list.
     expect(bar.querySelectorAll("[tabindex], button, a")).toHaveLength(0);
   });
@@ -1094,7 +1142,7 @@ describe("Agents session detail (BACKLOG P1)", () => {
     await userEvent.click(bar.querySelector('[data-segment="access"]')!);
     const row = document.activeElement as HTMLElement;
     expect(row.dataset.steps).toBe("e4");
-    expect(row).toHaveTextContent(/AccessMCP github/);
+    expect(row).toHaveTextContent(/Web or MCP accessMCP github/);
     expect(row).toHaveClass("bg-row-selected");
     // In Conversation the same step is its call row; the turn end is its own row.
     await userEvent.click(within(detail).getByRole("button", { name: "Conversation" }));
@@ -1311,17 +1359,13 @@ describe("AI inventory (ADR-0038 section 7)", () => {
     // One filter bar: State, Type, Status. Nothing is unreviewed here, so Status opens on
     // All and the header says "0 to review" (ADR-0052 section 3.3).
     const type = within(card).getByRole("combobox", { name: "Type" });
-    expect(within(type).getByRole("option", { name: "MCP servers (1)" })).toBeInTheDocument();
-    expect(
-      within(type).getByRole("option", { name: /^Microsoft 365 apps \(\d+\)$/ }),
-    ).toBeInTheDocument();
+    expect(optionLabels(type)).toContain("MCP servers (1)");
+    // Only types with items in the view: the one app is excluded, so it is not offered here.
+    expect(optionLabels(type).some((o) => /^Microsoft 365 apps/.test(o))).toBe(false);
     expect(within(card).getByRole("combobox", { name: "Status" })).toHaveValue("all");
     expect(document.querySelector("[data-header-count]")).toHaveTextContent(/^0 to review$/);
     expect(within(card).queryByRole("button", { name: "Reset" })).toBeNull();
-    await userEvent.selectOptions(
-      within(card).getByRole("combobox", { name: "Status" }),
-      "approved",
-    );
+    await choose(within(card).getByRole("combobox", { name: "Status" }), "approved");
     expect(window.location.pathname + window.location.hash).toBe("/ai/inventory#status=approved");
     expect(within(card).queryByText("ChatGPT")).toBeNull();
     expect(within(card).getByText("1 of 2 items")).toBeVisible();
@@ -1339,11 +1383,17 @@ describe("AI inventory (ADR-0038 section 7)", () => {
     await userEvent.click(within(card).getByRole("button", { name: /^Excluded/ }));
     const row = (await within(card).findByText("Lab Notes App")).closest("tr") as HTMLElement;
     expect(row).toHaveTextContent("Pilot app");
-    // Group by and Export sit in the filter bar, not in the card's title row (D254).
+    // Group by sits in the filter bar, not in the card's title row (D254); the exports are
+    // the page header's two secondary buttons (one filter row, owner 2026-11-16).
     const bar = within(card).getByRole("group", { name: "Filter the inventory" });
-    expect(within(bar).getByRole("button", { name: "Export CSV" })).toBeVisible();
-    expect(within(bar).getByRole("button", { name: "Export JSON" })).toBeVisible();
-    expect(within(bar).getByLabelText("Group by")).toBeVisible();
+    const actions = document.querySelector<HTMLElement>("[data-header-actions]")!;
+    expect(within(actions).getByRole("button", { name: /^Export CSV/ })).toBeVisible();
+    expect(within(actions).getByRole("button", { name: /^Export JSON/ })).toBeVisible();
+    expect(within(bar).queryByRole("button", { name: /^Export/ })).toBeNull();
+    // One excluded item makes one group whatever the grouping: no Group by there.
+    expect(within(bar).queryByLabelText("Group by")).toBeNull();
+    await userEvent.click(within(card).getByRole("button", { name: /^Active/ }));
+    expect(await within(bar).findByLabelText("Group by")).toBeVisible();
     const head = card.querySelector<HTMLElement>("[data-card-header]")!;
     expect(within(head).queryByRole("button")).toBeNull();
     expect(within(head).queryByRole("combobox")).toBeNull();
@@ -1359,6 +1409,7 @@ describe("AI inventory (ADR-0038 section 7)", () => {
       if (!/\/api\/ai\/inventory\?/.test(String(input))) return res;
       const body = await res.json();
       body.items[0].status = "unreviewed";
+      body.to_review = 1; // the server counts it
       return new Response(JSON.stringify(body), {
         status: 200,
         headers: { "content-type": "application/json" },
@@ -1387,7 +1438,7 @@ describe("AI inventory (ADR-0038 section 7)", () => {
     expect(window.location.hash).toBe("");
     expect(within(card).queryByRole("button", { name: "Reset" })).toBeNull();
     expect(within(card).queryByText("github")).toBeNull();
-    await userEvent.selectOptions(
+    await choose(
       within(card).getByRole("combobox", { name: "Review status of ChatGPT" }),
       "approved",
     );
@@ -1404,8 +1455,8 @@ describe("AI inventory (ADR-0038 section 7)", () => {
     await userEvent.click(within(card).getByRole("button", { name: /^Active/ }));
     expect(within(card).getByRole("combobox", { name: "Status" })).toHaveValue("unreviewed");
     // An MCP server is reviewed through its rule; Unreviewed clears the rule.
-    await userEvent.selectOptions(within(card).getByRole("combobox", { name: "Status" }), "all");
-    await userEvent.selectOptions(
+    await choose(within(card).getByRole("combobox", { name: "Status" }), "all");
+    await choose(
       within(card).getByRole("combobox", { name: "Review status of github" }),
       "not_approved",
     );
@@ -1418,7 +1469,7 @@ describe("AI inventory (ADR-0038 section 7)", () => {
     });
     await userEvent.click(within(card).getByRole("button", { name: "Reset" }));
     // The export is the view: it carries the Status filter.
-    await userEvent.click(within(card).getByRole("button", { name: "Export CSV" }));
+    await userEvent.click(screen.getByRole("button", { name: /^Export CSV/ }));
     expect(
       spy.mock.calls.some(([u]) => /inventory\/export\?.*status=unreviewed/.test(String(u))),
     ).toBe(true);
@@ -1435,7 +1486,7 @@ describe("AI inventory (ADR-0038 section 7)", () => {
           })
         : base(input, init),
     );
-    await userEvent.selectOptions(
+    await choose(
       within(card).getByRole("combobox", { name: "Review status of ChatGPT" }),
       "approved",
     );
@@ -1499,7 +1550,7 @@ describe("Agents overview and tools (ADR-0038 section 6)", () => {
     expect(document.querySelector("[data-primary]")).toBeNull();
   });
 
-  it("counts the strip in whole days and says so, whatever the page's time", async () => {
+  it("counts the strip for the time chosen, exactly, and says so (PR 639 review)", async () => {
     window.history.replaceState(null, "", "/agents");
     const spy = mockApi("Codename", { mode: "open" });
     vi.resetModules();
@@ -1512,13 +1563,17 @@ describe("Agents overview and tools (ADR-0038 section 6)", () => {
         queryClient={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
       />,
     );
-    const days = () =>
-      spy.mock.calls
-        .map(([u]) => String(u))
-        .filter((u) => u.includes("/api/agents/overview"))
-        .map((u) => new URL(u, "http://x").searchParams.get("days"));
+    // How far back the last read of a path starts, in minutes.
+    const back = (path: string) => {
+      const u = spy.mock.calls
+        .map(([x]) => String(x))
+        .filter((x) => x.includes(path))
+        .at(-1);
+      const start = u ? new URL(u, "http://x").searchParams.get("start") : null;
+      return start ? Math.round((Date.now() - Date.parse(start)) / 60_000) : null;
+    };
     const strip = await screen.findByRole("region", { name: "Overview" });
-    expect(days().at(-1)).toBe("7");
+    expect(back("/api/agents/overview")).toBe(7 * 1440);
     // On the strip and on the sessions list under it.
     expect(screen.getAllByText(/^Last 7 days\./).length).toBeGreaterThanOrEqual(1);
     expect(
@@ -1530,35 +1585,13 @@ describe("Agents overview and tools (ADR-0038 section 6)", () => {
     expect(within(strip).getByRole("note")).toHaveTextContent("ws-0420");
     const time = screen.getByRole("group", { name: "Time" });
     await userEvent.click(within(time).getByRole("button", { name: "30 days" }));
-    await waitFor(() => expect(days().at(-1)).toBe("30"));
+    await waitFor(() => expect(back("/api/agents/overview")).toBe(30 * 1440));
     expect((await screen.findAllByText(/^Last 30 days\./)).length).toBeGreaterThanOrEqual(1);
-    // 1 hour is still a day of sessions, and the words say a day, not an hour.
+    // 1 hour is an hour, in the reads and in the words, and the list reads the same hour.
     await userEvent.click(within(time).getByRole("button", { name: "1 hour" }));
-    await waitFor(() => expect(days().at(-1)).toBe("1"));
-    const caption = (await screen.findAllByText(/^Last 24 hours\./))[0] as HTMLElement;
-    expect(caption).not.toHaveTextContent(/previous hour/);
-    // The sessions list covers the same days as the strip above it.
-    expect(
-      spy.mock.calls
-        .map(([u]) => String(u))
-        .filter((u) => u.includes("/api/ai/sessions?"))
-        .at(-1),
-    ).toContain("days=1");
-    // Custom counts whole days from its start to now, 30 at most.
-    await userEvent.click(within(time).getByRole("button", { name: "Custom" }));
-    const { fireEvent } = await import("@testing-library/react");
-    const pad = (n: number) => String(n).padStart(2, "0");
-    const back = (daysAgo: number) => {
-      const d = new Date(Date.now() - daysAgo * 86_400_000 + 3_600_000);
-      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-    };
-    fireEvent.change(screen.getByLabelText("From"), { target: { value: back(3) } });
-    await waitFor(() => expect(days().at(-1)).toBe("3"));
-    expect((await screen.findAllByText(/^Last 3 days\./)).length).toBeGreaterThanOrEqual(1);
-    fireEvent.change(screen.getByLabelText("From"), { target: { value: back(200) } });
-    await waitFor(() => expect(days().at(-1)).toBe("30"));
-    await userEvent.click(within(time).getByRole("button", { name: "1 hour" }));
-    await waitFor(() => expect(days().at(-1)).toBe("1"));
+    await waitFor(() => expect(back("/api/agents/overview")).toBe(60));
+    expect((await screen.findAllByText(/^Last hour\./)).length).toBeGreaterThanOrEqual(1);
+    await waitFor(() => expect(back("/api/ai/sessions?")).toBe(60));
     const card = (await screen.findByText("Failed tool calls")).closest(
       "[data-kpi]",
     ) as HTMLElement;
@@ -1921,5 +1954,327 @@ describe("AI usage: the time filter (ADR-0052 section 3.7; owner, 2026-11-13)", 
       "href",
       "/ai/people",
     );
+  });
+});
+
+describe("Agents header (fix list item 14)", () => {
+  it("counts the page's own sessions, people, and tool calls, as the tiles do", async () => {
+    window.history.replaceState(null, "", "/agents/sessions");
+    const spy = await openAiAt();
+    const strip = await screen.findByRole("region", { name: "Overview" });
+    await waitFor(() =>
+      expect(document.querySelector("[data-header-count]")).toHaveTextContent(
+        /^12 sessions · 3 people · 240 tool calls$/,
+      ),
+    );
+    // The same numbers as the tiles beside them.
+    expect(strip.querySelector('[data-kpi="Sessions"]')).toHaveTextContent(/12/);
+    expect(strip.querySelector('[data-kpi="People"]')).toHaveTextContent(/3/);
+    expect(strip.querySelector('[data-kpi="Tool calls"]')).toHaveTextContent(/240/);
+    // One comparison line: the strip's, never AI usage's line about services as well.
+    expect(screen.getAllByText(/Changes against|Comparisons start|No comparison yet/)).toHaveLength(
+      1,
+    );
+    expect(screen.queryByText(/no longer seen|Nothing earlier to compare/)).toBeNull();
+    // Needs attention names the strip's own not-approved MCP server (fix list item 15):
+    // Sessions never asks for the whole AI usage answer, the page's heaviest read.
+    const attention = await screen.findByRole("region", { name: "Needs attention" });
+    expect(attention).toHaveTextContent("1 not approved MCP server in use");
+    expect(spy.mock.calls.some(([u]) => String(u).includes("/api/ai/usage"))).toBe(false);
+    await goTo("Agents", "MCP servers");
+    await screen.findByRole("region", { name: "MCP servers" });
+    expect(spy.mock.calls.some(([u]) => String(u).includes("/api/ai/usage"))).toBe(true);
+  });
+});
+
+describe("Agents Sessions and Accounts (PR 639)", () => {
+  it("says how the list adds up to the Sessions tile", async () => {
+    window.history.replaceState(null, "", "/agents/sessions");
+    await openAiAt();
+    const card = await screen.findByRole("region", { name: "Agent sessions" });
+    const line = await within(card).findByText(/in the Sessions tile/);
+    expect(line).toHaveTextContent(
+      "12 sessions in the Sessions tile: 2 with step detail · 1 empty, hidden · 9 seen only in Claude Code telemetry",
+    );
+    // The parts add up to the tile, and the step-detail part is the list's own count.
+    const nums = [
+      ...(line.textContent ?? "").matchAll(/(\d+) (?:with step detail|empty|seen)/g),
+    ].map((m) => Number(m[1]));
+    expect(nums.reduce((a, b) => a + b, 0)).toBe(12);
+    expect(within(card).getByText("2 sessions")).toBeVisible();
+    await userEvent.click(
+      within(card).getByRole("checkbox", { name: /Hide sessions with no tool calls or prompts/ }),
+    );
+    expect(line).toHaveTextContent(
+      "12 sessions in the Sessions tile: 2 with step detail · 1 empty · 9 seen only in Claude Code telemetry",
+    );
+    expect(within(card).getByText("3 sessions")).toBeVisible();
+  });
+
+  it("says when the list holds only the newest of more sessions (the cap of 100)", async () => {
+    window.history.replaceState(null, "", "/agents/sessions");
+    const spy = mockApi("Codename", { mode: "open" });
+    const base = spy.getMockImplementation()!;
+    const one = (i: number) => ({
+      session_id: `c-${i}`,
+      person: "erin@example.com",
+      machine: "ws-0050",
+      started: "2026-10-22T18:00:00+00:00",
+      last: "2026-10-22T18:04:00+00:00",
+      prompts: 1,
+      tool_calls: 1,
+      tools: ["Bash"],
+      hosts: [],
+      stopped: true,
+      // The list says itself it was cut: 300 in the window, the newest 100 sent.
+      total: 300,
+      with_steps: 300,
+    });
+    spy.mockImplementation(async (input, init) => {
+      const url = String(input);
+      const res = await base(input, init);
+      if (url.includes("/api/ai/sessions?"))
+        return new Response(JSON.stringify(Array.from({ length: 100 }, (_, i) => one(i))));
+      if (url.includes("/api/agents/overview")) {
+        const body = await res.json();
+        body.sessions.value = 310;
+        body.session_parts = { listed: 300, empty: 0, telemetry_only: 10 };
+        return new Response(JSON.stringify(body));
+      }
+      return res;
+    });
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    render(
+      <App
+        initialTheme="dark"
+        queryClient={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      />,
+    );
+    const card = await screen.findByRole("region", { name: "Agent sessions" });
+    const line = await within(card).findByText(/in the Sessions tile/);
+    expect(line).toHaveTextContent(
+      "310 sessions in the Sessions tile: 300 with step detail (newest 100 shown) · 10 seen only in Claude Code telemetry",
+    );
+    // The filter row agrees: 100 of the 300, never "100 sessions" as if that were all.
+    expect(within(card).getByText("100 of 300 sessions")).toBeVisible();
+  });
+
+  it("reads accounts for the page's time", async () => {
+    window.history.replaceState(null, "", "/agents/accounts#time=30d");
+    const spy = await openAiAt();
+    await screen.findByRole("region", { name: "Claude accounts" });
+    expect(screen.getByText(/^Last 30 days, reported by the hooks plugin/)).toBeVisible();
+    const asked = spy.mock.calls
+      .map(([u]) => String(u))
+      .find((u) => u.includes("/api/agents/accounts?"));
+    const start = new URL(asked!, "http://x").searchParams.get("start");
+    expect(Math.round((Date.now() - Date.parse(start!)) / 86_400_000)).toBe(30);
+  });
+
+  it("reads one window everywhere: an hour, exactly", async () => {
+    window.history.replaceState(null, "", "/agents/mcp#time=1h");
+    const spy = await openAiAt();
+    await screen.findByRole("region", { name: "MCP servers" });
+    const starts = (path: string) =>
+      spy.mock.calls
+        .map(([u]) => String(u))
+        .filter((u) => u.includes(path))
+        .map((u) => Date.parse(new URL(u, "http://x").searchParams.get("start") ?? ""));
+    const [overview] = starts("/api/agents/overview?");
+    expect(Math.round((Date.now() - overview!) / 60_000)).toBe(60);
+    // A preset is never clamped: the MCP servers table reads the same hour, at once.
+    const [usage] = starts("/api/ai/usage");
+    expect(Math.abs(overview! - usage!)).toBeLessThan(60_000);
+  });
+
+  it("reads one window everywhere: a custom range in the past", async () => {
+    const from = "2026-10-20T09:00:00.000Z";
+    const to = "2026-10-21T09:00:00.000Z";
+    window.history.replaceState(
+      null,
+      "",
+      `/agents/sessions#time=custom&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+    );
+    const spy = await openAiAt();
+    await screen.findByRole("region", { name: "Agent sessions" });
+    for (const path of ["/api/agents/overview?", "/api/ai/sessions?"]) {
+      const u = new URL(
+        spy.mock.calls.map(([x]) => String(x)).find((x) => x.includes(path))!,
+        "http://x",
+      );
+      expect(u.searchParams.get("start")).toBe(from);
+      // The end includes the minute it names.
+      expect(Date.parse(u.searchParams.get("end")!) - Date.parse(to)).toBeLessThan(60_000);
+    }
+    // The strip names the range, not a number of days back from now.
+    expect(
+      await screen.findByText(/ to .*\. (Changes against|Comparisons start|No comparison)/),
+    ).toBeVisible();
+  });
+
+  it("sends what was chosen: an open end stays open, a missing start stays missing", async () => {
+    const from = "2026-10-20T09:00:00.000Z";
+    const to = "2026-10-21T09:00:00.000Z";
+    const reads = async (hash: string) => {
+      vi.restoreAllMocks(); // a fresh spy: only this page's reads
+      window.history.replaceState(null, "", `/agents/sessions#${hash}`);
+      const spy = await openAiAt();
+      await screen.findByRole("region", { name: "Agent sessions" });
+      return spy.mock.calls
+        .map(([u]) => String(u))
+        .filter((u) => /\/api\/(agents\/overview|ai\/sessions|agents\/accounts)\?/.test(u))
+        .map((u) => new URL(u, "http://x").searchParams);
+    };
+    // Custom from a start with an open end: the start as chosen, and no end.
+    for (const q of await reads(`time=custom&from=${encodeURIComponent(from)}`)) {
+      expect(q.get("start")).toBe(from);
+      expect(q.get("end")).toBeNull();
+    }
+    // Custom with an end and no start: no start computed here; the server takes 90 days.
+    for (const q of await reads(`time=custom&to=${encodeURIComponent(to)}`)) {
+      expect(q.get("start")).toBeNull();
+      expect(q.get("days")).toBe("90");
+    }
+  });
+
+  it("says once when Agents reads less than the range chosen (the last 90 days of it)", async () => {
+    const from = "2026-06-01T00:00:00.000Z";
+    const to = "2026-10-20T00:00:00.000Z";
+    vi.restoreAllMocks();
+    window.history.replaceState(
+      null,
+      "",
+      `/agents/sessions#time=custom&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+    );
+    const spy = mockApi("Codename", { mode: "open" });
+    const base = spy.getMockImplementation()!;
+    spy.mockImplementation(async (input, init) => {
+      const res = await base(input, init);
+      if (!String(input).includes("/api/agents/overview")) return res;
+      const body = await res.json();
+      // What the server read: the 90 days to the chosen end.
+      body.read_start = "2026-07-22T00:00:00+00:00";
+      body.read_end = to;
+      return new Response(JSON.stringify(body));
+    });
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    render(
+      <App
+        initialTheme="dark"
+        queryClient={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      />,
+    );
+    const line = await screen.findByText(/^Agents shows at most 90 days: /);
+    // The strip's words match what was read: the 90 days to the chosen end.
+    expect((await screen.findAllByText(/^The 90 days to Oct 20/)).length).toBeGreaterThan(0);
+    // Clamped: the MCP servers table reads from the start the overview read.
+    // The page's own tab bar (the rail may list the same tabs, D268).
+    const tabs = screen.getByRole("navigation", { name: "Agents tabs" });
+    await userEvent.click(within(tabs).getByRole("link", { name: "MCP servers" }));
+    await waitFor(() =>
+      expect(
+        spy.mock.calls
+          .map(([x]) => String(x))
+          .filter((x) => x.includes("/api/ai/usage"))
+          .map((x) => new URL(x, "http://x").searchParams.get("start")),
+      ).toContain("2026-07-22T00:00:00+00:00"),
+    );
+    expect(document.querySelectorAll("[data-agents-window]")).toHaveLength(1);
+    expect(line.textContent).toMatch(/ to /);
+  });
+
+  it("updates the strip and Needs attention when an MCP server is reviewed", async () => {
+    vi.restoreAllMocks();
+    window.history.replaceState(null, "", "/agents/mcp");
+    const spy = await openAiAt();
+    const card = await screen.findByRole("region", { name: "MCP servers" });
+    const overviews = () =>
+      spy.mock.calls.filter(([u]) => String(u).includes("/api/agents/overview")).length;
+    await waitFor(() => expect(overviews()).toBeGreaterThan(0));
+    const before = overviews();
+    const usages = spy.mock.calls.filter(([u]) => String(u).includes("/api/ai/usage")).length;
+    await choose(within(card).getByLabelText("Review status of paste-share"), "approved");
+    // The table, and the overview behind the tile and Needs attention, are read again.
+    await waitFor(() => expect(overviews()).toBeGreaterThan(before));
+    expect(
+      spy.mock.calls.filter(([u]) => String(u).includes("/api/ai/usage")).length,
+    ).toBeGreaterThan(usages);
+  });
+
+  describe("the MCP servers table follows the overview's counts (PR 639 final review)", () => {
+    // The overview counts the table's rows by review state; `extra` adds one new server.
+    const setup = async (hash: string) => {
+      vi.restoreAllMocks();
+      window.history.replaceState(null, "", `/agents/mcp#${hash}`);
+      const spy = mockApi("Codename", { mode: "open" });
+      const base = spy.getMockImplementation()!;
+      const state = { extra: false };
+      const fresh = {
+        name: "new-mcp",
+        status: "unreviewed",
+        calls: 1,
+        people: 1,
+        machines: 1,
+        installs: 0,
+        clients: [],
+        first_seen: "2026-10-30T11:59:00+00:00",
+        last_seen: "2026-10-30T11:59:00+00:00",
+        sources: ["hooks"],
+      };
+      const table = async (init?: RequestInit) => {
+        const body = await (await base("/api/ai/usage", init)).json();
+        if (state.extra) body.mcp = [...body.mcp, fresh];
+        return body;
+      };
+      spy.mockImplementation(async (input, init) => {
+        const url = String(input);
+        if (url.includes("/api/ai/usage")) return new Response(JSON.stringify(await table(init)));
+        const res = await base(input, init);
+        if (!url.includes("/api/agents/overview")) return res;
+        const body = await res.json();
+        const rows = (await table(init)).mcp as { status: string }[];
+        body.mcp_not_approved.value = rows.filter((m) => m.status === "not_approved").length;
+        body.mcp_unreviewed = rows.filter((m) => m.status === "unreviewed").length;
+        return new Response(JSON.stringify(body));
+      });
+      vi.resetModules();
+      const { loadBranding } = await import("@/lib/branding");
+      await loadBranding();
+      const { App } = await import("@/app/App");
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      render(<App initialTheme="dark" queryClient={client} />);
+      await screen.findByRole("region", { name: "MCP servers" });
+      const usage = () =>
+        spy.mock.calls.filter(([u]) => String(u).includes("/api/ai/usage")).length;
+      await waitFor(() => expect(usage()).toBeGreaterThan(0));
+      return { spy, state, client, usage };
+    };
+
+    it("lists a new server within one overview read (a preset)", async () => {
+      const { state, client, usage } = await setup("time=1h");
+      const before = usage();
+      state.extra = true;
+      await client.refetchQueries({ queryKey: ["agents-overview"] });
+      await waitFor(() => expect(usage()).toBe(before + 1));
+      const card = await screen.findByRole("region", { name: "MCP servers" });
+      expect(await within(card).findByText("new-mcp")).toBeVisible();
+    });
+
+    it("never re-reads the table while the counts agree (a clamped window)", async () => {
+      const { client, usage } = await setup(
+        `time=custom&from=${encodeURIComponent("2026-06-01T00:00:00.000Z")}`,
+      );
+      await waitFor(() => expect(usage()).toBe(1));
+      await client.refetchQueries({ queryKey: ["agents-overview"] });
+      await client.refetchQueries({ queryKey: ["agents-overview"] });
+      await new Promise((r) => setTimeout(r, 50));
+      expect(usage()).toBe(1);
+    });
   });
 });

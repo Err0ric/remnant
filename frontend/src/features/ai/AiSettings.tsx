@@ -4,6 +4,7 @@ import { useState, type FormEvent } from "react";
 import { ApiError, api, type AiWatch } from "@/lib/api";
 import { StatusBadge, StatusPicker } from "./StatusBadge";
 import { SectionTitle } from "@/components/SectionTitle";
+import { Select } from "@/components/forms/Select";
 
 const SECTION = "overflow-hidden rounded-card border border-border bg-surface";
 const HEAD = "border-b border-border bg-surface-head px-3 py-2";
@@ -185,15 +186,15 @@ function McpRules() {
           maxLength={121}
           className="h-8 min-w-0 flex-[1_1_200px] rounded border border-border-control bg-inset px-2 font-mono"
         />
-        <select
+        <Select
           aria-label="Rule"
           value={status}
-          onChange={(e) => setStatus(e.target.value as "approved" | "not_approved")}
-          className="h-8 rounded border border-border-control bg-surface px-2"
-        >
-          <option value="approved">Approved</option>
-          <option value="not_approved">Not approved</option>
-        </select>
+          onChange={(v) => setStatus(v as "approved" | "not_approved")}
+          options={[
+            { value: "approved", label: "Approved" },
+            { value: "not_approved", label: "Not approved" },
+          ]}
+        />
         <button
           type="submit"
           disabled={change.isPending}
@@ -290,13 +291,11 @@ function CatalogList() {
             className="h-8 min-w-0 rounded border border-border-control bg-inset px-2"
           />
         ))}
-        <select
+        <Select
           aria-label="Kind"
           value={form.kind}
-          onChange={(e) => setForm((f) => ({ ...f, kind: e.target.value }))}
-          className="h-8 rounded border border-border-control bg-surface px-2"
-        >
-          {[
+          onChange={(v) => setForm((f) => ({ ...f, kind: v }))}
+          options={[
             "chat",
             "api",
             "coding",
@@ -306,12 +305,11 @@ function CatalogList() {
             "meetings",
             "writing",
             "non_usage",
-          ].map((k) => (
-            <option key={k} value={k}>
-              {k === "non_usage" ? "not AI use (ad or measurement tag)" : k.replace("_", " ")}
-            </option>
-          ))}
-        </select>
+          ].map((k) => ({
+            value: k,
+            label: k === "non_usage" ? "not AI use (ad or measurement tag)" : k.replace("_", " "),
+          }))}
+        />
         <input
           aria-label="Domains"
           placeholder="Domains (llm.corp.example)"

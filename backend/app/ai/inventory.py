@@ -44,7 +44,7 @@ SELECT coalesce(app, app_id, 'an app with no name') AS name,
 FROM consents
 WHERE coalesce(status_id, 1) <> 2
 GROUP BY 1
-ORDER BY last_seen DESC
+ORDER BY last_seen DESC, 1
 LIMIT 2000"""  # noqa: S608  # fixed SQL text
 
 HOOKS_LABEL = "Claude Code hooks plugin"
@@ -164,8 +164,28 @@ def inventory(
     for it in out:
         if it.type != "agent":  # an agent's is by its own key, which a masked row hides
             it.excluded = excluded.get((it.type, it.key))
+    return ordered(out), sorted(set(sources) | set(apps.sources) | set(mcp_read))
+
+
+def ordered(items: list[Item]) -> list[Item]:
+    """Newest last seen first; equal times by type, then name, then key, so the order is
+    the same on every load (fix list S6). Two passes: the sort is stable."""
+    out = sorted(items, key=lambda i: (i.type, i.name.lower(), i.key))
     out.sort(key=lambda i: i.last_seen or "", reverse=True)
-    return out, sorted(set(sources) | set(apps.sources) | set(mcp_read))
+    return out
+
+
+def to_review(items: list[Item]) -> int:
+    """The one "to review" number (D258): active items nobody has marked Approved or Not
+    approved, as the Inventory's Status = Unreviewed lists them. The Inventory's header,
+    its table, AI usage's Needs attention line, and the rail all show this number."""
+    return sum(1 for i in items if i.excluded is None and i.status == "unreviewed")
+
+
+def not_approved(items: list[Item]) -> int:
+    """Active items marked Not approved, as the Inventory's Status = Not approved lists
+    them: the other number of AI usage's Needs attention line."""
+    return sum(1 for i in items if i.excluded is None and i.status == "not_approved")
 
 
 def export(items: list[Item], fmt: Literal["csv", "json"]) -> str:

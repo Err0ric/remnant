@@ -1,8 +1,9 @@
 import { Skeleton } from "@/components/Skeleton";
+import { When } from "@/components/When";
 import { useQuery } from "@tanstack/react-query";
 import { InlineError } from "@/components/InlineError";
 import { EntityLink } from "@/components/EntityLink";
-import { api, type Cell } from "@/lib/api";
+import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { openDrill } from "@/lib/drill";
 import { formatCell } from "@/lib/search";
@@ -17,7 +18,7 @@ const SHOWN = [
   "message",
 ] as const;
 const LABEL: Record<(typeof SHOWN)[number], string> = {
-  time: "Time (UTC)",
+  time: "Time",
   source_id: "Source",
   actor_user_name: "Person",
   device_hostname: "Device",
@@ -29,10 +30,6 @@ const KIND = {
   device_hostname: "host",
   src_endpoint_ip: "ip",
 } as const;
-
-function clock(v: Cell): string {
-  return typeof v === "string" ? v.slice(11, 19) : formatCell(v);
-}
 
 /** Around this event (ADR-0038 section 8): 5 minutes either side, same person or same
  * device, every source the viewer may read, newest last. Likely cause is a hint in the
@@ -135,7 +132,11 @@ export function AroundEvent({ eventId, at }: { eventId: string; at: string }) {
                           title={c === "message" ? formatCell(v) : undefined}
                         >
                           {c === "time" ? (
-                            clock(v)
+                            typeof v === "string" ? (
+                              <When iso={v} seconds />
+                            ) : (
+                              formatCell(v)
+                            )
                           ) : kind && v ? (
                             <EntityLink kind={kind} value={v} label={formatCell(v)} />
                           ) : (

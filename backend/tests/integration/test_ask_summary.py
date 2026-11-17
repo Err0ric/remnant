@@ -102,7 +102,9 @@ def test_rows_without_event_ids_get_only_the_headline(lab: dict[str, Any]) -> No
     ana, ask_id, out = _ran(lab, "SELECT source_id, count(*) AS events FROM events GROUP BY 1")
     assert out["headline"] == "source: fw_edge; events: 8"  # plain column names (#452)
     assert out["summarize"] is False
-    assert out["summary_note"] == "No summary: these rows have no event ids to cite."
+    # The counted line says what was read in place of "No summary" (fix list 2026-11-16).
+    assert out["summary_note"] is None
+    assert out["counted"] is not None and out["counted"].startswith("Read 1 source")
     after_run = len(lab["script"].seen)
     got = ana.post(f"/api/ask/{ask_id}/answer").json()
     assert got["claims"] == [] and got["call_id"] is None

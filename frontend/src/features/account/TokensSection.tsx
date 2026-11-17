@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState, type FormEvent } from "react";
+import { When } from "@/components/When";
+import { useState, type FormEvent, type ReactNode } from "react";
 import { Field } from "@/features/auth/Field";
 import { FormError } from "@/features/auth/FormError";
 import { ApiError, api } from "@/lib/api";
 import { SectionTitle } from "@/components/SectionTitle";
 
-function when(v: string | null): string {
-  return v ? `${v.slice(0, 16).replace("T", " ")} UTC` : "Never";
+function when(v: string | null): ReactNode {
+  return v ? <When iso={v} /> : "Never";
 }
 
 /** Your CLI and API tokens: create (shown once), list, revoke. */
@@ -113,9 +114,9 @@ export function TokensSection() {
               {list.map((t) => (
                 <tr key={t.token_id} className="border-b border-border last:border-0">
                   <td className="py-2 pr-3">{t.label}</td>
-                  <td className="py-2 pr-3 font-mono">{when(t.created_at)}</td>
-                  <td className="py-2 pr-3 font-mono">{when(t.last_used_at)}</td>
-                  <td className="py-2 pr-3 font-mono">{when(t.expires_at)}</td>
+                  <td className="whitespace-nowrap py-2 pr-3">{when(t.created_at)}</td>
+                  <td className="whitespace-nowrap py-2 pr-3">{when(t.last_used_at)}</td>
+                  <td className="whitespace-nowrap py-2 pr-3">{when(t.expires_at)}</td>
                   <td className="py-2 text-right">
                     <button
                       type="button"

@@ -236,7 +236,7 @@ def rank(question: str, library: Library, seen: set[str], top: int = CANDIDATES)
             # the reviewed example decides (owner, 2026-11-04).
             if any(_plain(a) == _plain(question) for a in q.ask):
                 score += 0.25
-            out.append(Candidate(pack, q, round(score, 3)))
+            out.append(Candidate(pack, library.resolve(q), round(score, 3)))
     out.sort(key=lambda c: (-c.score, c.ref))
     return out[:top]
 

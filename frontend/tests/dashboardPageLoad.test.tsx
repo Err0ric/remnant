@@ -2,7 +2,7 @@ import { QueryClient } from "@tanstack/react-query";
 import { act, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { mockApi } from "./mockApi";
+import { mockApi, withM365 } from "./mockApi";
 
 /** Handoff item 3: every request of one Dashboard visit carries the same page-load id and
  * the list of every part the page requests, so the server writes the visit's audit row on
@@ -32,7 +32,7 @@ function partsFetched(): Set<string> {
 
 async function open(path: string) {
   window.history.replaceState(null, "", path);
-  mockApi("Codename", { mode: "login", signedIn: true, role: "admin" });
+  withM365(mockApi("Codename", { mode: "login", signedIn: true, role: "admin" }));
   vi.resetModules();
   const { loadBranding } = await import("@/lib/branding");
   await loadBranding();

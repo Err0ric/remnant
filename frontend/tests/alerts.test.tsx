@@ -3,6 +3,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mockApi, type MockAuth } from "./mockApi";
+import { choose } from "./choose";
 
 async function renderAt(
   path: string,
@@ -34,7 +35,7 @@ describe("Alert targets", () => {
     const spy = await renderAt("/alert-targets");
     await userEvent.click(await screen.findByRole("button", { name: "Add target" }));
     const form = screen.getByRole("form", { name: "New alert target" });
-    await userEvent.selectOptions(within(form).getByLabelText("Kind"), "webhook");
+    await choose(within(form).getByLabelText("Kind"), "webhook");
     await userEvent.type(within(form).getByLabelText("Name"), "Relay");
     await userEvent.type(within(form).getByLabelText("Webhook URL"), "http://192.168.1.50/hook");
     await userEvent.click(within(form).getByRole("button", { name: "Add target" }));
@@ -63,7 +64,7 @@ describe("Alert targets", () => {
     expect(screen.queryByRole("link", { name: "Alert targets" })).toBeNull();
     await userEvent.click(await screen.findByRole("button", { name: "New schedule" }));
     const form = screen.getByRole("form", { name: "New schedule" });
-    await userEvent.selectOptions(within(form).getByLabelText("Saved search"), "failed_by_ip");
+    await choose(within(form).getByLabelText("Saved search"), "failed_by_ip");
     await userEvent.click(await within(form).findByRole("checkbox", { name: "SOC Slack" }));
     await userEvent.click(within(form).getByRole("button", { name: "Create schedule" }));
     await vi.waitFor(() =>

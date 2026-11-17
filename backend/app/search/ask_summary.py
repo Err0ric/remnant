@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -151,6 +151,55 @@ def headline(
     count = f"More than {n:,} rows" if truncated else _rows(n)
     lead = ", ".join(f"{_LABELS.get(c, c)} {_show(v, tz)}" for c, v in shown[:FIRST_COLUMNS])
     return f"{count}. First row: {lead}." if lead else f"{count}."
+
+
+# A window that ends now and is this long reads as its preset (5 minutes of slack: the
+# browser's start is a little older than the server's now).
+_PRESETS = (
+    (timedelta(hours=1), "the last hour"),
+    (timedelta(hours=24), "the last 24 hours"),
+    (timedelta(days=7), "the last 7 days"),
+    (timedelta(days=30), "the last 30 days"),
+    (timedelta(days=90), "the last 90 days"),
+)
+
+
+def window_words(
+    start: datetime, end: datetime, ends_now: bool, label: str | None, tz: str | None
+) -> str:
+    """The window a run read, as words: the time the question named ("today", "since
+    Monday"), a preset that ends now, or its two ends in the asker's zone."""
+    if label:
+        return label if label.startswith("since ") else f"for {label}"
+    if ends_now:
+        for length, words in _PRESETS:
+            if abs((end - start) - length) <= timedelta(minutes=5):
+                return f"for {words}"
+    return f"from {_show(start, tz)} to {_show(end, tz)}"
+
+
+def counted_line(
+    columns: list[str],
+    n: int,
+    sources: int,
+    window: str,
+    counted: tuple[str, str, str] | None,
+) -> str | None:
+    """What a run read and counted, when its rows have no event ids to cite (fix list
+    2026-11-16 item 21): written by code from the run's own facts (the sources it read and
+    its window) and the library entry's words (`counted`: what was counted, one row, many
+    rows). The headline and the table already give the count, so it is not repeated; with
+    no rows this is the one line the answer shows. Never model text, and it states nothing
+    the query did not compute."""
+    if "event_id" in columns:
+        return None
+    read = "1 source" if sources == 1 else f"{sources:,} sources"
+    if n == 0:
+        return f"Read {read} {window}: no {counted[2] if counted else 'rows'}."
+    if counted is None:
+        return f"Read {read} {window}."
+    what, row, _ = counted
+    return f"Read {read} {window} and counted {what}, grouped by {row}."
 
 
 @dataclass(frozen=True, slots=True)

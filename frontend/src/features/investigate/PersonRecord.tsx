@@ -164,6 +164,7 @@ function ActivityPerDay({
   );
 }
 
+const M365_HIDDEN = ["actor_user_name", "device_hostname"];
 const M365: [PersonM365List, string, string][] = [
   ["sign_ins", "Sign-ins", "sign-ins"],
   ["mail", "Mail", "mailbox rule changes"],
@@ -234,10 +235,18 @@ function PersonM365({ person, days, d }: { person: string; days: number; d: Pers
           No Microsoft 365 {words} by this person in this range.
         </p>
       ) : q.data ? (
-        // A section of the page, not the page: the list scrolls inside its own height.
-        <div className="max-h-96 overflow-y-auto">
-          <ResultsTable result={q.data} view="parsed" compact geo={q.data.geo} localTimes />
-        </div>
+        // Paged like Logs, so the page scrolls and the table never does, and narrow enough
+        // for the main column at 1280px (owner, 2026-11-16): the person and the device are
+        // in the Accounts and Devices cards beside it, and in each open row.
+        <ResultsTable
+          result={q.data}
+          view="parsed"
+          compact
+          geo={q.data.geo}
+          localTimes
+          hidden={M365_HIDDEN}
+          placeOnHover
+        />
       ) : null}
     </Card>
   );

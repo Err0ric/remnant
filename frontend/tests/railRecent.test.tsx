@@ -182,12 +182,12 @@ describe("Rail Recent (D258)", () => {
 });
 
 describe("Rail counts (D258)", () => {
-  it("puts the AI items to review beside AI usage, outlined and neutral, opening the Inventory", async () => {
+  it("puts the AI items to review beside AI usage, on the solid High pair, opening the Inventory", async () => {
     const nav = await rail("/alerts", { ...ADMIN, aiToReview: 3 });
     const ai = within(nav).getByRole("link", { name: /^AI usage/ });
     const count = await within(ai).findByLabelText("3 to review", {}, { timeout: 5000 });
-    expect(count).toHaveClass("border", "border-border-strong", "text-text-secondary");
-    expect(count).not.toHaveClass("bg-sev-h-solid");
+    // One style for every count that asks for action (fix list 2026-11-16 item 7).
+    expect(count).toHaveClass("bg-sev-h-solid", "text-sev-h-on");
     expect(ai).toHaveAttribute("href", "/ai/inventory");
   });
 
@@ -222,10 +222,9 @@ describe("Rail counts (D258)", () => {
       items: loaded.items.map((i, k) =>
         k === 0 ? { ...i, status: "unreviewed" as const, excluded: null } : i,
       ),
+      to_review: 1, // the server's count of it
     };
-    const { toReview } = await import("@/features/ai/review");
-    const n = toReview(inventory.items);
-    expect(n).toBeGreaterThan(0);
+    const n = 1;
     expect(n).not.toBe(2); // tells the page's answer apart from the count's
     act(() => client.setQueryData(["ai-usage", "inventory"], inventory));
     await new Promise((r) => setTimeout(r, 3000)); // past the rail's first read

@@ -81,7 +81,9 @@ export function Truncate({ value, kind, inLink = false, className }: TruncatePro
     <span
       {...common}
       className={cn(
-        "inline-grid max-w-full align-bottom",
+        // One row, always: the parts flow into columns, so no browser ever stacks the head
+        // over the tail ("clau" over "de_hooks", fix list item 10).
+        "inline-grid max-w-full grid-flow-col align-bottom",
         keepHead
           ? "grid-cols-[minmax(0,max-content)_minmax(0,1fr)]"
           : "grid-cols-[minmax(0,1fr)_minmax(0,max-content)]",

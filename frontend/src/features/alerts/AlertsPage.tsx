@@ -35,6 +35,7 @@ import {
   evidenceSql,
   type Category,
 } from "./guide";
+import { Select } from "@/components/forms/Select";
 
 type Tab = "open" | "closed" | "muted";
 
@@ -478,19 +479,16 @@ function BulkClose({
       className="flex flex-wrap items-center gap-2 rounded-card border border-border bg-surface-head px-3 py-2 text-sm"
     >
       <span className="font-semibold tabular-nums">{ids.length} selected</span>
-      <select
+      <Select
         aria-label="Reason for all selected"
         value={reason}
-        onChange={(e) => setReason(e.target.value as CloseReason | "")}
-        className="h-8 rounded border border-border-control bg-surface px-2"
-      >
-        <option value="">Reason</option>
-        {(Object.keys(reasons) as CloseReason[]).map((r) => (
-          <option key={r} value={r}>
-            {reasons[r]}
-          </option>
-        ))}
-      </select>
+        onChange={(v) => setReason(v as CloseReason | "")}
+        placeholder="Reason"
+        options={(Object.keys(reasons) as CloseReason[]).map((r) => ({
+          value: r,
+          label: reasons[r],
+        }))}
+      />
       <input
         aria-label="Note for all selected"
         placeholder={needsNote ? "Note (required)" : "Note (optional)"}

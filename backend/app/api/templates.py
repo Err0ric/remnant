@@ -80,6 +80,7 @@ class TemplateChangeOut(BaseModel):
     fields: list[str]
     since: str | None
     current: bool
+    summary: str = ""  # the note in plain words; `note` keeps the developer detail
     affected: list[AffectedOut]
 
 

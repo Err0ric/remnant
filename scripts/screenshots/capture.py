@@ -114,6 +114,15 @@ def settled(page: Page, name: str) -> None:
     page.wait_for_timeout(300)  # one more frame for layout after the last data arrived
 
 
+def choose(page: Page, control: str, option: str) -> None:
+    """Chooses `option` in the themed select named `control` (components/forms/Select.tsx):
+    opens its list, clicks the option, and waits for the list to close."""
+    page.get_by_role("combobox", name=control, exact=True).click()
+    listbox = page.get_by_role("listbox")
+    listbox.get_by_role("option", name=option, exact=True).click()
+    listbox.wait_for(state="detached", timeout=WAIT_MS)
+
+
 def dashboard(page: Page, url: str) -> None:
     page.goto(url + "/dashboard")
     page.get_by_role("heading", name="Dashboard", exact=True).wait_for(timeout=WAIT_MS)
@@ -133,8 +142,8 @@ def search(page: Page, url: str) -> None:
 
 def ask(page: Page, url: str) -> None:
     page.goto(url + "/ask-ai")
-    page.get_by_role("combobox", name="Time").select_option(label="7 days")
-    page.get_by_role("combobox", name="Model").select_option(label=PROVIDER)
+    choose(page, "Time", "7 days")
+    choose(page, "Model", PROVIDER)
     page.get_by_role("textbox", name="Question").fill(QUESTION)
     page.get_by_role("button", name="Ask", exact=True).click()
     turn = page.get_by_role("region", name=f"Question: {QUESTION}")

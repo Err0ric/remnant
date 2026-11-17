@@ -1,3 +1,4 @@
+import { Select } from "@/components/forms/Select";
 interface ModelCellProps {
   providerName: string;
   model: string;
@@ -12,22 +13,18 @@ export function ModelCell({ providerName, model, models, saving, onChoose }: Mod
   if (models.length) {
     const options = models.includes(model) || !model ? models : [model, ...models];
     return (
-      <select
+      <Select
         aria-label={`Model for ${providerName}`}
-        className="h-7 max-w-[16rem] rounded border border-border bg-surface px-1 font-mono text-sm"
+        className="h-7 max-w-[16rem] font-mono text-sm"
+        optionClassName="font-mono"
         value={model}
         disabled={saving}
-        onChange={(e) => {
-          if (e.target.value) onChoose(e.target.value);
+        onChange={(v) => {
+          if (v) onChoose(v);
         }}
-      >
-        {model ? null : <option value="">Choose a model</option>}
-        {options.map((m) => (
-          <option key={m} value={m}>
-            {m}
-          </option>
-        ))}
-      </select>
+        placeholder={model ? undefined : "Choose a model"}
+        options={options.map((m) => ({ value: m, label: m }))}
+      />
     );
   }
   if (model) return <span className="font-mono">{model}</span>;

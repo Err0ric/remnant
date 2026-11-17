@@ -4,6 +4,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } fr
 import { SeverityBadge } from "@/components/SeverityBadge";
 import type { Cell, GeoInfo, QueryResult } from "@/lib/api";
 import { EntityLink } from "@/components/EntityLink";
+import { Truncate } from "@/components/Truncate";
 import { When } from "@/components/When";
 import { isIsoTime } from "@/features/ask/AskResults";
 import { kindForColumn, type EntityKind } from "@/lib/entity";
@@ -15,11 +16,13 @@ import {
   columnTemplate,
   displayCell,
   formatCell,
+  isNameColumn,
   sortRows,
   type SortDir,
 } from "@/lib/search";
 import { EventDetail } from "./EventDetail";
 import { RawLines } from "./RawLines";
+import { Select } from "@/components/forms/Select";
 
 const PAGE_SIZES = [50, 100, 500] as const;
 const SIZE_KEY = "results.pageSize";
@@ -84,18 +87,13 @@ function Pager({ page, pages, size, total, truncated, onPage, onSize }: PagerPro
       </span>
       <label className="flex items-center gap-1.5">
         Rows per page
-        <select
+        <Select
           aria-label="Rows per page"
-          value={size}
-          onChange={(e) => onSize(Number(e.target.value))}
-          className="h-7 rounded border border-border-control bg-inset px-1.5 text-text"
-        >
-          {PAGE_SIZES.map((n) => (
-            <option key={n} value={n}>
-              {n}
-            </option>
-          ))}
-        </select>
+          value={String(size)}
+          onChange={(v) => onSize(Number(v))}
+          options={PAGE_SIZES.map((n) => ({ value: String(n), label: String(n) }))}
+          className="h-7"
+        />
       </label>
     </nav>
   );
@@ -121,6 +119,14 @@ interface ResultsTableProps {
   /** Times in the viewer's zone with UTC on hover, as Ask shows them (on by default since
    * 2026-11-08: Logs and Microsoft 365 tables showed raw UTC). False keeps UTC stamps. */
   localTimes?: boolean;
+  /** A view's own headers for the columns its server query names (Microsoft 365 views);
+   * any other column keeps the shared label. */
+  labels?: Readonly<Record<string, string>>;
+  /** The view states the count beside its title: no "N rows" line under a single page. */
+  counted?: boolean;
+  /** An address's place in its tooltip instead of beside it, so a narrow table gives the
+   * width to the names (the person page's Microsoft 365, owner 2026-11-16). */
+  placeOnHover?: boolean;
 }
 
 export function ResultsTable({
@@ -134,6 +140,9 @@ export function ResultsTable({
   fresh,
   onOpenChange,
   localTimes = true,
+  labels,
+  counted = false,
+  placeOnHover = false,
 }: ResultsTableProps) {
   const geoOf = (v: unknown) => (geo && typeof v === "string" ? geo[v] : undefined);
   const intelOf = (v: unknown) =>
@@ -210,7 +219,7 @@ export function ResultsTable({
     visible.map(({ i }) => i),
     48,
     (v) => {
-      const g = geoOf(v);
+      const g = placeOnHover ? undefined : geoOf(v);
       return (g ? geoShort(g).length + 2 : 0) + (intelOf(v) ? 2 : 0);
     },
   );
@@ -288,7 +297,7 @@ export function ResultsTable({
                   title={`${c} · sort the rows shown`}
                   className="inline-flex max-w-full items-center gap-1 truncate hover:text-text"
                 >
-                  {columnLabel(c)}
+                  {labels?.[c] ?? columnLabel(c)}
                   {sort?.index === i ? (
                     sort.dir === "asc" ? (
                       <ArrowUp size={12} aria-hidden />
@@ -361,13 +370,22 @@ export function ResultsTable({
                               kind={kindForColumn(c) as EntityKind}
                               value={row[i]}
                               label={displayCell(row[i] ?? null)}
+                              // The place on hover, where the link's own tooltip shows it.
+                              hint={
+                                placeOnHover && geoOf(row[i])
+                                  ? geoShort(geoOf(row[i]) as GeoInfo)
+                                  : undefined
+                              }
                             />
+                          ) : isNameColumn(c) && typeof row[i] === "string" ? (
+                            // Cut in the middle, so two long names stay told apart.
+                            <Truncate kind="name" value={row[i] as string} />
                           ) : (
                             <span title={formatCell(row[i] ?? null)}>
                               {displayCell(row[i] ?? null)}
                             </span>
                           )}
-                          {geoOf(row[i]) ? (
+                          {geoOf(row[i]) && !placeOnHover ? (
                             <span className="ml-2 text-text-muted">
                               {geoShort(geoOf(row[i]) as GeoInfo)}
                             </span>
@@ -409,7 +427,7 @@ export function ResultsTable({
       </div>
       {paged ? (
         pager
-      ) : (
+      ) : counted ? null : (
         <p className="px-3.5 py-2 text-sm text-text-secondary">
           {result.rows.length.toLocaleString()} {result.rows.length === 1 ? "row" : "rows"}
           {result.truncated ? " (the newest rows; narrow the range or filters to see all)" : ""}

@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { ApiError, QUIET_OK_DAYS, api, type QuietOkDays } from "@/lib/api";
+import { Select } from "@/components/forms/Select";
 
 interface QuietOkEditorProps {
   sourceId: string;
@@ -8,8 +9,6 @@ interface QuietOkEditorProps {
   canManage: boolean;
   /** The source has a quiet alert on: it is held for these days and fires after them (D262). */
   quietAlert?: boolean;
-  /** "No events for 2 d (normal for this source)" while the source is idle, else null. */
-  idle: string | null;
 }
 
 const days = (n: number) => (n === 1 ? "1 day" : `${n} days`);
@@ -21,7 +20,6 @@ export function QuietOkEditor({
   value,
   canManage,
   quietAlert = false,
-  idle,
 }: QuietOkEditorProps) {
   const client = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -40,12 +38,10 @@ export function QuietOkEditor({
       Its quiet alert is held for these days and fires after them.
     </span>
   ) : null;
-  const said = idle ? <span className="text-sm text-text-secondary">Idle: {idle}</span> : null;
   if (!open) {
-    if (!value && !canManage) return said;
+    if (!value && !canManage) return null;
     return (
       <>
-        {said}
         <span className="flex flex-wrap items-center gap-x-2 text-sm">
           {value ? (
             <span className="text-text-secondary">Quiet is normal for up to {days(value)}</span>
@@ -73,20 +69,15 @@ export function QuietOkEditor({
       <legend className="sr-only">Quiet is normal for {sourceId}</legend>
       <label className="flex flex-col gap-0.5">
         <span className="text-text-secondary">Quiet is normal for up to</span>
-        <select
-          value={choice ?? "off"}
-          onChange={(e) =>
-            setChoice(e.target.value === "off" ? null : (Number(e.target.value) as QuietOkDays))
-          }
-          className="h-7 w-28 rounded border border-border-control bg-surface px-1"
-        >
-          <option value="off">Off</option>
-          {QUIET_OK_DAYS.map((d) => (
-            <option key={d} value={d}>
-              {days(d)}
-            </option>
-          ))}
-        </select>
+        <Select
+          value={choice === null ? "off" : String(choice)}
+          onChange={(v) => setChoice(v === "off" ? null : (Number(v) as QuietOkDays))}
+          options={[
+            { value: "off", label: "Off" },
+            ...QUIET_OK_DAYS.map((d) => ({ value: String(d), label: days(d) })),
+          ]}
+          className="h-7 w-28"
+        />
       </label>
       <span className="text-text-muted">
         For a source that sends only while people work. Inside these days no events is not a problem

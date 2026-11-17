@@ -5,6 +5,7 @@ import { FormError } from "@/features/auth/FormError";
 import { ApiError, api, type Draft, type DraftSampleInput } from "@/lib/api";
 import type { DraftSeed } from "./draftSeed";
 import { SectionTitle } from "@/components/SectionTitle";
+import { Select } from "@/components/forms/Select";
 
 const ID_PATTERN = /^[a-z][a-z0-9_]{1,63}$/;
 
@@ -74,19 +75,16 @@ export function NewDraftForm({
           <label htmlFor="draft-from" className="text-sm font-semibold">
             Start from
           </label>
-          <select
+          <Select
             id="draft-from"
             value={from}
-            onChange={(e) => setFrom(e.target.value)}
-            className="h-9 rounded border border-border-control bg-inset px-2 text-sm text-text"
-          >
-            <option value="">Blank template (each line becomes a message)</option>
-            {(templates.data ?? []).map((t) => (
-              <option key={t.id} value={t.id}>
-                Copy of {t.name}
-              </option>
-            ))}
-          </select>
+            onChange={setFrom}
+            options={[
+              { value: "", label: "Blank template (each line becomes a message)" },
+              ...(templates.data ?? []).map((t) => ({ value: t.id, label: `Copy of ${t.name}` })),
+            ]}
+            className="h-9 text-sm"
+          />
           <p className="text-sm text-text-muted">Copy the closest template and adjust it.</p>
         </div>
       </div>

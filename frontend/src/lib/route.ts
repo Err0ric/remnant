@@ -1,11 +1,10 @@
 import { useSyncExternalStore } from "react";
 
-/** Pages that exist today. The root opens Home, which picks the Dashboard when the viewer
- * has a panel and Health otherwise (ADR-0031, ADR-0034 row 11). `/overview` and unknown
- * paths open Health > Sources, where the former Overview's numbers now live. */
+/** Pages that exist today. The root opens Home, which always picks the Dashboard. Old
+ * addresses open their new page (`OLD_ADDRESSES`); any other address is `notfound`, which
+ * shows "Page not found" in the app shell and keeps the address as typed. */
 export type PageId =
   | "home"
-  | "overview"
   | "logs"
   | "ask"
   | "sources"
@@ -35,11 +34,11 @@ export type PageId =
   | "agents"
   | "m365"
   | "plugins"
-  | "sso";
+  | "sso"
+  | "notfound";
 
-const PATHS: Record<PageId, string> = {
+export const PATHS: Readonly<Record<PageId, string>> = {
   home: "/",
-  overview: "/overview",
   logs: "/investigate/logs",
   ask: "/ask-ai",
   sources: "/sources",
@@ -77,6 +76,7 @@ const PATHS: Record<PageId, string> = {
   audit: "/audit",
   about: "/about",
   account: "/account", // invite and reset links land here; works signed out
+  notfound: "", // never an address of its own: the page for an address nothing claims
 };
 const CHANGE = "app:navigate";
 
@@ -85,67 +85,98 @@ const CHANGE = "app:navigate";
 export const PAGE_TABS: Partial<Record<PageId, readonly string[]>> = {
   ai: ["services", "people", "inventory"],
   m365: ["sign-ins", "mail", "admin"],
-  // Overview and Tools are gone (ADR-0052 section 3.3): the numbers are a strip on
-  // Sessions and the tools are rows of MCP servers. Their old addresses still open.
   agents: ["sessions", "mcp", "accounts"],
   health: ["sources", "collectors", "delivery"],
   audit: ["activity", "ai", "integrity"],
 };
 
-/** Paths before ADR-0038, kept so links already sent (alert messages, bookmarks) open the
- * same place. A legacy path's `#tab` becomes the tab segment. */
-const LEGACY: Record<string, PageId> = {
-  "/search": "logs",
-  // Logs and Ask AI before their names settled (D206); search state in the fragment is kept.
-  "/investigate/search": "logs",
-  "/ask": "ask",
-  "/saved": "saved",
-  "/rules": "rules",
-  "/schedules": "schedules",
-  "/investigations": "investigate",
-};
-/** Alerts: Open, Closed, and Muted were tabs (`/alerts/closed`) and are now the State filter
- * of the Queue, kept in the fragment (`/alerts#state=closed`; ADR-0052 sections 3.3, 3.4). */
-const ALERT_STATES = ["open", "closed", "muted"] as const;
-function oldAlertState(path: string): string | null {
-  const state = path.startsWith(`${PATHS.alerts}/`) ? path.slice(PATHS.alerts.length + 1) : "";
-  return (ALERT_STATES as readonly string[]).includes(state) ? state : null;
+/** Where an old address opens now. */
+export interface OldAddress {
+  page: PageId;
+  /** The tab of that page ("" or left out: its first). */
+  tab?: string;
+  /** Filter state the new address starts its fragment with (`type=devices`). */
+  add?: string;
 }
 
-/** The Microsoft 365 area's old addresses (`/m365/mail`, and `/m365#mail` from before tabs
- * had paths), each where its content now is (ADR-0052 sections 3.3 and 3.4): Sign-ins,
- * Mail, and Admin are Logs views, the Overview is the top of the Sign-ins view, and Apps is
- * a Type of the AI usage Inventory. */
-const M365_OLD = "/m365";
-function oldM365(path: string, hash: string): Place | null {
-  if (path !== M365_OLD && !path.startsWith(`${M365_OLD}/`)) return null;
-  const tab = path === M365_OLD ? hash : path.slice(M365_OLD.length + 1);
-  if (tab === "mail" || tab === "admin") return { page: "m365", tab };
-  if (tab === "apps") return { page: "ai", tab: "inventory" };
-  // Sign-ins, and the Overview, whose charts and lists are at the top of that view.
-  return { page: "m365", tab: "" };
+/** Every address the app served before and no longer serves, and where it opens now
+ * (ADR-0052 section 3.4), so links already sent (alert messages, bookmarks, guides) open
+ * the right page. A key is a path, or a path with the bare `#word` that named a tab before
+ * tabs had paths. The new address replaces the old one (Back does not return to it) and
+ * keeps the query string and the fragment, except a `#word` its key names. Current tab
+ * names in a `#word` (`/health#delivery`) need no entry: they become the tab's path. */
+export const OLD_ADDRESSES: Readonly<Record<string, OldAddress>> = {
+  // Addresses people type: an area's first word, and Settings itself (owner, 2026-11-16).
+  "/investigate": { page: "investigate" },
+  "/investigate/ask": { page: "ask" },
+  "/settings": { page: "sources" }, // where the rail's Settings opens for every role
+  // The former Overview is Health (ADR-0034 row 11).
+  "/overview": { page: "health" },
+  // Before ADR-0038 and D206: Logs and Ask AI before their names settled.
+  "/search": { page: "logs" },
+  "/investigate/search": { page: "logs" },
+  "/ask": { page: "ask" },
+  "/saved": { page: "saved" },
+  "/rules": { page: "rules" },
+  "/schedules": { page: "schedules" },
+  "/investigations": { page: "investigate" },
+  // Alerts: Open, Closed, and Muted were tabs and are the Queue's State filter (3.3).
+  "/alerts/open": { page: "alerts" },
+  "/alerts/closed": { page: "alerts", add: "state=closed" },
+  "/alerts/muted": { page: "alerts", add: "state=muted" },
+  "/alerts#open": { page: "alerts" },
+  "/alerts#closed": { page: "alerts", add: "state=closed" },
+  "/alerts#muted": { page: "alerts", add: "state=muted" },
+  // AI usage: Review is the Inventory, which picks Unreviewed or All itself (no Status in
+  // the address); its settings are Settings > AI watch and catalog; two tabs went to Agents.
+  "/ai/settings": { page: "ai", tab: "inventory" },
+  "/ai#settings": { page: "ai", tab: "inventory" },
+  "/ai/watch": { page: "aisettings" }, // never a page, but reads like one (owner, 2026-10-31)
+  "/ai#agents": { page: "agents" },
+  "/ai#mcp": { page: "agents", tab: "mcp" },
+  // Agents: the Overview is a strip on Sessions; Tools are rows of MCP servers.
+  "/agents/overview": { page: "agents" },
+  "/agents#overview": { page: "agents" },
+  "/agents/tools": { page: "agents", tab: "mcp" },
+  "/agents#tools": { page: "agents", tab: "mcp" },
+  // Health's old tabs, by path and by hash: Enrichment feeds is a Type of Sources, Endpoint
+  // agents and Watched devices are Collectors, Delivery has its own name, and Backups, Page
+  // rollups, and Speed are Settings > System.
+  ...healthTab("enrichment", { page: "health", add: "type=enrichment" }),
+  ...healthTab("agents", { page: "health", tab: "collectors" }),
+  ...healthTab("devices", { page: "health", tab: "collectors", add: "type=devices" }),
+  ...healthTab("alerts", { page: "health", tab: "delivery" }),
+  ...healthTab("backups", { page: "system" }),
+  ...healthTab("rollups", { page: "system", add: "type=rollups" }),
+  ...healthTab("speed", { page: "system", add: "type=speed" }),
+  // Integrity alerts linked here before the check moved to Settings > Audit log.
+  "/health#integrity": { page: "audit", tab: "integrity" },
+  // Microsoft 365 (3.3, D249): Sign-ins, Mail, and Admin are Logs views, the Overview is
+  // the top of the Sign-ins view, and Apps is a Type of the AI usage Inventory.
+  ...m365Tab("overview", { page: "m365" }),
+  ...m365Tab("sign-ins", { page: "m365" }),
+  ...m365Tab("mail", { page: "m365", tab: "mail" }),
+  ...m365Tab("admin", { page: "m365", tab: "admin" }),
+  ...m365Tab("apps", { page: "ai", tab: "inventory", add: "type=m365_app" }),
+  "/m365": { page: "m365" },
+};
+function healthTab(word: string, to: OldAddress): Record<string, OldAddress> {
+  return { [`/health/${word}`]: to, [`/health#${word}`]: to };
+}
+function m365Tab(word: string, to: OldAddress): Record<string, OldAddress> {
+  return { [`/m365/${word}`]: to, [`/m365#${word}`]: to };
 }
 
-/** Health's old tabs (`/health/agents`, and `/health#agents` from before tabs had paths),
- * each where it is now (ADR-0052 sections 3.3 and 3.4): Enrichment feeds is a Type of
- * Sources, Endpoint agents and Watched devices are Types of Collectors, Delivery has its own
- * name, and Backups, Page rollups, and Speed are Settings > System. `type` is the Type
- * filter the new address carries in its fragment. */
-const HEALTH_OLD: Record<string, { place: Place; type?: string }> = {
-  enrichment: { place: { page: "health", tab: "" }, type: "enrichment" },
-  agents: { place: { page: "health", tab: "collectors" } },
-  devices: { place: { page: "health", tab: "collectors" }, type: "devices" },
-  alerts: { place: { page: "health", tab: "delivery" } },
-  backups: { place: { page: "system", tab: "" } },
-  rollups: { place: { page: "system", tab: "" }, type: "rollups" },
-  speed: { place: { page: "system", tab: "" }, type: "speed" },
-};
-function oldHealth(path: string, hash: string): { place: Place; type?: string } | null {
-  const base = "/health";
-  if (path !== base && !path.startsWith(`${base}/`)) return null;
-  // Own names only: the word comes from the address, and `constructor` is not a tab.
-  const old = path === base ? hash : path.slice(base.length + 1);
-  return Object.hasOwn(HEALTH_OLD, old) ? (HEALTH_OLD[old] ?? null) : null;
+/** The old address a path and fragment are, and the fragment the new one keeps. Own keys
+ * only: the words come from the address, and `constructor` is not an address. */
+function oldAddress(path: string, hash: string): { to: OldAddress; rest: string } | null {
+  const word = /^[\w-]+$/.test(hash) ? `${path}#${hash}` : "";
+  if (word && Object.hasOwn(OLD_ADDRESSES, word)) {
+    const to = OLD_ADDRESSES[word];
+    if (to) return { to, rest: "" };
+  }
+  const to = Object.hasOwn(OLD_ADDRESSES, path) ? OLD_ADDRESSES[path] : undefined;
+  return to ? { to, rest: hash } : null;
 }
 
 /** Health's Status filter (D255): All, Problems, Paused, Healthy; anything else is All. */
@@ -156,14 +187,6 @@ export function healthStatus(frag: URLSearchParams): HealthStatus {
   return (HEALTH_STATUS as readonly string[]).includes(v) ? (v as HealthStatus) : "all";
 }
 
-/** Tabs that moved from AI usage to the Agents area, by their old hash. */
-const AI_TO_AGENTS: Record<string, string> = { agents: "sessions", mcp: "mcp" };
-/** The Agents tab an old AI usage hash stood for, or "" (own names only: the word comes
- * from the address). */
-function movedToAgents(hash: string): string {
-  return Object.hasOwn(AI_TO_AGENTS, hash) ? (AI_TO_AGENTS[hash] ?? "") : "";
-}
-
 interface Place {
   page: PageId;
   tab: string;
@@ -171,30 +194,15 @@ interface Place {
 
 function parse(pathname: string, hash: string): Place {
   const path = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
-  const exact = (Object.keys(PATHS) as PageId[]).find((id) => path === PATHS[id]);
-  const legacyHashTab = (page: PageId) =>
-    PAGE_TABS[page]?.includes(hash) && hash !== PAGE_TABS[page]?.[0] ? hash : "";
   // Before the exact match: `/health#speed` is the Health path with an old tab's hash.
-  const health = oldHealth(path, hash);
-  if (health) return health.place;
+  const old = oldAddress(path, hash);
+  if (old) return { page: old.to.page, tab: old.to.tab ?? "" };
+  const exact = (Object.keys(PATHS) as PageId[]).find((id) => PATHS[id] && path === PATHS[id]);
   if (exact) {
-    if (exact === "ai" && hash === "settings") return { page: "ai", tab: "inventory" };
-    if (exact === "ai" && movedToAgents(hash)) return { page: "agents", tab: movedToAgents(hash) };
-    // `/agents#tools` and `/agents#overview`, from before tabs had paths.
-    if (exact === "agents" && hash === "tools") return { page: "agents", tab: "mcp" };
-    return { page: exact, tab: legacyHashTab(exact) };
+    // `/health#delivery`, from before tabs had paths.
+    const first = PAGE_TABS[exact]?.[0];
+    return { page: exact, tab: PAGE_TABS[exact]?.includes(hash) && hash !== first ? hash : "" };
   }
-  if (Object.hasOwn(LEGACY, path) && LEGACY[path]) return { page: LEGACY[path], tab: "" };
-  if (path === `${PATHS.agents}/overview`) return { page: "agents", tab: "" };
-  if (path === `${PATHS.agents}/tools`) return { page: "agents", tab: "mcp" };
-  const old = oldM365(path, hash);
-  if (old) return old;
-  if (oldAlertState(path)) return { page: "alerts", tab: "" };
-  // AI Watch's settings (which services and signals it watches): `/ai/watch` was never a
-  // page but reads like one (owner, 2026-10-31).
-  if (path === "/ai/watch") return { page: "aisettings", tab: "" };
-  // The Review tab is gone: reviewing is the Inventory's Status filter (ADR-0052 3.3).
-  if (path === "/ai/settings") return { page: "ai", tab: "inventory" };
   for (const id of Object.keys(PAGE_TABS) as PageId[]) {
     const base = PATHS[id];
     if (path.startsWith(`${base}/`)) {
@@ -202,7 +210,7 @@ function parse(pathname: string, hash: string): Place {
       if (PAGE_TABS[id]?.includes(tab)) return { page: id, tab };
     }
   }
-  return { page: "overview", tab: "" };
+  return { page: "notfound", tab: "" };
 }
 
 function here(): Place {
@@ -218,47 +226,24 @@ export function pathFor(page: PageId, tab?: string): string {
   return tab && tab !== first ? `${PATHS[page]}/${tab}` : PATHS[page];
 }
 
-/** The canonical address for the current one: legacy paths and `#tab` hashes become
- * `/<page>/<tab>`; other hash state (`#item=...`) is kept. Returns null when unchanged. */
+/** The canonical address for the current one: old addresses become their new page, and
+ * `#tab` hashes become `/<page>/<tab>`; the query string and other fragment state
+ * (`#item=...`) are kept. Returns null when unchanged, and for an address nothing claims,
+ * which stays as typed so the person can see and fix it. */
 export function canonical(): string | null {
-  const { page, tab } = here();
   const hash = window.location.hash.replace(/^#/, "");
   const path = window.location.pathname.replace(/(.)\/+$/, "$1");
-  // `/alerts/closed`, and `/alerts#closed` from before tabs had paths (PR 274).
-  const bare = (ALERT_STATES as readonly string[]).includes(hash) ? hash : null;
-  const state = oldAlertState(path) ?? (path === PATHS.alerts ? bare : null);
-  if (state) {
-    // The old tab becomes the State filter; whatever else the fragment held (`item=<id>`)
-    // is kept. Open is the default and needs no word.
-    const rest = hash && !(ALERT_STATES as readonly string[]).includes(hash) ? hash : "";
-    const parts = [state === "open" ? "" : `state=${state}`, rest].filter(Boolean);
-    return PATHS.alerts + window.location.search + (parts.length ? `#${parts.join("&")}` : "");
+  const search = window.location.search;
+  const old = oldAddress(path, hash);
+  if (old) {
+    const fragment = [old.to.add ?? "", old.rest].filter(Boolean).join("&");
+    return pathFor(old.to.page, old.to.tab) + search + (fragment ? `#${fragment}` : "");
   }
-  // AI usage > Review, by path or by its old hash: the Inventory, which opens on Unreviewed
-  // while anything is unreviewed and on All otherwise (a Status in the address would
-  // switch that fallback off).
-  if (path === "/ai/settings" || (path === PATHS.ai && hash === "settings"))
-    return pathFor("ai", "inventory") + window.location.search;
-  // An old Health tab: its new place, with the Type it stood for in the fragment.
-  const health = oldHealth(path, hash);
-  if (health) {
-    const to = pathFor(health.place.page, health.place.tab) + window.location.search;
-    return health.type ? `${to}#type=${health.type}` : to;
-  }
-  // Microsoft 365 > Apps is the Inventory with its Type set.
-  if (path === `${M365_OLD}/apps` || (path === M365_OLD && hash === "apps"))
-    return `${pathFor("ai", "inventory")}${window.location.search}#type=m365_app`;
-  const wasM365 = path === M365_OLD && ["sign-ins", "mail", "admin", "overview"].includes(hash);
-  const oldAgents = path === PATHS.agents && (hash === "tools" || hash === "overview");
-  const keep =
-    hash && !PAGE_TABS[page]?.includes(hash) && !movedToAgents(hash) && !oldAgents && !wasM365
-      ? `#${hash}`
-      : "";
-  if (page === "overview" && window.location.pathname !== PATHS.overview) return null;
-  const target = pathFor(page, tab) + window.location.search + keep;
-  return target === window.location.pathname + window.location.search + window.location.hash
-    ? null
-    : target;
+  const { page, tab } = here();
+  if (page === "notfound") return null;
+  const keep = hash && !PAGE_TABS[page]?.includes(hash) ? `#${hash}` : "";
+  const target = pathFor(page, tab) + search + keep;
+  return target === window.location.pathname + search + window.location.hash ? null : target;
 }
 
 function target(page: PageId, section?: string): string {
@@ -314,6 +299,18 @@ export function usePage(): PageId {
 /** The open tab of the current page, "" for its first. */
 export function useTab(): string {
   return useSyncExternalStore(subscribe, () => here().tab);
+}
+
+/** The path of the address as typed (percent escapes read back), for the page that says
+ * nothing is there. */
+export function usePathname(): string {
+  return useSyncExternalStore(subscribe, () => {
+    try {
+      return decodeURI(window.location.pathname);
+    } catch {
+      return window.location.pathname; // a broken escape: shown as it came
+    }
+  });
 }
 
 function currentHash(): string {

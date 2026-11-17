@@ -477,6 +477,9 @@ class TemplateChange(_Strict):
 
     version: Annotated[str, StringConstraints(min_length=1, max_length=20)]
     note: Annotated[str, StringConstraints(min_length=1, max_length=400)]
+    # The note in plain words for the Sources page: no column names or decision numbers
+    # (fix list 2026-11-16 item 23). Empty: the page says only that the parser changed.
+    summary: Annotated[str, StringConstraints(max_length=200)] = ""
     fields: list[str] = Field(default_factory=list, max_length=20)
 
     @field_validator("fields")

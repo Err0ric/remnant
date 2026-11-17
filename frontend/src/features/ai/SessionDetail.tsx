@@ -309,7 +309,15 @@ function Kpis({ s, loading, failed, account }: KpisProps) {
         {...tile}
         label="Tokens"
         about="From Claude Code telemetry for this session. Input counts cache tokens too."
-        value={metered ? n(s.tokens_in! + s.tokens_out!) : "Not reported"}
+        value={
+          metered ? (
+            n(s.tokens_in! + s.tokens_out!)
+          ) : (
+            // Words, not a number: one line in the body size on the number's line, so the
+            // tile keeps its height and nothing wraps in a narrow pane (fix list S2).
+            <span className="whitespace-nowrap text-md font-normal">Not reported</span>
+          )
+        }
         tone={metered && s.tokens_in! + s.tokens_out! > 0 ? "text" : "muted"}
         context={metered ? `In ${n(s.tokens_in!)}, out ${n(s.tokens_out!)}` : undefined}
       />

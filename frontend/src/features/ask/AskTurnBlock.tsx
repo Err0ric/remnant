@@ -10,6 +10,7 @@ import {
 } from "@/lib/api";
 import { isAborted, isModelBusy } from "@/components/ai/ModelWait";
 import { cn } from "@/lib/cn";
+import { fitsInLogs, TOO_LONG_FOR_LOGS } from "@/lib/sqlLimit";
 import { AskResults } from "./AskResults";
 import { EmptyAddress, addressIn } from "@/features/investigate/EmptyAddress";
 
@@ -226,7 +227,7 @@ export function AskTurnBlock({
         </div>
       ) : null}
       {turn.result ? <Answer turn={turn} /> : null}
-      {turn.result ? (
+      {turn.result && !(turn.result.counted && turn.result.rows.length === 0) ? (
         <AskResults
           result={turn.result}
           drillKeys={turn.result.drill_keys}
@@ -247,19 +248,37 @@ export function AskTurnBlock({
         </p>
       ) : null}
       {a && turn.phase !== "guidance" && onEdit ? (
-        <div className="text-sm">
-          <button
-            type="button"
-            onClick={() => onEdit(a.sql)}
-            className="text-accent-text hover:underline"
-          >
-            Open in Logs
-          </button>
-          <span className="text-text-muted">
-            {" "}
-            · the SQL in the Logs SQL mode, to change or save
-          </span>
-        </div>
+        !fitsInLogs(a.sql) ? (
+          // Built by the server from the AI catalog, longer than Logs takes (fix 20).
+          <div className="text-sm">
+            <button
+              type="button"
+              aria-disabled="true"
+              aria-describedby={`too-long-${turn.id}`}
+              className="cursor-default text-text-muted"
+            >
+              Open in Logs
+            </button>
+            <span id={`too-long-${turn.id}`} className="text-text-muted">
+              {" "}
+              · {TOO_LONG_FOR_LOGS}
+            </span>
+          </div>
+        ) : (
+          <div className="text-sm">
+            <button
+              type="button"
+              onClick={() => onEdit(a.sql)}
+              className="text-accent-text hover:underline"
+            >
+              Open in Logs
+            </button>
+            <span className="text-text-muted">
+              {" "}
+              · the SQL in the Logs SQL mode, to change or save
+            </span>
+          </div>
+        )
       ) : null}
       {a && turn.phase !== "guidance" ? (
         <details className="rounded border border-border bg-surface text-sm">
@@ -375,9 +394,14 @@ function shortId(id: string): string {
  * only statements that cite rows that were sent (C1). When the model's statements could
  * not cite, there is no summary and the note says why; the rows stand alone. */
 function Answer({ turn }: { turn: Turn }) {
+  const counted = turn.result?.counted;
+  // No rows and a counted line: that line is the whole answer (fix list 2026-11-16).
+  if (counted && turn.result?.rows.length === 0)
+    return <p className="text-sm [overflow-wrap:anywhere]">{counted}</p>;
   const head = turn.summary?.headline ?? turn.result?.headline;
   const claims = turn.summary?.claims ?? [];
-  const note = turn.summary?.note ?? turn.summaryNote;
+  // The counted line says why there is no summary; the note would repeat it.
+  const note = counted ? null : (turn.summary?.note ?? turn.summaryNote);
   return (
     <div className="flex flex-col gap-1.5 text-sm">
       {head ? <p className="font-semibold [overflow-wrap:anywhere]">{head}</p> : null}
@@ -398,6 +422,11 @@ function Answer({ turn }: { turn: Turn }) {
       {claims.length && turn.answer ? (
         <p className="text-text-muted">
           Summary by {turn.answer.provider.name}; every statement cites rows below.
+        </p>
+      ) : null}
+      {counted ? (
+        <p className="text-text-secondary [overflow-wrap:anywhere]">
+          <span className="font-semibold">What was counted:</span> {counted}
         </p>
       ) : null}
       {note ? <p className="text-text-muted">{note}</p> : null}

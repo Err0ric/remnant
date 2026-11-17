@@ -1,7 +1,9 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { When } from "@/components/When";
 import { useState } from "react";
 import { ApiError, api, type ManagedUser, type Role } from "@/lib/api";
 import { ROLE_LABEL } from "./roles";
+import { Select } from "@/components/forms/Select";
 
 interface UserRowProps {
   user: ManagedUser;
@@ -14,10 +16,6 @@ function status(u: ManagedUser): { label: string; dot: string } {
   if (u.disabled) return { label: "Disabled", dot: "bg-border-strong" };
   if (u.pending) return { label: "Invite pending", dot: "bg-warn" };
   return { label: "Active", dot: "bg-ok" };
-}
-
-function when(value: string | null): string {
-  return value ? `${value.slice(0, 16).replace("T", " ")} UTC` : "Never";
 }
 
 export function UserRow({ user, groupNames, isSelf, onResetLink }: UserRowProps) {
@@ -59,19 +57,17 @@ export function UserRow({ user, groupNames, isSelf, onResetLink }: UserRowProps)
           ) : null}
         </td>
         <td className="px-3 py-2.5">
-          <select
+          <Select
             aria-label={`Role for ${user.username}`}
             value={user.role}
             disabled={update.isPending}
-            onChange={(e) => update.mutate({ role: e.target.value as Role })}
-            className="h-7 rounded border border-border-control bg-inset px-1.5 text-sm text-text"
-          >
-            {(Object.keys(ROLE_LABEL) as Role[]).map((r) => (
-              <option key={r} value={r}>
-                {ROLE_LABEL[r]}
-              </option>
-            ))}
-          </select>
+            onChange={(v) => update.mutate({ role: v as Role })}
+            options={(Object.keys(ROLE_LABEL) as Role[]).map((r) => ({
+              value: r,
+              label: ROLE_LABEL[r],
+            }))}
+            className="h-7 text-sm"
+          />
           <label
             className="mt-1.5 flex items-center gap-1.5 text-sm text-text-secondary"
             title={
@@ -102,8 +98,10 @@ export function UserRow({ user, groupNames, isSelf, onResetLink }: UserRowProps)
               ? groupNames.join(", ")
               : "None"}
         </td>
-        {/* May wrap between date and time, so the table fits a 1280px window. */}
-        <td className="px-3 py-2.5 font-mono text-sm">{when(user.last_login_at)}</td>
+        {/* "Nov 8, 7:19 AM" on one line; the table fits a 1280px window with it. */}
+        <td className="whitespace-nowrap px-3 py-2.5 text-sm">
+          {user.last_login_at ? <When iso={user.last_login_at} /> : "Never"}
+        </td>
         <td className="whitespace-nowrap px-3 py-2.5 text-right">
           {confirming ? (
             <span className="flex items-center justify-end gap-2">

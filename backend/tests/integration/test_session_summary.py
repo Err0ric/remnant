@@ -107,9 +107,12 @@ def test_the_summary_counts_the_whole_session(summary_lab: dict[str, Any]) -> No
     assert (s["files"], s["files_outside"]) == (4, 1)
     assert s["new_mcp"] == ["notes"]
     assert (s["tokens_in"], s["tokens_out"]) == (None, None)  # "Not reported", never 0
+    # Bookkeeping (D186) is "other", so the three tool call types add up to Tool calls, the
+    # number the tile beside the legend shows (fix list S3).
     assert s["types"] == {
-        "prompt": 2, "tool_call": 2, "file_access": 4, "access": 2, "tool_result": 7, "other": 3,
+        "prompt": 2, "tool_call": 1, "file_access": 4, "access": 2, "tool_result": 6, "other": 5,
     }  # fmt: skip
+    assert s["types"]["tool_call"] + s["types"]["file_access"] + s["types"]["access"] == 7
     assert (s["steps"], s["steps_cut"]) == (20, False)
     # Show events in Logs: the session's records, the window bound by Logs.
     assert "template_id = 'claude_hooks'" in s["sql"] and "'s-sum'" in s["sql"]

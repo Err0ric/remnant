@@ -2,14 +2,16 @@ import { QueryClient } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mockApi, type MockAuth } from "./mockApi";
+import { mockApi, type MockAuth, loadedRegion, withM365 } from "./mockApi";
 
 type Change = (url: string, body: Record<string, unknown>) => Record<string, unknown> | null;
 
 /** The Dashboard, with `change` rewriting the JSON of the answers it wants to. */
 async function renderDashboard(change: Change = () => null, auth?: MockAuth) {
   window.history.replaceState(null, "", "/dashboard");
-  const spy = mockApi("Codename", auth ?? { mode: "login", signedIn: true, role: "admin" });
+  const spy = withM365(
+    mockApi("Codename", auth ?? { mode: "login", signedIn: true, role: "admin" }),
+  );
   const real = spy.getMockImplementation() as typeof fetch;
   spy.mockImplementation(async (url, init) => {
     const res = await real(url, init);
@@ -36,6 +38,10 @@ async function renderDashboard(change: Change = () => null, auth?: MockAuth) {
   return spy;
 }
 
+const isOverview = (url: string) => /\/api\/overview$/.test(url);
+const asked = (spy: ReturnType<typeof mockApi>, test: (url: string) => boolean) =>
+  spy.mock.calls.some((c) => test(String(c[0])));
+
 const isDetections = (url: string) =>
   url.includes("/api/dashboard/sections") && url.includes("part=detections");
 
@@ -44,7 +50,7 @@ afterEach(() => vi.restoreAllMocks());
 describe("Dashboard: Detections (ADR-0052, DESIGN.md 6.3, redesign build row 18)", () => {
   it("lists the hosts and people involved with their rules and last match", async () => {
     await renderDashboard();
-    const section = await screen.findByRole("region", { name: "Detections" });
+    const section = await loadedRegion("Detections");
     for (const label of [
       "Matched events",
       "Rules that matched",
@@ -67,7 +73,7 @@ describe("Dashboard: Detections (ADR-0052, DESIGN.md 6.3, redesign build row 18)
 
   it("opens the rule from its name, and its events from its total", async () => {
     await renderDashboard();
-    const section = await screen.findByRole("region", { name: "Detections" });
+    const section = await loadedRegion("Detections");
     const row = section.querySelector('tr[data-row="SSH failed password"]') as HTMLElement;
     // The total opens the events in Logs.
     expect(within(row).getByTitle("Open 9 events in Logs")).toHaveAttribute("data-drill");
@@ -107,7 +113,7 @@ describe("Dashboard: Detections (ADR-0052, DESIGN.md 6.3, redesign build row 18)
       }
       return null;
     });
-    const section = await screen.findByRole("region", { name: "Detections" });
+    const section = await loadedRegion("Detections");
     const notice = await within(section).findByRole("note");
     expect(notice).toHaveAttribute("data-state-notice", "blind");
     expect(notice).toHaveTextContent("Detection is not running for 1 schedule: Failed logons.");
@@ -127,7 +133,7 @@ describe("Dashboard: Detections (ADR-0052, DESIGN.md 6.3, redesign build row 18)
       const d = body.detections as Record<string, { value: number }>;
       return { ...body, detections: { ...d, hosts: { ...d.hosts, value: 0 } } };
     });
-    const section = await screen.findByRole("region", { name: "Detections" });
+    const section = await loadedRegion("Detections");
     const hosts = section.querySelector('[data-kpi="Hosts involved"]') as HTMLElement;
     expect(within(hosts).getByText("0")).toBeVisible();
     expect(within(section).queryByRole("note")).toBeNull();
@@ -137,19 +143,103 @@ describe("Dashboard: Detections (ADR-0052, DESIGN.md 6.3, redesign build row 18)
     await renderDashboard((url, body) =>
       isDetections(url) ? { ...body, detections: null, no_rules: true } : null,
     );
-    const section = await screen.findByRole("region", { name: "Detections" });
+    const section = await loadedRegion("Detections");
     expect(within(section).getByText("No rules are enabled.")).toBeVisible();
     await userEvent.click(within(section).getByRole("button", { name: "Enable rules" }));
     expect(window.location.pathname).toBe("/alerts/rules");
   });
 
-  it("shows nothing for it to someone who cannot enable a rule", async () => {
-    await renderDashboard(
-      (url, body) => (isDetections(url) ? { ...body, detections: null, no_rules: true } : null),
+  it("hides Detections from someone who cannot enable a rule, from the first paint", async () => {
+    // The Overview says no rule is on and no match is kept: nothing for them to act on, so
+    // the section is not drawn (as before item 27), and its answer is never asked for.
+    const spy = await renderDashboard(
+      (url, body) =>
+        isOverview(url) ? { ...body, rules_enabled: 0, rules_last_match: null } : null,
       { mode: "login", signedIn: true, role: "analyst" },
     );
-    await screen.findByRole("region", { name: "Identity" });
+    await loadedRegion("Identity");
     expect(screen.queryByRole("region", { name: "Detections" })).toBeNull();
     expect(screen.queryByText("No rules are enabled.")).toBeNull();
+    expect(asked(spy, isDetections)).toBe(false);
+  });
+
+  it("draws no rule enabled at once from the Overview, without asking for the section", async () => {
+    const spy = await renderDashboard((url, body) =>
+      isOverview(url) ? { ...body, rules_enabled: 0, rules_last_match: null } : null,
+    );
+    const section = await screen.findByRole("region", { name: "Detections" });
+    expect(within(section).getByText("No rules are enabled.")).toBeVisible();
+    expect(within(section).getByRole("button", { name: "Enable rules" })).toBeVisible();
+    // Its own height, no box and no skeleton cards.
+    expect(section.closest("[data-slot]")).toBeNull();
+    expect(section.querySelector("[data-kpi]")).toBeNull();
+    expect(asked(spy, isDetections)).toBe(false);
+  });
+
+  it("still shows matches kept from before the rules were turned off (code review)", async () => {
+    // No rule on, but a match since the window before: the section loads as on main.
+    const recent = new Date(Date.now() - 3_600_000).toISOString();
+    const spy = await renderDashboard((url, body) =>
+      isOverview(url) ? { ...body, rules_enabled: 0, rules_last_match: recent } : null,
+    );
+    const section = await loadedRegion("Detections");
+    expect(section.querySelector('[data-kpi="Matched events"]')).not.toBeNull();
+    expect(screen.queryByText("No rules are enabled.")).toBeNull();
+    expect(asked(spy, isDetections)).toBe(true);
+  });
+
+  it("draws the egress note in Attacks and access while its numbers load", async () => {
+    // The Overview says no company egress is listed; the sections are held back.
+    const held = new Promise<Response>(() => undefined);
+    const spy = withM365(mockApi("Codename", { mode: "login", signedIn: true, role: "admin" }));
+    const real = spy.getMockImplementation() as typeof fetch;
+    spy.mockImplementation(async (url, init) => {
+      if (String(url).includes("/api/dashboard/sections")) return held;
+      const res = await real(url, init);
+      if (!isOverview(String(url))) return res;
+      const body = (await res.clone().json()) as { sources: Record<string, unknown>[] };
+      // Its sources sent events just now, so Attacks and access is not known to be empty.
+      const now = new Date().toISOString();
+      const sources = body.sources.map((h) => ({ ...h, newest_event_at: now, last_event_at: now }));
+      return new Response(JSON.stringify({ ...body, sources, egress_listed: false }), {
+        headers: { "content-type": "application/json" },
+      });
+    });
+    window.history.replaceState(null, "", "/dashboard");
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    render(<App initialTheme="dark" queryClient={new QueryClient()} />);
+    const attacks = await screen.findByRole("region", { name: "Attacks and access" });
+    expect(within(attacks).getByText(/^Company egress addresses are not listed/)).toBeVisible();
+    expect(within(attacks).getAllByRole("status", { name: /^Loading / }).length).toBeGreaterThan(0);
+  });
+
+  it("keeps every section when the sources answer fails, with Retry for it (code review)", async () => {
+    const spy = mockApi("Codename", { mode: "login", signedIn: true, role: "admin" });
+    const real = spy.getMockImplementation() as typeof fetch;
+    spy.mockImplementation(async (url, init) =>
+      String(url).endsWith("/api/sources") && (init?.method ?? "GET") === "GET"
+        ? new Response(JSON.stringify({ error: { code: "internal", message: "It broke" } }), {
+            status: 500,
+            headers: { "content-type": "application/json" },
+          })
+        : real(url, init),
+    );
+    window.history.replaceState(null, "", "/dashboard");
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<App initialTheme="dark" queryClient={client} />);
+    // Each part is drawn and loads on its own, as before item 27.
+    for (const name of ["Identity", "Attacks and access", "Detections"])
+      expect(await loadedRegion(name)).toBeVisible();
+    expect(screen.getByRole("region", { name: "Key numbers" })).toHaveAttribute("data-tiles", "5");
+    const failed = screen.getByText(/^Your sources did not load/);
+    expect(failed.closest("[role=alert]") ?? failed).toBeVisible();
+    expect(screen.getAllByRole("button", { name: "Retry" }).length).toBeGreaterThan(0);
   });
 });

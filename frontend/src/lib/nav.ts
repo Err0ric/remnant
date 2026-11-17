@@ -31,8 +31,8 @@ export interface NavGroup {
 }
 
 // Plain labels only (CLAUDE.md rule 12). An area is one page of the rail (ADR-0052 section
-// 3.2); its tabs sit in the page header and never repeat the rail. Each tab is a page, or a
-// page's tab (`tab`).
+// 3.2); its tabs sit in the page header, and the rail lists them under the current page only
+// (D268), from the same list. Each tab is a page, or a page's tab (`tab`).
 export interface AreaTab {
   label: string;
   page: PageId;
@@ -192,8 +192,9 @@ export const AREAS: Area[] = [
 ];
 
 /** The rail (ADR-0052 section 3.2): three labeled groups of pages, then a pinned cluster at
- * the bottom (Health, and Settings, which keeps its own sub-nav). Pages only: no entry has
- * children, and nothing collapses. Reports joins the pinned cluster when its page exists. */
+ * the bottom (Health, and Settings, which keeps its own sub-nav). Only the current page lists
+ * its tabs under it (D268); nothing else expands. Reports joins the pinned cluster when its
+ * page exists. */
 export interface RailGroup {
   id: string;
   /** Empty for the pinned cluster, which has no label. */
@@ -208,6 +209,20 @@ export const RAIL_GROUPS: RailGroup[] = [
   { id: "ai", label: "AI", areas: ["ai", "agents"] },
   { id: "pinned", label: "", areas: ["health"], pinned: true },
 ];
+
+/** One plain line per rail entry, its tooltip and accessible description (D268): what the
+ * page is for, never its name, no flavor names, under about 50 characters. */
+export const RAIL_DESCRIPTIONS: Record<string, string> = {
+  dashboard: "What needs you today, at a glance",
+  alerts: "Open alerts and the rules that raise them",
+  logs: "Search every event",
+  ask: "Ask about your logs in plain words",
+  people: "Who and what is active, ranked by risk",
+  ai: "Which AI services people use",
+  agents: "AI agent sessions, MCP servers, and accounts",
+  health: "Whether every source and collector is sending",
+  settings: "Sources and app settings",
+};
 
 /** Tabs this user can open. */
 export function visibleTabs(

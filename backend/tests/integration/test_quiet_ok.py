@@ -3,8 +3,10 @@ who may change it, its audit row, and every surface that reads a source's condit
 
 import json
 import sqlite3
+from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -12,6 +14,8 @@ from fastapi.testclient import TestClient
 
 from app.ingest.watcher import SourceStatus
 from app.ingest.writer import LakeWriter
+from app.search.gaps import Gap
+from app.search.overview import SourceVolume
 from tests.integration.test_schedules import NOW, _lake_rows, make_lab
 
 
@@ -95,7 +99,8 @@ def test_silence_inside_the_days_is_idle_and_healthy_and_past_them_is_quiet(
     # The rail's Health dot counts the same.
     count = lab["admin"].get("/api/health/count").json()
     wrong = sum(1 for s in o["sources"] if s["condition"] not in ("healthy", "paused"))
-    assert count == {"total": summary["total"], "not_healthy": wrong}
+    assert (count["total"], count["not_healthy"]) == (summary["total"], wrong)
+    assert hooks["problem"] is None  # held inside its days (D262): never a source problem
 
     # A week on, nine days after it last sent: past its seven days, quiet as before.
     lab["clock"].now = NOW + timedelta(days=7)
@@ -283,3 +288,61 @@ def test_quiet_and_idle_count_from_the_newest_dated_event(
     waits = {q["source_id"]: q["last_event_at"] for q in o["source_summary"]["quiet"]}
     if cond == "quiet":
         assert waits["otel_collector"] == expect  # "1 quiet: otel_collector 2 d"
+
+
+def _firing(
+    lab: dict[str, Any], monkeypatch: pytest.MonkeyPatch, gap_hours: dict[str, bool]
+) -> None:
+    """Each source in `gap_hours` gets a firing quiet watch, and gap hours on its 24-hour
+    chart (True) or none (False): the two inputs of the red rule, set on purpose."""
+    since = (NOW - timedelta(hours=3)).isoformat()
+    watches = [SimpleNamespace(source_id=s, state="quiet", quiet_since=since) for s in gap_hours]
+    monkeypatch.setattr(lab["app"].state.quiet, "all", lambda: watches)
+    gap = Gap(since, None, 3, True, False)
+
+    def with_gaps(o: Any) -> Any:
+        have = {v.source_id for v in o.volume}
+        volume = [
+            replace(v, gaps=[gap] if gap_hours[v.source_id] else [])
+            if v.source_id in gap_hours
+            else v
+            for v in o.volume
+        ] + [
+            SourceVolume(s, [0] * 24, [None] * 24, [""] * 24, 0, [gap] if g else [])
+            for s, g in gap_hours.items()
+            if s not in have
+        ]
+        return replace(o, volume=volume)
+
+    svc = lab["app"].state.overview
+    get, count = svc.get, svc.for_count
+    monkeypatch.setattr(svc, "get", lambda user: (with_gaps(get(user)[0]), True))
+    monkeypatch.setattr(svc, "for_count", lambda user: with_gaps(count(user)))
+
+
+def test_the_dot_is_red_only_for_what_health_draws_red(
+    lab: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Designer check of 637: unhealthy (red on the rail) is a firing quiet watch WITH gap
+    hours on the chart; without them Health draws the source greyed, so it needs attention.
+    A source marked "Quiet is normal" inside its days shows no gap hours (D262), so even with
+    an alert that already fired it is never red."""
+    _add(lab, "otel_gapped", sender="collector")
+    _add(lab, "otel_only_quiet", sender="collector")
+    _add(lab, "claude_hooks", sender="claude")  # Quiet is normal for 7 days
+    for s in ("otel_gapped", "otel_only_quiet", "claude_hooks"):
+        _sent(lab, s, 2)
+    _firing(lab, monkeypatch, {"otel_gapped": True, "otel_only_quiet": False, "claude_hooks": True})
+    rows = _rows(_overview(lab))
+    gapped, only_quiet, hooks = (
+        rows["otel_gapped"],
+        rows["otel_only_quiet"],
+        rows["claude_hooks"],
+    )
+    assert (gapped["condition"], gapped["problem"]) == ("quiet", "unhealthy")
+    assert (only_quiet["condition"], only_quiet["problem"]) == ("quiet", "attention")
+    assert hooks["quiet_ok"] is True and hooks["quiet_since"]
+    assert (hooks["condition"], hooks["problem"]) == ("quiet", "attention")
+    count = lab["admin"].get("/api/health/count").json()
+    assert count["unhealthy"] == sum(1 for r in rows.values() if r["problem"] == "unhealthy")
+    assert count["unhealthy"] >= 1

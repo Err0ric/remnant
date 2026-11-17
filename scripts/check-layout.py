@@ -5,8 +5,8 @@ or table scrolls sideways inside it. Only elements marked `data-scroll-x` (the s
 results grid, whose columns are the user's choice) may scroll.
 
 Every page also keeps the page pattern's limits (ADR-0052, DESIGN.md 6.0): one `h1`, at
-most 10 rail entries (pages; the Recent and Pinned regions apart hold at most 5 links
-each, D258, D259), at most 5 tabs, and at most one filled button. Every card header
+most 10 rail entries (pages, not the current page's tab rows, D268; the Recent and Pinned
+regions apart hold at most 5 links each, D258, D259), at most 5 tabs, and at most one filled button. Every card header
 drawn by the shared `Card` (`data-card-header`, D254) on a page has the same height and no
 fill of its own, and the pages on that anatomy have no card with a header drawn by hand.
 
@@ -54,7 +54,8 @@ COUNT_JS = """() => {
     return r.width > 0 && r.height > 0 && getComputedStyle(n).visibility !== "hidden";
   };
   return {
-    rail: document.querySelectorAll('nav[aria-label="Primary"] a').length,
+    // Entries, not the current page's tab rows under its entry (D268).
+    rail: document.querySelectorAll('nav[aria-label="Primary"] [data-rail-entry]').length,
     recent: document.querySelectorAll('nav[aria-label="Recent"] a').length,
     pinned: document.querySelectorAll('nav[aria-label="Pinned"] a').length,
     // The page header's strip, or a strip a page draws itself (`role="tablist"`).

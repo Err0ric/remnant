@@ -1,4 +1,5 @@
 import type { TargetedUsername } from "@/lib/api";
+import { LEAD_COL, NAME_COL, restCol } from "./listColumns";
 
 interface TargetedTableProps {
   rows: TargetedUsername[];
@@ -14,17 +15,27 @@ function places(list: { label: string; attempts: number }[]): string {
  * row opens the same page a user does. */
 export function TargetedTable({ rows, onPick }: TargetedTableProps) {
   const CELL = "px-3 py-2 align-top";
+  // The same column scheme as the other tabs, so they line up when switching.
+  const rest = restCol(4);
   return (
     <div className="overflow-x-auto">
       <table aria-label="Targeted usernames" className="w-full min-w-[760px] text-sm">
         <thead>
           <tr className="border-b border-border text-left text-text-secondary">
-            <th className="px-3 py-2">Username</th>
-            <th className="px-3 py-2 text-right">Attempts</th>
-            <th className="px-3 py-2">Sources</th>
-            <th className="px-3 py-2">Top countries</th>
-            <th className="px-3 py-2">Top networks (ASN)</th>
-            <th className="px-3 py-2">Hosts targeted</th>
+            <th className={`px-3 py-2 ${NAME_COL}`}>Username</th>
+            <th className={`whitespace-nowrap px-3 py-2 text-right ${LEAD_COL}`}>Attempts</th>
+            <th className="whitespace-nowrap px-3 py-2" style={rest}>
+              Sources
+            </th>
+            <th className="whitespace-nowrap px-3 py-2" style={rest}>
+              Top countries
+            </th>
+            <th className="whitespace-nowrap px-3 py-2" style={rest}>
+              Top networks (ASN)
+            </th>
+            <th className="whitespace-nowrap px-3 py-2" style={rest}>
+              Hosts targeted
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -41,12 +52,12 @@ export function TargetedTable({ rows, onPick }: TargetedTableProps) {
                     e.stopPropagation();
                     onPick(r);
                   }}
-                  className="break-all text-left font-mono text-accent-text hover:underline"
+                  className="text-left font-mono text-accent-text [overflow-wrap:anywhere] hover:underline"
                 >
                   {r.value}
                 </button>
               </td>
-              <td className={`${CELL} text-right font-mono tabular-nums`}>
+              <td className={`${CELL} whitespace-nowrap text-right font-mono tabular-nums`}>
                 {r.attempts.toLocaleString()}
               </td>
               <td className={`${CELL} font-mono text-text-secondary`}>{r.sources.join(", ")}</td>

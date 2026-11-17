@@ -92,6 +92,11 @@ const LABELS: Record<string, string> = {
   event_id: "Event ID",
   raw: "Raw",
   parse_status: "Parse status",
+  // Names the server's own lists give their columns (the person page's Microsoft 365).
+  app: "App",
+  outcome: "Outcome",
+  operation: "Operation",
+  target: "Target",
 };
 
 export function columnLabel(name: string): string {
@@ -112,10 +117,20 @@ export const SEVERITY: Record<number, { label: string; tone: string }> = {
  * Shared grid template for the results table. Every row uses the same column widths,
  * sized from the header and the values on the current page (in ch, since values are
  * monospace), capped so one long value cannot push the rest off screen. One column takes
- * the width that is left and may shrink to `FLEX_MIN_CH` (its values truncate; the full
- * text is in the expanded row): `message` when the result has it, else the last column.
+ * the width that is left and may shrink (its values truncate; the full text is in the
+ * expanded row): `message` when the result has it (to `FLEX_MIN_CH`); else the widest of
+ * the last column (to `FLEX_MIN_CH`) and a list's app, target, or operation (to
+ * `NAME_MIN_CH`, cut in the middle). So an address after a long app name is never the one
+ * cut, and a long last column still gives way first (owner, 2026-11-16).
  */
 export const FLEX_MIN_CH = 16;
+const NAME_MIN_CH = 12;
+const NAME_COLUMNS = ["app", "target", "operation"];
+
+/** A list's app, target, or operation: a name cut in the middle when it does not fit. */
+export function isNameColumn(name: string): boolean {
+  return NAME_COLUMNS.includes(name);
+}
 
 export function columnTemplate(
   columns: string[],
@@ -125,11 +140,8 @@ export function columnTemplate(
   /** Characters shown after a value (the GeoIP label), counted into its width. */
   extra?: (value: Cell) => number,
 ): string {
-  const message = indexes.findIndex((i) => columns[i] === "message");
-  const flex = message >= 0 ? message : indexes.length - 1;
-  const widths = indexes.map((i, pos) => {
+  const natural = indexes.map((i) => {
     const name = columns[i] ?? "";
-    if (name === "severity_id" && pos !== flex) return 12;
     let longest = columnLabel(name).length;
     for (const row of rows) {
       const value = row[i] ?? null;
@@ -137,8 +149,21 @@ export function columnTemplate(
       if (len > longest) longest = len;
       if (longest >= maxCh) break;
     }
-    const ch = Math.min(longest, maxCh) + 3; // room for cell padding
-    return pos === flex ? -Math.min(ch, FLEX_MIN_CH) : ch;
+    return Math.min(longest, maxCh) + 3; // room for cell padding
+  });
+  const message = indexes.findIndex((i) => columns[i] === "message");
+  const last = indexes.length - 1;
+  let flex = message >= 0 ? message : last;
+  if (message < 0) {
+    indexes.forEach((i, pos) => {
+      if (isNameColumn(columns[i] ?? "") && (natural[pos] ?? 0) > (natural[flex] ?? 0)) flex = pos;
+    });
+  }
+  const least = isNameColumn(columns[indexes[flex] ?? -1] ?? "") ? NAME_MIN_CH : FLEX_MIN_CH;
+  const widths = indexes.map((i, pos) => {
+    const ch = natural[pos] ?? 0;
+    if (pos === flex) return -Math.min(ch, least);
+    return columns[i] === "severity_id" ? 12 : ch;
   });
   const parts = widths.map((w) => (w < 0 ? `minmax(${-w}ch, 1fr)` : `${w}ch`));
   return ["32px", ...parts].join(" ");

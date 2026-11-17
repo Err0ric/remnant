@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mockApi } from "./mockApi";
+import { choose } from "./choose";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -73,10 +74,7 @@ describe("Settings > Claude plugins (D127)", () => {
     const spy = await openPlugins();
     URL.createObjectURL = vi.fn(() => "blob:x");
     URL.revokeObjectURL = vi.fn();
-    await userEvent.selectOptions(
-      screen.getByRole("combobox", { name: /^Deployment token/ }),
-      "t1",
-    );
+    await choose(screen.getByRole("combobox", { name: /^Deployment token/ }), "t1");
     const tokens = screen.getByRole("region", { name: "Deployment tokens" });
     await userEvent.click(within(tokens).getByRole("button", { name: "Revoke" }));
     await userEvent.click(within(tokens).getByRole("button", { name: "Revoke" }));

@@ -2,6 +2,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { FormError } from "@/features/auth/FormError";
 import { ApiError, api, type Draft } from "@/lib/api";
+import { Select } from "@/components/forms/Select";
 
 interface AiDraftBarProps {
   templateId: string;
@@ -43,18 +44,16 @@ export function AiDraftBar({ templateId, dirty, hasSample, onDrafted }: AiDraftB
         <label htmlFor="ai-provider" className="font-semibold">
           Draft with
         </label>
-        <select
+        <Select
           id="ai-provider"
           value={providerId}
-          onChange={(e) => setChosen(e.target.value)}
-          className="h-8 rounded border border-border-control bg-inset px-2 text-sm text-text"
-        >
-          {list.map((p) => (
-            <option key={p.provider_id} value={p.provider_id}>
-              {p.name} ({p.locality === "cloud" ? "cloud" : "local"})
-            </option>
-          ))}
-        </select>
+          onChange={setChosen}
+          options={list.map((p) => ({
+            value: p.provider_id,
+            label: `${p.name} (${p.locality === "cloud" ? "cloud" : "local"})`,
+          }))}
+          className="text-sm"
+        />
         {confirm ? (
           <>
             <span className="text-text-secondary">Replace your unsaved edits?</span>

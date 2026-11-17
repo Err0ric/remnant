@@ -1,3 +1,4 @@
+import { Skeleton } from "@/components/Skeleton";
 import { EmptyState } from "@/components/EmptyState";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AUTO_PARSER } from "@/lib/parsers";
@@ -6,9 +7,18 @@ import { ParserMix } from "./ParserMix";
 import { Fragment, useEffect, useState } from "react";
 import { useSection } from "@/lib/route";
 import { GapNote } from "@/features/health/GapNote";
-import { idleText, quietFrom, shownGaps } from "@/features/health/flow";
+import { shownGaps } from "@/features/health/flow";
+import { greyedStatus, sourceStatus } from "@/features/health/sourceStatus";
+import { SourceStatusLabel } from "@/features/health/SourceStatusLabel";
 import { PageHeader } from "@/components/shell/PageHeader";
-import { ApiError, api, type Source, type SourceInput } from "@/lib/api";
+import {
+  ApiError,
+  api,
+  type Overview,
+  type Source,
+  type SourceGap,
+  type SourceInput,
+} from "@/lib/api";
 import { AddSourceForm } from "./AddSourceForm";
 import { DiscoverPanel } from "./DiscoverPanel";
 import { ClassificationBadge } from "./ClassificationBadge";
@@ -58,6 +68,36 @@ function formatTime(value: unknown): string {
   return `${value.slice(0, 19).replace("T", " ")} UTC`;
 }
 
+interface SourceStatusCellProps {
+  source: Source;
+  judged: Overview["sources"][number] | undefined;
+  now: string | undefined;
+  gaps: SourceGap[] | undefined;
+  /** The Overview the status comes from: still loading, failed, or read. */
+  overview: "loading" | "error" | "ready";
+}
+
+/** The status Health shows for this source, in the same words and dot, and its idle
+ * sentence. Never derived from the reader: while the Overview loads a placeholder, and
+ * without it "Status unavailable" (a reader stopped on an error still reads Unhealthy). The
+ * reader's own facts follow as a separate line. */
+function SourceStatusCell({ source, judged, now, gaps, overview }: SourceStatusCellProps) {
+  const st = sourceStatus(source, judged, now);
+  if (!st && overview === "loading")
+    return <Skeleton label="status" block="h-4 w-24" className="border-0 bg-transparent" />;
+  if (!st) return <span className="text-text-secondary">Status unavailable</span>;
+  // The idle sentence, as Health says it. A quiet source needs none: its word ("Quiet 34 h")
+  // already says how long nothing has been received, for every role.
+  const idle = st.word === "Idle";
+  const greyed = st.word !== "Unhealthy" && greyedStatus(judged, gaps);
+  return (
+    <>
+      <SourceStatusLabel level={st.level} word={st.word} greyed={greyed} />
+      {idle && st.reason ? <span className="text-sm text-text-secondary">{st.reason}</span> : null}
+    </>
+  );
+}
+
 export function SourcesPage({ canManage }: SourcesPageProps) {
   const client = useQueryClient();
   const [adding, setAdding] = useState(false);
@@ -75,7 +115,12 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
     refetchInterval: 5000,
   });
   // Gaps in the last 24 hours, as Health shows them (F61), and the source a link opened.
-  const overview = useQuery({ queryKey: ["overview"], queryFn: api.overview });
+  // Each source's status is the server's one condition, read as Health reads it (item 19).
+  const overview = useQuery({
+    queryKey: ["overview"],
+    queryFn: api.overview,
+    refetchInterval: 60_000,
+  });
   const gapsOf = new Map((overview.data?.volume ?? []).map((v) => [v.source_id, v.gaps]));
   const judged = new Map((overview.data?.sources ?? []).map((h) => [h.source_id, h]));
   const section = useSection();
@@ -198,9 +243,6 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
         <section className="overflow-hidden rounded-card border border-border bg-surface">
           <div className="flex items-center gap-2 border-b border-border bg-surface-head px-3 py-2">
             <SectionTitle>Configured sources</SectionTitle>
-            <span className="ml-auto text-sm text-text-muted">
-              Status refreshes every 5 seconds
-            </span>
           </div>
           {list.length === 0 && !sources.isPending ? (
             <EmptyState
@@ -216,13 +258,15 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-border text-left text-sm text-text-secondary">
-                    <th className="min-w-[8rem] px-3 py-2">Source</th>
-                    <th className="min-w-[6rem] px-3 py-2">Path</th>
-                    <th className="px-3 py-2">Status</th>
-                    <th className="px-3 py-2 text-right">Events</th>
-                    <th className="px-3 py-2">Data and retention</th>
-                    {canManage ? <th className="px-3 py-2" aria-label="Actions" /> : null}
+                  <tr className="whitespace-nowrap border-b border-border text-left text-sm text-text-secondary">
+                    {/* The three text columns share the room; the others take only what they
+                        need, so wrapping falls between words (fix list item 19 review). */}
+                    <th className="w-[27%] px-3 py-2">Source</th>
+                    <th className="w-[43%] px-3 py-2">Path</th>
+                    <th className="w-[16%] px-3 py-2">Status</th>
+                    <th className="w-px px-3 py-2 text-right">Events</th>
+                    <th className="w-px px-3 py-2">Data and retention</th>
+                    {canManage ? <th className="w-px px-3 py-2" aria-label="Actions" /> : null}
                   </tr>
                 </thead>
                 <tbody>
@@ -296,7 +340,16 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
                         </td>
                         <td className="px-3 py-2.5">
                           <div className="flex flex-col gap-0.5">
-                            <SourceState status={s.status} />
+                            <SourceStatusCell
+                              source={s}
+                              judged={judged.get(s.source_id)}
+                              now={overview.data?.generated_at}
+                              gaps={gapsOf.get(s.source_id)}
+                              overview={
+                                overview.data ? "ready" : overview.isError ? "error" : "loading"
+                              }
+                            />
+                            <SourceState status={s.status} kind={s.kind} />
                             <QuietAlert
                               sourceId={s.source_id}
                               quiet={s.quiet}
@@ -308,14 +361,6 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
                                 value={s.quiet_ok_days ?? null}
                                 quietAlert={Boolean(s.quiet)}
                                 canManage={canManage}
-                                idle={
-                                  judged.get(s.source_id)?.idle && overview.data
-                                    ? idleText(
-                                        quietFrom(judged.get(s.source_id)),
-                                        overview.data.generated_at,
-                                      )
-                                    : null
-                                }
                               />
                             ) : null}
                             {s.emits_alerts || s.alert_pause ? (
@@ -348,7 +393,7 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
                             {c ? c.events.toLocaleString() : "0"}
                           </div>
                           <div
-                            className="text-sm text-text-muted"
+                            className="whitespace-nowrap text-sm text-text-muted"
                             title={typeof c?.last === "string" ? formatTime(c.last) : undefined}
                           >
                             {typeof c?.last === "string"

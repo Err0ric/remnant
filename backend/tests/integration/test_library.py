@@ -25,7 +25,7 @@ from app.templates.runtime import TemplateNormalizer
 ROOT = Path(__file__).resolve().parents[3]
 FIX = Path(__file__).parent.parent / "fixtures" / "logs"
 STARTER = ROOT / "templates" / "starter"
-PACKS = [load(p) for p in sorted(LIBRARY_DIR.glob("*/pack.yaml"))]
+PACKS = [load(p, True) for p in sorted(LIBRARY_DIR.glob("*/pack.yaml"))]
 START, END = datetime(2000, 1, 1, tzinfo=UTC), datetime(2100, 1, 1, tzinfo=UTC)
 CASES = [pytest.param(p, q.id, id=f"{p.id}/{q.id}") for p in PACKS for q in p.queries]
 

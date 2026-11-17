@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { EntityLink } from "@/components/EntityLink";
 import { InlineError } from "@/components/InlineError";
+import { KeepWords } from "@/components/KeepWords";
 import { Card } from "@/components/Card";
 import { CardAction } from "@/components/CardAction";
 import { SeverityMark } from "@/components/SeverityMark";
@@ -11,7 +12,8 @@ import { RESTRICTED_NOTE } from "@/features/alerts/kinds";
 import { api, type AlertItem, type AlertLines, type Overview, type Source } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { navigate, pathFor, type PageId } from "@/lib/route";
-import { quietFrom } from "@/features/health/flow";
+import { lag, quietFrom } from "@/features/health/flow";
+import { sourceStatus, type SourceStatusView } from "@/features/health/sourceStatus";
 import { listOf, sourceStates } from "./Attention";
 
 /** Alert rows shown after the blind rows; the rest are behind "View all", which opens Alerts. */
@@ -37,20 +39,29 @@ export interface NeedsYouRow {
 
 const TEMPLATE_MISSING = /is storing events without its parser: template (\S+) is not available/;
 
-/** What a source's own problem is called, and said in a few words. */
+/** A source's own row, in the status Health and Settings > Sources show for it (fix list
+ * 2026-11-16 item 19): the status word as its kind ("Quiet 33 h", "Unhealthy"), and what is
+ * wrong in a few words as its title. */
 function blindSource(
   id: string,
   problem: string,
+  status: SourceStatusView,
   health: Overview["sources"][number] | undefined,
+  now: string | undefined,
 ): Pick<NeedsYouRow, "kind" | "title"> {
+  const kind = status.word;
   const missing = TEMPLATE_MISSING.exec(health?.error ?? "");
   if (missing)
+    return { kind, title: `${id} is stored without its parser (template ${missing[1]})` };
+  if (problem === "has errors") return { kind, title: `${id} has errors` };
+  if (health?.condition === "quiet" && now) {
+    const ago = lag(quietFrom(health), now);
     return {
-      kind: "Template missing",
-      title: `${id} is stored without its parser (template ${missing[1]})`,
+      kind,
+      title: ago ? `${id}: nothing received for ${ago}` : `${id}: nothing received yet`,
     };
-  if (problem === "has errors") return { kind: "Source error", title: `${id} has errors` };
-  return { kind: "Source down", title: `${id} ${problem}` };
+  }
+  return { kind, title: `${id} ${problem}` };
 }
 
 /** Whether an AI Watch alert is a review task, not something that fired. The server says
@@ -93,9 +104,16 @@ export function needsYouRows(
         /^[a-z0-9][a-z0-9_]{0,63}$/.test(i.subject) && i.subject !== "backup");
   const gapItem = new Map(items.filter(onSource).map((i) => [i.subject, i]));
   const said = new Set<string>();
+  const configured = new Map(listOf<Source>(sources).map((x) => [x.source_id, x]));
+  const now = overview?.generated_at;
   for (const s of sourceStates(sources, overview)) {
     if (!s.problem) continue;
     const h = health.get(s.id);
+    // Not a row when Health does not count it as a problem: marked Quiet is normal and
+    // inside its days (D260), or paused (item 19).
+    // Without the Overview its status is not known yet (the list waits for it, or says why).
+    const status = sourceStatus(configured.get(s.id), h, now);
+    if (!status || status.level === "healthy" || status.level === "paused") continue;
     const item = gapItem.get(s.id) ?? null;
     const alertId = item?.item_id ?? h?.gap_alert ?? null;
     said.add(s.id);
@@ -103,7 +121,7 @@ export function needsYouRows(
       key: `source:${s.id}`,
       order: 1,
       severity: null,
-      ...blindSource(s.id, s.problem, h),
+      ...blindSource(s.id, s.problem, status, h, now),
       subject: { kind: "source", value: s.id },
       // When it went quiet: the quiet alert, the gap alert, or else its newest dated event
       // (not when a record last arrived: old events can arrive now).
@@ -217,12 +235,13 @@ export function shownRows(rows: NeedsYouRow[]): NeedsYouRow[] {
   return [...blind, ...rows.filter((r) => r.order !== 1).slice(0, SHOWN)];
 }
 
-/** Who or what a row is about: a source opens Health, anyone else their page. At most
- * 220px wide; `w-max` makes the column take the value's width up to that. */
+/** Who or what a row is about: a source opens Health, anyone else their page. It fills its
+ * column on one line, cut in the middle by `Truncate` when longer (the full value in the
+ * tooltip and on copy), never broken inside an identifier or address (fix list item 10). */
 function Subject({ subject }: { subject: NeedsYouRow["subject"] }) {
   if (!subject) return null;
   // Inline: a row copies as one line of cells.
-  const box = "inline-block w-max max-w-55 align-bottom font-mono text-data";
+  const box = "inline-block max-w-full whitespace-nowrap align-bottom font-mono text-data";
   if (subject.kind !== "source")
     return <EntityLink kind={subject.kind} value={subject.value} className={box} />;
   const tab = `source=${encodeURIComponent(subject.value)}`;
@@ -305,9 +324,18 @@ export function NeedsYou() {
       }
     >
       {shown.length ? (
-        // Badge, kind, subject, title, time (D257): kind and subject take their content (the
-        // subject at most 220px, cut by `Truncate`), the title the rest of the row in two lines.
-        <table className="w-full text-base">
+        // Badge, kind, subject, title, time (D257): fixed widths for the badge, the kind, and
+        // the time; the subject a fixed share of the row (wide enough for a long source id or
+        // an IPv6 address, cut in the middle past that), the title the rest in two lines.
+        <table className="w-full table-fixed text-base">
+          {/* The fixed layout takes its widths from these columns. */}
+          <colgroup>
+            <col className="w-24" />
+            <col className="w-36 max-md:hidden" />
+            <col className="w-[22%] max-lg:hidden" />
+            <col />
+            <col className="w-32" />
+          </colgroup>
           <thead className="sr-only">
             <tr>
               <th>Severity</th>
@@ -328,7 +356,7 @@ export function NeedsYou() {
                 >
                   <td
                     className={cn(
-                      "w-px whitespace-nowrap py-1.5 pl-3 pr-3 align-middle",
+                      "w-24 whitespace-nowrap py-1.5 pl-3 pr-3 align-middle",
                       // The bar is a shape, so a blind row never reads as an alert row.
                       blind && "border-l-2 border-l-warn pl-2.5",
                     )}
@@ -346,10 +374,10 @@ export function NeedsYou() {
                       <span className="text-text-muted">·</span>
                     )}
                   </td>
-                  <td className="w-px whitespace-nowrap py-1.5 pr-4 text-text-secondary max-md:hidden">
+                  <td className="w-36 truncate whitespace-nowrap py-1.5 pr-4 text-text-secondary max-md:hidden">
                     {r.kind}
                   </td>
-                  <td className="w-px py-1.5 pr-4 max-lg:hidden">
+                  <td className="w-[22%] py-1.5 pr-4 max-lg:hidden">
                     <Subject subject={r.subject} />
                   </td>
                   <td className="py-1.5 pr-4">
@@ -365,10 +393,11 @@ export function NeedsYou() {
                       title={r.title}
                     >
                       <span className="md:hidden">{r.kind}: </span>
-                      {r.title}
+                      {/* Wraps between words only: never inside an id or address. */}
+                      <KeepWords text={r.title} />
                     </a>
                   </td>
-                  <td className="w-px whitespace-nowrap py-1.5 pr-3 text-right align-middle">
+                  <td className="w-32 whitespace-nowrap py-1.5 pr-3 text-right align-middle">
                     {r.at ? <When iso={r.at} className="text-text-muted" /> : null}
                   </td>
                 </tr>

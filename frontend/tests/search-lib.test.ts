@@ -27,6 +27,22 @@ describe("columnTemplate", () => {
   });
 });
 
+describe("columnTemplate, the flexible column (owner, 2026-11-16)", () => {
+  it("lets a long app name shrink instead of the address after it", () => {
+    const cols = ["time", "app", "outcome", "src_endpoint_ip"];
+    const rows = [
+      ["2026-11-15T16:48:33Z", "Office 365 SharePoint Online", "Signed in", "198.51.100.7"],
+    ];
+    expect(columnTemplate(cols, rows, [0, 1, 2, 3])).toBe("32px 22ch minmax(12ch, 1fr) 12ch 15ch");
+  });
+
+  it("leaves a longer last column to give way first", () => {
+    const cols = ["app", "result", "permissions"];
+    const rows = [["Microsoft Entra Sync Pro", "blocked", "Mail.ReadWrite ".repeat(6)]];
+    expect(columnTemplate(cols, rows, [0, 1, 2])).toBe("32px 27ch 10ch minmax(16ch, 1fr)");
+  });
+});
+
 describe("sortRows", () => {
   it("sorts numbers as numbers, text as text, and keeps empty values last", async () => {
     const { sortRows } = await import("@/lib/search");

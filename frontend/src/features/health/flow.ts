@@ -92,12 +92,40 @@ export function quietFrom(
   return h?.newest_event_at ?? h?.last_event_at ?? null;
 }
 
-/** How many sources have something wrong, for the rail's Health dot: every condition but
- * healthy and paused (a source someone paused on purpose is not a problem to flag). The
- * same rule as the server's `needing_attention` behind `/api/health/count`. */
-export function needingAttention(o: Overview | undefined): number {
+/** The viewer's problems on Health's Sources tab, by the server's one rule (`problem` on
+ * each source, `app.search.source_state.problem`): how many sources, how many of them Health
+ * draws as unhealthy, and the damaged lake files of the notice row. The rail's Health dot
+ * reads it, as `/api/health/count` counts it; a source paused on purpose or marked "Quiet is
+ * normal" inside its days is never one. */
+export interface SourceProblems {
+  count: number;
+  unhealthy: number;
+  damaged: number;
+}
+export const NO_PROBLEMS: SourceProblems = { count: 0, unhealthy: 0, damaged: 0 };
+
+export function sourceProblems(o: Overview | undefined): SourceProblems {
   const rows = Array.isArray(o?.sources) ? o.sources : [];
-  return rows.filter((r) => r.condition !== "healthy" && r.condition !== "paused").length;
+  return {
+    count: rows.filter((r) => r.problem).length,
+    unhealthy: rows.filter((r) => r.problem === "unhealthy").length,
+    damaged: o?.damaged_files ?? 0,
+  };
+}
+
+/** The dot's name and tooltip (D265), or "" when nothing is wrong: "Health: 2 sources need
+ * attention", with ", 1 unhealthy" when Health draws any of them red, and "; 3 damaged files
+ * in the data folder" (alone after "Health: " when no source has a problem). */
+export function healthWords(p: SourceProblems): string {
+  const parts: string[] = [];
+  if (p.count)
+    parts.push(
+      `${p.count} ${p.count === 1 ? "source needs" : "sources need"} attention` +
+        (p.unhealthy ? `, ${p.unhealthy} unhealthy` : ""),
+    );
+  if (p.damaged)
+    parts.push(`${p.damaged} damaged ${p.damaged === 1 ? "file" : "files"} in the data folder`);
+  return parts.length ? `Health: ${parts.join("; ")}` : "";
 }
 
 /** Sources with an open gap (review item 3): an open source gap alert, or a quiet watch

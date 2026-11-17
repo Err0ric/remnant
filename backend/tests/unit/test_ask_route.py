@@ -64,7 +64,9 @@ def test_library_ranking_offers_only_what_the_viewer_has() -> None:
     top = rank("which addresses had the most failed SSH logins today?", lib, {"linux_sshd"})
     assert top and top[0].ref == "linux_auth/ssh_failures_by_source"
     assert all(c.pack.id == "linux_auth" or not c.query.requires for c in top)
-    assert rank("who is using copilot", lib, {"linux_sshd"}) == []  # no Microsoft 365 data
+    # No Microsoft 365 data: only AI services in use, which reads any source (item 20).
+    got = rank("who is using copilot", lib, {"linux_sshd"})
+    assert [c.ref for c in got] == ["ai_services/ai_services_in_use"]
     m365 = rank("who is using copilot", lib, {"m365_management_activity"})
     assert m365[0].ref == "m365/m365_copilot_activity"
     assert words("Failed logons") == {"failure", "signin"}

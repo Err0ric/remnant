@@ -3,6 +3,7 @@ import { X } from "lucide-react";
 import { FilterBar as Bar } from "@/components/FilterBar";
 import { api } from "@/lib/api";
 import type { LogsRange } from "@/lib/search";
+import { Select } from "@/components/forms/Select";
 
 interface FilterBarProps {
   range: LogsRange;
@@ -68,26 +69,21 @@ export function FilterBar({
           </button>
         </span>
       ))}
-      <label className="flex items-center gap-1 text-sm text-accent-text">
-        <span className="sr-only">Add source filter</span>
-        <select
-          aria-label="Add source filter"
-          value=""
-          onChange={(e) => e.target.value && toggle(e.target.value)}
-          className="cursor-pointer border-0 bg-transparent text-sm text-accent-text focus:outline-none"
-        >
-          <option value="" className="bg-surface text-text">
-            + Add source filter
-          </option>
-          {options
-            .filter((o) => !sources.includes(o))
-            .map((o) => (
-              <option key={o} value={o} className="bg-surface text-text">
-                {o}
-              </option>
-            ))}
-        </select>
-      </label>
+      <Select
+        look="facet"
+        aria-label="Add source filter"
+        placeholder="Add source filter"
+        emptyReason={
+          !available.data
+            ? "Loading"
+            : options.length
+              ? "Every source is already added"
+              : "No sources yet"
+        }
+        value=""
+        onChange={(v) => v && toggle(v)}
+        options={options.filter((o) => !sources.includes(o)).map((o) => ({ value: o, label: o }))}
+      />
     </div>
   );
 }

@@ -9,22 +9,15 @@ import {
   type ReactNode,
 } from "react";
 import { cn } from "@/lib/cn";
-import { areaOf, visibleTabs, type AreaTab } from "@/lib/nav";
-import {
-  fragmentValues,
-  navigate,
-  navigateTab,
-  pathFor,
-  usePage,
-  type PageId,
-  useSection,
-  useTab,
-} from "@/lib/route";
-import { useViewer } from "@/lib/viewer";
+import { tabKey as key, usePageTabs } from "@/lib/pageTabs";
+import { navigate, pathFor, type PageId } from "@/lib/route";
 
 /** A button in the page header. */
 export interface HeaderAction {
   label: string;
+  /** The accessible name when the label alone could be misread ("Export the items listed
+   * below as CSV" for "Export CSV"). */
+  name?: string;
   onClick: () => void;
   disabled?: boolean;
   /** Hover hint; the accessible name is the label. */
@@ -54,10 +47,8 @@ interface PageHeaderProps {
   tabExtras?: Record<string, ReactNode>;
   /** Problems on a tab, by tab label: an outlined warn tag, drawn only above zero (D255). */
   tabProblems?: Record<string, number>;
-}
-
-function key(t: AreaTab): string {
-  return `${t.page}:${t.tab ?? ""}`;
+  /** What a tab's problem count counts, by tab label: its tooltip and screen reader words. */
+  tabProblemText?: Record<string, string>;
 }
 
 const SECONDARY =
@@ -187,22 +178,10 @@ export function PageHeader({
   mono = false,
   tabExtras,
   tabProblems,
+  tabProblemText,
 }: PageHeaderProps) {
-  const page = usePage();
-  const tab = useTab();
-  // The page's time choice lives in the fragment (ADR-0052 section 3.7: one time control
-  // per page), so a tab of the same page keeps it.
-  const frag = fragmentValues(useSection());
-  const time = new URLSearchParams();
-  for (const k of ["time", "from", "to"]) {
-    const v = frag.get(k);
-    if (v) time.set(k, v);
-  }
-  const keeps = (t: { page: string; tab?: string }) =>
-    t.page === page && t.tab !== undefined && time.toString() !== "";
-  const { isAdmin, canAsk = true, canRunSql = true } = useViewer();
-  const place = areaOf(page, tab);
-  const tabs = place ? visibleTabs(place.area, isAdmin, canAsk, canRunSql) : [];
+  // The tab bar's list, the one the rail's current entry draws too (D268).
+  const { place, tabs, isOpen, href, onClick } = usePageTabs();
   // The page's views (Logs: the Microsoft 365 lists), behind one "Views" menu on every tab
   // of the page. They are server-built lists, so they do not depend on SQL access. The
   // first item goes back to the page's own first tab.
@@ -278,18 +257,13 @@ export function PageHeader({
           className="col-span-2 row-start-2 -mb-px flex h-9 items-end gap-5 overflow-x-auto"
         >
           {tabs.map((t) => {
-            const on = key(t) === key(place.tab);
+            const on = isOpen(t);
             return (
               <a
                 key={key(t)}
-                href={pathFor(t.page, t.tab) + (keeps(t) ? `#${time.toString()}` : "")}
+                href={href(t)}
                 aria-current={on ? "page" : undefined}
-                onClick={(e: ReactMouseEvent) => {
-                  if (e.metaKey || e.ctrlKey || e.shiftKey) return;
-                  e.preventDefault();
-                  if (keeps(t) && t.tab) navigateTab(t.page, t.tab, time.toString());
-                  else navigate(t.page, t.tab);
-                }}
+                onClick={onClick(t)}
                 className={cn(
                   "whitespace-nowrap border-b-2 pb-2 pt-1.5 no-underline",
                   on
@@ -304,7 +278,7 @@ export function PageHeader({
                 {(tabProblems?.[t.label] ?? 0) > 0 ? (
                   <span
                     data-problems=""
-                    title={`${tabProblems?.[t.label]} need attention`}
+                    title={tabProblemText?.[t.label] ?? `${tabProblems?.[t.label]} need attention`}
                     className="ml-1 rounded-badge border border-warn px-1 text-xs font-semibold tabular-nums text-warn"
                   >
                     {tabProblems?.[t.label]}
@@ -331,6 +305,7 @@ export function PageHeader({
               onClick={a.onClick}
               disabled={a.disabled}
               title={a.title}
+              aria-label={a.name}
               aria-pressed={a.pressed}
               className={cn(SECONDARY, a.pressed && "border-accent-text bg-accent-subtle")}
             >

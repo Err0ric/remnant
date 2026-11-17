@@ -9,6 +9,7 @@ import { PageHeader } from "@/components/shell/PageHeader";
 import { InlineError } from "@/components/InlineError";
 import { since, stamp } from "@/features/overview/time";
 import { SectionTitle } from "@/components/SectionTitle";
+import { Select } from "@/components/forms/Select";
 
 function save(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
@@ -111,36 +112,26 @@ export function PluginsPage() {
               {d.sources.length > 1 ? (
                 <label className="flex flex-col gap-1">
                   <span className="font-semibold">Source</span>
-                  <select
+                  <Select
                     value={sourceId ?? ""}
-                    onChange={(e) => {
-                      setSource(e.target.value);
+                    onChange={(v) => {
+                      setSource(v);
                       setPick(NEW);
                     }}
-                    className="h-8 rounded border border-border bg-inset px-2"
-                  >
-                    {d.sources.map((s) => (
-                      <option key={s.source_id} value={s.source_id}>
-                        {s.source_id}
-                      </option>
-                    ))}
-                  </select>
+                    options={d.sources.map((s) => ({ value: s.source_id, label: s.source_id }))}
+                  />
                 </label>
               ) : null}
               <label className="flex flex-col gap-1">
                 <span className="font-semibold">Deployment token</span>
-                <select
+                <Select
                   value={chosen}
-                  onChange={(e) => setPick(e.target.value)}
-                  className="h-8 rounded border border-border bg-inset px-2"
-                >
-                  <option value={NEW}>New token</option>
-                  {live.map((t) => (
-                    <option key={t.token_id} value={t.token_id}>
-                      {t.name} ({t.prefix}…)
-                    </option>
-                  ))}
-                </select>
+                  onChange={setPick}
+                  options={[
+                    { value: NEW, label: "New token" },
+                    ...live.map((t) => ({ value: t.token_id, label: `${t.name} (${t.prefix}…)` })),
+                  ]}
+                />
                 <span className="text-text-muted">
                   Each deployment gets its own token, so one can be revoked without breaking the
                   others.
@@ -154,7 +145,7 @@ export function PluginsPage() {
                     onChange={(e) => setName(e.target.value)}
                     placeholder="pilot, all windows"
                     maxLength={80}
-                    className="h-8 rounded border border-border bg-inset px-2"
+                    className="h-8 rounded border border-border-control bg-inset px-2"
                   />
                 </label>
               ) : null}
@@ -164,7 +155,7 @@ export function PluginsPage() {
                   value={server}
                   onChange={(e) => setServer(e.target.value)}
                   placeholder={d.public_url ?? "https://siem.example:8080"}
-                  className="h-8 rounded border border-border bg-inset px-2 font-mono"
+                  className="h-8 rounded border border-border-control bg-inset px-2 font-mono"
                 />
                 <span className="text-text-muted">
                   Where people's computers reach this server. Records go to /api/otlp/v1/logs.
@@ -176,7 +167,7 @@ export function PluginsPage() {
                   value={pilot}
                   onChange={(e) => setPilot(e.target.value)}
                   placeholder="Empty: everyone who has the plugin"
-                  className="h-8 rounded border border-border bg-inset px-2 font-mono"
+                  className="h-8 rounded border border-border-control bg-inset px-2 font-mono"
                 />
                 {pilots.length ? (
                   <span className="text-text-muted">

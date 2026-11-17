@@ -5,6 +5,7 @@ import { Field } from "@/features/auth/Field";
 import { FormError } from "@/features/auth/FormError";
 import { ApiError, api, type ProviderConfig, type ProviderInput } from "@/lib/api";
 import { SectionTitle } from "@/components/SectionTitle";
+import { Select } from "@/components/forms/Select";
 
 interface ProviderFormProps {
   /** Edit this provider; omit to add a new one. */
@@ -95,23 +96,25 @@ export function ProviderForm({ existing, models = [], onDone, onCancel }: Provid
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <label className="flex flex-col gap-1 text-sm md:col-span-2">
           <span className="text-text-secondary">API</span>
-          <select
+          <Select
             value={kind}
             disabled={Boolean(existing)}
-            onChange={(e) => {
-              const next = e.target.value as "openai_compat" | "anthropic";
+            onChange={(v) => {
+              const next = v as "openai_compat" | "anthropic";
               setKind(next);
               if (next === "anthropic" && !baseUrl) setBaseUrl("https://api.anthropic.com/v1");
               setNeedsAck(false);
               setAck(false);
             }}
-            className="h-8 max-w-sm rounded border border-border-control bg-surface px-2 text-sm disabled:opacity-60"
-          >
-            <option value="openai_compat">
-              OpenAI-compatible (Ollama, LM Studio, vLLM, OpenAI, others)
-            </option>
-            <option value="anthropic">Anthropic Messages API (always cloud)</option>
-          </select>
+            options={[
+              {
+                value: "openai_compat",
+                label: "OpenAI-compatible (Ollama, LM Studio, vLLM, OpenAI, others)",
+              },
+              { value: "anthropic", label: "Anthropic Messages API (always cloud)" },
+            ]}
+            className="h-9 max-w-md text-sm"
+          />
           {kind === "anthropic" ? (
             <span className="text-text-muted">
               Always treated as a cloud provider: data from local-only sources is never sent to it.
@@ -195,17 +198,18 @@ export function ProviderForm({ existing, models = [], onDone, onCancel }: Provid
             {existing && existing.kind !== "anthropic" ? (
               <label className="flex flex-col gap-1 text-sm md:col-span-2">
                 <span className="font-semibold">Thinking</span>
-                <select
+                <Select
                   value={reasoning}
-                  onChange={(e) => setReasoning(e.target.value)}
-                  className="h-8 max-w-xs rounded border border-border-control bg-surface px-2 text-sm"
-                >
-                  <option value="default">Model default</option>
-                  <option value="none">Off</option>
-                  <option value="low">Low</option>
-                  <option value="medium">Medium</option>
-                  <option value="high">High</option>
-                </select>
+                  onChange={setReasoning}
+                  options={[
+                    { value: "default", label: "Model default" },
+                    { value: "none", label: "Off" },
+                    { value: "low", label: "Low" },
+                    { value: "medium", label: "Medium" },
+                    { value: "high", label: "High" },
+                  ]}
+                  className="h-9 max-w-xs text-sm"
+                />
                 <span className="text-text-muted">
                   For reasoning models (Qwen 3, DeepSeek R1, gpt-oss). Off makes Ask answer in
                   seconds and stops long thinking from using up the answer; sent as

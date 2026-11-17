@@ -150,11 +150,13 @@ GROUP BY 1
 LIMIT 2000"""  # fixed SQL text
 
 
-def test_the_old_queries_could_not_be_narrowed_and_the_new_ones_can() -> None:
+def test_the_old_queries_and_the_new_ones_are_narrowed_alike() -> None:
+    """The old shapes pin their templates inside an OR of parenthesized ANDs, which is now
+    read too (S7, fix list 2026-11-16), so both narrow to the same templates."""
     assert OLD_ITEMS != agents_mod.ITEMS_SQL
-    assert pinned_templates(OLD_ITEMS, {"recent": NOW}) is None
-    assert pinned_templates(OLD_HOURLY, {"recent": NOW}) is None
     want = {"claude_code_otel", "claude_hooks", "mcp_inventory", "anthropic_reports"}
+    assert pinned_templates(OLD_ITEMS, {"recent": NOW}) == want
+    assert pinned_templates(OLD_HOURLY, {"recent": NOW}) == want - {"mcp_inventory"}
     assert pinned_templates(agents_mod.ITEMS_SQL, {"recent": NOW}) == want
     assert pinned_templates(agents_mod.HOURLY_SQL, {"recent": NOW}) == want - {"mcp_inventory"}
 

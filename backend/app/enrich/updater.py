@@ -118,7 +118,7 @@ class FeedUpdater:
                 new = self._geoip(st)
             if new is None:
                 if self.stops is not None and spec.is_intel:
-                    self.stops.working(f"feed:{feed_id}", "health#enrichment")
+                    self.stops.working(f"feed:{feed_id}", "health#type=enrichment")
                 return self._store.state(feed_id)
         except (httpx.HTTPError, AppError, OSError, FeedDownloadError) as exc:
             reason = _reason(exc)
@@ -130,11 +130,11 @@ class FeedUpdater:
                 # A stale threat list misses new indicators; tell people after a day.
                 self.stops.failing(
                     f"feed:{feed_id}", f"Threat feed {spec.label}", reason,
-                    "health#enrichment", grace=INTEL_GRACE,
+                    "health#type=enrichment", grace=INTEL_GRACE,
                 )  # fmt: skip
             return self._store.record_check(feed_id, reason)
         if self.stops is not None and spec.is_intel:
-            self.stops.working(f"feed:{feed_id}", "health#enrichment")
+            self.stops.working(f"feed:{feed_id}", "health#type=enrichment")
         self._audit.write(
             "enrichment.update",
             "success",

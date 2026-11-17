@@ -2,7 +2,9 @@ import { PinButton } from "@/components/PinButton";
 import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { KpiStrip } from "./KpiStrip";
-import { NeedsYou } from "./NeedsYou";
+import { NeedsYou, SHOWN } from "./NeedsYou";
+import { knownEmpty, shapeOf } from "./shape";
+import { InlineError } from "@/components/InlineError";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -32,6 +34,7 @@ import type { PageWindow } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { layoutOf, placed, sectionAdded, sectionRemoved, sectionStepped, stepped } from "./layout";
 import { SchedulePanel } from "./SchedulePanel";
+import { Select } from "@/components/forms/Select";
 
 interface DashboardPageProps {
   me?: User | null;
@@ -74,6 +77,32 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
     queryFn: api.schedules,
     refetchInterval: 60_000,
   });
+  // What the page draws is decided before any number arrives (fix list 2026-11-16 item 27):
+  // the viewer's sources say which tiles and sections there are, and Needs you, the panels,
+  // and the Sources tile come from these quick answers (the same queries those parts make).
+  // Until they are in, nothing is drawn under the time window; then every part takes its
+  // final place at once, as a skeleton until its own answer arrives, and nothing moves.
+  const sourceList = useQuery({ queryKey: ["source-list"], queryFn: api.sources });
+  const lines = useQuery({
+    queryKey: ["alerts", "lines", SHOWN, "severity"],
+    queryFn: () => api.alertLines(SHOWN),
+  });
+  const overview = useQuery({
+    queryKey: ["overview"],
+    queryFn: api.overview,
+    refetchInterval: 60_000,
+  });
+  // Once in, the layout stays: a failed read that a part asks for again on mount goes back
+  // to pending, and must not take the page down with it (code review of PR 650).
+  const settled = useRef(false);
+  if ([sourceList, lines, overview, boards, schedules].every((q) => !q.isPending))
+    settled.current = true;
+  const known = settled.current;
+  // Without the sources answer every part is drawn and loads on its own, as before item
+  // 27: a part the viewer has no source for then says so, and the read's error has Retry.
+  const shape = sourceList.isError
+    ? { m365: true, other: true, any: true }
+    : shapeOf(sourceList.data ?? []);
   const [picked, setPicked] = useState<string | null>(currentDashboard);
   const [editing, setEditing] = useState(false);
   const [win, setWin] = useState<PageWindow>(readWindow);
@@ -258,19 +287,16 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
         </div>
         <span className="mr-2 text-sm text-text-muted">{windowRange(win)}</span>
         {list.length > 1 ? (
-          <select
+          <Select
             aria-label="Dashboard"
             value={board?.dashboard_id ?? ""}
-            onChange={(e) => pick(e.target.value)}
-            className="h-8 rounded border border-border-control bg-inset px-2 text-sm"
-          >
-            {list.map((d) => (
-              <option key={d.dashboard_id} value={d.dashboard_id}>
-                {d.name}
-                {d.shared && !d.mine ? " (shared)" : ""}
-              </option>
-            ))}
-          </select>
+            onChange={pick}
+            options={list.map((d) => ({
+              value: d.dashboard_id,
+              label: `${d.name}${d.shared && !d.mine ? " (shared)" : ""}`,
+            }))}
+            className="text-sm"
+          />
         ) : null}
         {board ? (
           <span className="text-sm">
@@ -298,16 +324,35 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
       <div className="flex flex-col gap-3 px-5 py-3">
         {/* Order (DESIGN.md 6.3): what needs you (blind states pinned first; hidden when
             nothing does), the key numbers for the window, the sections, then the panels. */}
-        <ErrorBoundary label="Needs you">
-          <NeedsYou />
-        </ErrorBoundary>
-        <ErrorBoundary label="Key numbers">
-          <KpiStrip window={win} days={daysOf(win)} />
-        </ErrorBoundary>
-        <ErrorBoundary label="AI Watch">
-          <AiWatch days={daysOf(win)} isAdmin={isAdmin} />
-        </ErrorBoundary>
-        <Sections window={win} />
+        {known ? (
+          <>
+            {sourceList.isError ? (
+              <InlineError
+                what="Your sources"
+                error={sourceList.error}
+                onRetry={() => void sourceList.refetch()}
+                retrying={sourceList.isFetching}
+              />
+            ) : null}
+            <ErrorBoundary label="Needs you">
+              <NeedsYou />
+            </ErrorBoundary>
+            <ErrorBoundary label="Key numbers">
+              <KpiStrip window={win} days={daysOf(win)} shape={shape} />
+            </ErrorBoundary>
+            {shape.any ? (
+              <ErrorBoundary label="AI Watch">
+                <AiWatch days={daysOf(win)} isAdmin={isAdmin} />
+              </ErrorBoundary>
+            ) : null}
+            <Sections
+              window={win}
+              shape={shape}
+              empty={knownEmpty(win, sourceList.data, overview.data)}
+              egress={overview.data?.egress_listed ?? true}
+            />
+          </>
+        ) : null}
         {error ? (
           <p role="alert" className="text-sm text-danger">
             {error instanceof ApiError ? error.message : "Could not load"}
@@ -324,7 +369,7 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
             }}
           />
         ) : null}
-        {boards.isSuccess && (!board || board.panels.length === 0) ? (
+        {known && boards.isSuccess && (!board || board.panels.length === 0) ? (
           <EmptyState
             kind="not-set-up"
             title="No panels yet."
@@ -332,7 +377,7 @@ export function DashboardPage({ me = null }: DashboardPageProps) {
             action={{ label: "Go to Schedules", onClick: () => navigate("schedules") }}
           />
         ) : null}
-        {board
+        {board && known
           ? layout
               .filter((sec) => sec.schedule_ids.length > 0 || (editing && sec.name))
               .map((sec, si, shown) => {
@@ -517,21 +562,17 @@ function BoardSettings({ board, schedules, onAddSection, onDeleted }: BoardSetti
       <div className="flex flex-wrap items-end gap-2">
         <label className="flex flex-col gap-1">
           <span className="text-text-secondary">Add a panel</span>
-          <select
+          <Select
             aria-label="Schedule to add"
             value={adding}
-            onChange={(e) => setAdding(e.target.value)}
-            className="h-8 min-w-56 rounded border border-border-control bg-inset px-2"
-          >
-            <option value="">
-              {available.length ? "Pick a schedule" : "Every schedule you can see is here"}
-            </option>
-            {available.map((s) => (
-              <option key={s.schedule_id} value={s.schedule_id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
+            onChange={setAdding}
+            placeholder={
+              available.length ? "Pick a schedule" : "Every schedule you can see is here"
+            }
+            emptyReason="Every schedule you can see is here"
+            options={available.map((s) => ({ value: s.schedule_id, label: s.name }))}
+            className="min-w-56"
+          />
         </label>
         <button
           type="button"

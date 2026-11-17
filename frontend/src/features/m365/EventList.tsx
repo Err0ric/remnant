@@ -18,10 +18,31 @@ interface EventListProps {
   m: M365Overview;
   /** Filters shown in the header, beside the count. */
   controls?: ReactNode;
+  /** What one row is, for the count beside the title: ["app consent", "app consents"]. */
+  noun: readonly [string, string];
 }
 
+/** Headers for the columns the Microsoft 365 lists name in their server queries
+ * (`app/search/m365.py`); schema columns keep the shared labels of the results table. */
+const LABELS: Readonly<Record<string, string>> = {
+  app: "App",
+  app_id: "App ID",
+  code: "Code",
+  country: "Country",
+  interactive: "Interactive",
+  operation: "Operation",
+  outcome: "Outcome",
+  permissions: "Permissions",
+  person: "Person",
+  reason: "Reason",
+  result: "Result",
+  status_id: "Status",
+};
+// Event ids of a consent: for Open in Logs, not a column to read.
+const HIDDEN = ["event_ids"];
+
 /** One tab's events over the page window, in the Search table (ADR-0038 section 5). */
-export function EventList({ title, sql, list, filter, m, controls }: EventListProps) {
+export function EventList({ title, sql, list, filter, m, controls, noun }: EventListProps) {
   const q = useQuery<QueryResult>({
     queryKey: ["m365-list", list, filter?.cls, filter?.mode, m.start, m.end],
     queryFn: () => api.m365List(list, m.start, m.end, filter),
@@ -33,7 +54,7 @@ export function EventList({ title, sql, list, filter, m, controls }: EventListPr
         {q.data ? (
           <span className="text-sm text-text-muted">
             {q.data.row_count.toLocaleString()}
-            {q.data.truncated ? "+" : ""} rows
+            {q.data.truncated ? "+" : ""} {q.data.row_count === 1 ? noun[0] : noun[1]}
           </span>
         ) : null}
         {controls}
@@ -59,7 +80,15 @@ export function EventList({ title, sql, list, filter, m, controls }: EventListPr
       ) : q.data && q.data.row_count === 0 ? (
         <p className="p-3 text-sm text-text-secondary">Nothing in this window.</p>
       ) : q.data ? (
-        <ResultsTable result={q.data} view="parsed" compact geo={q.data.geo} />
+        <ResultsTable
+          result={q.data}
+          view="parsed"
+          compact
+          geo={q.data.geo}
+          labels={LABELS}
+          hidden={HIDDEN}
+          counted
+        />
       ) : null}
     </section>
   );

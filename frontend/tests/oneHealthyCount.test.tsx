@@ -73,7 +73,7 @@ describe("one healthy count on Health and the Dashboard (handoff item 4)", () =>
     client.setQueryData(["overview"], OVERVIEW);
     render(
       <QueryClientProvider client={client}>
-        <KpiStrip window="7d" days={7} />
+        <KpiStrip window="7d" days={7} shape={{ m365: false, other: true, any: true }} />
         <SystemStrip
           overview={OVERVIEW}
           tally={{ summary: OVERVIEW.source_summary }}

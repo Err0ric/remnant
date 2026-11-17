@@ -82,7 +82,9 @@ tests:
 changes:
   - version: 1.1.0
     note: "New columns: resource_name and resource_uid (the app and its application id), status_detail (the failure reason), and metadata_correlation_uid. Earlier events have these empty."
+    summary: "Sign-ins now show the app signed in to and why a sign-in failed. Earlier events do not have these details."
     fields: []
   - version: 1.2.0
     note: "New columns: status_code (Entra's error code) and is_interactive (the person signed in, or an app did in the background). Earlier events have these empty; the pages read both from the stored record instead (D158)."
+    summary: "Sign-ins now store the error code and whether a person or an app signed in. Earlier sign-ins do not store them; the pages work both out from the original record instead."
     fields: []

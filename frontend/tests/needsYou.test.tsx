@@ -123,8 +123,9 @@ describe("Needs you list (ADR-0052 section 3.9, redesign build row 17)", () => {
     const first = rows[0] as HTMLElement;
     expect(first.dataset.needsYou).toBe("blind");
     expect(first).toHaveClass("bg-warn-tint");
-    expect(first).toHaveTextContent("Source down");
-    expect(first).toHaveTextContent("fw_main stopped sending");
+    // The source's status as Health and Settings say it (fix list 2026-11-16 item 19).
+    expect(first).toHaveTextContent("Quiet 30 min");
+    expect(first).toHaveTextContent("fw_main: nothing received for 30 min");
     // A shape as well as a tint: the 2px bar, and an outlined badge that is not a severity.
     expect(first.querySelector("td")).toHaveClass("border-l-2", "border-l-warn");
     expect(first.querySelector("[data-severity]")).toBeNull();
@@ -170,9 +171,9 @@ describe("Needs you list (ADR-0052 section 3.9, redesign build row 17)", () => {
     expect(blind.map((r) => r.kind).sort()).toEqual([
       "Detection paused",
       "Detection paused",
-      "Source down",
-      "Source error",
-      "Template missing",
+      "Quiet 30 min",
+      "Unhealthy",
+      "Unhealthy",
     ]);
     const shown = shownRows(rows);
     expect(shown.filter((r) => r.order === 1)).toHaveLength(5); // every blind row
@@ -286,10 +287,9 @@ describe("Needs you list (ADR-0052 section 3.9, redesign build row 17)", () => {
       "6",
     );
     // The blind row opens the gap alert the Overview names, though its line was not sent.
-    expect(within(list).getByRole("link", { name: /fw_main stopped sending/ })).toHaveAttribute(
-      "href",
-      "/alerts#item=g9",
-    );
+    expect(
+      within(list).getByRole("link", { name: /fw_main: nothing received for 30 min/ }),
+    ).toHaveAttribute("href", "/alerts#item=g9");
   });
 
   it("opens the source on Health from a blind row with no alert", () => {
@@ -397,7 +397,7 @@ describe("Needs you list (ADR-0052 section 3.9, redesign build row 17)", () => {
       [],
       overview({ sources: [source("win_dc", { condition: "quiet", gap_alert: "g3" })] }),
     );
-    expect(down.map((r) => [r.order, r.kind])).toEqual([[1, "Source down"]]);
+    expect(down.map((r) => [r.order, r.kind])).toEqual([[1, "Quiet 30 min"]]);
   });
 
   it("reports detection the system paused, not a schedule someone paused themselves", () => {
@@ -447,12 +447,24 @@ describe("Needs you columns (D257)", () => {
     const [blind, alert] = within(list).getAllByRole("row").slice(1) as HTMLElement[];
     // Blind row: the source id, cut in the middle, links to Health; then the title.
     const cells = [...blind!.querySelectorAll("td")];
-    expect(cells[1]).toHaveTextContent("Source down");
+    expect(cells[1]).toHaveTextContent("Quiet 30 min");
     const source = within(cells[2]!).getByRole("link", { name: "fw_main" });
     expect(source.getAttribute("href")).toBe("/health#source=fw_main");
     expect(source.querySelector("[data-truncate]")).toHaveAttribute("data-truncate", "name");
-    expect(cells[3]).toHaveTextContent("fw_main stopped sending");
+    expect(cells[3]).toHaveTextContent("fw_main: nothing received for 30 min");
     expect(cells[4]?.querySelector("time")).not.toBeNull();
+    // Fixed widths for the short columns, a fixed share for the subject, which stays on one
+    // line and is cut in the middle (fix list item 10), never sized to its content.
+    expect(list.querySelector("table")).toHaveClass("table-fixed");
+    expect(cells.map((c) => c.className.match(/\bw-\S+/)?.[0] ?? "")).toEqual([
+      "w-24",
+      "w-36",
+      "w-[22%]",
+      "",
+      "w-32",
+    ]);
+    expect(source).toHaveClass("max-w-full", "whitespace-nowrap");
+    expect(source).not.toHaveClass("w-max");
     // Alert row: the person's email keeps its local part; the title wraps to two lines.
     const acells = [...alert!.querySelectorAll("td")];
     expect(acells[0]?.querySelector("[data-severity]")).toHaveAttribute("data-severity", "high");
@@ -463,5 +475,58 @@ describe("Needs you columns (D257)", () => {
     expect(title).not.toHaveClass("truncate");
     expect(title).toHaveAttribute("title", person.title);
     expect(title.getAttribute("href")).toBe("/alerts#item=p1");
+  });
+});
+
+describe("Needs you long values (fix list item 10)", () => {
+  it("keeps a long source id, an IPv6 address, and a host name on one line, cut in the middle", () => {
+    const longSource = "claude_hooks_collector_build_runners_example";
+    const ipv6 = "2001:db8:85a3::8a2e:370:7334";
+    const host = "build-runner-0042.corp.example";
+    const ip = item({
+      item_id: "i1",
+      kind: "ai_watch",
+      subject: "agent-ip",
+      title: `AI agent not reviewed: Claude Code: ${ipv6}: In use; device ws-0046`,
+      severity: "medium",
+      devices: [ipv6],
+    });
+    const named = item({
+      item_id: "i2",
+      kind: "ai_watch",
+      subject: "agent-host",
+      title: `AI agent not reviewed: Claude Code: ${host}: In use`,
+      severity: "medium",
+      devices: [host],
+    });
+    show({
+      lines: lines([ip, named]),
+      overview: overview({
+        sources: [
+          source(longSource, { condition: "quiet", quiet_since: "2026-11-10T09:00:00+00:00" }),
+        ],
+      }),
+    });
+    const list = screen.getByRole("region", { name: "Needs you" });
+    for (const value of [longSource, ipv6, host]) {
+      const link = within(list).getByRole("link", { name: value });
+      // One line in the subject column, cut in the middle: the start, then the last 8.
+      expect(link).toHaveClass("whitespace-nowrap", "max-w-full");
+      const cut = link.querySelector<HTMLElement>("[data-truncate]")!;
+      expect(cut).toHaveClass("inline-grid", "grid-flow-col", "max-w-full");
+      expect(cut.querySelector('[data-part="head"]')?.textContent).toBe(value.slice(0, -8));
+      expect(cut.querySelector('[data-part="tail"]')?.textContent).toBe(value.slice(-8));
+    }
+    // A title wraps between words only: ids and addresses in it are kept whole.
+    const title = within(list)
+      .getAllByRole("link")
+      .find((a) => a.hasAttribute("data-needs-you-title") && a.textContent?.includes(ipv6))!;
+    const kept = [...title.querySelectorAll("[data-keep]")].map((k) => k.textContent);
+    expect(kept).toEqual([`${ipv6}:`, "ws-0046"]);
+    title
+      .querySelectorAll("[data-keep]")
+      .forEach((k) => expect(k).toHaveClass("truncate", "max-w-full"));
+    expect(title).toHaveAttribute("title", ip.title);
+    expect(title.textContent).toContain(ip.title);
   });
 });

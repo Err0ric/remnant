@@ -18,6 +18,7 @@ from typing import Any
 
 import structlog
 from fastapi import FastAPI, Request
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
@@ -562,7 +563,11 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         meta, SecretBox(config.paths.data_dir), lambda: app.state.auth.clock()
     )
     app.state.searches = SavedSearchStore(meta, lambda: app.state.auth.clock())
-    app.state.library = Library(load_dir(config.paths.library or LIBRARY_DIR))
+    # A builtin library query's SQL comes from the live AI catalog (fix 20), read per ask.
+    app.state.library = Library(
+        load_dir(config.paths.library or LIBRARY_DIR),
+        lambda: app.state.ai_catalog.services(),
+    )
     app.state.live = LiveRegistry(meta)
     app.state.groups = GroupStore(meta, app.state.auth.audit, lambda: app.state.auth.clock())
     budget = server_budget_mb(config.server.memory_limit_mb)
@@ -1043,6 +1048,20 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
 
     for exc_type in _ERROR_STATUS:
         app.add_exception_handler(exc_type, app_error)
+
+    async def no_route(request: Request, exc: Exception) -> Response:
+        """A path nothing serves. Under /api it is the typed 404 every endpoint gives, with
+        the web UI mounted or not; elsewhere Starlette's own answer (the UI's fallback to
+        index.html never reaches here)."""
+        assert isinstance(exc, StarletteHTTPException)
+        path = request.url.path
+        if exc.status_code == 404 and (path == "/api" or path.startswith("/api/")):
+            return JSONResponse(
+                status_code=404, content={"detail": "Not found", "code": "not_found"}
+            )
+        return await http_exception_handler(request, exc)
+
+    app.add_exception_handler(StarletteHTTPException, no_route)
 
     static_dir = config.server.static_dir
     if static_dir is not None and static_dir.is_dir():

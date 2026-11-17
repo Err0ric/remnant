@@ -247,12 +247,23 @@ describe("Dashboard: the states of the page (redesign build row 14)", () => {
 
   it("holds the place of a section and of AI Watch while they load", async () => {
     const never = new Promise<Response>(() => undefined);
+    // A Microsoft 365 source and a file source: every tile and section is drawn.
+    const status = { state: "reading", files: 1, last_pass_at: null, last_event_at: null };
+    const sources = [
+      { source_id: "m365_signin", kind: "m365", template_id: "m365_signin", status },
+      { source_id: "linux_sshd", kind: "file", template_id: "linux_sshd", status },
+    ];
     await renderAt("/dashboard", (url) =>
       url.includes("/api/dashboard/sections") || url.includes("/api/ai/watch/summary")
         ? never
-        : null,
+        : /\/api\/sources(\?|$)/.test(url)
+          ? json(sources)
+          : null,
     );
-    expect(await screen.findByRole("status", { name: "Loading AI Watch" })).toBeVisible();
+    expect((await screen.findAllByRole("status", { name: "Loading AI Watch" }))[0]).toBeVisible();
+    // Each section in its final place, titled, its numbers still on the way (item 27).
+    for (const name of ["AI Watch", "Identity", "Attacks and access", "Detections"])
+      expect(screen.getByRole("region", { name })).toHaveAttribute("data-card", "section");
     expect(
       (
         await screen.findAllByRole("status", {
@@ -260,5 +271,6 @@ describe("Dashboard: the states of the page (redesign build row 14)", () => {
         })
       ).length,
     ).toBeGreaterThan(0);
+    expect(screen.getByRole("region", { name: "Key numbers" })).toHaveAttribute("data-tiles", "5");
   });
 });

@@ -4,6 +4,9 @@ import type { Overview, SourceGap } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { stamp } from "@/features/overview/time";
 import { gapText, lag, localHour, shownGaps, zoneName } from "./flow";
+import { SourceStatusLabel } from "./SourceStatusLabel";
+import { greyedStatus } from "./sourceStatus";
+import { timesNote } from "@/lib/localTime";
 
 export type FlowLevel = "unhealthy" | "attention" | "paused" | "healthy";
 
@@ -30,12 +33,6 @@ interface SourceFlowProps {
   focused?: string | null;
 }
 
-const DOT: Record<FlowLevel, string> = {
-  unhealthy: "bg-danger",
-  attention: "bg-warn",
-  paused: "bg-text-muted",
-  healthy: "bg-ok",
-};
 const WORD: Record<FlowLevel, string> = {
   unhealthy: "Unhealthy",
   attention: "Needs attention",
@@ -201,7 +198,9 @@ export function SourceFlow({
           // so the gap hours, not the alert, tell a real gap from a source that is only quiet.
           // An idle source is drawn the same way, though it counts as healthy (D260).
           const gapped = gaps.length > 0;
-          const quiet = (!gapped && h?.condition === "quiet") || Boolean(h?.idle);
+          // A reader stopped on an error ("Unhealthy" before the Overview says so) is drawn
+          // red, never greyed.
+          const quiet = s.word !== "Unhealthy" && greyedStatus(h, v?.gaps);
           const num = cn("font-mono tabular-nums md:text-right", quiet && "text-text-secondary");
           return (
             <li
@@ -235,14 +234,7 @@ export function SourceFlow({
                     </span>
                   )}
                 </div>
-                <div className="flex min-w-0 items-center gap-1.5 text-text-secondary">
-                  <span
-                    aria-hidden
-                    data-dot=""
-                    className={`inline-block size-2 shrink-0 rounded-full ${quiet ? "bg-text-muted" : DOT[s.level]}`}
-                  />
-                  <span className="truncate">{s.word ?? WORD[s.level]}</span>
-                </div>
+                <SourceStatusLabel level={s.level} word={s.word ?? WORD[s.level]} greyed={quiet} />
                 <Spark
                   counts={counts}
                   hours={hours}
@@ -304,8 +296,8 @@ export function SourceFlow({
       </ul>
       {hours.length ? (
         <p className="px-3 py-2 text-xs text-text-muted">
-          Times in {zone}; hover for UTC. Each line is scaled to its own busiest hour, the Peak
-          column. Shaded hours are gaps.
+          {timesNote(zone)} Each line is scaled to its own busiest hour, the Peak column. Shaded
+          hours are gaps.
         </p>
       ) : null}
     </div>

@@ -1,7 +1,9 @@
 """The engine reads only the sources a query pins with source_id (trial finding)."""
 
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -22,7 +24,8 @@ from app.ingest.writer import LakeWriter
         ("SELECT * FROM events WHERE source_id = $p0", {"p0": "fw"}, {"fw"}),  # Simple search
         # Not provable: full scope.
         ("SELECT * FROM events", None, None),
-        ("SELECT * FROM events WHERE source_id = 'a' OR source_id = 'b'", None, None),
+        # Both sides of an OR pin it: a or b (S7, fix list 2026-11-16).
+        ("SELECT * FROM events WHERE source_id = 'a' OR source_id = 'b'", None, {"a", "b"}),
         ("SELECT * FROM events WHERE source_id = $p0", {}, None),
         ("SELECT * FROM events WHERE source_id LIKE 'fw%'", None, None),
         ("WITH x AS (SELECT * FROM events) SELECT * FROM x WHERE source_id = 'a'", None, None),
@@ -39,7 +42,8 @@ from app.ingest.writer import LakeWriter
         ),
         # Owner review: each falls back to the full permitted scope.
         ("SELECT * FROM events WHERE source_id = 'a' OR 1=1", None, None),
-        ("SELECT * FROM events WHERE source_id = 'a' AND (source_id = 'b' OR 1=1)", None, None),
+        # The OR does not pin; the AND around it still does.
+        ("SELECT * FROM events WHERE source_id = 'a' AND (source_id = 'b' OR 1=1)", None, {"a"}),
         ("SELECT * FROM events WHERE source_id IN (SELECT source_id FROM events)", None, None),
         (
             "SELECT * FROM events WHERE source_id IN (SELECT indicator FROM threat_intel)",
@@ -91,25 +95,35 @@ def test_narrowing_never_widens_the_callers_scope(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "sql",
+    ("sql", "expected"),
     [
-        "SELECT source_id, count(*) FROM events WHERE source_id = 'dns' OR 1=1 GROUP BY 1",
-        "SELECT source_id, count(*) FROM events"
-        " WHERE source_id IN (SELECT source_id FROM events) GROUP BY 1",
-        "WITH other AS (SELECT * FROM events WHERE source_id = 'fw')"
-        " SELECT source_id, count(*) FROM (SELECT * FROM events WHERE source_id = 'dns'"
-        " UNION ALL SELECT * FROM other) GROUP BY 1",
-        "SELECT source_id, count(*) FROM events WHERE source_id = 'dns' GROUP BY 1",
+        (
+            "SELECT source_id, count(*) FROM events WHERE source_id = 'dns' OR 1=1 GROUP BY 1",
+            ["dns", "fw", "linux"],
+        ),
+        (
+            "SELECT source_id, count(*) FROM events"
+            " WHERE source_id IN (SELECT source_id FROM events) GROUP BY 1",
+            ["dns", "fw", "linux"],
+        ),
+        # Each read pins its own source, so the two are all it reads (S7, 2026-11-16).
+        (
+            "WITH other AS (SELECT * FROM events WHERE source_id = 'fw')"
+            " SELECT source_id, count(*) FROM (SELECT * FROM events WHERE source_id = 'dns'"
+            " UNION ALL SELECT * FROM other) GROUP BY 1",
+            ["dns", "fw"],
+        ),
+        ("SELECT source_id, count(*) FROM events WHERE source_id = 'dns' GROUP BY 1", ["dns"]),
     ],
 )
-def test_reported_sources_are_exactly_what_the_view_reads(tmp_path: Path, sql: str) -> None:
+def test_reported_sources_are_exactly_what_the_view_reads(
+    tmp_path: Path, sql: str, expected: list[str]
+) -> None:
     """The view and the report share one scope: every source in the rows is reported, and
     a query narrowing could not prove reports every permitted source."""
     engine = _lake(tmp_path)
     res = engine.run(sql, QueryScope(None))
     assert {r[0] for r in res.rows} <= set(res.sources)
-    pinned = pinned_sources(sql)
-    expected = engine.sources_in(QueryScope(None if pinned is None else sorted(pinned)))
     assert res.sources == expected
 
 
@@ -173,3 +187,146 @@ def test_templates_pinned_through_ctes_and_unions(sql: str, expected: set[str] |
     from app.engine.narrow import pinned_templates
 
     assert pinned_templates(sql) == expected
+
+
+@pytest.mark.parametrize(
+    ("sql", "expected"),
+    [
+        # S7 (fix list 2026-11-16): a class pin narrows like a template pin, in a CTE too.
+        ("SELECT * FROM events WHERE class_uid = 4003", [("class_uid", {"4003"})]),
+        (
+            "WITH q AS (SELECT * FROM events WHERE class_uid IN (4003, 4001)) SELECT * FROM q",
+            [("class_uid", {"4001", "4003"})],
+        ),
+        (
+            "SELECT * FROM events WHERE template_id = 'a' AND class_uid = 1",
+            [("template_id", {"a"})],
+        ),
+        ("SELECT * FROM events WHERE class_uid = '4003'", None),
+        ("SELECT * FROM events WHERE class_uid BETWEEN 4000 AND 4999", None),
+        ("SELECT * FROM events WHERE class_uid = 4003 OR 1=1", None),
+        (
+            "SELECT * FROM events WHERE (class_uid = 1 AND a = 1) OR (class_uid = 2 AND b = 2)",
+            [("class_uid", {"1", "2"})],
+        ),
+    ],
+)
+def test_reads_pinned_by_class_or_template(sql: str, expected: Any) -> None:
+    from app.engine.narrow import pinned_reads
+
+    got = pinned_reads(sql)
+    assert (None if got is None else [(c, set(v)) for c, v in got]) == expected
+
+
+def test_a_class_filter_reads_only_sources_holding_it(tmp_path: Path) -> None:
+    from app.core.schema import COLUMN_NAMES
+    from app.ingest.writer import LakeWriter
+
+    def one(source: str, cls: int) -> dict[str, Any]:
+        r: dict[str, Any] = dict.fromkeys(COLUMN_NAMES)
+        at = datetime(2026, 10, 1, tzinfo=UTC)
+        r.update(
+            event_id=str(uuid.uuid4()), source_id=source, template_id=source,
+            template_version="1", time=at, time_observed=at, raw="x", raw_bytes_invalid=False,
+            parse_status="ok", classification="internal", owner_id="system", message="m",
+            unmapped="{}", class_uid=cls,
+        )  # fmt: skip
+        return r
+
+    LakeWriter(tmp_path).write([one("dns", 4003), one("fw", 4001), one("auth", 3002)])
+    engine = QueryEngine(tmp_path)
+    sql = "WITH q AS (SELECT * FROM events WHERE class_uid = 4003) SELECT count(*) FROM q"
+    res = engine.run(sql, QueryScope(None))
+    assert res.rows == [[1]] and res.sources == ["dns"]
+
+
+def test_a_subquery_pinned_to_sources_reads_only_them(tmp_path: Path) -> None:
+    """Each read pins its own sources (the summary shot of the fix list's S7): the outer
+    read and the subquery together read two sources of three."""
+    from app.core.schema import COLUMN_NAMES
+
+    def one(source: str) -> dict[str, Any]:
+        r: dict[str, Any] = dict.fromkeys(COLUMN_NAMES)
+        at = datetime(2026, 10, 1, tzinfo=UTC)
+        r.update(
+            event_id=str(uuid.uuid4()), source_id=source, template_id=source,
+            template_version="1", time=at, time_observed=at, raw="x", raw_bytes_invalid=False,
+            parse_status="ok", classification="internal", owner_id="system", message="m",
+            unmapped="{}", src_endpoint_ip="192.0.2.1",
+        )  # fmt: skip
+        return r
+
+    LakeWriter(tmp_path).write([one("m365"), one("ssh"), one("fw")])
+    sql = (
+        "SELECT count(*) FROM events WHERE source_id = 'm365' AND src_endpoint_ip IN"
+        " (SELECT src_endpoint_ip FROM events WHERE source_id = 'ssh')"
+    )
+    res = QueryEngine(tmp_path).run(sql, QueryScope(None))
+    assert res.rows == [[1]] and res.sources == ["m365", "ssh"]
+
+
+CORRELATED = (
+    "SELECT * FROM events WHERE {col} = {v} AND EXISTS (SELECT 1 FROM events i"
+    " WHERE i.actor_user_name = events.actor_user_name AND events.{col} = {v})"
+)
+
+
+@pytest.mark.parametrize(
+    ("col", "v"), [("class_uid", "7"), ("template_id", "'t7'"), ("source_id", "'s7'")]
+)
+def test_a_correlated_reference_does_not_pin_the_inner_read(col: str, v: str) -> None:
+    """Second review of 636: `events.<col>` inside the read aliased `i` names the outer
+    read, so `i` has no pin of its own and nothing may be narrowed."""
+    from app.engine.narrow import pinned_reads, pinned_templates
+
+    sql = CORRELATED.format(col=col, v=v)
+    assert pinned_reads(sql) is None
+    assert pinned_templates(sql) is None
+
+
+def test_a_correlated_reference_keeps_every_source_the_inner_read_needs(
+    tmp_path: Path,
+) -> None:
+    """The outer row (class 7, in fw) matches only through an inner row in dns, which has
+    no class 7: narrowing the inner read to class 7 would drop it."""
+    from app.core.schema import COLUMN_NAMES
+
+    def one(source: str, cls: int) -> dict[str, Any]:
+        r: dict[str, Any] = dict.fromkeys(COLUMN_NAMES)
+        at = datetime(2026, 10, 1, tzinfo=UTC)
+        r.update(
+            event_id=str(uuid.uuid4()), source_id=source, template_id=source,
+            template_version="1", time=at, time_observed=at, raw="x", raw_bytes_invalid=False,
+            parse_status="ok", classification="internal", owner_id="system", message="m",
+            unmapped="{}", class_uid=cls, actor_user_name="alice" if source != "auth" else "bob",
+        )  # fmt: skip
+        return r
+
+    LakeWriter(tmp_path).write([one("fw", 7), one("dns", 4003), one("auth", 3002)])
+    sql = (
+        "SELECT count(*) FROM events WHERE class_uid = 7 AND EXISTS (SELECT 1 FROM events i"
+        " WHERE i.actor_user_name = events.actor_user_name AND i.class_uid = 4003"
+        " AND events.class_uid = 7)"
+    )
+    res = QueryEngine(tmp_path).run(sql, QueryScope(None))
+    assert res.rows == [[1]]
+
+
+@pytest.mark.parametrize(
+    ("sql", "expected"),
+    [
+        # Each read's own pins still narrow, aliased or not, through ORs and parentheses.
+        ("SELECT * FROM events e WHERE e.class_uid = 7", [("class_uid", {"7"})]),
+        ("SELECT * FROM events e WHERE class_uid = 7", [("class_uid", {"7"})]),
+        ("SELECT * FROM events e WHERE events.class_uid = 7", None),
+        (
+            "SELECT * FROM events WHERE (template_id = 'a' AND x = 1) OR (template_id = 'b')",
+            [("template_id", {"a", "b"})],
+        ),
+    ],
+)
+def test_own_pins_still_narrow(sql: str, expected: Any) -> None:
+    from app.engine.narrow import pinned_reads
+
+    got = pinned_reads(sql)
+    assert (None if got is None else [(c, set(v)) for c, v in got]) == expected

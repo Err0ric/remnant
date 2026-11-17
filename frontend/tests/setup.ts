@@ -9,6 +9,10 @@ import { afterEach, vi } from "vitest";
 // longer than the 1 s default while Vite transforms it.
 configure({ asyncUtilTimeout: 5000 });
 
+// A tall desktop window: the rail's short-window rules (D268, read from the window height)
+// then show Recent and Pinned in full under any page's tabs.
+window.innerHeight = 1000;
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();

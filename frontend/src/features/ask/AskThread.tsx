@@ -11,6 +11,7 @@ import { FacetSelect } from "@/components/FilterBar";
 import { isAborted, ModelWait } from "@/components/ai/ModelWait";
 import { api, type AskTurn, type Cell } from "@/lib/api";
 import { closeAsk } from "@/lib/askSlideOver";
+import { fitsInLogs, TOO_LONG_FOR_LOGS } from "@/lib/sqlLimit";
 import { setAskProvider, useAskProvider } from "@/lib/askProvider";
 import { navigate } from "@/lib/route";
 import { seedSearch } from "@/lib/searchSeed";
@@ -216,7 +217,13 @@ export function AskThread({
     const history = earlier
       .filter((t) => t.answer)
       .slice(-MAX_TURNS)
-      .map((t) => ({ question: t.question, sql: t.answer!.sql }));
+      // By the answer's id: the server reads its own SQL, so SQL it built (longer than
+      // typed SQL may be) is never posted back; the copy goes too while it fits.
+      .map((t) => ({
+        question: t.question,
+        ...(t.answer!.ask_id ? { ask_id: t.answer!.ask_id } : {}),
+        ...(fitsInLogs(t.answer!.sql) ? { sql: t.answer!.sql } : {}),
+      }));
     setTurns([
       ...earlier,
       {
@@ -232,6 +239,7 @@ export function AskThread({
     ask.mutate({ id, q, history, route });
   };
   const busy = ask.isPending || run.isPending || summarize.isPending;
+  const ready = Boolean(question.trim()) && !busy;
   // With no AI provider, Ask still offers library queries that match the words (C4).
   const [suggestFor, setSuggestFor] = useState<string | null>(null);
   const suggestions = useQuery({
@@ -292,7 +300,9 @@ export function AskThread({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex max-w-[880px] flex-col gap-2">
+      {/* The content column's width up to 1200px (DESIGN 6.1): the prompt, the chips, and
+          the suggestions share it; the answers below use the full width. */}
+      <div className="flex max-w-[1200px] flex-col gap-2">
         {/* Only the prompt and Ask are in the form: Enter in a chip never asks (D256). */}
         <form aria-label="Ask a question" onSubmit={submit} className="flex flex-col gap-2">
           <label htmlFor="ask-question" className="sr-only">
@@ -314,18 +324,24 @@ export function AskThread({
               // Two lines, growing with the text to six.
               className="max-h-[calc(6lh+8px)] min-h-[calc(2lh+8px)] min-w-0 flex-1 resize-none bg-transparent py-1 text-md font-normal [field-sizing:content] focus:outline-none"
             />
+            {/* The page's one filled button once there is text; while empty or busy it
+                stays focusable and says why it does nothing (DESIGN 6.1). */}
             <button
               type="submit"
-              disabled={!question.trim() || busy}
+              aria-disabled={!ready}
+              aria-describedby={ready ? undefined : "ask-not-ready"}
               className={cn(
                 "h-8 shrink-0 rounded px-4 font-semibold",
-                question.trim() && !busy
+                ready
                   ? "bg-accent text-on-accent hover:brightness-110"
-                  : "border border-border-strong text-text-muted",
+                  : "cursor-default border border-border-strong text-text-muted",
               )}
             >
               {turns.length ? "Refine" : "Ask"}
             </button>
+            <span id="ask-not-ready" className="sr-only">
+              {busy ? "Working on the last question" : "Type a question first"}
+            </span>
           </div>
           {QUERY_LIKE.test(question) ? (
             <p className="text-sm text-text-muted">
@@ -383,20 +399,39 @@ export function AskThread({
         ) : null}
       </div>
       {noProviders && suggestFor !== null ? (
-        <section aria-label="Library suggestions" className="flex flex-col gap-1.5 text-sm">
+        <section
+          aria-label="Library suggestions"
+          className="flex max-w-[1200px] flex-col gap-1.5 text-sm"
+        >
           <h3 className="font-semibold">Library queries that match your words</h3>
           {suggestions.data?.length ? (
             <ul className="flex flex-col gap-1.5">
               {suggestions.data.map((s) => (
                 <li key={s.ref}>
-                  <button
-                    type="button"
-                    onClick={() => onEdit?.(s.sql)}
-                    className="font-semibold text-accent-text hover:underline"
-                  >
-                    {s.name}
-                  </button>
+                  {fitsInLogs(s.sql) ? (
+                    <button
+                      type="button"
+                      onClick={() => onEdit?.(s.sql)}
+                      className="font-semibold text-accent-text hover:underline"
+                    >
+                      {s.name}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      aria-disabled="true"
+                      aria-describedby={`too-long-${s.ref}`}
+                      className="cursor-default font-semibold text-text-muted"
+                    >
+                      {s.name}
+                    </button>
+                  )}
                   <span className="block text-text-secondary">{s.why}</span>
+                  {fitsInLogs(s.sql) ? null : (
+                    <span id={`too-long-${s.ref}`} className="block text-text-muted">
+                      {TOO_LONG_FOR_LOGS}
+                    </span>
+                  )}
                 </li>
               ))}
             </ul>

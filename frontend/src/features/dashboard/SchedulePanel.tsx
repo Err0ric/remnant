@@ -26,6 +26,7 @@ import {
 } from "./headline";
 import { barShape, cellText, COLUMNS_AT, type PanelView, type PanelWidth } from "./panelShape";
 import { Sparkline } from "./Sparkline";
+import { Select } from "@/components/forms/Select";
 
 const TOP_ROWS = 5;
 const TOP_BARS = 10;
@@ -496,20 +497,17 @@ function MoveTo({ name, value, sections, onMove }: MoveToProps) {
   return (
     <label className="flex items-center gap-2">
       <span className="text-text-secondary">Section</span>
-      <select
+      <Select
         aria-label={`Move ${name} to section`}
         value={value}
-        onChange={(e) => (e.target.value === NEW ? setAdding(true) : onMove(e.target.value))}
-        className="h-7 min-w-0 flex-1 rounded border border-border-control bg-inset px-1"
-      >
-        <option value="">No section</option>
-        {sections.map((x) => (
-          <option key={x} value={x}>
-            {x}
-          </option>
-        ))}
-        <option value={NEW}>New section…</option>
-      </select>
+        onChange={(v) => (v === NEW ? setAdding(true) : onMove(v))}
+        options={[
+          { value: "", label: "No section" },
+          ...sections.map((x) => ({ value: x, label: x })),
+          { value: NEW, label: "New section…" },
+        ]}
+        className="h-7 min-w-0 flex-1"
+      />
     </label>
   );
 }
@@ -546,32 +544,28 @@ function HeadlineForm({ schedule: s, columns }: HeadlineFormProps) {
     >
       <label className="flex items-center gap-1">
         <span className="text-text-secondary">Number</span>
-        <select
+        <Select
           aria-label={`Number shown for ${s.name}`}
           value={kind}
-          onChange={(e) => setKind(e.target.value as HeadlineKind)}
-          className="h-7 rounded border border-border-control bg-inset px-1"
-        >
-          {HEADLINES.map(([k, text]) => (
-            <option key={k} value={k}>
-              {text}
-            </option>
-          ))}
-        </select>
+          onChange={(v) => setKind(v as HeadlineKind)}
+          options={HEADLINES.map(([k, text]) => ({ value: k, label: text }))}
+          className="h-7"
+        />
       </label>
       {kind !== "rows" ? (
-        <select
+        <Select
           aria-label={`Column for ${s.name}`}
           value={column}
-          onChange={(e) => setColumn(e.target.value)}
-          className="h-7 rounded border border-border-control bg-inset px-1 font-mono"
-        >
-          {(columns.includes(column) || !column ? columns : [column, ...columns]).map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </select>
+          onChange={setColumn}
+          options={(columns.includes(column) || !column ? columns : [column, ...columns]).map(
+            (c) => ({
+              value: c,
+              label: c,
+            }),
+          )}
+          className="h-7 font-mono"
+          optionClassName="font-mono"
+        />
       ) : null}
       <input
         aria-label={`Label for ${s.name}`}

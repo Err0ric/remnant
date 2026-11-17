@@ -26,9 +26,10 @@ describe("Microsoft 365 as views of Logs (ADR-0052 section 3.3, redesign build r
     const summary = await screen.findByRole("region", { name: "Summary" });
     const rail = screen.getByRole("navigation", { name: "Primary" });
     expect(within(rail).queryByText("Microsoft 365")).toBeNull();
+    // Logs is the current section; its tab rows mark none, since a view is not a tab (D268).
     expect(within(rail).getByRole("link", { name: "Logs" })).toHaveAttribute(
       "aria-current",
-      "page",
+      "true",
     );
     expect(screen.getByRole("heading", { level: 1, name: "Logs" })).toBeVisible();
     expect(screen.queryByRole("navigation", { name: "Microsoft 365 tabs" })).toBeNull();
@@ -133,7 +134,19 @@ describe("Microsoft 365 as views of Logs (ADR-0052 section 3.3, redesign build r
   });
 
   it("opens the Inventory on Microsoft 365 apps from the old Apps address", async () => {
-    await renderAt("/m365/apps");
+    const spy = await renderAt("/m365/apps");
+    // An app in use (the mock's one is excluded): the Type list offers only types it has.
+    const base = spy.getMockImplementation() as typeof fetch;
+    spy.mockImplementation(async (input, init) => {
+      const res = await base(input, init);
+      if (!/\/api\/ai\/inventory\?/.test(String(input))) return res;
+      const body = await res.json();
+      for (const i of body.items) if (i.type === "m365_app") i.excluded = null;
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
     await waitFor(() =>
       expect(window.location.pathname + window.location.hash).toBe("/ai/inventory#type=m365_app"),
     );
@@ -187,6 +200,57 @@ describe("Microsoft 365 as views of Logs (ADR-0052 section 3.3, redesign build r
       );
     });
     expect(spy.mock.calls.some(([u]) => String(u).endsWith("/api/query"))).toBe(false);
+  });
+
+  it("counts the Admin view's lists in their own words, under plain headers (fix list S4)", async () => {
+    window.history.replaceState(null, "", "/investigate/views/admin");
+    const spy = mockApi("Codename", { mode: "login", signedIn: true, role: "admin" });
+    const base = spy.getMockImplementation()!;
+    const consents = {
+      columns: [
+        ...["time", "person", "app", "app_id", "result", "permissions", "reason"],
+        ...["event_id", "event_ids"],
+      ],
+      rows: [
+        [
+          ...["2026-10-29T10:00:00+00:00", "frank@example.com", "Mail Sync", "app-1"],
+          ...["blocked", "Mail.Read", "", "e-1", ["e-1"]],
+        ],
+      ],
+      row_count: 1,
+      truncated: false,
+      elapsed_ms: 3,
+      executed_sql: "SELECT ...",
+      sources: ["m365"],
+    };
+    spy.mockImplementation(async (input, init) =>
+      String(input).includes("name=consents")
+        ? new Response(JSON.stringify(consents), {
+            headers: { "Content-Type": "application/json" },
+          })
+        : base(input, init),
+    );
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    render(
+      <App
+        initialTheme="dark"
+        queryClient={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      />,
+    );
+    const list = await screen.findByRole("region", { name: "App consents" });
+    expect(await within(list).findByText("1 app consent")).toBeVisible();
+    const headers = within(list)
+      .getAllByRole("columnheader")
+      .map((h) => h.textContent)
+      .filter(Boolean);
+    expect(headers).toEqual(["Time", "Person", "App", "App ID", "Result", "Permissions", "Reason"]);
+    // The count is beside the title once, not again under the rows.
+    expect(within(list).queryByText(/^1 row$/)).toBeNull();
+    const registrations = screen.getByRole("region", { name: "App registrations" });
+    expect(await within(registrations).findByText(/^\d+ app registrations?$/)).toBeVisible();
   });
 
   it("names the top user and app of each spike in the tooltip (owner 2026-10-31)", async () => {

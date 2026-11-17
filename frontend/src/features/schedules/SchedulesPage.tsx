@@ -1,6 +1,7 @@
 import { EmptyState } from "@/components/EmptyState";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useState, type ReactNode } from "react";
+import { When } from "@/components/When";
 import { fragmentValues, useSection } from "@/lib/route";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { ApiError, api, type Schedule } from "@/lib/api";
@@ -15,14 +16,22 @@ interface SchedulesPageProps {
   isAdmin: boolean;
 }
 
-function lastRunText(s: Schedule): string {
+function lastRunText(s: Schedule): ReactNode {
   const r = s.recent[0];
   if (!r) return "Not run yet";
-  const when = r.started_at.slice(0, 16).replace("T", " ");
-  if (r.status === "paused") return `${when} · paused`;
-  if (r.status === "failed") return `${when} · failed`;
-  if (r.restricted) return `${when} · restricted`;
-  return `${when} · ${r.row_count ?? 0} rows${r.flagged ? " · flagged" : ""}`;
+  const what =
+    r.status === "paused"
+      ? "paused"
+      : r.status === "failed"
+        ? "failed"
+        : r.restricted
+          ? "restricted"
+          : `${(r.row_count ?? 0).toLocaleString()} ${r.row_count === 1 ? "row" : "rows"}${r.flagged ? " · flagged" : ""}`;
+  return (
+    <>
+      <When iso={r.started_at} /> · {what}
+    </>
+  );
 }
 
 /** Scheduled saved searches and rules: create, pause, resume, run now, delete. */
@@ -126,7 +135,7 @@ export function SchedulesPage({ canCreate, isAdmin }: SchedulesPageProps) {
                         <td className="px-3 py-2">{cronLabel(s.cron)}</td>
                         <td className="px-3 py-2">{lookbackLabel(s.lookback_minutes)}</td>
                         <td className="px-3 py-2">
-                          <div className="font-mono">{lastRunText(s)}</div>
+                          <div>{lastRunText(s)}</div>
                           {s.recent[0]?.definition_change ? (
                             <div className="text-text-secondary">
                               Changed: {s.recent[0].definition_change}
@@ -143,8 +152,7 @@ export function SchedulesPage({ canCreate, isAdmin }: SchedulesPageProps) {
                             </>
                           ) : (
                             <span>
-                              Next{" "}
-                              {s.next_run_at ? s.next_run_at.slice(0, 16).replace("T", " ") : "·"}
+                              Next <When iso={s.next_run_at} />
                             </span>
                           )}
                         </td>

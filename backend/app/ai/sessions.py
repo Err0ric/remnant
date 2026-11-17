@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.ai.internal_tools import counted, is_counted
-from app.ai.test_records import HOOKS, NOT_TEST
+from app.ai.test_records import NOT_TEST
 from app.core.errors import NotFoundError, ParamInvalidError
 from app.engine.duckdb import QueryEngine, QueryScope
 
@@ -30,15 +30,25 @@ def has(expr: str) -> str:
     return f"coalesce({expr}, '') <> ''"
 
 
-def step_type(event: str, mcp_server: str | None, web_host: str | None, path: str | None) -> str:
+def step_type(
+    event: str,
+    mcp_server: str | None,
+    web_host: str | None,
+    path: str | None,
+    counted: bool = True,
+) -> str:
     """One of STEP_TYPES. A prompt; a tool's result (failed or not); a tool call, which is
     an access when it names an MCP server or a web host, a file access when it names a
     path, and a plain tool call otherwise. A session start, a turn end, and a session end
-    are "other", as is anything unknown: never a guess. A field is there when it is not
-    empty; `has()` is the same test in SQL, for counts per type."""
+    are "other", as is anything unknown: never a guess. Claude Code's own bookkeeping
+    (`counted` false, D186) is "other" too, so the three tool call types add up to the
+    session's Tool calls (fix list S3). A field is there when it is not empty; `has()` is
+    the same test in SQL, for counts per type."""
     e = event.removeprefix("claude_hooks.")
     if e == "user_prompt_submit":
         return "prompt"
+    if not counted:
+        return "other"
     if e in ("post_tool_use", "post_tool_use_failure"):
         return "tool_result"
     if e != "pre_tool_use":
@@ -56,9 +66,12 @@ def _a(key: str) -> str:
 # number name a record, so the copy is left out (ADR-0026 offline queue).
 def one_copy(name: str = "hooks", where: str | None = None) -> str:
     """The CTE of hook records with each resent copy left out. With `where` (fixed SQL that
-    every copy of a record matches alike, such as its session), only those records, and
-    `template_id` is pinned at the top level so the engine can narrow by template."""
-    cond = f"template_id = 'claude_hooks' AND {NOT_TEST} AND {where}" if where else HOOKS
+    every copy of a record matches alike, such as its session), only those records.
+    `template_id` is pinned at the top level of the WHERE, never inside parentheses, so the
+    engine reads only the sources that can hold hook records (`narrow.pinned_templates`):
+    in parentheses, as `HOOKS` writes it, every source of the window was read (fix list
+    item 15: the Sessions list on 30 days of a busy install)."""
+    cond = f"template_id = 'claude_hooks' AND {NOT_TEST}" + (f" AND {where}" if where else "")
     return f"""{name} AS (
   SELECT * FROM events
   WHERE {cond}
@@ -124,7 +137,11 @@ SELECT s.session_id, s.person, s.machine, s.started, s.last, s.prompts, s.tool_c
        s.files, greatest(s.tool_calls - s.results, 0) AS unanswered,
        (SELECT list(m.mcp ORDER BY m.mcp) FROM mfirst m
         WHERE list_contains(s.mcps, m.mcp) AND m.first >= s.started) AS new_mcp,
-       s.account
+       s.account,
+       -- The window's sessions in all, and those with a prompt or a tool call, before the
+       -- cap: the list says itself whether it was cut (PR 639 review).
+       count(*) OVER () AS total,
+       sum(CASE WHEN s.tool_calls > 0 OR s.prompts > 0 THEN 1 ELSE 0 END) OVER () AS with_steps
 FROM s LEFT JOIN top ON top.sid = s.session_id
 ORDER BY s.last DESC
 LIMIT {MAX_SESSIONS}"""  # noqa: S608  # fixed SQL text
@@ -168,6 +185,10 @@ class Session:
     unanswered: int = 0
     new_mcp: list[str] = field(default_factory=list)
     account: str | None = None
+    # The same on every row: the window's sessions, and those with a step, before the cap of
+    # MAX_SESSIONS, so a list of the newest 100 can say "100 of 300".
+    total: int = 0
+    with_steps: int = 0
 
 
 @dataclass(slots=True)
@@ -226,8 +247,13 @@ def sessions(
     now: datetime,
     days: int,
     idle_minutes: int = 120,
+    start: datetime | None = None,
+    end: datetime | None = None,
 ) -> list[Session]:
-    scope = QueryScope(allowed, now - timedelta(days=days), now)
+    """`days` back from `now`, or exactly `start` to `end` (or now): the page's time."""
+    scope = QueryScope(
+        allowed, start if start is not None else now - timedelta(days=days), end or now
+    )
     rows = engine.run(SESSIONS_SQL, scope, timeout_s=TIMEOUT_S, page=True).rows
     return [
         Session(
@@ -248,10 +274,12 @@ def sessions(
             int(unanswered or 0),
             [str(m) for m in (new_mcp or [])],
             str(account) if account else None,
+            int(total or 0),
+            int(with_steps or 0),
         )
         for (
             sid, person, machine, started, last, prompts, calls, tools, hosts, stopped, failed,
-            top, files, unanswered, new_mcp, account,
+            top, files, unanswered, new_mcp, account, total, with_steps,
         ) in rows
     ]  # fmt: skip
 
@@ -283,7 +311,7 @@ def timeline(
             oc,
             str(eid),
             int(late) if late is not None and late > 300 else None,
-            step_type(str(msg), srv, host, path),
+            step_type(str(msg), srv, host, path, is_counted(tool)),
             is_counted(tool),
         )
         for t, msg, role, tool, srv, mtool, path, host, prog, pc, ic, oc, eid, _, _, late in rows

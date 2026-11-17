@@ -248,8 +248,10 @@ def test_five_thousand_alerts_in_one_item_stay_fast(lab: dict[str, Any]) -> None
     assert not rest, [c[0][:80] for c in rest]
     assert "B-0" not in sql and "unnest($keys)" in sql
     assert len(params["keys"]) == 5_001 and params["limit"] == 200
-    # A ceiling for a hang, not a speed rule: measured at about 30 times the one-key call
-    # on a quiet machine (0.50 s against 0.016 s), so 100 times it under a load that slows
-    # both alike, and never less than the old fixed 5 s (a burst can arrive between the
-    # two timings), which failed once at a machine load of about 12. Still catches a hang.
-    assert took < max(5.0, 100 * baseline), (took, baseline)
+    # A ceiling for a hang, not a speed rule (the shape checks above and the speed check
+    # cover real slowdowns): measured at about 30 times the one-key call on a quiet
+    # machine (0.50 s against 0.016 s), so 100 times it under a load that slows both
+    # alike, and never less than 30 s, because a burst can arrive between the two timings:
+    # the queue's suite took 8.9 s here three times on 2026-11-16 while builders loaded
+    # the machine, against the old 5 s floor. 30 s still catches a hang.
+    assert took < max(30.0, 100 * baseline), (took, baseline)

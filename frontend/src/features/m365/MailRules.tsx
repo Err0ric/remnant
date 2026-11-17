@@ -34,7 +34,7 @@ export interface Burst {
 }
 
 function day(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 /** "dana@example.com created 62 rules Oct 29 to 30: 60 organizing, 2 hiding". */

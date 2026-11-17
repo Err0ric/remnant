@@ -94,6 +94,9 @@ def test_the_script_looks_for_the_labels_the_app_draws() -> None:
     src = ROOT / "frontend" / "src" / "components" / "shell"
     assert 'nav[aria-label="Primary"]' in script.COUNT_JS
     assert 'aria-label="Primary"' in (src / "SideNav.tsx").read_text()
+    # Entries by their mark, so the current page's tab rows do not count (D268).
+    assert "[data-rail-entry]" in script.COUNT_JS
+    assert "data-rail-entry={row.key}" in (src / "SideNav.tsx").read_text()
     assert "} tabs`}" in (src / "PageHeader.tsx").read_text()
 
 

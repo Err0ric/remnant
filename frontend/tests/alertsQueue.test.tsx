@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AREAS } from "@/lib/nav";
 import { mockApi, type MockAuth } from "./mockApi";
+import { choose } from "./choose";
 
 async function renderAt(
   path: string,
@@ -55,7 +56,7 @@ describe("Alerts (ADR-0037, ADR-0043)", () => {
     // High first, then by time: DeepSeek opens in the pane on load.
     const pane = screen.getByRole("region", { name: "This alert" });
     expect(within(pane).getByRole("heading", { name: "New AI service: DeepSeek" })).toBeVisible();
-    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Category" }), "Detections");
+    await choose(screen.getByRole("combobox", { name: "Category" }), "Detections");
     expect(within(list).queryByRole("button", { name: /DeepSeek/ })).toBeNull();
     // The count is of alerts this person can read: two, though the source they cannot read
     // has more (the note above), and it says how many of them the filters leave.
@@ -67,11 +68,11 @@ describe("Alerts (ADR-0037, ADR-0043)", () => {
     expect(here()).toBe("/alerts");
     expect(screen.queryByRole("button", { name: "Reset" })).toBeNull();
     expect(count).toHaveTextContent(/^2 alerts$/);
-    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Category" }), "Detections");
-    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Category" }), "");
-    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Severity" }), "high");
+    await choose(screen.getByRole("combobox", { name: "Category" }), "Detections");
+    await choose(screen.getByRole("combobox", { name: "Category" }), "");
+    await choose(screen.getByRole("combobox", { name: "Severity" }), "high");
     expect(within(list).queryByRole("button", { name: /Failed logons/ })).toBeNull();
-    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Severity" }), "");
+    await choose(screen.getByRole("combobox", { name: "Severity" }), "");
     await userEvent.type(
       screen.getByRole("textbox", { name: "Person, device, or source" }),
       "ws-0042",
@@ -159,7 +160,7 @@ describe("Alerts (ADR-0037, ADR-0043)", () => {
     for (const box of within(list).getAllByRole("checkbox")) await userEvent.click(box);
     const bulk = screen.getByRole("form", { name: "Close selected alerts" });
     expect(bulk).toHaveTextContent("2 selected");
-    await userEvent.selectOptions(within(bulk).getByRole("combobox"), "expected");
+    await choose(within(bulk).getByRole("combobox"), "expected");
     await userEvent.click(within(bulk).getByRole("button", { name: "Close 2" }));
     await vi.waitFor(() => {
       const call = spy.mock.calls.find(([u]) => String(u).endsWith("/api/alerts/close"));

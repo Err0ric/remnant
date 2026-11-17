@@ -14,6 +14,7 @@ import {
 import { SourceFlow, type FlowSource } from "@/features/health/SourceFlow";
 import { QuietOkEditor } from "@/features/sources/QuietOkEditor";
 import type { Overview } from "@/lib/api";
+import { choose } from "./choose";
 
 const NOW = "2026-11-14T12:30:00+00:00";
 const TWO_DAYS_AGO = "2026-11-12T12:30:00+00:00";
@@ -27,7 +28,7 @@ function editor(props: Partial<Parameters<typeof QuietOkEditor>[0]> = {}) {
   const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <QuietOkEditor sourceId="claude_hooks" value={null} canManage idle={null} {...props} />
+      <QuietOkEditor sourceId="claude_hooks" value={null} canManage {...props} />
     </QueryClientProvider>,
   );
 }
@@ -47,7 +48,7 @@ describe("Quiet is normal (D260): the control on Sources", () => {
     expect(within(box).getByText(/its quiet alert waits; errors still count/)).toHaveClass(
       "text-text-muted",
     );
-    await userEvent.selectOptions(within(box).getByLabelText("Quiet is normal for up to"), "3");
+    await choose(within(box).getByLabelText("Quiet is normal for up to"), "3");
     await userEvent.click(save);
     await waitFor(() => expect(spy).toHaveBeenCalled());
     const [url, init] = spy.mock.calls[0] ?? [];
@@ -63,18 +64,17 @@ describe("Quiet is normal (D260): the control on Sources", () => {
     editor({ value: 7 });
     expect(screen.getByText("Quiet is normal for up to 7 days")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Quiet is normal for claude_hooks" }));
-    await userEvent.selectOptions(screen.getByLabelText("Quiet is normal for up to"), "off");
+    await choose(screen.getByLabelText("Quiet is normal for up to"), "off");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(spy).toHaveBeenCalled());
     expect(JSON.parse(String(spy.mock.calls[0]?.[1]?.body))).toEqual({ quiet_ok_days: null });
   });
 
-  it("shows the setting and the idle line to others, with nothing to change", () => {
-    editor({ value: 7, canManage: false, idle: idleText(TWO_DAYS_AGO, NOW) });
+  it("shows the setting to others, with nothing to change", () => {
+    // The idle sentence is said once, under the status (fix list 2026-11-16 item 19).
+    editor({ value: 7, canManage: false });
     expect(screen.getByText("Quiet is normal for up to 7 days")).toBeInTheDocument();
-    expect(screen.getByText("Idle: No events for 2 d (normal for this source)")).toHaveClass(
-      "text-text-secondary",
-    );
+    expect(screen.queryByText(/^Idle/)).toBeNull();
     expect(screen.queryByRole("button")).toBeNull();
   });
 
@@ -142,11 +142,18 @@ describe("Quiet is normal (D260): how an idle source reads", () => {
     expect(marked).toEqual([]);
     const plain = {
       ...flowOverview,
-      sources: flowOverview.sources.map((s) => ({ ...s, quiet_ok: false, idle: false })),
+      // Unmarked, the server judges the same silence quiet (app.search.source_state).
+      sources: flowOverview.sources.map((s) => ({
+        ...s,
+        quiet_ok: false,
+        idle: false,
+        condition: "quiet",
+        problem: "attention",
+      })),
     } as Overview;
     const rows = needsYouRows(undefined, [], plain);
     expect(rows.map((r) => [r.kind, r.title])).toEqual([
-      ["Source down", "claude_hooks has sent nothing for 6 h"],
+      ["Quiet 2 d", "claude_hooks: nothing received for 2 d"],
     ]);
   });
 
@@ -155,7 +162,7 @@ describe("Quiet is normal (D260): how an idle source reads", () => {
       ...flowOverview,
       sources: flowOverview.sources.map((s) => ({ ...s, state: "error", condition: "error" })),
     } as Overview;
-    expect(needsYouRows(undefined, [], failing).map((r) => r.kind)).toEqual(["Source error"]);
+    expect(needsYouRows(undefined, [], failing).map((r) => r.kind)).toEqual(["Unhealthy"]);
   });
 
   it("is named in the Sources healthy line as idle", () => {

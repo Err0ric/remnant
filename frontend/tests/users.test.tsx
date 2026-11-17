@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mockApi, type MockAuth } from "./mockApi";
+import { choose } from "./choose";
 
 async function renderAt(path: string, auth: MockAuth = { mode: "login", signedIn: true }) {
   window.history.replaceState(null, "", path);
@@ -38,7 +39,7 @@ describe("Users and access", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Invite user" }));
     const form = screen.getByRole("form", { name: "Invite user" });
     await userEvent.type(within(form).getByLabelText("Username"), "dana");
-    await userEvent.selectOptions(within(form).getByLabelText("Role"), "auditor");
+    await choose(within(form).getByLabelText("Role"), "auditor");
     await userEvent.click(within(form).getByRole("button", { name: "Create invite link" }));
     const panel = await screen.findByRole("region", { name: "Invite link" });
     expect(within(panel).getByLabelText("One-time link")).toHaveValue(

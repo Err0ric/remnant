@@ -1,7 +1,7 @@
 schema_version: 1
 id: dns_ai
 name: DNS and AI services
-version: 1.0.0
+version: 1.1.0
 description: AI services seen in DNS, by device, plus the DNS questions that find odd names.
 queries:
 - id: ai_services_dns
@@ -54,9 +54,8 @@ queries:
   suggested_schedule: daily
   flag: null
   ask:
-  - 'Which AI services are people using?'
   - 'What AI tools showed up in DNS?'
-  - 'Who is using ChatGPT or Claude?'
+  - 'Which AI services did DNS see?'
 - id: ai_services_by_device
   name: AI services by device (DNS and DHCP)
   description: 'Each AI service query from DNS, named by the device that held the client address at the

@@ -46,6 +46,7 @@ from app.search.dashboard import (
     changes_drill,
     fact_run,
     outside_where,
+    settle,
     trend_points,
     zone,
 )
@@ -718,6 +719,7 @@ def overview(
         )
         for a, n in got["apps"]
     ]
+    settle(out, start, before, now, window, tz)
     out.read = sorted(run.read)
     return out
 

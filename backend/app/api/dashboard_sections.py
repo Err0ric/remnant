@@ -55,6 +55,8 @@ class RowOut(BaseModel):
 class HistoryOut(BaseModel):
     compared: bool
     since: datetime | None
+    # While not compared: when the window before will be covered ("Comparisons start").
+    starts: datetime | None = None
 
 
 class TrendOut(BaseModel):

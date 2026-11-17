@@ -1,6 +1,7 @@
 import { useMutation } from "@tanstack/react-query";
 import { Field } from "@/features/auth/Field";
 import { ApiError, api, type LokiSettings } from "@/lib/api";
+import { Select } from "@/components/forms/Select";
 
 interface LokiFieldsProps {
   /** Required fields (address, query, test) or the optional ones (sign-in, tenant, backfill). */
@@ -34,16 +35,17 @@ export function LokiFields({
           <label htmlFor="loki-auth" className="text-sm font-semibold">
             Sign-in
           </label>
-          <select
+          <Select
             id="loki-auth"
             value={value.auth}
-            onChange={(e) => set("auth", e.target.value as LokiSettings["auth"])}
-            className="h-9 rounded border border-border-control bg-inset px-2 text-sm text-text"
-          >
-            <option value="none">None</option>
-            <option value="basic">Username and password</option>
-            <option value="bearer">Bearer token</option>
-          </select>
+            onChange={(v) => set("auth", v as LokiSettings["auth"])}
+            options={[
+              { value: "none", label: "None" },
+              { value: "basic", label: "Username and password" },
+              { value: "bearer", label: "Bearer token" },
+            ]}
+            className="h-9 text-sm"
+          />
         </div>
         {value.auth === "basic" ? (
           <Field

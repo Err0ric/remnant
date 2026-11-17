@@ -3,7 +3,7 @@ import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { mockApi, type MockAuth } from "./mockApi";
+import { mockApi, type MockAuth, loadedRegion, withM365 } from "./mockApi";
 
 async function renderAt(
   path: string,
@@ -11,7 +11,7 @@ async function renderAt(
   tweak?: (spy: ReturnType<typeof mockApi>) => void,
 ) {
   window.history.replaceState(null, "", path);
-  const spy = mockApi("Codename", auth);
+  const spy = withM365(mockApi("Codename", auth));
   tweak?.(spy);
   vi.resetModules();
   const { loadBranding } = await import("@/lib/branding");
@@ -42,7 +42,7 @@ describe("AI Watch on the Dashboard (ADR-0035 Part 2)", () => {
       blocked_drill: "SELECT 'blocked' AS which WHERE TIMESTAMPTZ '{from}' < TIMESTAMPTZ '{to}'",
     };
     window.history.replaceState(null, "", "/dashboard");
-    const spy = mockApi("Codename", { mode: "login", signedIn: true, role: "admin" });
+    const spy = withM365(mockApi("Codename", { mode: "login", signedIn: true, role: "admin" }));
     const base = spy.getMockImplementation()!;
     spy.mockImplementation(async (input, init) => {
       const res = await base(input, init);
@@ -64,7 +64,7 @@ describe("AI Watch on the Dashboard (ADR-0035 Part 2)", () => {
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
     });
     render(<App initialTheme="dark" queryClient={client} />);
-    const watch = await screen.findByRole("region", { name: "AI Watch" });
+    const watch = await loadedRegion("AI Watch");
     expect(within(watch).getByText("App consent grants")).toBeVisible();
     expect(within(watch).getByText(/^Latest: Lab Notes App/)).toBeVisible();
     expect(within(watch).getByText(/^Blocked: Lab Notes Beta/)).toBeVisible();
@@ -89,7 +89,7 @@ describe("AI Watch on the Dashboard (ADR-0035 Part 2)", () => {
 
   it("shows five cards against the previous period, the 30-day chart, and top services", async () => {
     const spy = await renderAt("/dashboard");
-    const watch = await screen.findByRole("region", { name: "AI Watch" });
+    const watch = await loadedRegion("AI Watch");
     // Not yet approved, with Not approved and Unreviewed apart (owner, 2026-11-03; D184).
     expect(within(watch).getByText("AI services not yet approved")).toBeVisible();
     expect(within(watch).getByText("1 not approved, 1 unreviewed")).toBeVisible();
@@ -135,6 +135,10 @@ describe("AI Watch on the Dashboard (ADR-0035 Part 2)", () => {
     const top = within(watch).getByRole("table", { name: "Top AI services" });
     expect(within(top).getByRole("link", { name: "DeepSeek" })).toBeVisible();
     expect(within(top).getByText("Not approved")).toBeVisible();
+    // Zero people is the number 0, as in the Inventory; "·" is only for an unknown value.
+    const gemini = within(top).getByRole("link", { name: "Gemini" }).closest("tr")!;
+    expect(gemini.querySelectorAll("td")[2]).toHaveTextContent(/^0$/);
+    expect(gemini).not.toHaveTextContent("·");
     // The page window drives the block (ADR-0038 edit 10): no toggle of its own.
     expect(within(watch).queryByRole("button", { name: "30 days" })).toBeNull();
     const win = screen.getByRole("group", { name: "Time window" });
@@ -199,7 +203,7 @@ describe("A dashboard section that fails to load (F63)", () => {
     const { App } = await import("@/app/App");
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<App initialTheme="dark" queryClient={client} />);
-    const watch = await screen.findByRole("region", { name: "AI Watch" });
+    const watch = await loadedRegion("AI Watch");
     const alert = await within(watch).findByRole("alert");
     expect(alert).toHaveTextContent(
       "AI Watch did not load: the query ran out of memory on this server; try a shorter time range.",
@@ -244,7 +248,7 @@ describe("Dashboard sections (ADR-0038 edit 10)", () => {
   it("shows Identity, Attacks and access, and Detections for the page window", async () => {
     window.localStorage.removeItem("dashboard.window");
     const spy = await renderAt("/dashboard");
-    const identity = await screen.findByRole("region", { name: "Identity" });
+    const identity = await loadedRegion("Identity");
     // The comparison note sits beside the title; the action place holds View all (D254).
     const head = identity.querySelector<HTMLElement>("[data-card-header]")!;
     expect(within(head).getByText(/^from Microsoft 365\. Changes against/)).toBeVisible();
@@ -285,7 +289,10 @@ describe("Dashboard sections (ADR-0038 edit 10)", () => {
     expect(within(attacks).getByText("No VPN logs")).toBeVisible();
     // The week before is only partly there: no change pills, and one line for the section
     // saying when comparisons start, not a note under every number (owner, 2026-11-02).
-    expect(within(attacks).getByText("Comparisons start Nov 4")).toBeVisible();
+    // The date is the server's (`history.starts`): the page does no date math (item 8).
+    expect(
+      within(attacks).getByText(/^Comparisons start Nov 3, when the window before has data/),
+    ).toBeVisible();
     expect(within(attacks).queryByText("Not enough history for comparison")).toBeNull();
     expect(within(attacks).queryByText("↑ 18")).not.toBeInTheDocument();
     expect(within(identity).getByText("↑ 4")).toBeVisible();
@@ -318,7 +325,7 @@ describe("Dashboard sections (ADR-0038 edit 10)", () => {
       ["Attacks and access", "/investigate/logs"],
       ["Detections", "/alerts/rules"],
     ] as const) {
-      const region = await screen.findByRole("region", { name });
+      const region = await loadedRegion(name);
       const top = region.querySelector<HTMLElement>("[data-card-header]")!;
       const all = within(top).getByRole("button", { name: "View all" });
       expect(top.lastElementChild).toContainElement(all);

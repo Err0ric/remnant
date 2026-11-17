@@ -2,12 +2,12 @@ import { QueryClient } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mockApi } from "./mockApi";
+import { mockApi, loadedRegion, withM365 } from "./mockApi";
 
 async function renderDashboard() {
   window.history.replaceState(null, "", "/dashboard");
   window.localStorage.removeItem("dashboard.window");
-  mockApi("Codename", { mode: "login", signedIn: true, role: "admin" });
+  withM365(mockApi("Codename", { mode: "login", signedIn: true, role: "admin" }));
   vi.resetModules();
   const { loadBranding } = await import("@/lib/branding");
   await loadBranding();
@@ -16,7 +16,7 @@ async function renderDashboard() {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   render(<App initialTheme="dark" queryClient={client} />);
-  await screen.findByRole("region", { name: "Identity" });
+  await loadedRegion("Identity");
 }
 
 afterEach(() => vi.restoreAllMocks());
@@ -69,7 +69,7 @@ describe("Dashboard drill-through (ADR-0039)", () => {
       await screen.findByText(/^From Dashboard > Identity > Failed sign-ins, Oct 24, 12:00 AM to/),
     ).toBeVisible();
     window.history.back();
-    await screen.findByRole("region", { name: "Identity" });
+    await loadedRegion("Identity");
     expect(window.location.pathname).toBe("/dashboard");
   });
 
@@ -97,7 +97,7 @@ describe("AI Watch drill-through (ADR-0039)", () => {
       await screen.findByText(/^From Dashboard > AI Watch > AI services not yet approved, Oct 4/),
     ).toBeVisible();
     window.history.back();
-    const again = await screen.findByRole("region", { name: "AI Watch" });
+    const again = await loadedRegion("AI Watch");
     const chart = within(again).getByRole("img", { name: /^AI use per day/ });
     chart.focus();
     await userEvent.keyboard("{End}{Enter}");

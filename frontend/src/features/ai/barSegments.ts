@@ -101,12 +101,12 @@ export const TYPES: TypeMark[] = [
   { type: "tool_call", label: "Tool call", color: "series-graphite", hatch: false },
   { type: "tool_result", label: "Tool result", color: "series-neutral", hatch: false },
   { type: "file_access", label: "File access", color: "series-graphite", hatch: true },
-  { type: "access", label: "Access", color: "series-ice", hatch: true },
+  { type: "access", label: "Web or MCP access", color: "series-ice", hatch: true },
   { type: "other", label: "Other", color: null, hatch: false },
 ];
 
 export const HATCH_MEANS =
-  "Hatched: a file access or an access, the steps that reach outside the session (a file, the web, or an MCP server)";
+  "Hatched: a file access or a web or MCP access, the steps that reach outside the session";
 
 export const TICK_MEANS =
   "Tick below: at least one step in this part of the bar reached outside the session (a file, the web, or an MCP server)";

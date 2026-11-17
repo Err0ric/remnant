@@ -1,11 +1,11 @@
 import { QueryClient } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mockApi } from "./mockApi";
+import { mockApi, loadedRegion, withM365 } from "./mockApi";
 
 async function renderAt(path: string) {
   window.history.replaceState(null, "", path);
-  const spy = mockApi("Codename", { mode: "login", signedIn: true, role: "admin" });
+  const spy = withM365(mockApi("Codename", { mode: "login", signedIn: true, role: "admin" }));
   vi.resetModules();
   const { loadBranding } = await import("@/lib/branding");
   await loadBranding();
@@ -46,7 +46,7 @@ describe("Needs attention (owner, 2026-11-02)", () => {
 
   it("tops the Dashboard with the key numbers, each opening the place to act", async () => {
     await renderAt("/dashboard");
-    const strip = await screen.findByRole("region", { name: "Key numbers" });
+    const strip = await loadedRegion("Key numbers");
     expect(
       await within(strip).findByRole("link", { name: /^Open alerts: \d+\. Open Alerts/ }),
     ).toBeVisible();
@@ -54,7 +54,7 @@ describe("Needs attention (owner, 2026-11-02)", () => {
     const ai = (
       await within(strip).findByRole("link", { name: /^AI services in use: \d+/ })
     ).closest("[data-kpi]") as HTMLElement;
-    expect(ai).toHaveTextContent(/\d+ to review|All reviewed/);
+    expect(ai).toHaveTextContent(/\d+ of them unreviewed|All reviewed/);
     expect(strip).not.toHaveTextContent(/unapproved/i);
     // The old one-line strip is gone from the Dashboard.
     expect(screen.queryByRole("region", { name: "Needs attention" })).toBeNull();
@@ -74,7 +74,7 @@ describe("Needs attention (owner, 2026-11-02)", () => {
 describe("Zero values are muted, never green (DESIGN.md)", () => {
   it("shows a zero KPI in muted gray", async () => {
     await renderAt("/dashboard");
-    const overview = await screen.findByRole("region", { name: "Identity" });
+    const overview = await loadedRegion("Identity");
     const zeros = [...overview.querySelectorAll<HTMLElement>("[data-kpi] .text-kpi")].filter(
       (e) => e.textContent === "0",
     );

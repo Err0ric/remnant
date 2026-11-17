@@ -10,6 +10,7 @@ import {
   type ThresholdKind,
 } from "@/lib/api";
 import { PRESETS } from "./schedule";
+import { Select } from "@/components/forms/Select";
 
 interface ScheduleFormProps {
   onDone: () => void;
@@ -106,7 +107,7 @@ export function ScheduleForm({ onDone, initial = null, existing = null }: Schedu
   });
 
   const field = "flex min-w-0 flex-col gap-1 text-sm";
-  const input = "h-8 rounded border border-border bg-inset px-2";
+  const input = "h-8 rounded border border-border-control bg-inset px-2 text-text";
   return (
     <form
       aria-label={e ? `Edit ${e.name}` : "New schedule"}
@@ -119,39 +120,37 @@ export function ScheduleForm({ onDone, initial = null, existing = null }: Schedu
       <div className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-3">
         <label className={field}>
           <span className="text-text-secondary">Runs</span>
-          <select
-            className={input}
+          <Select
             value={kind}
-            onChange={(e) => {
-              setKind(e.target.value as "search" | "rule");
+            onChange={(v) => {
+              setKind(v as "search" | "rule");
               setTarget("");
             }}
-          >
-            <option value="search">A saved search</option>
-            <option value="rule">A detection rule</option>
-          </select>
+            options={[
+              { value: "search", label: "A saved search" },
+              { value: "rule", label: "A detection rule" },
+            ]}
+          />
         </label>
         <label className={field}>
           <span className="text-text-secondary">{kind === "search" ? "Saved search" : "Rule"}</span>
-          <select className={input} value={target} onChange={(e) => setTarget(e.target.value)}>
-            <option value="">Choose…</option>
-            {targets.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.label}
-              </option>
-            ))}
-          </select>
+          <Select
+            placeholder="Choose…"
+            value={target}
+            onChange={setTarget}
+            options={targets.map((t) => ({ value: t.id, label: t.label }))}
+          />
         </label>
         <label className={field}>
           <span className="text-text-secondary">When</span>
-          <select className={input} value={preset} onChange={(e) => setPreset(e.target.value)}>
-            {PRESETS.map((p) => (
-              <option key={p.value} value={p.value}>
-                {p.label}
-              </option>
-            ))}
-            <option value="custom">Custom cron…</option>
-          </select>
+          <Select
+            value={preset}
+            onChange={setPreset}
+            options={[
+              ...PRESETS.map((p) => ({ value: p.value, label: p.label })),
+              { value: "custom", label: "Custom cron…" },
+            ]}
+          />
         </label>
         {preset === "custom" ? (
           <label className={field}>
@@ -187,28 +186,27 @@ export function ScheduleForm({ onDone, initial = null, existing = null }: Schedu
         </label>
         <label className={field}>
           <span className="text-text-secondary">Time range of each run</span>
-          <select className={input} value={lookback} onChange={(e) => setLookback(e.target.value)}>
-            {LOOKBACKS.map((l) => (
-              <option key={l.value} value={l.value}>
-                {l.label}
-              </option>
-            ))}
-          </select>
+          <Select
+            value={lookback}
+            onChange={setLookback}
+            options={LOOKBACKS.map((l) => ({ value: l.value, label: l.label }))}
+          />
         </label>
         <label className={field}>
           <span className="text-text-secondary">Flag a run when the count is</span>
           <div className="flex gap-2">
-            <select
+            <Select
               aria-label="Flag when"
-              className={`${input} min-w-0 flex-1`}
+              className="min-w-0 flex-1"
               value={thresholdKind}
-              onChange={(e) => setThresholdKind(e.target.value as ThresholdKind | "")}
-            >
-              <option value="">Never</option>
-              <option value="above">Above</option>
-              <option value="below">Below</option>
-              <option value="change_pct">Changed by more than (%)</option>
-            </select>
+              onChange={(v) => setThresholdKind(v as ThresholdKind | "")}
+              options={[
+                { value: "", label: "Never" },
+                { value: "above", label: "Above" },
+                { value: "below", label: "Below" },
+                { value: "change_pct", label: "Changed by more than (%)" },
+              ]}
+            />
             {thresholdKind ? (
               <input
                 aria-label="Flag value"

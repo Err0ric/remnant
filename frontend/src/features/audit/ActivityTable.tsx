@@ -1,4 +1,5 @@
 import { Fragment, useState } from "react";
+import { When } from "@/components/When";
 import { NAMES_HIDDEN } from "@/features/alerts/kinds";
 import type { AuditEvent } from "@/lib/api";
 import { describeAction } from "./actions";
@@ -22,7 +23,7 @@ export function ActivityTable({ rows, onUser }: ActivityTableProps) {
         <thead>
           <tr className="border-b border-border text-left text-text-secondary">
             <th className="w-8" />
-            <th className="px-2 py-1.5">Time (UTC)</th>
+            <th className="px-2 py-1.5">Time</th>
             <th className="px-2 py-1.5">User</th>
             <th className="px-2 py-1.5">Action</th>
             <th className="px-2 py-1.5">Outcome</th>
@@ -44,8 +45,8 @@ export function ActivityTable({ rows, onUser }: ActivityTableProps) {
                     {open === r.audit_id ? "▾" : "▸"}
                   </button>
                 </td>
-                <td className="whitespace-nowrap px-2 py-1 font-mono tabular-nums">
-                  {r.ts.slice(0, 19).replace("T", " ")}
+                <td className="whitespace-nowrap px-2 py-1 tabular-nums">
+                  <When iso={r.ts} seconds />
                 </td>
                 <td className="px-2 py-1">
                   {r.user_id ? (

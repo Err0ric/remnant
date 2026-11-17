@@ -23,6 +23,7 @@ import {
   type SyslogSettings,
 } from "@/lib/api";
 import { SectionTitle } from "@/components/SectionTitle";
+import { Select } from "@/components/forms/Select";
 
 const ID_PATTERN = /^[a-z0-9][a-z0-9_]{0,63}$/;
 
@@ -219,11 +220,11 @@ export function AddSourceForm({ allowedRoots, initial, onDone }: AddSourceFormPr
           <label htmlFor="source-kind" className="text-sm font-semibold">
             Reads from
           </label>
-          <select
+          <Select
             id="source-kind"
             value={kind}
-            onChange={(e) => {
-              const next = e.target.value as SourceKind;
+            onChange={(v) => {
+              const next = v as SourceKind;
               setKind(next);
               setCredentials({});
               if (next === "otlp" || next === "m365")
@@ -234,16 +235,20 @@ export function AddSourceForm({ allowedRoots, initial, onDone }: AddSourceFormPr
               if (next === "proxmox")
                 setForm((f) => ({ ...f, format: "json", template_id: "proxmox_inventory" }));
             }}
-            className="h-9 rounded border border-border-control bg-inset px-2 text-sm text-text"
-          >
-            <option value="file">A file or folder on this server</option>
-            <option value="syslog">Syslog sent over the network (UDP, TCP, TLS)</option>
-            <option value="loki">Grafana Loki</option>
-            <option value="otlp">OpenTelemetry: Claude Code, endpoint agents, MCP inventory</option>
-            <option value="m365">Microsoft 365: audit, Entra sign-ins, alerts</option>
-            <option value="anthropic">Anthropic: usage, cost, Claude Code, audit</option>
-            <option value="proxmox">Proxmox VE: guest inventory (names, MACs, IPs)</option>
-          </select>
+            options={[
+              { value: "file", label: "A file or folder on this server" },
+              { value: "syslog", label: "Syslog sent over the network (UDP, TCP, TLS)" },
+              { value: "loki", label: "Grafana Loki" },
+              {
+                value: "otlp",
+                label: "OpenTelemetry: Claude Code, endpoint agents, MCP inventory",
+              },
+              { value: "m365", label: "Microsoft 365: audit, Entra sign-ins, alerts" },
+              { value: "anthropic", label: "Anthropic: usage, cost, Claude Code, audit" },
+              { value: "proxmox", label: "Proxmox VE: guest inventory (names, MACs, IPs)" },
+            ]}
+            className="h-9 text-sm"
+          />
           <p className="text-sm text-text-muted">{KIND_HELP[kind]}</p>
         </div>
         {kind === "loki" ? (
@@ -280,24 +285,25 @@ export function AddSourceForm({ allowedRoots, initial, onDone }: AddSourceFormPr
               Listen on
             </span>
             <div className="flex gap-2" role="group" aria-labelledby="listener-label">
-              <select
+              <Select
                 aria-label="Protocol"
                 value={syslog.protocol}
-                onChange={(e) => {
-                  const protocol = e.target.value as SyslogSettings["protocol"];
+                onChange={(v) => {
+                  const protocol = v as SyslogSettings["protocol"];
                   // Follow the usual port for the protocol until the admin picks one.
-                  setSyslog((v) => ({
-                    ...v,
+                  setSyslog((s) => ({
+                    ...s,
                     protocol,
-                    port: v.port === DEFAULT_PORT[v.protocol] ? DEFAULT_PORT[protocol] : v.port,
+                    port: s.port === DEFAULT_PORT[s.protocol] ? DEFAULT_PORT[protocol] : s.port,
                   }));
                 }}
-                className="h-9 rounded border border-border-control bg-inset px-2 text-sm text-text"
-              >
-                <option value="udp">UDP</option>
-                <option value="tcp">TCP</option>
-                <option value="tls">TLS (encrypted TCP)</option>
-              </select>
+                options={[
+                  { value: "udp", label: "UDP" },
+                  { value: "tcp", label: "TCP" },
+                  { value: "tls", label: "TLS (encrypted TCP)" },
+                ]}
+                className="h-9 text-sm"
+              />
               <input
                 aria-label="Port"
                 type="number"

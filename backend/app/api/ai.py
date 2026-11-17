@@ -5,7 +5,7 @@ Usage numbers come from the caller's own events view and reading them is audited
 """
 
 import asyncio
-from dataclasses import fields
+from dataclasses import fields, replace
 from datetime import datetime, timedelta
 from typing import Annotated, Any, Literal
 
@@ -19,7 +19,7 @@ from app.ai.agents import agents
 from app.ai.agents import masked as masked_agents
 from app.ai.agents_overview import overview as agents_overview
 from app.ai.catalog import NON_USAGE, Catalog, DataLevel, Service, ServiceDef
-from app.ai.inventory import Exclusions, inventory
+from app.ai.inventory import Exclusions, inventory, not_approved, to_review
 from app.ai.inventory import export as inventory_export
 from app.ai.people_view import HIDDEN, audit_ai_view, can_view_people, mask_person, tie
 from app.ai.person_ai import activity as person_activity
@@ -37,7 +37,7 @@ from app.api.dashboard_sections import HistoryOut, KpiOut
 from app.api.identities import caller_identities
 from app.auth.service import AuthService
 from app.auth.users import User
-from app.core.errors import NotFoundError
+from app.core.errors import NotFoundError, ParamInvalidError
 from app.core.job_status import Failure
 from app.core.times import UtcDateTime
 from app.engine.duckdb import QueryEngine, QueryScope
@@ -170,6 +170,23 @@ def _service_out(s: Service) -> ServiceOut:
         note=s.note,
         data_level=s.data_level,
     )
+
+
+def _window(
+    start: datetime | None, end: datetime | None, now: datetime, days: int, most_days: int = 90
+) -> tuple[datetime | None, datetime | None]:
+    """The window an Agents read covers (PR 639), by one rule on the server's clock: the
+    last `most_days` of what was chosen. The end is the chosen end (never past now) or now;
+    the start is the chosen start (or `days` before the end), never earlier than
+    `most_days` before the end. Only an end before the start is refused. Neither side:
+    (None, None), `days` back from now."""
+    if start is None and end is None:
+        return None, None
+    stop = min(end or now, now)
+    first = start if start is not None else stop - timedelta(days=days)
+    if stop <= first:
+        raise ParamInvalidError("The end is before the start")
+    return max(first, stop - timedelta(days=most_days)), stop
 
 
 async def _scope(
@@ -406,6 +423,7 @@ class WatchSummaryOut(BaseModel):
     new: list[NewOut] = []  # first seen in 24 hours, from the data (ADR-0037 row 6)
     compared: bool = True  # False: under 90% of the period before has AI use data
     since: str | None = None
+    starts: str | None = None  # while not compared: when comparisons start
     before: str = ""
     chart_drill: str | None = None
     services_in_use: int = 0  # AI services with any use in the period, whatever their status
@@ -508,6 +526,7 @@ async def ai_watch_summary(
             new=[NewOut(**_slots(n)) for n in s.new],
             compared=s.compared,
             since=s.since,
+            starts=s.starts,
             before=s.before,
             chart_drill=s.chart_drill,
             services_in_use=s.services_in_use,
@@ -851,6 +870,13 @@ class SessionOut(BaseModel):
     unanswered: int = 0  # tool calls with no result (blocked, interrupted, or still running)
     new_mcp: list[str] = []  # MCP servers first used in this session (in the range)
     account: str | None = None  # the Claude account the plugin reported
+    # The same on every row: the window's sessions and those with a step, before the list's
+    # cap of 100 (so the newest 100 can say "100 of 300").
+    total: int = 0
+    with_steps: int = 0
+    # The window this list read (the same on every row): the last 90 days of the choice.
+    read_start: str = ""
+    read_end: str = ""
     # True: `person` and `account` show the machine (or "Hidden"), for a viewer without View
     # people in AI usage (D242).
     masked: bool = False
@@ -900,6 +926,8 @@ async def ai_sessions(
     user: CurrentUser,
     days: Annotated[int, Query(ge=1, le=90)] = 7,
     person: Annotated[str | None, Query(max_length=256)] = None,
+    start: UtcDateTime | None = None,
+    end: UtcDateTime | None = None,
 ) -> list[SessionOut]:
     """Recent Claude Code and Cowork sessions from the hooks plugin (ADR-0026), newest
     first, from the sources the caller may read; with `person`, only that person's under
@@ -913,23 +941,30 @@ async def ai_sessions(
     engine: QueryEngine = request.app.state.engine
     idle = request.app.state.config.agents.session_idle_minutes
     at = app_now(request)
-    rows = await run_in_threadpool(sessions, engine, allowed, at, days, idle)
+    # With `start`, exactly the page's time (Agents, PR 639); `days` otherwise.
+    start, end = _window(start, end, at, days)
+    rows = await run_in_threadpool(sessions, engine, allowed, at, days, idle, start, end)
     if person:
         # As the rest of the person page: the part the caller's scope shows (T70, D219,
         # D223), the same kept set for the same days.
         ident = await caller_identities(
-            request, user, QueryScope(allowed, at - timedelta(days=days), at)
+            request, user, QueryScope(allowed, start or at - timedelta(days=days), end or at)
         )
         keys = set(ident.keys_for(person))
         rows = [s for s in rows if s.person and ident.key(s.person) in keys]
-    out = [SessionOut(**_slots(s)) for s in rows]
+        # The totals count what is listed: this person's sessions, not the caller's all.
+        total, stepped = len(rows), sum(1 for s in rows if s.tool_calls or s.prompts)
+        rows = [replace(s, total=total, with_steps=stepped) for s in rows]
+    read_start = (start or at - timedelta(days=days)).isoformat()
+    read_end = (end or at).isoformat()
+    out = [SessionOut(**_slots(s), read_start=read_start, read_end=read_end) for s in rows]
     named_ok = can_view_people(user)
     if not named_ok:
         # Newest first as computed, never reordered by a hidden name.
         out = [_masked_session(s) for s in out]
     await run_in_threadpool(
         audit_ai_view, _audit(request).audit, user, client_ip(request), "ai.sessions",
-        at - timedelta(days=days), at, allowed,
+        start or at - timedelta(days=days), end or at, allowed,
         named_ok and any(s.person or s.account for s in out),
         **({"person": person[:256]} if person else {}),
     )  # fmt: skip
@@ -1050,11 +1085,18 @@ class AccountsOut(BaseModel):
     rows: list[AccountRowOut]
     counts: dict[str, int]
     masked: bool = False
+    # The window read: the last 90 days of the choice (PR 639).
+    read_start: str = ""
+    read_end: str = ""
 
 
 @router.get("/agents/accounts")
 async def agents_accounts(
-    request: Request, user: CurrentUser, days: Annotated[int, Query(ge=1, le=90)] = 30
+    request: Request,
+    user: CurrentUser,
+    days: Annotated[int, Query(ge=1, le=90)] = 30,
+    start: UtcDateTime | None = None,
+    end: UtcDateTime | None = None,
 ) -> AccountsOut:
     """Claude accounts the hooks plugin reported, by tier (ADR-0030 amendment): company
     confirmed by an Entra sign-in, company reported, company not confirmed, personal, or not
@@ -1073,6 +1115,9 @@ async def agents_accounts(
 
     domains = (await run_in_threadpool(request.app.state.identities.load)).domains
     at = app_now(request)
+    start, end = _window(start, end, at, days)
+    if end is not None:
+        at = end
     out = await run_in_threadpool(
         accounts,
         request.app.state.engine,
@@ -1082,6 +1127,7 @@ async def agents_accounts(
         domains,
         at,
         days,
+        start,
     )
     named_ok = can_view_people(user)
     rows = []
@@ -1092,7 +1138,7 @@ async def agents_accounts(
         rows.append(row)
     await run_in_threadpool(
         audit_ai_view, _audit(request).audit, user, client_ip(request), "agents.accounts",
-        at - timedelta(days=days), at, out.sources,
+        start or at - timedelta(days=days), at, out.sources,
         named_ok and any(r.email or r.os_users for r in rows),
     )  # fmt: skip
     return AccountsOut(
@@ -1102,6 +1148,8 @@ async def agents_accounts(
         rows=rows,
         counts=out.counts,
         masked=not named_ok,
+        read_start=(start or at - timedelta(days=days)).isoformat(),
+        read_end=at.isoformat(),
     )
 
 
@@ -1130,6 +1178,12 @@ class ToolRowOut(BaseModel):
     drill: str
 
 
+class SessionPartsOut(BaseModel):
+    listed: int = 0  # hook-plugin sessions with a prompt or a tool call
+    empty: int = 0  # hook-plugin sessions with neither (hidden by default)
+    telemetry_only: int = 0  # sessions only Claude Code telemetry reported
+
+
 class AgentsOverviewOut(BaseModel):
     days: int
     start: str
@@ -1143,17 +1197,44 @@ class AgentsOverviewOut(BaseModel):
     failed: KpiOut | None
     mcp_not_approved: KpiOut | None
     late_devices: KpiOut | None
+    mcp_unreviewed: int = 0  # MCP servers seen in the window, still unreviewed
+    # The window read (`start` to `end` above): the last 90 days of the choice, PR 639.
+    read_start: str = ""
+    read_end: str = ""
+    # The Sessions tile in parts that add up to it (listed + empty + telemetry_only).
+    session_parts: SessionPartsOut = SessionPartsOut()
     missing_devices: list[str]
     tools: list[ToolRowOut]
 
 
 @router.get("/agents/overview")
 async def agents_overview_get(
-    request: Request, user: CurrentUser, days: Annotated[int, Query(ge=1, le=90)] = 7
+    request: Request,
+    user: CurrentUser,
+    days: Annotated[int, Query(ge=1, le=90)] = 7,
+    start: UtcDateTime | None = None,
+    end: UtcDateTime | None = None,
 ) -> AgentsOverviewOut:
     """Agents > Overview and Tools (ADR-0038 section 6): sessions, people, tool calls,
     failures, MCP servers not approved, late or silent devices, and one row per tool, from
-    the hooks plugin sources the caller may read. Audited ai.view."""
+    the hooks plugin sources the caller may read; `days` back from now, or with `start`
+    exactly the page's time (PR 639). The MCP counts are the MCP servers table's own rows
+    (`Usage.mcp`) for the same window. Audited ai.view."""
+    at = app_now(request)
+    asked_end = end
+    start, end = _window(start, end, at, days)
+    # The MCP servers table's rows for the window read, bounded as the page asks AI usage
+    # for them: the start to the minute, the end the chosen one taken to the next minute
+    # (inclusive) or open. So the counts and the table they open are one answer.
+    mcp_from = (start or at - timedelta(days=days)).replace(second=0, microsecond=0)
+    mcp_to = None
+    if asked_end is not None:
+        whole = asked_end.replace(second=0, microsecond=0)
+        mcp_to = whole if whole == asked_end else whole + timedelta(minutes=1)
+    mcp_scope = await _scope(request, user, mcp_from, mcp_to)
+    mcp_rows, mcp_read = await run_in_threadpool(
+        request.app.state.ai_usage.mcp_and_sources, mcp_scope
+    )
     meta: MetaDB = request.app.state.meta
     allowed = await run_in_threadpool(permitted_sources, meta, user)
     srcs = [
@@ -1167,8 +1248,11 @@ async def agents_overview_get(
         request.app.state.engine,
         _catalog(request),
         telemetry,
-        app_now(request),
+        at,
         days,
+        mcp_rows,
+        start,
+        end,
     )
     await run_in_threadpool(
         _audit(request).audit.write,
@@ -1176,7 +1260,8 @@ async def agents_overview_get(
         "success",
         user.user_id,
         client_ip(request),
-        {"sources_in_scope": out.sources, "view": "agents_overview"},
+        # Every source this request read: the overview's and the MCP table's (rule 2.14).
+        {"sources_in_scope": sorted(set(out.sources) | set(mcp_read)), "view": "agents_overview"},
     )
 
     def kpi(k: Any) -> KpiOut | None:
@@ -1191,6 +1276,7 @@ async def agents_overview_get(
         history=HistoryOut(
             compared=out.history.compared,
             since=out.history.since,
+            starts=out.history.starts,
         ),
         sessions=kpi(out.sessions),
         people=kpi(out.people),
@@ -1198,6 +1284,10 @@ async def agents_overview_get(
         failed=kpi(out.failed),
         mcp_not_approved=kpi(out.mcp_not_approved),
         late_devices=kpi(out.late_devices),
+        mcp_unreviewed=out.mcp_unreviewed,
+        read_start=out.start,
+        read_end=out.end,
+        session_parts=SessionPartsOut(**_slots(out.session_parts)),
         missing_devices=out.missing_devices,
         tools=[ToolRowOut(**_slots(t)) for t in out.tools],
     )
@@ -1232,6 +1322,10 @@ class InventoryOut(BaseModel):
     sources_in_scope: list[str]
     # True: agents show machines, never their owners' names (D242).
     masked: bool = False
+    # Active items still unreviewed: the same number as `/ai/inventory/count`.
+    to_review: int = 0
+    # Active items marked Not approved, counted by the same server rule as the count.
+    not_approved: int = 0
 
 
 class ExcludeIn(BaseModel):
@@ -1285,18 +1379,22 @@ async def ai_inventory(
         items=[_item_out(i) for i in items],
         sources_in_scope=sources,
         masked=not named_ok,
+        to_review=to_review(items),
+        not_approved=not_approved(items),
     )
 
 
 class InventoryCountOut(BaseModel):
     to_review: int
+    not_approved: int = 0
 
 
 @router.get("/ai/inventory/count")
 async def ai_inventory_count(request: Request, user: CurrentUser) -> InventoryCountOut:
     """How many items of the viewer's Inventory are still to review, for the rail's AI
     usage count (D258): active items nobody has marked Approved or Not approved, as the
-    Inventory's header counts them, on the viewer's own sources over its 30 days. Numbers
+    Inventory's header counts them, on the viewer's own sources over its 30 days; and how
+    many are marked Not approved, for AI usage's Needs attention line. Numbers
     only: it names nothing, so like `/health/count` it writes no audit row. Kept in the
     page cache for 60 s, which any change in the app empties, so a review shows at once;
     the audited Inventory read never comes from this answer."""
@@ -1307,9 +1405,10 @@ async def ai_inventory_count(request: Request, user: CurrentUser) -> InventoryCo
     hit = cache.get(key)
     if hit is None:
         items, _ = await _inventory(request, user, 30)
-        hit = sum(1 for i in items if i.excluded is None and i.status == "unreviewed")
+        hit = (to_review(items), not_approved(items))
         cache.put(key, hit)
-    return InventoryCountOut(to_review=int(hit))
+    review, refused = hit
+    return InventoryCountOut(to_review=int(review), not_approved=int(refused))
 
 
 @router.get("/ai/inventory/export")

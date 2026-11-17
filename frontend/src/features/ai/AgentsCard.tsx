@@ -1,4 +1,5 @@
 import { Skeleton } from "@/components/Skeleton";
+import { When } from "@/components/When";
 import { EmptyState } from "@/components/EmptyState";
 import { useQuery } from "@tanstack/react-query";
 import { ApiError, api } from "@/lib/api";
@@ -13,15 +14,6 @@ const STATE: Record<string, { label: string; tint: string }> = {
   new: { label: "New agent", tint: "border border-border-strong text-text-secondary" },
   usual: { label: "As usual", tint: "bg-info-bg text-info-tx" },
 };
-
-function when(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
 
 /** AI agents and what changed in the last 24 hours against the 30 days before
  * (ADR-0020 rows 2 and 3). */
@@ -85,7 +77,7 @@ export function AgentsCard() {
                           {a.machines.map((m) => (
                             <li key={m.name} className="text-text-secondary">
                               <span className="font-mono text-text">{m.name}</span>: last seen{" "}
-                              {when(m.last_seen)}, {m.events_24h.toLocaleString()} in 24 h
+                              <When iso={m.last_seen} />, {m.events_24h.toLocaleString()} in 24 h
                             </li>
                           ))}
                         </ul>
@@ -101,7 +93,9 @@ export function AgentsCard() {
                     <td className="px-3 py-2 text-right font-mono tabular-nums">
                       {a.events_24h.toLocaleString()}
                     </td>
-                    <td className="whitespace-nowrap px-3 py-2 font-mono">{when(a.last_seen)}</td>
+                    <td className="whitespace-nowrap px-3 py-2">
+                      <When iso={a.last_seen} />
+                    </td>
                     <td className="px-3 py-2">
                       <span
                         className={`rounded-badge px-1.5 py-px text-xs font-semibold ${st.tint}`}

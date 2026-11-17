@@ -28,11 +28,12 @@ import {
 import { SpeedTable } from "./SpeedTable";
 import { BackgroundFailures } from "./BackgroundFailures";
 import { EntityLink } from "@/components/EntityLink";
-import { idleText, openGaps, quietFrom, quietWord } from "./flow";
-import { heldText } from "@/features/sources/VendorAlertNotify";
+import { openGaps } from "./flow";
+import { readerStatus, sourceStatus, type SourceStatusView } from "./sourceStatus";
 import { SourceFlow } from "./SourceFlow";
 import { StatusLine } from "./StatusLine";
 import { SystemStrip, type SourceTally } from "./SystemStrip";
+import { Select } from "@/components/forms/Select";
 
 type Level = "unhealthy" | "attention" | "paused" | "healthy";
 type TabId =
@@ -130,49 +131,16 @@ function human(seconds: number): string {
   return `${Math.round(seconds / 86400)} d`;
 }
 
-function sourceRow(s: Source): Row {
-  const st = s.status;
+function sourceRow(s: Source, st: SourceStatusView): Row {
   const kind = s.kind ?? "file";
-  const base: Row = {
+  return {
     key: s.source_id,
     name: s.source_id,
     detail: KIND_LABEL[kind] ?? kind,
-    last: st.last_event_at,
-    level: "healthy",
+    last: s.status.last_event_at,
     page: "sources",
+    ...st,
   };
-  if (!s.enabled || st.state === "disabled")
-    return { ...base, level: "paused", reason: "Turned off" };
-  if (st.state === "error") return { ...base, level: "unhealthy", reason: st.error };
-  if (s.quiet?.state === "quiet")
-    return {
-      ...base,
-      level: "unhealthy",
-      reason: `No events for over ${human(s.quiet.quiet_after_s)}`,
-      quietNote: true,
-    };
-  if (s.alert_pause)
-    return {
-      ...base,
-      level: "attention",
-      reason: `Over 100 new alerts an hour: below High stored, not raised (${heldText(s.alert_pause)})`,
-    };
-  if (st.warnings?.length) return { ...base, level: "attention", reason: st.warnings.join("; ") };
-  if (st.retry_at)
-    return { ...base, level: "attention", reason: `Retrying at ${localStamp(st.retry_at)}` };
-  if (st.time_offset_text) return { ...base, level: "attention", reason: st.time_offset_text };
-  if ((st.behind_s ?? 0) > 3600)
-    return { ...base, level: "attention", reason: `Reading is ${human(st.behind_s ?? 0)} behind` };
-  if (st.records_skipped)
-    return {
-      ...base,
-      level: "attention",
-      reason: `${st.records_skipped} records could not be read`,
-    };
-  if (st.files_waiting)
-    return { ...base, level: "attention", reason: `${st.files_waiting} files still being written` };
-  if (st.state === "waiting") return { ...base, level: "attention", reason: "Not read yet" };
-  return base;
 }
 
 function Spark({ counts }: { counts: number[] }) {
@@ -304,44 +272,18 @@ export function HealthPage({ isAdmin, scope = "health" }: HealthPageProps) {
 
   const now = new Date().toISOString();
   const list = sources.data ?? [];
-  // Each source's level comes from the server's one condition (handoff item 4), the same
-  // one the Dashboard footer counts; the reading status above only gives the words.
+  // Each source's status is the server's one condition (handoff item 4, fix list item 19),
+  // said the same here and on Settings > Sources (`sourceStatus`).
   const judged = new Map((overview.data?.sources ?? []).map((h) => [h.source_id, h]));
-  const flowing = (r: Row): Row => {
-    const h = judged.get(r.key);
-    if (!h || !overview.data) return r; // the overview is still loading
-    switch (h.condition) {
-      case "paused":
-        return { ...r, level: "paused", reason: r.reason ?? "Turned off" };
-      case "error":
-        return { ...r, level: "unhealthy" };
-      case "quiet": {
-        const word = quietWord(quietFrom(h), overview.data.generated_at);
-        return {
-          ...r,
-          level: h.quiet_since ? "unhealthy" : "attention",
-          word: word.charAt(0).toUpperCase() + word.slice(1),
-        };
-      }
-      case "gap":
-        return { ...r, level: "attention", word: "Gap" };
-      case "attention":
-        return { ...r, level: "attention", reason: r.reason ?? "Needs a look" };
-      default:
-        // Marked "Quiet is normal" and silent inside its days (D260): healthy, said in a word.
-        return h.idle
-          ? {
-              ...r,
-              level: "healthy",
-              word: "Idle",
-              reason: idleText(quietFrom(h), overview.data.generated_at),
-            }
-          : { ...r, level: "healthy", reason: null };
-    }
-  };
+  const flowing = (s: Source): Row =>
+    sourceRow(
+      s,
+      sourceStatus(s, judged.get(s.source_id), overview.data?.generated_at) ?? readerStatus(s),
+    );
   const rows: Record<TabId, Row[]> = {
     sources: [
-      ...((checks.data?.quarantined_files ?? 0) > 0
+      // The damaged-files notice: a problem on this tab and on the rail's dot, one number.
+      ...((overview.data?.damaged_files ?? 0) > 0
         ? [
             {
               key: "lake-quarantine",
@@ -349,13 +291,13 @@ export function HealthPage({ isAdmin, scope = "health" }: HealthPageProps) {
               detail: "Stored events",
               last: null,
               level: "attention" as Level,
-              reason: `${checks.data?.quarantined_files ?? 0} damaged files moved to data/quarantine (after a crash or a disk fault); searches skip them`,
+              reason: `${overview.data?.damaged_files ?? 0} damaged files moved to data/quarantine (after a crash or a disk fault); searches skip them`,
             },
           ]
         : []),
       // Anything that brings events is a source, read or pulled (F59): files, the syslog
       // listener, OpenTelemetry, Loki, Microsoft 365, the Anthropic admin API.
-      ...list.map((s) => flowing(sourceRow(s))),
+      ...list.map(flowing),
     ],
     // Feeds are judged by their own update interval, never against log freshness (F59).
     enrichment: [
@@ -507,14 +449,37 @@ export function HealthPage({ isAdmin, scope = "health" }: HealthPageProps) {
     (onHealth ? (overview.error ?? alerts.error ?? enrichment.error ?? schedules.error) : null);
   const loading = !listed[tab] && !error;
   // Problems per tab, only once every type on it is judged; a problem on any type of a tab
-  // shows on the tab. No totals (DESIGN.md 6.0: a count only where something needs action).
+  // shows on the tab (D255), and its words say on which types. No totals (DESIGN.md 6.0).
+  const problemsOf = (k: TabId) => (levelled[k] ? bad(rows[k]) : 0);
+  const typeLabel = (k: TabId) =>
+    Object.values(TYPES)
+      .flat()
+      .find((t) => t?.id === k)?.label ?? NOUN[k][1];
   const tabProblems: Record<string, number> = {};
+  const tabProblemText: Record<string, string> = {};
   for (const [label, kinds] of [
     ["Sources", ["sources", "enrichment"]],
     ["Collectors", ["agents", "devices"]],
     ["Delivery", ["alerts"]],
   ] as [string, TabId[]][])
-    if (kinds.every((k) => levelled[k])) tabProblems[label] = bad(kinds.flatMap((k) => rows[k]));
+    if (kinds.every((k) => levelled[k])) {
+      const n = kinds.reduce((sum, k) => sum + problemsOf(k), 0);
+      tabProblems[label] = n;
+      // By type, the damaged-files notice named on its own: it is not a source.
+      const parts = kinds.flatMap((k) => {
+        const own = levelled[k] ? bad(real(k)) : 0;
+        const notice = rows[k].length - real(k).length > 0 ? ["the data folder"] : [];
+        return [...(own ? [`${own} in ${typeLabel(k)}`] : []), ...notice];
+      });
+      tabProblemText[label] =
+        `${n} ${n === 1 ? "needs" : "need"} attention` +
+        (kinds.length > 1 || parts.length > 1 ? `: ${parts.join(", ")}` : "");
+    }
+  // Problems on this tab's other types, so the Problems count and the tab's count add up:
+  // a link that opens that type ("Show 1 problem in Enrichment feeds").
+  // Health only: Settings > System keeps its own row as it was.
+  const elsewhere =
+    scope === "system" ? [] : (types ?? []).filter((t) => t.id !== tab && problemsOf(t.id) > 0);
   const total = real(tab).length;
   // A tab with nothing listed has nothing to filter: no Status row of zeros (D255).
   const hasStatus = tab !== "speed" && (!levelled[tab] || total > 0);
@@ -525,6 +490,7 @@ export function HealthPage({ isAdmin, scope = "health" }: HealthPageProps) {
       <PageHeader
         title={scope === "system" ? "System" : "Health"}
         tabProblems={scope === "system" ? undefined : tabProblems}
+        tabProblemText={scope === "system" ? undefined : tabProblemText}
         count={
           scope === "system"
             ? null
@@ -571,9 +537,25 @@ export function HealthPage({ isAdmin, scope = "health" }: HealthPageProps) {
                   }
             }
             count={
-              !hasStatus || !levelled[tab]
-                ? null
-                : `${showing === total ? "" : `${showing.toLocaleString()} of `}${total.toLocaleString()} ${NOUN[tab][total === 1 ? 0 : 1]}`
+              (hasStatus && levelled[tab]) || elsewhere.length ? (
+                <>
+                  {elsewhere.map((t) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      data-problems-elsewhere=""
+                      onClick={() => setType(t.id)}
+                      className="mr-3 text-accent-text hover:underline"
+                    >
+                      Show {problemsOf(t.id)} {problemsOf(t.id) === 1 ? "problem" : "problems"} in{" "}
+                      {t.label}
+                    </button>
+                  ))}
+                  {hasStatus && levelled[tab]
+                    ? `${showing === total ? "" : `${showing.toLocaleString()} of `}${total.toLocaleString()} ${NOUN[tab][total === 1 ? 0 : 1]}`
+                    : null}
+                </>
+              ) : null
             }
             onReset={resetFilters}
             isDefault={status === "all" && (!types || tab === types[0]?.id)}
@@ -916,17 +898,12 @@ function DeviceForm({ targets, onDone }: DeviceFormProps) {
       </div>
       <label className="flex flex-col gap-1">
         <span className="font-semibold">Unhealthy after silent for</span>
-        <select
-          value={silence}
-          onChange={(e) => setSilence(Number(e.target.value))}
-          className={input}
-        >
-          {SILENCE.map((o) => (
-            <option key={o.s} value={o.s}>
-              {o.label}
-            </option>
-          ))}
-        </select>
+        <Select
+          value={String(silence)}
+          onChange={(v) => setSilence(Number(v))}
+          options={SILENCE.map((o) => ({ value: String(o.s), label: o.label }))}
+          className="w-full text-sm"
+        />
       </label>
       <fieldset className="flex flex-col gap-1 md:col-span-2">
         <legend className="mb-1 font-semibold">

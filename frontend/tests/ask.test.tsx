@@ -3,6 +3,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mockApi, type MockAuth } from "./mockApi";
+import { choose, optionLabels } from "./choose";
 
 async function renderAt(
   path: string,
@@ -139,9 +140,9 @@ describe("Ask (ADR-0042 slice 1a)", () => {
 
   it("says where a question goes when the model is in the cloud, and explains a block", async () => {
     await renderAt("/ask-ai");
-    await screen.findByRole("option", { name: "Cloud" });
+    await vi.waitFor(() => expect(optionLabels(screen.getByLabelText("Model"))).toContain("Cloud"));
     expect(screen.queryByRole("note")).toBeNull();
-    await userEvent.selectOptions(screen.getByLabelText("Model"), "p2");
+    await choose(screen.getByLabelText("Model"), "p2");
     expect(screen.getByRole("note")).toHaveTextContent("Your question is sent to Cloud.");
     await askQuestion("failed logins");
     expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -151,7 +152,7 @@ describe("Ask (ADR-0042 slice 1a)", () => {
 
   it("asks over a Custom range, start and end, and hands it on to Logs", async () => {
     const spy = await renderAt("/ask-ai");
-    await userEvent.selectOptions(await screen.findByLabelText("Time"), "custom");
+    await choose(await screen.findByLabelText("Time"), "custom");
     const { fireEvent } = await import("@testing-library/react");
     fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-11-01T08:00" } });
     fireEvent.change(screen.getByLabelText("To"), { target: { value: "2026-11-02T08:00" } });
@@ -175,7 +176,7 @@ describe("Ask (ADR-0042 slice 1a)", () => {
 
   it("Open in Logs opens the answer's SQL in the SQL mode, and Save keeps the question (D206)", async () => {
     const spy = await renderAt("/ask-ai");
-    await userEvent.selectOptions(await screen.findByLabelText("Time"), "7d");
+    await choose(await screen.findByLabelText("Time"), "7d");
     await askQuestion("failed logins");
     const block = await screen.findByRole("region", { name: "Question: failed logins" });
     await within(block).findByRole("table", { name: "Results" });
@@ -251,25 +252,25 @@ describe("Ask AI, search first (D256)", () => {
     for (const chip of [time, sources, model])
       expect(prompt.compareDocumentPosition(chip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // "Name Value": the same five presets, all sources, and the model with its badge.
-    expect(
-      within(time)
-        .getAllByRole("option")
-        .map((o) => o.textContent),
-    ).toEqual(["1 hour", "24 hours", "7 days", "30 days", "Custom"]);
+    expect(optionLabels(time)).toEqual(["1 hour", "24 hours", "7 days", "30 days", "Custom"]);
     expect(time).toHaveValue("24h");
     await vi.waitFor(() => expect(sources).toHaveTextContent(/^Sources\s*All \d+$/));
-    await within(model).findByRole("option", { name: "Local Ollama", selected: true });
-    expect(model.closest("label")).toHaveTextContent(/^Model\s*Local Ollama.*Local$/);
+    await vi.waitFor(() => expect(model).toHaveTextContent("Local Ollama"));
+    expect(model).toHaveTextContent(/^Model\s*Local Ollama.*Local$/);
     // The Logs controls are gone from this page: no segmented time strip, no source select.
     expect(screen.queryByRole("group", { name: "Time" })).toBeNull();
     expect(screen.queryByLabelText("Add source filter")).toBeNull();
-    // The Ask button is disabled until there is text, then the page's one filled button.
+    // The Ask button is quiet until there is text, still reachable and saying why, then
+    // the page's one filled button (fix list 2026-11-16 item 6).
     const ask = screen.getByRole("button", { name: "Ask" });
-    expect(ask).toBeDisabled();
+    expect(ask).toHaveAttribute("aria-disabled", "true");
+    expect(ask).toHaveAccessibleDescription("Type a question first");
     expect(ask.className).not.toMatch(/bg-accent|opacity/);
+    await userEvent.click(ask);
+    expect(screen.queryByRole("region", { name: /^Question:/ })).toBeNull();
     await userEvent.type(prompt, "failed logins");
-    expect(ask).toBeEnabled();
-    expect(ask.className).toMatch(/bg-accent/);
+    expect(ask).toHaveAttribute("aria-disabled", "false");
+    expect(ask.className).toMatch(/bg-accent text-on-accent/);
   });
 
   it("sends the chosen sources, and says when the text reads as a query", async () => {
@@ -308,7 +309,8 @@ describe("Ask AI, search first (D256)", () => {
       question: "only for dana",
       provider_id: one?.provider_id,
       tz: one?.tz,
-      history: [{ question: "Who logged in over SSH?", sql: firstSql }],
+      // By the answer's id (the server reads its own SQL), with the copy while it fits.
+      history: [{ question: "Who logged in over SSH?", ask_id: "a1", sql: firstSql }],
     });
     for (const block of [first, second]) {
       const head = block.querySelector("[data-turn-head]") as HTMLElement;
@@ -329,7 +331,7 @@ describe("Ask AI, search first (D256)", () => {
     const spy = await renderAt("/ask-ai");
     const prompt = await screen.findByLabelText("Question");
     await userEvent.type(prompt, "failed logins");
-    await userEvent.selectOptions(screen.getByLabelText("Time"), "custom");
+    await choose(screen.getByLabelText("Time"), "custom");
     await userEvent.click(screen.getByLabelText("From"));
     await userEvent.keyboard("{Enter}");
     await userEvent.click(screen.getByRole("button", { name: /^Sources/ }));
@@ -492,11 +494,15 @@ describe("Ask routing (ADR-0042 slice 1b)", () => {
     // D256: the Model chip reads "Model None".
     const model = screen.getByLabelText("Model");
     expect(model).toBeDisabled();
-    expect(within(model).getByRole("option", { selected: true })).toHaveTextContent("None");
+    expect(model).toHaveTextContent("None");
     await askQuestion("failed ssh logins by source");
     const found = await screen.findByRole("region", { name: "Library suggestions" });
     const open = within(found).getByRole("button", { name: "SSH failures by source address" });
     expect(posts(spy, "/api/ask")).toHaveLength(0); // no model call at all
+    // Longer than Logs takes: shown, but disabled with the plain reason (review of 636).
+    const big = within(found).getByRole("button", { name: "AI services in use" });
+    expect(big).toHaveAttribute("aria-disabled", "true");
+    expect(big).toHaveAccessibleDescription(/longer than the 20,000 characters Logs takes/);
     await userEvent.click(open);
     expect(await screen.findByRole("tab", { name: "SQL", selected: true })).toBeVisible();
   });
@@ -526,10 +532,39 @@ describe("Ask routing (ADR-0042 slice 1b)", () => {
     expect(within(block).queryByRole("list", { name: "Summary" })).toBeNull();
     await askQuestion("failed logins");
     const second = await screen.findByRole("region", { name: "Question: failed logins" });
-    expect(
-      await within(second).findByText("No summary: these rows have no event ids to cite."),
-    ).toBeVisible();
+    // What was counted, written by the server from the run, in place of "No summary"
+    // (item 21): said once, and the count stays in the headline and the table only.
+    const counted = (await within(second).findByText("What was counted:")).parentElement;
+    expect(counted).toHaveTextContent(
+      "What was counted: Read 1 source for the last 24 hours and counted failures, grouped by address.",
+    );
+    expect(within(second).queryByText(/^No summary/)).toBeNull();
     expect(spy.mock.calls.filter(([u]) => String(u).endsWith("/a2/answer"))).toHaveLength(0);
+  });
+
+  it("says a library answer with nothing found in one line, and why Logs cannot open it", async () => {
+    const spy = await renderAt("/ask-ai");
+    await askQuestion("which ai services are in use");
+    const block = await screen.findByRole("region", {
+      name: "Question: which ai services are in use",
+    });
+    expect(
+      await within(block).findByText("Read 2 sources for the last 24 hours: no AI services."),
+    ).toBeVisible();
+    for (const said of [
+      "No matching rows in this time range.",
+      "No rows matched in this time range.",
+    ])
+      expect(within(block).queryByText(said)).toBeNull();
+    expect(within(block).queryByRole("table")).toBeNull();
+    // Server-built SQL longer than Logs takes: the link says why instead of failing there.
+    const open = within(block).getByRole("button", { name: "Open in Logs" });
+    expect(open).toHaveAttribute("aria-disabled", "true");
+    expect(open).toHaveAccessibleDescription(/longer than the 20,000 characters Logs takes/);
+    // A follow-up names that answer by id and never posts its SQL back (review of 636).
+    await askQuestion("only claude");
+    const turns = (posts(spy, "/api/ask") as { history: Record<string, unknown>[] }[]).at(-1);
+    expect(turns?.history).toEqual([{ question: "which ai services are in use", ask_id: "a1" }]);
   });
 
   it("opens a row's own events in Logs, built by the server (D173)", async () => {

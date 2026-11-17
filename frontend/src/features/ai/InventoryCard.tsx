@@ -1,6 +1,6 @@
 import { Skeleton } from "@/components/Skeleton";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type MutableRefObject } from "react";
 import { EntityLink } from "@/components/EntityLink";
 import { InlineError } from "@/components/InlineError";
 import { api, type AiStatus, type InventoryItem, type InventoryType } from "@/lib/api";
@@ -11,7 +11,6 @@ import { STATUS_LABEL, StatusBadge, StatusPicker } from "./StatusBadge";
 import { Card } from "@/components/Card";
 import { StateNotice } from "@/components/StateNotice";
 import { NAMES_HIDDEN } from "@/features/alerts/kinds";
-import { toReview } from "./review";
 
 const TYPE_LABEL: Record<InventoryType, string> = {
   service: "AI services",
@@ -53,13 +52,23 @@ function statusText(i: InventoryItem): string {
   return i.status ? STATUS_LABEL[i.status] : "No review";
 }
 
+export type InventoryExport = (format: "csv" | "json") => void;
+
+interface InventoryCardProps {
+  isAdmin: boolean;
+  /** The page header's Export CSV and Export JSON call this with the view on screen. */
+  exporter?: MutableRefObject<InventoryExport | null>;
+  /** How many rows the view shows, so the header's exports are off with nothing to export. */
+  onRows?: (n: number | null) => void;
+}
+
 /** AI usage > Inventory (ADR-0038 section 7): everything AI seen in one typed list, by
- * type, Active or Excluded, grouped as asked; the view exports as CSV or JSON, audited. */
-export function InventoryCard({ isAdmin, canExport }: { isAdmin: boolean; canExport: boolean }) {
+ * type, Active or Excluded, grouped as asked; the view exports as CSV or JSON, audited.
+ * One filter row (owner, 2026-11-16); the exports are the page header's. */
+export function InventoryCard({ isAdmin, exporter, onRows }: InventoryCardProps) {
   const client = useQueryClient();
   const q = useQuery({ queryKey: ["ai-usage", "inventory"], queryFn: () => api.aiInventory(30) });
   const filters = useFilters(FILTER_DEFAULTS, FILTER_VALUES);
-  const type = (filters.values.type || null) as InventoryType | null;
   const excludedView = filters.values.state === "excluded";
   const [group, setGroup] = useState<Group>("none");
   const [excluding, setExcluding] = useState<InventoryItem | null>(null);
@@ -79,10 +88,12 @@ export function InventoryCard({ isAdmin, canExport }: { isAdmin: boolean; canExp
       refresh();
       void client.invalidateQueries({ queryKey: ["ai-usage"] });
       void client.invalidateQueries({ queryKey: ["ai-mcp-rules"] });
+      void client.invalidateQueries({ queryKey: ["agents-overview"] });
     },
   });
   const items = q.data?.items ?? [];
-  const waiting = toReview(items);
+  // The server's count, the same as the header's and the rail's (D258).
+  const waiting = q.data?.to_review ?? 0;
   // Opens on Unreviewed; with nothing to review, on All. Decided once, when the list first
   // loads: a review made on this page does not move the view under the person. Excluded
   // items are out of review, so that view always opens on All.
@@ -91,18 +102,34 @@ export function InventoryCard({ isAdmin, canExport }: { isAdmin: boolean; canExp
   const usual: StatusFilter = excludedView ? "all" : (opened.current ?? "all");
   const status = (filters.values.status || usual) as StatusFilter;
   const inView = items.filter((i) => (i.excluded !== null) === excludedView);
-  const ofType = inView.filter((i) => type === null || i.type === type);
-  const rows = ofType.filter((i) => status === "all" || i.status === status);
   const count = (t: InventoryType | null) =>
     inView.filter((i) => t === null || i.type === t).length;
+  // Only types with items in this view are offered (no choice that lists nothing); a type
+  // left empty by a review or an exclusion reads as All.
+  const types = TYPES.filter((t) => count(t) > 0);
+  const asked = (filters.values.type || null) as InventoryType | null;
+  const type = asked && types.includes(asked) ? asked : null;
+  const ofType = inView.filter((i) => type === null || i.type === type);
+  const rows = ofType.filter((i) => status === "all" || i.status === status);
   const word = (n: number) => (n === 1 ? "item" : "items");
+  // A grouping that makes one group of the rows shown does nothing: it is not offered,
+  // and with none left Group by is not shown (an empty view included).
+  const groupings: { value: Group; label: string }[] = [
+    ...(new Set(rows.map((i) => i.type)).size > 1
+      ? [{ value: "type" as const, label: "Type" }]
+      : []),
+    ...(new Set(rows.map(statusText)).size > 1
+      ? [{ value: "status" as const, label: "Status" }]
+      : []),
+  ];
+  const grouped: Group = groupings.some((g) => g.value === group) ? group : "none";
   const groups: [string, InventoryItem[]][] =
-    group === "none"
+    grouped === "none"
       ? [["", rows]]
       : [
           ...rows
             .reduce((m, i) => {
-              const k = group === "type" ? ONE[i.type] : statusText(i);
+              const k = grouped === "type" ? ONE[i.type] : statusText(i);
               m.set(k, [...(m.get(k) ?? []), i]);
               return m;
             }, new Map<string, InventoryItem[]>())
@@ -122,12 +149,18 @@ export function InventoryCard({ isAdmin, canExport }: { isAdmin: boolean; canExp
       setExportError(e instanceof Error ? e.message : "The export failed");
     }
   };
+  useEffect(() => {
+    if (exporter) exporter.current = (format) => void doExport(format);
+  });
+  const shown = q.data ? rows.length : null;
+  useEffect(() => onRows?.(shown), [onRows, shown]);
   const now = new Date().toISOString();
   return (
     <Card
-      title="Inventory"
+      // Not "Inventory" again under the tab of that name (owner, 2026-11-16).
+      title="Everything AI seen"
       label="AI inventory"
-      note="Everything AI seen in the last 30 days, from the sources you can read."
+      note="In the last 30 days, from the sources you can read."
     >
       {q.data?.masked ? (
         <div className="border-b border-border p-2">
@@ -150,15 +183,20 @@ export function InventoryCard({ isAdmin, canExport }: { isAdmin: boolean; canExp
             ],
           }}
           facets={[
-            {
-              name: "Type",
-              value: type ?? "",
-              options: [
-                { id: "", label: `All (${count(null)})` },
-                ...TYPES.map((t) => ({ id: t, label: `${TYPE_LABEL[t]} (${count(t)})` })),
-              ],
-              onChange: (id) => filters.set("type", id),
-            },
+            // Two types or more, or one is chosen: otherwise every choice lists the same.
+            ...(types.length > 1 || type !== null
+              ? [
+                  {
+                    name: "Type",
+                    value: type ?? "",
+                    options: [
+                      { id: "", label: `All (${count(null)})` },
+                      ...types.map((t) => ({ id: t, label: `${TYPE_LABEL[t]} (${count(t)})` })),
+                    ],
+                    onChange: (id: string) => filters.set("type", id),
+                  },
+                ]
+              : []),
             {
               name: "Status",
               value: status,
@@ -169,6 +207,19 @@ export function InventoryCard({ isAdmin, canExport }: { isAdmin: boolean; canExp
               // The usual choice is left out of the address.
               onChange: (id) => filters.set("status", id === usual ? "" : id),
             },
+            ...(groupings.length
+              ? [
+                  {
+                    name: "Group by",
+                    value: grouped,
+                    options: [
+                      { id: "none", label: "None" },
+                      ...groupings.map((g) => ({ id: g.value, label: g.label })),
+                    ],
+                    onChange: (id: string) => setGroup(id as Group),
+                  },
+                ]
+              : []),
           ]}
           count={
             q.data
@@ -176,40 +227,6 @@ export function InventoryCard({ isAdmin, canExport }: { isAdmin: boolean; canExp
                 ? `${inView.length} ${word(inView.length)}`
                 : `${rows.length} of ${inView.length} ${word(inView.length)}`
               : undefined
-          }
-          columns={
-            <span className="flex flex-wrap items-center gap-2">
-              <label className="flex items-center gap-1.5 text-sm">
-                <span className="text-text-secondary">Group by</span>
-                <select
-                  value={group}
-                  onChange={(e) => setGroup(e.target.value as Group)}
-                  className="h-8 rounded border border-border bg-surface px-2 text-sm"
-                >
-                  <option value="none">None</option>
-                  <option value="type">Type</option>
-                  <option value="status">Status</option>
-                </select>
-              </label>
-              {canExport ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => void doExport("csv")}
-                    className="h-8 rounded border border-border px-3 text-sm hover:bg-surface"
-                  >
-                    Export CSV
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void doExport("json")}
-                    className="h-8 rounded border border-border px-3 text-sm hover:bg-surface"
-                  >
-                    Export JSON
-                  </button>
-                </>
-              ) : null}
-            </span>
           }
           onReset={filters.reset}
           isDefault={filters.values.state === "active" && !type && status === usual}

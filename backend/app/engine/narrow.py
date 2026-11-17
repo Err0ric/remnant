@@ -27,7 +27,16 @@ def _parse(sql: str) -> Any:
     return sqlglot.parse_one(sql, read="duckdb")
 
 
-def _value(node: exp.Expression, params: Mapping[str, Any]) -> str | None:
+def _value(node: exp.Expression, params: Mapping[str, Any], column: str = "") -> str | None:
+    """A pinned value as text: a string for source_id and template_id, a whole number for
+    class_uid (as text, so one set type serves both)."""
+    if column == "class_uid":
+        if isinstance(node, exp.Literal) and not node.is_string and str(node.this).isdigit():
+            return str(int(node.this))
+        if isinstance(node, exp.Placeholder | exp.Parameter):
+            value = params.get(str(node.name))
+            return str(value) if isinstance(value, int) and not isinstance(value, bool) else None
+        return None
     if isinstance(node, exp.Literal) and node.is_string:
         return str(node.this)
     if isinstance(node, exp.Placeholder | exp.Parameter):
@@ -70,7 +79,7 @@ def _pinned(sql: str, params: Mapping[str, Any] | None, column: str) -> set[str]
     events = [t for t in tree.find_all(exp.Table) if t.name.lower() == "events"]
     if len(events) != 1 or len(list(tree.find_all(exp.Table))) != 1:
         return None
-    names = {"events", events[0].alias_or_name.lower()}
+    names = _own_name(events[0])
     return _where_pins(tree.args.get("where"), names, column, params)
 
 
@@ -80,34 +89,50 @@ def _where_pins(
     """The values a WHERE provably limits `column` to, or None."""
     if where is None:
         return None
-    conjuncts = list(where.this.flatten()) if isinstance(where.this, exp.And) else [where.this]
-    pinned: set[str] | None = None
-    used: set[int] = set()
-    for cond in conjuncts:
-        values: list[str | None] | None = None
-        if isinstance(cond, exp.EQ):
-            col, other = cond.this, cond.expression
-            if not isinstance(col, exp.Column):
-                col, other = other, col
-            if isinstance(col, exp.Column) and _is_col(col, names, column):
-                values = [_value(other, params or {})]
-                used.add(id(col))
-        elif isinstance(cond, exp.In) and isinstance(cond.this, exp.Column):
-            if _is_col(cond.this, names, column) and not cond.args.get("query"):
-                values = [_value(v, params or {}) for v in cond.expressions]
-                used.add(id(cond.this))
-        if values is None:
-            continue
-        if any(v is None for v in values):
-            return None  # a filter we cannot read: do not guess
-        found = {v for v in values if v is not None}
-        pinned = found if pinned is None else pinned & found
-    # Any other mention of the column in the WHERE (inside an OR, a function, a CASE):
-    # the pins above may not be the whole story, so do not narrow.
-    for col in where.find_all(exp.Column):
-        if _is_col(col, names, column) and id(col) not in used:
-            return None
-    return pinned
+    pins, readable = _pins(where.this, names, column, params or {})
+    return pins if readable else None
+
+
+def _pins(
+    e: exp.Expression, names: set[str], column: str, params: Mapping[str, Any]
+) -> tuple[set[str] | None, bool]:
+    """(the values `e` limits `column` to, or None when it does not limit it; whether every
+    mention of the column in `e` could be read). Parentheses are looked through; AND keeps
+    what both sides allow; OR pins only when both sides pin (S7 of the fix list of
+    2026-11-16: "(template_id = 'a' AND ...) OR (template_id = 'b' AND ...)" is a or b).
+    Any other mention of the column (a function, a CASE, a NOT) is unreadable, so the
+    caller does not narrow."""
+    while isinstance(e, exp.Paren):
+        e = e.this
+    if isinstance(e, exp.And | exp.Or):
+        left, lok = _pins(e.this, names, column, params)
+        right, rok = _pins(e.expression, names, column, params)
+        if not (lok and rok):
+            return None, False
+        if isinstance(e, exp.Or):
+            return (None if left is None or right is None else left | right), True
+        if left is None or right is None:
+            return left if right is None else right, True
+        return left & right, True
+    values: list[str | None] | None = None
+    if isinstance(e, exp.EQ):
+        col, other = e.this, e.expression
+        if not isinstance(col, exp.Column):
+            col, other = other, col
+        if isinstance(col, exp.Column) and _is_col(col, names, column):
+            values = [_value(other, params, column)]
+    elif isinstance(e, exp.In) and isinstance(e.this, exp.Column):
+        if _is_col(e.this, names, column) and not e.args.get("query"):
+            values = [_value(v, params, column) for v in e.expressions]
+    if values is None:
+        # A column inside a subquery of `e` belongs to that subquery's own read of events.
+        mentioned = any(
+            _is_col(c, names, column) and not _in_subquery(c, e) for c in e.find_all(exp.Column)
+        )
+        return None, not mentioned
+    if any(v is None for v in values):
+        return None, False  # a filter we cannot read: do not guess
+    return {v for v in values if v is not None}, True
 
 
 def pinned_templates_each(sql: str, params: Mapping[str, Any] | None = None) -> set[str] | None:
@@ -132,12 +157,67 @@ def pinned_templates_each(sql: str, params: Mapping[str, Any] | None = None) -> 
         source = sel.args.get("from_") or sel.args.get("from")
         if source is None or source.this is not table:
             return None
-        names = {"events", table.alias_or_name.lower()}
+        names = _own_name(table)
         pins = _where_pins(sel.args.get("where"), names, "template_id", params)
         if pins is None:
             return None
         out |= pins
     return out
+
+
+def pinned_reads(
+    sql: str, params: Mapping[str, Any] | None = None
+) -> list[tuple[str, frozenset[str]]] | None:
+    """What each read of `events` is pinned to, as (column, values): `source_id` where a
+    read pins it, else `template_id`, else `class_uid` (S7 of the fix list of 2026-11-16:
+    a DNS question that pins class 4003 said it read every source). Every read must be
+    the only table of its own SELECT and pin one of the three at the top level of its
+    WHERE; anything else: None. A source whose files can hold none of the pins adds no
+    rows, so leaving it out gives the same result (`QueryEngine._holding`)."""
+    try:
+        tree = _parse(sql)
+    except sqlglot.errors.ParseError:
+        return None
+    if any(c.alias_or_name.lower() == "events" for c in tree.find_all(exp.CTE)):
+        return None  # a CTE named events would hide the table
+    reads = [t for t in tree.find_all(exp.Table) if t.name.lower() == "events"]
+    if not reads:
+        return None
+    out: list[tuple[str, frozenset[str]]] = []
+    for table in reads:
+        sel = table.find_ancestor(exp.Select)
+        if sel is None or sel.args.get("joins"):
+            return None
+        source = sel.args.get("from_") or sel.args.get("from")
+        if source is None or source.this is not table:
+            return None
+        names = _own_name(table)
+        for column in ("source_id", "template_id", "class_uid"):
+            pins = _where_pins(sel.args.get("where"), names, column, params)
+            if pins is not None:
+                out.append((column, frozenset(pins)))
+                break
+        else:
+            return None
+    return out
+
+
+def _in_subquery(node: exp.Expression, top: exp.Expression) -> bool:
+    """Whether `node` sits in a SELECT nested inside `top`."""
+    p = node.parent
+    while p is not None and p is not top:
+        if isinstance(p, exp.Select):
+            return True
+        p = p.parent
+    return False
+
+
+def _own_name(table: exp.Table) -> set[str]:
+    """The one name a column can use to refer to this read: its alias when it has one,
+    otherwise `events` (second review of 636: `events.x` inside a read aliased `i` refers
+    to an outer read, so it never pins `i`). An unqualified column in the read's own
+    WHERE is the read's own, since it is the only table of its SELECT."""
+    return {table.alias_or_name.lower()}
 
 
 def _is_col(col: exp.Column, table_names: set[str], column: str) -> bool:

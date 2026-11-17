@@ -411,6 +411,9 @@ export interface AskRunResult extends QueryResult {
   summary_note?: string | null;
   /** Group keys (D173): each row can open its own events in Logs. */
   drill_keys?: string[];
+  /** What was counted, when the rows have no event ids (fix 21): written by code from
+   * the run, never by a model, so it is not a summary and cites nothing. */
+  counted?: string | null;
 }
 
 /** "Show events" for one row: SQL for the Search editor and the window it reads. */
@@ -511,10 +514,12 @@ export interface SectionRow {
   rules?: number | null;
 }
 
-/** False while the window before is under 90% covered by the section's sources. */
+/** False while the window before is under 90% covered by the section's sources; `starts`:
+ * then, when it will be covered (the server's one rule for "Comparisons start"). */
 export interface SectionHistory {
   compared: boolean;
   since: string | null;
+  starts?: string | null;
 }
 
 /** The Microsoft 365 area (ADR-0038 section 5). Every query has `{from}` and `{to}`. */
@@ -1263,6 +1268,8 @@ export interface TemplateChange {
   /** When this server first loaded the version: events from then on use it. */
   since: string | null;
   current: boolean;
+  /** The note in plain words, for the Sources page; empty when the template has none. */
+  summary?: string;
   affected: { kind: string; id: string; name: string; fields: string[] }[];
 }
 
@@ -1655,6 +1662,10 @@ async function requestText(path: string): Promise<string> {
 
 /** An agent session from the hooks plugin (ADR-0026). */
 export interface AgentSession {
+  /** The same on every row: the window's sessions, and those with a step, before the cap
+   * of 100, so the list can say "100 of 300" (PR 639 review). */
+  total?: number;
+  with_steps?: number;
   session_id: string;
   person: string | null;
   machine: string | null;
@@ -1835,6 +1846,10 @@ export interface AiInventory {
   sources_in_scope: string[];
   /** No View people in AI usage (D242): agents show machines, never owners' names. */
   masked?: boolean;
+  /** Active items still unreviewed: the server's one "to review" number (D258). */
+  to_review?: number;
+  /** Active items marked Not approved, by the same server rule. */
+  not_approved?: number;
 }
 
 export interface AgentTool {
@@ -1864,6 +1879,13 @@ export interface AgentsOverview {
   failed: SectionKpi | null;
   mcp_not_approved: SectionKpi | null;
   late_devices: SectionKpi | null;
+  /** MCP servers seen in the window, still unreviewed (Agents' Needs attention). */
+  mcp_unreviewed?: number;
+  /** The window read: the last 90 days of the time chosen, on the server's clock. */
+  read_start: string;
+  read_end: string;
+  /** The Sessions tile in parts that add up to it, for the Sessions card's line. */
+  session_parts?: { listed: number; empty: number; telemetry_only: number };
   missing_devices: string[];
   tools: AgentTool[];
 }
@@ -2031,7 +2053,10 @@ export interface ProviderHealth {
 
 export interface AskTurn {
   question: string;
-  sql: string;
+  /** The earlier answer by id: the server reads its own SQL (fix 20). */
+  ask_id?: string;
+  /** The client's copy, sent while it fits typed SQL; used when the answer expired. */
+  sql?: string;
 }
 
 export interface AskRequest {
@@ -2235,6 +2260,8 @@ export interface OverviewSourceHealth {
   idle?: boolean;
   /** The one state Health and the Dashboard footer show (server-side, handoff item 4). */
   condition: SourceCondition;
+  /** The source's problem as every page draws it (server-side), or none. */
+  problem?: SourceProblem | null;
 }
 
 /** The choices for "Quiet is normal for up to" (D260). */
@@ -2242,6 +2269,8 @@ export const QUIET_OK_DAYS = [1, 3, 7, 14, 30] as const;
 export type QuietOkDays = (typeof QUIET_OK_DAYS)[number];
 
 export type SourceCondition = "healthy" | "quiet" | "gap" | "attention" | "error" | "paused";
+/** Unhealthy (an error, or a quiet watch firing) or needs attention: one server rule. */
+export type SourceProblem = "unhealthy" | "attention";
 
 /** A source and when it last sent; null when it never did. */
 export interface SourceWait {
@@ -2329,6 +2358,14 @@ export interface Overview {
   /** Sources with under 7 days of data, left out of the comparison. */
   new_sources: string[];
   source_summary: SourceSummary;
+  /** Damaged lake files moved aside: Health's notice row, a problem the rail's dot shows. */
+  damaged_files?: number;
+  /** How many rules are enabled: none, and the Dashboard's Detections says so at once. */
+  rules_enabled?: number;
+  /** With no rule enabled, the newest rule match kept on the viewer's sources (UTC). */
+  rules_last_match?: string | null;
+  /** A company egress is listed in Internal networks (else Attacks and access asks). */
+  egress_listed?: boolean;
 }
 
 /** GET /api/audit/... (Slice 5): admins and auditors only; reading is itself audited. */
@@ -2670,6 +2707,8 @@ export interface AiWatchSummary {
   /** False while AI use was seen for under 90% of the period before; `since`: first use. */
   compared?: boolean;
   since?: string | null;
+  /** While not compared: when comparisons start. */
+  starts?: string | null;
   /** Start of the period before; and AI use per service for one chart day. */
   before?: string;
   chart_drill?: string | null;
@@ -2851,9 +2890,13 @@ export const api = {
   alertMetrics: (bounds: { start?: string; end?: string }) =>
     request<AlertMetrics>(`/api/alerts/metrics${queryString(bounds)}`),
   /** How many of the viewer's sources are not healthy: numbers only, for the rail's dot. */
-  healthCount: () => request<{ total: number; not_healthy: number }>("/api/health/count"),
+  healthCount: () =>
+    request<{ total: number; not_healthy: number; unhealthy?: number; damaged_files?: number }>(
+      "/api/health/count",
+    ),
   /** The Inventory's "to review" number for the rail (D258): numbers only, not audited. */
-  aiInventoryCount: () => request<{ to_review: number }>("/api/ai/inventory/count"),
+  aiInventoryCount: () =>
+    request<{ to_review: number; not_approved?: number }>("/api/ai/inventory/count"),
   /** Only the open alert lines a summary shows, most severe or newest first. */
   alertLines: (limit: number, by: "severity" | "newest" = "severity") =>
     request<AlertLines>(`/api/alerts/lines?limit=${limit}&by=${by}`),
@@ -3130,11 +3173,16 @@ export const api = {
   /** The hooks plugin for an OTLP source (ADR-0026): issues a new token for the source. */
   claudePlugin: (id: string, body: ClaudePluginRequest) =>
     postForFile(`/api/sources/${encodeURIComponent(id)}/claude-plugin`, body),
-  agentsOverview: (days = 7) => request<AgentsOverview>(`/api/agents/overview?days=${days}`),
-  agentAccounts: (days = 30) => request<AgentAccounts>(`/api/agents/accounts?days=${days}`),
-  aiSessions: (days = 7, person?: string) =>
+  /** With `start` (and `end`), exactly that window: Agents' time (PR 639); else days. */
+  agentsOverview: (days = 7, w?: Window) =>
+    request<AgentsOverview>(`/api/agents/overview?days=${days}${windowQuery(w)}`),
+  agentAccounts: (days = 30, w?: Window) =>
+    request<AgentAccounts>(`/api/agents/accounts?days=${days}${windowQuery(w)}`),
+  aiSessions: (days = 7, person?: string, w?: Window) =>
     request<AgentSession[]>(
-      `/api/ai/sessions?days=${days}` + (person ? `&person=${encodeURIComponent(person)}` : ""),
+      `/api/ai/sessions?days=${days}` +
+        (person ? `&person=${encodeURIComponent(person)}` : "") +
+        windowQuery(w),
     ),
   personAlerts: (person: string) =>
     request<AlertList>(`/api/alerts?state=all&person=${encodeURIComponent(person)}`),
@@ -3479,7 +3527,7 @@ function list<T>(v: unknown): T[] {
 
 function shapeHistory(h: unknown): SectionHistory {
   const x = (h ?? {}) as Partial<SectionHistory>;
-  return { compared: Boolean(x.compared), since: x.since ?? null };
+  return { compared: Boolean(x.compared), since: x.since ?? null, starts: x.starts ?? null };
 }
 
 function shapeSeries(v: unknown): SectionSeries[] {
@@ -3553,4 +3601,15 @@ export function shapeOverview(o: Overview): Overview {
     detections: list(x.detections),
     paused: list(x.paused),
   };
+}
+
+/** A window as chosen: either side may be open. */
+type Window = { start?: string; end?: string };
+
+/** `&start=...&end=...` for the sides given, or nothing. */
+function windowQuery(w?: Window): string {
+  return (
+    (w?.start ? `&start=${encodeURIComponent(w.start)}` : "") +
+    (w?.end ? `&end=${encodeURIComponent(w.end)}` : "")
+  );
 }

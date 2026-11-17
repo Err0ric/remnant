@@ -4,6 +4,133 @@
 
 <!-- unreleased:start -->
 
+### Dashboard: loads in its final layout, with nothing moving (2026-11-17)
+
+- The Dashboard draws every part in its final place at once: the key numbers have all their tiles from the start, each a placeholder until its number arrives, and AI Watch, Identity, Attacks and access, and Detections each show their title and cards while their numbers load, in a box of the same size they have when loaded.
+- Nothing jumps when a number arrives: the Needs you list, the key numbers, and every section header stay where they first appeared.
+- Each section keeps the height it had the last time you opened the Dashboard in this browser, so returning visits load with no empty space; a first visit sizes each section by the time window.
+- What is already known to be empty is drawn at its own size from the start: Detections when no rule is enabled and no match is kept from before (administrators only, with Enable rules; others do not see the section, as before), and Attacks and access when the sources it counts sent nothing in the window. Matches kept from rules turned off still show.
+- If your list of sources cannot be read, every section still loads on its own, with Retry for the list.
+- A tile with nothing to count keeps its place: AI services in use reads 0 ("None in this window"), and a tile without data says "Not available". A section with nothing to show says so, centered in its box: "No sign-in failures from external addresses in this window.", "No AI use in sources you can read."
+- Loading placeholders are easier to see in the dark theme.
+- The smoke test now loads the Dashboard with its answers held back and fails when anything on it moves.
+- What you will notice: the Dashboard no longer jumps while it loads; every section shows its title and grey placeholders until its numbers arrive.
+- What changes for existing installs: nothing to do.
+
+### The left menu shows the open page's tabs and what each entry is for (2026-11-16)
+
+- The page you are on lists its own tabs under it in the left menu, indented, with the open tab marked: AI usage (Services, People, Inventory), Agents, Health, Alerts, and Logs. Other pages stay folded, and Settings keeps its own list on its pages.
+- Pointing at a menu entry, or moving to it with the keyboard, shows one line on what it is for, such as "Search every event" for Logs. With the narrow icon-only menu it shows the name and that line.
+- With nothing pinned yet, Pinned shows "Pin a dashboard or saved search here" instead of being hidden.
+- On short windows the recent and pinned lists still give way first, so the menu never scrolls.
+- What you will notice: the left menu lists the open page's tabs, explains each entry on hover, and says where pins go.
+- What changes for existing installs: nothing to do.
+
+### Times in the app's format on Schedules, bars on Handling, and a paged Microsoft 365 table on a person's page (2026-11-16)
+
+- Alerts > Schedules shows each schedule's last and next run as "Nov 16, 10:00 AM" in your time zone, with the UTC time on hover, instead of "2026-11-16 10:00". The same goes for its alert deliveries, Alert targets' last send, Users' last sign-in, your tokens, parser drafts, the Activity and AI calls tables, the events around an event, the AI Watch failing line, the Agents card, the Logs "Last run" line, and the offline banner.
+- Alerts > Handling draws alerts opened and closed per day as bars side by side, so a day's count is never drawn as a curve between days. The legend, the zero baseline, and the exact numbers on hover stay.
+- A person's Microsoft 365 table no longer scrolls inside the page: it shows 50 rows a page with Previous and Next above and below, as Logs does. Its headers read App, Outcome, Operation, and Target instead of column names.
+- What you will notice: times on Schedules read like the rest of the app, the Handling chart shows bars, and a person's Microsoft 365 rows come in pages.
+- What changes for existing installs: nothing to do.
+
+### Agents: its own numbers in the header, a faster Sessions list, and a legend that adds up (2026-11-16)
+
+- The Agents header now counts what the page is about: sessions, people, and tool calls for the time chosen, the same numbers as the tiles below it, instead of AI usage's count of services.
+- The comparison line shows once, above the tiles; AI usage's line about new and no longer seen services is no longer repeated on Agents.
+- Agents loads faster: the Sessions and Accounts tabs no longer wait on the whole AI usage answer (only the MCP servers tab reads it), and the Sessions list and session pages read only the Claude plugin's records instead of every source of the time chosen.
+- On Agents, Needs attention counts not approved and unreviewed MCP servers from the same answer as the tiles, the same on every tab. The chips about services not approved and sensitive-data signals stay on AI usage, where they belong.
+- In a session's timeline, the legend puts the three kinds of tool call (in the session, file access, access) under one "Tool calls" total, the same number as the Tool calls tile. Claude Code's own bookkeeping counts as Other, as it already did in the tiles.
+- "Not reported" under Tokens stays on one line, and the timeline's "Access" is now called "Web or MCP access".
+- The Sessions card has one line that adds its list up to the Sessions tile: listed, empty and hidden, and sessions seen only in Claude Code telemetry. With nothing in the time chosen it says so for that time, and offers the plugin download only when there are no sessions at all.
+- Everything on Agents now covers exactly the time you pick: 1 hour is an hour, not a day, and a custom range is that range. The header, the tiles, Needs attention, the Sessions list, Accounts, and the MCP servers table all agree; Needs attention counts the MCP servers the table lists. Placeholder names such as "custom" are no longer counted as an unreviewed MCP server.
+- For a range longer than 90 days, Agents shows its last 90 days and says so under the time control.
+- When there are more than 100 sessions, the Sessions card says it shows the newest 100 of how many.
+- MCP servers with the same number of calls keep the same order on every load.
+- What you will notice: the Agents header shows sessions, people, and tool calls, the Sessions list loads faster and says how it adds up to the tile, every number on Agents covers the time you pick, and the timeline's Tool calls match the tile.
+- What changes for existing installs: nothing to do.
+
+### AI usage People rows, the Admin view's lists, and one order on every load (2026-11-16)
+
+- AI usage > People: a person seen only on the network keeps each value in its own column. What the network saw is under Network, "Unmatched" and Link in Identities are under the name, cost and tokens say "Not reported", and sessions, tool calls, and errors are empty, with the reason said once above the table; no sentence runs across the columns. "No cost data" is now "None received": Claude Code telemetry reports cost and tokens, and none arrived.
+- Logs > Views > Microsoft 365 admin, Sign-ins, and Mail: each list counts its rows in its own words ("1 app consent", "3 sign-ins") and its columns have plain headers ("Person", "App ID") instead of column names.
+- AI usage lists keep one order on every load: services and people with equal counts are listed by name, and Inventory items seen at the same time are listed by type, then by name.
+- "N new, N no longer seen" beside the time control counts AI services only on AI usage (MCP servers were counted too), so it matches the New badges and the No longer seen card.
+- What you will notice: AI usage People rows stay inside their columns, the Admin view says "1 app consent" with plain headers, and AI usage lists no longer change order between loads.
+- What changes for existing installs: nothing to do.
+
+### Settings > Sources: one status with Health, parser updates folded away (2026-11-16)
+
+- Settings > Sources shows each source's status in the same words and dot as Health ("Flowing", "Idle", "Quiet 5 d", "Never sent", "Paused", "Unhealthy"), from the one rule the server uses for both. A file that is still being read but has sent nothing for days now reads as quiet on both pages, not as green "Reading".
+- What the reader is doing is its own small line under the status, for example "Reader: following the files".
+- Parser updates are one line with a closed "What changed" that lists each update in plain words and the searches to check; column names and decision numbers are no longer on the page.
+- The "Local only" badge and the "latest ... ago" line no longer break over two lines.
+- The Dashboard's Needs you names a source by the same status ("Quiet 33 h", "Unhealthy") with what is wrong ("dns_bind: nothing received for 33 h"), and lists no source that is quiet as normal or paused.
+- What you will notice: Settings > Sources and the Dashboard say the same status as Health for every source, and parser updates take one line until you open What changed.
+- What changes for existing installs: nothing to do.
+
+### People & devices at full width, with neutral score bars (2026-11-16)
+
+- People & devices uses the full content width, like Alerts and AI usage, instead of a narrow centered card. Names get a bounded share and the counts share the rest evenly, with one-line headers, the same on every tab; every number, rule matches included, is right-aligned.
+- The score bars are drawn in a neutral grey instead of red: a score is a size, not a severity. Severity colors stay on the rule match badges.
+- The line beside the title, "0 rule matches considered", is gone: it counted stored rule matches of any date, not the page's range. Each tab still shows its own count.
+- What you will notice: People & devices fills the page, its score bars are grey, and the title has no count beside it.
+- What changes for existing installs: nothing to do.
+
+### Old addresses open the right page, and unknown ones say "Page not found" (2026-11-16)
+
+- Old addresses and bookmarks open the page that holds their content now: `/investigate` opens People & devices, `/investigate/ask` opens Ask AI, and `/settings` opens Sources in Settings, instead of Health. Anything after the address (a person, a filter) is kept, and Back does not return to the old address.
+- An address that matches no page shows "Page not found" with the address you typed and a link to the Dashboard, and leaves the address as it is so you can correct it.
+- Links in alert messages point at today's pages: the log integrity alerts open the Integrity tab of the audit log, and events sent to you open Logs.
+- What you will notice: old links land on the right page, and a mistyped address says "Page not found" instead of opening Health.
+- What changes for existing installs: nothing to do.
+
+### Comparison dates, "No earlier data", and the Needs you subject column (2026-11-16)
+
+- "Comparisons start" now gives the day the window before is first covered, from one rule on the server for the Dashboard sections, AI Watch, Agents, and Microsoft 365. Before, the page added two whole windows to the newest source's start, so the date came about 4 days late (on a 30-day window, about 57 days of data are needed, so the date can still be weeks ahead).
+- Agents no longer counts the server's own events as an AI telemetry source, so the day the server first ran no longer holds back its comparisons.
+- While a section's sources have no data for the window before, no number shows a change: the server sends no earlier value. The Dashboard's Failed sign-ins and Sign-ins outside approved countries tiles say "No earlier data" in its place, instead of a rise from zero. A window before that has data and counted 0 still shows the change.
+- Needs you on the Dashboard gives the subject column a fixed share of the row: source ids, host names, and addresses stay on one line and are cut in the middle when long, with the full value on hover and on copy. Titles wrap between words only, never inside a device id or address.
+- Top services on the Dashboard shows 0 people as 0, as the Inventory does; "·" stays only for a value that is not known.
+- What you will notice: the Dashboard's comparison dates are right, a tile with nothing earlier says "No earlier data", and long names in Needs you no longer break across lines.
+- What changes for existing installs: nothing to do.
+
+### One badge style in the left menu, and Health's counts agree (2026-11-16)
+
+- The counts beside Alerts and AI usage now look the same: both are the solid orange badge, because both ask you to act.
+- Health shows a small status dot instead of a number, only when something is wrong: red only when Health shows a source in red (an error, or a source that stopped with gaps on its chart), amber otherwise. It also shows when damaged data files were moved aside. Hovering it, or a screen reader, says how many ("Health: 2 sources need attention").
+- On Health, the Sources tab's count, the Problems count, the rows listed, and the dot in the left menu now come from one rule on the server. When the tab's count includes enrichment feeds as well as sources, its tooltip says so, and a link beside the filters ("Show 1 problem in Enrichment feeds") opens them.
+- The note under Health's source chart says "Times in UTC." when your time zone is UTC, instead of offering a hover that shows the same time.
+- What you will notice: Alerts and AI usage counts look alike, Health has a colored dot instead of a number, and Health's counts add up.
+- What changes for existing installs: nothing to do.
+
+### Ask AI lists every AI service and says what it counted (2026-11-16)
+
+- "Which AI services are people using?" now counts AI services the way AI usage does, from every source that can show one (DNS, proxy, firewall, Microsoft 365, and the rest), so its list matches AI usage > Services for the same time range. Each service shows the sources it was seen in. A saved copy of this query (Save as my own, or a pack added to a dashboard) keeps the service list as it was when saved.
+- An answer made of counts, with no events to cite, now has one plain "What was counted" line in place of "No summary": the sources read, the time range, and what was counted. An answer with nothing found is one line that says what was read.
+- "Sources read" under How I got this lists only the sources the question actually read, not every source you can see.
+- The question box is wider (up to 1200 px), and Ask is the page's one blue button once there is text.
+- What you will notice: Ask AI's AI services answer matches AI usage, says what it counted, and names only the sources it read.
+- What changes for existing installs: nothing to do.
+
+### One "to review" number on AI usage (2026-11-16)
+
+- The header, the AI usage count in the left menu, the Inventory's Unreviewed rows, and the Needs attention line now all show the same number of items to review, counted once on the server. Before, Needs attention counted AI services only, over the page's time range, so it could say 1 while the rest said 2.
+- Needs attention reads the same on Services, People, and Inventory: open alerts, items to review, items marked Not approved (each opening the Inventory on that list), and sensitive-data signals in the time chosen on Services and People. Following one of these links keeps that time choice.
+- The Inventory tab no longer shows the "not approved in use" and "sensitive-data signals" tags beside the time control: they count the time chosen on the other tabs, and that tab has no time control.
+- The Dashboard's AI services tile now says "N of them unreviewed": AI services in its time range only.
+- The Inventory tab has no time control any more: it always shows the last 30 days, as its card says. The other tabs keep the time you chose.
+- The Inventory's filters are one row; Export CSV and Export JSON are in the page header and are off when there is nothing to export. Type lists only the kinds of item in the view, and Group by only groupings that make more than one group. The card under the tab is titled "Everything AI seen" instead of repeating "Inventory".
+- What you will notice: AI usage states one "to review" number everywhere, and the Inventory tab shows only the controls that do something there.
+- What changes for existing installs: nothing to do.
+
+### Every dropdown is drawn in the app's theme (2026-11-16)
+
+- Every dropdown (filters such as the AI inventory's Status, and the choices in forms) is now the app's own list instead of the browser's, so its options follow the dark and light themes.
+- The current choice has a check mark; only an option that really cannot be chosen is greyed out. The keyboard works as before: arrows, Home, End, typing the first letters, Enter, and Escape.
+- What you will notice: every dropdown is readable in the dark theme and looks the same on every page.
+- What changes for existing installs: nothing to do.
+
 ### README screenshots of the current console, in both themes (2026-11-15)
 
 - The README screenshots are retaken from the synthetic demo after the console redesign: Dashboard, Logs, Ask AI, the Microsoft 365 admin view of Logs, AI usage, Agents > Sessions with a session open, Health, and the command palette, each in the dark and the light theme. The social preview image is rebuilt from the new Dashboard.

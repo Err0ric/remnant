@@ -21,15 +21,14 @@ async function rail(path: string, auth: MockAuth) {
   return screen.findByRole("navigation", { name: "Primary" });
 }
 
-const titles = (nav: HTMLElement) =>
-  within(nav)
-    .getAllByRole("link")
-    .map((a) => a.getAttribute("title"));
+/** The rail's entries by label (the current page's tab rows are not entries, D268). */
+const entries = (nav: HTMLElement) => [...nav.querySelectorAll<HTMLElement>("[data-rail-entry]")];
+const titles = (nav: HTMLElement) => entries(nav).map((a) => a.querySelector("span")?.textContent);
 
 afterEach(() => window.history.replaceState(null, "", "/"));
 
 describe("Rail (ADR-0052 section 3.2, redesign build row 4)", () => {
-  it("has at most 10 entries in the model, and every one is a page with no children", () => {
+  it("has at most 10 entries in the model, and every one is a page", () => {
     const ids = RAIL_GROUPS.flatMap((g) => g.areas);
     expect(ids.length + 1).toBeLessThanOrEqual(10); // plus Settings
     expect(new Set(ids).size).toBe(ids.length);
@@ -57,11 +56,10 @@ describe("Rail (ADR-0052 section 3.2, redesign build row 4)", () => {
       "Health",
       "Settings",
     ]);
-    const here = within(nav)
-      .getAllByRole("link")
-      .filter((a) => a.hasAttribute("aria-current"));
-    expect(here.map((a) => a.getAttribute("title"))).toEqual(["Alerts"]);
-    expect(here[0]).toHaveAttribute("aria-current", "page");
+    const here = entries(nav).filter((a) => a.hasAttribute("aria-current"));
+    expect(here.map((a) => a.dataset.railEntry)).toEqual(["alerts"]);
+    // Alerts lists its tabs (D268): the entry is the current section, Queue the page.
+    expect(here[0]).toHaveAttribute("aria-current", "true");
   });
 
   it("shows an Auditor only what they can open: no Ask AI, and Logs opens Saved searches", async () => {
@@ -90,38 +88,70 @@ describe("Rail (ADR-0052 section 3.2, redesign build row 4)", () => {
     );
   });
 
-  it("shows no count beside Health when every source is healthy", async () => {
+  it("shows no dot and no number beside Health when every source is healthy", async () => {
     const calm = await rail("/alerts", { mode: "login", signedIn: true, role: "admin" });
     await screen.findByRole("heading", { level: 1, name: "Alerts" });
     await new Promise((r) => setTimeout(r, 3000)); // past the rail's first read
-    expect(calm.querySelector("[data-health-count]")).toBeNull();
     expect(calm.querySelector("[data-health-dot]")).toBeNull();
+    expect(within(calm).getByRole("link", { name: "Health" })).toHaveTextContent(/^Health$/);
   });
 
-  it("says how many sources need attention beside Health, outlined in warn, in place of the dot", async () => {
+  it("shows Health's status dot only, no number, its words naming the state and count (item 7)", async () => {
     const nav = await rail("/alerts", {
       mode: "login",
       signedIn: true,
       role: "admin",
-      healthCount: { total: 5, not_healthy: 2 },
+      healthCount: { total: 5, not_healthy: 2, unhealthy: 0 },
     });
-    const health = within(nav).getByRole("link", { name: /^Health/ });
-    expect(await within(health).findByText("2 sources need attention")).toHaveClass("sr-only");
-    const count = health.querySelector("[data-health-count]");
-    expect(count).toHaveClass("border", "border-warn", "text-warn");
-    expect(count).toHaveAttribute("title", "2 sources need attention");
-    expect(count?.querySelector("[aria-hidden]")).toHaveTextContent(/^2$/);
-    expect(health.querySelector("[data-health-dot]")).toBeNull();
+    const health = await within(nav).findByRole(
+      "link",
+      { name: "Health: 2 sources need attention" },
+      { timeout: 5000 },
+    );
+    const dot = within(health).getByRole("img", { name: "Health: 2 sources need attention" });
+    // One tooltip per entry (D268): the state leads Health's own, the dot has none.
+    expect(dot).not.toHaveAttribute("title");
+    expect(health.parentElement!.querySelector('[role="tooltip"]')).toHaveTextContent(
+      "Health: 2 sources need attention. Whether every source and collector is sending",
+    );
+    expect(dot).toHaveAttribute("data-health-dot", "attention");
+    expect(dot).toHaveClass("bg-warn");
+    expect(health).toHaveTextContent(/^Health$/); // no number
   });
 
-  it("puts the open alert count on the solid High pair", async () => {
-    const nav = await rail("/dashboard", { mode: "login", signedIn: true, role: "admin" });
+  it("colors the Health dot by the worst state: unhealthy in the danger color", async () => {
+    const nav = await rail("/alerts", {
+      mode: "login",
+      signedIn: true,
+      role: "admin",
+      healthCount: { total: 5, not_healthy: 3, unhealthy: 1 },
+    });
+    const health = await within(nav).findByRole(
+      "link",
+      { name: "Health: 3 sources need attention, 1 unhealthy" },
+      { timeout: 5000 },
+    );
+    const dot = health.querySelector("[data-health-dot]");
+    expect(dot).toHaveAttribute("data-health-dot", "unhealthy");
+    expect(dot).toHaveClass("bg-danger");
+  });
+
+  it("puts every count that asks for action on the solid High pair: Alerts and AI usage alike", async () => {
+    const nav = await rail("/dashboard", {
+      mode: "login",
+      signedIn: true,
+      role: "admin",
+      aiToReview: 3,
+    });
     const alerts = within(nav).getByRole("link", { name: /^Alerts/ });
-    const count = await within(alerts).findByLabelText(/open$/);
-    expect(count).toHaveClass("bg-sev-h-solid", "text-sev-h-on");
+    const open = await within(alerts).findByLabelText(/open$/);
+    const ai = within(nav).getByRole("link", { name: /^AI usage/ });
+    const review = await within(ai).findByLabelText("3 to review", {}, { timeout: 5000 });
+    expect(open.className).toBe(review.className);
+    expect(review).toHaveClass("bg-sev-h-solid", "text-sev-h-on");
   });
 
-  it("reads the Health count from what the page already loaded, without a second request", async () => {
+  it("reads the Health dot from what the page already loaded, without a second request", async () => {
     window.history.replaceState(null, "", "/health");
     const spy = mockApi("Codename", { mode: "login", signedIn: true, role: "admin" });
     vi.resetModules();
@@ -140,26 +170,26 @@ describe("Rail (ADR-0052 section 3.2, redesign build row 4)", () => {
     const asked = spy.mock.calls.map(([u]) => String(u));
     expect(asked.some((u) => u.endsWith("/api/overview"))).toBe(true);
     expect(asked.some((u) => u.endsWith("/api/health/count"))).toBe(false);
-    // And the dot says what that Overview says, by the same rule as the server's count.
-    const { needingAttention } = await import("@/features/health/flow");
+    // And the dot says what that Overview says, by the server's rule.
+    const { sourceProblems, healthWords } = await import("@/features/health/flow");
     const { api } = await import("@/lib/api");
-    const n = needingAttention(await api.overview());
-    const health = within(screen.getByRole("navigation", { name: "Primary" })).getByRole("link", {
-      name: /^Health/,
-    });
-    if (n) expect(within(health).getByText(/need(s)? attention$/)).toHaveTextContent(`${n} `);
-    else expect(health.querySelector("[data-health-count]")).toBeNull();
+    const words = healthWords(sourceProblems(await api.overview()));
+    expect(words).not.toBe("");
+    const nav = screen.getByRole("navigation", { name: "Primary" });
+    expect(within(nav).getByRole("link", { name: words })).toBeInTheDocument();
   });
 
-  it("does not count a source paused on purpose, as the server's count does not", async () => {
-    const { needingAttention } = await import("@/features/health/flow");
-    const o = (conditions: string[]) =>
-      ({ sources: conditions.map((condition, i) => ({ source_id: `s${i}`, condition })) }) as never;
-    expect(needingAttention(o(["healthy", "paused", "paused"]))).toBe(0);
-    expect(needingAttention(o(["healthy", "paused", "quiet", "error", "gap", "attention"]))).toBe(
-      4,
-    );
-    expect(needingAttention(undefined)).toBe(0);
+  it("counts only the server's source problems: never a paused or held source", async () => {
+    const { sourceProblems } = await import("@/features/health/flow");
+    const o = (problems: (string | null)[]) =>
+      ({ sources: problems.map((problem, i) => ({ source_id: `s${i}`, problem })) }) as never;
+    expect(sourceProblems(o([null, null, null]))).toEqual({ count: 0, unhealthy: 0, damaged: 0 });
+    expect(sourceProblems(o([null, "attention", "unhealthy", "attention"]))).toEqual({
+      count: 3,
+      unhealthy: 1,
+      damaged: 0,
+    });
+    expect(sourceProblems(undefined)).toEqual({ count: 0, unhealthy: 0, damaged: 0 });
   });
 
   it("lists Logs in Ctrl+K only for those who may search, and its Saved searches tab for all", async () => {

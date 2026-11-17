@@ -1,20 +1,20 @@
-const day = (iso: string) =>
-  new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
-
-/** The window length a "the previous 7 days" or "the previous 24 hours" phrase names. */
-function daysIn(before: string): number {
-  const m = /(\d+)\s+(day|hour)/.exec(before);
-  if (!m) return 7;
-  return m[2] === "hour" ? Number(m[1]) / 24 : Number(m[1]);
-}
+const day = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+const hour = (d: Date) => d.toLocaleTimeString("en-US", { hour: "numeric" });
 
 /** The section header's comparison line: the one place a section says whether its numbers
  * are compared, so cards no longer repeat "Not enough history" under every number (owner,
- * 2026-11-02). Comparisons start once the window before is covered: two windows after the
- * data starts. */
-export function compareLine(compared: boolean, since: string | null, before: string): string {
+ * 2026-11-02). When comparisons start is the server's one rule (`comparisons_start`): the
+ * first moment the window before is covered by the section's sources. The page does no date
+ * math of its own (fix list item 8). */
+export function compareLine(
+  compared: boolean,
+  starts: string | null | undefined,
+  before: string,
+): string {
   if (compared) return `Changes against ${before}`;
-  if (!since) return "No comparison yet";
-  const start = new Date(new Date(since).getTime() + 2 * daysIn(before) * 86_400_000);
-  return `Comparisons start ${day(start.toISOString())}`;
+  if (!starts) return "No comparison yet";
+  const at = new Date(starts);
+  // A 24-hour window can start comparing at any hour; days start at midnight.
+  const when = /hour/.test(before) ? `${day(at)}, ${hour(at)}` : day(at);
+  return `Comparisons start ${when}, when the window before has data`;
 }

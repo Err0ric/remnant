@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { ApiError, api } from "@/lib/api";
+import { Select } from "@/components/forms/Select";
 
 const EVERY: Record<string, string> = { hourly: "hourly", daily: "daily" };
 
@@ -46,21 +47,20 @@ export function AddPack({ dashboardId }: { dashboardId: string }) {
       <legend className="sr-only">Add a pack</legend>
       <label className="flex flex-col gap-1">
         <span className="text-text-secondary">Add a pack from the query library</span>
-        <select
+        <Select
           aria-label="Pack"
           value={packId}
-          onChange={(e) => pick(e.target.value)}
-          className="h-8 w-56 max-w-full rounded border border-border-control bg-inset px-2"
-        >
-          <option value="">
-            {lib.data && !lib.data.packs.length ? "No pack fits your sources yet" : "Pick a pack"}
-          </option>
-          {(lib.data?.packs ?? []).map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name} ({p.queries.length})
-            </option>
-          ))}
-        </select>
+          onChange={pick}
+          placeholder={
+            lib.data && !lib.data.packs.length ? "No pack fits your sources yet" : "Pick a pack"
+          }
+          emptyReason={lib.data ? "No pack fits your sources yet" : "Loading"}
+          options={(lib.data?.packs ?? []).map((p) => ({
+            value: p.id,
+            label: `${p.name} (${p.queries.length})`,
+          }))}
+          className="w-56 max-w-full"
+        />
       </label>
       {pack ? (
         <>

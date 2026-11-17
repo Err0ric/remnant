@@ -1,4 +1,3 @@
-import { lastDays } from "@/lib/timeWindow";
 import { EmptyState } from "@/components/EmptyState";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
@@ -13,6 +12,39 @@ import { StateNotice } from "@/components/StateNotice";
 import { NAMES_HIDDEN } from "@/features/alerts/kinds";
 import { duration, FLAG_LABEL, sessionFlags, type SessionFlag } from "./sessionFlags";
 import { SessionDetail } from "./SessionDetail";
+import { useAgentsOverview } from "./AgentsOverview";
+import type { AgentWindow } from "./agentWindow";
+
+interface PartsLineProps {
+  total: number;
+  parts: { listed: number; empty: number; telemetry_only: number };
+  hideEmpty: boolean;
+  /** When the list itself says it was cut (the newest 100 at most): how many it shows. */
+  shown: number | null;
+}
+
+/** One line under the filters whose parts add up to the Sessions tile (PR 639): sessions
+ * with step detail, the empty ones (hidden or not), and sessions only Claude Code
+ * telemetry reported. Past the list's cap it says how many of them the list shows. */
+export function PartsLine({ total, parts, hideEmpty, shown }: PartsLineProps) {
+  const cut = shown !== null ? ` (newest ${shown.toLocaleString()} shown)` : "";
+  const bits = [
+    `${parts.listed.toLocaleString()} with step detail${hideEmpty ? cut : ""}`,
+    parts.empty ? `${parts.empty.toLocaleString()} empty${hideEmpty ? ", hidden" : ""}` : "",
+    parts.telemetry_only
+      ? `${parts.telemetry_only.toLocaleString()} seen only in Claude Code telemetry`
+      : "",
+  ].filter(Boolean);
+  // The list is the whole tile and all of it shows: nothing to reconcile.
+  if (bits.length < 2 && !cut) return null;
+  return (
+    <p data-session-parts="" className="border-b border-border px-3 py-1.5 text-sm text-text-muted">
+      {total.toLocaleString()} {total === 1 ? "session" : "sessions"} in the Sessions tile:{" "}
+      {bits.join(" · ")}
+      {!hideEmpty && shown !== null ? `; the list shows the newest ${shown.toLocaleString()}` : ""}
+    </p>
+  );
+}
 
 /** How a session's end reads: a stop record, no record for the idle time, or still open. */
 export function sessionState(s: AgentSession, short = false): string {
@@ -29,16 +61,30 @@ const FILTER_DEFAULTS = { person: "", machine: "", tool: "", flags: "" };
  * in a sticky pane on the right (7 parts). On a narrow window the open session takes the
  * page, with Back. Metadata only: what was touched, never what was said. */
 interface SessionsCardProps {
-  /** Whole days back from now, from the page's time choice (as the strip above counts). */
-  days?: number;
+  /** The page's time, exactly, as the strip above counts it (PR 639 review). */
+  win: AgentWindow;
 }
 
-export function SessionsCard({ days = 7 }: SessionsCardProps) {
+export function SessionsCard({ win }: SessionsCardProps) {
   const list = useQuery({
-    queryKey: ["ai-sessions", days],
-    queryFn: () => api.aiSessions(days),
+    queryKey: ["ai-sessions", ...win.key],
+    queryFn: () => api.aiSessions(win.days, undefined, win.bounds()),
+    // As the strip above refreshes, so the line under the filters and the list agree.
+    refetchInterval: 300_000,
   });
-  const accounts = useQuery({ queryKey: ["agent-accounts"], queryFn: () => api.agentAccounts(30) });
+  // Tiers for the list's own window (the Accounts tab's answer, shared).
+  const accounts = useQuery({
+    queryKey: ["agent-accounts", ...win.key],
+    queryFn: () => api.agentAccounts(win.days, win.bounds()),
+  });
+  // The strip's answer (shared, not asked twice): the Sessions tile in parts.
+  const tile = useAgentsOverview(win).data;
+  // The plugin is in use, only not in this window: sessions in the window before, devices
+  // that sent before it, or accounts with sessions in the last 30 days.
+  const seenElsewhere =
+    (tile?.sessions?.before ?? 0) > 0 ||
+    (tile?.missing_devices.length ?? 0) > 0 ||
+    (accounts.data?.rows.length ?? 0) > 0;
   // The open session is the one in the address, so Back and a sent link agree with the pane.
   const open = fragmentValues(useSection()).get("session");
   const setOpen = (id: string | null) => {
@@ -68,7 +114,13 @@ export function SessionsCard({ days = 7 }: SessionsCardProps) {
   const all = list.data ?? [];
   // Test or empty sessions (a start and nothing else) clutter the list (owner 2026-11-02).
   const shown = hideEmpty ? all.filter((r) => r.tool_calls > 0 || r.prompts > 0) : all;
-  const hidden = all.length - shown.length;
+  // Past the server's cap the list holds the newest sessions only, and says so itself: its
+  // rows carry the window's totals, so "N of M" never depends on another answer.
+  const head = all[0];
+  const listable = head ? (hideEmpty ? (head.with_steps ?? 0) : (head.total ?? 0)) : null;
+  const capped = listable !== null && listable > shown.length;
+  const hidden =
+    head && capped ? (head.total ?? 0) - (head.with_steps ?? 0) : all.length - shown.length;
   // Without View people in AI usage (D242) the server sends machines, not accounts: no
   // lookup, so a machine is never matched to another account's tier.
   const masked = all.some((r) => r.masked) || accounts.data?.masked === true;
@@ -119,7 +171,7 @@ export function SessionsCard({ days = 7 }: SessionsCardProps) {
         className={open ? "max-lg:hidden" : undefined}
         title="Sessions"
         label="Agent sessions"
-        note={`${lastDays(days)}, from the hooks plugin`}
+        note={`${win.words}, from the hooks plugin`}
         about="Claude Code and Cowork sessions from the hooks plugin. Browser chat is not covered."
       >
         {masked ? (
@@ -146,8 +198,8 @@ export function SessionsCard({ days = 7 }: SessionsCardProps) {
                 },
               ]}
               count={
-                filtered > 0
-                  ? `${rows.length} of ${shown.length} ${shown.length === 1 ? "session" : "sessions"}`
+                filtered > 0 || capped
+                  ? `${rows.length} of ${capped ? listable : shown.length} ${(capped ? listable : shown.length) === 1 ? "session" : "sessions"}`
                   : `${shown.length} ${shown.length === 1 ? "session" : "sessions"}`
               }
               columns={
@@ -168,6 +220,14 @@ export function SessionsCard({ days = 7 }: SessionsCardProps) {
             />
           </div>
         ) : null}
+        {tile?.session_parts && tile.sessions ? (
+          <PartsLine
+            total={tile.sessions.value}
+            parts={tile.session_parts}
+            hideEmpty={hideEmpty}
+            shown={capped ? shown.length : null}
+          />
+        ) : null}
         {list.error ? (
           <p role="alert" className="px-3 py-4 text-sm text-danger">
             {list.error instanceof ApiError ? list.error.message : "Could not load sessions"}
@@ -178,7 +238,10 @@ export function SessionsCard({ days = 7 }: SessionsCardProps) {
               ? "No sessions match these filters."
               : hidden > 0
                 ? `No sessions with tool calls or prompts. ${hidden} empty ${hidden === 1 ? "session is" : "sessions are"} hidden.`
-                : "No sessions yet. Download the Claude plugin from Settings > Claude plugins and install it."}
+                : seenElsewhere
+                  ? // Sessions exist, just not here: the window's words, no install hint.
+                    `No plugin sessions. ${win.words}.`
+                  : "No sessions yet. Download the Claude plugin from Settings > Claude plugins and install it."}
           </p>
         ) : (
           <ul aria-label="Sessions">

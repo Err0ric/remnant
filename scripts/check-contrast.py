@@ -22,6 +22,11 @@ TOKENS = ROOT / "frontend" / "src" / "styles" / "tokens.css"
 DESIGN = ROOT / "docs" / "DESIGN.md"
 
 TEXT, MARK = 4.5, 3.0
+# A loading placeholder (`Skeleton`, `--border-strong`) is a shape that holds a place, not
+# information: it must read against its card, quieter than a mark (fix list item 27).
+SHAPE = 1.4
+# The body of an empty Dashboard section: a fill that reads against its card (item 27).
+FILL = 1.15
 # Chart series (DESIGN.md section 2): the neutral, ice, and graphite. A hatched mark is the
 # same color over the surface, so its solid part is held by the same pair.
 SERIES = ["series-neutral", "series-ice", "series-graphite"]
@@ -106,6 +111,16 @@ def pairs() -> list[tuple[str, str | tuple[str, str], float]]:
     out += [("focus-ring", g, MARK) for g in [*grounds, PRESSED]]
     out += [("focus-ring-top", "top", MARK)]
     out += [(s, g, MARK) for s in SERIES for g in ["surface", "surface-head"]]
+    # Magnitude bars (the People & devices score, a person's Activity per day) are
+    # --text-secondary, held at 4.5:1 by the text pairs above on every row ground: rest
+    # (--surface), hover (--surface-head), selected (--row-selected over --surface).
+    # The score bar's fill also reads against its empty track, --border-strong.
+    out += [("text-secondary", "border-strong", MARK)]
+    out += [("border-strong", g, SHAPE) for g in ["surface", "inset"]]
+    out += [("empty-fill", "surface", FILL)]
+    # The rail's Health dot (fix list 2026-11-16 item 7): the worst state's color on the rail,
+    # also under a hovered row. The rail's action counts are the High pair, checked above.
+    out += [(s, g, MARK) for s in ["warn", "danger"] for g in ["nav", "surface-head"]]
     # State tags are outlined, not filled: the state color is text on a plain surface, and
     # the neutral tag is secondary text on the Info fill.
     out += [(s, g, TEXT) for s in ["warn", "danger"] for g in ["surface-expand", "inset"]]

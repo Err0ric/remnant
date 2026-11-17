@@ -66,6 +66,7 @@ export function SignIns({ m }: { m: M365Overview }) {
       list="sign_ins"
       filter={m.sign_in_lists?.[cls]?.[mode] ? { cls, mode } : undefined}
       m={m}
+      noun={["sign-in", "sign-ins"]}
       controls={
         <>
           <Choice label="Outcome" options={CLASSES} value={cls} onChange={setCls} />

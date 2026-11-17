@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { api, type LibraryQuery } from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { fitsInLogs, TOO_LONG_FOR_LOGS } from "@/lib/sqlLimit";
 
 export interface LibraryPick extends LibraryQuery {
   pack: string;
@@ -153,13 +154,24 @@ export function LibraryPanel({ onLoad, onClose, canSave }: LibraryPanelProps) {
                         return (
                           <li key={key} className="border-b border-border px-3 py-2 last:border-0">
                             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                              <button
-                                type="button"
-                                onClick={() => onLoad({ ...q, pack: p.id, packName: p.name })}
-                                className="text-left font-semibold text-accent-text hover:underline"
-                              >
-                                {q.name}
-                              </button>
+                              {fitsInLogs(q.sql) ? (
+                                <button
+                                  type="button"
+                                  onClick={() => onLoad({ ...q, pack: p.id, packName: p.name })}
+                                  className="text-left font-semibold text-accent-text hover:underline"
+                                >
+                                  {q.name}
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  aria-disabled="true"
+                                  aria-describedby={`too-long-${key}`}
+                                  className="cursor-default text-left font-semibold text-text-muted"
+                                >
+                                  {q.name}
+                                </button>
+                              )}
                               {q.my_copy?.updated ? (
                                 <button
                                   type="button"
@@ -174,7 +186,7 @@ export function LibraryPanel({ onLoad, onClose, canSave }: LibraryPanelProps) {
                                   Saved as {q.my_copy.search_id}
                                 </span>
                               ) : null}
-                              {canSave && !q.my_copy ? (
+                              {canSave && !q.my_copy && fitsInLogs(q.sql) ? (
                                 <button
                                   type="button"
                                   onClick={() => save.mutate({ pack: p.id, id: q.id })}
@@ -187,6 +199,11 @@ export function LibraryPanel({ onLoad, onClose, canSave }: LibraryPanelProps) {
                               ) : null}
                             </div>
                             <p className="text-sm">{q.why}</p>
+                            {fitsInLogs(q.sql) ? null : (
+                              <p id={`too-long-${key}`} className="text-sm text-text-muted">
+                                {TOO_LONG_FOR_LOGS} Ask AI answers it.
+                              </p>
+                            )}
                             <p className="text-sm text-text-muted">Normal: {q.normal}</p>
                             {diffFor === key && q.my_copy ? (
                               <div className="mt-2 flex flex-col gap-2">

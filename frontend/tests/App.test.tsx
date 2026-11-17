@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { mockApi } from "./mockApi";
 import { setSql } from "./sqlEditor";
+import { choose, optionLabels } from "./choose";
 
 async function renderApp() {
   window.history.replaceState(null, "", "/search");
@@ -49,31 +50,32 @@ describe("App shell", () => {
     expect(window.location.pathname).toBe("/investigate/logs");
   });
 
-  it("lists pages only: three labeled groups and a pinned cluster (ADR-0052 3.2)", async () => {
+  it("lists pages in three labeled groups and a pinned cluster (ADR-0052 3.2, D268)", async () => {
     await renderApp();
     const nav = screen.getByRole("navigation", { name: "Primary" });
     const groups = within(nav)
       .getAllByRole("region")
       .map((g) => g.getAttribute("aria-label"));
     expect(groups).toEqual(["Monitor", "Investigate", "AI"]);
-    const rows = (name: string) =>
-      within(within(nav).getByRole("region", { name }))
-        .getAllByRole("link")
-        .map((a) => a.getAttribute("title"));
+    const entries = (el: HTMLElement) =>
+      [...el.querySelectorAll<HTMLElement>("[data-rail-entry]")].map(
+        (a) => a.querySelector("span")?.textContent,
+      );
+    const rows = (name: string) => entries(within(nav).getByRole("region", { name }));
     expect(rows("Monitor")).toEqual(["Dashboard", "Alerts"]);
     expect(rows("Investigate")).toEqual(["Logs", "Ask AI", "People & devices"]);
     expect(rows("AI")).toEqual(["AI usage", "Agents"]);
     const pinned = within(nav).getByRole("list", { name: "Health and settings" });
-    expect(
-      within(pinned)
-        .getAllByRole("link")
-        .map((a) => a.getAttribute("title")),
-    ).toEqual(["Health", "Settings"]);
-    // At most 10 entries for an administrator, and none has children or folds.
-    expect(within(nav).getAllByRole("link").length).toBeLessThanOrEqual(10);
-    expect(nav.querySelector("ul ul")).toBeNull();
+    expect(entries(pinned)).toEqual(["Health", "Settings"]);
+    // At most 10 entries for an administrator; only the current page (Logs) lists its tabs.
+    expect(nav.querySelectorAll("[data-rail-entry]").length).toBeLessThanOrEqual(10);
+    expect(nav.querySelectorAll("ul ul")).toHaveLength(1);
     expect(within(nav).queryAllByRole("button")).toEqual([]);
-    expect(within(nav).queryByText("Saved searches")).toBeNull();
+    expect(
+      within(within(nav).getByRole("list", { name: "Logs tabs" }))
+        .getAllByRole("link")
+        .map((a) => a.textContent),
+    ).toEqual(["Search", "Saved searches"]);
     expect(within(nav).queryByText("Microsoft 365")).toBeNull();
     expect(within(nav).getByRole("link", { name: "Logs" })).toHaveAttribute(
       "href",
@@ -95,13 +97,21 @@ describe("App shell", () => {
     expect(screen.queryByText(/grimoire|seance|séance|ossuary/i)).not.toBeInTheDocument();
   });
 
-  it("marks where you are with a bar and weight on exactly one link, not a fill", async () => {
+  it("marks where you are with a bar and weight on exactly one entry, not a fill", async () => {
     await renderApp();
     const nav = screen.getByRole("navigation", { name: "Primary" });
-    const here = within(nav)
-      .getAllByRole("link")
-      .filter((a) => a.getAttribute("aria-current") === "page");
-    expect(here.map((a) => a.getAttribute("title"))).toEqual(["Logs"]);
+    const here = [...nav.querySelectorAll<HTMLElement>("[data-rail-entry]")].filter((a) =>
+      a.hasAttribute("aria-current"),
+    );
+    expect(here.map((a) => a.dataset.railEntry)).toEqual(["logs"]);
+    // Logs has tabs, so its entry is the current section and its open tab the page (D268).
+    expect(here[0]).toHaveAttribute("aria-current", "true");
+    expect(
+      within(nav)
+        .getAllByRole("link")
+        .filter((a) => a.getAttribute("aria-current") === "page")
+        .map((a) => a.textContent),
+    ).toEqual(["Search"]);
     expect(here[0]).toHaveClass(
       "before:w-0.5",
       "before:bg-accent-text",
@@ -114,7 +124,7 @@ describe("App shell", () => {
     expect(within(nav).getByRole("link", { name: /^Alerts/ })).toHaveClass("font-medium");
   });
 
-  it("marks the page, not a tab, when a tab of that page is open", async () => {
+  it("marks the page as the current section and its open tab, when a tab is open", async () => {
     window.history.replaceState(null, "", "/agents/sessions");
     mockApi("Codename");
     vi.resetModules();
@@ -130,9 +140,12 @@ describe("App shell", () => {
     const nav = await screen.findByRole("navigation", { name: "Primary" });
     expect(within(nav).getByRole("link", { name: "Agents" })).toHaveAttribute(
       "aria-current",
+      "true",
+    );
+    expect(within(nav).getByRole("link", { name: "Sessions" })).toHaveAttribute(
+      "aria-current",
       "page",
     );
-    expect(within(nav).queryByRole("link", { name: "Sessions" })).toBeNull();
     const tabs = await screen.findByRole("navigation", { name: "Agents tabs" });
     expect(within(tabs).getByRole("link", { name: /^Sessions/ })).toHaveAttribute(
       "aria-current",
@@ -245,10 +258,8 @@ describe("Search page", () => {
     const spy = await renderApp();
     await screen.findByText("Failed password for invalid user oracle");
     const picker = await screen.findByLabelText("Add source filter");
-    await waitFor(() =>
-      expect(within(picker).getByRole("option", { name: "paloalto_traffic" })).toBeInTheDocument(),
-    );
-    await userEvent.selectOptions(picker, "paloalto_traffic");
+    await waitFor(() => expect(optionLabels(picker)).toContain("paloalto_traffic"));
+    await choose(picker, "paloalto_traffic");
     expect(screen.getByText("Source: paloalto_traffic")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() =>
@@ -371,6 +382,18 @@ describe("Query library (ADR-0033)", () => {
     expect(note).toHaveTextContent("Why SSH logins by user and source");
     expect(note).toHaveTextContent("Normal: Normal for SSH logins by user and source");
     expect(screen.queryByRole("region", { name: "Query library" })).toBeNull();
+  });
+
+  it("shows a query too long for Logs disabled, with the reason and no Save", async () => {
+    await renderApp();
+    await userEvent.click(await fromMore("Library"));
+    const lib = await screen.findByRole("region", { name: "Query library" });
+    const big = await within(lib).findByRole("button", { name: "AI services in use" });
+    expect(big).toHaveAttribute("aria-disabled", "true");
+    expect(big).toHaveAccessibleDescription(/longer than the 20,000 characters Logs takes/);
+    expect(
+      within(lib).queryByRole("button", { name: "Save AI services in use as my own" }),
+    ).toBeNull();
   });
 });
 

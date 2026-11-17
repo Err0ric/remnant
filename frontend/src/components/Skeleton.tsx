@@ -34,7 +34,7 @@ export function Skeleton({
       className={cn("overflow-hidden rounded-card border border-border bg-surface", className)}
     >
       {block ? (
-        <div className={cn("animate-pulse bg-surface-head/60", block)} />
+        <div className={cn("animate-pulse bg-border-strong", block)} />
       ) : (
         <>
           {header ? (
@@ -42,9 +42,9 @@ export function Skeleton({
               data-skeleton-header=""
               className="flex h-12 items-center gap-3 border-b border-border px-3"
             >
-              <span className="h-2 w-1/6 animate-pulse rounded bg-surface-head" />
-              <span className="h-2 w-1/6 animate-pulse rounded bg-surface-head" />
-              <span className="h-2 w-1/6 animate-pulse rounded bg-surface-head" />
+              <span className="h-2 w-1/6 animate-pulse rounded bg-border-strong" />
+              <span className="h-2 w-1/6 animate-pulse rounded bg-border-strong" />
+              <span className="h-2 w-1/6 animate-pulse rounded bg-border-strong" />
             </div>
           ) : null}
           {Array.from({ length: rows }, (_, i) => (
@@ -58,13 +58,13 @@ export function Skeleton({
             >
               {tall ? (
                 <span className="flex w-1/4 flex-col gap-2">
-                  <span className="h-2.5 w-full animate-pulse rounded bg-surface-head" />
-                  <span className="h-2 w-2/3 animate-pulse rounded bg-surface-head" />
+                  <span className="h-2.5 w-full animate-pulse rounded bg-border-strong" />
+                  <span className="h-2 w-2/3 animate-pulse rounded bg-border-strong" />
                 </span>
               ) : (
-                <span className="h-2.5 w-1/4 animate-pulse rounded bg-surface-head" />
+                <span className="h-2.5 w-1/4 animate-pulse rounded bg-border-strong" />
               )}
-              <span className="h-2.5 w-2/5 animate-pulse rounded bg-surface-head" />
+              <span className="h-2.5 w-2/5 animate-pulse rounded bg-border-strong" />
             </div>
           ))}
         </>

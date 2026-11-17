@@ -10,9 +10,20 @@ from starlette.concurrency import run_in_threadpool
 
 from app.api.access import CurrentUser, client_ip
 from app.engine.views import permitted_sources
+from app.enrich import networks
+from app.ingest.durable import quarantined_count
 from app.meta.page_loads import PageLoadAudit, declared
+from app.search.dashboard import rules_state
 from app.search.overview import OverviewService
-from app.search.source_state import Condition, SourceInput, assess, idle, needing_attention
+from app.search.source_state import (
+    Condition,
+    Problem,
+    SourceInput,
+    assess,
+    idle,
+    needing_attention,
+    problem,
+)
 
 router = APIRouter(tags=["overview"])
 
@@ -61,6 +72,8 @@ class SourceHealthOut(BaseModel):
     # One state for Health and the Dashboard footer (handoff item 4, app.search.source_state):
     # healthy, quiet, gap, attention, error, or paused.
     condition: Condition = "healthy"
+    # The source's problem as every page draws it (`source_state.problem`), or None.
+    problem: Problem | None = None
 
 
 class WaitOut(BaseModel):
@@ -126,6 +139,16 @@ class OverviewOut(BaseModel):
     events_usual_24h: float | None
     new_sources: list[str]
     source_summary: SourceSummaryOut
+    # Damaged lake files moved aside (after a crash or a disk fault): Health's notice row
+    # and a problem on its Sources tab and the rail's dot, counted once here.
+    damaged_files: int = 0
+    # What the Dashboard draws before its sections answer (fix list 2026-11-16 item 27): how
+    # many rules are enabled, and with none the newest rule match on the caller's sources
+    # (no rule and no match since the window before: Detections says so at once), and
+    # whether a company egress is listed (not: Attacks and access carries its note).
+    rules_enabled: int = 0
+    rules_last_match: str | None = None
+    egress_listed: bool = True
 
 
 @router.get("/overview")
@@ -153,13 +176,25 @@ async def overview(request: Request, user: CurrentUser) -> OverviewOut:
             detail,
         )
     data, summary = await _assessed(request, result)
+    data |= await run_in_threadpool(_dashboard_settings, request.app.state.meta, user)
     return OverviewOut(**data, source_summary=SourceSummaryOut(**asdict(summary)))
+
+
+def _dashboard_settings(meta: Any, user: Any) -> dict[str, Any]:
+    """The Overview's part for the Dashboard's first paint: small metadata reads. Blocking."""
+    on, last = rules_state(meta, permitted_sources(meta, user))
+    return {
+        "rules_enabled": on,
+        "rules_last_match": last,
+        "egress_listed": networks.load(meta).has_public,
+    }
 
 
 async def _assessed(request: Request, result: Any) -> tuple[dict[str, Any], Any]:
     """The Overview as sent, each source with its condition, and the "N of M healthy" summary."""
     data = asdict(result)
     data.pop("sources_in_scope")
+    data["damaged_files"] = await run_in_threadpool(quarantined_count, request.app.state.lake_dir)
     # Quiet state is read fresh on every call, not cached with the numbers above.
     watches = await run_in_threadpool(request.app.state.quiet.all)
     quiet = {w.source_id: w.quiet_since for w in watches if w.state == "quiet"}
@@ -176,6 +211,9 @@ async def _assessed(request: Request, result: Any) -> tuple[dict[str, Any], Any]
     for s in data["sources"]:
         s["condition"] = conditions[s["source_id"]]
         s["idle"] = idle(inputs[s["source_id"]], s["condition"])
+        i = inputs[s["source_id"]]
+        # Gap hours as Health draws them: none for a source inside "Quiet is normal".
+        s["problem"] = problem(s["condition"], bool(i.quiet_since), bool(i.gaps) and not i.quiet_ok)
         s.pop("reading_issue", None)
     return data, summary
 
@@ -183,13 +221,18 @@ async def _assessed(request: Request, result: Any) -> tuple[dict[str, Any], Any]
 class HealthCountOut(BaseModel):
     total: int
     not_healthy: int
+    # Of those, how many Health draws as unhealthy (`source_state.problem`): the dot's color.
+    unhealthy: int = 0
+    # Damaged lake files moved aside: a problem on Health too, though not a source's.
+    damaged_files: int = 0
 
 
 @router.get("/health/count")
 async def health_count(request: Request, user: CurrentUser) -> HealthCountOut:
-    """How many of the viewer's sources need attention, for the rail's Health dot (ADR-0052
-    section 3.2). The same assessment as the Health page, on the viewer's own sources; a
-    source paused on purpose is not counted. Numbers only: it names no source, so like
+    """How many of the viewer's sources need attention, and how many of them are unhealthy
+    (the dot's color), for the rail's Health dot (ADR-0052 section 3.2). The same assessment
+    as the Health page, on the viewer's own sources; a source paused on purpose is not
+    counted. Numbers only: it names no source, so like
     `/alerts/count` it writes no audit row (owner, 2026-11-11: the audit log records access,
     not page loads). It never fills the cache `/overview` reads, so the next Overview read
     is still computed and recorded."""
@@ -197,7 +240,13 @@ async def health_count(request: Request, user: CurrentUser) -> HealthCountOut:
     result = await run_in_threadpool(svc.for_count, user)
     data, summary = await _assessed(request, result)
     wrong = needing_attention(s["condition"] for s in data["sources"])
-    return HealthCountOut(total=summary.total, not_healthy=wrong)
+    worst = sum(1 for s in data["sources"] if s["problem"] == "unhealthy")
+    return HealthCountOut(
+        total=summary.total,
+        not_healthy=wrong,
+        unhealthy=worst,
+        damaged_files=data["damaged_files"],
+    )
 
 
 def _input(s: dict[str, Any], v: dict[str, Any] | None) -> SourceInput:

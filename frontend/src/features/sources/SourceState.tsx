@@ -1,25 +1,33 @@
 import type { SourceStatus } from "@/lib/api";
 
-const LABELS: Record<SourceStatus["state"], { label: string; dot: string }> = {
-  reading: { label: "Reading", dot: "bg-ok" },
-  waiting: { label: "Waiting for first pass", dot: "bg-text-muted" },
-  error: { label: "Error", dot: "bg-danger" },
-  disabled: { label: "Disabled", dot: "bg-border-strong" },
+/** What the reader is doing, in words: a fact beside the status, never the status itself
+ * (fix list 2026-11-16 item 19: a file being followed can still have sent nothing for days). */
+const READER: Record<SourceStatus["state"], string> = {
+  reading: "following the files",
+  waiting: "waiting for the first pass",
+  error: "stopped on an error",
+  disabled: "off",
 };
+const PUSHED: Partial<Record<SourceStatus["state"], string>> = { reading: "listening" };
+const PULLED: Partial<Record<SourceStatus["state"], string>> = { reading: "fetching" };
 
 interface SourceStateProps {
   status: SourceStatus;
+  kind?: string;
 }
 
-/** Status dot plus label; never color alone (DESIGN.md). */
-export function SourceState({ status }: SourceStateProps) {
-  const { label, dot } = LABELS[status.state];
+function readerWords(state: SourceStatus["state"], kind: string | undefined): string {
+  if (kind === "otlp" || kind === "syslog") return PUSHED[state] ?? READER[state];
+  if (kind && kind !== "file") return PULLED[state] ?? READER[state];
+  return READER[state];
+}
+
+/** What the reader says under the status: "Reader: following the files", then
+ * any error, warnings, and records it could not read. */
+export function SourceState({ status, kind }: SourceStateProps) {
   return (
     <span className="flex flex-col gap-0.5">
-      <span className="flex items-center gap-1.5">
-        <span className={`h-2 w-2 shrink-0 rounded-full ${dot}`} aria-hidden="true" />
-        <span className={status.state === "error" ? "text-danger" : "text-text"}>{label}</span>
-      </span>
+      <span className="text-sm text-text-muted">Reader: {readerWords(status.state, kind)}</span>
       {status.error ? (
         <span className="max-w-[320px] text-sm text-text-secondary">{status.error}</span>
       ) : null}

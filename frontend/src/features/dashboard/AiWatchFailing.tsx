@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { stamp } from "@/features/overview/time";
+import { When } from "@/components/When";
 import { api, type FailingJob } from "@/lib/api";
 import { navigate } from "@/lib/route";
 
@@ -30,7 +30,7 @@ export function AiWatchFailing({ isAdmin }: { isAdmin: boolean }) {
     <div role="alert" className="border-b border-warn px-3 py-2 text-sm">
       <p>
         <span className="font-semibold">AI Watch checks are failing</span> since{" "}
-        {stamp(first.since)} UTC: {failing.map((f) => `${what(f.job)} (${f.count}x)`).join(", ")}.
+        <When iso={first.since} />: {failing.map((f) => `${what(f.job)} (${f.count}x)`).join(", ")}.
         New AI use, alerts, and review items may be behind.
       </p>
       {isAdmin ? (

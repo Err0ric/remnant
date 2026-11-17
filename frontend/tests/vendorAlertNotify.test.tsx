@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/lib/api";
 import { VendorAlertNotify } from "@/features/sources/VendorAlertNotify";
+import { choose } from "./choose";
 
 function show(
   canManage = true,
@@ -39,7 +40,7 @@ describe("Vendor alert messages per source (D231)", () => {
     expect(level).toBeDisabled();
     await userEvent.click(box);
     await userEvent.click(await screen.findByRole("checkbox", { name: "Relay" }));
-    await userEvent.selectOptions(level, "critical");
+    await choose(level, "critical");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() =>
       expect(save).toHaveBeenCalledWith("edr", {

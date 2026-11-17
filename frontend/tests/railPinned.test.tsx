@@ -3,6 +3,7 @@ import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mockApi, type MockAuth } from "./mockApi";
+import { choose } from "./choose";
 
 /** D259: the rail's Pinned, the viewer's pinned saved searches and dashboards. */
 let client: QueryClient;
@@ -57,9 +58,9 @@ describe("Rail Pinned (D259)", () => {
     expect(search.querySelector("[data-truncate]")).toHaveAttribute("data-truncate", "name");
     const board = within(region).getByRole("link", { name: "Team" });
     expect(board).toHaveAttribute("href", "/dashboard#board=d2");
-    // Not pages: the Primary nav keeps its own links only.
+    // Not pages: the Primary nav keeps its own entries only (and Alerts' tab rows, D268).
     expect(within(nav).queryByRole("link", { name: "Team" })).toBeNull();
-    expect(within(nav).getAllByRole("link")).toHaveLength(9);
+    expect(nav.querySelectorAll("[data-rail-entry]")).toHaveLength(9);
     // Above Recent, in the same column.
     expect(region.closest("#primary-nav")).not.toBeNull();
 
@@ -155,7 +156,7 @@ describe("Rail Pinned (D259)", () => {
     // Picking another clears the address.
     await userEvent.click(within(region).getByRole("link", { name: "Team" }));
     expect(window.location.hash).toBe("#board=d2");
-    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Dashboard" }), "d1");
+    await choose(screen.getByRole("combobox", { name: "Dashboard" }), "d1");
     expect(window.location.hash).toBe("");
     expect(screen.getByRole("combobox", { name: "Dashboard" })).toHaveValue("d1");
 
@@ -210,14 +211,28 @@ describe("Rail Pinned (D259)", () => {
       id,
       name: id,
     }));
-    await rail("/alerts", { ...ADMIN, pins: five });
-    await threeMoreBoards();
-    const region = await screen.findByRole("navigation", { name: "Pinned" });
-    const recent = await screen.findByRole("navigation", { name: "Recent" });
-    expect(recent).toHaveClass("[@media(max-height:809px)]:hidden");
-    expect(region).toHaveClass("[@media(max-height:619px)]:hidden");
-    const rows = within(region).getAllByRole("listitem");
-    expect(rows[3]).toHaveClass("[@media(max-height:699px)]:hidden");
-    expect(rows[2]).not.toHaveClass("[@media(max-height:699px)]:hidden");
+    const tall = window.innerHeight;
+    const resize = (h: number) =>
+      act(() => {
+        window.innerHeight = h;
+        window.dispatchEvent(new Event("resize"));
+      });
+    try {
+      // The Dashboard has no tabs, so D259's thresholds hold as they were.
+      resize(900);
+      await rail("/dashboard", { ...ADMIN, pins: five });
+      await threeMoreBoards();
+      await vi.waitFor(() => expect(pinned()).toHaveLength(5));
+      expect(await screen.findByRole("navigation", { name: "Recent" })).toBeInTheDocument();
+      resize(800);
+      expect(screen.queryByRole("navigation", { name: "Recent" })).toBeNull();
+      expect(pinned()).toHaveLength(5);
+      resize(690);
+      expect(pinned()).toHaveLength(3);
+      resize(610);
+      expect(screen.queryByRole("navigation", { name: "Pinned" })).toBeNull();
+    } finally {
+      resize(tall);
+    }
   });
 });

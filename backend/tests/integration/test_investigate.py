@@ -396,7 +396,7 @@ def test_dashboard_sections_follow_the_callers_sources_and_networks(
     assert attacks["failures"]["value"] > 0 and attacks["addresses"]["value"] > 0
     assert all(len(s["counts"]) == 30 for s in attacks["by_host"])
     assert attacks["vpn_outside"] is None  # no approved countries, no VPN source
-    assert set(attacks["history"]) == {"compared", "since"} and "geoip_date" in body
+    assert set(attacks["history"]) == {"compared", "since", "starts"} and "geoip_date" in body
     det = body["detections"]
     assert det["matches"]["value"] > 0 and det["rules_matched"]["extra"] == 2
     assert {s["label"] for s in det["by_rule"]} == {"SSH failed password", "Failed logon"}
@@ -418,7 +418,10 @@ def test_dashboard_sections_follow_the_callers_sources_and_networks(
     win = (body["start"], body["end"])
     prev = (body["before"], body["start"])
     assert count(fill(attacks["failures"]["drill"], *win)) == attacks["failures"]["value"]
-    assert count(fill(attacks["failures"]["drill"], *prev)) == attacks["failures"]["before"]
+    # The lab's data starts inside this window: no earlier value is sent (fix list item 9),
+    # and the window before holds nothing.
+    assert attacks["history"]["compared"] is False and attacks["failures"]["before"] is None
+    assert count(fill(attacks["failures"]["drill"], *prev)) == 0
     assert count(fill(attacks["addresses"]["drill"], *win)) == attacks["addresses"]["value"]
     assert count(fill(det["matches"]["drill"], *win)) >= det["matches"]["value"]
     drills = [

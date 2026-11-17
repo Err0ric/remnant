@@ -20,6 +20,10 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 Condition = Literal["healthy", "quiet", "gap", "attention", "error", "paused"]
+# A source problem as every page draws it: unhealthy (drawn in --danger on Health: an error,
+# or a quiet watch firing with gap hours on the chart) or needs attention (anything else that
+# is not healthy or paused, a source that is only quiet among them). None: not a problem.
+Problem = Literal["unhealthy", "attention"]
 BEHIND_S = 3600  # reading more than this far behind needs attention (as Health showed)
 
 
@@ -86,6 +90,20 @@ def needing_attention(conditions: Iterable[Condition]) -> int:
     """How many sources have something wrong: every condition but healthy and paused. A
     source someone paused on purpose is not a problem to flag (the rail's Health dot)."""
     return sum(1 for c in conditions if c not in ("healthy", "paused"))
+
+
+def problem(c: Condition, quiet_firing: bool, gap_hours: bool) -> Problem | None:
+    """The one definition of a source problem (fix list 2026-11-16 item 12): Health's rows,
+    its Sources tab count, the rail's Health dot, and its color all read it. Unhealthy is
+    exactly what Health draws in the danger color: an error, or a firing quiet watch with
+    gap hours in the 24 hours shown (`gap_hours`). A source only quiet (no gap hours) is
+    drawn greyed, so it needs attention. A source marked "Quiet is normal" inside its days
+    (D260, D262) is healthy, so never one."""
+    if c in ("healthy", "paused"):
+        return None
+    if c == "error" or (c == "quiet" and quiet_firing and gap_hours):
+        return "unhealthy"
+    return "attention"
 
 
 def _quiet_from(s: SourceInput) -> str | None:

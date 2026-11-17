@@ -55,3 +55,14 @@ The nine queries in the owner's notes become the `m365` pack with these changes:
 ## ATLAS / ATT&CK
 
 No new AI surface: library queries are deterministic SQL, and no library text is sent to a model. The M365 pack maps to ATT&CK T1110.003 (password spraying), T1078.004 (cloud accounts), T1564.008 and T1114.003 (inbox rules and forwarding), T1528 (consent phishing), T1098 (account and role changes), T1567 (sharing links). The Copilot and AI queries support monitoring for AML.T0057 (LLM data leakage), as the AI usage page does.
+
+## Amendment (D266, 2026-11-16)
+
+Fix list 2026-11-16 item 20: "Which AI services are people using?" read DNS only, while AI usage counts every source that names a destination host against the AI service catalog, which admins change in the app (approvals, their own services). Plain SQL in a pack file cannot follow that catalog: it lives in the metadata database, not in the lake, and guarded SQL reads only the caller's `events` view.
+
+- Packs are plain SQL. A pack shipped with the product (loaded from the `library/` folder next to the code) may instead name a **builtin** (`builtin: <name>`) from a fixed registry in code (`app.search.library.BUILTINS`), only where plain SQL cannot follow live data. The one builtin is `ai_services`: the AI usage Services count with the live catalog (`app.ai.usage.answer_sql`, the same definition the page runs).
+- Never in any other pack: a pack from another folder that names a builtin is refused at load with a logged reason, and the other packs still load. There is no pack import; Save as my own and Add a pack store the SQL as built at that moment, as plain SQL, and that copy keeps the service list it had.
+- A builtin's SQL runs like any library SQL: through the guard on the caller's `events` view, audited as `query.run`. The pack check runs the guard on it at load; a builtin whose SQL the guard refuses leaves its pack out.
+- Ask runs held SQL by id (an answer's SQL is never sent back by the client), so a builtin's SQL is not held to the 20,000-character limit on typed SQL. Where a person would get it as typed SQL (Open in Logs, a library suggestion, the Library panel, Save as my own, Replace my copy), the app says plainly that it is too long instead.
+- Approved by the owner on 2026-11-16 ("If not, builtin is allowed only in packs shipped with Remnant; reject it in user-imported packs, and builtins still run through the guard and the caller's view").
+- ATLAS / ATT&CK: no new model-facing surface; the SQL is built by the server from the catalog, guarded, and never sent to a model. It supports the same AML.T0057 monitoring as the AI usage page.

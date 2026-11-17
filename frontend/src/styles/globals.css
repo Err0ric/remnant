@@ -95,6 +95,29 @@
   }
 }
 
+/* The themed Select (components/forms/Select.tsx): each option's label sizes the button
+   without being text in it, so the button keeps the width of its longest option. */
+[data-select-sizer]::before {
+  content: attr(data-select-sizer);
+  display: block;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  white-space: nowrap;
+}
+
+/* Forced colors drop the active row's fill and the muted color: outline the active row in
+   the system highlight and draw a disabled option in the system's disabled text. */
+@media (forced-colors: active) {
+  [role="option"][data-active] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+  [role="option"][aria-disabled="true"] {
+    color: GrayText;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

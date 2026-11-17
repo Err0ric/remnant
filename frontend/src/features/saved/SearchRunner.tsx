@@ -5,6 +5,7 @@ import { ResultsTable } from "@/features/search/ResultsTable";
 import { ApiError, api, type SavedSearch } from "@/lib/api";
 import { TIME_RANGES, rangeStart, type TimeRangeId } from "@/lib/search";
 import { SectionTitle } from "@/components/SectionTitle";
+import { Select } from "@/components/forms/Select";
 
 interface SearchRunnerProps {
   search: SavedSearch;
@@ -66,15 +67,15 @@ export function SearchRunner({ search, onClose }: SearchRunnerProps) {
                 <span className="font-normal text-text-muted">({p.type})</span>
               </span>
               {p.type === "bool" ? (
-                <select
+                <Select
                   aria-label={p.name}
                   value={values[p.name] ?? ""}
-                  onChange={(e) => setValues({ ...values, [p.name]: e.target.value })}
-                  className="h-8 rounded border border-border-control bg-inset px-2"
-                >
-                  <option value="true">true</option>
-                  <option value="false">false</option>
-                </select>
+                  onChange={(v) => setValues({ ...values, [p.name]: v })}
+                  options={[
+                    { value: "true", label: "true" },
+                    { value: "false", label: "false" },
+                  ]}
+                />
               ) : (
                 <input
                   aria-label={p.name}
@@ -88,18 +89,12 @@ export function SearchRunner({ search, onClose }: SearchRunnerProps) {
           ))}
           <label className="flex flex-col gap-1 text-sm">
             <span className="font-semibold">Time range</span>
-            <select
+            <Select
               aria-label="Time range"
               value={range}
-              onChange={(e) => setRange(e.target.value as TimeRangeId)}
-              className="h-8 rounded border border-border-control bg-inset px-2"
-            >
-              {RANGES.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.label}
-                </option>
-              ))}
-            </select>
+              onChange={(v) => setRange(v as TimeRangeId)}
+              options={RANGES.map((r) => ({ value: r.id, label: r.label }))}
+            />
           </label>
           <button
             type="submit"

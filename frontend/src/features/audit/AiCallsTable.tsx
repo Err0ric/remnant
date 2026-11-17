@@ -1,4 +1,5 @@
 import { Fragment, useState } from "react";
+import { When } from "@/components/When";
 import type { AuditLlmCall } from "@/lib/api";
 import { OutcomeBadge } from "./OutcomeBadge";
 
@@ -23,7 +24,7 @@ export function AiCallsTable({ rows, onUser }: AiCallsTableProps) {
         <thead>
           <tr className="border-b border-border text-left text-text-secondary">
             <th className="w-8" />
-            <th className="px-2 py-1.5">Time (UTC)</th>
+            <th className="px-2 py-1.5">Time</th>
             <th className="px-2 py-1.5">User</th>
             <th className="px-2 py-1.5">Purpose</th>
             <th className="px-2 py-1.5">Model</th>
@@ -48,8 +49,8 @@ export function AiCallsTable({ rows, onUser }: AiCallsTableProps) {
                       {open === c.call_id ? "▾" : "▸"}
                     </button>
                   </td>
-                  <td className="whitespace-nowrap px-2 py-1 font-mono tabular-nums">
-                    {c.ts.slice(0, 19).replace("T", " ")}
+                  <td className="whitespace-nowrap px-2 py-1 tabular-nums">
+                    <When iso={c.ts} seconds />
                   </td>
                   <td className="px-2 py-1">
                     <button

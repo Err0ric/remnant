@@ -69,7 +69,8 @@ w AS (
 ),
 k AS (
   SELECT coalesce(message, '') || '|' || ({has("mcp")})::VARCHAR || '|'
-           || ({has("host")})::VARCHAR || '|' || ({has("path")})::VARCHAR AS kind,
+           || ({has("host")})::VARCHAR || '|' || ({has("path")})::VARCHAR || '|'
+           || ({counted("tool")})::VARCHAR AS kind,
          count(*) AS n
   FROM s GROUP BY 1
 ),
@@ -151,9 +152,9 @@ def _types(kinds: list[Any], counts: list[Any]) -> dict[str, int]:
     out: Counter[str] = Counter({t: 0 for t in STEP_TYPES})
     for kind, n in zip(kinds or [], counts or [], strict=True):
         # The query says only whether each field is there, which is all step_type reads.
-        message, *has = str(kind).split("|")
+        message, *has, real = str(kind).split("|")
         mcp, host, path = ("set" if h == "true" else None for h in has)
-        out[step_type(message, mcp, host, path)] += int(n)
+        out[step_type(message, mcp, host, path, real == "true")] += int(n)
     return dict(out)
 
 

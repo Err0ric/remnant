@@ -99,6 +99,7 @@ The query library ships tested questions for common sources, grouped in packs: M
 | AI agents | `agents_accounts_by_machine` | Machines where Claude Code ran under a personal account or one no company sign-in confirms. | `claude_hooks` |
 | AI agents | `agents_calls_without_result` | Tool calls that never came back: blocked, interrupted, or still running. | `claude_hooks` |
 | AI agents | `agents_sessions_for_person` | One person's sessions with prompts, tool calls, and minutes. | `claude_hooks` |
+| AI services | `ai_services_in_use` | Which AI services people use, from every source that can show one, as the AI usage page counts them (the SQL is built from the AI catalog). | any source |
 | DNS and AI services | `ai_services_dns` | Which AI services the network looks up, and from how many clients. | `dns_bind`, `dns_unbound`, `dns_windows`, `dns_powerdns` |
 | DNS and AI services | `ai_services_by_device` | AI service lookups named by the device that held the address, from Palo Alto DHCP leases. | `dns_bind`, `dns_unbound`, `dns_windows`, `dns_powerdns` |
 | DNS and AI services | `dns_top_domains` | What the network looks up most, and from how many clients. | `dns_bind`, `dns_unbound`, `dns_windows`, `dns_powerdns` |

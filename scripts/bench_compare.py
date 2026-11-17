@@ -161,6 +161,25 @@ def pages() -> dict[str, list[Call]]:
         ],
         "Top bar lookup": [("GET", f"/api/entities/lookup?q=alice&{week}", None)],
         "AI usage": [("GET", f"/api/ai/usage?{week}", None)],
+        # Agents > Sessions at 7 days (fix list item 15): the header, strip, and Needs
+        # attention (one answer, for the time chosen: `start`), the Agents card, the
+        # Sessions list, and the accounts it looks tiers up in (30 days). The
+        # whole AI usage answer is read on the MCP servers tab only. Endpoints every
+        # version since ADR-0052 has, so the before side times the same calls.
+        "Agents": [
+            ("GET", "/api/alerts/count", None),
+            ("GET", f"/api/agents/overview?days=7&{week}", None),
+            ("GET", "/api/ai/agents", None),
+            ("GET", f"/api/ai/sessions?days=7&{week}", None),
+            ("GET", "/api/agents/accounts?days=30", None),
+        ],
+        # Agents > MCP servers at 7 days: the strip's answer (Needs attention and the
+        # header) and the MCP servers table, read side by side.
+        "Agents, MCP servers tab": [
+            ("GET", "/api/alerts/count", None),
+            ("GET", f"/api/agents/overview?days=7&{week}", None),
+            ("GET", f"/api/ai/usage?{week}", None),
+        ],
         "Alerts": [("GET", "/api/alerts?state=open", None)],
     }
 

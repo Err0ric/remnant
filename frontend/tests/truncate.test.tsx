@@ -25,6 +25,8 @@ describe("Truncate (D257)", () => {
     expect(tail).toHaveClass("text-text-muted");
     // The local part's column is sized first; the domain's gets what is left.
     expect(el.className).toContain("grid-cols-[minmax(0,max-content)_minmax(0,1fr)]");
+    // The parts flow into columns: one row, never the head over the tail (fix list item 10).
+    expect(el).toHaveClass("grid-flow-col");
   });
 
   it("never lets a 60-character local part overflow: it shrinks with an ellipsis too", () => {

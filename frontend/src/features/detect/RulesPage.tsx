@@ -16,6 +16,7 @@ import { SigmaHqImportPanel } from "./SigmaHqImportPanel";
 import { RulesTable } from "./RulesTable";
 import { RunPanel } from "./RunPanel";
 import { filterRules } from "./rules";
+import { Select } from "@/components/forms/Select";
 
 const SHOWN = 200;
 const RUN_RANGES = TIME_RANGES.filter((r) => ["1h", "24h", "7d", "30d"].includes(r.id));
@@ -135,7 +136,7 @@ export function RulesPage({ isAdmin, canRun }: RulesPageProps) {
           <input
             aria-label="Filter rules"
             placeholder="Filter by title, author, tag, or log source"
-            className="h-8 min-w-0 flex-[1_1_280px] rounded border border-border bg-inset px-2"
+            className="h-8 min-w-0 flex-[1_1_280px] rounded border border-border-control bg-inset px-2"
             value={text}
             onChange={(e) => {
               setText(e.target.value);
@@ -162,18 +163,12 @@ export function RulesPage({ isAdmin, canRun }: RulesPageProps) {
           {canRun ? (
             <label className="flex items-center gap-1.5">
               Run over
-              <select
+              <Select
                 aria-label="Run over"
-                className="h-8 rounded border border-border bg-surface px-1"
                 value={rangeId}
-                onChange={(e) => setRangeId(e.target.value)}
-              >
-                {RUN_RANGES.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.label}
-                  </option>
-                ))}
-              </select>
+                onChange={setRangeId}
+                options={RUN_RANGES.map((r) => ({ value: r.id, label: r.label }))}
+              />
             </label>
           ) : null}
         </div>

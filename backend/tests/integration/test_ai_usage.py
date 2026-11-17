@@ -3,7 +3,8 @@
 import json
 import sqlite3
 import sys
-from datetime import timedelta
+from collections.abc import Callable
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -361,7 +362,10 @@ def test_ai_watch_summary_cards_chart_and_top(lab: dict[str, Any]) -> None:
     s = res.json()
     cards = {c["key"]: c for c in s["cards"]}
     assert list(cards) == ["services", "people", "agents", "consent", "sensitive"]
-    assert cards["services"]["value"] >= 3 and cards["services"]["previous"] == 0
+    # AI use starts in this period: no earlier data, so no earlier value and a start date
+    # for comparisons, never a change from zero (fix list items 8 and 9).
+    assert cards["services"]["value"] >= 3 and cards["services"]["previous"] is None
+    assert s["compared"] is False and s["starts"] > s["end"]
     assert cards["services"]["unreviewed"] >= 1  # linked to the review list (owner, 2026-10-29)
     # Every service with use in the period, whatever its status (the Dashboard's "AI services
     # in use"): nothing is approved here, so it equals the not-yet-approved count, and it is
@@ -618,7 +622,7 @@ def test_ai_watch_24_hours_is_rolling_not_since_midnight(lab: dict[str, Any]) ->
     app.state.ai_watch._clock = lambda: NOW + timedelta(hours=20)
     s = a.get("/api/ai/watch/summary?days=1&tz=UTC").json()
     cards = {c["key"]: c for c in s["cards"]}
-    assert cards["services"]["value"] >= 3 and cards["services"]["previous"] == 0
+    assert cards["services"]["value"] >= 3 and cards["services"]["previous"] is None
     assert s["start"] == (NOW - timedelta(hours=4)).isoformat()
     assert s["before"] == (NOW - timedelta(hours=28)).isoformat()
     # A week keeps whole days in the viewer's zone.
@@ -635,13 +639,14 @@ def test_new_agents_card_counts_first_seen_not_alerts(lab: dict[str, Any]) -> No
     card = next(c for c in s["cards"] if c["key"] == "agents")
     new = [n for n in s["new"] if n["kind"] in ("agent", "mcp")]
     assert {n["name"] for n in new} >= {"github", "paste-share"}
-    assert card["value"] == len(new) and card["previous"] == 0
-    # A day later they are not new any more, and count in the period before.
+    assert card["value"] == len(new) and card["previous"] is None  # no earlier data yet
+    # A day later they are not new any more. The period before holds them, but AI use
+    # starts partway through it, so it is not covered: still no change.
     app.state.ai_watch._clock = lambda: NOW + timedelta(hours=25)
     app.state.page_cache.clear()
     later = a.get("/api/ai/watch/summary?days=1&tz=UTC").json()
     card = next(c for c in later["cards"] if c["key"] == "agents")
-    assert card["value"] == 0 and card["previous"] == len(new)
+    assert card["value"] == 0 and card["previous"] is None and later["compared"] is False
 
 
 def test_people_without_cost_metrics_say_so(lab: dict[str, Any]) -> None:
@@ -769,3 +774,31 @@ def test_the_period_before_is_read_beside_the_range_and_its_failure_is_the_page_
     now = lab["admin"].get("/api/ai/usage", params={"start": start, "end": end})
     assert before.status_code == now.status_code >= 400
     assert before.json() == now.json()
+
+
+def test_agents_overview_says_when_comparisons_start(
+    lab: dict[str, Any], pin_now: Callable[[datetime], None]
+) -> None:
+    """Fix list items 8, 9, and S1: the lab's telemetry starts inside this week, so the week
+    before has no data. The answer names the date and sends no earlier values."""
+    pin_now(NOW + timedelta(hours=1))
+    o = lab["admin"].get("/api/agents/overview?days=7").json()
+    h = o["history"]
+    assert h["compared"] is False and h["since"] is not None
+    since = datetime.fromisoformat(h["since"].replace("Z", "+00:00"))
+    # A rolling week: covered once its start is 90% of a week after the first event.
+    starts = since + timedelta(days=7 * 0.9 + 7)
+    assert datetime.fromisoformat(h["starts"].replace("Z", "+00:00")) == starts
+    for k in ("sessions", "people", "calls", "failed"):
+        assert o[k] is None or o[k]["before"] is None, (k, o[k])
+
+
+def test_services_with_equal_events_keep_one_order_by_name(lab: dict[str, Any]) -> None:
+    def order() -> list[tuple[int, str]]:
+        lab["app"].state.page_cache.clear()  # a second load runs the queries again
+        return [(u["events"], u["service"]["name"]) for u in usage(lab["admin"])["services"]]
+
+    first, second = order(), order()
+    assert first == second
+    assert first == sorted(first, key=lambda r: (-r[0], r[1].lower()))
+    assert sum(1 for n, _ in first if n == 1) >= 3  # the lab has ties to order

@@ -102,3 +102,9 @@ export function localDayBounds(day: string, timeZone?: string): { start: string;
     end: new Date(localMidnight(next, timeZone)).toISOString(),
   };
 }
+
+/** The one note under a page's local times (DESIGN.md section 3): "Times in PDT; hover for
+ * UTC.", or "Times in UTC." when the viewer's zone is UTC, where the hover would add nothing. */
+export function timesNote(zone: string): string {
+  return zone === "UTC" || zone === "GMT" ? "Times in UTC." : `Times in ${zone}; hover for UTC.`;
+}

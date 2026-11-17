@@ -1,4 +1,5 @@
 import type { AiStatus } from "@/lib/api";
+import { Select } from "@/components/forms/Select";
 
 // A dot and the label (DESIGN.md 7). Never a severity color: Not approved is a review
 // state, not an alert.
@@ -35,17 +36,15 @@ interface StatusPickerProps {
 /** Admins set the review status inline; the change is audited server-side. */
 export function StatusPicker({ label, value, onChange }: StatusPickerProps) {
   return (
-    <select
+    <Select
       aria-label={`Review status of ${label}`}
       value={value}
-      onChange={(e) => onChange(e.target.value as AiStatus)}
-      className="h-7 rounded border border-border-control bg-inset px-1.5 text-sm text-text"
-    >
-      {(Object.keys(STATUS_LABEL) as AiStatus[]).map((s) => (
-        <option key={s} value={s}>
-          {STATUS_LABEL[s]}
-        </option>
-      ))}
-    </select>
+      onChange={(v) => onChange(v as AiStatus)}
+      options={(Object.keys(STATUS_LABEL) as AiStatus[]).map((s) => ({
+        value: s,
+        label: STATUS_LABEL[s],
+      }))}
+      className="h-7 text-sm"
+    />
   );
 }

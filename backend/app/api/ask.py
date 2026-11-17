@@ -14,17 +14,23 @@ from datetime import datetime, timedelta
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Query, Request
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, model_validator
 from starlette.concurrency import run_in_threadpool
 
 from app.api.access import SqlUser, client_ip
 from app.api.cancel import watch_disconnect
-from app.api.query import QueryRequest, QueryResponse, _geo, _intel, _run_audited
+from app.api.query import MAX_TYPED_SQL, HeldQuery, QueryResponse, _geo, _intel, _run_audited
 from app.auth.service import AuthService
 from app.auth.users import User
 from app.core import clock
 from app.core.config import AppConfig
-from app.core.errors import AppError, ParamInvalidError, ProviderConfigError, RateLimitedError
+from app.core.errors import (
+    AppError,
+    NotFoundError,
+    ParamInvalidError,
+    ProviderConfigError,
+    RateLimitedError,
+)
 from app.core.times import UtcDateTime
 from app.engine.duckdb import QueryScope
 from app.engine.views import permitted_sources, scope_sources
@@ -39,7 +45,14 @@ from app.search.ask_drill import DrillError, drill_sql
 from app.search.ask_flow import Routed, route_question
 from app.search.ask_route import Plan, rank
 from app.search.ask_runs import AskRuns, Drill, Ran
-from app.search.ask_summary import check_claims, headline, removed_note, sample
+from app.search.ask_summary import (
+    check_claims,
+    counted_line,
+    headline,
+    removed_note,
+    sample,
+    window_words,
+)
 from app.search.library import Library, LibraryQuery, editor_sql
 from app.search.saved import SavedSearchStore
 
@@ -51,7 +64,41 @@ Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max
 
 class Turn(BaseModel):
     question: Text
-    sql: str = Field(min_length=1, max_length=20_000)
+    # The earlier answer by its id: the server reads its SQL from what it holds, so SQL it
+    # built (a library answer longer than typed SQL may be) is never posted back. `sql`
+    # is the client's copy, used when the answer has expired or had no id.
+    ask_id: str | None = Field(default=None, max_length=64)
+    sql: str | None = Field(default=None, min_length=1, max_length=MAX_TYPED_SQL)
+
+    @model_validator(mode="after")
+    def _one(self) -> "Turn":
+        if self.ask_id is None and self.sql is None:
+            raise ValueError("a turn needs its ask_id or its sql")
+        return self
+
+
+def _history_sql(t: Turn, runs: AskRuns, user_id: str, now: datetime) -> str:
+    """An earlier turn's SQL for the follow-up: the held answer's own SQL, the client's
+    copy when it has expired, or one line in its place when the SQL is a server-built
+    library answer too long for the model's turn or expired with no copy (the
+    model-facing limit stays as it is)."""
+    run = None
+    if t.ask_id is not None:
+        try:
+            run = runs.get(t.ask_id, user_id, now)
+        except NotFoundError:
+            run = None
+    if run is None:
+        # Expired, and its SQL too long to have been sent back: the follow-up still runs,
+        # with one line saying so, never blocked by an earlier turn (second review of 636).
+        if t.sql is None:
+            return (
+                "-- An earlier answer built by the server; it has expired, so its SQL is not shown."
+            )
+        return t.sql
+    if len(run.sql) <= MAX_TYPED_SQL:
+        return run.sql
+    return f"-- The library query {run.origin}; its SQL was built by the server and is not shown."
 
 
 class AskRequest(BaseModel):
@@ -185,7 +232,11 @@ async def ask(body: AskRequest, request: Request, user: AskUser) -> AskResponse:
 
     allowed = await run_in_threadpool(permitted_sources, meta, user)
     scope = QueryScope(sources=scope_sources(allowed, body.sources), start=body.start, end=body.end)
-    history = [AskTurn(t.question, t.sql) for t in body.history]
+    runs: AskRuns = request.app.state.ask_runs
+    asked_at = clock.now()
+    history = [
+        AskTurn(t.question, _history_sql(t, runs, user.user_id, asked_at)) for t in body.history
+    ]
     searches: SavedSearchStore = request.app.state.searches
     found = await run_in_threadpool(searches.examples, user, body.question)
     examples = [AskExample(s.name, s.sql) for s in found]
@@ -226,7 +277,6 @@ async def ask(body: AskRequest, request: Request, user: AskUser) -> AskResponse:
         )
         raise
     config: AppConfig = request.app.state.config
-    runs: AskRuns = request.app.state.ask_runs
     route_out = _route_out(routed, bool(history))
     start = routed.span.start if routed and routed.span else body.start
     end = routed.span.end if routed and routed.span else body.end
@@ -248,6 +298,8 @@ async def ask(body: AskRequest, request: Request, user: AskUser) -> AskResponse:
             body.question, origin=c.pack.origin(c.query), params=routed.plan.params,
             provider_id=chosen.provider_id, template=c.query.answer,
             drill=_drill(c.query, routed.plan), tz=body.tz,
+            counted=(w.what, w.row, w.rows) if (w := c.query.counted) else None,
+            window=routed.span.label if routed.span else None,
         )  # fmt: skip
         detail |= {"call_ids": call_ids, "ask_id": kept.ask_id}
         await run_in_threadpool(
@@ -263,6 +315,7 @@ async def ask(body: AskRequest, request: Request, user: AskUser) -> AskResponse:
     kept = runs.keep(
         user.user_id, outcome.answer.sql, start, end, body.sources,
         call_ids, now, body.question, provider_id=chosen.provider_id, tz=body.tz,
+        window=routed.span.label if routed and routed.span else None,
     )  # fmt: skip
     detail |= {"call_ids": call_ids, "check": outcome.check, "ask_id": kept.ask_id}
     await run_in_threadpool(
@@ -385,6 +438,9 @@ class AskRunResponse(QueryResponse):
     summary_note: str | None = None
     # Group keys (D173): each row can open its events with POST /api/ask/{id}/drill.
     drill_keys: list[str] = Field(default_factory=list)
+    # What was counted, when the rows have no event ids to cite (item 21): one sentence
+    # written by code from the run (sources read, window, rows) and the library entry.
+    counted: str | None = None
 
 
 @router.post("/ask/{ask_id}/run")
@@ -400,7 +456,7 @@ async def run_answer(ask_id: str, request: Request, user: AskUser) -> AskRunResp
     start = run.start
     if start is None or end - start > timedelta(days=ASK_MAX_DAYS):
         start = end - timedelta(days=ASK_MAX_DAYS)
-    body = QueryRequest(
+    body = HeldQuery(
         sql=run.sql,
         start=start,
         end=end,
@@ -417,8 +473,15 @@ async def run_answer(ask_id: str, request: Request, user: AskUser) -> AskRunResp
     head = headline(result.columns, result.rows, result.truncated, run.template, run.tz)
     rows = sample(result.columns, result.rows, result.truncated)
     runs.ran(run.ask_id, Ran(rows, list(result.sources), head, start, end))
+    # Words for the window the run read: the question's own words only when the run read
+    # exactly that window (a cut to the 90-day cap reads less than "the last 120 days").
+    label = run.window if run.start is not None and start == run.start else None
+    window = window_words(start, end, run.end is None, label, run.tz)
+    counted = counted_line(
+        result.columns, len(result.rows), len(result.sources), window, run.counted,
+    )  # fmt: skip
     note = None
-    if config.ask.summarize and result.rows and rows is None:
+    if config.ask.summarize and result.rows and rows is None and counted is None:
         note = "No summary: these rows have no event ids to cite."
     return AskRunResponse(
         columns=result.columns,
@@ -434,6 +497,7 @@ async def run_answer(ask_id: str, request: Request, user: AskUser) -> AskRunResp
         summarize=config.ask.summarize and rows is not None and bool(run.provider_id),
         summary_note=note,
         drill_keys=run.drill.keys if run.drill and result.columns else [],
+        counted=counted,
     )
 
 

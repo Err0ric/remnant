@@ -5,6 +5,7 @@ import { FormError } from "@/features/auth/FormError";
 import { ApiError, api, type ParamDef, type ParamType, type SavedSearch } from "@/lib/api";
 import { slugify, sqlPlaceholders } from "@/lib/search";
 import { SectionTitle } from "@/components/SectionTitle";
+import { Select } from "@/components/forms/Select";
 
 interface SaveSearchFormProps {
   sql: string;
@@ -128,15 +129,16 @@ export function SaveSearchForm({
           <label htmlFor="save-visibility" className="text-sm font-semibold">
             Visibility
           </label>
-          <select
+          <Select
             id="save-visibility"
             value={visibility}
-            onChange={(e) => setVisibility(e.target.value as "private" | "shared")}
-            className="h-9 rounded border border-border-control bg-inset px-2 text-sm text-text"
-          >
-            <option value="private">Private: only you</option>
-            <option value="shared">Shared: everyone signed in</option>
-          </select>
+            onChange={(v) => setVisibility(v as "private" | "shared")}
+            options={[
+              { value: "private", label: "Private: only you" },
+              { value: "shared", label: "Shared: everyone signed in" },
+            ]}
+            className="h-9 text-sm"
+          />
           <p className="text-sm text-text-muted">
             Shared searches run with each person&apos;s own source access, never yours.
           </p>
@@ -156,23 +158,18 @@ export function SaveSearchForm({
             {names.map((n) => (
               <div key={n} className="grid items-center gap-2 md:grid-cols-[160px_140px_1fr]">
                 <span className="font-mono text-sm">{n}</span>
-                <select
+                <Select
                   aria-label={`Type of ${n}`}
                   value={params[n]?.type ?? "string"}
-                  onChange={(e) =>
+                  onChange={(v) =>
                     setParams({
                       ...params,
-                      [n]: { type: e.target.value as ParamType, def: params[n]?.def ?? "" },
+                      [n]: { type: v as ParamType, def: params[n]?.def ?? "" },
                     })
                   }
-                  className="h-8 rounded border border-border-control bg-inset px-2 text-sm text-text"
-                >
-                  {TYPES.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </select>
+                  options={TYPES.map((t) => ({ value: t, label: t }))}
+                  className="text-sm"
+                />
                 <input
                   aria-label={`Default for ${n}`}
                   placeholder="Default (optional)"

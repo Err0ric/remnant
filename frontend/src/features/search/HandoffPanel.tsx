@@ -2,6 +2,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { ApiError, api } from "@/lib/api";
 import { navigate } from "@/lib/route";
+import { Select } from "@/components/forms/Select";
 
 interface HandoffPanelProps {
   eventIds: string[];
@@ -69,17 +70,14 @@ export function HandoffPanel({ eventIds, onClose }: HandoffPanelProps) {
           <div className="flex flex-wrap items-center gap-3">
             <label className="flex items-center gap-2">
               <span className="text-text-secondary">To</span>
-              <select
+              <Select
                 value={chosen}
-                onChange={(e) => setTargetId(e.target.value)}
-                className="h-8 rounded border border-border-control bg-inset px-2"
-              >
-                {(targets.data ?? []).map((t) => (
-                  <option key={t.target_id} value={t.target_id}>
-                    {t.name} ({t.kind})
-                  </option>
-                ))}
-              </select>
+                onChange={setTargetId}
+                options={(targets.data ?? []).map((t) => ({
+                  value: t.target_id,
+                  label: `${t.name} (${t.kind})`,
+                }))}
+              />
             </label>
           </div>
           <label className="flex flex-col gap-1">

@@ -184,9 +184,9 @@ describe("Health layout (D255)", () => {
       const base = spy.getMockImplementation() as typeof fetch;
       spy.mockImplementation(async (input, init) => {
         const res = await base(input, init);
-        if (!String(input).endsWith("/api/health-checks")) return res;
+        if (!String(input).endsWith("/api/overview")) return res;
         const body = await res.json();
-        return new Response(JSON.stringify({ ...body, quarantined_files: 2 }), {
+        return new Response(JSON.stringify({ ...body, damaged_files: 2 }), {
           headers: { "Content-Type": "application/json" },
         });
       });

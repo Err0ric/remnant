@@ -66,7 +66,7 @@ describe("Needs you banner keeps its inputs (handoff item 4, owner rule 5)", () 
     ]);
     const rows = needsYouRows(undefined, [], o);
     expect(rows.map((r) => [r.order, r.kind, r.title])).toEqual([
-      [1, "Source error", "dns has errors"],
+      [1, "Unhealthy", "dns has errors"],
     ]);
   });
 });

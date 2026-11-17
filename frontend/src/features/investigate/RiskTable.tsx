@@ -3,6 +3,7 @@ import { SeverityMark } from "@/components/SeverityMark";
 import { useQuery } from "@tanstack/react-query";
 import { api, type EntityRisk } from "@/lib/api";
 import { InventoryMatches } from "./InventoryLine";
+import { LEAD_COL, NAME_COL, restCol } from "./listColumns";
 
 type Kind = "user" | "ip" | "host";
 
@@ -107,14 +108,18 @@ export function RiskTable({
   });
   const top = Math.max(1, ...rows.map((r) => r.score));
   const cols = COLUMNS[kind];
-  const NUM = "px-3 py-2 text-right font-mono tabular-nums align-top";
+  // Numbers are right-aligned; headers stay on one line (listColumns.ts sets the widths).
+  const NUM = "whitespace-nowrap px-3 py-2 text-right font-mono tabular-nums align-top";
+  const HEAD = "whitespace-nowrap px-3 py-2 text-right";
+  // Rule matches, the signal columns, and Events share what the name and score leave.
+  const rest = restCol(cols.length + 2);
   return (
     <div className="overflow-x-auto">
       <table aria-label={label} className="w-full min-w-[760px] text-sm">
         <thead>
           <tr className="border-b border-border text-left text-text-secondary">
-            <th className="px-3 py-2">{label}</th>
-            <th aria-label="Score" className="w-40 px-3 py-2 text-right">
+            <th className={`px-3 py-2 ${NAME_COL}`}>{label}</th>
+            <th aria-label="Score" className={`${HEAD} ${LEAD_COL}`}>
               <span className="flex items-center justify-end gap-1.5">
                 Score
                 <About
@@ -123,13 +128,17 @@ export function RiskTable({
                 />
               </span>
             </th>
-            <th className="px-3 py-2">Rule matches</th>
+            <th className={HEAD} style={rest}>
+              Rule matches
+            </th>
             {cols.map((c) => (
-              <th key={c} className="px-3 py-2 text-right">
+              <th key={c} className={HEAD} style={rest}>
                 {PART_LABEL[c]}
               </th>
             ))}
-            <th className="px-3 py-2 text-right">Events</th>
+            <th className={HEAD} style={rest}>
+              Events
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -146,7 +155,7 @@ export function RiskTable({
                     e.stopPropagation();
                     onPick(r);
                   }}
-                  className="break-all text-left font-mono text-accent-text hover:underline"
+                  className="text-left font-mono text-accent-text [overflow-wrap:anywhere] hover:underline"
                 >
                   {r.value}
                 </button>
@@ -159,9 +168,12 @@ export function RiskTable({
               </td>
               <td className="px-3 py-2 align-top">
                 <div className="flex items-center justify-end gap-2" title={scoreTitle(r)}>
-                  <span className="h-1.5 w-24 rounded bg-surface-head" aria-hidden="true">
+                  {/* A magnitude, not a severity or a state: neutral, never red
+                      (docs/proposals/fix-list-2026-11-16.md item 17; DESIGN.md 6.3,
+                      People & devices). */}
+                  <span className="h-1.5 w-24 shrink-0 rounded bg-border-strong" aria-hidden="true">
                     <span
-                      className="block h-1.5 rounded bg-danger"
+                      className="block h-1.5 rounded bg-text-secondary"
                       style={{ width: `${r.score ? Math.max(4, (r.score / top) * 100) : 0}%` }}
                     />
                   </span>
@@ -169,7 +181,7 @@ export function RiskTable({
                 </div>
               </td>
               <td className="px-3 py-2 align-top" title={r.rules.join(", ") || undefined}>
-                <div className="flex flex-wrap gap-1">
+                <div className="flex flex-wrap justify-end gap-1 whitespace-nowrap">
                   {LEVELS.map((level) =>
                     r[level] ? (
                       <SeverityMark

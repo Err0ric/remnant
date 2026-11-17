@@ -4,9 +4,11 @@ interface ClassificationBadgeProps {
 
 export function ClassificationBadge({ value }: ClassificationBadgeProps) {
   return value === "local_only" ? (
-    <span className="rounded-badge bg-local-bg px-2 py-px text-xs text-local-tx">Local only</span>
+    <span className="whitespace-nowrap rounded-badge bg-local-bg px-2 py-px text-xs text-local-tx">
+      Local only
+    </span>
   ) : (
-    <span className="rounded-badge bg-cloud-bg px-2 py-px text-xs text-cloud-tx">
+    <span className="whitespace-nowrap rounded-badge bg-cloud-bg px-2 py-px text-xs text-cloud-tx">
       Cloud allowed
     </span>
   );

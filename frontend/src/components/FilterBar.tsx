@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Select } from "@/components/forms/Select";
 import { cn } from "@/lib/cn";
 import { utcText } from "@/lib/timeWindow";
 
@@ -121,26 +122,16 @@ interface FacetSelectProps extends Facet {
 /** A facet button that reads "Name Value" and opens its list (DESIGN.md 6.0). */
 export function FacetSelect({ name, value, options, onChange, disabled, after }: FacetSelectProps) {
   return (
-    <label className="flex h-7 items-center gap-1.5 rounded border border-border-strong pl-2.5 text-text-secondary focus-within:outline focus-within:outline-2 focus-within:outline-focus-ring">
-      {name}
-      <select
-        aria-label={name}
-        value={value}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
-        className={cn(
-          "h-full rounded-r bg-transparent font-semibold text-text focus:outline-none",
-          after ? "pr-0" : "pr-1",
-        )}
-      >
-        {options.map((o) => (
-          <option key={o.id} value={o.id}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-      {after ? <span className="flex items-center pr-1.5">{after}</span> : null}
-    </label>
+    <Select
+      look="facet"
+      aria-label={name}
+      prefix={name}
+      value={value}
+      disabled={disabled}
+      options={options.map((o) => ({ value: o.id, label: o.label }))}
+      onChange={onChange}
+      suffix={after ? <span className="flex items-center">{after}</span> : null}
+    />
   );
 }
 

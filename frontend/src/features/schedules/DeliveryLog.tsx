@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { When } from "@/components/When";
 import { api } from "@/lib/api";
 
 interface DeliveryLogProps {
@@ -26,8 +27,8 @@ export function DeliveryLog({ scheduleId }: DeliveryLogProps) {
       <tbody>
         {rows.map((d) => (
           <tr key={d.delivery_id} className="border-b border-border last:border-0">
-            <td className="py-1 pr-6 font-mono text-text-secondary">
-              {d.created_at.slice(0, 16).replace("T", " ")}
+            <td className="whitespace-nowrap py-1 pr-6 text-text-secondary">
+              <When iso={d.created_at} />
             </td>
             <td className="py-1 pr-6">{d.target_name ?? "Deleted target"}</td>
             <td className="py-1 pr-6">{d.kind}</td>

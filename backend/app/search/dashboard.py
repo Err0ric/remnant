@@ -15,8 +15,8 @@ import re
 import threading
 from collections import Counter, defaultdict
 from collections.abc import Callable, Collection, Iterable
-from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from dataclasses import dataclass, field, fields
+from datetime import UTC, datetime, time, timedelta
 from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -153,10 +153,12 @@ class Identity:
 class History:
     """Whether the window before can be compared: every source that counts toward the
     section has data for at least MIN_COVERAGE of it. `since`: the latest first event
-    among those sources, for "sources start Oct 21"."""
+    among those sources, for "sources start Oct 21". `starts`: while not compared, when the
+    window before will be covered ("Comparisons start Nov 23"; `settle`)."""
 
     compared: bool
     since: datetime | None = None
+    starts: datetime | None = None
 
 
 @dataclass(slots=True)
@@ -322,6 +324,90 @@ def _history(
     latest = max(firsts)
     covered = (start - max(before, latest)) / span if span else 1.0
     return History(covered >= MIN_COVERAGE, latest if latest > before else None)
+
+
+def comparisons_start(
+    latest: datetime,
+    start: datetime,
+    before: datetime,
+    now: datetime,
+    window: Window | None = None,
+    tz: str = "UTC",
+) -> datetime:
+    """When comparisons start (fix list item 8): the first moment `_history` finds the window
+    before covered, that is when the window's start is MIN_COVERAGE of a window after
+    `latest`, the latest first event of the counted sources. `window`: a Dashboard window,
+    which moves a whole bucket at a time (`bounds`: hours for 24 hours, the viewer's days
+    otherwise); None: a window of the same length ending now (Agents), whose length never
+    changes, so the estimate is exact.
+
+    For a Dashboard window the estimate is then checked against `_history` itself at each
+    step: a day across a clock change is 23 or 25 hours, so the window before on that date
+    may be an hour longer or shorter than today's. The answer is the first step at which the
+    rule compares, so the date and the comparison never disagree."""
+    need = latest + MIN_COVERAGE * (start - before)
+    if window is None:
+        return need + (now - start)
+    if window == "24h":
+        hour = need.astimezone(UTC).replace(minute=0, second=0, microsecond=0)
+        first = hour if hour >= need else hour + timedelta(hours=1)
+        guess = first + timedelta(hours=23)
+
+        def step(at: datetime, n: int) -> datetime:
+            return at + timedelta(hours=n)
+    else:
+        where = zone(tz)
+        local = need.astimezone(where)
+        day = local.date()
+        if datetime.combine(day, time.min, where) < need:
+            day += timedelta(days=1)
+        days = 7 if window == "7d" else 30
+        guess = datetime.combine(day + timedelta(days=days - 1), time.min, where).astimezone(UTC)
+
+        def step(at: datetime, n: int) -> datetime:
+            d = at.astimezone(where).date() + timedelta(days=n)
+            return datetime.combine(d, time.min, where).astimezone(UTC)
+
+    def compared(at: datetime) -> bool:
+        s, b, _ = bounds(window, at, tz)
+        return _history({"x": latest}, ["x"], s, b).compared
+
+    # A clock change moves the answer by at most one step; a few steps bound the search.
+    for _ in range(3):
+        if compared(guess):
+            break
+        guess = step(guess, 1)
+    for _ in range(3):
+        if not compared(step(guess, -1)):
+            break
+        guess = step(guess, -1)
+    return guess
+
+
+def settle(
+    part: Any,
+    start: datetime,
+    before: datetime,
+    now: datetime,
+    window: Window | None = None,
+    tz: str = "UTC",
+) -> None:
+    """One rule for every number compared with the window before (fix list items 8 and 9):
+    while the section's sources do not cover the window before (`part.history`), no number
+    has an earlier value, so no page shows a change, and the history says when comparisons
+    start. A covered window before with a count of 0 is a real zero and keeps its change."""
+    h: History = part.history
+    if h.compared:
+        return
+    if h.since is not None:
+        h.starts = comparisons_start(h.since, start, before, now, window, tz)
+    for f in fields(part):
+        v = getattr(part, f.name)
+        for k in v if isinstance(v, list) else [v]:
+            kpi = k if isinstance(k, Kpi) else getattr(k, "kpi", None)
+            if isinstance(kpi, Kpi):
+                kpi.before = None
+                kpi.drill_before = None
 
 
 def _utc(v: Any) -> datetime | None:
@@ -674,6 +760,26 @@ def _attacks_on(
     )
 
 
+def rules_state(meta: MetaDB, allowed: list[str] | None) -> tuple[int, str | None]:
+    """How many rules are enabled on the install, and, only when none is, the newest event
+    time of a rule match on a source `allowed` (None: every source) that is still kept:
+    with no rule and no match since the window before, Detections has nothing to show. A
+    count over the small rules table; the matches are read only when no rule is on."""
+    with meta.connect() as con:
+        on = int(con.execute("SELECT count(*) FROM rules WHERE enabled = 1").fetchone()[0])
+        if on:
+            return on, None
+        if allowed is None:
+            row = con.execute("SELECT max(event_time) FROM rule_matches").fetchone()
+        else:
+            marks = ",".join("?" * len(allowed)) or "NULL"
+            row = con.execute(
+                f"SELECT max(event_time) FROM rule_matches WHERE source_id IN ({marks})",  # noqa: S608  # placeholders only
+                allowed,
+            ).fetchone()
+    return 0, (str(row[0]) if row and row[0] else None)
+
+
 def _matches(
     meta: MetaDB, allowed: list[str] | None, start: datetime, before: datetime
 ) -> tuple[list[tuple[str, str, str, datetime | None, str, str]], int]:
@@ -917,5 +1023,8 @@ def sections(
             run, meta, allowed, [s[0] for s in mine], start, before, buckets, window, first
         )
         out.no_rules = out.detections is None and bool(mine)
+    for part in (out.identity, out.attacks, out.detections):
+        if part is not None:
+            settle(part, start, before, now, window, tz)
     out.read = sorted(run.read)
     return out

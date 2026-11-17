@@ -7,6 +7,7 @@ from typing import Any
 
 from app.engine.duckdb import QueryScope
 from app.enrich.networks import Places
+from app.search.dashboard import comparisons_start
 from app.search.m365 import overview
 from tests.integration.test_m365_consents import _row, _write
 from tests.integration.test_schedules import make_lab
@@ -66,6 +67,15 @@ def test_overview_splits_outcomes_and_every_number_opens_its_rows(tmp_path: Path
         assert count(c.kpi.drill) == c.kpi.value
     for sql in m.lists.values():
         count(sql)
+    # The data starts inside this window: the 30 days before have none, so no number has an
+    # earlier value and the history says when comparisons start (fix list items 8 and 9).
+    assert m.history.compared is False and m.history.since is not None
+    assert m.history.starts == comparisons_start(
+        m.history.since, m.start, m.before, NOW, "30d", "UTC"
+    )
+    assert m.history.starts > NOW
+    kpis = [m.sign_ins, m.failed, m.risky, m.consents, *(c.kpi for c in m.counts)]
+    assert all(k is not None and k.before is None for k in kpis)
     # No Microsoft 365 source for this viewer: the area says so instead of zeros.
     assert overview(engine, ["other"], SOURCES, places, "7d", NOW).has_source is False
 

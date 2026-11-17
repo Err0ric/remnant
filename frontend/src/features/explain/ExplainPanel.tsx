@@ -7,6 +7,7 @@ import { ApiError, api } from "@/lib/api";
 import { navigate } from "@/lib/route";
 import { eventsSql, seedSearch } from "@/lib/searchSeed";
 import { reportMarkdown } from "./report";
+import { Select } from "@/components/forms/Select";
 
 export const MAX_EXPLAIN = 50;
 
@@ -79,23 +80,20 @@ export function ExplainPanel({ eventIds, subject, onClose }: ExplainPanelProps) 
       >
         <label className="flex flex-col gap-1">
           <span className="text-text-secondary">Model</span>
-          <select
+          <Select
             aria-label="Model"
-            className="h-8 rounded border border-border bg-surface px-1"
             value={chosen}
-            onChange={(e) => setProvider(e.target.value)}
-          >
-            {choices.map((p) => (
-              <option key={p.provider_id} value={p.provider_id}>
-                {p.name} · {p.model} · {p.locality === "local" ? "Local" : "Cloud"}
-              </option>
-            ))}
-          </select>
+            onChange={setProvider}
+            options={choices.map((p) => ({
+              value: p.provider_id,
+              label: `${p.name} · ${p.model} · ${p.locality === "local" ? "Local" : "Cloud"}`,
+            }))}
+          />
         </label>
         <label className="flex min-w-0 flex-[1_1_260px] flex-col gap-1">
           <span className="text-text-secondary">Question (optional)</span>
           <input
-            className="h-8 rounded border border-border bg-inset px-2"
+            className="h-8 rounded border border-border-control bg-inset px-2"
             maxLength={500}
             value={question}
             placeholder="What happened here?"

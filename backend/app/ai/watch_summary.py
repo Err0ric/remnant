@@ -26,7 +26,7 @@ from app.ai.usage import Usage
 from app.alerts.items import AlertItem
 from app.core.timing import in_context
 from app.engine.duckdb import QueryEngine, QueryScope
-from app.search.dashboard import zone
+from app.search.dashboard import Window, _history, comparisons_start, zone
 
 CHART_DAYS = 30
 TOP = 10
@@ -170,6 +170,7 @@ class Summary:
     # 2026-10-30): the cards then show no change. `since`: the first use seen.
     compared: bool = True
     since: str | None = None
+    starts: str | None = None  # while not compared: when comparisons start
     # AI services with any use in the period, of every review status (the Dashboard's
     # "AI services in use"; `top` is only the first few).
     services_in_use: int = 0
@@ -371,10 +372,19 @@ def summary(
         for sid, u in ranked[:TOP]
     ]
     new = [n for n in firsts if n.first_seen >= (now - NEW_WINDOW).isoformat()]
+    # The first AI use seen (owner, 2026-10-30), through the Dashboard's one rule: compared
+    # once the period before is covered; until then no card has an earlier value, and the
+    # history says when comparisons start (fix list items 8 and 9).
     oldest = min(first_in_rows.values(), default=None)
-    compared = oldest is None or (cur_start - max(prev_start, oldest)) >= 0.9 * (
-        cur_start - prev_start
-    )
+    history = _history({} if oldest is None else {"use": oldest}, ["use"], cur_start, prev_start)
+    compared = history.compared
+    starts = None
+    if not compared and oldest is not None:
+        window: Window | None = "7d" if days == 7 else "30d" if days == 30 else None
+        starts = comparisons_start(oldest, cur_start, prev_start, now, window, tz)
+        for c in cards:
+            c.previous = None
+            c.drill_before = None
     return Summary(
         days,
         cur_start.isoformat(),
@@ -386,6 +396,7 @@ def summary(
         [replace(n, id=shown_ids[n.id]) if n.id in shown_ids else n for n in new],
         compared=compared,
         since=oldest.isoformat() if oldest is not None and oldest > prev_start else None,
+        starts=starts.isoformat() if starts is not None else None,
         before=prev_start.isoformat(),
         chart_drill=use_drill(set(use) | chart_svcs, "services"),
         services_in_use=len(use),
@@ -478,14 +489,20 @@ def _firsts(
 
 
 TELEMETRY_TEMPLATES = frozenset({"claude_code_otel", "mcp_inventory"})
+SERVER_EVENTS_TEMPLATE = "server_events"  # app.ingest.server_events' template
 
 
 def source_classes(sources: list[tuple[str, str, str | None]]) -> dict[str, list[str]]:
     """Which sources can carry what the cards count, from (id, kind, template): telemetry
     (an OpenTelemetry receiver, or a file read with the Claude Code or MCP inventory
-    template) and Microsoft 365 (the connector, or a file with an M365 template)."""
+    template) and Microsoft 365 (the connector, or a file with an M365 template). The
+    server's own events arrive through the OpenTelemetry spool but carry no AI telemetry:
+    counted as telemetry, the day the server first ran held back Agents' comparisons (fix
+    list S1)."""
     out: dict[str, list[str]] = {"telemetry": [], "m365": []}
     for sid, kind, template in sources:
+        if template == SERVER_EVENTS_TEMPLATE:
+            continue
         if kind == "otlp" or template in TELEMETRY_TEMPLATES:
             out["telemetry"].append(sid)
         if kind == "m365" or (template or "").startswith("m365_"):

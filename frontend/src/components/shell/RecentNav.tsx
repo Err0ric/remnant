@@ -1,25 +1,14 @@
 import type { MouseEvent } from "react";
 import { Globe, Monitor, User, type LucideIcon } from "lucide-react";
 import { Truncate } from "@/components/Truncate";
-import { cn } from "@/lib/cn";
 import { entityHref, openEntity } from "@/lib/entity";
 import { usePins } from "@/lib/pins";
+import { railFit, useWindowHeight } from "@/lib/railFit";
 import { useRecentEntities, type RecentEntity, type RecentKind } from "@/lib/recentEntities";
 import { useViewer } from "@/lib/viewer";
 
 const ICONS: Record<RecentKind, LucideIcon> = { user: User, host: Monitor, ip: Globe };
 const KIND_WORD: Record<RecentKind, string> = { user: "Person", host: "Host", ip: "Address" };
-
-/** Where Recent gives way on a short window, by how many pins sit above it (D259): its
- * fourth and fifth rows, then all of it. Recent goes first, so Pinned keeps its rows. */
-const FIT: [string, string][] = [
-  ["[@media(max-height:699px)]:hidden", "[@media(max-height:619px)]:hidden"],
-  ["[@media(max-height:769px)]:hidden", "[@media(max-height:689px)]:hidden"],
-  ["[@media(max-height:799px)]:hidden", "[@media(max-height:719px)]:hidden"],
-  ["[@media(max-height:829px)]:hidden", "[@media(max-height:749px)]:hidden"],
-  ["[@media(max-height:859px)]:hidden", "[@media(max-height:779px)]:hidden"],
-  ["[@media(max-height:889px)]:hidden", "[@media(max-height:809px)]:hidden"],
-];
 
 function open(e: RecentEntity) {
   return (ev: MouseEvent) => {
@@ -32,25 +21,25 @@ function open(e: RecentEntity) {
 /** The rail's Recent (D258, DESIGN.md 5): the last five entities the viewer opened, newest
  * first, under the page groups. Its own labelled region, not part of the Primary nav: these
  * are not pages, so the rows are 400 weight in the secondary text color. Hidden when empty,
- * in the icon-only rail, and on short windows: with no pins five rows from 700px tall, three
- * from 620px, none below that, and higher with pins above it (FIT), so the rail never
- * scrolls. Kept in this browser only. */
-export function RecentNav() {
+ * in the icon-only rail, and on short windows: five rows from 700px tall, three from 620px,
+ * none below that, and higher with the current page's tab rows and Pinned above it
+ * (`railFit`), so the rail never scrolls. Kept in this browser only. */
+export function RecentNav({ tabRows = 0 }: { tabRows?: number }) {
   const { userId = "", canViewPeople = true } = useViewer();
   const items = useRecentEntities(userId, canViewPeople);
   const pinned = usePins().data?.length ?? 0;
-  const [rows, all] = FIT[Math.min(pinned, FIT.length - 1)] ?? ["", ""];
-  if (!items.length) return null;
+  const fit = railFit(useWindowHeight(), tabRows, pinned).recent;
+  if (!items.length || !fit) return null;
   return (
-    <nav aria-label="Recent" className={cn("mb-3 md:max-[1099px]:hidden", all)}>
+    <nav aria-label="Recent" className="mb-3 md:max-[1099px]:hidden">
       <div aria-hidden="true" className="px-2.5 pb-1 text-xs text-text-muted">
         Recent
       </div>
       <ul className="flex flex-col gap-px">
-        {items.map((e, i) => {
+        {items.slice(0, fit).map((e) => {
           const Icon = ICONS[e.kind];
           return (
-            <li key={`${e.kind}:${e.value}`} className={cn(i >= 3 && rows)}>
+            <li key={`${e.kind}:${e.value}`}>
               <a
                 href={entityHref(e)}
                 onClick={open(e)}

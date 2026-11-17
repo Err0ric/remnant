@@ -1,4 +1,5 @@
 import { EmptyState } from "@/components/EmptyState";
+import { localStamp } from "@/lib/localTime";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { PageHeader } from "@/components/shell/PageHeader";
@@ -17,8 +18,7 @@ function health(t: AlertTarget): { text: string; tone: string } {
   if (t.failing)
     return { text: `Failing (${t.consecutive_failures} in a row)`, tone: "text-danger" };
   if (t.consecutive_failures) return { text: "Last send failed", tone: "text-warn" };
-  if (t.last_sent_at)
-    return { text: `Sent ${t.last_sent_at.slice(0, 16).replace("T", " ")}`, tone: "" };
+  if (t.last_sent_at) return { text: `Sent ${localStamp(t.last_sent_at)}`, tone: "" };
   return { text: "Not used yet", tone: "text-text-muted" };
 }
 

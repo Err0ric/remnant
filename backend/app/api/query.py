@@ -33,8 +33,13 @@ router = APIRouter(tags=["query"])
 Scalar = Annotated[str, StringConstraints(max_length=2048)] | int | float | bool | None
 
 
+# The longest SQL a person may send (Logs, the CLI, saved searches). Server-built SQL that
+# runs by id (an Ask answer) is not typed, so it is not held to it; the guard reads both.
+MAX_TYPED_SQL = 20_000
+
+
 class QueryRequest(BaseModel):
-    sql: str = Field(min_length=1, max_length=20_000)
+    sql: str = Field(min_length=1, max_length=MAX_TYPED_SQL)
     start: UtcDateTime | None = None
     end: UtcDateTime | None = None
     # A filter only: intersected with the sources the caller may read, never a grant.
@@ -48,6 +53,14 @@ class QueryRequest(BaseModel):
     # newest events are then read newest day first (`search/newest.py`), with the same
     # answer. Used only when the text compiles to exactly this SQL and these values.
     text: str | None = Field(default=None, max_length=MAX_TEXT)
+
+
+class HeldQuery(QueryRequest):
+    """SQL the server holds and runs by id, never sent by the client: an Ask answer, whose
+    library SQL may be built from the AI catalog (fix list 2026-11-16 item 20). Only the
+    typed-SQL length limit is lifted; it goes through the same guard, view, and audit."""
+
+    sql: str = Field(min_length=1)
 
 
 class GeoOut(BaseModel):

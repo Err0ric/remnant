@@ -19,6 +19,7 @@ export default {
       "surface-head": v("surface-head"),
       "surface-expand": v("surface-expand"),
       inset: v("inset"),
+      "empty-fill": v("empty-fill"),
       border: v("border"),
       "border-strong": v("border-strong"),
       "border-control": v("border-control"),
@@ -94,6 +95,8 @@ export default {
       // Larger steps, standard Tailwind values; used for widths and scroll caps.
       24: "96px",
       28: "112px",
+      32: "128px",
+      36: "144px",
       40: "160px",
       14: "56px",
       48: "192px",
@@ -115,7 +118,11 @@ export default {
       full: "9999px",
     },
     extend: {
-      height: { row: "var(--row-h)", "row-rail": "var(--rail-row-h)" },
+      height: {
+        row: "var(--row-h)",
+        "row-rail": "var(--rail-row-h)",
+        "row-rail-tab": "var(--rail-tab-h)",
+      },
       transitionDuration: { DEFAULT: "120ms" },
       transitionTimingFunction: { DEFAULT: "ease-out" },
     },

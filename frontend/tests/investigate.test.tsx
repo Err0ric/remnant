@@ -122,6 +122,66 @@ describe("Investigations (ADR-0016)", () => {
     expect(String(call?.[0])).toContain("value=root");
   });
 
+  it("uses the page's full width, a neutral score bar, and no count beside the title", async () => {
+    await openInvestigate();
+    const table = await screen.findByRole("table", { name: "User" });
+    const card = screen.getByRole("region", { name: "Most active entities" });
+    expect(card.className).not.toMatch(/max-w-|mx-auto/);
+    // The tabs carry the counts; the title has none (it said "0 rule matches considered").
+    expect(screen.queryByText(/rule matches considered/)).toBeNull();
+    const erin = within(table).getByRole("button", { name: "erin@example.com" }).closest("tr")!;
+    const fill = within(erin)
+      .getByTitle(/Score: 14/)
+      .querySelector("span > span")!;
+    // A magnitude, never a severity or a state color.
+    expect(fill.className).toContain("bg-text-secondary");
+    expect(fill.className).not.toMatch(/danger|sev-/);
+  });
+
+  it("lays out every tab on one column scheme, numbers right-aligned", async () => {
+    const { LEAD_COL, NAME_COL, restCol } = await import("@/features/investigate/listColumns");
+    await openInvestigate();
+    await screen.findByRole("table", { name: "User" });
+    const tabs: [RegExp, string][] = [
+      [/^Users/, "User"],
+      [/^IP addresses/, "Source IP"],
+      [/^Hosts/, "Host"],
+      [/^Targeted usernames/, "Targeted usernames"],
+    ];
+    for (const [tab, name] of tabs) {
+      await userEvent.click(screen.getByRole("tab", { name: tab }));
+      const table = await screen.findByRole("table", { name });
+      const heads = within(table).getAllByRole("columnheader");
+      const [first, lead, ...rest] = heads;
+      // The name and the lead number (score or attempts) take the shared widths.
+      for (const c of NAME_COL.split(" ")) expect(first!.className).toContain(c);
+      for (const c of LEAD_COL.split(" ")) expect(lead!.className).toContain(c);
+      expect(lead!.className).toContain("text-right");
+      // Every other column asks for the same equal share, on one line.
+      for (const h of rest) {
+        expect(parseFloat(h.style.width)).toBeCloseTo(
+          parseFloat(String(restCol(rest.length).width)),
+          2,
+        );
+        expect(h.className).toContain("whitespace-nowrap");
+      }
+      if (name !== "Targeted usernames") {
+        // Rule matches is a number column like the rest: header and values to the right.
+        const rule = heads.find((h) => h.textContent === "Rule matches")!;
+        expect(rule.className).toContain("text-right");
+        const col = heads.indexOf(rule);
+        for (const row of within(table).getAllByRole("row").slice(1)) {
+          const cell = row.querySelectorAll("td")[col]!;
+          expect(cell.querySelector("div")!.className).toContain("justify-end");
+        }
+      } else {
+        const attempts = within(table).getAllByRole("row")[1]!.querySelectorAll("td")[1]!;
+        expect(attempts.className).toContain("text-right");
+        expect(attempts.className).toContain("whitespace-nowrap");
+      }
+    }
+  });
+
   it("lists everyone seen, with a column per signal and the score's parts on hover (D195)", async () => {
     await openInvestigate();
     const table = await screen.findByRole("table", { name: "User" });
@@ -279,6 +339,67 @@ describe("Investigations (ADR-0016)", () => {
   });
 });
 
+describe("Person record, Microsoft 365 table (owner, 2026-11-16)", () => {
+  it("pages a long list instead of scrolling inside the page, with plain headers and no person or device column", async () => {
+    window.history.replaceState(null, "", "/investigate/people#user=alice");
+    const spy = mockApi("Codename", { mode: "open" });
+    const base = spy.getMockImplementation()!;
+    const columns = ["time", "actor_user_name", "app", "outcome", "src_endpoint_ip"];
+    const rows = Array.from({ length: 140 }, (_, i) => [
+      new Date(Date.UTC(2026, 9, 30, 12) - i * 60_000).toISOString(),
+      "alice@example.com",
+      "Office 365 Exchange Online",
+      "Success",
+      `198.51.100.${i % 250}`,
+    ]);
+    spy.mockImplementation(async (input, init) => {
+      if (!/\/api\/people\/[^/]+\/m365\?name=sign_ins/.test(String(input)))
+        return base(input, init);
+      const body = {
+        columns,
+        rows,
+        row_count: rows.length,
+        truncated: false,
+        elapsed_ms: 3,
+        executed_sql: "SELECT 1",
+        sources: ["m365"],
+        geo: {},
+        intel: {},
+      };
+      return new Response(JSON.stringify(body), {
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.resetModules();
+    const { loadBranding } = await import("@/lib/branding");
+    await loadBranding();
+    const { App } = await import("@/app/App");
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<App initialTheme="dark" queryClient={client} />);
+    const m365 = await screen.findByRole("region", { name: "Microsoft 365" });
+    const grid = await within(m365).findByRole("treegrid");
+    // No box of its own height around the table: the page scrolls, the table pages.
+    for (let el = grid.parentElement; el && el !== m365; el = el.parentElement) {
+      expect(el.className).not.toMatch(/max-h-|overflow-y-auto/);
+    }
+    expect(within(grid).getAllByRole("row")).toHaveLength(51); // the header and 50 rows
+    const ranges = within(m365).getAllByText(/^1 to 50 of 140/);
+    expect(ranges.length).toBe(2); // above and below the rows
+    expect(
+      within(grid)
+        .getAllByRole("columnheader")
+        .map((h) => h.textContent),
+    ).toEqual(["", "Time", "App", "Outcome", "Source IP"]);
+    // A long app name is cut in the middle, the whole name on hover.
+    const app = within(grid).getAllByText(
+      (_, el) => el?.getAttribute("data-truncate") === "name",
+    )[0]!;
+    expect(app).toHaveAttribute("title", "Office 365 Exchange Online");
+    await userEvent.click(within(m365).getAllByRole("button", { name: "Next" })[0]!);
+    expect(within(m365).getAllByText(/^51 to 100 of 140/).length).toBe(2);
+  });
+});
+
 describe("Person timeline (ADR-0038 section 9)", () => {
   it("shows the forms of the name and rows by day, each opening its events", async () => {
     await openInvestigate("/investigate/people#user=alice");
@@ -328,7 +449,8 @@ describe("Person timeline (ADR-0038 section 9)", () => {
     expect(at).toHaveAttribute("title", "2026-10-30 09:58 UTC");
     const pick = within(m365).getByRole("group", { name: "Microsoft 365 list" });
     await userEvent.click(within(pick).getByRole("button", { name: "Mail" }));
-    expect(await within(m365).findByText("new-inboxrule")).toBeVisible();
+    // The operation, cut in the middle when long, keeps its whole name on hover.
+    expect(await within(m365).findByTitle("new-inboxrule")).toBeVisible();
     expect(spy.mock.calls.some(([u]) => String(u).includes("/m365?name=mail&days=7"))).toBe(true);
     await userEvent.click(within(pick).getByRole("button", { name: "Admin" }));
     expect(

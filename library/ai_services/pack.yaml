@@ -1,0 +1,35 @@
+schema_version: 1
+id: ai_services
+name: AI services
+version: 1.0.0
+description: AI services in use, counted as the AI usage page counts them.
+queries:
+- id: ai_services_in_use
+  name: AI services in use
+  description: 'AI services people reached, per service: events, people, and machines, from every
+    source that names a destination host (DNS, proxy, firewall, and the others the AI usage page
+    reads), matched to the AI service catalog with its approvals and your own services. The SQL is
+    built by the server from the catalog, so in Ask AI this list is the AI usage Services list for
+    the same time range and sources. A saved copy or a pack added to a dashboard keeps the service
+    list as it was when saved. Vendor ad and measurement hosts are left out.'
+  tags:
+  - ai
+  builtin: ai_services
+  params: []
+  group: AI services / In use
+  requires: []
+  why: Which AI services people use, from every source that can show one, as the AI usage page counts
+    them.
+  normal: ChatGPT, Copilot, and Claude in most networks. A service you have not approved is a question
+    for the AI usage page.
+  suggested_schedule: daily
+  flag: null
+  answer: '{n|service|services} in use; most events: {first.service} ({first.events})'
+  counted:
+    what: events
+    row: AI service
+    rows: AI services
+  ask:
+  - 'Which AI services are people using?'
+  - 'What AI services are in use?'
+  - 'Who is using ChatGPT or Claude?'

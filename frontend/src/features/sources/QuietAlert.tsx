@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { ApiError, api, type SourceQuiet } from "@/lib/api";
-import { since } from "@/features/overview/time";
+import { Select } from "@/components/forms/Select";
 
 /** Choices for "Alert if no events for" (ADR-0014 allows 5 minutes to 7 days). */
 const PERIODS: { s: number; label: string }[] = [
@@ -28,44 +28,31 @@ interface QuietAlertProps {
   canManage: boolean;
 }
 
-/** "No events for 2 h" while a quiet-source alert fires, plus the admin setting. */
+/** The quiet alert setting, for admins. */
 export function QuietAlert({ sourceId, quiet, canManage }: QuietAlertProps) {
   const [open, setOpen] = useState(false);
-  const firing =
-    quiet?.state === "quiet" ? (
-      <span className="text-sm text-warn">
-        Quiet: nothing received{" "}
-        {quiet.last_seen ? since(quiet.last_seen, new Date().toISOString()) : "yet"}
-      </span>
-    ) : null;
-  if (!canManage) return firing;
+  // Whether it is quiet now, and for how long, is the status word above ("Quiet 34 h"),
+  // shown to every role; the setting itself is for admins.
+  if (!canManage) return null;
   if (open) {
-    return (
-      <>
-        {firing}
-        <QuietEditor sourceId={sourceId} quiet={quiet ?? null} onClose={() => setOpen(false)} />
-      </>
-    );
+    return <QuietEditor sourceId={sourceId} quiet={quiet ?? null} onClose={() => setOpen(false)} />;
   }
   return (
-    <>
-      {firing}
-      <span className="flex flex-wrap items-center gap-x-2 text-sm">
-        {quiet ? (
-          <span className="text-text-secondary">
-            Alert after {periodLabel(quiet.quiet_after_s)} quiet
-          </span>
-        ) : null}
-        <button
-          type="button"
-          aria-label={`Quiet alert for ${sourceId}`}
-          onClick={() => setOpen(true)}
-          className="whitespace-nowrap text-accent-text hover:underline"
-        >
-          {quiet ? "Change" : "Alert if quiet"}
-        </button>
-      </span>
-    </>
+    <span className="flex flex-wrap items-center gap-x-2 text-sm">
+      {quiet ? (
+        <span className="text-text-secondary">
+          Alert after {periodLabel(quiet.quiet_after_s)} quiet
+        </span>
+      ) : null}
+      <button
+        type="button"
+        aria-label={`Quiet alert for ${sourceId}`}
+        onClick={() => setOpen(true)}
+        className="whitespace-nowrap text-accent-text hover:underline"
+      >
+        {quiet ? "Change" : "Alert if quiet"}
+      </button>
+    </span>
   );
 }
 
@@ -100,21 +87,18 @@ function QuietEditor({ sourceId, quiet, onClose }: QuietEditorProps) {
       <legend className="sr-only">Quiet alert for {sourceId}</legend>
       <label className="flex flex-col gap-0.5">
         <span className="text-text-secondary">Alert if no events for</span>
-        <select
-          value={period ?? "off"}
-          onChange={(e) => setPeriod(e.target.value === "off" ? null : Number(e.target.value))}
-          className="h-7 rounded border border-border-control bg-surface px-1"
-        >
-          <option value="off">Off</option>
-          {PERIODS.map((p) => (
-            <option key={p.s} value={p.s}>
-              {p.label}
-            </option>
-          ))}
-          {quiet && !PERIODS.some((p) => p.s === quiet.quiet_after_s) ? (
-            <option value={quiet.quiet_after_s}>{periodLabel(quiet.quiet_after_s)}</option>
-          ) : null}
-        </select>
+        <Select
+          value={period === null ? "off" : String(period)}
+          onChange={(v) => setPeriod(v === "off" ? null : Number(v))}
+          options={[
+            { value: "off", label: "Off" },
+            ...PERIODS.map((p) => ({ value: String(p.s), label: p.label })),
+            ...(quiet && !PERIODS.some((p) => p.s === quiet.quiet_after_s)
+              ? [{ value: String(quiet.quiet_after_s), label: periodLabel(quiet.quiet_after_s) }]
+              : []),
+          ]}
+          className="h-7"
+        />
       </label>
       {period !== null ? (
         <div className="flex flex-col gap-0.5">

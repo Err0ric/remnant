@@ -28,8 +28,8 @@ export function RetentionEditor({ sourceId, value, canManage }: RetentionEditorP
   });
   if (!open) {
     return (
-      <span className="flex items-center gap-2">
-        <span className="tabular-nums">{value} days</span>
+      <span className="flex flex-wrap items-center gap-x-2">
+        <span className="whitespace-nowrap tabular-nums">{value} days</span>
         {canManage ? (
           <button
             type="button"

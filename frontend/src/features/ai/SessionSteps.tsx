@@ -32,7 +32,7 @@ const TYPE_LABEL: Record<string, string> = {
   tool_call: "Tool call",
   tool_result: "Tool result",
   file_access: "File access",
-  access: "Access",
+  access: "Web or MCP access",
 };
 const OTHER_LABEL: Record<string, string> = {
   session_start: "Session started",
@@ -151,7 +151,10 @@ export function ExecutionSteps({ steps, flagged, flaggedOnly, around, onAround }
           <li key={st.event_id} className={ROW} {...pick(st)}>
             <StepTime iso={st.time} />
             <span className="min-w-0 truncate" title={what || undefined}>
-              <span className="inline-block w-24 text-text-secondary">{typeLabel(st)}</span>
+              {/* Wide enough for the longest type, "Web or MCP access" (PR 639). */}
+              <span className="inline-block w-[8.5rem] whitespace-nowrap text-text-secondary">
+                {typeLabel(st)}
+              </span>
               {st.tool || st.mcp_server ? (
                 <span className="font-mono">{st.mcp_server ? "MCP" : st.tool}</span>
               ) : null}

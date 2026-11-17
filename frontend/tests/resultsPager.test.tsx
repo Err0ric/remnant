@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 import { ResultsTable } from "@/features/search/ResultsTable";
 import type { QueryResult } from "@/lib/api";
+import { choose, optionLabels } from "./choose";
 
 /** 120 events, newest first: "event 1" to "event 120". */
 function result(n = 120): QueryResult {
@@ -51,12 +52,8 @@ describe("Results paging (owner, 2026-11-13: row 51 must be reachable)", () => {
   it("offers 50, 100, or 500 rows a page, and remembers the choice", async () => {
     const { unmount } = render(<ResultsTable result={result()} view="parsed" />);
     const size = screen.getAllByRole("combobox", { name: "Rows per page" })[0]!;
-    expect(
-      within(size)
-        .getAllByRole("option")
-        .map((o) => o.textContent),
-    ).toEqual(["50", "100", "500"]);
-    await userEvent.selectOptions(size, "100");
+    expect(optionLabels(size)).toEqual(["50", "100", "500"]);
+    await choose(size, "100");
     expect(row(51)).toBeVisible();
     expect(row(101)).toBeNull();
     expect(screen.getAllByRole("navigation", { name: "Result pages" })[0]).toHaveTextContent(
@@ -71,7 +68,7 @@ describe("Results paging (owner, 2026-11-13: row 51 must be reachable)", () => {
     render(<ResultsTable result={result()} view="parsed" />);
     const pager = screen.getAllByRole("navigation", { name: "Result pages" })[0]!;
     await userEvent.click(within(pager).getByRole("button", { name: "Next" }));
-    await userEvent.selectOptions(within(pager).getByRole("combobox"), "500");
+    await choose(within(pager).getByRole("combobox"), "500");
     expect(row(1)).toBeVisible();
     expect(row(120)).toBeVisible();
     expect(within(pager).getByRole("button", { name: "Next" })).toBeDisabled();
@@ -134,5 +131,35 @@ describe("Results width (owner, 2026-11-13: Message takes what is left)", () => 
     expect(first.style.gridTemplateColumns).toMatch(/minmax\(\d+ch, 1fr\)$/);
     // The full text is one click away, in the expanded row; the cell carries it on hover.
     expect(screen.getByText("event 1", { exact: true })).toHaveAttribute("title", "event 1");
+  });
+});
+
+describe("An address's place on hover (person page, owner 2026-11-16)", () => {
+  const withPlace = {
+    columns: ["time", "app", "src_endpoint_ip"],
+    rows: [["2026-10-09T23:04:36+00:00", "Office 365 Exchange Online", "198.51.100.7"]],
+    row_count: 1,
+    truncated: false,
+    elapsed_ms: 1,
+    executed_sql: "",
+    sources: ["m365"],
+  } as QueryResult;
+  const geo = {
+    "198.51.100.7": { country: "US", country_name: "United States", asn: 64501, org: null },
+  };
+
+  it("puts the place in the address link's own tooltip, not beside it", () => {
+    render(<ResultsTable result={withPlace} view="parsed" geo={geo} placeOnHover />);
+    const link = screen.getByRole("link", { name: "198.51.100.7" });
+    expect(link.getAttribute("title")).toBe("198.51.100.7, US · AS64501\nInvestigate this address");
+    expect(screen.queryByText("US · AS64501")).toBeNull();
+  });
+
+  it("keeps the place beside the address everywhere else", () => {
+    render(<ResultsTable result={withPlace} view="parsed" geo={geo} />);
+    expect(screen.getByText("US · AS64501")).toBeVisible();
+    expect(screen.getByRole("link", { name: "198.51.100.7" }).getAttribute("title")).toBe(
+      "198.51.100.7\nInvestigate this address",
+    );
   });
 });

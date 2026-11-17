@@ -1,6 +1,7 @@
 import { About } from "@/components/About";
 import { Skeleton } from "@/components/Skeleton";
 import { useQuery } from "@tanstack/react-query";
+import type { AgentWindow } from "./agentWindow";
 import { EntityLink } from "@/components/EntityLink";
 import { InlineError } from "@/components/InlineError";
 import { api, type AccountTier } from "@/lib/api";
@@ -55,12 +56,25 @@ export function TierBadge({ tier }: { tier: AccountTier }) {
 
 /** Agents > Accounts (ADR-0038 section 6): Claude accounts by tier, with devices, the
  * people the computers belong to, and the evidence behind each tier. */
-export function AccountsCard() {
-  const q = useQuery({ queryKey: ["agent-accounts"], queryFn: () => api.agentAccounts(30) });
+interface AccountsCardProps {
+  /** The page's time, exactly (PR 639: it was fixed to 30 days while the picker said
+   * otherwise). */
+  win: AgentWindow;
+}
+
+export function AccountsCard({ win }: AccountsCardProps) {
+  const q = useQuery({
+    queryKey: ["agent-accounts", ...win.key],
+    queryFn: () => api.agentAccounts(win.days, win.bounds()),
+  });
+  const span = win.words;
   const now = new Date().toISOString();
   const d = q.data;
   return (
-    <Card title="Claude accounts" note="Reported by the hooks plugin on each device, last 30 days.">
+    <Card
+      title="Claude accounts"
+      note={`${span}, reported by the hooks plugin on each device; sessions only Claude Code telemetry saw are not listed here.`}
+    >
       {d?.masked ? (
         <div className="border-b border-border p-2">
           <StateNotice>{NAMES_HIDDEN}</StateNotice>
@@ -102,8 +116,8 @@ export function AccountsCard() {
           ) : null}
           {d.rows.length === 0 ? (
             <p className="px-3 py-4 text-sm text-text-secondary">
-              No Claude Code or Cowork sessions in the last 30 days. The hooks plugin reports the
-              account once it is installed.
+              No Claude Code or Cowork sessions. {span}. The hooks plugin reports the account once
+              it is installed.
             </p>
           ) : (
             <div className="overflow-x-auto">

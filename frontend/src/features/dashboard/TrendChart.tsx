@@ -40,6 +40,9 @@ interface TrendChartProps {
   bare?: boolean;
   /** Extra lines for a point's tooltip ("Top user: erin@example.com (12)"). */
   details?: (i: number) => { label: string; value: string }[];
+  /** Counts per day as bars side by side, one group per point (owner, 2026-11-16): a
+   * count has no value between two days, so no line is drawn. `previous` is not drawn. */
+  bars?: boolean;
 }
 
 /** The first point whose bucket holds `since` (when data starts), or undefined when the
@@ -50,6 +53,20 @@ export function startIndex(points: string[], since: string | null | undefined): 
   if (t <= new Date(points[0] ?? "").getTime()) return undefined;
   const i = points.findIndex((_, k) => new Date(points[k + 1] ?? "9999").getTime() > t);
   return i > 0 ? i : undefined;
+}
+
+/** Whether the last point is drawn as still filling (a dashed segment, an outlined bar):
+ * only with `partial`, data up to the last point, and more than one point with data. A
+ * legend that names it asks the same question. */
+export function stillFilling(
+  n: number,
+  partial: string | undefined,
+  lastWithData?: number,
+  firstWithData?: number,
+): boolean {
+  const last = Math.min(n - 1, lastWithData ?? n - 1);
+  const begin = Math.max(0, Math.min(last, firstWithData ?? 0));
+  return Boolean(partial) && last === n - 1 && last > begin;
 }
 
 const W = 1000; // viewBox width; the plot stretches to its box, strokes do not scale
@@ -120,7 +137,7 @@ function segments(
 
 /** A short area chart for the Dashboard (owner 2026-10-30): at most 160 px tall, smooth
  * monotone curves, values on hover or with the arrow keys, an optional stack, and the
- * window before as a faint dashed line. */
+ * window before as a faint dashed line; or, with `bars`, grouped bars per point. */
 export function TrendChart({
   title,
   note,
@@ -138,11 +155,12 @@ export function TrendChart({
   onOpen,
   details,
   bare = false,
+  bars = false,
 }: TrendChartProps) {
   const n = Math.max(0, ...series.map((s) => s.values.length));
   const last = Math.min(n - 1, lastWithData ?? n - 1);
   const begin = Math.max(0, Math.min(last, firstWithData ?? 0));
-  const open = Boolean(partial) && last === n - 1 && last > begin;
+  const open = stillFilling(n, partial, lastWithData, firstWithData);
   const label = (i: number) => `${pointLabel(i)}${open && i === n - 1 ? ` (${partial})` : ""}`;
   const [at, setAt] = useState<number | null>(null);
   const box = useRef<HTMLDivElement>(null);
@@ -159,13 +177,21 @@ export function TrendChart({
   const y = (v: number) => h - (Math.max(0, v) / top) * h;
   const xs = Array.from({ length: last - begin + 1 }, (_, i) => x(begin + i));
   const has = (i: number) => i >= begin && i <= last;
-  const pct = (i: number) => (n <= 1 ? 50 : (i / (n - 1)) * 100);
+  // Bars sit in the middle of their slot; line points run edge to edge.
+  const pct = (i: number) =>
+    bars ? ((i + 0.5) / Math.max(1, n)) * 100 : n <= 1 ? 50 : (i / (n - 1)) * 100;
+  const edge = (i: number) => (bars ? (i / Math.max(1, n)) * 100 : pct(i));
 
-  const pick = (clientX: number) => {
+  const indexAt = (clientX: number): number | null => {
     const r = box.current?.getBoundingClientRect();
-    if (!r || r.width === 0 || n === 0) return;
-    const i = Math.round(((clientX - r.left) / r.width) * (n - 1));
-    setAt(Math.max(0, Math.min(n - 1, i)));
+    if (!r || r.width === 0 || n === 0) return null;
+    const f = (clientX - r.left) / r.width;
+    const i = bars ? Math.floor(f * n) : Math.round(f * (n - 1));
+    return Math.max(0, Math.min(n - 1, i));
+  };
+  const pick = (clientX: number) => {
+    const i = indexAt(clientX);
+    if (i !== null) setAt(i);
   };
   const onKey = (e: KeyboardEvent) => {
     const go = (i: number) => {
@@ -250,13 +276,8 @@ export function TrendChart({
           onClick={(e) => {
             if (!onOpen) return;
             pick(e.clientX);
-            const r = box.current?.getBoundingClientRect();
-            if (!r || r.width === 0) return;
-            const i = Math.max(
-              0,
-              Math.min(n - 1, Math.round(((e.clientX - r.left) / r.width) * (n - 1))),
-            );
-            if (has(i)) onOpen(i);
+            const i = indexAt(e.clientX);
+            if (i !== null && has(i)) onOpen(i);
           }}
           aria-describedby={at !== null ? tipId : undefined}
           onPointerMove={(e) => pick(e.clientX)}
@@ -278,7 +299,7 @@ export function TrendChart({
               aria-hidden="true"
               className="absolute inset-y-0 left-0"
               style={{
-                width: `${pct(begin)}%`,
+                width: `${edge(begin)}%`,
                 backgroundImage:
                   "repeating-linear-gradient(135deg, var(--border) 0 1px, transparent 1px 6px)",
               }}
@@ -289,76 +310,113 @@ export function TrendChart({
               aria-hidden="true"
               className="absolute inset-y-0 right-0"
               style={{
-                left: `${pct(last)}%`,
+                left: `${edge(bars ? last + 1 : last)}%`,
                 backgroundImage:
                   "repeating-linear-gradient(135deg, var(--border) 0 1px, transparent 1px 6px)",
               }}
             />
           ) : null}
-          <svg
-            aria-hidden="true"
-            viewBox={`0 0 ${W} ${h}`}
-            preserveAspectRatio="none"
-            className="absolute inset-0 h-full w-full overflow-visible"
-          >
-            {prev.length > 1 ? (
-              <path
-                d={`M${x(0)},${y(prev[0] ?? 0)} ${segments(
-                  prev.map((_, i) => x(i)),
-                  prev,
-                  tangents(prev),
-                  y,
-                )}`}
-                fill="none"
-                stroke="var(--text-muted)"
-                strokeWidth={1.5}
-                strokeDasharray="5 3"
-                vectorEffect="non-scaling-stroke"
-              />
-            ) : null}
-            {xs.length > 1
-              ? layers.map((l, k) => {
-                  const s = series[k] as TrendSeries;
-                  const m = layerM[k] as number[];
-                  const upper = `M${xs[0]},${y(l[0] ?? 0)} ${segments(xs, l, m, y)}`;
-                  // A still-filling last point: the line up to the one before is solid,
-                  // the last segment dashed.
-                  const k1 = xs.length - 1;
-                  const solid = open
-                    ? `M${xs[0]},${y(l[0] ?? 0)} ${segments(xs.slice(0, k1), l.slice(0, k1), m.slice(0, k1), y)}`
-                    : upper;
-                  return (
-                    <g key={s.key}>
-                      <path
-                        d={solid}
-                        fill="none"
-                        stroke={`var(--${s.color})`}
-                        strokeWidth={1.5}
-                        vectorEffect="non-scaling-stroke"
-                      />
-                      {open ? (
+          {bars ? (
+            <div aria-hidden="true" className="absolute inset-0 flex">
+              {Array.from({ length: n }, (_, i) => (
+                <div
+                  key={i}
+                  className={cn(
+                    "flex h-full flex-1 items-end justify-center gap-px px-0.5",
+                    at === i && "bg-row-selected",
+                  )}
+                >
+                  {has(i)
+                    ? series.map((s) => {
+                        const v = Math.max(0, s.values[i] ?? 0);
+                        // Today, still filling: an outline, as the line's dashed last part.
+                        const soFar = open && i === n - 1;
+                        return (
+                          <span
+                            key={s.key}
+                            data-bar={s.key}
+                            data-value={v}
+                            className="w-full max-w-[10px]"
+                            style={{
+                              height: `${(v / top) * 100}%`,
+                              background: soFar ? "transparent" : `var(--${s.color})`,
+                              border: soFar && v > 0 ? `1px dashed var(--${s.color})` : undefined,
+                            }}
+                          />
+                        );
+                      })
+                    : null}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <svg
+              aria-hidden="true"
+              viewBox={`0 0 ${W} ${h}`}
+              preserveAspectRatio="none"
+              className="absolute inset-0 h-full w-full overflow-visible"
+            >
+              {prev.length > 1 ? (
+                <path
+                  d={`M${x(0)},${y(prev[0] ?? 0)} ${segments(
+                    prev.map((_, i) => x(i)),
+                    prev,
+                    tangents(prev),
+                    y,
+                  )}`}
+                  fill="none"
+                  stroke="var(--text-muted)"
+                  strokeWidth={1.5}
+                  strokeDasharray="5 3"
+                  vectorEffect="non-scaling-stroke"
+                />
+              ) : null}
+              {xs.length > 1
+                ? layers.map((l, k) => {
+                    const s = series[k] as TrendSeries;
+                    const m = layerM[k] as number[];
+                    const upper = `M${xs[0]},${y(l[0] ?? 0)} ${segments(xs, l, m, y)}`;
+                    // A still-filling last point: the line up to the one before is solid,
+                    // the last segment dashed.
+                    const k1 = xs.length - 1;
+                    const solid = open
+                      ? `M${xs[0]},${y(l[0] ?? 0)} ${segments(xs.slice(0, k1), l.slice(0, k1), m.slice(0, k1), y)}`
+                      : upper;
+                    return (
+                      <g key={s.key}>
                         <path
-                          d={`M${xs[k1 - 1]},${y(l[k1 - 1] ?? 0)} L${xs[k1]},${y(l[k1] ?? 0)}`}
+                          d={solid}
                           fill="none"
                           stroke={`var(--${s.color})`}
                           strokeWidth={1.5}
-                          strokeDasharray="3 3"
                           vectorEffect="non-scaling-stroke"
                         />
-                      ) : null}
-                    </g>
-                  );
-                })
-              : null}
-          </svg>
+                        {open ? (
+                          <path
+                            d={`M${xs[k1 - 1]},${y(l[k1 - 1] ?? 0)} L${xs[k1]},${y(l[k1] ?? 0)}`}
+                            fill="none"
+                            stroke={`var(--${s.color})`}
+                            strokeWidth={1.5}
+                            strokeDasharray="3 3"
+                            vectorEffect="non-scaling-stroke"
+                          />
+                        ) : null}
+                      </g>
+                    );
+                  })
+                : null}
+            </svg>
+          )}
           {at !== null ? (
             <>
-              <div
-                aria-hidden="true"
-                className="absolute inset-y-0 border-l border-border-strong"
-                style={{ left: `${pct(at)}%` }}
-              />
-              {has(at)
+              {bars ? null : (
+                <div
+                  aria-hidden="true"
+                  className="absolute inset-y-0 border-l border-border-strong"
+                  style={{ left: `${pct(at)}%` }}
+                />
+              )}
+              {has(at) && !bars
                 ? layers.map((l, k) => (
                     <span
                       key={series[k]?.key ?? k}
@@ -451,7 +509,8 @@ export function TrendChart({
 export function TrendLegend({
   items,
 }: {
-  items: { label: ReactNode; color?: string; dashed?: boolean }[];
+  /** `outline`: an outlined swatch, for a bar still filling (today, so far). */
+  items: { label: ReactNode; color?: string; dashed?: boolean; outline?: boolean }[];
 }) {
   return (
     <ul className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-text-secondary">
@@ -461,6 +520,11 @@ export function TrendLegend({
             <span
               aria-hidden="true"
               className="inline-block w-4 border-t-2 border-dashed border-text-muted"
+            />
+          ) : it.outline ? (
+            <span
+              aria-hidden="true"
+              className="inline-block size-2.5 rounded-sm border border-dashed border-text-secondary"
             />
           ) : (
             <span

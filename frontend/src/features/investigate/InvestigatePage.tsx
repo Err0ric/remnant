@@ -252,14 +252,9 @@ export function InvestigatePage() {
           }}
         />
       ) : (
-        <PageHeader
-          title="People &amp; devices"
-          count={
-            risk.data
-              ? `${risk.data.matches_considered.toLocaleString()} rule matches considered`
-              : null
-          }
-        />
+        // No count beside the title: each tab carries its own
+        // (docs/proposals/fix-list-2026-11-16.md item 17).
+        <PageHeader title="People &amp; devices" />
       )}
       <div className="flex flex-col gap-4 px-5 py-3">
         <FilterBar
@@ -273,7 +268,7 @@ export function InvestigatePage() {
           <>
             <section
               aria-label="Most active entities"
-              className="mx-auto w-full max-w-5xl rounded-card border border-border bg-surface"
+              className="w-full min-w-0 rounded-card border border-border bg-surface"
             >
               <div className="flex flex-wrap items-end justify-between gap-2 border-b border-border px-4 pt-3">
                 <div className="pb-2">

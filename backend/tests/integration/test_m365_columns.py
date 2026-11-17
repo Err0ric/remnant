@@ -4,6 +4,7 @@ as NULL; and the Sources page learns which template mappings changed and when (r
 safety)."""
 
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from app.core.schema import COLUMNS_BY_NAME
 from app.engine.duckdb import QueryScope
 from app.ingest.records import DecodedLine
 from app.ingest.writer import LakeWriter
@@ -106,6 +108,13 @@ def test_the_sources_page_learns_which_mappings_changed_and_what_to_check(
     found = {(c["template_id"], c["version"]): c for c in res.json()}
     c = found[("m365_directory_audit", "1.1.0")]
     assert c["current"] is True and c["since"] and c["fields"] == [] and c["affected"] == []
+    # Each change says in plain words what the Sources page shows: no column names and no
+    # decision numbers (fix list 2026-11-16 item 23); the note keeps the developer detail.
+    for change in res.json():
+        assert change["summary"], change["template_id"]
+        words = set(re.findall(r"[a-z_]+", change["summary"]))
+        assert not words & {n for n in COLUMNS_BY_NAME if "_" in n}, change["summary"]
+        assert not re.search(r"\bD\d+\b", change["summary"])
     # A saved search that filters on a changed column is listed for review.
     reg = lab["app"].state.templates
     t = reg.get("m365_signin")

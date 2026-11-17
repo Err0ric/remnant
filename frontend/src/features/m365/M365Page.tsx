@@ -103,7 +103,7 @@ export function M365Page() {
           </div>
           {m?.has_source ? (
             <span className="text-sm text-text-muted">
-              {compareLine(m.history.compared, m.history.since, previousPhrase(win))}
+              {compareLine(m.history.compared, m.history.starts, previousPhrase(win))}
             </span>
           ) : null}
         </div>
@@ -135,19 +135,32 @@ export function M365Page() {
             {tab === "mail" ? (
               <>
                 <MailRules m={m} />
-                <EventList title="DLP matches" list="dlp" sql={m.lists.dlp} m={m} />
+                <EventList
+                  title="DLP matches"
+                  list="dlp"
+                  sql={m.lists.dlp}
+                  m={m}
+                  noun={["DLP match", "DLP matches"]}
+                />
               </>
             ) : tab === "admin" ? (
               <>
                 <AdminChanges m={m} />
                 {/* The event lists of the old Apps tab: consents and registrations are
                     changes an administrator made. The register of apps is the Inventory. */}
-                <EventList title="App consents" list="consents" sql={m.lists.consents} m={m} />
+                <EventList
+                  title="App consents"
+                  list="consents"
+                  sql={m.lists.consents}
+                  m={m}
+                  noun={["app consent", "app consents"]}
+                />
                 <EventList
                   title="App registrations"
                   list="registrations"
                   sql={m.lists.registrations}
                   m={m}
+                  noun={["app registration", "app registrations"]}
                 />
               </>
             ) : (

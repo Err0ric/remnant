@@ -3,6 +3,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mockApi, type MockAuth } from "./mockApi";
+import { choose } from "./choose";
 
 async function renderAt(
   path: string,
@@ -56,7 +57,7 @@ describe("AI providers", () => {
     expect(await within(table).findByText(/No model chosen/)).toBeInTheDocument();
     await userEvent.click(within(table).getByRole("button", { name: "Test Local Ollama" }));
     const picker = await within(table).findByRole("combobox", { name: "Model for Local Ollama" });
-    await userEvent.selectOptions(picker, "llama3.1:8b");
+    await choose(picker, "llama3.1:8b");
     await vi.waitFor(() =>
       expect(sent(spy, "PATCH", (u) => u.includes("/api/providers/p1"))).toEqual([
         { model: "llama3.1:8b" },
@@ -92,7 +93,7 @@ describe("AI providers", () => {
     const spy = await renderAt("/providers");
     await userEvent.click(await screen.findByRole("button", { name: "Add provider" }));
     const form = screen.getByRole("form", { name: "Add provider" });
-    await userEvent.selectOptions(within(form).getByLabelText("API"), "anthropic");
+    await choose(within(form).getByLabelText("API"), "anthropic");
     expect(within(form).getByLabelText("Base URL")).toHaveValue("https://api.anthropic.com/v1");
     expect(within(form).getByText(/Always treated as a cloud provider/)).toBeInTheDocument();
     await userEvent.type(within(form).getByLabelText("Name"), "Claude");
@@ -128,7 +129,7 @@ describe("AI providers", () => {
     const table = await screen.findByRole("table", { name: "AI providers" });
     await userEvent.click(await within(table).findByRole("button", { name: "Edit Local Ollama" }));
     const form = screen.getByRole("form", { name: "Edit Local Ollama" });
-    await userEvent.selectOptions(within(form).getByLabelText(/Thinking/), "none");
+    await choose(within(form).getByLabelText(/Thinking/), "none");
     await userEvent.click(within(form).getByRole("button", { name: "Save changes" }));
     await vi.waitFor(() =>
       expect(sent(spy, "PATCH", (u) => u.includes("/api/providers/")).at(-1)?.reasoning).toBe(

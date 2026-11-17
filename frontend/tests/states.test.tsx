@@ -81,7 +81,6 @@ describe("Help text (ADR-0052 section 3.7, redesign build rows 15 and 16)", () =
     // one line. (Text after a `{...}` expression is not seen by this check.)
     expect(longText().sort()).toEqual(
       [
-        "ai/AccountsCard.tsx: No Claude Code or Cowork sessions in the", // empty state
         "ai/AiSettings.tsx: A server name, or a prefix ending in * (", // Settings: field help
         "ai/AiSettings.tsx: Alerts the first time an AI service or M", // Settings: what it does
         "ai/AiSettings.tsx: Every service the network view recognize", // Settings: what it lists

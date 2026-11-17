@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from app.search.source_state import SourceInput, assess, condition, idle
+from app.search.source_state import SourceInput, assess, condition, idle, problem
 
 
 def src(source_id: str, **kw: Any) -> SourceInput:
@@ -165,3 +165,41 @@ def test_the_quiet_list_counts_from_the_newest_dated_event() -> None:
     assert [(q.source_id, q.last_event_at) for q in summary.quiet] == [
         ("otel_collector", "2026-11-07T12:00:00+00:00")
     ]
+
+
+# Fix list 2026-11-16 item 19: each case's one state, which Health and Settings > Sources both
+# draw from the Overview (frontend `sourceStatus`, tested in oneSourceStatus.test.tsx). The
+# reader's own state ("reading") never decides it: a file followed for days with nothing new
+# is quiet.
+ONE_STATE_CASES: list[tuple[str, dict[str, Any], tuple[str, str | None, bool]]] = [
+    ("healthy", {}, ("healthy", None, False)),
+    ("quiet", {"total_24h": 0}, ("quiet", "attention", False)),
+    (
+        "quiet, the alert held (Quiet is normal, D262)",
+        {"total_24h": 0, "quiet_ok": True},
+        ("healthy", None, True),
+    ),
+    (
+        "quiet is normal (server_events)",
+        {"total_24h": 0, "quiet_expected": True},
+        ("healthy", None, False),
+    ),
+    ("paused", {"state": "disabled"}, ("paused", None, False)),
+    ("error", {"state": "error"}, ("error", "unhealthy", False)),
+    (
+        "never received anything",
+        {"total_24h": 0, "last_event_at": None},
+        ("quiet", "attention", False),
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("case", "kw", "want"), ONE_STATE_CASES, ids=[c[0] for c in ONE_STATE_CASES]
+)
+def test_one_state_for_each_case_whatever_the_reader_says(
+    case: str, kw: dict[str, Any], want: tuple[str, str | None, bool]
+) -> None:
+    s = src("claude_hooks", **kw)
+    c = condition(s)
+    assert (c, problem(c, bool(s.quiet_since), bool(s.gaps) and not s.quiet_ok), idle(s, c)) == want

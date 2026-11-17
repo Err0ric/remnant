@@ -122,9 +122,11 @@ def accounts(
     domains: list[str],
     now: datetime,
     days: int,
+    start: datetime | None = None,
 ) -> Accounts:
-    """`telemetry` and `m365` are the caller's readable sources of each kind."""
-    start = now - timedelta(days=days)
+    """`telemetry` and `m365` are the caller's readable sources of each kind. `days` back
+    from `now`, or from `start` to `now` exactly (the page's time choice)."""
+    start = start if start is not None else now - timedelta(days=days)
     out = Accounts(days=days, domains_set=bool(domains), has_signins=bool(m365))
     if not telemetry:
         return out

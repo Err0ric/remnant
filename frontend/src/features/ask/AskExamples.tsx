@@ -38,7 +38,10 @@ export function AskExamples({ onPick, disabled }: AskExamplesProps) {
   const examples = lib.data ? pickExamples(lib.data) : [];
   if (!examples.length) return null;
   return (
-    <section aria-label="Example questions" className="flex flex-col gap-1.5 text-sm">
+    <section
+      aria-label="Example questions"
+      className="flex max-w-[1200px] flex-col gap-1.5 text-sm"
+    >
       <h3 className="font-semibold">Try one of these on your data</h3>
       <ul className="flex flex-wrap gap-2">
         {examples.map((q) => (

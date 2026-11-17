@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { localClock } from "@/lib/localTime";
+import { When } from "@/components/When";
 import { withChunkReload } from "@/lib/chunkReload";
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { PageHeader } from "@/components/shell/PageHeader";
@@ -14,7 +14,7 @@ import {
 import { DEFAULT_SQL, logsRange, rangeStart, sqlPlaceholders, type LogsRange } from "@/lib/search";
 import { localInput, windowOf } from "@/lib/timeWindow";
 import { openSavedSearch } from "@/lib/savedSeed";
-import { navigate } from "@/lib/route";
+import { navigate, pathFor } from "@/lib/route";
 import { seedSchedule } from "@/lib/scheduleSeed";
 import { RUN_SEARCH_EVENT, takeSearchSeed } from "@/lib/searchSeed";
 import {
@@ -419,8 +419,8 @@ export function SearchPage({ canSave }: SearchPageProps) {
 
   // The viewer's clock, UTC on hover, as times read everywhere else (owner, 2026-11-08).
   const meta = lastRun ? (
-    <span title={`${lastRun.toISOString().slice(0, 19).replace("T", " ")} UTC`}>
-      Last run {localClock(lastRun)}
+    <span>
+      Last run <When iso={lastRun.toISOString()} />
       {result ? ` · ${result.elapsed_ms} ms` : ""}
     </span>
   ) : null;
@@ -758,7 +758,7 @@ export function SearchPage({ canSave }: SearchPageProps) {
               <span className="font-mono text-text-muted">{saved.id}</span>.
             </span>
             <a
-              href="/saved"
+              href={pathFor("saved")}
               onClick={(e) => {
                 e.preventDefault();
                 openSavedSearch(saved.id);

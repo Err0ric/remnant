@@ -15,7 +15,16 @@ from app.auth.users import User
 from app.core.errors import NotFoundError, ParamInvalidError
 from app.engine.views import permitted_sources
 from app.search.dashboards import DashboardStore, can_edit
-from app.search.library import Library, LibraryQuery, Pack, copies, copy, editor_sql, threshold
+from app.search.library import (
+    Library,
+    LibraryQuery,
+    Pack,
+    copies,
+    copy,
+    editor_sql,
+    saved_spec,
+    threshold,
+)
 from app.search.saved import SavedSearch, SavedSearchStore
 from app.search.schedules import ScheduleService
 
@@ -107,17 +116,18 @@ async def library(request: Request, user: CurrentUser) -> LibraryOut:
                     name=p.name,
                     version=p.version,
                     description=p.description,
-                    queries=[_query_out(p, q, mine) for q in offered],
+                    queries=[_query_out(p, lib.resolve(q), mine) for q in offered],
                 )
             )
     return LibraryOut(packs=packs, hidden=hidden)
 
 
 def _find(request: Request, pack_id: str, query_id: str) -> tuple[Pack, LibraryQuery]:
-    found = _lib(request).find(pack_id, query_id)
+    lib = _lib(request)
+    found = lib.find(pack_id, query_id)
     if found is None:
         raise NotFoundError("No such library query")
-    return found
+    return found[0], lib.resolve(found[1])
 
 
 @router.post("/library/{pack_id}/{query_id}/copy", status_code=status.HTTP_201_CREATED)
@@ -143,7 +153,7 @@ async def replace_mine(pack_id: str, query_id: str, request: Request, user: Auth
     mine = copies(await run_in_threadpool(store.visible, user), user).get(f"{pack.id}/{q.id}")
     if mine is None:
         raise NotFoundError("You have no copy of this library query")
-    spec = q.spec(pack.origin(q)).model_copy(
+    spec = saved_spec(pack, q).model_copy(
         update={"id": mine.id, "name": mine.name, "tags": mine.tags,
                 "visibility": mine.visibility, "sources": mine.sources}
     )  # fmt: skip
@@ -187,7 +197,7 @@ async def add_pack(pack_id: str, body: AddPackIn, request: Request, user: Author
     pack = next((p for p in lib.packs if p.id == pack_id), None)
     if pack is None:
         raise NotFoundError("No such pack")
-    wanted = [q for q in pack.queries if q.id in set(body.query_ids)]
+    wanted = [lib.resolve(q) for q in pack.queries if q.id in set(body.query_ids)]
     if len(wanted) != len(set(body.query_ids)):
         raise ParamInvalidError("Some of those queries are not in this pack")
     store: SavedSearchStore = request.app.state.searches

@@ -1,9 +1,32 @@
 import { useMutation } from "@tanstack/react-query";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { ApiError, api } from "@/lib/api";
 import { PRODUCT_NAME } from "@/lib/branding";
 import { SectionTitle } from "@/components/SectionTitle";
 import { navigate } from "@/lib/route";
+
+interface SlashBreaksProps {
+  text: string;
+}
+
+/** A URL that may break only after a "/", never mid-word. */
+function SlashBreaks({ text }: SlashBreaksProps) {
+  const parts = text.split("/");
+  return (
+    <>
+      {parts.map((part, i) => (
+        <Fragment key={i}>
+          {part}
+          {i < parts.length - 1 ? (
+            <>
+              /<wbr />
+            </>
+          ) : null}
+        </Fragment>
+      ))}
+    </>
+  );
+}
 
 /** The OTLP base address senders use (ADR-0015 row 3). */
 export function otlpEndpoint(): string {
@@ -171,7 +194,12 @@ export function OtlpControls({ sourceId, keepContent, canManage }: OtlpControlsP
   const kept = keep.data?.otlp_keep_content ?? keepContent;
   return (
     <div className="flex flex-col gap-1 font-sans text-sm">
-      <span className="text-text-secondary">OTLP receiver · {otlpEndpoint()}</span>
+      <span className="text-text-secondary">
+        OTLP receiver{" "}
+        <span className="font-mono">
+          <SlashBreaks text={otlpEndpoint()} />
+        </span>
+      </span>
       {canManage ? (
         <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
           {confirming ? (

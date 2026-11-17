@@ -13,17 +13,27 @@ only and never go to a model.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable, Sequence
 from datetime import timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import structlog
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    ValidationError,
+    model_validator,
+)
 
+from app.ai.catalog import shipped
+from app.ai.usage import answer_sql
 from app.auth.users import User
 from app.core import clock, safeyaml
-from app.core.errors import ConfigError, ConflictError
+from app.core.errors import AppError, ConfigError, ConflictError, ParamInvalidError
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.search.ask_drill import DrillError
 from app.search.ask_drill import base as drill_base
@@ -44,6 +54,9 @@ PackId = Annotated[str, StringConstraints(pattern=r"^[a-z0-9][a-z0-9_]{0,40}$")]
 Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=400)]
 FLAG = re.compile(r"^(above|below) \d+$|^change \d+%$")
 SEEN_DAYS = 30  # which templates the viewer's sources have used, for what is offered
+# The longest SQL a saved search or Logs takes (typed SQL). A builtin built from a large
+# AI catalog can be longer: it still runs in Ask, by id, but cannot be saved as a search.
+MAX_SAVED_SQL = 20_000
 
 
 class Expect(BaseModel):
@@ -54,6 +67,15 @@ class Expect(BaseModel):
     first_row: dict[str, Any] | None = None
 
 
+class Counted(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # Plain words only: they are put into a sentence as they are.
+    what: Annotated[str, StringConstraints(pattern=r"^[A-Za-z][A-Za-z0-9 ,]{0,79}$")]
+    row: Annotated[str, StringConstraints(pattern=r"^[A-Za-z][A-Za-z0-9 ]{0,39}$")]
+    rows: Annotated[str, StringConstraints(pattern=r"^[A-Za-z][A-Za-z0-9 ]{0,39}$")]
+
+
 class LibraryQuery(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -61,7 +83,12 @@ class LibraryQuery(BaseModel):
     name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)]
     description: str = Field(default="", max_length=1000)
     tags: list[Tag] = Field(default_factory=list, max_length=20)
-    sql: str = Field(min_length=1, max_length=20_000)
+    sql: str = Field(default="", max_length=20_000)
+    # Server-built SQL in place of `sql` (fix list 2026-11-16 item 20): "ai_services" is the
+    # AI usage Services count with the live catalog (`usage.answer_sql`), so the library
+    # answer and the page count the same rows. It runs like any library SQL: the guard, the
+    # caller's view, audited.
+    builtin: Literal["ai_services"] | None = None
     params: list[ParamDef] = Field(default_factory=list, max_length=20)
     group: Text
     requires: list[Annotated[str, StringConstraints(pattern=r"^[a-z0-9_]{1,64}$")]] = Field(
@@ -88,6 +115,17 @@ class LibraryQuery(BaseModel):
     keys: list[Annotated[str, StringConstraints(pattern=r"^[a-z_][a-z0-9_]{0,63}$")]] = Field(
         default_factory=list, max_length=8
     )
+
+    # What the answer counted, for Ask's "What was counted" line when its rows have no
+    # event ids to cite (fix list 2026-11-16 item 21): what was counted ("events") and what
+    # one row is ("AI service"), from the pack, never from a model.
+    counted: Counted | None = None
+
+    @model_validator(mode="after")
+    def _has_sql(self) -> LibraryQuery:
+        if not self.sql.strip() and self.builtin is None:
+            raise ValueError("give sql, or builtin for server-built SQL")
+        return self
 
     def spec(self, origin: str) -> SavedSearchIn:
         return SavedSearchIn(
@@ -119,6 +157,10 @@ def check(pack: Pack) -> None:
     if len(ids) != len(set(ids)):
         raise ConfigError(f"Pack {pack.id}: query ids repeat")
     for q in pack.queries:
+        if len(q.sql) > MAX_SAVED_SQL:
+            raise ConfigError(
+                f"{pack.id}/{q.id}: its SQL is longer than {MAX_SAVED_SQL:,} characters"
+            )
         validate_definition(q.spec(pack.origin(q)))
         defaults = {p.name for p in q.params if p.default is not None}
         missing = placeholders(q.sql) - RESERVED - defaults
@@ -140,7 +182,9 @@ def check(pack: Pack) -> None:
             )
 
 
-def load(path: Path) -> Pack:
+def load(path: Path, shipped_pack: bool = False) -> Pack:
+    """One pack. `builtin` is accepted only in a pack shipped with the product (D266):
+    any other pack that names one is refused."""
     try:
         raw = safeyaml.load(path.read_text(encoding="utf-8"))
         pack = Pack.model_validate(raw)
@@ -148,16 +192,50 @@ def load(path: Path) -> Pack:
         raise ConfigError(f"{path.parent.name}: {str(exc)[:400]}") from exc
     if pack.id != path.parent.name:
         raise ConfigError(f"{path}: pack id {pack.id} does not match its folder")
-    check(pack)
+    if not shipped_pack and any(q.builtin for q in pack.queries):
+        raise ConfigError(
+            f"{pack.id}: only packs shipped with the product may use builtin; write the query"
+            " as SQL"
+        )
+    pack = built(pack, shipped_sql)
+    try:
+        check(pack)
+    except AppError as exc:  # the guard refused its SQL: this pack is left out, not the app
+        if isinstance(exc, ConfigError):
+            raise
+        raise ConfigError(f"{pack.id}: {str(exc)[:300]}") from exc
     return pack
 
 
+# The builtins a shipped pack may name (D266): a fixed registry, each building its SQL from
+# the AI service catalog's entries. Never looked up by any other name.
+BUILTINS: dict[str, Callable[[Sequence[Any]], str]] = {"ai_services": answer_sql}
+
+
+def shipped_sql(kind: str) -> str:
+    """A builtin's SQL with the shipped AI catalog: what the pack is checked and tested
+    with. The app builds it with the live catalog instead (`Library.resolve`)."""
+    return BUILTINS[kind](shipped())
+
+
+def built(pack: Pack, build: Callable[[str], str]) -> Pack:
+    """The pack with each builtin query's SQL written in by `build`."""
+    if not any(q.builtin for q in pack.queries):
+        return pack
+    queries = [
+        q.model_copy(update={"sql": build(q.builtin)}) if q.builtin else q for q in pack.queries
+    ]
+    return pack.model_copy(update={"queries": queries})
+
+
 def load_dir(root: Path) -> list[Pack]:
-    """Every valid pack under `root`; a broken pack is logged and left out."""
+    """Every valid pack under `root`; a broken pack is logged and left out. Only the
+    folder shipped next to the code counts as shipped packs (builtins allowed, D266)."""
     out = []
+    shipped_dir = root.resolve() == LIBRARY_DIR.resolve()
     for path in sorted(root.glob("*/pack.yaml")) if root.is_dir() else []:
         try:
-            out.append(load(path))
+            out.append(load(path, shipped_dir))
         except ConfigError as exc:
             log.warning("library.pack_rejected", pack=path.parent.name, reason=str(exc)[:300])
     return out
@@ -183,8 +261,19 @@ def editor_sql(q: LibraryQuery) -> str:
 
 
 class Library:
-    def __init__(self, packs: list[Pack]) -> None:
+    def __init__(
+        self, packs: list[Pack], catalog: Callable[[], Sequence[Any]] | None = None
+    ) -> None:
         self.packs = packs
+        # The live AI catalog's entries, which a builtin's SQL is built from (an admin's own
+        # services count too); without it the shipped catalog's SQL from loading stays.
+        self._catalog = catalog
+
+    def resolve(self, q: LibraryQuery) -> LibraryQuery:
+        """The query as it runs now: a builtin's SQL built from the live catalog."""
+        if q.builtin is None or self._catalog is None:
+            return q
+        return q.model_copy(update={"sql": BUILTINS[q.builtin](self._catalog())})
 
     def find(self, pack_id: str, query_id: str) -> tuple[Pack, LibraryQuery] | None:
         for p in self.packs:
@@ -210,9 +299,20 @@ class Library:
         return not q.requires or bool(seen & set(q.requires))
 
 
+def saved_spec(pack: Pack, q: LibraryQuery) -> SavedSearchIn:
+    """The saved search a library query becomes (plain SQL, as built now), or a plain
+    error when a builtin's SQL is longer than a saved search can be."""
+    if len(q.sql) > MAX_SAVED_SQL:
+        raise ParamInvalidError(
+            f"{q.name} is built from the AI service catalog and is now longer than a saved"
+            " search can be. Ask AI still answers it."
+        )
+    return q.spec(pack.origin(q))
+
+
 def copy(store: Any, pack: Pack, q: LibraryQuery, user: User) -> SavedSearch:
     """Save as my own: a private saved search, the user's from now on (row 7)."""
-    spec = q.spec(pack.origin(q))
+    spec = saved_spec(pack, q)
     for n in range(1, 50):
         try:
             made: SavedSearch = store.create(spec, user)

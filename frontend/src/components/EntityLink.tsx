@@ -18,6 +18,8 @@ interface EntityLinkProps {
   className?: string;
   /** A person opens on this tab (AI usage and Agents open "AI use", D189). */
   tab?: EntityTab;
+  /** Said after the value on hover ("US · AS64501", an address's place). */
+  hint?: string;
 }
 
 const NOUN: Record<EntityKind, string> = {
@@ -30,7 +32,7 @@ const NOUN: Record<EntityKind, string> = {
 /** Every IP, user, host, and AI service value, everywhere, opens its page in
  * Investigations (product pass step 2). A real link: middle-click and copy work. Empty
  * values and placeholders stay text. */
-export function EntityLink({ kind, value, label, className, tab }: EntityLinkProps) {
+export function EntityLink({ kind, value, label, className, tab, hint }: EntityLinkProps) {
   if (!isEntityValue(value))
     return <span className={className}>{label ?? String(value ?? "")}</span>;
   const entity = { kind, value };
@@ -50,7 +52,7 @@ export function EntityLink({ kind, value, label, className, tab }: EntityLinkPro
         if (e.key === "Enter" || e.key === " ") e.stopPropagation();
       }}
       // The full value first: a long one is cut in the cell (DESIGN.md section 7, D257).
-      title={`${text}\nInvestigate this ${NOUN[kind]}`}
+      title={`${text}${hint ? `, ${hint}` : ""}\nInvestigate this ${NOUN[kind]}`}
       aria-label={text}
       className={cn("group text-accent-text hover:underline focus-visible:underline", className)}
     >

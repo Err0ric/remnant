@@ -7,6 +7,7 @@ import { FormError } from "@/features/auth/FormError";
 import { ApiError, api, type Role } from "@/lib/api";
 import { ROLE_HELP, ROLE_LABEL } from "./roles";
 import { SectionTitle } from "@/components/SectionTitle";
+import { Select } from "@/components/forms/Select";
 
 const USERNAME = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$/;
 
@@ -66,18 +67,16 @@ export function InviteForm({ onInvited, onCancel, firstAccount = false }: Invite
           <label htmlFor="invite-role" className="text-sm font-semibold">
             Role
           </label>
-          <select
+          <Select
             id="invite-role"
             value={role}
-            onChange={(e) => setRole(e.target.value as Role)}
-            className="h-9 rounded border border-border-control bg-inset px-2 text-sm text-text"
-          >
-            {(Object.keys(ROLE_LABEL) as Role[]).map((r) => (
-              <option key={r} value={r}>
-                {ROLE_LABEL[r]}
-              </option>
-            ))}
-          </select>
+            onChange={(v) => setRole(v as Role)}
+            options={(Object.keys(ROLE_LABEL) as Role[]).map((r) => ({
+              value: r,
+              label: ROLE_LABEL[r],
+            }))}
+            className="h-9 text-sm"
+          />
           <p className="text-sm text-text-muted">{ROLE_HELP[role]}</p>
         </div>
       </div>

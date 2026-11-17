@@ -3,7 +3,7 @@ import { LayoutGrid, Search, type LucideIcon } from "lucide-react";
 import { Truncate } from "@/components/Truncate";
 import { rememberDashboard } from "@/features/dashboard/choice";
 import type { Pin } from "@/lib/api";
-import { cn } from "@/lib/cn";
+import { railFit, useWindowHeight } from "@/lib/railFit";
 import { targetSection, usePins, usePinsFollowTargets } from "@/lib/pins";
 import { navigate, pathFor } from "@/lib/route";
 
@@ -28,36 +28,49 @@ function open(p: Pin) {
   };
 }
 
-/** The rail's Pinned (D259, DESIGN.md 5): the viewer's pinned saved searches and dashboards,
- * oldest first, above Recent. Its own labelled region with Recent's row anatomy, not part of
- * the Primary nav. Hidden when empty and in the icon-only rail. Recent gives way first on a
- * short window; then Pinned shows three rows below 700px tall and none below 620px. */
-export function PinnedNav() {
+const ROW =
+  "flex h-row-rail items-center gap-2.5 rounded px-2.5 text-sm font-normal text-text-secondary no-underline hover:bg-surface-head hover:text-text";
+
+/** The rail's Pinned (D259, D268, DESIGN.md 5): the viewer's pinned saved searches and
+ * dashboards, oldest first, above Recent. Its own labelled region with Recent's row anatomy,
+ * not part of the Primary nav. With no pins, one muted line says where pins go (not a link,
+ * so not a navigation region). Hidden in the icon-only rail. Recent gives way first on a
+ * short window; then Pinned keeps three rows, then none (`railFit`, raised by the current
+ * page's `tabRows`). */
+export function PinnedNav({ tabRows = 0 }: { tabRows?: number }) {
   const pins = usePins();
   usePinsFollowTargets();
+  const height = useWindowHeight();
   const items = pins.data ?? [];
-  if (!items.length) return null;
-  return (
-    <nav
-      aria-label="Pinned"
-      className="mb-3 md:max-[1099px]:hidden [@media(max-height:619px)]:hidden"
-    >
-      <div aria-hidden="true" className="px-2.5 pb-1 text-xs text-text-muted">
-        Pinned
+  const fit = railFit(height, tabRows, items.length).pinned;
+  if (!pins.isSuccess || !fit) return null;
+  const label = (
+    <div aria-hidden="true" className="px-2.5 pb-1 text-xs text-text-muted">
+      Pinned
+    </div>
+  );
+  if (!items.length)
+    return (
+      <div data-pinned-empty="" className="mb-3 md:max-[1099px]:hidden">
+        {label}
+        <p className="px-2.5 py-1.5 text-sm text-text-muted">
+          Pin a dashboard or saved search here
+        </p>
       </div>
+    );
+  return (
+    <nav aria-label="Pinned" className="mb-3 md:max-[1099px]:hidden">
+      {label}
       <ul className="flex flex-col gap-px">
-        {items.map((p, i) => {
+        {items.slice(0, fit).map((p) => {
           const Icon = ICONS[p.kind];
           return (
-            <li
-              key={`${p.kind}:${p.id}`}
-              className={cn(i >= 3 && "[@media(max-height:699px)]:hidden")}
-            >
+            <li key={`${p.kind}:${p.id}`}>
               <a
                 href={href(p)}
                 onClick={open(p)}
                 title={`${KIND_WORD[p.kind]}: ${p.name}`}
-                className="flex h-row-rail items-center gap-2.5 rounded px-2.5 text-sm font-normal text-text-secondary no-underline hover:bg-surface-head hover:text-text"
+                className={ROW}
               >
                 <Icon size={14} aria-hidden className="shrink-0" />
                 <Truncate value={p.name} kind="name" inLink className="min-w-0" />

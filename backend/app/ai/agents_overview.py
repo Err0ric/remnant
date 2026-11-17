@@ -8,6 +8,7 @@ number carries its Search query (ADR-0039)."""
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -16,9 +17,10 @@ from app.ai.catalog import Catalog
 from app.ai.internal_tools import counted
 from app.ai.sessions import _ONE_COPY, _a
 from app.ai.test_records import HOOKS as HOOKS_USE
+from app.ai.usage import McpUse
 from app.engine.duckdb import QueryEngine, QueryScope
 from app.search import drill
-from app.search.dashboard import FIRST_EVENT_SQL, History, Kpi, _history, _utc
+from app.search.dashboard import FIRST_EVENT_SQL, History, Kpi, _history, _utc, settle
 
 TIMEOUT_S = 20.0
 LATE_S = 3600  # delivered an hour or more after it happened (the plugin's offline queue)
@@ -44,15 +46,19 @@ tel AS (SELECT * FROM events WHERE {TELEMETRY}),
 seen AS (SELECT DISTINCT {_a("session_id")} AS sid FROM tel WHERE {_a("session_id")} IS NOT NULL),
 a AS (
   SELECT {_a("session_id")} AS sid, nullif(actor_user_name, '') AS who, {_TS} AS ts,
-         {_TEL_CALL} AS call, coalesce({_TEL_FAIL}, false) AS fail
+         {_TEL_CALL} AS call, coalesce({_TEL_FAIL}, false) AS fail, false AS hook,
+         false AS step
   FROM tel
   UNION ALL
   SELECT {_a("session_id")}, nullif(actor_user_name, ''), {_TS},
          {_CALL} AND coalesce({_a("session_id")} NOT IN (SELECT sid FROM seen), true),
-         {_FAIL} AND coalesce({_a("session_id")} NOT IN (SELECT sid FROM seen), true)
+         {_FAIL} AND coalesce({_a("session_id")} NOT IN (SELECT sid FROM seen), true),
+         true,
+         -- A step the Sessions list counts: a prompt or a real tool call (D186).
+         coalesce(message = 'claude_hooks.user_prompt_submit' OR {_CALL}, false)
   FROM hooks
   UNION ALL
-  SELECT NULL, nullif(actor_user_name, ''), {_TS}, false, false
+  SELECT NULL, nullif(actor_user_name, ''), {_TS}, false, false, false, false
   FROM events WHERE {INVENTORY}
 )
 SELECT count(DISTINCT sid) FILTER (WHERE ts >= $start),
@@ -64,19 +70,15 @@ SELECT count(DISTINCT sid) FILTER (WHERE ts >= $start),
        count(*) FILTER (WHERE ts >= $start AND fail),
        count(*) FILTER (WHERE ts < $start AND fail),
        (SELECT count(DISTINCT device_hostname) FROM hooks
-        WHERE {_TS} >= $start AND epoch(time_observed) - epoch({_TS}) >= {LATE_S})
+        WHERE {_TS} >= $start AND epoch(time_observed) - epoch({_TS}) >= {LATE_S}),
+       -- The window's sessions the hooks plugin recorded, and those with a step: the
+       -- Sessions list's rows and its hidden empty ones (fix list, PR 639 item 3).
+       count(DISTINCT sid) FILTER (WHERE ts >= $start AND hook),
+       count(DISTINCT sid) FILTER (WHERE ts >= $start AND hook AND step)
 FROM a"""  # noqa: S608  # fixed SQL text
 
-# MCP servers seen in the window by any of the three.
+# An MCP server's name in a telemetry or hook record, for the not-approved drill.
 _MCP_NAME = f"coalesce({_a('mcp_server_name')}, json_extract_string(unmapped, '$.mcp_server_name'))"
-MCP_SQL = f"""
-WITH {_ONE_COPY}
-SELECT DISTINCT name FROM (
-  SELECT {_a("mcp_server_name")} AS name, {_TS} AS ts FROM hooks
-  UNION ALL SELECT {_MCP_NAME}, {_TS} FROM events WHERE {TELEMETRY}
-  UNION ALL SELECT message, {_TS} FROM events WHERE {INVENTORY}
-) WHERE name IS NOT NULL AND ts >= $start
-LIMIT {MAX_TOOLS}"""  # noqa: S608  # fixed SQL text
 
 # Devices that sent before the window and nothing in it: stopped, or the plugin removed.
 MISSING_SQL = f"""
@@ -131,6 +133,15 @@ class ToolRow:
 
 
 @dataclass(slots=True)
+class SessionParts:
+    """The Sessions tile in parts that add up to it, for the Sessions card's line."""
+
+    listed: int = 0  # hook-plugin sessions with a prompt or a tool call: the list's rows
+    empty: int = 0  # hook-plugin sessions with neither: hidden by default
+    telemetry_only: int = 0  # sessions only Claude Code telemetry reported
+
+
+@dataclass(slots=True)
 class AgentsOverview:
     days: int
     start: str
@@ -144,6 +155,10 @@ class AgentsOverview:
     failed: Kpi | None = None
     mcp_not_approved: Kpi | None = None
     late_devices: Kpi | None = None
+    # MCP servers seen in the window that nobody has reviewed, by the names and rules the
+    # not-approved count uses: what Agents' Needs attention says (fix list item 15).
+    mcp_unreviewed: int = 0
+    session_parts: SessionParts = field(default_factory=SessionParts)
     missing_devices: list[str] = field(default_factory=list)
     tools: list[ToolRow] = field(default_factory=list)
     sources: list[str] = field(default_factory=list)
@@ -156,11 +171,26 @@ def _iso(v: Any) -> str | None:
 
 
 def overview(
-    engine: QueryEngine, catalog: Catalog, telemetry: list[str], now: datetime, days: int
+    engine: QueryEngine,
+    catalog: Catalog,
+    telemetry: list[str],
+    now: datetime,
+    days: int,
+    mcp_rows: list[McpUse] | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
 ) -> AgentsOverview:
-    now = now.astimezone(UTC)
-    start = now - timedelta(days=days)
-    before = start - timedelta(days=days)
+    """`days` back from now, or with `start` exactly the window the page chose (`end`
+    or now), compared with the window of the same length before it. `mcp_rows` is the MCP
+    servers table's own rows for that window (`Usage.mcp`): the not-approved and
+    unreviewed counts are its rows by review state, never a second list of names."""
+    now = (end or now).astimezone(UTC)
+    if start is not None:
+        start = start.astimezone(UTC)
+        days = max(1, math.ceil((now - start) / timedelta(days=1)))
+    else:
+        start = now - timedelta(days=days)
+    before = start - (now - start)
     out = AgentsOverview(
         days=days,
         start=start.isoformat(),
@@ -178,7 +208,12 @@ def overview(
     head = engine.run(
         OVERVIEW_SQL, scope, params, timeout_s=TIMEOUT_S, name="agents.overview", page=True
     )
-    s, s_b, p, p_b, c, c_b, f, f_b, late = (head.rows or [[0] * 9])[0]
+    s, s_b, p, p_b, c, c_b, f, f_b, late, hooked, stepped = (head.rows or [[0] * 11])[0]
+    # Parts of the Sessions tile that add up to it: listed (a step), empty (hidden by
+    # default), and seen only in telemetry (no hook records in the window).
+    out.session_parts = SessionParts(
+        listed=int(stepped), empty=int(hooked) - int(stepped), telemetry_only=int(s) - int(hooked)
+    )
     sessions = f"({HOOKS} OR {TELEMETRY}) AND {_a('session_id')} IS NOT NULL"
     out.sessions = Kpi(
         int(s), int(s_b), drill=drill.grouped(sessions, _a("session_id"), "session_id")
@@ -213,10 +248,8 @@ def overview(
                 drill.events(f"{HOOKS} AND {_TOOL} = {drill.lit(name)}", COLUMNS),
             )
         )  # fmt: skip
-    mcps = engine.run(MCP_SQL, scope, params, timeout_s=TIMEOUT_S, name="agents.mcp", page=True)
-    bad = sorted(
-        str(n) for (n,) in mcps.rows if catalog.mcp_status(str(n), rules) == "not_approved"
-    )
+    bad = sorted(m.name for m in mcp_rows or [] if m.status == "not_approved")
+    out.mcp_unreviewed = sum(1 for m in mcp_rows or [] if m.status == "unreviewed")
     names = drill.lits(bad) if bad else "['']"
     server = f"coalesce({_MCP_NAME}, CASE WHEN {INVENTORY} THEN message END)"
     out.mcp_not_approved = Kpi(
@@ -230,5 +263,7 @@ def overview(
         MISSING_SQL, scope, params, timeout_s=TIMEOUT_S, name="agents.missing", page=True
     )
     out.missing_devices = sorted(str(r[0]) for r in missing.rows)[:50]
-    out.sources = sorted(set(head.sources) | set(tools.sources) | set(mcps.sources))
+    out.sources = sorted(set(head.sources) | set(tools.sources))
+    # #638's one rule, for the window actually read (the clamped start and the read end).
+    settle(out, start, before, now)
     return out

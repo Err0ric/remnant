@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { OptionalSection } from "@/components/forms/OptionalSection";
 import { ApiError, api, type AlertTargetInput, type AlertTargetKind } from "@/lib/api";
+import { Select } from "@/components/forms/Select";
 
 interface TargetFormProps {
   onCreated: (name: string, signingKey: string | null) => void;
@@ -63,7 +64,7 @@ export function TargetForm({ onCreated, onCancel }: TargetFormProps) {
     },
   });
   const field = "flex min-w-0 flex-col gap-1 text-sm";
-  const input = "h-8 rounded border border-border bg-inset px-2";
+  const input = "h-8 rounded border border-border-control bg-inset px-2 text-text";
   return (
     <form
       aria-label="New alert target"
@@ -76,16 +77,16 @@ export function TargetForm({ onCreated, onCancel }: TargetFormProps) {
       <div className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-3">
         <label className={field}>
           <span className="text-text-secondary">Kind</span>
-          <select
-            className={input}
+          <Select
             value={kind}
-            onChange={(e) => setKind(e.target.value as AlertTargetKind)}
-          >
-            <option value="slack">Slack</option>
-            <option value="teams">Microsoft Teams</option>
-            <option value="email">Email (SMTP)</option>
-            <option value="webhook">Webhook</option>
-          </select>
+            onChange={(v) => setKind(v as AlertTargetKind)}
+            options={[
+              { value: "slack", label: "Slack" },
+              { value: "teams", label: "Microsoft Teams" },
+              { value: "email", label: "Email (SMTP)" },
+              { value: "webhook", label: "Webhook" },
+            ]}
+          />
         </label>
         <label className={field}>
           <span className="text-text-secondary">Name</span>
@@ -129,15 +130,15 @@ export function TargetForm({ onCreated, onCancel }: TargetFormProps) {
               </label>
               <label className={field}>
                 <span className="text-text-secondary">Security</span>
-                <select
-                  className={input}
+                <Select
                   value={security}
-                  onChange={(e) => setSecurity(e.target.value as "starttls" | "tls" | "none")}
-                >
-                  <option value="starttls">STARTTLS</option>
-                  <option value="tls">TLS</option>
-                  <option value="none">None (relay on this host only)</option>
-                </select>
+                  onChange={(v) => setSecurity(v as "starttls" | "tls" | "none")}
+                  options={[
+                    { value: "starttls", label: "STARTTLS" },
+                    { value: "tls", label: "TLS" },
+                    { value: "none", label: "None (relay on this host only)" },
+                  ]}
+                />
               </label>
               <label className={field}>
                 <span className="text-text-secondary">User name</span>

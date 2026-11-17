@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mockApi, type MockAuth } from "./mockApi";
 import { setSql } from "./sqlEditor";
+import { choose } from "./choose";
 
 async function renderAt(
   path: string,
@@ -42,7 +43,7 @@ describe("Saving a search", () => {
     await userEvent.type(within(form).getByLabelText("Name"), "Recent Events!");
     expect(within(form).getByText("Id: recent_events")).toBeInTheDocument();
     expect(within(form).queryByLabelText("Type of start")).not.toBeInTheDocument();
-    await userEvent.selectOptions(within(form).getByLabelText("Type of top"), "int");
+    await choose(within(form).getByLabelText("Type of top"), "int");
     await userEvent.type(within(form).getByLabelText("Default for top"), "5");
     await userEvent.click(within(form).getByRole("button", { name: "Save" }));
     expect(await screen.findByText(/Saved as/)).toHaveTextContent(
@@ -297,7 +298,13 @@ describe("Saved searches under Logs (ADR-0052 section 3.3, redesign build row 8)
       "page",
     );
     const rail = screen.getByRole("navigation", { name: "Primary" });
-    expect(within(rail).queryByRole("link", { name: /Saved searches/ })).toBeNull();
+    // Not a rail entry: only a tab row under the current page, Logs (D268).
+    expect(rail.querySelector('[data-rail-entry="saved"]')).toBeNull();
+    expect(
+      within(within(rail).getByRole("list", { name: "Logs tabs" })).getByRole("link", {
+        name: "Saved searches",
+      }),
+    ).toHaveAttribute("aria-current", "page");
   });
 
   it("says which searches are scheduled, and the link opens that schedule", async () => {
