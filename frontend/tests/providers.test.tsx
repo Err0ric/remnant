@@ -182,4 +182,35 @@ describe("Locality badge", () => {
     expect(loaded).toHaveTextContent("Not loaded now; Ollama loads it on the next question.");
     expect(loaded).toHaveTextContent("Also loaded: gemma4:26b (on CPU only)");
   });
+
+  it("lets an Admin change Ask's time limit, with the CPU note (owner, 2026-11-17)", async () => {
+    const spy = await renderAt("/providers");
+    const section = await screen.findByRole("region", { name: "Ask time limit" });
+    expect(section).toHaveTextContent("CPU-only local models may need 240 s or more.");
+    const box = within(section).getByRole("textbox", { name: "Seconds" });
+    expect(await within(section).findByDisplayValue("90")).toBe(box);
+    expect(section).toHaveTextContent("90 s, from the install's configuration.");
+    expect(section).toHaveTextContent("seconds (5 to 3600)");
+    const save = within(section).getByRole("button", { name: "Save" });
+    await userEvent.clear(box);
+    await userEvent.type(box, "4");
+    expect(save).toBeDisabled(); // 5 to 3600, as in the config
+    await userEvent.clear(box);
+    await userEvent.type(box, "240");
+    await userEvent.click(save);
+    expect(await within(section).findByDisplayValue("240")).toBe(box);
+    expect(section).toHaveTextContent("240 s, saved here.");
+    await userEvent.click(
+      within(section).getByRole("button", { name: "Use the configured value" }),
+    );
+    expect(await within(section).findByDisplayValue("90")).toBe(box);
+    expect(section).toHaveTextContent("90 s, from the install's configuration.");
+    expect(
+      within(section).queryByRole("button", { name: "Use the configured value" }),
+    ).not.toBeInTheDocument();
+    expect(sent(spy, "PUT", (u) => u.endsWith("/api/settings/ask-time-limit"))).toEqual([
+      { seconds: 240 },
+      { seconds: null },
+    ]);
+  });
 });

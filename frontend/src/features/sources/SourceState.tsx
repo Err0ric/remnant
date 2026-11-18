@@ -27,7 +27,10 @@ function readerWords(state: SourceStatus["state"], kind: string | undefined): st
 export function SourceState({ status, kind }: SourceStateProps) {
   return (
     <span className="flex flex-col gap-0.5">
-      <span className="text-sm text-text-muted">Reader: {readerWords(status.state, kind)}</span>
+      {/* Read by another source: the status and the line under the path say it (D273). */}
+      {status.read_by && status.state === "reading" ? null : (
+        <span className="text-sm text-text-muted">Reader: {readerWords(status.state, kind)}</span>
+      )}
       {status.error ? (
         <span className="max-w-[320px] text-sm text-text-secondary">{status.error}</span>
       ) : null}

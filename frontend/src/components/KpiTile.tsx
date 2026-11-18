@@ -18,6 +18,8 @@ interface KpiTileProps {
   change?: number | null;
   /** One context line under the value. */
   context?: ReactNode;
+  /** Lines the context may take before it is cut (default 2). */
+  contextLines?: 2 | 4;
   /** Where the value leads; without it the value is plain text. */
   page?: PageId;
   tab?: string;
@@ -53,6 +55,7 @@ export function KpiTile({
   title,
   loading = false,
   contextLine = true,
+  contextLines = 2,
   failed,
 }: KpiTileProps) {
   const cls = cn(
@@ -129,7 +132,16 @@ export function KpiTile({
               />
             ) : null}
           </span>
-          {context ? <span className="line-clamp-2 text-sm text-text-muted">{context}</span> : null}
+          {context ? (
+            <span
+              className={cn(
+                "text-sm text-text-muted",
+                contextLines === 4 ? "line-clamp-4" : "line-clamp-2",
+              )}
+            >
+              {context}
+            </span>
+          ) : null}
         </>
       )}
     </div>

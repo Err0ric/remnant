@@ -54,5 +54,9 @@ schedules:
 
 # Ask runs its query at once when it passes the guard, on the asker's own sources, and
 # shows the SQL under "How I got this" (ADR-0042). false: Ask waits for Run query.
+# model_timeout_s: the longest one Ask model call may take, in seconds (D270); on a
+# timeout the request to the model is closed and the rows found so far stay. A value an
+# Admin saves in Settings > AI providers takes its place.
 # ask:
 #   auto_run: true
+#   model_timeout_s: 90

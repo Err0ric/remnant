@@ -154,6 +154,11 @@ class ProviderUnreachableError(ProviderError):
     """No connection to the model server (refused, timed out, name not found)."""
 
 
+class ModelTimeoutError(ProviderError):
+    """A model call ran past its time limit (D270, `ask.model_timeout_s`); the provider
+    request was closed."""
+
+
 class CallCancelledError(AppError):
     """The caller went away while the model call waited for a slot (ADR-0028 row 6)."""
 

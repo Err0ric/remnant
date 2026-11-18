@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   useEffect,
   useRef,
@@ -8,8 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { FacetSelect } from "@/components/FilterBar";
-import { isAborted, ModelWait } from "@/components/ai/ModelWait";
-import { api, type AskTurn, type Cell } from "@/lib/api";
+import { api, ApiError, type AskJob, type AskRequest, type Cell } from "@/lib/api";
 import { closeAsk } from "@/lib/askSlideOver";
 import { fitsInLogs, TOO_LONG_FOR_LOGS } from "@/lib/sqlLimit";
 import { setAskProvider, useAskProvider } from "@/lib/askProvider";
@@ -19,8 +18,11 @@ import { LocalityBadge } from "@/features/providers/LocalityBadge";
 import { cn } from "@/lib/cn";
 import { AskExamples } from "./AskExamples";
 import { AskTurnBlock, type Turn } from "./AskTurnBlock";
+import { fromJob, halted, pollEvery, stopped } from "./askJob";
 
 const MAX_TURNS = 3;
+/** Why Ask waits while a question runs: the server takes one per person (D269). */
+const STILL_RUNNING = "Your previous question is still running";
 /** The prompt's height in lines: one per line typed, from two to six. */
 export function promptRows(text: string): number {
   return Math.min(6, Math.max(2, text.split("\n").length));
@@ -86,8 +88,9 @@ export function AskThread({
   const [question, setQuestion] = useState(initialQuestion);
   const [turns, setTurns] = useState<Turn[]>([]);
   const nextId = useRef(1);
-  const startedAt = useRef<Record<number, number>>({});
-  const abort = useRef<AbortController | null>(null);
+  const turnsNow = useRef(turns);
+  turnsNow.current = turns;
+  const client = useQueryClient();
   const providers = useQuery({ queryKey: ["ask-providers"], queryFn: api.askProviders });
   const chosen =
     providers.data?.find((p) => p.provider_id === providerId) ?? providers.data?.[0] ?? null;
@@ -96,28 +99,76 @@ export function AskThread({
   const update = (id: number, change: Partial<Turn>) =>
     setTurns((all) => all.map((t) => (t.id === id ? { ...t, ...change } : t)));
 
-  // The answer step (slice 1c): statements that cite the rows. Any failure here leaves
-  // the headline and the rows without a summary; it never fails the turn.
-  const summarize = useMutation({
-    mutationFn: ({ askId }: { id: number; askId: string }) => {
-      abort.current = new AbortController();
-      return api.askAnswer(askId, abort.current.signal);
-    },
-    onSuccess: (summary, { id }) =>
-      update(id, {
-        phase: "done",
-        summary,
-        summaryMs: Date.now() - (summaryStart.current[id] ?? Date.now()),
-      }),
-    onError: (error, { id }) =>
-      update(id, {
-        phase: "done",
-        summaryNote: isAborted(error)
-          ? "No summary: cancelled."
-          : `No summary: ${error instanceof Error ? error.message : "the model did not answer"}`,
-      }),
+  // Ask runs as a job (D269): the submit returns at once and the page polls the job, so no
+  // request stays open while the model works (a proxy's time limit never ends a question).
+  const [active, setActive] = useState<{ turn: number; job: string } | null>(null);
+  const job = useQuery({
+    queryKey: ["ask-job", active?.job],
+    queryFn: ({ signal }) => api.askJob(active?.job ?? "", signal),
+    enabled: active !== null,
+    staleTime: 0,
+    // A dropped poll or a proxy's 5xx is tried again; an expired job (404) is not.
+    retry: (n, e) => n < 3 && !(e instanceof ApiError && e.status >= 400 && e.status < 500),
+    retryDelay: (n) => Math.min(2000, 500 * 2 ** n),
+    refetchInterval: (q) =>
+      q.state.data?.state === "running" && q.state.status !== "error"
+        ? pollEvery(q.state.dataUpdateCount)
+        : false,
   });
-  const summaryStart = useRef<Record<number, number>>({});
+  // A job keeps being read after New question clears its turn: the server holds the
+  // person's one question until it ends, and Ask comes back then (D269).
+  const apply = (id: number, j: AskJob) => {
+    const t = turnsNow.current.find((x) => x.id === id);
+    if (t) {
+      if (j.ask && !t.answer)
+        onAnswer?.({ sql: j.ask.sql, question: turnsNow.current[0]?.question ?? t.question });
+      update(id, fromJob(j, t, Date.now()));
+    }
+    if (j.state !== "running") setActive(null);
+  };
+  const fail = (id: number, error: unknown) => {
+    const t = turnsNow.current.find((x) => x.id === id);
+    if (t) update(id, stopped(t, error, Date.now()));
+  };
+  const activeNow = useRef(active);
+  activeNow.current = active;
+  // A 429 on a submit ("Your previous question is still running", D269) fails nothing: the
+  // answers keep their state and buttons, and the reason shows as one muted line.
+  const [held, setHeld] = useState<string | null>(null);
+  const isHeld = (error: unknown) => error instanceof ApiError && error.status === 429;
+  const follow = (id: number, j: AskJob) => {
+    const was = activeNow.current;
+    const left = was && was.turn !== id ? turnsNow.current.find((t) => t.id === was.turn) : null;
+    if (left) update(left.id, halted(left, Date.now())); // no longer followed: steps end
+    setHeld(null);
+    client.setQueryData(["ask-job", j.job_id], j);
+    setActive({ turn: id, job: j.job_id });
+    apply(id, j);
+  };
+  const applyRef = useRef(apply);
+  applyRef.current = apply;
+  useEffect(() => {
+    if (active && job.data?.job_id === active.job) applyRef.current(active.turn, job.data);
+  }, [active, job.data]);
+  const failRef = useRef(fail);
+  failRef.current = fail;
+  useEffect(() => {
+    if (!active || !job.isError) return;
+    failRef.current(active.turn, job.error);
+    setActive(null); // every read of this job stops; its steps stopped with it
+  }, [active, job.isError, job.error]);
+  const asking = useMutation({
+    mutationFn: ({ body }: { id: number; body: AskRequest; before: Turn[] }) => api.askJobs(body),
+    onSuccess: (j, { id }) => follow(id, j),
+    onError: (error, { id, body, before }) => {
+      if (!isHeld(error)) return fail(id, error);
+      setTurns(before); // the answers as they were, a replaced one included
+      setQuestion(
+        (q) => q || (before.some((t) => t.question === body.question) ? "" : body.question),
+      );
+      setHeld(error instanceof Error ? error.message : null);
+    },
+  });
 
   // "Show events" (D173): the server builds the row's events query from the library
   // query; Search runs it through the guard on the caller's view, audited like any query.
@@ -141,81 +192,37 @@ export function AskThread({
       }),
   });
 
+  // Run query on a click-to-run answer (ADR-0042): the query, then the summary, as a job.
   const run = useMutation({
-    mutationFn: ({ askId }: { id: number; askId: string }) => {
-      abort.current = new AbortController();
-      return api.runAnswer(askId, abort.current.signal);
-    },
-    onMutate: ({ id }) => update(id, { phase: "running" }),
-    onSuccess: (result, { id, askId }) => {
-      const writing = result.summarize && result.rows.length > 0;
+    mutationFn: ({ askId }: { id: number; askId: string }) => api.runJob(askId),
+    onMutate: ({ id }) => {
+      const before = turnsNow.current.find((t) => t.id === id);
       update(id, {
-        phase: writing ? "writing" : "done",
-        result,
-        runMs: result.elapsed_ms,
-        summaryNote: result.summary_note ?? undefined,
-        willSummarize: writing,
+        phase: "running",
+        steps: [
+          ...(turnsNow.current.find((t) => t.id === id)?.steps ?? []).filter(
+            (s) => s.name === "sql",
+          ),
+          { name: "run", state: "running", ms: null },
+        ],
+        seen: { run: Date.now() },
       });
-      if (writing) {
-        summaryStart.current[id] = Date.now();
-        summarize.mutate({ id, askId });
-      }
+      return { before };
     },
-    onError: (error, { id }) => update(id, { phase: "failed", error }),
+    onSuccess: (j, { id }) => follow(id, j),
+    onError: (error, { id }, context) => {
+      if (!isHeld(error) || !context?.before) return fail(id, error);
+      update(id, context.before); // still ready, with its Run query
+      setHeld(error instanceof Error ? error.message : null);
+    },
   });
 
-  const ask = useMutation({
-    mutationFn: ({
-      q,
-      history,
-      route,
-    }: {
-      id: number;
-      q: string;
-      history: AskTurn[];
-      route?: "data";
-    }) => {
-      abort.current = new AbortController();
-      return api.ask(
-        {
-          question: q,
-          provider_id: chosen?.provider_id,
-          start,
-          end,
-          sources: sources.length ? sources : undefined,
-          history,
-          tz: TZ,
-          route,
-        },
-        abort.current.signal,
-      );
-    },
-    onSuccess: (answer, { id, q, history }) => {
-      const first = history[0]?.question ?? q;
-      onAnswer?.({ sql: answer.sql, question: first });
-      const auto = Boolean(answer.auto_run && answer.ask_id);
-      const guidance = answer.route?.kind === "knowhow";
-      setTurns((all) =>
-        all.map((t) =>
-          t.id === id
-            ? {
-                ...t,
-                answer,
-                phase: guidance ? "guidance" : auto ? "running" : "ready",
-                askMs: Date.now() - (startedAt.current[id] ?? Date.now()),
-              }
-            : t,
-        ),
-      );
-      if (auto && !guidance && answer.ask_id) run.mutate({ id, askId: answer.ask_id });
-    },
-    onError: (error, { id }) => update(id, { phase: "failed", error }),
-  });
   const begin = (q: string, earlier: Turn[], route?: "data") => {
     const id = nextId.current++;
-    startedAt.current[id] = Date.now();
+    const before = turnsNow.current;
     const history = earlier
-      .filter((t) => t.answer)
+      // A direct lookup (D276) has no query to refine: it never goes to the model.
+      .filter((t) => t.answer && !t.answer.lookup?.length)
       .slice(-MAX_TURNS)
       // By the answer's id: the server reads its own SQL, so SQL it built (longer than
       // typed SQL may be) is never posted back; the copy goes too while it fits.
@@ -236,9 +243,21 @@ export function AskThread({
     ]);
     // Nothing on the page is this question's answer until its query runs (D192).
     onAnswer?.(null);
-    ask.mutate({ id, q, history, route });
+    const body: AskRequest = {
+      question: q,
+      provider_id: chosen?.provider_id,
+      start,
+      end,
+      sources: sources.length ? sources : undefined,
+      history,
+      tz: TZ,
+      route,
+    };
+    asking.mutate({ id, body, before });
   };
-  const busy = ask.isPending || run.isPending || summarize.isPending;
+  const busy = asking.isPending || run.isPending || active !== null;
+  // New question cleared the running question's turn; the server still holds it.
+  const hidden = active !== null && !turns.some((t) => t.id === active.turn);
   const ready = Boolean(question.trim()) && !busy;
   // With no AI provider, Ask still offers library queries that match the words (C4).
   const [suggestFor, setSuggestFor] = useState<string | null>(null);
@@ -273,8 +292,7 @@ export function AskThread({
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) submit();
   };
   const startOver = () => {
-    abort.current?.abort();
-    setTurns([]);
+    setTurns([]); // a job still running is still read, so Ask stays off until it ends
     onAnswer?.(null);
   };
   const startOverRef = useRef(startOver);
@@ -285,18 +303,21 @@ export function AskThread({
   const hasTurns = turns.length > 0;
   useEffect(() => onTurns?.(hasTurns), [hasTurns, onTurns]);
   const retry = (t: Turn) =>
+    !busy &&
     begin(
       t.question,
       turns.filter((x) => x.id !== t.id),
     );
   // Check your data instead (ADR-0042 condition 3): the same question as a data question.
   const checkData = (t: Turn) =>
+    !busy &&
     begin(
       t.question,
       turns.filter((x) => x.id !== t.id),
       "data",
     );
-  const runTurn = (t: Turn) => t.answer?.ask_id && run.mutate({ id: t.id, askId: t.answer.ask_id });
+  const runTurn = (t: Turn) =>
+    !busy && t.answer?.ask_id && run.mutate({ id: t.id, askId: t.answer.ask_id });
 
   return (
     <div className="flex flex-col gap-4">
@@ -340,9 +361,18 @@ export function AskThread({
               {turns.length ? "Refine" : "Ask"}
             </button>
             <span id="ask-not-ready" className="sr-only">
-              {busy ? "Working on the last question" : "Type a question first"}
+              {busy ? STILL_RUNNING : "Type a question first"}
             </span>
           </div>
+          {hidden ? (
+            <p aria-hidden="true" className="text-sm text-text-muted">
+              {STILL_RUNNING}. Ask comes back when it ends.
+            </p>
+          ) : held && !busy ? (
+            <p role="status" className="text-sm text-text-muted">
+              {held}
+            </p>
+          ) : null}
           {QUERY_LIKE.test(question) ? (
             <p className="text-sm text-text-muted">
               Reads as a KQL or SPL query: Ask turns it into SQL for your logs.
@@ -444,12 +474,6 @@ export function AskThread({
       {turns.length === 0 && suggestFor === null ? (
         <AskExamples onPick={askNow} disabled={busy} />
       ) : null}
-      <ModelWait
-        providerId={chosen?.provider_id ?? ""}
-        label="Finding the right query"
-        pending={ask.isPending}
-        onCancel={() => abort.current?.abort()}
-      />
       {turns.length ? (
         <div aria-label="Answers" className="mt-1 flex flex-col gap-4 border-t border-border pt-4">
           {/* Newest first, directly under the prompt that refines it (D256). */}
@@ -458,6 +482,8 @@ export function AskThread({
               key={t.id}
               turn={t}
               start={start}
+              busy={busy ? STILL_RUNNING : undefined}
+              providerId={chosen?.provider_id ?? ""}
               onRun={runTurn}
               onRetry={retry}
               onCheckData={checkData}

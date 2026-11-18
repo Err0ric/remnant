@@ -85,6 +85,7 @@ The query library ships tested questions for common sources, grouped in packs: M
 
 - Clicking a query loads its SQL into SQL mode, unsaved. Run it as any search: it goes through the query guard and reads only your sources.
 - **Save as my own** makes a private saved search from it. That copy is yours; a new version of the pack never changes it. When the pack's SQL changes, the Library shows **Updated in this version** with the difference and **Replace my copy**.
+- When a query finds no rows, it may say what that means in its own words: "Who had this address" says "No DHCP lease for this address in the range. It may be a static address." Logs shows them while the query is unchanged or only its values are (another address); after any other edit it shows the usual advice. Ask AI shows them in its answer. In a pack, this is the optional `empty:` field (plain text, at most 160 characters).
 - Every query runs in CI on the template fixtures for its sources, so a template change that would break one fails the build.
 - The packs live in `library/<pack>/pack.yaml` and are read at start. Nothing is downloaded.
 
@@ -100,6 +101,8 @@ The query library ships tested questions for common sources, grouped in packs: M
 | AI agents | `agents_calls_without_result` | Tool calls that never came back: blocked, interrupted, or still running. | `claude_hooks` |
 | AI agents | `agents_sessions_for_person` | One person's sessions with prompts, tool calls, and minutes. | `claude_hooks` |
 | AI services | `ai_services_in_use` | Which AI services people use, from every source that can show one, as the AI usage page counts them (the SQL is built from the AI catalog). | any source |
+| Addresses | `dns_names_from_ip` | What one device asks DNS for most, and when it first and last asked (the address page's Names looked up). | `dns_bind`, `dns_unbound`, `dns_windows`, `dns_powerdns` |
+| Addresses | `access_from_ip` | Every way one address signed in or was let through: SSH, the web auth proxy, other sign-ins, and firewall allow and deny (the address page's Sign-ins and access). | any source |
 | DNS and AI services | `ai_services_dns` | Which AI services the network looks up, and from how many clients. | `dns_bind`, `dns_unbound`, `dns_windows`, `dns_powerdns` |
 | DNS and AI services | `ai_services_by_device` | AI service lookups named by the device that held the address, from Palo Alto DHCP leases. | `dns_bind`, `dns_unbound`, `dns_windows`, `dns_powerdns` |
 | DNS and AI services | `dns_top_domains` | What the network looks up most, and from how many clients. | `dns_bind`, `dns_unbound`, `dns_windows`, `dns_powerdns` |
@@ -133,7 +136,8 @@ The query library ships tested questions for common sources, grouped in packs: M
 Notes:
 
 - The AI usage page uses the full, reviewable AI catalog and names people from logon, User-ID, and VPN events. The AI queries are a smaller, editable starting point.
-- The DHCP queries (`ai_services_by_device`, `who_had_ip`) read the Palo Alto system log's DHCP lease lines. For another DHCP server, change the `leases` part to read that source. `who_had_ip` loads with the address `10.20.1.5` written in; change it in the editor.
+- The DHCP queries (`ai_services_by_device`, `who_had_ip`) read the Palo Alto system log's DHCP lease lines. For another DHCP server, change the `leases` part (in `who_had_ip`, the `seen` part) to read that source. `who_had_ip` loads with the address `10.20.1.5` written in; change it in the editor.
+- `who_had_ip` finds DHCP leases and VPN tunnels with a start or end line in the range, one row per lease or tunnel, newest first (`first_seen`, `last_seen`). It reads both "lease started" and "lease ended" lines, so a lease that started before the range shows from its end line, and the interface whether the firewall writes it quoted (`interface "vlan20"`) or not (`interface ae0.120`). A new row starts when the holder changes or after an end line, and a row ends at the next holder's start even when its end line comes later. No row means no lease started or ended in the range: the address may be static, or a lease may span the whole range. The built-in address resolution reads both lines with the same rules, in the same order, and with the same expressions for a DHCP line (D278): a lease runs until its end line, the next start, or 24 hours, and a lease seen only by its end line covers back to the address's previous line, at most 24 hours.
 - A summary with a label and a count can be shown as bars on the Dashboard.
 - The `m365` failure queries treat MFA interruptions as interruptions, not failures. Events stored before `m365_management_activity` 1.1.0 recorded failed logons as successes, so older failures are missing.
 

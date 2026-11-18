@@ -127,6 +127,8 @@ interface ResultsTableProps {
   /** An address's place in its tooltip instead of beside it, so a narrow table gives the
    * width to the names (the person page's Microsoft 365, owner 2026-11-16). */
   placeOnHover?: boolean;
+  /** A library query's own words for no rows (D274), in place of the generic advice. */
+  emptyDetail?: string;
 }
 
 export function ResultsTable({
@@ -143,6 +145,7 @@ export function ResultsTable({
   labels,
   counted = false,
   placeOnHover = false,
+  emptyDetail,
 }: ResultsTableProps) {
   const geoOf = (v: unknown) => (geo && typeof v === "string" ? geo[v] : undefined);
   const intelOf = (v: unknown) =>
@@ -234,7 +237,7 @@ export function ResultsTable({
         detail={
           noScope
             ? "None are shared with you yet. An administrator adds sources and shares them through source groups."
-            : "Try a wider time range or remove a source filter."
+            : (emptyDetail ?? "Try a wider time range or remove a source filter.")
         }
       />
     );

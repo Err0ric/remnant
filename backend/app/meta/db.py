@@ -1349,6 +1349,15 @@ MIGRATIONS: tuple[Migration, ...] = (
     """
     ALTER TABLE alert_items ADD COLUMN devices_total INTEGER;
     """,
+    # 81: one reader per text file across sources: a file's positions by device and inode.
+    """
+    CREATE INDEX file_positions_by_file ON file_positions (inode, device);
+    """,
+    # 82: Ask's model time limit saved by an Admin in Settings > AI providers (owner,
+    # 2026-11-17). NULL: `ask.model_timeout_s` from the config, as before.
+    """
+    ALTER TABLE install_settings ADD COLUMN ask_model_timeout_s INTEGER;
+    """,
 )
 
 

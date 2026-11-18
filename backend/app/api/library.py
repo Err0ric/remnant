@@ -48,12 +48,16 @@ class QueryOut(BaseModel):
     normal: str
     tags: list[str]
     requires: list[str]
+    # The plain names of the templates in `requires` (any one is enough); empty: any source.
+    sources: list[str]
     sql: str  # for the editor: start and end placeholders kept, other defaults written in
     pack_sql: str  # as shipped, for the difference with a copy
     suggested_schedule: str | None
     flag: str | None
     # Example questions it answers (ADR-0042 row 6), for Ask's empty state (D182).
     ask: list[str]
+    # What a run with no rows says in place of the generic text (D274); plain text.
+    empty: str | None
     my_copy: CopyOut | None
 
 
@@ -68,6 +72,8 @@ class PackOut(BaseModel):
 class LibraryOut(BaseModel):
     packs: list[PackOut]
     hidden: int  # queries whose sources the viewer has no events from
+    # Those queries, by pack, so the Library can say which sources each needs.
+    needs: list[PackOut]
 
 
 def _lib(request: Request) -> Library:
@@ -80,7 +86,15 @@ def _audit(request: Request, action: str, user: User, detail: dict[str, Any]) ->
     auth.audit.write(action, "success", user.user_id, client_ip(request), detail)
 
 
-def _query_out(pack: Pack, q: LibraryQuery, mine: dict[str, SavedSearch]) -> QueryOut:
+def _source_names(request: Request, q: LibraryQuery) -> list[str]:
+    """Each required template's name, or its id when the install has no such template."""
+    templates = request.app.state.templates
+    return [getattr(templates.get(t), "name", None) or t for t in q.requires]
+
+
+def _query_out(
+    pack: Pack, q: LibraryQuery, mine: dict[str, SavedSearch], sources: list[str]
+) -> QueryOut:
     c = mine.get(f"{pack.id}/{q.id}")
     cp = None
     if c is not None:
@@ -91,35 +105,39 @@ def _query_out(pack: Pack, q: LibraryQuery, mine: dict[str, SavedSearch]) -> Que
         )  # fmt: skip
     return QueryOut(
         id=q.id, name=q.name, group=q.group, description=q.description, why=q.why,
-        normal=q.normal, tags=q.tags, requires=q.requires, sql=editor_sql(q), pack_sql=q.sql,
-        suggested_schedule=q.suggested_schedule, flag=q.flag, ask=list(q.ask), my_copy=cp,
+        normal=q.normal, tags=q.tags, requires=q.requires, sources=sources, sql=editor_sql(q),
+        pack_sql=q.sql,
+        suggested_schedule=q.suggested_schedule, flag=q.flag, ask=list(q.ask), empty=q.empty,
+        my_copy=cp,
     )  # fmt: skip
 
 
 @router.get("/library")
 async def library(request: Request, user: CurrentUser) -> LibraryOut:
     """The packs, with only the queries whose templates the viewer's sources produced in
-    the last 30 days, and the viewer's own copies."""
+    the last 30 days, and the viewer's own copies; the other queries under `needs`."""
     lib = _lib(request)
     allowed = await run_in_threadpool(permitted_sources, request.app.state.meta, user)
     seen = await run_in_threadpool(lib.templates_seen, request.app.state.engine, allowed)
     store: SavedSearchStore = request.app.state.searches
     mine = copies(await run_in_threadpool(store.visible, user), user)
-    packs, hidden = [], 0
+    packs: list[PackOut] = []
+    needs: list[PackOut] = []
     for p in lib.packs:
-        offered = [q for q in p.queries if lib.offered(q, seen)]
-        hidden += len(p.queries) - len(offered)
-        if offered:
-            packs.append(
-                PackOut(
-                    id=p.id,
-                    name=p.name,
-                    version=p.version,
-                    description=p.description,
-                    queries=[_query_out(p, lib.resolve(q), mine) for q in offered],
-                )
-            )
-    return LibraryOut(packs=packs, hidden=hidden)
+        for offered, out in ((True, packs), (False, needs)):
+            qs = [q for q in p.queries if lib.offered(q, seen) is offered]
+            if qs:
+                out.append(
+                    PackOut(
+                        id=p.id, name=p.name, version=p.version, description=p.description,
+                        queries=[
+                            _query_out(p, lib.resolve(q), mine, _source_names(request, q))
+                            for q in qs
+                        ],
+                    )
+                )  # fmt: skip
+    hidden = sum(len(p.queries) for p in needs)
+    return LibraryOut(packs=packs, hidden=hidden, needs=needs)
 
 
 def _find(request: Request, pack_id: str, query_id: str) -> tuple[Pack, LibraryQuery]:
@@ -180,6 +198,7 @@ class AddedOut(BaseModel):
     query_id: str
     search_id: str
     schedule_id: str
+    existing: bool = False  # already on that dashboard: nothing was made
 
 
 class AddPackOut(BaseModel):
@@ -192,7 +211,8 @@ async def add_pack(pack_id: str, body: AddPackIn, request: Request, user: Author
     """Add a pack (ADR-0033 row 5): each ticked query becomes the user's private saved
     search (their copy if they have one), a private schedule with the query's suggested
     interval and flag, and a panel in a section named after the query's group. Every
-    object is ordinary and editable; each is audited as if made by hand."""
+    object is ordinary and editable; each is audited as if made by hand. A query whose
+    copy already has a panel on that dashboard is returned as it is, and nothing is made."""
     lib = _lib(request)
     pack = next((p for p in lib.packs if p.id == pack_id), None)
     if pack is None:
@@ -215,7 +235,20 @@ async def add_pack(pack_id: str, body: AddPackIn, request: Request, user: Author
                 board = None
         return (board or dashboards.default_for(user)).dashboard_id
 
+    def on_board(board: str) -> dict[str, str]:
+        """The saved search each panel of the board runs, to its schedule."""
+        out: dict[str, str] = {}
+        for panel in dashboards.get(board, user).panels:
+            try:
+                sched = schedules.get(panel.schedule_id)
+            except NotFoundError:
+                continue
+            if sched.kind == "search":
+                out.setdefault(sched.target_id, sched.schedule_id)
+        return out
+
     target = await run_in_threadpool(board_id)
+    shown = await run_in_threadpool(on_board, target)
     mine = copies(await run_in_threadpool(store.visible, user), user)
     added: list[AddedOut] = []
     for q in wanted:
@@ -226,6 +259,14 @@ async def add_pack(pack_id: str, body: AddPackIn, request: Request, user: Author
                 _audit, request, "search.create", user,
                 {"search_id": search.id, "library": pack.origin(q)},
             )  # fmt: skip
+        if search.id in shown:  # already there: a second click makes nothing
+            added.append(
+                AddedOut(
+                    query_id=q.id, search_id=search.id, schedule_id=shown[search.id],
+                    existing=True,
+                )
+            )  # fmt: skip
+            continue
         kind, value = threshold(q.flag)
         s = await run_in_threadpool(
             schedules.create, user, "search", search.id, q.name,

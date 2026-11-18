@@ -149,6 +149,22 @@ export function SavedSearchesPage({ me }: SavedSearchesPageProps) {
             }}
           />
         ) : null}
+        {canRunSql ? (
+          <p className="text-sm text-text-muted">
+            Start from a tested query in the{" "}
+            <a
+              href={pathFor("library")}
+              onClick={(e) => {
+                if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+                e.preventDefault();
+                navigate("library");
+              }}
+              className="text-accent-text hover:underline"
+            >
+              Library
+            </a>
+          </p>
+        ) : null}
         <section className="overflow-hidden rounded-card border border-border bg-surface">
           {list.length === 0 && !searches.isPending ? (
             <EmptyState

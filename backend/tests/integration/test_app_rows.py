@@ -3,6 +3,7 @@ lists, and the Sources page counts are built and run by the server, on the calle
 view, audited `query.view`. A source the caller may not read stays invisible through every
 one of them, and Auditors can read them."""
 
+import shutil
 import sqlite3
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -27,9 +28,12 @@ def lab(tmp_path: Path, pin_now: Callable[[datetime], None]) -> Any:
     admin, h = out["admin"], out["h"]
     # An Automatic source over the Windows folder, and Microsoft 365 rows in a source of
     # their own: only admin may read either. Ana, Bob, and the auditor read Linux only.
+    # A copy of the folder: one file is read by one source only, so the Automatic source
+    # gets files of its own.
+    shutil.copytree(tmp_path / "logs" / "win", tmp_path / "logs" / "win_copy")
     body = {
         "source_id": "win_auto", "format": "syslog",
-        "path": str(tmp_path / "logs" / "win"), "template_id": "auto",
+        "path": str(tmp_path / "logs" / "win_copy"), "template_id": "auto",
     }  # fmt: skip
     assert admin.post("/api/sources", json=body, headers=h).status_code == 201
     out["app"].state.ingest.run_once()

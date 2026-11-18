@@ -1,12 +1,31 @@
 import { EmptyState } from "@/components/EmptyState";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { NumberSetting, type NumberValue } from "@/components/NumberSetting";
 import { PageHeader } from "@/components/shell/PageHeader";
-import { ApiError, api, type ProviderConfig, type ProviderHealth } from "@/lib/api";
+import {
+  ApiError,
+  api,
+  type AskTimeLimit,
+  type ProviderConfig,
+  type ProviderHealth,
+} from "@/lib/api";
 import { LoadedModel } from "./LoadedModel";
 import { LocalityBadge } from "./LocalityBadge";
 import { ModelCell } from "./ModelCell";
 import { ProviderForm } from "./ProviderForm";
+
+/** Ask's time limit as the shared control shows it: bounds and where the value comes from. */
+function askLimit(t: AskTimeLimit): NumberValue {
+  const from = t.source === "settings" ? "saved here" : "from the install's configuration";
+  return {
+    value: t.seconds,
+    min: t.min_seconds,
+    max: t.max_seconds,
+    note: `${t.seconds} s, ${from}.`,
+    saved: t.source === "settings",
+  };
+}
 
 /** AI providers (SPEC 6.1). Admin only; locality is computed by the server from the URL. */
 export function ProvidersPage() {
@@ -209,6 +228,19 @@ export function ProvidersPage() {
               ) : null;
             })()
           : null}
+        <NumberSetting
+          title="Ask time limit"
+          help="Each Ask model call, writing the query or summarizing the results, stops after this long; waiting behind another question does not count. CPU-only local models may need 240 s or more."
+          unit="seconds"
+          queryKey="ask-time-limit"
+          load={async () => askLimit(await api.askTimeLimit())}
+          save={async (seconds) => askLimit(await api.setAskTimeLimit(seconds))}
+          reset={{
+            label: "Use the configured value",
+            run: async () => askLimit(await api.setAskTimeLimit(null)),
+          }}
+          canEdit
+        />
       </div>
     </div>
   );

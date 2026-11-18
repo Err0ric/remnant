@@ -60,7 +60,9 @@ def test_no_event_ids_means_nothing_to_summarize() -> None:
 
 def test_a_sample_is_small_and_lists_what_may_be_cited() -> None:
     cols = ["user", *[f"c{i}" for i in range(15)], "event_id"]
-    rows = [[f"u{i}", *(["x" * 1000] * 15), A.upper() if i == 0 else B] for i in range(50)]
+    rows = [
+        [f"u{i}", *(["x" * 1000] * 2), *(["y"] * 13), A.upper() if i == 0 else B] for i in range(50)
+    ]
     s = sample(cols, rows, True)
     assert s is not None
     assert s.columns[0] == "event_id" and len(s.columns) == 12
@@ -110,3 +112,37 @@ def test_headline_reads_iso_text_times_and_plain_column_names() -> None:
     assert headline(["note"], [["2026-11-05 maintenance"]], False) == (
         "note: 2026-11-05 maintenance"
     )
+
+
+def test_the_summary_gets_ten_rows_and_stats_over_every_row_never_more() -> None:
+    """D270: at most ANSWER_ROWS rows plus per-column stats over all kept rows, together
+    within the 7,000 characters the 20 rows alone had before."""
+    import json
+
+    from app.search.ask_summary import STATS_CHARS
+
+    cols = ["event_id", "time", "user", "bytes", "message", *[f"c{i}" for i in range(10)]]
+    rows = [
+        [
+            f"0190a1b2-0000-7000-8000-{i:012d}",
+            datetime(2026, 10, 10, i % 24, tzinfo=UTC),
+            ["alice", "bob", "carol"][i % 3],
+            i,
+            f"message {i} " + "x" * 400,
+            *([f"v{i % 7}"] * 10),
+        ]
+        for i in range(1000)
+    ]
+    s = sample(cols, rows, True)
+    assert s is not None
+    assert ANSWER_ROWS == 10 and len(s.rows) <= 10
+    assert len(s.event_ids) == len(s.rows)  # only the rows sent may be cited
+    assert set(s.stats) == set(s.columns[1:])  # every column but event_id, at most 11
+    assert s.stats["user"]["values"] == 1000 and s.stats["user"]["distinct"] == 3
+    assert s.stats["user"] == {"values": 1000, "distinct": 3}  # no text values, ever
+    assert s.stats["bytes"] == {"values": 1000, "distinct": 1000, "min": 0, "max": 999}
+    assert s.stats["time"]["min"].startswith("2026-10-10T00:00")
+    assert s.stats["time"]["max"].startswith("2026-10-10T23:00")
+    assert set(s.stats["message"]) == {"values", "distinct"}
+    assert len(json.dumps(s.rows, default=str)) <= MAX_CHARS + 2_000  # one row may cross
+    assert len(json.dumps(s.stats, default=str)) <= STATS_CHARS

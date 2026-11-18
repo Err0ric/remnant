@@ -449,6 +449,13 @@ class SourceStore:
         with self._meta.connect() as con:
             return {r[0] for r in con.execute("SELECT source_id FROM sources")}
 
+    def created(self) -> dict[str, str]:
+        """When each source was added: the tie between two equally specific sources over
+        one file goes to the older (D273)."""
+        with self._meta.connect() as con:
+            rows = con.execute("SELECT source_id, created_at FROM sources").fetchall()
+        return {r[0]: r[1] or "" for r in rows}
+
     def retention_days(self) -> dict[str, int]:
         """Retention per source id, including kinds this version cannot load, so a
         rollback never ages their data out on the shorter orphan retention."""
@@ -689,11 +696,55 @@ class SourceStore:
         return before, source
 
     def delete(self, source_id: str) -> bool:
-        """Remove the configuration. Data already in the lake stays until retention removes it."""
+        """Remove the configuration. Data already in the lake stays until retention removes it.
+
+        Its read positions go to the other file sources that list the same files now (the
+        further position wins), so one of them carries on without storing a line twice
+        (D273); the rest are dropped, and a source added later reads the files no source
+        holds from their start."""
+        listing: dict[tuple[int, int], list[str]] = {}
+        for other in self.list():
+            if other.kind != "file" or other.source_id == source_id:
+                continue
+            try:
+                paths = files_for(other, self.allowed_roots)
+            except Exception:  # noqa: S112  # a broken source takes no part; the delete goes on
+                continue
+            for path in paths:
+                try:
+                    st = path.stat()
+                except OSError:
+                    continue
+                here = (_signed(st.st_dev), _signed(st.st_ino))
+                listing.setdefault(here, []).append(other.source_id)
         with self._meta.connect() as con:
+            for dev, ino in con.execute(
+                "SELECT device, inode FROM file_positions WHERE source_id = ?", (source_id,)
+            ).fetchall():
+                for heir in listing.get((dev, ino), []):
+                    con.execute(
+                        f"INSERT INTO file_positions (source_id, {_POSITION_COLUMNS})"  # noqa: S608  # fixed list
+                        f" SELECT ?, {_POSITION_COLUMNS} FROM file_positions"
+                        " WHERE source_id = ? AND device = ? AND inode = ?"
+                        " ON CONFLICT (source_id, device, inode) DO UPDATE SET "
+                        + ", ".join(f"{c} = excluded.{c}" for c in _POSITION_COLUMNS.split(", "))
+                        + " WHERE excluded.offset > file_positions.offset",
+                        (heir, source_id, dev, ino),
+                    )
             cur = con.execute("DELETE FROM sources WHERE source_id = ?", (source_id,))
             # A source added again under this id starts its Loki position afresh.
             con.execute("DELETE FROM connector_checkpoints WHERE source_id = ?", (source_id,))
             # And reads its files afresh (ADR-0051: positions are keyed by the file).
             con.execute("DELETE FROM file_positions WHERE source_id = ?", (source_id,))
             return cur.rowcount > 0
+
+
+_POSITION_COLUMNS = (
+    "device, inode, path, offset, size, mtime_ns, head, tail, csv_header, skip_to_newline,"
+    " updated_at, seen_at"
+)
+
+
+def _signed(n: int) -> int:
+    """As `file_positions` stores a device or inode number (SQLite integers are signed)."""
+    return n - (1 << 64) if n >= 1 << 63 else n

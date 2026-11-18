@@ -32,6 +32,7 @@ from app.core import clock
 from app.core.errors import ParamInvalidError
 from app.core.timing import in_context, phase
 from app.engine.duckdb import QueryEngine, QueryScope
+from app.engine.signin_classes import ACCESS_OUTCOME, M365_CLASS, SignInClass
 from app.meta.db import MetaDB
 from app.search import entity_signals, targeted
 from app.search.addresses import OBS_SQL, address_ctes, join_addr, lookup
@@ -88,6 +89,14 @@ def user_filter_sql(m: IdentityMap, keys: list[str]) -> str:
         .replace("$id_org", lit_list(m.domains or [""]))
         .join(["list_contains(" + lit_list(keys) + ", ", ")"])
     )
+
+
+def user_where(keys: list[str]) -> str:
+    """The events of everyone with these person keys (needs `$keys` and `$id_org`). A key is
+    part of the lower-cased name it came from (D136), so a plain substring test drops other
+    people's rows before any name is normalized; the key test then decides."""
+    near = " OR ".join(f"contains(lower(actor_user_name), {quote(k)})" for k in keys)
+    return f"(({near or 'true'}) AND list_contains($keys, {key_sql('actor_user_name')}))"
 
 
 def search_sql(where: str) -> str:
@@ -386,6 +395,7 @@ class Card:
     badges: list[str] = field(default_factory=list)
     search_sql: str | None = None
     group: str = ""  # a heading inside the lane ("MCP servers"); empty for none
+    hint: str = ""  # a real line behind a plain label, shown on hover
 
 
 @dataclass(slots=True)
@@ -415,9 +425,37 @@ RECORD_LIKE = (
     " - length(replace(replace(message, ',', ''), '|', '')) >= 8)"
 )
 
+# Sign-ins are one card per outcome, by the summary's rule (entity_summary), never by
+# their text (a whole record is still named by its template, as below): "Accepted
+# publickey ... port 41255" and "Disconnected from user ..." are a sign-in and a sign-out,
+# not two kinds of sign-in attempt.
+# A sign-in attempt: an authentication event that is not a sign-out (OCSF activity 2,
+# Logoff: sshd's "Disconnected from user"), so a session's end is not a second sign-in.
+# The one rule for every entity page's sign-in counts (entity_summary) and its lanes.
+SIGNIN = "class_uid = 3002 AND coalesce(activity_id, 0) <> 2"
+
+
+def failed_class(cls: SignInClass) -> str:
+    """A failed Microsoft 365 sign-in of this class (`class_sql`, read as `M365_CLASS`)."""
+    return f"template_id = 'm365_signin' AND status_id = 2 AND {M365_CLASS} = '{cls}'"
+
+
+# Only sign-in lines whose text carries numbers (ports, keys, ids) are named by outcome;
+# a fixed line ("User-ID login") keeps its own words.
+VARIES = "regexp_matches(coalesce(message, ''), '[0-9]')"
+SIGNIN_LABELS = {
+    "succeeded": "Sign-in succeeded",
+    "failed": "Sign-in failed",
+    "not counted": "Sign-in interrupted or expired",
+    "other": "Other sign-in event",
+    "signed out": "Sign-out",
+}
+
 ENTITY_SQL = """
 SELECT source_id, class_uid,
-       CASE WHEN {RECORD_LIKE} THEN '' ELSE left({PATTERN}, 60) END AS activity,
+       CASE WHEN {RECORD_LIKE} THEN ''
+            WHEN class_uid = 3002 AND {VARIES} THEN {ACCESS_OUTCOME}
+            ELSE left({PATTERN}, 60) END AS activity,
        CASE WHEN {RECORD_LIKE} THEN template_id END AS tpl,
        coalesce(nullif(dst_endpoint_hostname, ''), nullif(dst_endpoint_ip, '')) AS target,
        count(*) AS n,
@@ -425,7 +463,8 @@ SELECT source_id, class_uid,
        max(coalesce(severity_id, 0)) AS sev,
        -- The line itself when it never varies: "Office 365 Exchange Online", never the
        -- masked "Office # Exchange Online" (owner, 2026-11-08).
-       CASE WHEN count(DISTINCT message) = 1 THEN left(min(message), 60) END AS example
+       CASE WHEN count(DISTINCT message) = 1 THEN left(min(message), 60) END AS example,
+       left(arg_max(message, coalesce(time, time_observed)), 300) AS newest
 FROM events
 WHERE {where}
 GROUP BY 1, 2, 3, 4, 5
@@ -523,13 +562,19 @@ def entity_graph(
     label = value
     if kind == "user":
         keys = ident.keys_for(value)
-        where = f"list_contains($keys, {key_sql('actor_user_name')})"
+        where = user_where(keys)
         params |= {"keys": keys, **ident.params()}
     else:
         params["v"] = value
         label = ident.display(ident.key(value), ident.org_email(value))
     result = engine.run(
-        ENTITY_SQL.format(where=where, PATTERN=PATTERN, RECORD_LIKE=RECORD_LIKE),
+        ENTITY_SQL.format(
+            where=where,
+            PATTERN=PATTERN,
+            RECORD_LIKE=RECORD_LIKE,
+            ACCESS_OUTCOME=ACCESS_OUTCOME,
+            VARIES=VARIES,
+        ),
         scope,
         params,
         timeout_s=TIMEOUT_S,
@@ -555,7 +600,7 @@ def entity_graph(
         if names:
             b.cards[root].sublabel = f"IP address · {', '.join(names)}"
     b.cards[root].search_sql = search_sql(literal)
-    for source_id, class_uid, activity, tpl, target, n, m, sev, example in result.rows:
+    for source_id, class_uid, activity, tpl, target, n, m, sev, example, newest in result.rows:
         n, m, sev = int(n), int(m), int(sev or 0)
         b.cards[root].events += n
         b.cards[root].matches += m
@@ -563,7 +608,14 @@ def entity_graph(
         s = b.card(1, str(source_id), str(source_id), n, m, sev)
         b.cards[s].search_sql = search_sql(f"{literal} AND source_id = {quote(str(source_id))}")
         cls = CLASS_NAMES.get(int(class_uid or 0), f"Class {class_uid}")
-        if activity:
+        if class_uid == 3002 and activity in SIGNIN_LABELS:
+            a = b.card(2, f"3002|{activity}", SIGNIN_LABELS[str(activity)], n, m, sev)
+            b.cards[a].hint = str(newest or "")
+            match = (
+                f"class_uid = 3002 AND NOT {RECORD_LIKE} AND {VARIES}"
+                f" AND {ACCESS_OUTCOME} = {quote(str(activity))}"
+            )
+        elif activity:
             a = b.card(2, f"{class_uid}|{activity}", str(example or activity), n, m, sev)
             match = f"left({PATTERN}, 60) = {quote(str(activity))}"
         else:

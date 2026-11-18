@@ -23,7 +23,8 @@ function text(v: Cell): string {
  * as links to their pages, times in the viewer's zone with UTC on hover, the first 50 with
  * the rest one click away. Log values are text nodes only. */
 interface AskResultsProps {
-  result: QueryResult;
+  /** `empty`: a library query's own words for no rows (D274), shown as the headline. */
+  result: QueryResult & { empty?: string | null };
   /** Group keys (D173): each row gets "Show events" when there are any. */
   drillKeys?: string[];
   onShowEvents?: (values: Record<string, Cell>) => void;
@@ -37,8 +38,11 @@ export function AskResults({ result, drillKeys = [], onShowEvents }: AskResultsP
   const keyAt = drillKeys.map((k) => result.columns.indexOf(k));
   const valuesOf = (r: Cell[]) =>
     Object.fromEntries(drillKeys.map((k, i): [string, Cell] => [k, r[keyAt[i]!] ?? null]));
+  // A library query's own words for no rows are the answer's headline already (D274).
   if (result.rows.length === 0)
-    return <p className="text-sm text-text-secondary">No rows matched in this time range.</p>;
+    return result.empty ? null : (
+      <p className="text-sm text-text-secondary">No rows matched in this time range.</p>
+    );
   return (
     <div className="flex flex-col gap-1.5">
       <div className="overflow-x-auto rounded border border-border">

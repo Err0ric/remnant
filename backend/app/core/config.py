@@ -309,6 +309,9 @@ class M365Config(_Strict):
         return value
 
 
+MODEL_TIMEOUT_MIN_S, MODEL_TIMEOUT_MAX_S = 5, 3600  # Ask's model time limit, config and UI
+
+
 class AskConfig(_Strict):
     # Ask runs its query at once when it passes the guard (ADR-0042, D167); false restores
     # click-to-run. Guard, read-only engine, and the caller's sources apply either way.
@@ -317,6 +320,11 @@ class AskConfig(_Strict):
     # citing event ids. False shows only the code-written headline and the rows, with no
     # model call after the query; for slow CPU-only models.
     summarize: bool = True
+    # The longest one Ask model call may take, in seconds (D270): the query call and the
+    # summary call each. Waiting for the model's queue is not counted. On a timeout the
+    # provider request is closed and the asker keeps whatever results already exist.
+    # An Admin's value from Settings > AI providers takes its place (`LLMGate.time_limit`).
+    model_timeout_s: int = Field(default=90, ge=MODEL_TIMEOUT_MIN_S, le=MODEL_TIMEOUT_MAX_S)
 
 
 class AgentsConfig(_Strict):

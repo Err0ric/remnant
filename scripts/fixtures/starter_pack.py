@@ -11,7 +11,7 @@ Values: invented hosts and users, RFC 1918 internal and RFC 5737 external addres
 import json
 import random
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -517,7 +517,7 @@ def _pan_line(columns: list[str], values: dict[str, str], extra: int, hires: str
         tail = (tail + ["", "", ""])[: max(extra, 3)]
         tail[2] = hires
     cells += tail
-    return ",".join(f'"{c}"' if ("," in c or '"' in c) else c for c in cells)
+    return ",".join('"' + c.replace('"', '""') + '"' if ("," in c or '"' in c) else c for c in cells)
 
 
 # Firewalls in three zones (UTC, Pacific, and a half-hour zone): Generated Time is the
@@ -525,10 +525,11 @@ def _pan_line(columns: list[str], values: dict[str, str], extra: int, hires: str
 PAN_ZONES = (None, ZoneInfo("America/Los_Angeles"), ZoneInfo("Asia/Kolkata"))
 
 
-def _pan_sample(out: Path, template_id: str, seed: int, build: Callable[[Sample, int], tuple[dict[str, str], dict[str, Any]]]) -> None:
+def _pan_sample(out: Path, template_id: str, seed: int, build: Callable[[Sample, int], tuple[dict[str, str], dict[str, Any]]],
+                count: int = 60, pathological: Sequence[str] = ()) -> None:
     s = Sample(seed)
     columns = _pan_columns(template_id)
-    for i in range(60):
+    for i in range(count):
         t = s.tick()
         values, exp = build(s, i)
         zone = PAN_ZONES[i % 3]
@@ -549,6 +550,7 @@ def _pan_sample(out: Path, template_id: str, seed: int, build: Callable[[Sample,
         '<14>Oct  9 20:41:12 pa-fw01 1,2026/10/09 20:41:12,0,TRAFFIC,end,0,2026/10/09 20:41:12,"' + "x" * 9000,
         "<14>Oct  9 20:41:12 pa-fw01 1,2026/13/45 99:99:99,0,TRAFFIC,end,0,2026/13/45 99:99:99,a,b,,,r,,,,,,,,,,,0,1,99999999999999999999,-1",
         "<14>Oct  9 20:41:12 pa-fw01 1,2026/10/09",
+        *pathological,
     ])
 
 
@@ -590,9 +592,26 @@ def paloalto_threat(out: Path) -> None:
     _pan_sample(out, "paloalto_threat", 34, build)
 
 
+# DHCP lease lines after the 60 random ones (so those stay as they were): the interface
+# unquoted with dots and digits, quoted, and with a hyphen; leases that start and end.
+PAN_DHCP = (
+    ("lease-start", "started", "10.20.1.5", "00:00:5e:00:53:05", "ws-0105", "ae0.120"),
+    ("lease-start", "started", "10.20.2.14", "00:00:5e:00:53:14", "ws-0214", '"vlan20"'),
+    ("lease-start", "started", "10.20.3.30", "00:00:5e:00:53:30", "[Unavailable]", "eth1-guest"),
+    ("lease-end", "ended", "10.20.2.14", "00:00:5e:00:53:14", "ws-0214", '"vlan20"'),
+    ("lease-end", "ended", "10.20.1.5", "00:00:5e:00:53:05", "ws-0105", "ae0.120"),
+)
+
+
 def paloalto_system(out: Path) -> None:
     sev = {"informational": 1, "low": 2, "medium": 3, "high": 4, "critical": 5}
     def build(s: Sample, i: int) -> tuple[dict[str, str], dict[str, Any]]:
+        if i >= 60:
+            event, word, ip, mac, host, iface = PAN_DHCP[i - 60]
+            text = f"DHCP lease {word} ip {ip} --> mac {mac} - hostname {host}, interface {iface}"
+            values = {"type": "SYSTEM", "subtype": "dhcp", "module": "general", "event_id": event,
+                      "severity": "informational", "description": text}
+            return values, {"class_uid": 0, "severity_id": 1, "message": text}
         kind = s.rng.choice(("ok", "fail", "ha", "general"))
         user, ip = s.rng.choice(USERS), s.rng.choice(INTERNAL)
         if kind == "ok":
@@ -613,7 +632,10 @@ def paloalto_system(out: Path) -> None:
             exp = {"class_uid": 0, "severity_id": 1}
         values.update(type="SYSTEM", module="general")
         return values, exp
-    _pan_sample(out, "paloalto_system", 35, build)
+    _pan_sample(out, "paloalto_system", 35, build, count=60 + len(PAN_DHCP), pathological=[
+        '<14>Oct  9 20:41:12 pa-fw01 1,2026/10/09 20:41:12,0,SYSTEM,dhcp,,2026/10/09 20:41:12,vsys1,lease-end,,,,'
+        'general,informational,"DHCP lease ended ip 10.20.1.5 --> mac - hostname , interface ' + '"vlan' * 1500,
+    ])
 
 
 def paloalto_globalprotect(out: Path) -> None:

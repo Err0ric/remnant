@@ -38,6 +38,7 @@ class AskRun:
     # counted, one row, many rows) and the time the question named ("today"), if any.
     counted: tuple[str, str, str] | None = None
     window: str | None = None
+    empty: str | None = None  # a library query's words for no rows (D274)
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,12 +90,13 @@ class AskRuns:
         tz: str | None = None,
         counted: tuple[str, str, str] | None = None,
         window: str | None = None,
+        empty: str | None = None,
     ) -> AskRun:
         run = AskRun(
             str(uuid.uuid4()), user_id, sql, start, end, sources, list(call_ids), now,
             origin=origin, question=question, params=dict(params or {}),
             provider_id=provider_id, template=template, drill=drill, tz=tz,
-            counted=counted, window=window,
+            counted=counted, window=window, empty=empty,
         )  # fmt: skip
         with self._lock:
             self._kept[run.ask_id] = run

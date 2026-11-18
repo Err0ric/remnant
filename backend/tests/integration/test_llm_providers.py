@@ -1,5 +1,6 @@
 """Provider registry and admin API: keys encrypted at rest, never returned, cloud acknowledged."""
 
+import json
 import socket
 import sqlite3
 import stat
@@ -154,6 +155,9 @@ def test_non_admins_cannot_manage_providers(tmp_path: Path) -> None:
     ).json()["token"]
     bearer = {"Authorization": f"Bearer {tok}"}
     assert a.get("/api/providers", headers=bearer).status_code == 403
+    limit = "/api/settings/ask-time-limit"
+    assert a.get(limit, headers=bearer).status_code == 403
+    assert a.put(limit, json={"seconds": 240}, headers=bearer).status_code == 403
     assert (
         a.post(
             "/api/providers",
@@ -213,3 +217,36 @@ def test_thinking_can_be_turned_off_and_back_to_the_model_default(tmp_path: Path
     assert res.json()["reasoning"] is None
     bad = c.patch(f"/api/providers/{pid}", json={"reasoning": "max"}, headers=h)
     assert bad.status_code == 422
+
+
+def test_ask_time_limit_is_an_audited_admin_setting(tmp_path: Path) -> None:
+    """Owner, 2026-11-17 (D277): Ask's model time limit is editable in Settings > AI
+    providers, 5 to 3600 s as in the config; the default stays the config's 90 s, and a
+    reset follows the config again."""
+    c, h = admin(tmp_path)
+    limit = "/api/settings/ask-time-limit"
+    bounds = {"min_seconds": 5, "max_seconds": 3600}
+    assert c.get(limit).json() == {"seconds": 90, "source": "config", **bounds}
+    for bad in (4, 3601, "slow", 90.5):
+        assert c.put(limit, json={"seconds": bad}, headers=h).status_code == 422
+    assert c.put(limit, json={"seconds": 240}).status_code == 403  # no CSRF token
+    res = c.put(limit, json={"seconds": 240}, headers=h)
+    assert res.status_code == 200
+    assert res.json() == {"seconds": 240, "source": "settings", **bounds}
+    gate = c.app.state.gate  # type: ignore[attr-defined]  # the app
+    gate.model_timeout_s = 120  # the config changes: the saved value still applies
+    assert c.get(limit).json()["seconds"] == 240
+    res = c.put(limit, json={"seconds": None}, headers=h)
+    assert res.json() == {"seconds": 120, "source": "config", **bounds}
+    gate.model_timeout_s = 300  # after the reset the config's value applies
+    assert c.get(limit).json() == {"seconds": 300, "source": "config", **bounds}
+    with sqlite3.connect(tmp_path / "data" / "meta.sqlite") as db:
+        rows = db.execute(
+            "SELECT detail, user_id FROM audit_log WHERE action = 'settings.ask_time_limit'"
+            " ORDER BY audit_id"
+        ).fetchall()
+    assert [json.loads(d) for d, _ in rows] == [
+        {"from": 90, "to": 240, "source": "settings"},
+        {"from": 240, "to": 120, "source": "config"},
+    ]
+    assert all(actor for _, actor in rows)

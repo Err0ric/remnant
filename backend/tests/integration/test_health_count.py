@@ -173,3 +173,56 @@ def test_the_sources_listing_has_no_status_of_its_own_only_the_readers_fact(
     for s in listed.values():
         assert "condition" not in s and "condition" not in s["status"]
         assert "problem" not in s["status"]
+
+
+def test_a_source_whose_file_another_source_reads_is_in_no_count_and_never_quiet(
+    lab: dict[str, Any],  # noqa: F811
+) -> None:
+    """One reader per file (SPEC 3.5): a second source over lin_auth's file stores nothing
+    by design. Every count agrees: not a problem, not in the total, and its quiet watch
+    never fires, though it sends nothing."""
+    before = _count(lab)
+    summary = lab["admin"].get("/api/overview").json()["source_summary"]
+    # A second folder source over lin_auth's folder: as specific, added later (D273).
+    path = lab["app"].state.sources.allowed_roots[0] / "lin"
+    body = {"source_id": "lin_copy", "format": "syslog", "path": str(path)}
+    assert lab["admin"].post("/api/sources", json=body, headers=lab["h"]).status_code == 201
+    lab["app"].state.ingest.run_once()
+    _forget(lab)
+    after = _count(lab)
+    data = lab["admin"].get("/api/overview").json()
+    rows = {r["source_id"]: r for r in data["sources"]}
+    assert rows["lin_copy"]["condition"] == "shared"
+    assert rows["lin_copy"]["read_by"] == "lin_auth" and rows["lin_copy"]["problem"] is None
+    assert after == before  # not in the total, not a problem, not unhealthy
+    assert data["source_summary"]["total"] == summary["total"]
+    assert data["source_summary"]["healthy"] == summary["healthy"]
+    assert data["source_summary"]["shared"] == 1
+    assert "lin_copy" not in [q["source_id"] for q in data["source_summary"]["quiet"]]
+    listed = {s["source_id"]: s for s in lab["admin"].get("/api/sources").json()}
+    assert listed["lin_copy"]["status"]["read_by"] == "lin_auth"
+    assert listed["lin_copy"]["status"]["shared"] == [
+        {"file": "auth.log", "reader": "lin_auth", "tie": True}
+    ]
+    assert listed["lin_copy"]["status"]["warnings"] == []
+
+    # Its quiet watch never fires; lin_auth's, over the same silence, does.
+    lab["received"]["lin_copy"] = NOW
+    assert watch(lab, "lin_copy").status_code == 200
+    assert watch(lab, "lin_auth").status_code == 200
+    lab["clock"].now = NOW + timedelta(hours=2)
+    tick(lab)
+    states = {w.source_id: w.state for w in lab["app"].state.quiet.all()}
+    assert states["lin_copy"] == "ok" and states["lin_auth"] == "quiet"
+
+
+def test_deleting_a_source_works_and_is_audited_beside_one_that_cannot_be_listed(
+    lab: dict[str, Any],  # noqa: F811
+) -> None:
+    root = lab["app"].state.sources.allowed_roots[0]
+    body = {"source_id": "bad_glob", "format": "syslog", "path": str(root), "glob": "query**.log"}
+    assert lab["admin"].post("/api/sources", json=body, headers=lab["h"]).status_code == 201
+    lab["app"].state.ingest.run_once()  # every other source is still read
+    res = lab["admin"].delete("/api/sources/win_dc", headers=lab["h"])
+    assert res.status_code == 204, res.text
+    assert _audit_rows(lab, "source.delete") == 1

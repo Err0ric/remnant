@@ -8,7 +8,7 @@ import { Fragment, useEffect, useState } from "react";
 import { useSection } from "@/lib/route";
 import { GapNote } from "@/features/health/GapNote";
 import { shownGaps } from "@/features/health/flow";
-import { greyedStatus, sourceStatus } from "@/features/health/sourceStatus";
+import { greyedStatus, sharedFileText, sourceStatus } from "@/features/health/sourceStatus";
 import { SourceStatusLabel } from "@/features/health/SourceStatusLabel";
 import { PageHeader } from "@/components/shell/PageHeader";
 import {
@@ -335,6 +335,14 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
                                 {s.status.files} {s.status.files === 1 ? "file" : "files"}
                                 {s.glob !== "*" ? ` · ${s.glob}` : ""}
                               </div>
+                              {sharedFileText(s) ? (
+                                <div
+                                  data-shared-note=""
+                                  className="mt-1 font-sans text-sm text-text-secondary"
+                                >
+                                  {sharedFileText(s)}
+                                </div>
+                              ) : null}
                             </>
                           )}
                         </td>
@@ -354,6 +362,7 @@ export function SourcesPage({ canManage }: SourcesPageProps) {
                               sourceId={s.source_id}
                               quiet={s.quiet}
                               canManage={canManage}
+                              readBy={s.status.read_by}
                             />
                             {(s.kind === "otlp" || s.kind === "syslog") && !s.built_in ? (
                               <QuietOkEditor

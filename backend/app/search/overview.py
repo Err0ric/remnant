@@ -89,6 +89,8 @@ class SourceHealth:
     # The newest time its events are dated, at most when they arrived: what "Quiet 2 d",
     # "Idle", and "No events for" measure, and "Quiet is normal" days count from.
     newest_event_at: str | None = None
+    # Every file it lists is read by this other source (one reader per file, SPEC 3.5).
+    read_by: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -265,6 +267,7 @@ class OverviewService:
                             or (st.behind_s or 0) > BEHIND_S
                         )
                     ),
+                    read_by=st.read_by if st and s.enabled else None,
                 )
             )
         since = now - timedelta(hours=HOURS)

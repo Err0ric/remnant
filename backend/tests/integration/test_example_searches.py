@@ -10,7 +10,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import load_config
+from app.engine.duckdb import QueryScope
 from app.main import create_app
+from app.search.addresses import OBS_SQL
 from app.search.library import LIBRARY_DIR, load_dir
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -19,11 +21,33 @@ NOW = datetime(2026, 10, 10, 12, 0, tzinfo=UTC)
 RANGE = {"start": "2026-10-09T00:00:00Z", "end": "2026-10-10T00:00:00Z"}
 
 
-def _pan_dhcp(t: str, ip: str, mac: str, host: str) -> str:
+def _pan_dhcp(
+    t: str,
+    ip: str,
+    mac: str,
+    host: str,
+    iface: str = "ethernet1/2",
+    ended: bool = False,
+    day: int = 9,
+) -> str:
+    """A PAN-OS DHCP lease line. The description is one CSV cell, so a quoted interface
+    name has its quotes doubled, as the firewall sends it."""
+    event, word = ("lease-end", "ended") if ended else ("lease-start", "started")
+    text = f"DHCP lease {word} ip {ip} --> mac {mac} - hostname {host}, interface {iface}"
+    when = f"2026/10/{day:02d} {t}"
     return (
-        f"<14>Oct  9 {t} pa-fw01 1,2026/10/09 {t},012345678901,SYSTEM,dhcp,,2026/10/09 {t},vsys1,"
-        f'lease-start,,,,general,informational,"DHCP lease started ip {ip} --> mac {mac} - '
-        f'hostname {host}, interface ethernet1/2",,,,,,,,pa-fw01'
+        f"<14>Oct {day:>2} {t} pa-fw01 1,{when},012345678901,SYSTEM,dhcp,,{when},vsys1,"
+        f'{event},,,,general,informational,"{text.replace(chr(34), chr(34) * 2)}",,,,,,,,pa-fw01'
+    )
+
+
+def _gp(t: str, event: str, user: str, laptop: str, ip: str) -> str:
+    """A GlobalProtect line giving `ip` to `user` on `laptop` (gateway-logout ends it)."""
+    when = f"2026/10/09 {t}"
+    return (
+        f"<14>Oct  9 {t} pa-fw01 1,{when},012345678901,GLOBALPROTECT,0,,{when},vsys1,{event},"
+        f"login,LDAP,SSL,{user},,{laptop},203.0.113.9,,{ip},,,,,,,,,,,success,,,,,gp-portal,"
+        ",,,,,,,,,,,,,,pa-fw01"
     )
 
 
@@ -80,6 +104,30 @@ def client(tmp_path_factory: pytest.TempPathFactory) -> Any:
             [
                 _pan_dhcp("08:00:00", "10.20.1.5", "00:00:5e:00:53:0a", "LAPTOP-A"),
                 _pan_dhcp("12:00:00", "10.20.1.5", "00:00:5e:00:53:0b", "LAPTOP-B"),
+                # 10.20.1.7: leased the evening before the range, ended inside it (quoted
+                # interface). 10.20.1.8: started and ended inside it (unquoted, dotted).
+                _pan_dhcp(
+                    "22:00:00", "10.20.1.7", "00:00:5e:00:53:0c", "LAPTOP-C", '"vlan20"', day=8
+                ),
+                _pan_dhcp(
+                    "06:00:00", "10.20.1.7", "00:00:5e:00:53:0c", "LAPTOP-C", '"vlan20"', True
+                ),
+                # 10.20.1.9: the same MAC again after its end line. 10.20.1.10: A, then
+                # B, then A's end line late. 10.20.1.11: an empty hostname.
+                _pan_dhcp("13:00:00", "10.20.1.9", "00:00:5e:00:53:0e", "LAPTOP-E"),
+                _pan_dhcp("14:00:00", "10.20.1.9", "00:00:5e:00:53:0e", "LAPTOP-E", ended=True),
+                _pan_dhcp("15:00:00", "10.20.1.9", "00:00:5e:00:53:0e", "LAPTOP-E"),
+                _pan_dhcp("08:00:00", "10.20.1.10", "00:00:5e:00:53:a1", "HOST-A"),
+                _pan_dhcp("12:00:00", "10.20.1.10", "00:00:5e:00:53:b1", "HOST-B"),
+                _pan_dhcp("12:05:00", "10.20.1.10", "00:00:5e:00:53:a1", "HOST-A", ended=True),
+                _pan_dhcp("09:00:00", "10.20.1.11", "00:00:5e:00:53:d1", ""),
+                # 10.20.1.12: started and ended in the same second.
+                _pan_dhcp("16:00:00", "10.20.1.12", "00:00:5e:00:53:e1", "HOST-E"),
+                _pan_dhcp("16:00:00", "10.20.1.12", "00:00:5e:00:53:e1", "HOST-E", ended=True),
+                _pan_dhcp("07:00:00", "10.20.1.8", "00:00:5e:00:53:0d", "LAPTOP-D", "ae0.120"),
+                _pan_dhcp(
+                    "09:30:00", "10.20.1.8", "00:00:5e:00:53:0d", "LAPTOP-D", "ae0.120", True
+                ),
                 *(FIX / "paloalto_system" / "sample.log").read_text().splitlines(),
             ]
         )
@@ -97,7 +145,18 @@ def client(tmp_path_factory: pytest.TempPathFactory) -> Any:
         )
         + "\n"
     )
-    (logs / "gp" / "gp.log").write_text((FIX / "paloalto_globalprotect" / "sample.log").read_text())
+    (logs / "gp" / "gp.log").write_text(
+        (FIX / "paloalto_globalprotect" / "sample.log").read_text()
+        + "\n".join(
+            [  # 10.30.0.9: two tunnels for erin, a new one after gateway-logout
+                _gp("08:00:00", "gateway-auth", "erin", "LAPTOP-ERIN", "10.30.0.9"),
+                _gp("08:00:05", "gateway-connected", "erin", "LAPTOP-ERIN", "10.30.0.9"),
+                _gp("09:00:00", "gateway-logout", "erin", "LAPTOP-ERIN", "10.30.0.9"),
+                _gp("10:00:00", "gateway-auth", "erin", "LAPTOP-ERIN", "10.30.0.9"),
+            ]
+        )
+        + "\n"
+    )
     (logs / "ssh" / "auth.log").write_text((FIX / "linux_sshd" / "sample.log").read_text())
     # Directory audits: Microsoft's own provisioning (two ways), a real app, a consent.
     (logs / "m365" / "dir.jsonl").write_text(
@@ -167,10 +226,44 @@ def test_ai_services_by_device_follow_the_lease_at_the_time(client: TestClient) 
 
 
 def test_who_had_an_address(client: TestClient) -> None:
+    """One row per lease, newest first: the address went from LAPTOP-A to LAPTOP-B, then to
+    ws-0105 (the template fixture's lease, which started and ended)."""
     dhcp = [r for r in rows(run(client, "who_had_ip", ip="10.20.1.5")) if r["kind"] == "DHCP lease"]
-    assert [r["device"] for r in dhcp] == ["LAPTOP-B", "LAPTOP-A"]
+    assert [r["device"] for r in dhcp] == ["ws-0105", "LAPTOP-B", "LAPTOP-A"]
+    assert dhcp[0]["interface"] == "ae0.120" and dhcp[1]["interface"] == "ethernet1/2"
+    assert dhcp[0]["first_seen"] < dhcp[0]["last_seen"]  # the start line and the end line
     vpn = rows(run(client, "who_had_ip", ip="10.30.0.5"))
     assert vpn and all(r["kind"] == "VPN tunnel" and r["person"] for r in vpn)
+
+
+def _at(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def test_who_had_an_address_from_a_lease_that_started_before_the_range(
+    client: TestClient,
+) -> None:
+    """Owner, 2026-11-17: a lease that started before the range still shows, from its
+    "lease ended" line; the quoted interface name is read without its quotes."""
+    (got,) = rows(run(client, "who_had_ip", ip="10.20.1.7"))
+    assert (got["kind"], got["device"], got["mac"]) == (
+        "DHCP lease",
+        "LAPTOP-C",
+        "00:00:5e:00:53:0c",
+    )
+    assert got["interface"] == "vlan20"
+    assert _at(got["first_seen"]) == _at(got["last_seen"]) == datetime(2026, 10, 9, 6, tzinfo=UTC)
+
+
+def test_who_had_an_address_from_its_start_and_end_lines(client: TestClient) -> None:
+    (got,) = rows(run(client, "who_had_ip", ip="10.20.1.8"))
+    assert (got["device"], got["interface"]) == ("LAPTOP-D", "ae0.120")
+    assert _at(got["first_seen"]) == datetime(2026, 10, 9, 7, tzinfo=UTC)
+    assert _at(got["last_seen"]) == datetime(2026, 10, 9, 9, 30, tzinfo=UTC)
+
+
+def test_who_had_an_address_with_no_lease_is_empty(client: TestClient) -> None:
+    assert rows(run(client, "who_had_ip", ip="10.20.9.9")) == []
 
 
 @pytest.mark.parametrize("search_id", ["parser_mix", "ssh_logins", "firewall_maintenance"])
@@ -206,3 +299,70 @@ def test_built_in_resolution_names_what_the_example_search_names(client: TestCli
         (u["service"]["id"], m) for u in usage.json()["services"] for m in u["top_machines"]
     }
     assert {("chatgpt", "LAPTOP-A"), ("claude", "LAPTOP-B")} <= machines
+
+
+def test_who_had_an_address_starts_a_new_row_after_an_end_line(client: TestClient) -> None:
+    got = rows(run(client, "who_had_ip", ip="10.20.1.9"))
+    spans = [(_at(r["first_seen"]).hour, _at(r["last_seen"]).hour) for r in got]
+    assert [r["mac"] for r in got] == ["00:00:5e:00:53:0e"] * 2 and spans == [(15, 15), (13, 14)]
+
+
+def test_who_had_an_address_ends_a_row_at_the_next_holders_start(client: TestClient) -> None:
+    """A's end line arrives after B took the address: A's row still ends at B's start, and
+    B, the newest holder, comes first."""
+    got = rows(run(client, "who_had_ip", ip="10.20.1.10"))
+    assert [r["device"] for r in got] == ["HOST-B", "HOST-A"]
+    a = got[1]
+    assert _at(a["first_seen"]) == datetime(2026, 10, 9, 8, tzinfo=UTC)
+    assert _at(a["last_seen"]) == datetime(2026, 10, 9, 12, tzinfo=UTC)
+
+
+def test_who_had_an_address_with_an_empty_hostname(client: TestClient) -> None:
+    (got,) = rows(run(client, "who_had_ip", ip="10.20.1.11"))
+    assert got["device"] is None and got["mac"] == "00:00:5e:00:53:d1"
+
+
+def test_who_had_an_address_gives_one_row_per_vpn_tunnel(client: TestClient) -> None:
+    got = rows(run(client, "who_had_ip", ip="10.30.0.9"))
+    assert [(r["kind"], r["person"], r["device"]) for r in got] == [
+        ("VPN tunnel", "erin", "LAPTOP-ERIN")
+    ] * 2
+    assert _at(got[0]["first_seen"]) == datetime(2026, 10, 9, 10, tzinfo=UTC)
+    assert _at(got[1]["first_seen"]) == datetime(2026, 10, 9, 8, tzinfo=UTC)
+    assert _at(got[1]["last_seen"]) == datetime(2026, 10, 9, 9, tzinfo=UTC)
+
+
+BUILT_IN_DHCP = f"""WITH {OBS_SQL}
+SELECT host, mac, start, stop, capped FROM addr_span
+WHERE kind = 'dhcp' AND ip = $ip ORDER BY start"""  # fixed text
+
+
+def test_built_in_resolution_and_who_had_ip_agree_on_dhcp_leases(client: TestClient) -> None:
+    """Owner, 2026-11-17 (D278): over the same range, the built-in holds each address for
+    the same machines, in the same order, as who_had_ip lists them, and over every line
+    the library saw. A lease ended by its end line stops there in both; one cut short by
+    the next holder stops at that start; one seen only by its end line runs up to it."""
+    engine = client.app.state.engine  # type: ignore[attr-defined]  # the test app
+    scope = QueryScope(["fw"], _at(RANGE["start"]), _at(RANGE["end"]))
+    ips = ["10.20.1.5", "10.20.1.7", "10.20.1.8", "10.20.1.9", "10.20.1.10", "10.20.1.12"]
+    ips.append("10.20.2.14")
+    for ip in ips:
+        lib = sorted(
+            (r for r in rows(run(client, "who_had_ip", ip=ip)) if r["kind"] == "DHCP lease"),
+            key=lambda r: r["first_seen"],
+        )
+        built = [
+            (h, m, _at(str(a)), _at(str(b)), c)
+            for h, m, a, b, c in engine.run(BUILT_IN_DHCP, scope, {"ip": ip}).rows
+        ]
+        assert [(r["device"], r["mac"]) for r in lib] == [(b[0], b[1]) for b in built], ip
+        for i, (r, (_, _, start, stop, capped)) in enumerate(zip(lib, built, strict=True)):
+            first, last = _at(r["first_seen"]), _at(r["last_seen"])
+            assert start <= first and last <= stop, (ip, r)
+            nxt = built[i + 1][2] if i + 1 < len(built) else None
+            assert capped or stop in (last, nxt), (ip, r)
+            assert start == first or (first == last == stop and not capped), (ip, r)
+    # 10.20.1.7 started the evening before the range: the built-in names it until its end.
+    ((host, _, start, stop, _),) = engine.run(BUILT_IN_DHCP, scope, {"ip": "10.20.1.7"}).rows
+    assert host == "LAPTOP-C" and _at(str(start)) < datetime(2026, 10, 9, 5, tzinfo=UTC)
+    assert _at(str(stop)) == datetime(2026, 10, 9, 6, tzinfo=UTC)

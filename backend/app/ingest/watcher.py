@@ -110,6 +110,12 @@ class SourceStatus:
     retry_at: datetime | None = None
     # Event times look this many hours off (positive: early), steadily (ingest/skew.py).
     time_offset_h: float | None = None
+    # Files this source lists that another source reads (one reader per file, D273), as
+    # (file name, that source, whether both are equally specific), from the last pass; and
+    # that source when it reads every file this one lists, so this one stores nothing: a
+    # state of its own, not a problem, and no quiet alert.
+    shared: tuple[tuple[str, str, bool], ...] = ()
+    read_by: str | None = None
 
 
 SourceState = Literal["waiting", "reading", "error", "disabled"]
@@ -190,6 +196,21 @@ class IngestService:
         self._seen_inodes: dict[str, set[int]] = {}
         self._missed: dict[str, tuple[list[str], str, datetime]] = {}
         self._restarted: dict[str, tuple[str, datetime, bool]] = {}
+        # This source's files that another source reads, in this pass: path -> (name,
+        # reader, whether the two are equally specific).
+        self._skips: dict[str, tuple[str, str, bool]] = {}
+        self._enabled: set[str] = set()  # turned-on sources, as of this pass
+        # One reader per file (D273), from configuration each pass: (device, inode) -> the
+        # most specific turned-on source that lists it, with its rank; and what each file
+        # source listed for it.
+        self._holders: dict[tuple[int, int], tuple[tuple[int, str, str], str]] = {}
+        self._listed: dict[str, list[Path]] = {}
+        self._ranks: dict[str, int] = {}
+        # Each listed name -> the rank keys of the sources that list it, so a file that
+        # appears under a name during the pass (a rotation) goes to the same holder.
+        self._by_name: dict[str, list[tuple[int, str, str]]] = {}
+        # The holder the rule named for each file in the last pass (before a rename).
+        self._named: dict[tuple[int, int], str] = {}
         self._lock = threading.Lock()
         # Set by the app: source id -> why its syslog listener is not listening.
         self.listener_errors: Callable[[], dict[str, str]] | None = None
@@ -213,9 +234,9 @@ class IngestService:
         total = 0
         self._retry_stuck()  # every pass, not only when the next write comes
         self._owed_tried = False
-        self._handles.expire(
-            self._clock(), {s.source_id for s in self._sources.list() if s.enabled}
-        )
+        self._enabled = {s.source_id for s in self._sources.list() if s.enabled}
+        self._handles.expire(self._clock(), self._enabled)
+        self._find_holders()
         # What the path-keyed table knows and the positions do not, at each start.
         if not self._positions_copied:
             self._owed = self._take_checkpoints(start=True)
@@ -225,9 +246,16 @@ class IngestService:
         missing_at_start: dict[str, bool] = {}
         for source in self._sources.list():
             if not source.enabled:
+                # Turned off: no files another source reads are known now (Paused, not
+                # "Read by"), so nothing stale outlives the pass that found them.
+                with self._lock:
+                    off = self._status.get(source.source_id)
+                    if off is not None and (off.shared or off.read_by):
+                        self._status[source.source_id] = replace(off, shared=(), read_by=None)
                 continue
             missing_at_start[source.source_id] = self._missing_error(source) is not None
             self._maybe_missed = []
+            self._skips = {}
             prev = self.status().get(source.source_id, SourceStatus())
             count, files, error = 0, 0, None
             skipped, waiting = prev.records_skipped, prev.files_waiting
@@ -254,7 +282,9 @@ class IngestService:
                     spool = self._sources.spool_root
                     paths = spool_files(source, spool) if spool else []
                 else:
-                    paths = files_for(source, self._sources.allowed_roots)
+                    paths = self._listed.get(source.source_id) or files_for(
+                        source, self._sources.allowed_roots
+                    )
                 files = len(paths)
                 failed: list[str] = []
                 for path in paths:
@@ -317,6 +347,7 @@ class IngestService:
                         *self._restart_warning(source.source_id, now),
                         *self._missed_warning(source.source_id, now),
                     ),
+                    **self._shared_status(source.source_id, prev, files),
                 )
             total += count
         self._report_stops()
@@ -632,6 +663,8 @@ class IngestService:
         name is given to another."""
         sid, key = source.source_id, path_key(path)
         seen = path.stat()
+        if self._read_by_other(sid, (seen.st_dev, seen.st_ino), path, key):
+            return 0
         if (sid, key) in self._owed and not self._owed_tried:
             # Here now: its old position first, if it has one. Once a pass, for every owed
             # file together: one that is listed but still cannot be opened stays owed.
@@ -667,7 +700,11 @@ class IngestService:
             # Grew or changed since it was looked at: its last line is not waiting any more.
             flush = flush and (info.st_size, info.st_ino) == (seen.st_size, seen.st_ino)
             self._seen_inodes.setdefault(sid, set()).add(info.st_ino)
-            pos = self._positions.get(*file)
+            if self._read_by_other(sid, file[1:], path, key):  # not the file listed
+                fh.close()
+                return 0
+            mine = self._positions.for_file(info.st_dev, info.st_ino, sid)
+            pos = next((p for p in mine if p.device == info.st_dev), None)
             moved_from: FilePosition | None = None
             if pos is None:
                 # Not known under this device number, which a restart or remount can
@@ -675,10 +712,8 @@ class IngestService:
                 # name (it may have been rotated meanwhile).
                 # Saving it below moves the record to the new number.
                 pos = next(
-                    (p for p in self._positions.on_other_devices(sid, info.st_ino)
-                     if p.offset and same_content(fh, p, info.st_size)),
-                    None,
-                )  # fmt: skip
+                    (p for p in mine if p.offset and same_content(fh, p, info.st_size)), None
+                )
                 moved_from = pos
             if pos is None:
                 # A new file. If its name was another file's and this process has never
@@ -696,10 +731,8 @@ class IngestService:
                     last = max(before, key=lambda p: p.updated_at)
                     if self._handles.get((sid, last.device, last.inode)) is None:
                         self._maybe_missed.append((display_name(path.name)[:100], last))
-            start: FilePosition | None = None
-            if pos is not None and same_content(fh, pos, info.st_size):
-                start = pos
-            elif pos is not None and pos.path == key and pos.offset:
+            start = self._start(sid, fh, info)
+            if start is None and pos is not None and pos.path == key and pos.offset:
                 # The same name and inode with other content: emptied and refilled in
                 # place (logrotate `copytruncate`), or a new file that was given the
                 # deleted one's inode number. While the watcher still holds the file the
@@ -716,6 +749,114 @@ class IngestService:
             raise
         self._handles.keep(file, fh, path, key, self._clock())
         return n
+
+    def _find_holders(self) -> None:
+        """The holder of each file listed by two or more turned-on sources (D273), from
+        their configuration only, so a rotation, a restart, a truncation, or a device change
+        cannot move it: the most specific source that lists it (its path names the file,
+        then a folder with a pattern, then a recursive pattern), then the source added
+        first, then the lower id. One exception, ADR-0051 row 3: a file renamed away from its
+        name is read to its end by the source this rule named for it before the rename,
+        through the file it holds open. A source holding a file it is no longer the holder
+        of (a more specific source was added) closes it."""
+        created = self._sources.created()
+        self._holders, self._listed, self._ranks, self._by_name = {}, {}, {}, {}
+        files = [s for s in self._sources.list() if s.enabled and s.kind == "file"]
+        files = [s for s in files if self._is_text(s)]  # .evtx: not covered yet (D273)
+        for source in files:
+            try:
+                paths = files_for(source, self._sources.allowed_roots)
+            except Exception:  # noqa: S112  # any failure: said by the source's own pass below
+                continue  # left out of the holders; one source never stops another
+            self._listed[source.source_id] = paths
+            rank = 0 if os.path.isfile(source.path) else 2 if "**" in source.glob else 1
+            self._ranks[source.source_id] = rank
+            key = (rank, created.get(source.source_id, ""), source.source_id)
+            for path in paths:
+                self._by_name.setdefault(path_key(path), []).append(key)
+                try:
+                    st = path.stat()
+                except OSError:
+                    continue
+                here = (st.st_dev, st.st_ino)
+                if here not in self._holders or key < self._holders[here][0]:
+                    self._holders[here] = (key, source.source_id)
+        named = {here: found[1] for here, found in self._holders.items()}
+        for source in files:  # also while the source's own path is missing (mid-rotation)
+            sid = source.source_id
+            for file, held in self._handles.items(sid):
+                here = file[1:]
+                try:
+                    there = os.stat(held.path)
+                    renamed = (there.st_dev, there.st_ino) != here
+                except OSError:
+                    renamed = True
+                if renamed and self._named.get(here) == sid:
+                    self._holders[here] = ((-1, "", sid), sid)
+                    named[here] = sid  # still its file until the handle is closed
+                elif (renamed or named.get(here, sid) != sid) and self._handles.get(file):
+                    self._handles.drop(file)  # a former reader: no longer the holder
+        self._named = named
+
+    def _read_by_other(self, sid: str, here: tuple[int, int], path: Path, key: str | None) -> bool:
+        """Does another source read this file (D273)? Decided when `sid` is about to read
+        it, by the rule over the sources that list it: under this name (a file rotated in
+        during the pass goes where the name goes) or under any name found for it this pass
+        (a link). Then `sid` skips it, and a listed one (`key`) is noted for its status. A
+        file no source lists goes to the first that reads it. Two files with the same lines
+        are two files."""
+        named = [(k, k[2]) for k in self._by_name.get(path_key(path), [])]
+        known = self._holders.get(here)
+        if known is None and not named:
+            self._holders[here] = ((-2, "", sid), sid)
+            return False
+        found = min([*named, *([known] if known else [])])
+        if found[1] == sid:
+            return False
+        if key is not None:
+            tie = self._ranks.get(sid) == found[0][0]
+            self._skips[key] = (display_name(path.name)[:100], found[1], tie)
+        return True
+
+    def _shared_status(self, sid: str, prev: SourceStatus, files: int) -> dict[str, Any]:
+        """The source's files another source reads, from this pass, and that source when it
+        reads every file this one lists."""
+        shared = tuple(self._skips[k] for k in sorted(self._skips))  # by path: one per file
+        readers = {reader for _, reader, _ in self._skips.values()}
+        read_by = min(readers) if files and len(self._skips) >= files else None
+        if shared != prev.shared and shared:
+            log.warning("ingest.file_read_by_other_source", source_id=sid, others=sorted(readers))
+        return {"shared": shared, "read_by": read_by}
+
+    def _start(self, sid: str, fh: BinaryIO, info: os.stat_result) -> FilePosition | None:
+        """Where `sid` reads this open text file from, on every path (a listed file, a
+        held one after a rename, a takeover): the furthest position any source saved on it
+        (`FilePositions.for_file`: device and inode, the device fallback) whose content
+        checks match. None: from the start."""
+        found = furthest(
+            self._positions.for_file(info.st_dev, info.st_ino),
+            lambda p: p.offset,
+            lambda p: same_content(fh, p, info.st_size),
+        )
+        if found is None:
+            return None
+        # Only the offset and its content check carry over: the CSV header (and any other
+        # parse state) is the reading source's own, so taken again from the file's first
+        # line when another source's position is used (fifth review of #655).
+        if found.source_id != sid:
+            found = replace(found, csv_header=self._first_line(fh) if found.offset else None)
+        return replace(found, source_id=sid)
+
+    @staticmethod
+    def _first_line(fh: BinaryIO) -> str | None:
+        """The file's first line, as `_lines` takes a CSV header."""
+        fh.seek(0)
+        data = fh.read(MAX_LINE + 1)
+        end = data.find(b"\n")
+        if end < 0:
+            return None
+        frame = next(iter(Framer(max_len=MAX_LINE, mode="newline").frames([data[: end + 1]])))
+        return decode_frame(frame).text
 
     def _advance(
         self,
@@ -827,6 +968,8 @@ class IngestService:
         sid, total = source.source_id, 0
         now = self._clock()
         for file, held in self._handles.items(sid):
+            if self._read_by_other(sid, file[1:], held.path, None):
+                continue  # another source reads it now (it lists the new name)
             try:
                 there = os.stat(held.path)
                 if (there.st_dev, there.st_ino) == file[1:]:
@@ -837,17 +980,15 @@ class IngestService:
             except OSError:
                 pass  # no file of that name now
             held.gone_at = held.gone_at or now
-            pos = self._positions.get(*file)
             try:
-                size = os.fstat(held.fh.fileno()).st_size
-                same = pos is not None and same_content(held.fh, pos, size)
+                pos = self._start(sid, held.fh, os.fstat(held.fh.fileno()))
             except OSError as exc:
                 # The file cannot be read any more (deleted on a file server, a disk
                 # error): it is given up, and the other held files are still followed.
                 self._handles.drop(file)
                 log.warning("ingest.held_file_unreadable", source_id=sid, error=type(exc).__name__)
                 continue
-            if pos is None or not same:
+            if pos is None:
                 self._handles.drop(file)  # emptied before it went: nothing left to read on
                 continue
             last = closing(held, now)
@@ -1194,3 +1335,15 @@ def _json_object(text: Any) -> dict[str, Any]:
     except (TypeError, ValueError):
         return {}
     return value if isinstance(value, dict) else {}
+
+
+def furthest[T](found: list[T], offset: Callable[[T], int], fits: Callable[[T], bool]) -> T | None:
+    """The one rule against storing a line twice (D273): a file is read on from the
+    furthest position any source saved on it that still fits the file (its content
+    checks), whichever source reads it and by whatever route (a listed file, a held file
+    after a rename, a takeover). A change of reader can change which source new
+    lines belong to, never store one twice."""
+    for p in sorted(found, key=offset, reverse=True):
+        if fits(p):
+            return p
+    return None

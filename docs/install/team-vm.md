@@ -207,6 +207,8 @@ To run Ask with Ollama on this machine with no GPU (for example 4 vCPU and 8 GB)
 
 Before a major update, take a snapshot of the VM or container if your platform supports it; the rollback command only covers versions installed after this one.
 
+Ask's time limit stays 90 seconds after an update unless an Admin changes it in Settings > AI providers (Ask time limit). CPU-only local models may need 240 s or more.
+
 Run the update script as root; never fetch or merge by hand first. It fetches `main` from `origin` and stops there if the fetch fails, or if the build the service last ran is already `origin/main` (it says which). It keeps that commit in `/var/lib/remnant/installed_commit`, written by root (root:root, 0644) only after the service came up, and ignored if anything else could have written it, so a checkout moved by hand, or an update that failed partway, is built on the next run even with nothing new to fetch. Otherwise it stops the service, moves to `origin/main` and checks HEAD matches it, rebuilds the web UI, syncs the Python packages, makes `/opt/remnant` readable by the service user, starts the service, and prints the startup lines. Database migrations run on start.
 
 ```bash

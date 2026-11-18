@@ -353,7 +353,7 @@ export function LaneGraph({ graph, selected, onSelect }: LaneGraphProps) {
               onKeyDown={key(card)}
               className={`group cursor-pointer outline-none transition-opacity ${dim ? "opacity-40" : ""}`}
             >
-              <title>{card.label}</title>
+              <title>{card.hint ? `${card.label}\n${card.hint}` : card.label}</title>
               <rect
                 width={cardW}
                 height={h}

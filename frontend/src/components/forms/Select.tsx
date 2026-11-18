@@ -29,7 +29,8 @@ export interface SelectOption {
  * it; `facet`, the filter bar's "Name Value" control. */
 export type SelectLook = "field" | "facet";
 
-const LOOK: Record<SelectLook, string> = {
+/** Each look's trigger, also used by a text box beside it so the two match (FilterBar). */
+export const LOOK: Record<SelectLook, string> = {
   field: "h-8 rounded border border-border-control bg-inset px-2 text-text",
   facet: "h-7 rounded border border-border-strong bg-transparent pl-2.5 pr-2 text-text-secondary",
 };

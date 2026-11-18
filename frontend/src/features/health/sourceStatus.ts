@@ -3,7 +3,9 @@ import type { Overview, Source } from "@/lib/api";
 import { heldText } from "@/features/sources/VendorAlertNotify";
 import { idleText, quietFrom, quietWord, shownGaps } from "./flow";
 
-export type StatusLevel = "unhealthy" | "attention" | "paused" | "healthy";
+/** "shared": every file it lists is read by another source (one reader per file, SPEC
+ * 3.5), so it stores nothing by design; neither healthy nor a problem. */
+export type StatusLevel = "unhealthy" | "attention" | "paused" | "healthy" | "shared";
 
 /** A source's status as every page says it (fix list 2026-11-16 item 19): the level and
  * word come from the server's one condition (`condition`, `problem`, `idle` on each
@@ -26,7 +28,26 @@ const WORD: Record<StatusLevel, string> = {
   attention: "Needs attention",
   paused: "Paused",
   healthy: "Flowing",
+  shared: "Read by another source",
 };
+
+/** One line for the files another source reads, under the source's path on Settings and as a
+ * neutral line on Health: what happened and what to do. */
+export function sharedFileText(s: Source | undefined): string | null {
+  const shared = s?.status.shared ?? [];
+  if (!shared.length) return null;
+  const by = [...new Set(shared.map((f) => f.reader))].join(" and ");
+  const what = shared.length === 1 ? `${shared[0]?.file} is` : `${shared.length} of its files are`;
+  // A source's path cannot be changed (it is set when the source is added): the one thing
+  // to do is remove it. Some files only: the rest are read here as usual.
+  // Advice to remove only when the reading source is the more specific one (D273); two
+  // equally specific sources (the older reads) get the fact alone.
+  if (s?.status.read_by)
+    return shared.some((f) => f.tie)
+      ? `${what} already read by ${by}, so nothing is stored here.`
+      : `${what} already read by ${by}, so nothing is stored here. Remove this source.`;
+  return `${what} already read by ${by}, so ${shared.length === 1 ? "it is" : "they are"} not stored here.`;
+}
 
 function human(seconds: number): string {
   if (seconds < 3600) return `${Math.max(1, Math.round(seconds / 60))} min`;
@@ -46,6 +67,7 @@ function fromReader(s: Source): SourceStatusView {
   });
   if (!s.enabled || st.state === "disabled") return v("paused", "Turned off");
   if (st.state === "error") return v("unhealthy", st.error);
+  if (st.read_by) return { level: "shared", word: `Read by ${st.read_by}`, reason: null };
   if (s.quiet?.state === "quiet")
     return v("unhealthy", `No events for over ${human(s.quiet.quiet_after_s)}`, true);
   if (s.alert_pause)
@@ -101,6 +123,8 @@ export function sourceStatus(
     }
     case "gap":
       return { ...r, level: "attention", word: "Gap" };
+    case "shared":
+      return { level: "shared", word: `Read by ${h.read_by ?? "another source"}`, reason: null };
     case "attention":
       return {
         ...r,

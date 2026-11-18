@@ -11,7 +11,14 @@ import {
   type QueryResult,
   type SavedSearch,
 } from "@/lib/api";
-import { DEFAULT_SQL, logsRange, rangeStart, sqlPlaceholders, type LogsRange } from "@/lib/search";
+import {
+  DEFAULT_SQL,
+  logsRange,
+  rangeStart,
+  sameButValues,
+  sqlPlaceholders,
+  type LogsRange,
+} from "@/lib/search";
 import { localInput, windowOf } from "@/lib/timeWindow";
 import { openSavedSearch } from "@/lib/savedSeed";
 import { navigate, pathFor } from "@/lib/route";
@@ -37,7 +44,6 @@ import { FacetSidebar } from "./FacetSidebar";
 import { FieldActionsContext, type FieldActions } from "./fieldActions";
 import { FilterBar } from "./FilterBar";
 import { OpenSearchPanel } from "./OpenSearchPanel";
-import { LibraryPanel, type LibraryPick } from "./LibraryPanel";
 import { LivePanel } from "./LivePanel";
 import { downloadCsv, ResultsCard } from "./ResultsCard";
 import { SaveSearchForm } from "./SaveSearchForm";
@@ -255,7 +261,6 @@ export function SearchPage({ canSave }: SearchPageProps) {
     );
     run.mutate({ sql: value, params: names.length ? params : undefined });
   };
-  const [libraryOpen, setLibraryOpen] = useState(seed?.library === true);
   // Live (ADR-0036): the SQL it follows; null is off. A shared link never starts it.
   const [liveSql, setLiveSql] = useState<string | null>(null);
   const [liveKey, setLiveKey] = useState(0);
@@ -266,17 +271,23 @@ export function SearchPage({ canSave }: SearchPageProps) {
       return false;
     }
   });
-  const [libraryQuery, setLibraryQuery] = useState<LibraryPick | null>(null);
-  const loadLibrary = (q: LibraryPick) => {
-    setLibraryOpen(false);
-    setOpening(false);
-    setOpened(null);
-    openedNow.current = null;
-    setSaved(null);
-    setLibraryQuery(q);
-    setSql(q.sql);
-    setTab("sql");
-  };
+  // A query opened from Logs > Library, named above the editor while its SQL is unchanged.
+  const [libraryQuery] = useState(() =>
+    seed?.library && seed.sql !== undefined ? { ...seed.library, sql: seed.sql } : null,
+  );
+  // No rows from the library query as loaded, or with only its values changed (an
+  // address, D274): its own words in place of the generic advice.
+  const ran = run.variables;
+  const libraryEmpty =
+    libraryQuery?.empty &&
+    result?.rows.length === 0 &&
+    ran?.text === undefined &&
+    ran?.sql !== undefined &&
+    (libraryQuery.packSql
+      ? sameButValues(ran.sql, libraryQuery.packSql)
+      : ran.sql === libraryQuery.sql)
+      ? libraryQuery.empty
+      : undefined;
   const openSearch = (s: SavedSearch, given: Record<string, string> = {}) => {
     setOpening(false);
     setOpened(s);
@@ -375,6 +386,8 @@ export function SearchPage({ canSave }: SearchPageProps) {
   // Run once on open so the page shows recent events immediately.
   useEffect(() => {
     if (toOpen) return; // the saved search runs once it is loaded
+    // A library query only loads (ADR-0033 row 4): the person runs it with Run.
+    if (seed?.library) return;
     if (sqlSeed || tab === "sql") runSql(sql);
     else simple.mutate({ text });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -450,10 +463,7 @@ export function SearchPage({ canSave }: SearchPageProps) {
           {
             label: "Open",
             title: "Open a saved search here",
-            onClick: () => {
-              setLibraryOpen(false);
-              setOpening((v) => !v);
-            },
+            onClick: () => setOpening((v) => !v),
           },
         ]}
         menu={[
@@ -464,11 +474,8 @@ export function SearchPage({ canSave }: SearchPageProps) {
           },
           {
             label: "Library",
-            title: "Shipped, tested queries for the sources you have",
-            onClick: () => {
-              setOpening(false);
-              setLibraryOpen((v) => !v);
-            },
+            title: "Open the Library tab: shipped, tested queries",
+            onClick: () => navigate("library"),
           },
           ...(canSave
             ? [
@@ -516,13 +523,6 @@ export function SearchPage({ canSave }: SearchPageProps) {
 
       <div className="flex flex-col gap-2.5 px-5 py-3">
         {opening ? <OpenSearchPanel onOpen={openSearch} onClose={() => setOpening(false)} /> : null}
-        {libraryOpen ? (
-          <LibraryPanel
-            onLoad={loadLibrary}
-            onClose={() => setLibraryOpen(false)}
-            canSave={canSave}
-          />
-        ) : null}
         {confirmNew ? (
           <div
             role="alertdialog"
@@ -818,6 +818,7 @@ export function SearchPage({ canSave }: SearchPageProps) {
         <div className={liveSql !== null ? "hidden" : "contents"}>
           <FacetSidebar
             request={facetRequest}
+            total={result ? { count: result.row_count, more: result.truncated } : null}
             onTerm={
               // The results on screen came from a Filters search: refine that search, even
               // when SQL has been opened since (the results are still its).
@@ -842,6 +843,9 @@ export function SearchPage({ canSave }: SearchPageProps) {
               pending={pending}
               runKey={(result?.executed_sql ?? "") + (lastRun?.getTime() ?? 0)}
               canExplain={canSave}
+              // A library query only loads (ADR-0033 row 4): say what shows the rows.
+              idle={libraryQuery ? "Press Run to see the rows." : undefined}
+              emptyDetail={libraryEmpty}
             />
           </FieldActionsContext.Provider>
         </div>

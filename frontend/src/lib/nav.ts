@@ -100,6 +100,13 @@ export const AREAS: Area[] = [
     tabs: [
       { label: "Search", page: "logs", sqlOnly: true },
       { label: "Saved searches", page: "saved", aliases: ["grimoire"] },
+      // Shipped, tested queries (ADR-0033) that open in the SQL editor, so SQL access only.
+      {
+        label: "Library",
+        page: "library",
+        sqlOnly: true,
+        aliases: ["query library", "packs", "shipped queries"],
+      },
       // Views of Logs (ADR-0052 section 3.3): lists the server builds and runs on the
       // caller's own sources, so they need no SQL access. Opened from the Views menu.
       ...LOGS_VIEWS.map((v) => ({ ...v, page: "m365" as const, view: true })),

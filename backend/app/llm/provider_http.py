@@ -6,16 +6,72 @@ Headers passed in (API keys) never appear in errors or logs.
 """
 
 import json
+import socket
+import threading
+import time
+from contextvars import ContextVar
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
-from app.core.errors import ProviderBusyError, ProviderError, ProviderUnreachableError
+from app.core.errors import (
+    ModelTimeoutError,
+    ProviderBusyError,
+    ProviderError,
+    ProviderUnreachableError,
+)
 from app.llm.provider import Locality
 
 MAX_RESPONSE_BYTES = 64 * 1024
-TIMEOUT = httpx.Timeout(connect=5.0, read=180.0, write=30.0, pool=5.0)
+# Per-step limits without a deadline (Explain, parser drafts, reports). Under an Ask
+# deadline (D270) the read has no limit of its own: the deadline alone governs it, so
+# `ask.model_timeout_s` above 180 s is honoured.
+CAPS = {"connect": 5.0, "read": 180.0, "write": 30.0, "pool": 5.0}
+TIMED_OUT = "The model took too long to answer."
+
+# The time (time.monotonic) by which the current model call must end (D270). Set by the
+# gate around one provider request; None means only the per-step limits above apply.
+CALL_DEADLINE: ContextVar[float | None] = ContextVar("llm_call_deadline", default=None)
+
+
+def deadline_left() -> float | None:
+    """Seconds left before the current call's deadline, or None when there is none."""
+    deadline = CALL_DEADLINE.get()
+    return None if deadline is None else deadline - time.monotonic()
+
+
+class _TimeLeft(dict[str, float]):
+    """httpcore's per-request timeouts, read as each phase starts (connect, write, the
+    headers, the body): each is the time left to the one deadline, never a fresh limit."""
+
+    def __init__(self, deadline: float) -> None:
+        super().__init__()
+        self._deadline = deadline
+
+    def get(self, key: str, default: object = None) -> float:  # httpcore reads only .get
+        left = max(0.001, self._deadline - time.monotonic())
+        return left if key == "read" else min(CAPS.get(key, left), left)
+
+
+def _cut_off_at(res: httpx.Response, deadline: float) -> threading.Timer | None:
+    """Shut the connection's socket at the deadline, so a read already waiting (a reply
+    that stalls or trickles after its headers) ends then, not one read timeout later."""
+    stream = res.extensions.get("network_stream")
+    sock = stream.get_extra_info("socket") if stream is not None else None
+    if not isinstance(sock, socket.socket):
+        return None
+
+    def shut() -> None:
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass  # already closed
+
+    timer = threading.Timer(max(0.0, deadline - time.monotonic()), shut)
+    timer.daemon = True
+    timer.start()
+    return timer
 
 
 class PinnedJsonClient:
@@ -38,7 +94,7 @@ class PinnedJsonClient:
         # environment would send it, possibly in plain text, through another host.
         return httpx.Client(
             headers=self._headers,
-            timeout=TIMEOUT,
+            timeout=httpx.Timeout(**CAPS),
             follow_redirects=False,
             transport=self._transport,
             trust_env=self._locality == "cloud",
@@ -60,6 +116,12 @@ class PinnedJsonClient:
 
     def request(self, method: str, path: str, body: dict[str, Any] | None = None) -> Any:
         url, headers, extensions = self._target(path)
+        deadline = CALL_DEADLINE.get()
+        if deadline is not None:  # one deadline from here across every step (D270)
+            if deadline <= time.monotonic():
+                raise ModelTimeoutError(TIMED_OUT)
+            extensions = {**extensions, "timeout": _TimeLeft(deadline)}
+        timer: threading.Timer | None = None
         try:
             with (
                 self._client() as client,
@@ -67,6 +129,8 @@ class PinnedJsonClient:
                     method, url, json=body, headers=headers, extensions=extensions
                 ) as res,
             ):
+                if deadline is not None:
+                    timer = _cut_off_at(res, deadline)
                 if res.status_code in BUSY_STATUS:
                     raise ProviderBusyError(
                         f"Model server busy (HTTP {res.status_code})",
@@ -82,10 +146,20 @@ class PinnedJsonClient:
                     data += chunk
                     if len(data) > MAX_RESPONSE_BYTES:
                         raise ProviderError("Provider response too large")
-        except httpx.ConnectError as exc:
-            raise ProviderUnreachableError(f"Cannot reach provider: {type(exc).__name__}") from exc
+                    if (left := deadline_left()) is not None and left <= 0:
+                        raise ModelTimeoutError(TIMED_OUT)  # a trickling reply: closed here
         except httpx.HTTPError as exc:
+            late = deadline is not None and deadline - time.monotonic() <= 0.05
+            if late or (deadline is not None and isinstance(exc, httpx.ReadTimeout)):
+                raise ModelTimeoutError(TIMED_OUT) from exc  # the deadline governs reads
+            if isinstance(exc, httpx.ConnectError):
+                raise ProviderUnreachableError(
+                    f"Cannot reach provider: {type(exc).__name__}"
+                ) from exc
             raise ProviderError(f"Cannot reach provider: {type(exc).__name__}") from exc
+        finally:
+            if timer is not None:
+                timer.cancel()
         try:
             return json.loads(data)
         except ValueError as exc:

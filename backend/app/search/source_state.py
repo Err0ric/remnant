@@ -11,6 +11,10 @@ newest event is inside those days (`quiet_ok`), no events in 24 hours and gap ho
 problem and it counts as healthy ("idle" when it is silent now). Errors (a listener that is
 down, a full spool), reading problems, refused records, and an alert someone set up (a
 firing quiet alert, an open gap alert) still count. Past N days, or never sent, it is quiet.
+
+A source whose every file another source reads (one reader per file, SPEC 3.5) stores
+nothing by design: it is "shared", neither healthy nor a problem, and left out of the count
+("1 of 8") as it is out of the problems; the summary says how many there are.
 """
 
 from __future__ import annotations
@@ -19,7 +23,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Literal
 
-Condition = Literal["healthy", "quiet", "gap", "attention", "error", "paused"]
+Condition = Literal["healthy", "quiet", "gap", "attention", "error", "paused", "shared"]
 # A source problem as every page draws it: unhealthy (drawn in --danger on Health: an error,
 # or a quiet watch firing with gap hours on the chart) or needs attention (anything else that
 # is not healthy or paused, a source that is only quiet among them). None: not a problem.
@@ -45,6 +49,7 @@ class SourceInput:
     reading_issue: bool = False
     records_skipped: int = 0
     files_waiting: int = 0
+    read_by: str | None = None  # every file it lists is read by this other source
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +67,7 @@ class SourceSummary:
     gaps: int = 0  # gaps in 24 hours on sources that are not quiet
     longest_wait: Wait | None = None  # over sources that are not quiet
     idle: int = 0  # healthy sources silent inside their "Quiet is normal" days (D260)
+    shared: int = 0  # sources whose every file another source reads: not in the total
 
 
 def condition(s: SourceInput) -> Condition:
@@ -71,6 +77,8 @@ def condition(s: SourceInput) -> Condition:
         return "error"
     if s.state == "waiting":
         return "attention"  # not read yet
+    if s.read_by:
+        return "shared"  # stores nothing by design: another source reads its files
     silent = (s.ongoing_gap or s.total_24h == 0) and not s.quiet_ok
     if not s.quiet_expected and (s.quiet_since or s.gap_alert or silent):
         return "quiet"
@@ -89,7 +97,7 @@ def idle(s: SourceInput, c: Condition) -> bool:
 def needing_attention(conditions: Iterable[Condition]) -> int:
     """How many sources have something wrong: every condition but healthy and paused. A
     source someone paused on purpose is not a problem to flag (the rail's Health dot)."""
-    return sum(1 for c in conditions if c not in ("healthy", "paused"))
+    return sum(1 for c in conditions if c not in ("healthy", "paused", "shared"))
 
 
 def problem(c: Condition, quiet_firing: bool, gap_hours: bool) -> Problem | None:
@@ -99,7 +107,7 @@ def problem(c: Condition, quiet_firing: bool, gap_hours: bool) -> Problem | None
     gap hours in the 24 hours shown (`gap_hours`). A source only quiet (no gap hours) is
     drawn greyed, so it needs attention. A source marked "Quiet is normal" inside its days
     (D260, D262) is healthy, so never one."""
-    if c in ("healthy", "paused"):
+    if c in ("healthy", "paused", "shared"):
         return None
     if c == "error" or (c == "quiet" and quiet_firing and gap_hours):
         return "unhealthy"
@@ -114,7 +122,8 @@ def _quiet_from(s: SourceInput) -> str | None:
 def assess(sources: list[SourceInput]) -> tuple[dict[str, Condition], SourceSummary]:
     """Each source's condition, and the one summary both pages print."""
     conditions = {s.source_id: condition(s) for s in sources}
-    on = [s for s in sources if conditions[s.source_id] != "paused"]
+    on = [s for s in sources if conditions[s.source_id] not in ("paused", "shared")]
+    shared = sum(1 for c in conditions.values() if c == "shared")
     oldest_first = sorted(on, key=lambda s: s.last_event_at or "")
     quiet = [
         Wait(s.source_id, _quiet_from(s))
@@ -129,7 +138,7 @@ def assess(sources: list[SourceInput]) -> tuple[dict[str, Condition], SourceSumm
         and not (s.quiet_expected or s.quiet_ok)
     ]
     summary = SourceSummary(
-        total=len(sources),  # as Health counted before (paused in the total)
+        total=len(sources) - shared,  # paused in the total, as before; shared not
         healthy=sum(1 for s in on if conditions[s.source_id] == "healthy"),
         quiet=quiet,
         gaps=sum(
@@ -139,5 +148,6 @@ def assess(sources: list[SourceInput]) -> tuple[dict[str, Condition], SourceSumm
         ),
         longest_wait=Wait(waits[0].source_id, waits[0].last_event_at) if waits else None,
         idle=sum(1 for s in on if idle(s, conditions[s.source_id])),
+        shared=shared,
     )
     return conditions, summary

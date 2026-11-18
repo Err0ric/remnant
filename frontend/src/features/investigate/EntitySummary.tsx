@@ -6,6 +6,7 @@ import { EntityLink } from "@/components/EntityLink";
 import { When } from "@/components/When";
 import { ApiError, api, type EntitySummary as Summary } from "@/lib/api";
 import { useSignInAbout } from "@/features/m365/signInCounting";
+import { OutcomeBadge } from "@/features/audit/OutcomeBadge";
 import { EmptyAddress } from "./EmptyAddress";
 import { InventoryLine } from "./InventoryLine";
 
@@ -45,7 +46,9 @@ export function finding(s: Summary, rangeWords: string): string {
     return `${plural(s.sign_ins, "sign-in", "sign-ins")} (${n(s.failed)} failed) from ${plural(s.addresses, "address", "addresses")} to ${plural(s.hosts, "host", "hosts")} over ${rangeWords}.`;
   if (s.kind === "host" && s.sign_ins)
     return `${plural(s.events, "event", "events")} over ${rangeWords}; ${plural(s.failed, "failed sign-in", "failed sign-ins")} by ${plural(s.users, "user", "users")}, ${n(s.succeeded)} succeeded.`;
-  return `${plural(s.events, "event", "events")} from ${plural(s.sources.length, "source", "sources")} over ${rangeWords}.${where}`;
+  // On an address the cards below read more (DHCP names it in a line's text): say which.
+  const which = s.kind === "ip" ? " with this address as source or destination" : "";
+  return `${plural(s.events, "event", "events")}${which} from ${plural(s.sources.length, "source", "sources")} over ${rangeWords}.${where}`;
 }
 
 function Kpi({
@@ -53,14 +56,19 @@ function Kpi({
   value,
   tone,
   small,
+  title,
 }: {
   label: string;
   value: ReactNode;
   tone?: string;
   small?: boolean;
+  title?: string;
 }) {
   return (
-    <div className="flex min-w-0 flex-col gap-0.5 rounded-card border border-border bg-surface px-3 py-2">
+    <div
+      title={title}
+      className="flex min-w-0 flex-col gap-0.5 rounded-card border border-border bg-surface px-3 py-2"
+    >
       <PanelTitle as="span">{label}</PanelTitle>
       <span
         className={`${small ? "text-base" : "text-lg"} font-semibold tabular-nums [overflow-wrap:anywhere] ${tone ?? ""}`}
@@ -71,18 +79,16 @@ function Kpi({
   );
 }
 
-const OUTCOME: Record<string, string> = {
-  succeeded: "Succeeded",
-  failed: "Failed",
-  not_counted: "Interrupted or expired",
-  other: "Other",
+// The app's one outcome mapping (OutcomeBadge), as the address page's access card has it.
+const OUTCOME: Record<string, [string, string]> = {
+  succeeded: ["success", "Succeeded"],
+  failed: ["failure", "Failed"],
+  allowed: ["success", "Allowed"],
+  denied: ["denied", "Denied"],
+  not_counted: ["other", "Interrupted or expired"],
+  signed_out: ["other", "Signed out"],
+  other: ["other", "Other"],
 };
-
-/** Neutral badges; only a success from an outside address is alert-worthy. */
-function tone(kind: string, outcome: string): string {
-  if (kind === "ip" && outcome === "succeeded") return "border border-warn text-warn";
-  return "bg-surface-head text-text-secondary";
-}
 
 /** This entity's sign-ins by outcome (D158): real failures, interrupted, expired, other,
  * and all, each one click from its rows in Logs. Shown only when there are sign-ins. */
@@ -128,12 +134,12 @@ export function SignInSlices({ s, onSearch }: { s: Summary; onSearch: (sql: stri
 /** What the entity did, grouped by outcome, each with a real line and its rows in Logs. */
 export function Activities({
   s,
-  kind,
   onSearch,
   hideWho = false,
 }: {
   s: Summary;
-  kind: "user" | "ip" | "host";
+  /** Which page it is on; outcomes look the same on every page (one mapping). */
+  kind?: "user" | "ip" | "host";
   onSearch: (sql: string) => void;
   /** Names hidden on a person's page (D242): the "by <name>" label, which repeats the
    * names counted as the person, is left out. */
@@ -146,14 +152,13 @@ export function Activities({
         {s.activities.map((a, i) => (
           <li
             key={i}
-            className="grid grid-cols-1 gap-x-3 gap-y-1 border-b border-border px-3 py-2 text-sm last:border-0 md:grid-cols-[6rem_minmax(0,1fr)_7rem_auto]"
+            className="grid grid-cols-1 gap-x-3 gap-y-1 border-b border-border px-3 py-2 text-sm last:border-0 md:grid-cols-[6rem_minmax(0,1fr)_auto_auto]"
           >
             <span>
-              <span
-                className={`rounded-badge px-1.5 py-px text-xs font-semibold ${tone(kind, a.outcome)}`}
-              >
-                {OUTCOME[a.outcome] ?? a.outcome}
-              </span>
+              <OutcomeBadge
+                outcome={(OUTCOME[a.outcome] ?? ["other"])[0]}
+                label={(OUTCOME[a.outcome] ?? ["", a.outcome])[1]}
+              />
             </span>
             <span className="min-w-0">
               <span className="text-text-secondary">{a.kind}</span>
@@ -176,9 +181,9 @@ export function Activities({
                 {a.example}
               </span>
             </span>
-            <span className="font-mono tabular-nums md:text-right">
+            <span className="whitespace-nowrap font-mono tabular-nums md:text-right">
               {plural(a.events, "event", "events")}
-              <span className="block text-xs text-text-muted">
+              <span className="block whitespace-nowrap text-xs text-text-muted">
                 last <When iso={a.last} />
               </span>
             </span>
@@ -240,7 +245,9 @@ export function EntitySummary({
             key="s"
             label="Succeeded"
             value={n(s.succeeded)}
-            tone={s.succeeded ? "text-danger" : ""}
+            // The one place a success from an address is marked: badges stay neutral.
+            tone={s.succeeded ? "text-warn" : ""}
+            title="Sign-ins that succeeded from this address"
           />,
           <Kpi key="u" label="Users tried" value={n(s.users)} />,
           <Kpi key="h" label="Hosts targeted" value={n(s.hosts)} />,
@@ -279,22 +286,51 @@ export function EntitySummary({
           ];
   return (
     <section aria-label="Summary" className="flex flex-col gap-3">
-      <p className="text-md">{finding(s, rangeWords)}</p>
+      <p className="text-md">
+        {finding(s, rangeWords)}
+        {/* At the top with the answer, so the page does not seem to end below. Not at 0:
+            an empty search is no control. */}
+        {s.events ? (
+          <>
+            {" "}
+            <button
+              type="button"
+              onClick={() => onSearch(s.search_sql)}
+              className="text-sm text-accent-text hover:underline"
+            >
+              View {s.events === 1 ? "the event" : `all ${n(s.events)} events`} in Logs
+            </button>
+          </>
+        ) : null}
+      </p>
       {kind !== "user" ? <InventoryLine value={value} start={start} end={end} /> : null}
       {kind === "ip" && !s.events ? (
-        <EmptyAddress value={value} start={start} end={end} rangeWords={rangeWords} />
+        // The finding above already says there is nothing: no second headline.
+        <EmptyAddress value={value} start={start} end={end} rangeWords={rangeWords} noHeadline />
       ) : null}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-        {kpis}
-        <Kpi label="First seen" small value={<When iso={s.first_seen} />} />
-        <Kpi label="Last seen" small value={<When iso={s.last_seen} />} />
-        {kind === "ip" && s.geo ? (
+      {s.events ? (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+          {kpis}
+          {/* An address's sections read more than these events (DHCP names it in a line's
+            text): its times say they are of these events. */}
           <Kpi
-            label="Country and network"
-            value={`${s.geo.country ?? "?"}${s.geo.asn ? ` · AS${s.geo.asn}` : ""}`}
+            label={kind === "ip" ? "First event" : "First seen"}
+            small
+            value={<When iso={s.first_seen} />}
           />
-        ) : null}
-      </div>
+          <Kpi
+            label={kind === "ip" ? "Last event" : "Last seen"}
+            small
+            value={<When iso={s.last_seen} />}
+          />
+          {kind === "ip" && s.geo ? (
+            <Kpi
+              label="Country and network"
+              value={`${s.geo.country ?? "?"}${s.geo.asn ? ` · AS${s.geo.asn}` : ""}`}
+            />
+          ) : null}
+        </div>
+      ) : null}
       <SignInSlices s={s} onSearch={onSearch} />
       <Activities s={s} kind={kind} onSearch={onSearch} />
       {hosts.length || users.length ? (
@@ -320,15 +356,6 @@ export function EntitySummary({
           )}
         </div>
       ) : null}
-      <div>
-        <button
-          type="button"
-          onClick={() => onSearch(s.search_sql)}
-          className="h-8 rounded border border-border-strong px-3 text-sm hover:bg-surface-head"
-        >
-          View {s.events === 1 ? "the event" : `all ${n(s.events)} events`} in Logs
-        </button>
-      </div>
     </section>
   );
 }

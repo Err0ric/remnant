@@ -262,3 +262,34 @@ def test_existing_push_sources_lose_the_default_quiet_alert_once(lab: dict[str, 
     assert a.post("/api/sources", json=body, headers=h).status_code == 201
     assert quiet.retire_push_defaults() == []
     assert "otel_new" in {w.source_id for w in quiet.all()}
+
+
+def test_an_open_quiet_alert_is_resolved_when_another_source_reads_the_files(
+    lab: dict[str, Any],
+) -> None:
+    """One reader per file (SPEC 3.5): a source that becomes "Read by" another sends
+    nothing by design, so a quiet alert open on it is resolved, once, with the end message
+    and its audit row, and no new one is raised."""
+    watch(lab)
+    lab["clock"].now = NOW + timedelta(minutes=61)
+    assert tick(lab) == 1
+    lab["app"].state.quiet._shared = lambda: {"lin_auth": "dns_all"}
+    lab["clock"].now = NOW + timedelta(minutes=70)
+    assert tick(lab) == 1
+    doc = json.loads(lab["rx"].got[1][1])
+    assert doc["kind"] == "resumed"
+    assert doc["detail"] == (
+        "Its files are read by source dns_all now, so nothing is expected from it"
+    )
+    assert actions(lab) == ["source.quiet_alert_change", "source.quiet", "source.resumed"]
+    with lab["app"].state.meta.connect() as con:
+        states = con.execute(
+            "SELECT resolved FROM alert_items WHERE kind = 'gap' AND subject = 'lin_auth'"
+        ).fetchall()
+    # Resolved as a source sending again is: noted on the item, which stays for a person.
+    assert [r[0] for r in states] == [
+        "Its files are read by source dns_all now, so nothing is expected from it"
+    ]
+    lab["clock"].now = NOW + timedelta(hours=5)
+    assert tick(lab) == 0  # still silent, still shared: nothing raised again
+    assert lab["app"].state.quiet.all()[0].state == "ok"

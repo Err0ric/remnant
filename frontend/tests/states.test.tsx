@@ -94,7 +94,6 @@ describe("Help text (ADR-0052 section 3.7, redesign build rows 15 and 16)", () =
         "schedules/ScheduleForm.tsx: Runs as you, with your access checked ev", // access
         "search/FacetSidebar.tsx: No countable fields in this result. Face", // empty state
         "search/HandoffPanel.tsx: Webhooks get each event with its raw lin", // where data goes
-        "search/LibraryPanel.tsx: No library query fits your sources yet. ", // empty state
         "search/SearchPage.tsx: Your edits are not saved or run. Start a", // confirmation
       ].sort(),
     );

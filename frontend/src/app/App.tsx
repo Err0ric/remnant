@@ -65,6 +65,11 @@ const AccountPage = lazy(
     import("@/features/account/AccountPage").then((m) => ({ default: m.AccountPage })),
   ),
 );
+const LibraryPage = lazy(
+  withChunkReload(() =>
+    import("@/features/search/LibraryPage").then((m) => ({ default: m.LibraryPage })),
+  ),
+);
 const SavedSearchesPage = lazy(
   withChunkReload(() =>
     import("@/features/saved/SavedSearchesPage").then((m) => ({ default: m.SavedSearchesPage })),
@@ -177,7 +182,8 @@ export function newQueryClient(): QueryClient {
     defaultOptions: {
       queries: {
         staleTime: 30_000,
-        retry: (count, error) => count < 1 && !(error instanceof ApiError),
+        retry: (count, error) =>
+          count < 1 && (!(error instanceof ApiError) || error.code === "network_error"),
       },
     },
   });
@@ -308,6 +314,10 @@ export function App({ initialTheme, queryClient }: AppProps) {
                           />
                         ) : page === "saved" ? (
                           <SavedSearchesPage key={savedKey} me={user} />
+                        ) : page === "library" ? (
+                          <SqlOnly fallback={<SqlOffNotice />}>
+                            <LibraryPage canSave={!user || user.role !== "auditor"} />
+                          </SqlOnly>
                         ) : page === "me" && user ? (
                           <AccountPage me={user} />
                         ) : page === "providers" && (!user || user.role === "admin") ? (

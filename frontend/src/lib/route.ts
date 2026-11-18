@@ -14,6 +14,7 @@ export type PageId =
   | "account"
   | "me"
   | "saved"
+  | "library"
   | "rules"
   | "schedules"
   | "dashboard"
@@ -47,6 +48,8 @@ export const PATHS: Readonly<Record<PageId, string>> = {
   providers: "/providers",
   me: "/me",
   saved: "/investigate/saved",
+  // Logs > Library (owner, 2026-11-17): the query library, which was a panel on Logs.
+  library: "/investigate/library",
   rules: "/alerts/rules",
   schedules: "/alerts/schedules",
   dashboard: "/dashboard",
@@ -180,7 +183,7 @@ function oldAddress(path: string, hash: string): { to: OldAddress; rest: string 
 }
 
 /** Health's Status filter (D255): All, Problems, Paused, Healthy; anything else is All. */
-export const HEALTH_STATUS = ["all", "problems", "paused", "healthy"] as const;
+export const HEALTH_STATUS = ["all", "problems", "paused", "healthy", "shared"] as const;
 export type HealthStatus = (typeof HEALTH_STATUS)[number];
 export function healthStatus(frag: URLSearchParams): HealthStatus {
   const v = frag.get("status") ?? "";

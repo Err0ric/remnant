@@ -1,7 +1,7 @@
 schema_version: 1
 id: paloalto
 name: Palo Alto firewalls
-version: 1.0.0
+version: 1.2.0
 description: Traffic, threats, GlobalProtect VPN, admin sign-ins, and maintenance on Palo Alto firewalls.
 queries:
 - id: firewall_maintenance
@@ -169,30 +169,68 @@ queries:
   - 'Who connected to the VPN?'
 - id: who_had_ip
   name: Who had this address
-  description: 'Every Palo Alto DHCP lease and GlobalProtect tunnel assignment for one address, newest
-    first, from 7 days before the range to its end: the device name and MAC from DHCP, the person and
-    laptop from GlobalProtect. Read across both to see who held it at a moment.'
+  description: 'Palo Alto DHCP leases and GlobalProtect tunnels for one address that have a start or end
+    line in the range, newest first: the device name, MAC, and interface from DHCP, the person and
+    laptop from GlobalProtect. One row per lease or tunnel, from its first line in the range to its
+    last, or to the next holder''s start if that comes first. A lease that started before the range
+    shows from its "lease ended" line; one with neither line in the range is not found. Read across
+    both to see who held it at a moment.'
   tags:
   - dhcp
   - vpn
   - identity
   sql: |-
-    SELECT time, 'DHCP lease' AS kind,
-           nullif(regexp_extract(message, 'hostname ([^,\s]+)', 1), '[Unavailable]') AS device,
-           regexp_extract(message, 'mac ([0-9A-Fa-f:]{17})', 1) AS mac,
-           CAST(NULL AS VARCHAR) AS person
-    FROM events
-    WHERE template_id = 'paloalto_system'
-      AND json_extract_string(unmapped, '$.subtype') = 'dhcp'
-      AND regexp_extract(message, 'lease started ip ([0-9.]+)', 1) = {{ip}}
-      AND time BETWEEN {{start}} - INTERVAL 7 DAY AND {{end}}
-    UNION ALL
-    SELECT time, 'VPN tunnel', src_endpoint_hostname, NULL, actor_user_name
-    FROM events
-    WHERE template_id = 'paloalto_globalprotect'
-      AND json_extract_string(unmapped, '$.private_ip') = {{ip}}
-      AND time BETWEEN {{start}} - INTERVAL 7 DAY AND {{end}}
-    ORDER BY time DESC
+    WITH seen AS (
+      SELECT time, 'DHCP lease' AS kind,
+             nullif(nullif(regexp_extract(message, 'hostname ([^,\s]+)', 1), ''),
+                    '[Unavailable]') AS device,
+             nullif(regexp_extract(message, 'mac ([0-9A-Fa-f:]{17})', 1), '') AS mac,
+             coalesce(nullif(regexp_extract(message, 'interface "([^"]+)"', 1), ''),
+                      nullif(regexp_extract(message, 'interface ([^",\s]+)', 1), '')) AS interface,
+             CAST(NULL AS VARCHAR) AS person,
+             message LIKE '%lease ended%' AS ended
+      FROM events
+      WHERE template_id = 'paloalto_system'
+        AND json_extract_string(unmapped, '$.subtype') = 'dhcp'
+        AND regexp_extract(message, 'lease (?:started|ended) ip ([0-9a-fA-F.:]+)', 1) = {{ip}}
+      UNION ALL
+      SELECT time, 'VPN tunnel', src_endpoint_hostname, NULL, NULL, actor_user_name,
+             coalesce(activity_id = 2, false)
+      FROM events
+      WHERE template_id = 'paloalto_globalprotect'
+        AND json_extract_string(unmapped, '$.private_ip') = {{ip}}
+    ),
+    keyed AS (
+      SELECT *, coalesce(mac, person, device) AS holder FROM seen
+    ),
+    marked AS (
+      -- A row opens on the holder's first line, on its first line after its own end line,
+      -- and on a start line when the previous start was another holder's. Any other line
+      -- (a renewal, or an end line that arrives late) joins the holder's open row.
+      SELECT *, coalesce(lag(ended) OVER mine, true)
+                OR (NOT ended AND lag(holder) OVER starts IS DISTINCT FROM holder) AS opens
+      FROM keyed
+      WINDOW mine AS (PARTITION BY kind, holder ORDER BY time, ended),
+             starts AS (PARTITION BY kind, ended ORDER BY time)
+    ),
+    held AS (
+      SELECT *, max(CASE WHEN opens THEN time END) OVER (
+                  PARTITION BY kind, holder ORDER BY time, ended ROWS UNBOUNDED PRECEDING
+                ) AS opened
+      FROM marked
+    ),
+    leases AS (
+      SELECT kind, max(device) AS device, max(mac) AS mac, max(interface) AS interface,
+             max(person) AS person, min(time) AS first_seen, max(time) AS seen_last
+      FROM held
+      GROUP BY kind, holder, opened
+    )
+    -- A row ends at the next holder's start: a late end line does not carry it past that.
+    SELECT kind, device, mac, interface, person, first_seen,
+           least(seen_last, coalesce(lead(first_seen) OVER (PARTITION BY kind ORDER BY first_seen),
+                                     seen_last)) AS last_seen
+    FROM leases
+    ORDER BY first_seen DESC, kind
     LIMIT 50
   params:
   - name: ip
@@ -204,7 +242,13 @@ queries:
   - paloalto_system
   - paloalto_globalprotect
   why: 'Which device or person had an internal address at a time: DHCP leases and VPN tunnels.'
-  normal: One lease or tunnel per address at a time. Change the address in the query.
+  normal: 'One lease or tunnel per address at a time. No row means no lease started or ended in the
+    range: the address may be static, or a lease may span the whole range. Change the address in the
+    query.'
+  empty: No DHCP lease for this address in the range. It may be a static address.
+  expect:
+    rows: 1
+    first_row: {kind: DHCP lease, device: ws-0105, mac: '00:00:5e:00:53:05', interface: ae0.120}
   suggested_schedule: null
   flag: null
   ask:

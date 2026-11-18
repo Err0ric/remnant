@@ -16,17 +16,25 @@ for Ask and Explain on the demo data (`make demo`):
 
 The provider is added in Remnant under a name that says what it is (see capture.py), so
 a screenshot never passes this off as a real model. Stdlib only.
+
+`--sql-delay` and `--summary-delay` make it slow on purpose (seconds before the query
+answer and before the summary answer), so a test can see Ask's progress steps and its
+summary time limit (D270; scripts/ask_slow.py); with `--stall-on TEXT` only a question
+holding TEXT waits `--summary-delay`, and others get their summary after FAST_S. `--sql`
+answers with other SQL, for a lake other than the demo's.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import time
 from collections import Counter, defaultdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 MODEL = "scripted-demo"
+FAST_S = 1.5  # a summary that is not stalled (--stall-on): long enough to be seen running
 QUESTION = "Did any address that failed SSH passwords this week sign in to Microsoft 365?"
 SQL = """SELECT event_id, time, actor_user_name, src_endpoint_ip, status_id, message
 FROM events
@@ -121,10 +129,20 @@ def summarize(messages: list[dict[str, Any]]) -> dict[str, Any]:
         text = f"{len(failed)} failed Microsoft 365 sign-ins from {len(ips)} addresses that also"
         text += f" failed SSH passwords ({named}) tried {len(users)} accounts."
         claims.append({"text": text, "event_ids": [str(r["event_id"]) for r in failed]})
+    if not claims and rows and rows[0].get("event_id"):  # rows of another lake: one statement
+        first = rows[0]
+        text = f"The first of these {len(rows)} events came from {first.get('source_id')}."
+        claims.append({"text": text, "event_ids": [str(first["event_id"])]})
     return {"claims": claims}
 
 
 class Handler(BaseHTTPRequestHandler):
+    # Set from the command line in main(), or by a test that serves this handler itself.
+    sql = SQL
+    sql_delay = 0.0
+    summary_delay = 0.0
+    stall_on = ""
+
     def _send(self, body: dict[str, Any]) -> None:
         data = json.dumps(body).encode()
         self.send_response(200)
@@ -144,16 +162,23 @@ class Handler(BaseHTTPRequestHandler):
         ).lower()
         events = events_in(messages)
         if "sql query" in system:
-            answer = ASK
+            time.sleep(self.sql_delay)
+            answer = {**ASK, "sql": self.sql}
         elif "summarize the result of a query" in system:
+            text = json.dumps(messages)
+            stall = not self.stall_on or self.stall_on in text
+            time.sleep(self.summary_delay if stall else FAST_S)
             answer = summarize(messages)
         else:
             answer = explain(events)
-        self._send({
-            "id": "demo", "object": "chat.completion", "model": MODEL,
-            "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": json.dumps(answer)}}],
-            "usage": {"prompt_tokens": 0, "completion_tokens": 0},
-        })  # fmt: skip
+        try:
+            self._send({
+                "id": "demo", "object": "chat.completion", "model": MODEL,
+                "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": json.dumps(answer)}}],
+                "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+            })  # fmt: skip
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # the server gave up on a slow answer (its model time limit)
 
     def log_message(self, *args: Any) -> None:
         pass
@@ -162,7 +187,13 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--port", type=int, default=8091)
+    ap.add_argument("--sql-delay", type=float, default=0.0, help="seconds before the SQL")
+    ap.add_argument("--summary-delay", type=float, default=0.0, help="seconds before a summary")
+    ap.add_argument("--sql", default=SQL, help="the SQL to answer every question with")
+    ap.add_argument("--stall-on", default="", help="only a question with this text waits")
     args = ap.parse_args()
+    Handler.sql, Handler.stall_on = args.sql, args.stall_on
+    Handler.sql_delay, Handler.summary_delay = args.sql_delay, args.summary_delay
     ThreadingHTTPServer(("127.0.0.1", args.port), Handler).serve_forever()
 
 

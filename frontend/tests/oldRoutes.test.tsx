@@ -88,6 +88,7 @@ const CURRENT: [string, PageId][] = [
   ["/providers", "providers"],
   ["/me", "me"],
   ["/investigate/saved", "saved"],
+  ["/investigate/library", "library"],
   ["/alerts/rules", "rules"],
   ["/alerts/schedules", "schedules"],
   ["/dashboard", "dashboard"],
@@ -187,9 +188,9 @@ describe("Addresses of today", () => {
   });
 });
 
-async function renderAt(path: string, role: MockAuth["role"] = "admin") {
+async function renderAt(path: string, role: MockAuth["role"] = "admin", auditorSql = false) {
   at(path);
-  mockApi("Codename", { mode: "login", signedIn: true, role });
+  mockApi("Codename", { mode: "login", signedIn: true, role, auditorSql });
   vi.resetModules();
   const { loadBranding } = await import("@/lib/branding");
   await loadBranding();
@@ -254,6 +255,37 @@ describe("Pages a role cannot use keep today's rule (DESIGN.md 6.1)", () => {
     await renderAt("/investigate/ask", "auditor");
     await screen.findByRole("heading", { level: 1, name: "Logs" });
     await waitFor(() => expect(window.location.pathname).toBe("/investigate/logs"));
+  });
+
+  it("Logs > Library opens by its address; an Analyst gets every action", async () => {
+    await renderAt("/investigate/library", "analyst");
+    await screen.findByRole("region", { name: "Linux sign-ins and privilege" });
+    expect(
+      await screen.findByRole("button", { name: "Save SSH logins by user and source as my own" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Add SSH logins by user and source to the dashboard" }),
+    ).toBeInTheDocument();
+    expect(address()).toBe("/investigate/library");
+    // Not an admin: the Needs sources card says whom to ask, with no link to Sources.
+    const needs = screen.getByRole("region", { name: "Needs sources you don't have" });
+    expect(within(needs).getByText(/Ask an admin to add or share a source\./)).toBeVisible();
+    expect(within(needs).queryByRole("link", { name: "Add a source" })).toBeNull();
+  });
+
+  it("an Auditor with SQL may open queries from the Library but not save or add them", async () => {
+    await renderAt("/investigate/library", "auditor", true);
+    expect(
+      await screen.findByRole("button", { name: "Run SSH logins by user and source in Logs" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /as my own|to the dashboard/ })).toBeNull();
+  });
+
+  it("an Auditor without SQL has no Library tab, and its address says SQL is off", async () => {
+    await renderAt("/investigate/library", "auditor");
+    await screen.findByRole("heading", { level: 1, name: "Logs" });
+    expect(screen.queryByRole("link", { name: "Library" })).toBeNull();
+    expect(screen.queryByRole("heading", { level: 1, name: "Page not found" })).toBeNull();
   });
 
   it("an Analyst opening the audit log sees Logs, not Page not found", async () => {

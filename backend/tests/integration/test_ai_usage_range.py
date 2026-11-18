@@ -216,3 +216,32 @@ def test_the_inventory_is_the_old_answer(
     # A start inside a UTC hour reads the start day from the rollup's later hours.
     start = (now - timedelta(days=7)).replace(second=0, microsecond=0)
     assert bool(lab["rollup"].head(QueryScope(None, start, now))) is (minutes != 0)
+
+
+@pytest.mark.parametrize(("back", "zone"), STARTS)
+def test_the_people_ranking_reads_unreviewed_use_the_same_way(
+    lab: dict[str, Any], monkeypatch: pytest.MonkeyPatch, back: timedelta, zone: timezone
+) -> None:
+    """People & devices (owner, 2026-11-17): who used an unreviewed AI service is read from
+    the rollup's whole hours of the start's day too, with the answer the old read gives."""
+    usage: Usage = lab["usage"]
+    engine = lab["app"].state.engine
+    start = (NOW - back).astimezone(zone)
+    heads: list[Any] = []
+    run = engine.run
+
+    def spy(*a: Any, **k: Any) -> Any:
+        if k.get("name") == "ai_use.unreviewed_people":
+            heads.append(k.get("head"))
+        return run(*a, **k)
+
+    for scope in (QueryScope(None, start, None), QueryScope(["dns_a", "auth"], start, None)):
+        with monkeypatch.context() as m:
+            m.setattr(engine, "run", spy)
+            new = sorted(usage.unreviewed_use(scope), key=str)
+        with monkeypatch.context() as m:
+            m.setattr(AiRollup, "head", lambda self, scope: [])  # the old read
+            old = sorted(usage.unreviewed_use(scope), key=str)
+        assert new == old and any(who for who, _ in new)
+    # The head was really used, unless the start is on a UTC hour.
+    assert any(h is not None for h in heads) is (start.astimezone(UTC).minute != 0)

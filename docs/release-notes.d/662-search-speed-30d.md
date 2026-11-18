@@ -1,0 +1,7 @@
+### Logs: searching for a word or an address is about twice as fast, and field counts no longer give up on long ranges (2026-11-17)
+
+- A word, phrase, or address typed in Filters is found with a plain substring search instead of a case-insensitive pattern match. It finds exactly the same lines, in the same order. On a 30-day lake at the work install's rate (about 10.7 million events), a search for one address went from 5.4 s to 2.5 s for the first page and from 5.1 s to 2.3 s for the field counts; at 7 days from 1.7 s to 0.8 s. A word with a `*` in it is matched as before.
+- When the field counts of a Filters search cannot finish for the whole range in 7 seconds, the Fields panel counts the newest days that hold matches instead (about 2 million events at a time, passing over days without matches) and names the numbers: "Counts from the newest 4 days only (159 of 1,133 items): the whole range took too long to count." Before, it showed only "Counting fields took too long for this range."
+- Show SQL and Edit as SQL show the new form of the match, `contains(lower(raw), lower('text'))`, or `contains(raw, '192.0.2.15')` for text with no letter.
+- What you will notice: Logs searches over long ranges come back sooner, and the Fields panel shows counts (sometimes from the newest days only, with a note) where it used to say counting took too long.
+- What changes for existing installs: nothing to do.

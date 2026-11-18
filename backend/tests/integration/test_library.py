@@ -124,6 +124,18 @@ def test_library_api_offers_what_your_sources_have_and_copies(
     ssh = next(q for p in got["packs"] for q in p["queries"] if q["id"] == "ssh_logins")
     assert ssh["why"] and ssh["normal"] and "{{start}}" in ssh["sql"] and ssh["my_copy"] is None
     assert "Who logged in over SSH?" in ssh["ask"]  # the pack's example questions (D182)
+    assert ssh["sources"] == ["Linux sshd authentication"]  # the template's plain name
+    # The rest are listed by pack under `needs`, with the sources each needs; the count agrees.
+    needed = {q["id"]: q for p in got["needs"] for q in p["queries"]}
+    assert len(needed) == got["hidden"] and not ids & set(needed)
+    spray = needed["m365_failed_signins_by_user"]
+    assert spray["sources"] and all("_" not in s for s in spray["sources"]), spray["sources"]
+    assert spray["normal"] and spray["description"]
+    # A query's own words for no rows (D274); none for the rest.
+    assert needed["who_had_ip"]["empty"] == (
+        "No DHCP lease for this address in the range. It may be a static address."
+    )
+    assert ssh["empty"] is None
 
     assert aud.post("/api/library/linux_auth/ssh_logins/copy").status_code == 403
     first = ana.post("/api/library/linux_auth/ssh_logins/copy")
@@ -180,9 +192,23 @@ def test_add_a_pack_makes_searches_schedules_and_panels(tmp_path: Path) -> None:
     )  # fmt: skip
     sections = {p["schedule_id"]: p["section"] for p in board["panels"]}
     assert sections[added[0]["schedule_id"]] == "Linux / SSH"
-    # A second add reuses the user's copy instead of making another saved search.
-    again = ana.post("/api/library/linux_auth/dashboard", json={"query_ids": ["ssh_logins"]})
-    assert again.json()["added"][0]["search_id"] == added[0]["search_id"]
+    assert added[0]["existing"] is False
+    # A second add of a query already on that dashboard makes nothing: no saved search,
+    # no schedule, no panel; it returns the panel's schedule.
+    n_scheds, n_panels = len(scheds), len(board["panels"])
+    again = ana.post(
+        "/api/library/linux_auth/dashboard",
+        json={"query_ids": ["ssh_logins"], "dashboard_id": res.json()["dashboard_id"]},
+    )
+    one = again.json()["added"][0]
+    assert one["search_id"] == added[0]["search_id"]
+    assert one["schedule_id"] == added[0]["schedule_id"] and one["existing"] is True
+    assert len(ana.get("/api/schedules").json()) == n_scheds
+    board = next(
+        d for d in ana.get("/api/dashboards").json()
+        if d["dashboard_id"] == res.json()["dashboard_id"]
+    )  # fmt: skip
+    assert len(board["panels"]) == n_panels
     bad = ana.post("/api/library/linux_auth/dashboard", json={"query_ids": ["nope"]})
     assert bad.status_code == 400
     assert (

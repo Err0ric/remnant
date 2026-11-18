@@ -461,6 +461,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       updated_at: "2026-10-11T07:00:00+00:00",
     },
   ];
+  let askTimeLimit: number | null = null;
   const providers: Record<string, unknown>[] = [
     {
       provider_id: "p1",
@@ -477,7 +478,7 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
   ];
   const drafts: Record<string, Record<string, unknown>> = {};
   const DRAFT_YAML = "schema_version: 1\nid: ID\nname: Widget\nversion: 0.1.0\n";
-  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+  const answer = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     const user = {
       user_id: state.userId ?? "u1",
@@ -1643,11 +1644,12 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         id,
         name,
         group,
-        description: "",
+        description: `What ${name} lists`,
         why: `Why ${name}`,
         normal: `Normal for ${name}`,
         tags: [],
         requires: ["linux_sshd"],
+        sources: ["Linux sshd authentication"],
         sql,
         pack_sql: sql,
         suggested_schedule: "daily",
@@ -1657,7 +1659,22 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         ...extra,
       });
       return json({
-        hidden: 12,
+        hidden: 1,
+        // Sources the viewer has no events from: listed with their plain names.
+        needs: [
+          {
+            id: "paloalto",
+            name: "Palo Alto firewalls",
+            version: "1.0.0",
+            description: "",
+            queries: [
+              q("pa_admin_signins", "Firewall admin sign-ins", "Palo Alto / Admin", "SELECT 3", {
+                requires: ["paloalto_system", "paloalto_globalprotect"],
+                sources: ["Palo Alto Networks system", "Palo Alto Networks GlobalProtect"],
+              }),
+            ],
+          },
+        ],
         packs: [
           {
             id: "linux_auth",
@@ -2323,6 +2340,44 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         ),
       });
     }
+    // The address page's sections (P4): DNS from a source this viewer reads, no DHCP source.
+    if (url.includes("/api/addresses/") && url.includes("/sections/")) {
+      const name = (url.split("/sections/")[1] ?? "").split("?")[0] ?? "";
+      const base = {
+        section: name,
+        title: name,
+        library: `addresses/${name}@1.0.0`,
+        query: `Query ${name}`,
+        links: [] as (string | null)[],
+        read: [] as string[],
+        needs: [] as string[],
+        restricted: false,
+        columns: [] as string[],
+        rows: [] as unknown[][],
+        state: "ok",
+        count: 0,
+        count_words: "0 names",
+        found: [] as { source_id: string; kind: string }[],
+      };
+      if (name === "dhcp")
+        return json({ ...base, state: "no_source", needs: ["Palo Alto system", "GlobalProtect"] });
+      if (name === "dns")
+        return json({
+          ...base,
+          read: ["dns"],
+          count: 2,
+          count_words: "2 names",
+          columns: ["name", "queries", "first_seen", "last_seen", "names"],
+          rows: [
+            ["chatgpt.com", 3, "2026-10-12T09:00:00+00:00", "2026-10-12T11:00:00+00:00", 2],
+            ["www.example.com", 1, "2026-10-12T10:00:00+00:00", "2026-10-12T10:00:00+00:00", 2],
+          ],
+          links: ["SELECT time FROM events WHERE dns_one", "SELECT time FROM events WHERE dns_two"],
+          found: [{ source_id: "dns", kind: "DNS" }],
+        });
+      if (name === "ai") return json({ ...base, read: ["dns"], count_words: "0 AI services" });
+      return json({ detail: "This section took too long", code: "query_timeout" }, 400);
+    }
     if (url.includes("/api/inventory/coverage")) {
       const value = new URL(url, "http://x").searchParams.get("value") ?? "";
       return json({
@@ -2380,7 +2435,8 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         value,
         events: 2619,
         sign_ins: 2619,
-        succeeded: 0,
+        // An address that also signed in once (P4 review item 3: the KPI marks it).
+        succeeded: value === "198.51.100.23" ? 3 : 0,
         failed: 2619,
         users: 14,
         hosts: 1,
@@ -3255,6 +3311,18 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         ? json({ ...r, yaml: "title: <b>not markup</b>\n" })
         : json({ detail: "No such rule" }, 404);
     }
+    if (url.endsWith("/api/settings/ask-time-limit")) {
+      if (method === "PUT") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { seconds: number | null };
+        askTimeLimit = body.seconds;
+      }
+      return json({
+        seconds: askTimeLimit ?? 90,
+        source: askTimeLimit === null ? "config" : "settings",
+        min_seconds: 5,
+        max_seconds: 3600,
+      });
+    }
     if (url.endsWith("/api/providers") && method === "GET") return json(providers);
     if (url.endsWith("/api/providers") && method === "POST") {
       const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
@@ -3338,6 +3406,15 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
     if (/\/api\/ask\/a\d+\/answer$/.test(url) && method === "POST") {
       // Slice 1c: "summarize" questions get statements; "uncited" ones get none.
       const q = askQuestions[url.split("/api/ask/")[1]!.split("/")[0]!] ?? "";
+      if (q.includes("too slow"))
+        return json({
+          headline: "2 rows. First row: user dana.",
+          claims: [],
+          removed: 0,
+          note: "The model took too long to summarize. Results are above.",
+          call_id: null,
+          timed_out: true,
+        });
       return json(
         q.includes("uncited")
           ? {
@@ -3492,6 +3569,58 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
         );
       const n = body.history.length + 1;
       const b = body as { route?: string; question: string };
+      // A question that is only an address (D276): its page, no query, no model.
+      if (b.question === "10.20.30.40")
+        return json({
+          ask_id: null,
+          auto_run: false,
+          sql: "",
+          explanation: "",
+          assumptions: [],
+          check: "none",
+          check_detail: null,
+          attempts: 0,
+          call_ids: [],
+          provider: {
+            provider_id: "p1",
+            name: "Local Ollama",
+            model: "llama3.1:8b",
+            locality: "local",
+          },
+          route: {
+            kind: "data",
+            by: "direct",
+            library: null,
+            filters: [],
+            params: {},
+            time: null,
+            reason: null,
+          },
+          lookup: [
+            {
+              kind: "ip",
+              value: "10.20.30.40",
+              window: "the last 7 days",
+              range: "7d",
+              sections: [
+                {
+                  section: "dhcp",
+                  title: "DHCP and VPN history",
+                  state: "no_source",
+                  count_words: "",
+                  read: [],
+                },
+                {
+                  section: "dns",
+                  title: "Names looked up",
+                  state: "ok",
+                  count_words: "14 names",
+                  read: ["dns"],
+                },
+              ],
+            },
+          ],
+        });
       if (b.question.startsWith("how should I") && b.route !== "data")
         return json({
           ask_id: null,
@@ -3944,7 +4073,104 @@ export function mockApi(productName = "TestProduct", auth: MockAuth = { mode: "o
       return json(result(RESULTS));
     }
     return json({ status: "ok" });
-  });
+  };
+  const jobs = askJobs(answer);
+  return vi
+    .spyOn(globalThis, "fetch")
+    .mockImplementation(async (input, init) => (await jobs(input, init)) ?? answer(input, init));
+}
+
+type Answer = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+interface MockStep {
+  name: "sql" | "run" | "summary";
+  state: string;
+  ms: number | null;
+  error?: { code: string; message: string } | null;
+}
+interface MockJob {
+  job_id: string;
+  state: "running" | "done" | "failed";
+  steps: MockStep[];
+  ask?: unknown;
+  result?: unknown;
+  summary?: unknown;
+  error?: { code: string; message: string } | null;
+}
+
+/** Ask jobs (D269) over the mock's synchronous Ask answers, as the server runs them: the
+ * submit answers 202 with the first step running, and the first poll has the whole job. A
+ * question with "step by step" in it shows one more step per poll instead, and one with
+ * "never finishes" stays on its first step. */
+function askJobs(answer: Answer) {
+  const jobs = new Map<string, MockJob[]>();
+  let n = 0;
+  const post = async (path: string, body: unknown) => {
+    const r = await answer(path, { method: "POST", body: JSON.stringify(body) });
+    return { ok: r.ok, body: (await r.json()) as Record<string, unknown> };
+  };
+  return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response | null> => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    const method = (init?.method ?? "GET").toUpperCase();
+    const poll = /\/api\/ask\/jobs\/([^/]+)$/.exec(url);
+    if (poll && method === "GET") {
+      const left = jobs.get(poll[1]!);
+      if (!left)
+        return json({ detail: "That question has expired. Ask again.", code: "not_found" }, 404);
+      return json(left.length > 1 ? left.shift() : left[0]);
+    }
+    const ask = url.endsWith("/api/ask/jobs") && method === "POST";
+    const runOf = /\/api\/ask\/([^/]+)\/jobs$/.exec(url);
+    if (!ask && !(runOf && method === "POST")) return null;
+    const job: MockJob = { job_id: `j${++n}`, state: "running", steps: [] };
+    const shots: MockJob[] = [];
+    const step = (name: MockStep["name"], ok: boolean, body: Record<string, unknown>) => {
+      // The query runs in 40 ms, as on a small lake; the model steps take 1.2 s.
+      if (ok) job.steps = [...job.steps, { name, state: "done", ms: name === "run" ? 40 : 1200 }];
+      else {
+        const error = { code: String(body.code ?? "error"), message: String(body.detail) };
+        job.steps = [...job.steps, { name, state: "failed", ms: 900, error }];
+        Object.assign(job, { state: "failed", error });
+      }
+      shots.push({ ...job, steps: [...job.steps] });
+    };
+    let askId = runOf?.[1];
+    const sent = ask ? (JSON.parse(String(init?.body)) as { question: string }) : null;
+    if (sent?.question.includes("never finishes")) {
+      // The model is still writing the query on every read.
+      const still = { ...job, steps: [{ name: "sql" as const, state: "running", ms: null }] };
+      jobs.set(job.job_id, [still]);
+      return json(still, 202);
+    }
+    if (sent) {
+      const r = await post("/api/ask", sent);
+      if (r.ok) job.ask = r.body;
+      step("sql", r.ok, r.body);
+      askId = r.ok && r.body.auto_run ? ((r.body.ask_id as string | null) ?? undefined) : undefined;
+      if (r.ok && !askId) job.state = "done";
+    }
+    if (job.state === "running" && askId) {
+      const r = await post(`/api/ask/${askId}/run`, {});
+      if (r.ok) job.result = r.body;
+      step("run", r.ok, r.body);
+      if (r.ok && r.body.summarize) {
+        const a = await post(`/api/ask/${askId}/answer`, {});
+        job.summary = a.body;
+        step("summary", a.ok, a.body);
+      }
+      if (job.state === "running") job.state = "done";
+    }
+    const last = shots.at(-1);
+    if (last) Object.assign(last, { state: job.state });
+    // Between steps: the finished ones, and the next one running.
+    const between = shots.slice(0, -1).map((s, i) => ({
+      ...s,
+      steps: [...s.steps, { name: shots[i + 1]!.steps.at(-1)!.name, state: "running", ms: null }],
+    }));
+    const stepwise = sent?.question.includes("step by step");
+    jobs.set(job.job_id, stepwise ? [...between, last!] : [last!]);
+    const first = { name: ask ? "sql" : "run", state: "running", ms: null };
+    return json({ job_id: job.job_id, state: "running", steps: [first] }, 202);
+  };
 }
 
 /** The server's one "to review" rule (D258), for the mock's Inventory and its count. */

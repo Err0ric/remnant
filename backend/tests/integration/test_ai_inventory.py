@@ -127,6 +127,47 @@ def test_the_rail_count_is_numbers_only_on_the_callers_sources_and_unaudited(
     assert admin.get("/api/ai/inventory/count").json()["to_review"] == mine - 1
 
 
+def test_the_rail_count_reads_no_agents_or_apps(
+    tmp_path: Path, pin_now: Callable[[datetime], None], monkeypatch: Any
+) -> None:
+    """Speed (owner, 2026-11-17): only services and MCP servers have a review status, so
+    the rail's numbers are read without the agents and Microsoft 365 apps, and are the
+    Inventory's own, for each caller."""
+    import app.ai.inventory as inv
+
+    pin_now(datetime(2026, 11, 1, 12, 0, tzinfo=UTC))
+    lab = make_lab(tmp_path)
+    engine = lab["app"].state.engine
+    _write(engine, [])
+    LakeWriter(engine._lake).write(
+        [
+            _hook(
+                "claude_hooks.pre_tool_use", "s-9", "2026-10-29T11:00:00+00:00",
+                tool_name="mcp__github__create_issue", mcp_server_name="github",
+            )
+        ]
+    )  # fmt: skip
+    want = {}
+    for who in ("admin", "ana"):
+        page = lab[who].get("/api/ai/inventory?days=30").json()
+        want[who] = {"to_review": page["to_review"], "not_approved": page["not_approved"]}
+    assert want["admin"]["to_review"] >= 1
+
+    def unread(*a: Any, **k: Any) -> Any:
+        raise AssertionError("read for the rail's numbers")
+
+    run = engine.run
+    monkeypatch.setattr(inv, "agents", unread)
+    monkeypatch.setattr(
+        engine,
+        "run",
+        lambda *a, **k: unread() if k.get("name") == "inventory.apps" else run(*a, **k),
+    )
+    lab["app"].state.page_cache.clear()
+    for who in ("admin", "ana"):
+        assert lab[who].get("/api/ai/inventory/count").json() == want[who], who
+
+
 def test_one_to_review_number_for_every_place_and_every_caller(
     tmp_path: Path, pin_now: Callable[[datetime], None]
 ) -> None:

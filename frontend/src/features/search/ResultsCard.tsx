@@ -31,6 +31,10 @@ interface ResultsCardProps {
   runKey: string;
   /** Admins and analysts may send chosen events to a model (auditors have no AI). */
   canExplain?: boolean;
+  /** One muted line in place of the rows before the first run ("Press Run to see the rows."). */
+  idle?: string;
+  /** A library query's own words for no rows (D274), in place of the generic advice. */
+  emptyDetail?: string;
 }
 
 /** Download the CSV the server produced (and audited) for the query that was run. */
@@ -46,7 +50,14 @@ export async function downloadCsv(body: QueryRequest) {
 }
 
 /** Results with the parsed/raw toggle, shared by Search and Ask. */
-export function ResultsCard({ result, pending, runKey, canExplain = false }: ResultsCardProps) {
+export function ResultsCard({
+  result,
+  pending,
+  runKey,
+  canExplain = false,
+  idle,
+  emptyDetail,
+}: ResultsCardProps) {
   // Selection for Explain is per run: a new query starts it again.
   const [selection, setSelection] = useState<{ key: string; ids: Set<string> }>({
     key: runKey,
@@ -220,7 +231,10 @@ export function ResultsCard({ result, pending, runKey, canExplain = false }: Res
           geo={showGeo ? result.geo : undefined}
           selected={explainable ? selected : undefined}
           onToggleSelect={explainable ? toggleSelect : undefined}
+          emptyDetail={emptyDetail}
         />
+      ) : idle && !pending ? (
+        <p className="px-3.5 py-3 text-sm text-text-muted">{idle}</p>
       ) : null}
     </section>
   );

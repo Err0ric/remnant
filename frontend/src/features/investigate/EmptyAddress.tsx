@@ -64,19 +64,23 @@ interface CoverageLinesProps {
   data: AddressCoverage;
   /** "the last 24 hours" */
   rangeWords: string;
+  /** Leave out the "No events for ..." line where the page has already said it. */
+  noHeadline?: boolean;
 }
 
 /** "No events for 10.20.30.40 in the last 24 hours.", then one line per category. */
-export function CoverageLines({ data, rangeWords }: CoverageLinesProps) {
+export function CoverageLines({ data, rangeWords, noHeadline }: CoverageLinesProps) {
   if (data.events > 0) return null;
   return (
     <section
       aria-label="Why there are no events"
       className="flex flex-col gap-1.5 rounded-card border border-border bg-surface p-3 text-sm"
     >
-      <p className="text-text">
-        No events for <span className="font-mono">{data.value}</span> in {rangeWords}.
-      </p>
+      {noHeadline ? null : (
+        <p className="text-text">
+          No events for <span className="font-mono">{data.value}</span> in {rangeWords}.
+        </p>
+      )}
       <ul className="flex flex-col gap-1 text-text-secondary">
         {data.categories.map((c) => {
           const words = CATEGORY[c.category] ?? OTHER;
@@ -134,16 +138,19 @@ interface EmptyAddressProps {
   start: string | undefined;
   end?: string;
   rangeWords: string;
+  noHeadline?: boolean;
 }
 
 /** Asks the server what was searched for an address with no events, and shows it. */
-export function EmptyAddress({ value, start, end, rangeWords }: EmptyAddressProps) {
+export function EmptyAddress({ value, start, end, rangeWords, noHeadline }: EmptyAddressProps) {
   const q = useQuery({
     queryKey: ["address-coverage", value, start, end],
     queryFn: () => api.addressCoverage(value, start, end),
     staleTime: 60_000,
   });
-  return q.data ? <CoverageLines data={q.data} rangeWords={rangeWords} /> : null;
+  return q.data ? (
+    <CoverageLines data={q.data} rangeWords={rangeWords} noHeadline={noHeadline} />
+  ) : null;
 }
 
 const IPV4 = /(?<![\d.])(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}(?![\d.])/;

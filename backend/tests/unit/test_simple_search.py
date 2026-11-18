@@ -15,8 +15,13 @@ def where(text: str) -> str:
 @pytest.mark.parametrize(
     ("text", "fragment", "params"),
     [
-        ("sshd", "raw ILIKE $p0 ESCAPE '\\' OR message ILIKE $p0", {"p0": "%sshd%"}),
-        ('"failed password"', "raw ILIKE $p0", {"p0": "%failed password%"}),
+        (
+            "sshd",
+            "contains(lower(raw), lower($p0)) OR contains(lower(message), lower($p0))",
+            {"p0": "sshd"},
+        ),
+        ('"failed password"', "contains(lower(raw), lower($p0))", {"p0": "failed password"}),
+        ("ssh*d", "raw ILIKE $p0 ESCAPE '\\' OR message ILIKE $p0", {"p0": "%ssh%d%"}),
         ("user:root", 'lower("actor_user_name") = lower($p0)', {"p0": "root"}),
         ('user:"jane doe"', 'lower("actor_user_name") = lower($p0)', {"p0": "jane doe"}),
         ("src_ip:203.0.113.*", '"src_endpoint_ip" ILIKE $p0', {"p0": "203.0.113.%"}),
@@ -25,10 +30,11 @@ def where(text: str) -> str:
         ("src_ip:2001:db8::1", 'lower("src_endpoint_ip") = lower($p0)', {"p0": "2001:db8::1"}),
         ("user:*", '"actor_user_name" IS NOT NULL', {}),
         ("raw_bytes_invalid:true", '"raw_bytes_invalid" = $p0', {"p0": True}),
-        ("100%", "raw ILIKE $p0", {"p0": "%100\\%%"}),
-        ("a_b", "raw ILIKE $p0", {"p0": "%a\\_b%"}),
-        ("a\\*b", "raw ILIKE $p0", {"p0": "%a*b%"}),
-        ("12:30:01", "raw ILIKE $p0", {"p0": "%12:30:01%"}),
+        ("100%", "contains(raw, $p0) OR contains(message, $p0)", {"p0": "100%"}),
+        ("a_b", "contains(lower(raw), lower($p0))", {"p0": "a_b"}),
+        ("a\\*b", "contains(lower(raw), lower($p0))", {"p0": "a*b"}),
+        ("12:30:01", "contains(raw, $p0)", {"p0": "12:30:01"}),
+        ("fa*l_%", "raw ILIKE $p0", {"p0": "%fa%l\\_\\%%"}),
         ("EventID:4625", "$.winlog.event_id", {"p0": "4625"}),
         ("TargetUserName:adm*", '$.winlog.event_data."TargetUserName"', {"p0": "adm%"}),
         ("Source_Port:>1000", "TRY_CAST(", {"p0": 1000.0}),
@@ -43,8 +49,9 @@ def test_terms(text: str, fragment: str, params: dict[str, object]) -> None:
 
 def test_boolean_structure_and_negation() -> None:
     assert where("a b") == (
-        "(coalesce(raw ILIKE $p0 ESCAPE '\\' OR message ILIKE $p0 ESCAPE '\\', false) AND "
-        "coalesce(raw ILIKE $p1 ESCAPE '\\' OR message ILIKE $p1 ESCAPE '\\', false))"
+        "(coalesce(contains(lower(raw), lower($p0)) OR contains(lower(message), lower($p0)),"
+        " false) AND coalesce(contains(lower(raw), lower($p1)) OR"
+        " contains(lower(message), lower($p1)), false))"
     )
     assert where("a OR b AND c").count(" OR ") == 4  # one inside each term, one between
     assert where("-user:root").startswith("NOT coalesce(")

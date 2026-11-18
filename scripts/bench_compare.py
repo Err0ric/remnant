@@ -82,15 +82,15 @@ OUTSIDE_SQL = (
     " AND NOT list_contains({{org_domains}}, split_part(lower(actor_user_name), '@', 2))"
     " GROUP BY 1 ORDER BY 2 DESC LIMIT 50"
 )
-LOGS_SQL = (
-    "SELECT time, severity_id, source_id, device_hostname, actor_process_name, message,"
-    " event_id\nFROM events\nWHERE coalesce(raw ILIKE $p0 ESCAPE '\\' OR message ILIKE $p0"
-    " ESCAPE '\\', false)\nORDER BY coalesce(time, time_observed) DESC"
-)
+LOGS_TEXT = "failed"
 COUNTS_SQL = (
     "SELECT source_id, count(*) AS events FROM events GROUP BY source_id ORDER BY source_id"
 )
 Call = tuple[str, str, Any]  # method, path, JSON body; {start} {end} {tz} filled per round
+ADDRESS = "10.20.1.10"  # alice's desk in the demo: DNS, SSH, and firewall rows
+# Rows whose requests the before side does not have yet: timed on the after side only,
+# shown as "new", never flagged. Remove a name once the before side has its requests.
+NEW_PAGES = frozenset({"Address page sections"})
 
 
 def pages() -> dict[str, list[Call]]:
@@ -118,19 +118,21 @@ def pages() -> dict[str, list[Call]]:
         ],
         "Logs": [
             ("POST", "/api/query", {"sql": COUNTS_SQL}),
-            ("POST", "/api/search/compile", {"text": "failed"}),
+            ("POST", "/api/search/compile", {"text": LOGS_TEXT}),
             (
                 "POST",
                 "/api/query",
-                # The page sends the text too (newest day first); an older server ignores it.
+                # The page sends the text too (newest day first); an older server ignores
+                # it. The SQL and values are what that side's own compile returned, as the
+                # browser sends them (`compiled`).
                 {
-                    "sql": LOGS_SQL,
-                    "params": {"p0": "%failed%"},
-                    "text": "failed",
+                    "sql": "{logs_sql}",
+                    "params": {"p0": "{logs_p0}"},
+                    "text": LOGS_TEXT,
                     "start": "{start}",
                 },
             ),
-            ("POST", "/api/search/facets", {"text": "failed", "start": "{start}"}),
+            ("POST", "/api/search/facets", {"text": LOGS_TEXT, "start": "{start}"}),
         ],
         "Logs, saved search with {{person}}": [
             ("POST", "/api/searches/bench_person/run", {"start": "{start}"})
@@ -181,6 +183,18 @@ def pages() -> dict[str, list[Call]]:
             ("GET", f"/api/ai/usage?{week}", None),
         ],
         "Alerts": [("GET", "/api/alerts?state=open", None)],
+        # An address's page at 7 days: what main's page asks for (the summary, the lanes,
+        # and the inventory line), then its four sections (P4), each its own request, as
+        # a row of their own that is new (NEW_PAGES).
+        "Address page": [
+            ("GET", f"/api/entities/summary?kind=ip&value={ADDRESS}&{week}", None),
+            ("GET", f"/api/entities/graph?mode=entity&kind=ip&value={ADDRESS}&{week}", None),
+            ("GET", f"/api/inventory/matches?value={ADDRESS}&{week}", None),
+        ],
+        "Address page sections": [
+            ("GET", f"/api/addresses/{ADDRESS}/sections/{s}?{week}", None)
+            for s in ("dhcp", "dns", "access", "ai")
+        ],
     }
 
 
@@ -676,6 +690,12 @@ def medians(t: dict[str, list[float]], kind: str = "") -> tuple[float, float]:
     return statistics.median(t["before" + kind]), statistics.median(t["after" + kind])
 
 
+def compiled(api: Api) -> dict[str, str]:
+    """The Logs search as this side compiles it: its SQL and value, filled into the call."""
+    out = api.call("POST", "/api/search/compile", {"text": LOGS_TEXT})
+    return {"logs_sql": out["sql"], "logs_p0": str(out["params"]["p0"])}
+
+
 def measure(
     sides: dict[str, Api], wanted: dict[str, list[Call]], rounds: int, first: int, times: Times
 ) -> list[str]:
@@ -683,6 +703,7 @@ def measure(
     warms up. Each round asks with a new time zone and start, so no cache answers."""
     failures: list[str] = []
     now = datetime.now(UTC)
+    own = {side: compiled(api) for side, api in sides.items()}
     for r in range(first, first + rounds + 1):
         values = {
             "start": (now - timedelta(days=7, seconds=r)).isoformat().replace("+00:00", "Z"),
@@ -691,12 +712,14 @@ def measure(
         order = ("before", "after") if r % 2 == 0 else ("after", "before")
         for page, calls in wanted.items():
             for side in order:
+                if side == "before" and page in NEW_PAGES:
+                    continue  # the before side has none of its requests
                 # Any successful change empties the page cache (`clear_on_change`); a
                 # query does. So this load is computed, not answered from an earlier
                 # round or page.
                 sides[side].call("POST", "/api/query", {"sql": "SELECT 1"})
                 cpu = sides[side].cpu_ms()
-                ms, errors = time_page(sides[side], calls, values)
+                ms, errors = time_page(sides[side], calls, values | own[side])
                 failures += [f"{side} {page}: {e}" for e in errors]
                 if r > first:
                     times[page][side].append(ms)
@@ -710,7 +733,7 @@ def judge(t: dict[str, list[float]]) -> str:
     slower path or a lock wait slows every round), or the server spent more than 10% more
     CPU on it. Load from other work on a shared machine only adds wall time, moving the
     median but rarely every round and not this server's CPU."""
-    if not flag(*medians(t)):
+    if not t["before"] or not flag(*medians(t)):  # a new row is never flagged
         return ""
     cb, ca = medians(t, "_cpu")
     if flag(min(t["before"]), min(t["after"])) or (cb > 0 and ca > cb * (1 + PCT / 100)):
@@ -803,6 +826,11 @@ def main() -> int:
         )
         print("|---|---|---|---|---|---|---|")
         for page, t in times.items():
+            if not t["before"]:  # a new row: timed on the after side only, never flagged
+                a, ca = statistics.median(t["after"]), statistics.median(t["after_cpu"])
+                rows.append({"page": page, "before_ms": None, "after_ms": round(a), "before_cpu_ms": None, "after_cpu_ms": round(ca), "flag": "new"})  # fmt: skip
+                print(f"| {page} | new | {a:.0f} | new | new | new to {ca:.0f} | new |")
+                continue
             b, a = medians(t)
             cb, ca = medians(t, "_cpu")
             f = judge(t)

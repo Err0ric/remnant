@@ -76,7 +76,7 @@ def test_cited_statements_stay_and_uncited_ones_are_removed(lab: dict[str, Any])
     purpose, prompt = db.execute(
         "SELECT purpose, prompt_ref FROM llm_calls WHERE call_id = ?", (got["call_id"],)
     ).fetchone()
-    assert purpose == "ask" and prompt.startswith("ask_answer.v1")
+    assert purpose == "ask" and prompt.startswith("ask_answer.v2")
 
 
 def test_when_nothing_cites_there_is_no_summary(lab: dict[str, Any]) -> None:  # noqa: F811

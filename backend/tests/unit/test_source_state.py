@@ -4,7 +4,14 @@ from typing import Any
 
 import pytest
 
-from app.search.source_state import SourceInput, assess, condition, idle, problem
+from app.search.source_state import (
+    SourceInput,
+    assess,
+    condition,
+    idle,
+    needing_attention,
+    problem,
+)
 
 
 def src(source_id: str, **kw: Any) -> SourceInput:
@@ -203,3 +210,18 @@ def test_one_state_for_each_case_whatever_the_reader_says(
     s = src("claude_hooks", **kw)
     c = condition(s)
     assert (c, problem(c, bool(s.quiet_since), bool(s.gaps) and not s.quiet_ok), idle(s, c)) == want
+
+
+def test_a_source_whose_files_another_source_reads_is_shared_not_a_problem() -> None:
+    """One reader per file (SPEC 3.5): a source that stores nothing by design is neither
+    healthy nor a problem, and is left out of "N of M" and every problem count."""
+    sources = [*six(), src("dns_second", last_event_at=None, total_24h=0, read_by="dns")]
+    conditions, summary = assess(sources)
+    assert conditions["dns_second"] == "shared"
+    assert summary.total == 6 and summary.healthy == 4 and summary.shared == 1
+    assert "dns_second" not in [q.source_id for q in summary.quiet]
+    assert problem("shared", True, True) is None
+    assert needing_attention(conditions.values()) == 2  # the two quiet ones, as without it
+    # An error still wins: a reader that cannot list its files is unhealthy.
+    assert condition(src("x", state="error", read_by="dns")) == "error"
+    assert condition(src("x", state="disabled", read_by="dns")) == "paused"

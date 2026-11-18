@@ -1,0 +1,7 @@
+### Ask AI: a slow model no longer ends in an error (2026-11-17)
+
+- Ask AI now runs in the background on the server: asking returns at once, and the server keeps the question's progress, the query, the rows, and the summary for the page to pick up (the page moves to this in the next update; until then it works as before).
+- Each model call Ask makes has a time limit, 90 seconds by default. When the model takes longer to write the query, Ask says "The model took too long to write a query."; when it takes longer to summarize, the rows and the query stay and Ask says "The model took too long to summarize. Results are above." The request to the model is stopped, not left running.
+- The summary is written from at most 10 rows plus how many values and how many different ones each column has, and the range of numbers and times, over the whole result, worked out by the server; no names or other text from the rows not shown are sent.
+- What you will notice: nothing visible yet; the Ask page moves to the background job, and with it the end of "Can't reach the server" on a slow model, in the next update.
+- What changes for existing installs: a new setting, `ask.model_timeout_s` (default 90; `APP__ASK__MODEL_TIMEOUT_S`), the longest one Ask model call may take; a reverse proxy's timeout no longer matters for Ask once the page uses the background job. Nothing to do. To go back, remove the setting (or the environment line) and roll back as in `docs/install/` (`update-systemd.sh --rollback`); jobs are held in memory only and are lost on any restart.

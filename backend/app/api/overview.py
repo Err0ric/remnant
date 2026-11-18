@@ -74,6 +74,8 @@ class SourceHealthOut(BaseModel):
     condition: Condition = "healthy"
     # The source's problem as every page draws it (`source_state.problem`), or None.
     problem: Problem | None = None
+    # Every file it lists is read by this other source: condition "shared" (SPEC 3.5).
+    read_by: str | None = None
 
 
 class WaitOut(BaseModel):
@@ -90,6 +92,7 @@ class SourceSummaryOut(BaseModel):
     gaps: int
     longest_wait: WaitOut | None
     idle: int = 0  # healthy sources silent inside their "Quiet is normal" days
+    shared: int = 0  # sources whose every file another source reads: not in the total
 
 
 class DetectionOut(BaseModel):
@@ -266,6 +269,7 @@ def _input(s: dict[str, Any], v: dict[str, Any] | None) -> SourceInput:
         reading_issue=bool(s.get("reading_issue")),
         records_skipped=int(s.get("records_skipped") or 0),
         files_waiting=int(s.get("files_waiting") or 0),
+        read_by=s.get("read_by"),
     )
 
 

@@ -46,6 +46,10 @@ describe("App shell", () => {
       "href",
       "/investigate/saved",
     );
+    expect(within(tabs).getByRole("link", { name: "Library" })).toHaveAttribute(
+      "href",
+      "/investigate/library",
+    );
     expect(within(tabs).queryByRole("link", { name: "Ask AI" })).toBeNull();
     expect(window.location.pathname).toBe("/investigate/logs");
   });
@@ -75,7 +79,7 @@ describe("App shell", () => {
       within(within(nav).getByRole("list", { name: "Logs tabs" }))
         .getAllByRole("link")
         .map((a) => a.textContent),
-    ).toEqual(["Search", "Saved searches"]);
+    ).toEqual(["Search", "Saved searches", "Library"]);
     expect(within(nav).queryByText("Microsoft 365")).toBeNull();
     expect(within(nav).getByRole("link", { name: "Logs" })).toHaveAttribute(
       "href",
@@ -349,17 +353,168 @@ describe("Results table controls", () => {
   });
 });
 
-describe("Query library (ADR-0033)", () => {
-  it("loads a query into the SQL tab with why and normal, saves a copy, and replaces one", async () => {
-    const spy = await renderApp();
-    await userEvent.click(await fromMore("Library"));
-    const lib = await screen.findByRole("region", { name: "Query library" });
-    expect(await within(lib).findByText("Linux / SSH")).toBeVisible();
-    expect(
-      within(lib).getByText("12 more queries need sources you do not have events from."),
-    ).toBeVisible();
+describe("Logs > Library (ADR-0033, owner 2026-11-17)", () => {
+  const openLibrary = async () => {
     await userEvent.click(
-      within(lib).getByRole("button", { name: "Save SSH logins by user and source as my own" }),
+      within(screen.getByRole("navigation", { name: "Logs tabs" })).getByRole("link", {
+        name: "Library",
+      }),
+    );
+    await screen.findByRole("region", { name: "Linux sign-ins and privilege" });
+  };
+
+  it("lists the packs with each query's description, Normal line, and sources", async () => {
+    await renderApp();
+    await openLibrary();
+    expect(window.location.pathname).toBe("/investigate/library");
+    expect(screen.getByRole("heading", { level: 1, name: "Logs" })).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("navigation", { name: "Logs tabs" })).getByRole("link", {
+        name: "Library",
+      }),
+    ).toHaveAttribute("aria-current", "page");
+    const linux = screen.getByRole("region", { name: "Linux sign-ins and privilege" });
+    expect(within(linux).getByText("SSH logins by user and source")).toBeVisible();
+    // The short plain line Logs shows above the editor; the long text behind Details.
+    expect(within(linux).getByText("Why SSH logins by user and source")).toBeVisible();
+    expect(within(linux).queryByText("What SSH logins by user and source lists")).toBeNull();
+    const details = within(linux).getByRole("button", {
+      name: "Details of SSH logins by user and source",
+    });
+    expect(details).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(details);
+    expect(details).toHaveAttribute("aria-expanded", "true");
+    expect(within(linux).getByText("What SSH logins by user and source lists")).toBeVisible();
+    expect(
+      within(linux).getByText("Normal: Normal for SSH logins by user and source"),
+    ).toBeVisible();
+    expect(within(linux).getAllByText("Sources: Linux sshd authentication")).toHaveLength(2);
+    // One count for the whole library, the queries of both groups.
+    expect(screen.getByText("4 queries", { selector: "[data-filter-count]" })).toBeVisible();
+    expect(screen.queryByText(/hidden|more queries need/i)).toBeNull();
+  });
+
+  it("lists the queries whose sources you lack, with the source names and Open disabled", async () => {
+    await renderApp();
+    await openLibrary();
+    const needs = screen.getByRole("region", { name: "Needs sources you don't have" });
+    expect(within(needs).getByText("Firewall admin sign-ins")).toBeVisible();
+    expect(
+      within(needs).getByText(
+        "Sources, any one of: Palo Alto Networks system, Palo Alto Networks GlobalProtect",
+      ),
+    ).toBeVisible();
+    const open = within(needs).getByRole("button", {
+      name: "Run Firewall admin sign-ins in Logs",
+    });
+    expect(open).toHaveAttribute("aria-disabled", "true");
+    expect(open).toHaveAccessibleDescription(
+      "Needs a Palo Alto Networks system or Palo Alto Networks GlobalProtect source",
+    );
+    expect(open).toHaveAttribute("title", expect.stringMatching(/^Needs a Palo Alto/));
+    // Only the name and the Sources line; one next step for the whole card.
+    expect(within(needs).queryByText(/^Normal:/)).toBeNull();
+    expect(within(needs).queryByText("Why Firewall admin sign-ins")).toBeNull();
+    expect(within(needs).getByRole("link", { name: "Add a source" })).toHaveAttribute(
+      "href",
+      "/sources",
+    );
+    await userEvent.click(open);
+    expect(window.location.pathname).toBe("/investigate/library");
+    expect(within(needs).queryByRole("button", { name: /as my own|to the dashboard/ })).toBeNull();
+  });
+
+  it("filters by text and pack in one row, kept in the address", async () => {
+    await renderApp();
+    await openLibrary();
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "Filter by name or description" }),
+      "sudo",
+    );
+    expect(screen.getByText("1 of 4 queries", { selector: "[data-filter-count]" })).toBeVisible();
+    expect(screen.queryByText("SSH logins by user and source")).toBeNull();
+    expect(window.location.hash).toBe("#q=sudo");
+    await userEvent.click(screen.getByRole("button", { name: "Reset" }));
+    expect(screen.getByText("4 queries", { selector: "[data-filter-count]" })).toBeVisible();
+  });
+
+  it("Run opens the query in the SQL editor, unsaved, and only Logs' Run runs it", async () => {
+    const spy = await renderApp();
+    await openLibrary();
+    const before = queryBodies(spy).length;
+    await userEvent.click(
+      screen.getByRole("button", { name: "Run SSH logins by user and source in Logs" }),
+    );
+    const note = await screen.findByRole("note", { name: "From the query library" });
+    expect(window.location.pathname).toBe("/investigate/logs");
+    expect(note).toHaveTextContent("Why SSH logins by user and source");
+    expect(note).toHaveTextContent("Normal: Normal for SSH logins by user and source");
+    expect(screen.getByRole("tab", { name: "SQL" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText(/come from the time range above/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "24 hours" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    // Loading is not running (ADR-0033 row 4): nothing ran on arrival.
+    expect(queryBodies(spy).length).toBe(before);
+    expect(screen.getByText("Press Run to see the rows.")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(queryBodies(spy).at(-1)?.sql).toContain("actor_user_name"));
+  });
+
+  it("says the query's own words for no rows until its SQL is edited (D274)", async () => {
+    const spy = await renderApp();
+    const words = "No DHCP lease for this address in the range. It may be a static address.";
+    const packSql =
+      "SELECT time FROM events WHERE message LIKE '%dhcp%' AND device_ip = {{ip}} AND time BETWEEN {{start}} AND {{end}}";
+    const loaded = packSql.replace("{{ip}}", "'10.20.1.5'");
+    const base = spy.getMockImplementation()!;
+    spy.mockImplementation(async (input, init) => {
+      const res = await base(input, init);
+      const url = String(input);
+      if (url.endsWith("/api/library")) {
+        const body = await res.json();
+        body.packs[0].queries.push({
+          ...body.packs[0].queries[0],
+          id: "who_had_ip",
+          name: "Who had this address",
+          sql: loaded,
+          pack_sql: packSql,
+          empty: words,
+        });
+        return new Response(JSON.stringify(body), {
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (!url.endsWith("/api/query") || !String(init?.body).includes("dhcp")) return res;
+      const body = await res.json();
+      return new Response(JSON.stringify({ ...body, rows: [], row_count: 0 }), {
+        headers: { "content-type": "application/json" },
+      });
+    });
+    await openLibrary();
+    await userEvent.click(screen.getByRole("button", { name: "Run Who had this address in Logs" }));
+    await screen.findByRole("note", { name: "From the query library" });
+    await userEvent.click(screen.getByRole("button", { name: "Run" }));
+    expect(await screen.findByText(words)).toBeVisible();
+    expect(screen.queryByText(/Try a wider time range/)).toBeNull();
+    // Another address is the same query: its words still hold.
+    await setSql(loaded.replace("10.20.1.5", "10.20.9.9"));
+    await userEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(queryBodies(spy).at(-1)?.sql).toContain("10.20.9.9"));
+    expect(await screen.findByText(words)).toBeVisible();
+    // Any other edit makes it another query: the generic advice.
+    await setSql(`${loaded} AND message LIKE '%dhcp%'`);
+    await userEvent.click(screen.getByRole("button", { name: "Run" }));
+    expect(await screen.findByText(/Try a wider time range/)).toBeVisible();
+    expect(screen.queryByText(words)).toBeNull();
+  });
+
+  it("saves a copy, adds one to the dashboard, and replaces an updated copy", async () => {
+    const spy = await renderApp();
+    await openLibrary();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Save SSH logins by user and source as my own" }),
     );
     expect(
       spy.mock.calls.some(
@@ -367,33 +522,62 @@ describe("Query library (ADR-0033)", () => {
           String(u).endsWith("/api/library/linux_auth/ssh_logins/copy") && i?.method === "POST",
       ),
     ).toBe(true);
-    await userEvent.click(within(lib).getByRole("button", { name: "Updated in this version" }));
-    expect(within(lib).getByLabelText("Changes to sudo refused")).toHaveTextContent("- SELECT 1");
-    await userEvent.click(within(lib).getByRole("button", { name: "Replace my copy" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Add SSH logins by user and source to the dashboard" }),
+    );
+    const added = spy.mock.calls.find(([u]) =>
+      String(u).endsWith("/api/library/linux_auth/dashboard"),
+    );
+    expect(JSON.parse(String(added?.[1]?.body))).toMatchObject({ query_ids: ["ssh_logins"] });
+    expect(
+      await screen.findByText(/Added SSH logins by user and source to your dashboard/),
+    ).toBeVisible();
+    // Once added, the row links to the dashboard instead of offering the button again.
+    expect(
+      screen.queryByRole("button", { name: "Add SSH logins by user and source to the dashboard" }),
+    ).toBeNull();
+    const linux = screen.getByRole("region", { name: "Linux sign-ins and privilege" });
+    expect(within(linux).getByRole("link", { name: "On your dashboard" })).toHaveAttribute(
+      "href",
+      "/dashboard",
+    );
+    expect(
+      within(linux).getByRole("button", { name: "Add sudo refused to the dashboard" }),
+    ).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Updated in this version" }));
+    expect(screen.getByLabelText("Changes to sudo refused")).toHaveTextContent("- SELECT 1");
+    await userEvent.click(screen.getByRole("button", { name: "Replace my copy" }));
     expect(
       spy.mock.calls.some(([u]) =>
         String(u).endsWith("/api/library/linux_auth/sudo_denied/replace"),
       ),
     ).toBe(true);
-    await userEvent.click(
-      within(lib).getByRole("button", { name: "SSH logins by user and source" }),
-    );
-    const note = await screen.findByRole("note", { name: "From the query library" });
-    expect(note).toHaveTextContent("Why SSH logins by user and source");
-    expect(note).toHaveTextContent("Normal: Normal for SSH logins by user and source");
-    expect(screen.queryByRole("region", { name: "Query library" })).toBeNull();
   });
 
   it("shows a query too long for Logs disabled, with the reason and no Save", async () => {
     await renderApp();
-    await userEvent.click(await fromMore("Library"));
-    const lib = await screen.findByRole("region", { name: "Query library" });
-    const big = await within(lib).findByRole("button", { name: "AI services in use" });
+    await openLibrary();
+    const big = screen.getByRole("button", { name: "Run AI services in use in Logs" });
     expect(big).toHaveAttribute("aria-disabled", "true");
     expect(big).toHaveAccessibleDescription(/longer than the 20,000 characters Logs takes/);
-    expect(
-      within(lib).queryByRole("button", { name: "Save AI services in use as my own" }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save AI services in use as my own" })).toBeNull();
+  });
+
+  it("opens from the Logs menu and from Ctrl+K", async () => {
+    await renderApp();
+    await userEvent.click(await fromMore("Library"));
+    expect(window.location.pathname).toBe("/investigate/library");
+    await screen.findByRole("region", { name: "Linux sign-ins and privilege" });
+    await userEvent.click(
+      within(screen.getByRole("navigation", { name: "Logs tabs" })).getByRole("link", {
+        name: "Search",
+      }),
+    );
+    await userEvent.keyboard("{Control>}k{/Control}");
+    const palette = await screen.findByRole("dialog", { name: "Command palette" });
+    await userEvent.type(within(palette).getByRole("combobox"), "query library");
+    await userEvent.click(await within(palette).findByRole("option", { name: /Logs › Library/ }));
+    expect(window.location.pathname).toBe("/investigate/library");
   });
 });
 

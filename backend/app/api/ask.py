@@ -5,19 +5,28 @@ the person who asked, through the guard on their own view, audited like any quer
 purpose `ask` (ADR-0042 slice 1a). With `ask.auto_run` on, the panel calls it at once.
 Scope comes from the caller's grants exactly as in /api/query. Auditors have no Ask
 unless an admin has turned on the setting that grants Auditors SQL (D220).
+
+`POST /api/ask/jobs` and `POST /api/ask/{ask_id}/jobs` do the same steps as a background
+job (D269): they answer at once with a job id, and `GET /api/ask/jobs/{job_id}` returns
+what is done so far, so no request waits on the model. The steps are the same code, with
+the same guard, view, and audit rows, as the three calls above.
 """
 
+import asyncio
 import threading
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timedelta
+from time import monotonic
 from typing import Annotated, Literal
 
+import structlog
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field, StringConstraints, model_validator
 from starlette.concurrency import run_in_threadpool
 
 from app.api.access import SqlUser, client_ip
+from app.api.addresses import readable
 from app.api.cancel import watch_disconnect
 from app.api.query import MAX_TYPED_SQL, HeldQuery, QueryResponse, _geo, _intel, _run_audited
 from app.auth.service import AuthService
@@ -26,6 +35,7 @@ from app.core import clock
 from app.core.config import AppConfig
 from app.core.errors import (
     AppError,
+    ModelTimeoutError,
     NotFoundError,
     ParamInvalidError,
     ProviderConfigError,
@@ -41,8 +51,10 @@ from app.llm.provider import Locality
 from app.llm.queue import QUEUES
 from app.llm.registry import ProviderRecord, ProviderStore
 from app.meta.db import MetaDB
+from app.search import ask_direct
 from app.search.ask_drill import DrillError, drill_sql
 from app.search.ask_flow import Routed, route_question
+from app.search.ask_jobs import AskJob, AskJobs
 from app.search.ask_route import Plan, rank
 from app.search.ask_runs import AskRuns, Drill, Ran
 from app.search.ask_summary import (
@@ -57,6 +69,7 @@ from app.search.library import Library, LibraryQuery, editor_sql
 from app.search.saved import SavedSearchStore
 
 router = APIRouter(tags=["ask"])
+log = structlog.get_logger(__name__)
 
 AskUser = SqlUser
 Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2_000)]
@@ -126,7 +139,8 @@ class RouteOut(BaseModel):
 
     kind: Literal["data", "knowhow"]
     # library: matched in code to a library query, with no model call (owner, 2026-11-08).
-    by: Literal["model", "forced", "follow_up", "library"]
+    # direct: only an address; its page, with no model call (D276).
+    by: Literal["model", "forced", "follow_up", "library", "direct"]
     library: LibraryRef | None = None
     filters: list[str] = Field(default_factory=list)  # "user = dana@example.com"
     params: dict[str, str | int | float | bool] = Field(default_factory=dict)
@@ -139,6 +153,25 @@ class AskProvider(BaseModel):
     name: str
     model: str
     locality: Locality
+
+
+class DirectSectionOut(BaseModel):
+    section: str
+    title: str
+    state: Literal["ok", "no_source", "failed"]
+    count_words: str  # "14 names"; empty unless ok
+    read: list[str]
+
+
+class DirectOut(BaseModel):
+    """A direct lookup (D276): the address the question is, to open its page, and the
+    page's sections in brief, read as the page reads them."""
+
+    kind: Literal["ip"]
+    value: str
+    window: str  # "the last 7 days": the page's own default, which the sections read
+    range: str  # the same window as the page's time choice ("7d"), for the link
+    sections: list[DirectSectionOut] = Field(default_factory=list)
 
 
 class AskResponse(BaseModel):
@@ -159,24 +192,47 @@ class AskResponse(BaseModel):
     # The time range the query reads, when the question named one.
     start: UtcDateTime | None = None
     end: UtcDateTime | None = None
+    # A direct lookup (route.by "direct"): no query, the entity's page instead.
+    lookup: list[DirectOut] = Field(default_factory=list)
 
 
 _running: set[str] = set()
 _running_lock = threading.Lock()
 
 
-@contextmanager
-def _one_at_a_time(user_id: str) -> Iterator[None]:
+def _claim(user_id: str) -> None:
     """One Ask per user at a time: each can run several model calls and previews."""
     with _running_lock:
         if user_id in _running:
             raise RateLimitedError("Your previous question is still running", retry_after_s=5)
         _running.add(user_id)
+
+
+def _release(user_id: str) -> None:
+    with _running_lock:
+        _running.discard(user_id)
+
+
+@contextmanager
+def _one_at_a_time(user_id: str) -> Iterator[None]:
+    _claim(user_id)
     try:
         yield
     finally:
-        with _running_lock:
-            _running.discard(user_id)
+        _release(user_id)
+
+
+@asynccontextmanager
+async def _held(request: Request, user_id: str, live: bool) -> AsyncIterator[None]:
+    """A request's model calls: cancelled if the browser leaves, one per user at a time.
+    A job (`live` False) holds the user's turn itself for all its steps, and has no
+    browser to watch."""
+    if not live:
+        yield
+        return
+    async with watch_disconnect(request):
+        with _one_at_a_time(user_id):
+            yield
 
 
 def _enabled(request: Request) -> list[AskProvider]:
@@ -214,21 +270,32 @@ async def provider_queue(provider_id: str, request: Request, _: AskUser) -> Queu
     return QueueOut(slots=st.limit, running=st.running, waiting=st.waiting)
 
 
+async def _chosen(request: Request, provider_id: str | None) -> AskProvider:
+    choices = await run_in_threadpool(_enabled, request)
+    if provider_id is None:
+        if not choices:
+            raise ProviderConfigError("No AI provider is enabled. An admin can add one.")
+        return choices[0]
+    match = [p for p in choices if p.provider_id == provider_id]
+    if not match:
+        raise ProviderConfigError("That AI provider is not available")
+    return match[0]
+
+
+SQL_TIMED_OUT = "The model took too long to write a query."
+SUMMARY_TIMED_OUT = "The model took too long to summarize. Results are above."
+
+
 @router.post("/ask")
 async def ask(body: AskRequest, request: Request, user: AskUser) -> AskResponse:
+    return await _ask(body, request, user, live=True)
+
+
+async def _ask(body: AskRequest, request: Request, user: User, live: bool) -> AskResponse:
     meta: MetaDB = request.app.state.meta
     auth: AuthService = request.app.state.auth
     agent: AskAgent = request.app.state.ask
-    choices = await run_in_threadpool(_enabled, request)
-    if body.provider_id is None:
-        if not choices:
-            raise ProviderConfigError("No AI provider is enabled. An admin can add one.")
-        chosen = choices[0]
-    else:
-        match = [p for p in choices if p.provider_id == body.provider_id]
-        if not match:
-            raise ProviderConfigError("That AI provider is not available")
-        chosen = match[0]
+    chosen = await _chosen(request, body.provider_id)
 
     allowed = await run_in_threadpool(permitted_sources, meta, user)
     scope = QueryScope(sources=scope_sources(allowed, body.sources), start=body.start, end=body.end)
@@ -247,34 +314,56 @@ async def ask(body: AskRequest, request: Request, user: AskUser) -> AskResponse:
         "examples": [s.id for s in found],
     }
     now = clock.now()
+    # A bare address is never a refinement: it opens its page on any turn (D276).
+    began = monotonic()
+    direct = await run_in_threadpool(_direct, request, body.question, allowed, now)
+    if direct is not None:
+        detail["route"] = {
+            "kind": "data", "by": "direct", "via": "direct", "library": None,
+            "candidates": [], "time": None, "entities": 1, "reason": None,
+            "lookup": [direct.kind], "ms": round((monotonic() - began) * 1000),
+            "sources_read": sorted({r for x in direct.sections for r in x.read}),
+        }  # fmt: skip
+        await run_in_threadpool(
+            auth.audit.write, "ask.request", "success", user.user_id, client_ip(request), detail
+        )
+        return AskResponse(
+            ask_id=None, auto_run=False, sql="", explanation="", assumptions=[], check="none",
+            check_detail=None, attempts=0, provider=chosen, call_ids=[],
+            route=RouteOut(kind="data", by="direct"),
+            lookup=[DirectOut.model_validate(direct, from_attributes=True)],
+        )  # fmt: skip
     routed: Routed | None = None
     try:
-        async with watch_disconnect(request):
-            with _one_at_a_time(user.user_id):
-                if not history:  # follow-ups refine the last SQL (slice 4 routes them)
-                    routed = await run_in_threadpool(
-                        _route, request, user, chosen.provider_id, body, allowed, scope, now
-                    )
-                    detail["route"] = _route_detail(routed)
-                if routed is not None and (routed.kind == "knowhow" or routed.plan):
-                    outcome = None
-                else:
-                    if routed is not None and routed.span is not None:
-                        scope = QueryScope(scope.sources, routed.span.start, routed.span.end)
-                    outcome = await run_in_threadpool(
-                        agent.ask,
-                        user.user_id,
-                        chosen.provider_id,
-                        scope,
-                        body.question,
-                        history,
-                        examples,
-                    )
+        async with _held(request, user.user_id, live):
+            if not history:  # follow-ups refine the last SQL (slice 4 routes them)
+                routed = await run_in_threadpool(
+                    _route, request, user, chosen.provider_id, body, allowed, scope, now
+                )
+                detail["route"] = _route_detail(routed)
+            if routed is not None and (routed.kind == "knowhow" or routed.plan):
+                outcome = None
+            else:
+                if routed is not None and routed.span is not None:
+                    scope = QueryScope(scope.sources, routed.span.start, routed.span.end)
+                outcome = await run_in_threadpool(
+                    agent.ask,
+                    user.user_id,
+                    chosen.provider_id,
+                    scope,
+                    body.question,
+                    history,
+                    examples,
+                )
     except Exception as exc:  # every outcome is audited, including unexpected ones
         detail["error"] = type(exc).__name__
         await run_in_threadpool(
             auth.audit.write, "ask.request", "failure", user.user_id, client_ip(request), detail
         )
+        if isinstance(exc, ModelTimeoutError):
+            timed_out = ModelTimeoutError(SQL_TIMED_OUT)
+            timed_out.call_id = getattr(exc, "call_id", None)  # type: ignore[attr-defined]  # as the gate sets it
+            raise timed_out from exc
         raise
     config: AppConfig = request.app.state.config
     route_out = _route_out(routed, bool(history))
@@ -299,7 +388,7 @@ async def ask(body: AskRequest, request: Request, user: AskUser) -> AskResponse:
             provider_id=chosen.provider_id, template=c.query.answer,
             drill=_drill(c.query, routed.plan), tz=body.tz,
             counted=(w.what, w.row, w.rows) if (w := c.query.counted) else None,
-            window=routed.span.label if routed.span else None,
+            window=routed.span.label if routed.span else None, empty=c.query.empty,
         )  # fmt: skip
         detail |= {"call_ids": call_ids, "ask_id": kept.ask_id}
         await run_in_threadpool(
@@ -336,6 +425,29 @@ async def ask(body: AskRequest, request: Request, user: AskUser) -> AskResponse:
         start=start,
         end=end,
     )
+
+
+# The address page's own default window: the brief reads what the page shows (D276).
+DIRECT_DAYS = 7
+
+
+def _direct(
+    request: Request, question: str, allowed: list[str] | None, now: datetime
+) -> ask_direct.Direct | None:
+    """The direct lookup (D276) when the question is only an address, or None: then it goes
+    on as before. The brief reads what the address page reads: the caller's full view (not
+    the sources picked in Ask) over the page's default window, with the same function."""
+    ip = ask_direct.address(question)
+    if ip is None:
+        return None
+    state = request.app.state
+    view = QueryScope(allowed, now - timedelta(days=DIRECT_DAYS), now)
+    found = ask_direct.Direct("ip", ip, f"the last {DIRECT_DAYS} days", f"{DIRECT_DAYS}d")
+    found.sections = ask_direct.brief(
+        state.engine, state.library, ip, view, readable(request, allowed), now,
+        state.ai_catalog.services(),
+    )  # fmt: skip
+    return found
 
 
 def _route(
@@ -441,6 +553,8 @@ class AskRunResponse(QueryResponse):
     # What was counted, when the rows have no event ids to cite (item 21): one sentence
     # written by code from the run (sources read, window, rows) and the library entry.
     counted: str | None = None
+    # A library query's words for no rows (D274), for the results' empty line.
+    empty: str | None = None
 
 
 @router.post("/ask/{ask_id}/run")
@@ -449,6 +563,10 @@ async def run_answer(ask_id: str, request: Request, user: AskUser) -> AskRunResp
     Audited as query.run with purpose `ask`, the answer's id, its model call ids, and its
     origin (`generated`, or the library query `<pack>/<id>@<version>`). Returns a headline
     written by code from the rows."""
+    return await _run(ask_id, request, user)
+
+
+async def _run(ask_id: str, request: Request, user: User) -> AskRunResponse:
     runs: AskRuns = request.app.state.ask_runs
     config: AppConfig = request.app.state.config
     run = runs.get(ask_id, user.user_id, clock.now())
@@ -470,7 +588,7 @@ async def run_answer(ask_id: str, request: Request, user: AskUser) -> AskRunResp
         "ask_call_ids": run.call_ids,
     }
     result = await _run_audited(body, request, user, "query.run", extra, max_rows=ASK_ROWS)
-    head = headline(result.columns, result.rows, result.truncated, run.template, run.tz)
+    head = headline(result.columns, result.rows, result.truncated, run.template, run.tz, run.empty)
     rows = sample(result.columns, result.rows, result.truncated)
     runs.ran(run.ask_id, Ran(rows, list(result.sources), head, start, end))
     # Words for the window the run read: the question's own words only when the run read
@@ -478,7 +596,7 @@ async def run_answer(ask_id: str, request: Request, user: AskUser) -> AskRunResp
     label = run.window if run.start is not None and start == run.start else None
     window = window_words(start, end, run.end is None, label, run.tz)
     counted = counted_line(
-        result.columns, len(result.rows), len(result.sources), window, run.counted,
+        result.columns, len(result.rows), len(result.sources), window, run.counted, run.empty,
     )  # fmt: skip
     note = None
     if config.ask.summarize and result.rows and rows is None and counted is None:
@@ -498,6 +616,7 @@ async def run_answer(ask_id: str, request: Request, user: AskUser) -> AskRunResp
         summary_note=note,
         drill_keys=run.drill.keys if run.drill and result.columns else [],
         counted=counted,
+        empty=run.empty,
     )
 
 
@@ -513,6 +632,7 @@ class AnswerOut(BaseModel):
     removed: int  # statements dropped for citing no sent row
     note: str | None  # why statements were removed, or why there is no summary
     call_id: str | None
+    timed_out: bool = False  # the model ran past `ask.model_timeout_s` (D270)
 
 
 @router.post("/ask/{ask_id}/answer")
@@ -521,6 +641,10 @@ async def answer(ask_id: str, request: Request, user: AskUser) -> AnswerOut:
     each citing their event ids; never rows from the client. Statements that cite no sent
     row are removed and counted. Any failure of the model leaves the rows and the headline
     without a summary. Audited as ask.answer."""
+    return await _answer(ask_id, request, user, live=True)
+
+
+async def _answer(ask_id: str, request: Request, user: User, live: bool) -> AnswerOut:
     runs: AskRuns = request.app.state.ask_runs
     config: AppConfig = request.app.state.config
     auth: AuthService = request.app.state.auth
@@ -534,26 +658,26 @@ async def answer(ask_id: str, request: Request, user: AskUser) -> AnswerOut:
         )  # fmt: skip
     detail: dict[str, object] = {"ask_id": run.ask_id, "provider_id": run.provider_id}
     try:
-        async with watch_disconnect(request):
-            with _one_at_a_time(user.user_id):
-                got = await run_in_threadpool(
-                    summarize,
-                    request.app.state.gate,
-                    user.user_id,
-                    run.provider_id,
-                    run.question,
-                    ran.sample,
-                    ran.sources,
-                )
+        async with _held(request, user.user_id, live):
+            got = await run_in_threadpool(
+                summarize,
+                request.app.state.gate,
+                user.user_id,
+                run.provider_id,
+                run.question,
+                ran.sample,
+                ran.sources,
+            )
     except AppError as exc:
         # Accuracy over speed (owner, 2026-11-02): no summary rather than a doubtful one.
         detail["error"] = type(exc).__name__
         await run_in_threadpool(
             auth.audit.write, "ask.answer", "failure", user.user_id, client_ip(request), detail
         )
+        late = isinstance(exc, ModelTimeoutError)
         return AnswerOut(
             headline=ran.headline, claims=[], removed=0, call_id=None,
-            note=f"No summary: {exc}",
+            note=SUMMARY_TIMED_OUT if late else f"No summary: {exc}", timed_out=late,
         )  # fmt: skip
     checked = check_claims(got.claims, ran.sample.event_ids)
     detail |= {
@@ -625,3 +749,157 @@ async def drill(ask_id: str, body: DrillRequest, request: Request, user: AskUser
     except DrillError as exc:
         raise ParamInvalidError(f"Cannot show events for this row: {exc}") from exc
     return DrillOut(sql=sql, start=ran.start, end=ran.end, sources=run.sources)
+
+
+# --- Ask as a background job (D269) ----------------------------------------------------
+
+
+class StepError(BaseModel):
+    code: str  # as the synchronous call's HTTP error says it ("model_timeout", ...)
+    message: str
+
+
+class AskJobStep(BaseModel):
+    name: Literal["sql", "run", "summary"]
+    state: Literal["running", "done", "failed", "timed_out"]
+    ms: int | None  # None while running
+    error: StepError | None = None
+
+
+class AskJobOut(BaseModel):
+    """What a job has so far. `ask` is the SQL step's answer (the SQL, the self-check
+    verdict in `check`, the route); `result` the rows, as POST /ask/{id}/run returns them,
+    there as soon as the query ran; `summary` once written. A failed job is still a 200:
+    its `error` and the failed step say why."""
+
+    job_id: str
+    state: Literal["running", "done", "failed"]
+    steps: list[AskJobStep]
+    ask: AskResponse | None = None
+    result: AskRunResponse | None = None
+    summary: AnswerOut | None = None
+    error: StepError | None = None
+
+
+def _job_out(jobs: AskJobs, job: AskJob) -> AskJobOut:
+    def err(e: tuple[str, str] | None) -> StepError | None:
+        return StepError(code=e[0], message=e[1]) if e else None
+
+    with jobs.lock:  # one consistent picture while the job moves on
+        return AskJobOut(
+            job_id=job.job_id,
+            state=job.state,
+            steps=[
+                AskJobStep(name=s.name, state=s.state, ms=s.ms, error=err(s.error))
+                for s in job.steps
+            ],
+            ask=job.ask if isinstance(job.ask, AskResponse) else None,
+            result=job.result if isinstance(job.result, AskRunResponse) else None,
+            summary=job.summary if isinstance(job.summary, AnswerOut) else None,
+            error=err(job.error),
+        )
+
+
+def _detached(request: Request) -> Request:
+    """The app and the caller's address without the connection: a job outlives its
+    submit request and must not stop when that request ends."""
+    scope = {
+        "type": "http", "app": request.app, "client": request.client, "headers": [],
+        "method": "POST", "path": request.url.path, "query_string": b"",
+    }  # fmt: skip
+    return Request(scope)
+
+
+def _launch(request: Request, user: User, body: AskRequest | None, ask_id: str | None) -> AskJobOut:
+    """Start the job in its own thread and event loop, holding the user's one turn."""
+    jobs: AskJobs = request.app.state.ask_jobs
+    _claim(user.user_id)
+    try:
+        job = jobs.start(user.user_id, clock.now())
+    except Exception:
+        _release(user.user_id)
+        raise
+    req = _detached(request)
+
+    def work() -> None:
+        try:
+            asyncio.run(_work(job, req, user, body, ask_id))
+        finally:
+            if job.state == "running":  # _work never got to its end: give the turn back
+                _done(jobs, job, user, ("internal_error", "Something went wrong. Ask again."))
+
+    threading.Thread(target=work, name="ask-job", daemon=True).start()
+    return _job_out(jobs, job)
+
+
+def _done(jobs: AskJobs, job: AskJob, user: User, error: tuple[str, str] | None = None) -> None:
+    """Give the person's turn back first, then mark the job finished: whoever sees it
+    finished may ask again at once."""
+    _release(user.user_id)
+    jobs.finish(job, clock.now(), error)
+
+
+async def _work(
+    job: AskJob, request: Request, user: User, body: AskRequest | None, ask_id: str | None
+) -> None:
+    """The steps in order: SQL (for a question), the query (when it may run without a
+    click, or for an answer whose Run was clicked), then the summary. Each step's output
+    is readable as soon as the step ends."""
+    jobs: AskJobs = request.app.state.ask_jobs
+    codes: dict[type[Exception], str] = request.app.state.error_codes
+    step = None
+    try:
+        if body is not None:
+            step = jobs.begin(job, "sql")
+            got = await _ask(body, request, user, live=False)
+            job.ask = got
+            jobs.end(job, step, "done")
+            if got.ask_id is None or not got.auto_run:
+                _done(jobs, job, user)  # know-how, or click-to-run: nothing runs without a click
+                return
+            ask_id = got.ask_id
+        assert ask_id is not None
+        step = jobs.begin(job, "run")
+        result = await _run(ask_id, request, user)
+        job.result = result
+        jobs.end(job, step, "done")
+        if not result.summarize:
+            _done(jobs, job, user)
+            return
+        step = jobs.begin(job, "summary")
+        summary = await _answer(ask_id, request, user, live=False)
+        job.summary = summary
+        jobs.end(job, step, "timed_out" if summary.timed_out else "done")
+        _done(jobs, job, user)
+    except Exception as exc:
+        if isinstance(exc, AppError):
+            error = (codes.get(type(exc), "error"), str(exc))
+        else:  # an unexpected failure: its class only, never its text (it may hold data)
+            log.error("ask.job_failed", job_id=job.job_id, error=type(exc).__name__)
+            error = ("internal_error", "Something went wrong. Ask again.")
+        if step is not None:
+            late = isinstance(exc, ModelTimeoutError)
+            jobs.end(job, step, "timed_out" if late else "failed", error)
+        _done(jobs, job, user, error)
+
+
+@router.post("/ask/jobs", status_code=202)
+async def submit(body: AskRequest, request: Request, user: AskUser) -> AskJobOut:
+    """Ask as a background job: returns at once with `job_id`; poll GET /ask/jobs/{id}."""
+    await _chosen(request, body.provider_id)  # a provider problem is said now, not later
+    return _launch(request, user, body, None)
+
+
+@router.post("/ask/{ask_id}/jobs", status_code=202)
+async def submit_run(ask_id: str, request: Request, user: AskUser) -> AskJobOut:
+    """Run an answer's SQL (the Run click) and then summarize it, as a background job."""
+    runs: AskRuns = request.app.state.ask_runs
+    runs.get(ask_id, user.user_id, clock.now())  # only the asker's own, while fresh
+    return _launch(request, user, None, ask_id)
+
+
+@router.get("/ask/jobs/{job_id}")
+async def job_status(job_id: str, request: Request, user: AskUser) -> AskJobOut:
+    """What the job has so far; only for the person who submitted it (others get 404)."""
+    jobs: AskJobs = request.app.state.ask_jobs
+    return _job_out(jobs, jobs.get(job_id, user.user_id, clock.now()))

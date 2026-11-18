@@ -12,7 +12,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.api.access import AdminUser, client_ip
 from app.auth.service import AuthService
-from app.core.config import AppConfig
+from app.core.config import MODEL_TIMEOUT_MAX_S, MODEL_TIMEOUT_MIN_S, AppConfig
 from app.core.errors import CloudAckRequiredError, ProviderConfigError
 from app.llm import gate
 from app.llm.locality import provider_endpoint
@@ -273,3 +273,43 @@ async def provider_runtime(provider_id: str, request: Request, _: AdminUser) -> 
             for m in got
         ],
     )  # fmt: skip
+
+
+class TimeLimitIn(BaseModel):
+    # Whole seconds; null clears the saved value, so the config's applies again (D277).
+    seconds: int | None = Field(ge=MODEL_TIMEOUT_MIN_S, le=MODEL_TIMEOUT_MAX_S)
+
+
+class TimeLimitOut(BaseModel):
+    seconds: int  # in force
+    source: Literal["settings", "config"]  # saved here, or `ask.model_timeout_s`
+    min_seconds: int = MODEL_TIMEOUT_MIN_S
+    max_seconds: int = MODEL_TIMEOUT_MAX_S
+
+
+def _limit(g: gate.LLMGate) -> TimeLimitOut:
+    seconds, saved = g.time_limit()
+    return TimeLimitOut(seconds=int(seconds or 0), source="settings" if saved else "config")
+
+
+@router.get("/settings/ask-time-limit")
+async def get_ask_time_limit(request: Request, _: AdminUser) -> TimeLimitOut:
+    """Ask's model time limit in force (D270, D277), where it comes from, and its bounds."""
+    return await run_in_threadpool(_limit, request.app.state.gate)
+
+
+@router.put("/settings/ask-time-limit")
+async def put_ask_time_limit(body: TimeLimitIn, request: Request, actor: AdminUser) -> TimeLimitOut:
+    """Set Ask's model time limit for every Ask call, or null to use the config's again
+    (D277). Audited `settings.ask_time_limit`."""
+    g: gate.LLMGate = request.app.state.gate
+    before = await run_in_threadpool(_limit, g)
+    await run_in_threadpool(g.set_time_limit, body.seconds, actor.user_id)
+    after = await run_in_threadpool(_limit, g)
+    detail: dict[str, object] = {
+        "from": before.seconds,
+        "to": after.seconds,
+        "source": after.source,
+    }
+    await run_in_threadpool(_audit, request, "settings.ask_time_limit", actor, detail)
+    return after

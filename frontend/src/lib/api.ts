@@ -1,5 +1,5 @@
 import { setErrorCsrf } from "./clientErrors";
-import { reportReached, reportUnreachable, unreachableStatus } from "@/lib/connectivity";
+import { reportReached, reportUnreachable } from "@/lib/connectivity";
 
 export interface ClientErrorRow {
   at: string;
@@ -118,6 +118,15 @@ export class ApiError extends Error {
   }
 }
 
+/** What a failed request says (owner, 2026-11-17): only a request that never got an
+ * answer is "Can't reach the server"; a proxy that gave up or is overloaded says so. */
+const NOT_REACHED = "Can't reach the server";
+const GATEWAY_WORDS: Record<number, string> = {
+  502: "The request took too long",
+  503: "The server is busy",
+  504: "The request took too long",
+};
+
 // Session CSRF token, set by the auth gate after sign-in. Sent on every write.
 let csrfToken: string | null = null;
 let onAuthLost: (() => void) | null = null;
@@ -160,6 +169,40 @@ export function setAuthLostHandler(handler: (() => void) | null) {
   onAuthLost = handler;
 }
 
+/** `fetch`, where a request that never got an answer is an ApiError saying so (F40). */
+async function send(path: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(path, init);
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") throw err; // cancelled here
+    reportUnreachable(); // the request never reached the server
+    throw new ApiError(0, NOT_REACHED, "network_error");
+  }
+}
+
+/** The error of an answer that is not ok, in the server's words. A 502, 503, or 504
+ * without the server's own code came from a proxy or gateway in front of it: plain words,
+ * and the server is not called unreachable (owner, 2026-11-17). */
+async function failure(res: Response): Promise<ApiError> {
+  let detail = `${res.status} ${res.statusText}`;
+  let code: string | undefined;
+  try {
+    const body = (await res.json()) as { detail?: unknown; code?: string };
+    if (typeof body.detail === "string") detail = body.detail;
+    code = body.code;
+  } catch {
+    // Non-JSON error body: keep the status line.
+  }
+  const gateway = code === undefined ? GATEWAY_WORDS[res.status] : undefined;
+  if (gateway === undefined) reportReached();
+  return new ApiError(
+    res.status,
+    gateway ?? detail,
+    code,
+    res.headers.get("X-Request-ID") ?? undefined,
+  );
+}
+
 async function request<T>(path: string, init?: RequestInit, asText = false): Promise<T> {
   const method = (init?.method ?? "GET").toUpperCase();
   const headers: Record<string, string> = {
@@ -172,27 +215,11 @@ async function request<T>(path: string, init?: RequestInit, asText = false): Pro
     headers["X-Page-Load-Parts"] = pageLoad.parts;
     if (pageLoad.window) headers["X-Page-Load-Window"] = pageLoad.window;
   }
-  let res: Response;
-  try {
-    res = await fetch(path, { ...init, credentials: "same-origin", headers });
-  } catch (err) {
-    reportUnreachable(); // the request never reached the server (F40)
-    throw err;
-  }
+  const res = await send(path, { ...init, credentials: "same-origin", headers });
   if (!res.ok) {
-    let detail = `${res.status} ${res.statusText}`;
-    let code: string | undefined;
-    try {
-      const body = (await res.json()) as { detail?: unknown; code?: string };
-      if (typeof body.detail === "string") detail = body.detail;
-      code = body.code;
-    } catch {
-      // Non-JSON error body: keep the status line.
-    }
-    if (unreachableStatus(res.status, code)) reportUnreachable();
-    else reportReached();
-    if (code === "auth_required" || code === "setup_required") onAuthLost?.();
-    throw new ApiError(res.status, detail, code, res.headers.get("X-Request-ID") ?? undefined);
+    const err = await failure(res);
+    if (err.code === "auth_required" || err.code === "setup_required") onAuthLost?.();
+    throw err;
   }
   reportReached();
   if (res.status === 204) return undefined as T;
@@ -255,6 +282,17 @@ export interface FacetRequest {
 export interface Facet {
   field: string;
   values: { value: string | null; count: number }[];
+}
+
+/** Field counts. When counting the whole range took too long, they are from the newest
+ * `sampled_days` days with matches only (0: none reached in time), `sampled_items` matches
+ * in all; `sampled_skipped`: some newer day held no match (owner item P6, 2026-11-17). */
+export interface FacetResponse {
+  facets: Facet[];
+  elapsed_ms: number;
+  sampled_days?: number | null;
+  sampled_items?: number | null;
+  sampled_skipped?: boolean;
 }
 
 /** AI usage (ADR-0015). */
@@ -414,6 +452,8 @@ export interface AskRunResult extends QueryResult {
   /** What was counted, when the rows have no event ids (fix 21): written by code from
    * the run, never by a model, so it is not a summary and cites nothing. */
   counted?: string | null;
+  /** A library query's own words for no rows (D274), in place of the generic line. */
+  empty?: string | null;
 }
 
 /** "Show events" for one row: SQL for the Search editor and the window it reads. */
@@ -431,6 +471,29 @@ export interface AskSummary {
   removed: number;
   note: string | null;
   call_id: string | null;
+  /** The model ran past `ask.model_timeout_s` (D270): `note` says the results stand. */
+  timed_out?: boolean;
+}
+
+/** One step of an Ask job (D269), in the order run; a step that never starts is absent. */
+export interface AskJobStep {
+  name: "sql" | "run" | "summary";
+  state: "running" | "done" | "failed" | "timed_out";
+  /** How long it took; null while it runs. */
+  ms: number | null;
+  error?: { code: string; message: string } | null;
+}
+
+/** GET /api/ask/jobs/{id}: what the job has so far. A failed job is a 200 with `error`. */
+export interface AskJob {
+  job_id: string;
+  state: "running" | "done" | "failed";
+  steps: AskJobStep[];
+  ask?: AskResponse | null;
+  /** The rows, there as soon as the query ran, before the summary starts. */
+  result?: AskRunResult | null;
+  summary?: AskSummary | null;
+  error?: { code: string; message: string } | null;
 }
 
 export interface QueryResult {
@@ -832,6 +895,8 @@ export interface GraphCard {
   search_sql: string | null;
   /** A heading inside the lane ("MCP servers"); empty for none. */
   group: string;
+  /** A real line behind a plain label (sign-in cards), for hover. */
+  hint?: string;
 }
 
 /** GET /api/entities/lookup: the top bar search (ADR-0038 edit 10). */
@@ -1102,6 +1167,14 @@ export interface WatchStep {
   step: "events" | "agents" | "review";
   ok: boolean;
   detail: string | null;
+}
+
+/** Ask's model time limit in force (D270, D277): saved in Settings, or the config's. */
+export interface AskTimeLimit {
+  seconds: number;
+  source: "settings" | "config";
+  min_seconds: number;
+  max_seconds: number;
 }
 
 /** A local Ollama server's loaded models (Settings > AI providers, owner 2026-11-03). */
@@ -1404,6 +1477,10 @@ export interface SourceStatus {
   /** Event times steadily this many hours off (positive: early): check the time zone. */
   time_offset_h?: number | null;
   time_offset_text?: string | null;
+  /** Files it lists that another source reads (one reader per file, SPEC 3.5). */
+  shared?: { file: string; reader: string; tie?: boolean }[];
+  /** That source, when it reads every file this one lists: this one stores nothing. */
+  read_by?: string | null;
 }
 
 /** Quiet-source alert state (ADR-0014); null when no alert is set. */
@@ -1617,15 +1694,14 @@ async function postYaml<T>(path: string, text: string): Promise<T> {
     "Content-Type": "application/yaml",
   };
   if (csrfToken) headers["X-CSRF-Token"] = csrfToken;
-  const res = await fetch(path, {
+  const res = await send(path, {
     method: "POST",
     credentials: "same-origin",
     headers,
     body: text,
   });
-  const body = (await res.json().catch(() => ({}))) as { detail?: string; code?: string };
-  if (!res.ok) throw new ApiError(res.status, body.detail ?? `${res.status}`, body.code);
-  return body as T;
+  if (!res.ok) throw await failure(res);
+  return (await res.json().catch(() => ({}))) as T;
 }
 
 /** A POST whose answer is a file (the Claude hooks plugin zip), with the usual CSRF header
@@ -1633,30 +1709,19 @@ async function postYaml<T>(path: string, text: string): Promise<T> {
 async function postForFile(path: string, body: unknown): Promise<{ blob: Blob; headers: Headers }> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (csrfToken) headers["X-CSRF-Token"] = csrfToken;
-  const res = await fetch(path, {
+  const res = await send(path, {
     method: "POST",
     body: JSON.stringify(body),
     credentials: "same-origin",
     headers,
   });
-  if (!res.ok) {
-    let detail = `${res.status} ${res.statusText}`;
-    let code: string | undefined;
-    try {
-      const b = (await res.json()) as { detail?: unknown; code?: string };
-      if (typeof b.detail === "string") detail = b.detail;
-      code = b.code;
-    } catch {
-      // keep the status line
-    }
-    throw new ApiError(res.status, detail, code);
-  }
+  if (!res.ok) throw await failure(res);
   return { blob: await res.blob(), headers: res.headers };
 }
 
 async function requestText(path: string): Promise<string> {
-  const res = await fetch(path, { credentials: "same-origin" });
-  if (!res.ok) throw new ApiError(res.status, `${res.status} ${res.statusText}`);
+  const res = await send(path, { credentials: "same-origin" });
+  if (!res.ok) throw await failure(res);
   return res.text();
 }
 
@@ -1801,6 +1866,8 @@ export interface LibraryQuery {
   normal: string;
   tags: string[];
   requires: string[];
+  /** The plain names of the sources in `requires` (any one is enough); empty: any source. */
+  sources: string[];
   /** For the editor: start and end placeholders kept, other defaults written in. */
   sql: string;
   /** As shipped, for the difference with the viewer's copy. */
@@ -1809,6 +1876,8 @@ export interface LibraryQuery {
   flag: string | null;
   /** Example questions this query answers, for Ask's empty state. */
   ask: string[];
+  /** What a run with no rows says in place of the generic text (D274); plain text. */
+  empty?: string | null;
   my_copy: { search_id: string; version: string; updated: boolean; sql: string } | null;
 }
 
@@ -1823,6 +1892,8 @@ export interface LibraryPack {
 export interface QueryLibrary {
   packs: LibraryPack[];
   hidden: number;
+  /** Queries whose sources the viewer has no events from (the last 30 days), by pack. */
+  needs: LibraryPack[];
 }
 
 export type InventoryType = "service" | "agent" | "mcp" | "m365_app";
@@ -2076,7 +2147,8 @@ export interface AskRequest {
 /** How a question was routed (ADR-0042 slice 1b, condition 3). */
 export interface AskRoute {
   kind: "data" | "knowhow";
-  by: "model" | "forced" | "follow_up" | "library";
+  /** direct: only an address; its page, no model call (D276). */
+  by: "model" | "forced" | "follow_up" | "library" | "direct";
   library: { ref: string; name: string; version: string } | null;
   /** "user = dana@example.com (also dana)", for How I got this. */
   filters: string[];
@@ -2095,7 +2167,7 @@ export interface AskSuggestion {
 }
 
 export interface AskResponse {
-  /** Runs this answer's SQL on the server (POST /api/ask/{ask_id}/run); null for a
+  /** Runs this answer's SQL on the server (POST /api/ask/{ask_id}/jobs); null for a
    * general-guidance route; absent on older servers. */
   ask_id?: string | null;
   route?: AskRoute | null;
@@ -2112,6 +2184,48 @@ export interface AskResponse {
   attempts: number;
   provider: AskProvider;
   call_ids: string[];
+  /** A direct lookup (route.by "direct"): the entity to open, no query. */
+  lookup?: AskDirect[];
+}
+
+/** A question that is only an address (D276): its page's sections in brief. */
+export interface AskDirect {
+  kind: "ip";
+  value: string;
+  /** "the last 7 days": the address page's own default, which the sections read. */
+  window: string;
+  /** The same window as a time choice ("7d"): the link opens the page on it. */
+  range: "1h" | "24h" | "7d" | "30d";
+  sections: {
+    section: AddressSectionName;
+    title: string;
+    state: "ok" | "no_source" | "failed";
+    count_words: string;
+    read: string[];
+  }[];
+}
+
+export type AddressSectionName = "dhcp" | "dns" | "access" | "ai";
+
+/** One section of the address page (P4): a shipped library query's rows for the address,
+ * on the caller's view. `links` are the events behind each row, for Logs (server-built). */
+export interface AddressSection {
+  section: AddressSectionName;
+  title: string;
+  library: string;
+  query: string;
+  state: "ok" | "no_source";
+  count: number;
+  count_words: string;
+  columns: string[];
+  rows: unknown[][];
+  links: (string | null)[];
+  read: string[];
+  /** Template names its query reads, when none of the caller's sources has one. */
+  needs: string[];
+  restricted: boolean;
+  /** The sources that returned rows, each with its kind in plain words ("DNS"). */
+  found: { source_id: string; kind: string }[];
 }
 
 export interface SigmaRule {
@@ -2262,13 +2376,16 @@ export interface OverviewSourceHealth {
   condition: SourceCondition;
   /** The source's problem as every page draws it (server-side), or none. */
   problem?: SourceProblem | null;
+  /** Every file it lists is read by this other source: condition "shared". */
+  read_by?: string | null;
 }
 
 /** The choices for "Quiet is normal for up to" (D260). */
 export const QUIET_OK_DAYS = [1, 3, 7, 14, 30] as const;
 export type QuietOkDays = (typeof QUIET_OK_DAYS)[number];
 
-export type SourceCondition = "healthy" | "quiet" | "gap" | "attention" | "error" | "paused";
+export type SourceCondition =
+  "healthy" | "quiet" | "gap" | "attention" | "error" | "paused" | "shared";
 /** Unhealthy (an error, or a quiet watch firing) or needs attention: one server rule. */
 export type SourceProblem = "unhealthy" | "attention";
 
@@ -2292,6 +2409,8 @@ export interface SourceSummary {
   longest_wait: SourceWait | null;
   /** Healthy sources silent inside their "Quiet is normal" days (D260). */
   idle?: number;
+  /** Sources whose every file another source reads: not in the total, never a problem. */
+  shared?: number;
 }
 
 /** Hours with nothing from a source that normally sends every hour (F55). */
@@ -3052,21 +3171,18 @@ export const api = {
   providerRuntime: (id: string) =>
     request<ProviderRuntime>(`/api/providers/${encodeURIComponent(id)}/runtime`),
   askProviders: () => request<AskProvider[]>("/api/ask/providers"),
-  ask: (body: AskRequest, signal?: AbortSignal) =>
-    request<AskResponse>("/api/ask", { ...post(body), signal }),
+  /** Ask as a background job (D269): returns at once; poll `askJob` for the steps. */
+  askJobs: (body: AskRequest) => request<AskJob>("/api/ask/jobs", post(body)),
+  /** The Run click on a click-to-run answer, as a job: the query, then the summary. */
+  runJob: (askId: string) =>
+    request<AskJob>(`/api/ask/${encodeURIComponent(askId)}/jobs`, post({})),
+  askJob: (jobId: string, signal?: AbortSignal) =>
+    request<AskJob>(`/api/ask/jobs/${encodeURIComponent(jobId)}`, { signal }),
   askSuggest: (q: string) =>
     request<AskSuggestion[]>(`/api/ask/suggest?q=${encodeURIComponent(q)}`),
-  runAnswer: (askId: string, signal?: AbortSignal) =>
-    request<AskRunResult>(`/api/ask/${encodeURIComponent(askId)}/run`, { ...post({}), signal }),
   /** "Show events" for one row of an aggregate answer (D173); built by code, runs in Logs. */
   askDrill: (askId: string, values: Record<string, Cell>) =>
     request<AskDrill>(`/api/ask/${encodeURIComponent(askId)}/drill`, post({ values })),
-  /** The answer step (ADR-0042 slice 1c): statements that cite the rows the run kept. */
-  askAnswer: (askId: string, signal?: AbortSignal) =>
-    request<AskSummary>(`/api/ask/${encodeURIComponent(askId)}/answer`, {
-      ...post({}),
-      signal,
-    }),
   columns: () => request<ColumnInfo[]>("/api/schema/columns"),
   authState: () => request<AuthState>("/api/auth/state"),
   setup: (body: { token: string; username: string; password: string }) =>
@@ -3288,8 +3404,7 @@ export const api = {
   mcpSettings: () => request<McpSettings>("/api/mcp/settings"),
   saveMcpSettings: (body: { enabled: boolean; endpoint_local: boolean }) =>
     request<McpSettings>("/api/mcp/settings", put(body)),
-  facets: (body: FacetRequest) =>
-    request<{ facets: Facet[]; elapsed_ms: number }>("/api/search/facets", post(body)),
+  facets: (body: FacetRequest) => request<FacetResponse>("/api/search/facets", post(body)),
   searchPresets: () => request<SearchPreset[]>("/api/search/presets"),
   healthChecks: () => request<HealthChecks>("/api/health-checks"),
   handoff: (body: { target_id: string; event_ids: string[]; note: string }) =>
@@ -3380,6 +3495,10 @@ export const api = {
     if (end) p.set("end", end);
     return request<AddressCoverage>(`/api/inventory/coverage?${p.toString()}`);
   },
+  addressSection: (ip: string, name: AddressSectionName, start?: string, end?: string) =>
+    request<AddressSection>(
+      `/api/addresses/${encodeURIComponent(ip)}/sections/${name}${queryString({ start, end })}`,
+    ),
   entityLookup: (q: string) =>
     request<{ hits: LookupHit[]; days: number }>(
       `/api/entities/lookup?${new URLSearchParams({ q }).toString()}`,
@@ -3439,6 +3558,10 @@ export const api = {
   liveLimit: () => request<{ minutes: number }>("/api/settings/live"),
   setLiveLimit: (minutes: number) =>
     request<{ minutes: number }>("/api/settings/live", put({ minutes })),
+  askTimeLimit: () => request<AskTimeLimit>("/api/settings/ask-time-limit"),
+  /** null: follow the install's configuration again (D277). */
+  setAskTimeLimit: (seconds: number | null) =>
+    request<AskTimeLimit>("/api/settings/ask-time-limit", put({ seconds })),
   libraryCopy: (pack: string, id: string) =>
     request<SavedSearch>(
       `/api/library/${encodeURIComponent(pack)}/${encodeURIComponent(id)}/copy`,
@@ -3447,7 +3570,8 @@ export const api = {
   addPack: (pack: string, queryIds: string[], dashboardId?: string) =>
     request<{
       dashboard_id: string;
-      added: { query_id: string; search_id: string; schedule_id: string }[];
+      /** `existing`: already on that dashboard, so nothing was made. */
+      added: { query_id: string; search_id: string; schedule_id: string; existing?: boolean }[];
     }>(
       `/api/library/${encodeURIComponent(pack)}/dashboard`,
       post({ query_ids: queryIds, ...(dashboardId ? { dashboard_id: dashboardId } : {}) }),

@@ -155,3 +155,24 @@ def test_a_near_miss_is_left_to_the_router(lab: dict[str, Any], question: str) -
     body = lab["ana"].post("/api/ask", json={"question": question}).json()
     assert _routes(lab) == 1
     assert body["route"]["by"] == "model" and body["route"]["library"] is None
+
+
+def test_a_library_answer_with_no_rows_uses_the_querys_words(hooks: dict[str, Any]) -> None:
+    """D274: the query's `empty` text is the answer's headline and follows what was read
+    in the counted line, and the run carries it for the results' empty line."""
+    lib = hooks["app"].state.library
+    found = lib.find("ai_agents", "agents_claude_code_users")
+    assert found is not None
+    pack, q = found
+    words = "Nobody used Claude Code in the range."
+    none = q.model_copy(update={"sql": f"SELECT * FROM ({q.sql}) AS t WHERE false", "empty": words})
+    lib.packs[lib.packs.index(pack)] = pack.model_copy(
+        update={"queries": [none if x.id == q.id else x for x in pack.queries]}
+    )
+    body, _ = _timed(hooks["c"], "who uses claude code")
+    assert body["route"]["library"]["ref"] == "ai_agents/agents_claude_code_users"
+    run = hooks["c"].post(f"/api/ask/{body['ask_id']}/run")
+    assert run.status_code == 200, run.text
+    got = run.json()
+    assert got["rows"] == [] and got["headline"] == words and got["empty"] == words
+    assert got["counted"].startswith("Read 1 source") and got["counted"].endswith(words)

@@ -14,39 +14,41 @@ from typing import Any, Literal
 
 from app.core.timing import in_context
 from app.engine.duckdb import QueryEngine, QueryScope
-from app.engine.signin_classes import REAL_FAILURE_SQL, class_sql
+from app.engine.signin_classes import ACCESS_OUTCOME, REAL_FAILURE
 from app.search.entities import (
     CLASS_NAMES,
     RECORD_LIKE,
+    SIGNIN,
     WHERE,
+    failed_class,
     quote,
     search_sql,
     user_filter_sql,
+    user_where,
 )
-from app.search.identity import IdentityMap, key_sql
+from app.search.identity import IdentityMap
 
 TIMEOUT_S = 20
 Kind = Literal["user", "ip", "host"]
 
 # Sign-ins by outcome for the page's filter (D158): real failures, then each class of a
 # Microsoft 365 sign-in that is not counted, then every sign-in.
-_M365 = "class_uid = 3002 AND template_id = 'm365_signin' AND "
 SLICES: tuple[tuple[str, str, str], ...] = (
-    ("failed", "Real failures", f"class_uid = 3002 AND {REAL_FAILURE_SQL}"),
-    ("interrupted", "Interrupted", _M365 + class_sql("interrupted")),
-    ("expired", "Expired", _M365 + class_sql("expired")),
-    ("other", "Other", _M365 + class_sql("other")),
-    ("all", "All", "class_uid = 3002"),
+    ("failed", "Real failures", f"{SIGNIN} AND {REAL_FAILURE}"),
+    ("interrupted", "Interrupted", f"{SIGNIN} AND {failed_class('interrupted')}"),
+    ("expired", "Expired", f"{SIGNIN} AND {failed_class('expired')}"),
+    ("other", "Other", f"{SIGNIN} AND {failed_class('other')}"),
+    ("all", "All", SIGNIN),
 )
 SLICE_COUNTS = ",\n       ".join(f"count(*) FILTER (WHERE {cond})" for _, _, cond in SLICES)
 # Failed sign-ins are real failures only: a Microsoft 365 sign-in interrupted, expired, or
 # with an unknown code is "not counted" (D158).
 TOTALS_SQL = f"""
 SELECT count(*),
-       count(*) FILTER (WHERE class_uid = 3002),
-       count(*) FILTER (WHERE class_uid = 3002 AND status_id = 1),
-       count(*) FILTER (WHERE class_uid = 3002 AND {REAL_FAILURE_SQL}),
-       count(DISTINCT nullif(trim(actor_user_name), '')),
+       count(*) FILTER (WHERE {SIGNIN}),
+       count(*) FILTER (WHERE {SIGNIN} AND status_id = 1),
+       count(*) FILTER (WHERE {SIGNIN} AND {REAL_FAILURE}),
+       count(DISTINCT nullif(trim(actor_user_name), '')) FILTER (WHERE {SIGNIN}),
        count(DISTINCT coalesce(nullif(dst_endpoint_hostname, ''), nullif(device_hostname, ''))),
        count(DISTINCT {{addr}}) FILTER (WHERE NOT {{service}}),
        min(coalesce(time, time_observed)),
@@ -54,7 +56,7 @@ SELECT count(*),
        list(DISTINCT source_id),
        count(DISTINCT {{addr}}) FILTER (WHERE {{service}}),
        {SLICE_COUNTS}
-FROM events
+FROM {{rows}}
 WHERE {{where}}"""  # noqa: S608  # fixed SQL text
 
 ADDR = "coalesce(nullif(src_endpoint_ip, ''), nullif(dst_endpoint_ip, ''))"
@@ -74,18 +76,16 @@ SERVICE = (
 )
 
 # One row per outcome, kind of activity, user, and target, with a real line as the example.
-OUTCOME = (
-    "CASE WHEN class_uid = 3002 AND status_id = 1 THEN 'succeeded'"
-    f" WHEN class_uid = 3002 AND {REAL_FAILURE_SQL} THEN 'failed'"
-    " WHEN class_uid = 3002 AND status_id = 2 THEN 'not_counted' ELSE 'other' END"
-)
+# Sign-ins and firewall traffic by the access card's own outcome; other events are "other".
+OUTCOME = f"CASE WHEN class_uid IN (3002, 4001) THEN {ACCESS_OUTCOME} ELSE 'other' END"
 TARGET = "coalesce(nullif(dst_endpoint_hostname, ''), nullif(device_hostname, ''))"
+WHO = "nullif(trim(actor_user_name), '')"
 ACTIVITIES_SQL = """
 SELECT {outcome} AS outcome, coalesce(class_uid, 0) AS class_uid,
-       nullif(trim(actor_user_name), '') AS who, {target} AS target,
+       {who} AS who, {target} AS target,
        count(*) AS n, min(coalesce(time, time_observed)) AS first,
        max(coalesce(time, time_observed)) AS last, {example} AS example
-FROM events
+FROM {rows}
 WHERE {where}
 GROUP BY 1, 2, 3, 4
 ORDER BY CASE outcome WHEN 'succeeded' THEN 0 WHEN 'failed' THEN 1 ELSE 2 END, n DESC,
@@ -107,9 +107,21 @@ RECORD_FIELDS_SQL = """
 SELECT message, min(template_id), min(nullif(trim(actor_user_name), '')),
        min(nullif(src_endpoint_ip, '')),
        min(nullif(json_extract_string(unmapped, '$.data_source'), ''))
-FROM events
+FROM {rows}
 WHERE {where} AND message IN (SELECT unnest($records)) AND {record_like}
 GROUP BY 1"""
+
+
+def either_rows(kind: str) -> str:
+    """The events of the address or host `$v` (`WHERE[kind]`), as two arms, each row once:
+    as one OR the test is not pushed into the scan, so the record was read for every row in
+    range (owner, 2026-11-17: 1.5 s for 56 rows of an address on the 30-day bench lake)."""
+    a, b = {"ip": ("src_endpoint_ip", "dst_endpoint_ip"),
+            "host": ("device_hostname", "src_endpoint_hostname")}[kind]  # fmt: skip
+    return (
+        f"(SELECT * FROM events WHERE {a} = $v UNION ALL"  # noqa: S608  # fixed columns; $v is bound
+        f" SELECT * FROM events WHERE {b} = $v AND {a} IS DISTINCT FROM $v) AS e"
+    )
 
 
 def is_record(message: str) -> bool:
@@ -127,12 +139,14 @@ def record_summary(name: str, who: Any, address: Any, learned: Any) -> str:
     return text
 
 
+# Users are counted by their sign-ins (SIGNIN), so "Users tried" and its numbers agree
+# with the Sign-ins number; hosts by every event that names them.
 TARGETS_SQL = """
-SELECT 'host' AS kind, {target} AS value, count(*) AS n FROM events
+SELECT 'host' AS kind, {target} AS value, count(*) AS n FROM {rows}
 WHERE {where} AND {target} IS NOT NULL GROUP BY 2
 UNION ALL
-SELECT 'user', nullif(trim(actor_user_name), ''), count(*) FROM events
-WHERE {where} AND nullif(trim(actor_user_name), '') IS NOT NULL GROUP BY 2
+SELECT 'user', nullif(trim(actor_user_name), ''), count(*) FROM {rows}
+WHERE {where} AND {signin} AND nullif(trim(actor_user_name), '') IS NOT NULL GROUP BY 2
 ORDER BY n DESC
 LIMIT 40"""
 
@@ -216,19 +230,20 @@ def entity_summary(
     params: dict[str, object]
     if kind == "user":
         keys = ident.keys_for(value)
-        # A key is part of the lower-cased name it came from (D136), so a plain substring
-        # test drops other people's rows before any name is normalized.
-        near = " OR ".join(f"contains(lower(actor_user_name), {quote(k)})" for k in keys)
-        where = f"(({near or 'true'}) AND list_contains($keys, {key_sql('actor_user_name')}))"
+        where = user_where(keys)
         params = {"keys": keys, **ident.params()}
         literal = user_filter_sql(ident, keys)
+        rows = "events"
     else:
-        where = WHERE[kind]
+        rows, where = either_rows(kind), "true"
         params = {"v": value}
         literal = WHERE[kind].replace("$v", quote(value))
+    totals_sql = TOTALS_SQL.format(rows=rows, where=where, addr=ADDR, service=SERVICE)
     acts_sql = ACTIVITIES_SQL.format(
+        rows=rows,
         where=where,
         outcome=OUTCOME,
+        who=WHO,
         target=TARGET,
         example=EXAMPLE_NEWEST if kind == "user" else EXAMPLE_NAMED,
     )
@@ -245,31 +260,27 @@ def entity_summary(
                 page=True,
             )
             for name, sql in (
-                ("summary.totals", TOTALS_SQL.format(where=where, addr=ADDR, service=SERVICE)),
+                ("summary.totals", totals_sql),
                 ("summary.activities", acts_sql),
-                ("summary.targets", TARGETS_SQL.format(where=where, target=TARGET)),
+                (
+                    "summary.targets",
+                    TARGETS_SQL.format(rows=rows, where=where, target=TARGET, signin=SIGNIN),
+                ),
             )
         ]
         totals, acts, tgts = (r.result() for r in runs)
     t: list[Any] = list(totals.rows[0]) if totals.rows else [0] * 9 + [[], 0] + [0] * len(SLICES)
     activities = []
     for outcome, class_uid, who, target, n, first, last, example in acts.rows:
-        cond = [literal]
-        if outcome == "succeeded":
-            cond.append("class_uid = 3002 AND status_id = 1")
-        elif outcome == "failed":
-            cond.append(f"class_uid = 3002 AND {REAL_FAILURE_SQL}")
-        elif outcome == "not_counted":
-            cond.append(f"class_uid = 3002 AND status_id = 2 AND NOT ({REAL_FAILURE_SQL})")
-        else:
-            cond.append(f"coalesce(class_uid, 0) = {int(class_uid or 0)}")
-        if who:
-            cond.append(f"trim(actor_user_name) = {quote(str(who))}")
-        if target:
-            cond.append(f"{TARGET} = {quote(str(target))}")
+        # Exactly the row's events: its class and the same outcome rule that grouped it.
+        cond = [literal, f"coalesce(class_uid, 0) = {int(class_uid or 0)}"]
+        cond.append(f"{OUTCOME} = {quote(str(outcome))}")
+        # No user or no target is a group of its own: the link opens only those rows.
+        cond.append(f"trim(actor_user_name) = {quote(str(who))}" if who else f"{WHO} IS NULL")
+        cond.append(f"{TARGET} = {quote(str(target))}" if target else f"{TARGET} IS NULL")
         activities.append(
             Activity(
-                outcome=str(outcome),
+                outcome=str(outcome).replace(" ", "_"),  # the API's spelling: not_counted
                 kind=CLASS_NAMES.get(int(class_uid or 0), f"Class {class_uid}"),
                 user=str(who) if who else None,
                 target=str(target) if target else None,
@@ -283,7 +294,7 @@ def entity_summary(
     records = sorted({a.example for a in activities if a.example and is_record(a.example)})
     if records:
         found = engine.run(
-            RECORD_FIELDS_SQL.format(where=where, record_like=RECORD_LIKE),
+            RECORD_FIELDS_SQL.format(rows=rows, where=where, record_like=RECORD_LIKE),
             scope,
             {**params, "records": records},
             timeout_s=TIMEOUT_S,

@@ -23,8 +23,16 @@ export interface SearchSeed {
   origin?: string;
   /** The Ask AI question the SQL answers ("Open in Logs"): Save keeps it as the origin. */
   askQuestion?: string;
-  /** Open the query library panel (command palette). */
-  library?: boolean;
+  /** A query opened from Logs > Library: named above the editor while its SQL is unchanged.
+   * `packSql` and `empty` give its own words for no rows while only values change (D274). */
+  library?: {
+    name: string;
+    packName: string;
+    why: string;
+    normal: string;
+    packSql?: string;
+    empty?: string | null;
+  };
 }
 
 let seed: SearchSeed | null = null;

@@ -21,6 +21,8 @@ interface Case {
   judged: Record<string, unknown>;
   enabled?: boolean;
   quietOkDays?: number | null;
+  /** The reader's own facts beyond its state. */
+  status?: Record<string, unknown>;
   word: string;
   dot: string;
 }
@@ -106,6 +108,20 @@ const CASES: Case[] = [
     word: "Never sent",
     dot: "bg-text-muted",
   },
+  {
+    // Its only file is read by another source (SPEC 3.5): stores nothing by design.
+    id: "shared_src",
+    reader: "reading",
+    status: { shared: [{ file: "demo.log", reader: "healthy_src" }], read_by: "healthy_src" },
+    judged: {
+      condition: "shared",
+      read_by: "healthy_src",
+      last_event_at: null,
+      newest_event_at: null,
+    },
+    word: "Read by healthy_src",
+    dot: "bg-transparent",
+  },
 ];
 
 const OVERVIEW = {
@@ -145,6 +161,7 @@ const SOURCES = CASES.map((c) => ({
     state: c.reader,
     last_event_at: RECENT,
     error: c.reader === "error" ? "Cannot open the file" : null,
+    ...c.status,
   },
 }));
 
@@ -227,6 +244,31 @@ describe("one status for a source on Health and Settings > Sources (item 19)", (
     // Quiet is normal inside its days, and paused: Health counts neither, so no row.
     expect(kinds.has("held_src")).toBe(false);
     expect(kinds.has("paused_src")).toBe(false);
+    expect(kinds.has("shared_src")).toBe(false); // read by another source: no problem
+  });
+
+  it("says once, under the path, why a source whose file another source reads stores nothing", async () => {
+    await renderAt("/sources");
+    const row = await vi.waitFor(() => {
+      const el = document.getElementById("source-shared_src");
+      if (!el?.querySelector("[data-shared-note]")) throw new Error("not yet");
+      return el;
+    });
+    const note = row.querySelector("[data-shared-note]");
+    expect(note).toHaveTextContent(
+      "demo.log is already read by healthy_src, so nothing is stored here. Remove this source.",
+    );
+    expect(note).toHaveClass("text-text-secondary"); // one neutral tone, as on Health
+    // In the Path cell, beside the path, not in the Status column.
+    expect(note?.closest("td")?.textContent).toContain("/logs/bastion");
+    // Said by the status and the line under the path: no third time in a Reader line.
+    expect(within(row).queryByText(/^Reader:/)).toBeNull();
+    expect(within(row).getByText("No quiet alert")).toBeVisible();
+    expect(within(row).queryByText(/Alert after/)).toBeNull();
+    expect(within(row).queryByText("Alert if quiet")).toBeNull();
+    // A source with no shared file has no such line.
+    const plain = document.getElementById("source-healthy_src") as HTMLElement;
+    expect(plain.querySelector("[data-shared-note]")).toBeNull();
   });
 
   it("never takes the status from the reader: a placeholder while the Overview loads", async () => {
@@ -273,5 +315,41 @@ describe("one status for a source on Health and Settings > Sources (item 19)", (
     expect(within(row).getByText("Reader: stopped on an error")).toBeInTheDocument();
     const rows = needsYouRows(undefined, stopped as Source[], OVERVIEW as unknown as Overview);
     expect(rows.find((r) => r.key === "source:healthy_src")?.kind).toBe("Unhealthy");
+  });
+});
+
+describe("the line under a source read by another (D273)", () => {
+  it("advises removing it only when the reading source is the more specific one", async () => {
+    const { sharedFileText } = await import("@/features/health/sourceStatus");
+    const of = (tie: boolean) =>
+      ({
+        ...SOURCE,
+        status: {
+          ...SOURCE.status,
+          read_by: "dns",
+          shared: [{ file: "a.log", reader: "dns", tie }],
+        },
+      }) as unknown as Source;
+    expect(sharedFileText(of(false))).toBe(
+      "a.log is already read by dns, so nothing is stored here. Remove this source.",
+    );
+    expect(sharedFileText(of(true))).toBe(
+      "a.log is already read by dns, so nothing is stored here.",
+    );
+    // Two files of one name in two folders: two files, said as a count.
+    const two = {
+      ...SOURCE,
+      status: {
+        ...SOURCE.status,
+        read_by: "dns",
+        shared: [
+          { file: "queries.log", reader: "dns", tie: false },
+          { file: "queries.log", reader: "dns", tie: false },
+        ],
+      },
+    } as unknown as Source;
+    expect(sharedFileText(two)).toBe(
+      "2 of its files are already read by dns, so nothing is stored here. Remove this source.",
+    );
   });
 });

@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 
 from app.core.errors import ParamInvalidError
 from app.engine.duckdb import QueryEngine, QueryScope
-from app.engine.signin_classes import REAL_FAILURE_SQL
+from app.engine.signin_classes import REAL_FAILURE
 from app.search import drill, mail_rules
 from app.search.admin_changes import DIR, OP
 from app.search.dashboard import zone
@@ -33,7 +33,7 @@ M365_LISTS = ("sign_ins", "mail", "admin")
 SQL = f"""
 SELECT actor_user_name,
        time_bucket(INTERVAL '15 minutes', timezone('UTC', coalesce(time, time_observed))),
-       count(*), count(*) FILTER (WHERE class_uid = 3002 AND {REAL_FAILURE_SQL})
+       count(*), count(*) FILTER (WHERE class_uid = 3002 AND {REAL_FAILURE})
 FROM events WHERE {{mine}}{{ai}}
 GROUP BY 1, 2
 """  # noqa: S608  # fixed SQL text; the person condition holds literals only (`_mine`)

@@ -8,7 +8,7 @@ import { SourceStatusLabel } from "./SourceStatusLabel";
 import { greyedStatus } from "./sourceStatus";
 import { timesNote } from "@/lib/localTime";
 
-export type FlowLevel = "unhealthy" | "attention" | "paused" | "healthy";
+export type FlowLevel = "unhealthy" | "attention" | "paused" | "healthy" | "shared";
 
 export interface FlowSource {
   source_id: string;
@@ -17,6 +17,8 @@ export interface FlowSource {
   reason?: string | null;
   /** The reason is only the quiet sentence ("No events for over 1 h"). */
   quietNote?: boolean;
+  /** A neutral line: files another source reads (`sharedFileText`). */
+  note?: string | null;
   last: string | null;
   onOpen?: () => void;
 }
@@ -38,6 +40,7 @@ const WORD: Record<FlowLevel, string> = {
   attention: "Needs attention",
   paused: "Paused",
   healthy: "Flowing",
+  shared: "Read by another source",
 };
 // Source, Status, the line, Peak, 24 hours, Per minute, Last received (D255).
 const COLS =
@@ -288,6 +291,11 @@ export function SourceFlow({
                   )}
                 >
                   {s.reason}
+                </p>
+              ) : null}
+              {s.note ? (
+                <p data-shared-note="" className="mt-1 text-text-secondary">
+                  {s.note}
                 </p>
               ) : null}
             </li>

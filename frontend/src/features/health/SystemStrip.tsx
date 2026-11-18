@@ -29,6 +29,16 @@ interface SystemStripProps {
  * flagged, and do alerts get out. One strip of Dashboard tiles (D255): each leads with a
  * number in the text color, the Sources count in the warn color when not all are healthy,
  * and a tile whose data is still loading shows bars, never a zero or an all-clear. */
+function upper(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** The sources left out of "N of M" because another source reads their files. */
+export function sharedSourcesText(n: number): string {
+  // Short enough for the tile's one line at 1440px: nothing is cut off.
+  return n === 1 ? "1 source's file is read by another" : `${n} sources' files are read by others`;
+}
+
 export function SystemStrip(p: SystemStripProps) {
   const o = p.overview;
   const newest = p.alerts?.items[0];
@@ -63,7 +73,24 @@ export function SystemStrip(p: SystemStripProps) {
         failed={o ? undefined : p.overviewFailed}
         value={sum ? `${sum.healthy.toLocaleString()} of ${sum.total.toLocaleString()}` : "·"}
         tone={sourcesOk ? "text" : "warn"}
-        context={sourceLine.charAt(0).toUpperCase() + sourceLine.slice(1)}
+        context={
+          sum?.shared ? (
+            // Read by another source (SPEC 3.5): not in the count, said on a line of its own.
+            <>
+              {/* Every detail, as without it (one quiet source named, "and N more"), then
+                  its own line; up to four lines, so nothing is cut (DESIGN 6.3). */}
+              <span className="block" title={sourceLine} data-quiet-line="">
+                {upper(sourcesSummaryText(sum, o?.generated_at ?? p.now, 1).details.join("; "))}
+              </span>
+              <span className="block" data-shared-sources="">
+                {sharedSourcesText(sum.shared)}
+              </span>
+            </>
+          ) : (
+            sourceLine.charAt(0).toUpperCase() + sourceLine.slice(1)
+          )
+        }
+        contextLines={sum?.shared ? 4 : 2}
         page="health"
         tab="sources"
         opens="the Sources tab"

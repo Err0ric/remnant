@@ -179,6 +179,31 @@ export function sqlPlaceholders(sql: string): string[] {
   return [...names];
 }
 
+// A parameter's value as the Library writes it into the editor (library.literal): quoted
+// text, a number, true, or false.
+const LITERAL = String.raw`(?:'(?:[^']|'')*'|-?\d+(?:\.\d+)?|true|false)`;
+const KEPT = new Set(["start", "end", "org_domains"]);
+const escaped = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** True when `sql` is the library query `packSql` with at most its parameters' values
+ * changed (D274): `{{start}}`, `{{end}}`, and `{{org_domains}}` stay as they are; any other
+ * placeholder holds a value or itself, the same at every place it is used (`{{ip}}` twice
+ * is one address). Any other edit makes it a different query. */
+export function sameButValues(sql: string, packSql: string): boolean {
+  const parts = packSql.split(/(\{\{\s*[a-z_][a-z0-9_]{0,31}\s*\}\})/);
+  const seen = new Set<string>();
+  const pattern = parts
+    .map((part, i) => {
+      const name = part.slice(2, -2).trim();
+      if (i % 2 === 0 || KEPT.has(name)) return escaped(part);
+      if (seen.has(name)) return `\\k<p_${name}>`;
+      seen.add(name);
+      return `(?<p_${name}>${LITERAL}|${escaped(part)})`;
+    })
+    .join("");
+  return new RegExp(`^${pattern}$`).test(sql);
+}
+
 /** A saved-search id from its name: lowercase, digits, _ and -, at most 64 characters. */
 export function slugify(name: string): string {
   return name

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Select } from "@/components/forms/Select";
+import { LOOK, Select } from "@/components/forms/Select";
 import { cn } from "@/lib/cn";
 import { utcText } from "@/lib/timeWindow";
 
@@ -205,7 +205,8 @@ export function FilterBar<S extends string>({
           placeholder={text.label}
           value={text.value}
           onChange={(e) => text.onChange(e.target.value)}
-          className="h-7 w-56 min-w-0 rounded border border-border-control bg-inset px-2"
+          // Drawn as the facet buttons beside it, so it never reads as disabled.
+          className={cn(LOOK.facet, "w-56 min-w-0 text-text placeholder:text-text-secondary")}
         />
       ) : null}
       {!isDefault && onReset ? (

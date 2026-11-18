@@ -1,7 +1,8 @@
 import { QueryClient } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { halted } from "@/features/ask/askJob";
 import { mockApi, type MockAuth } from "./mockApi";
 import { choose, optionLabels } from "./choose";
 
@@ -75,8 +76,11 @@ describe("Ask (ADR-0042 slice 1a)", () => {
       name: "Question: failed logins by source ip",
     });
     const table = await within(block).findByRole("table", { name: "Results" });
-    // The server runs the answer it holds; the client never sends the SQL back.
-    expect(spy.mock.calls.some(([u]) => String(u).endsWith("/api/ask/a1/run"))).toBe(true);
+    // The server's job runs the answer it holds; the client never sends the SQL back.
+    expect(posts(spy, "/api/ask/jobs")).toHaveLength(1);
+    expect(spy.mock.calls.some(([u]) => /\/api\/ask\/a1\/(run|answer)$/.test(String(u)))).toBe(
+      false,
+    );
     expect(
       (posts(spy, "/api/query") as { sql: string }[]).filter((b) => b.sql.includes("turn 1")),
     ).toHaveLength(0);
@@ -90,6 +94,34 @@ describe("Ask (ADR-0042 slice 1a)", () => {
     expect(within(how).getByText("linux_sshd")).toBeInTheDocument();
   });
 
+  it("answers an address alone with its page, no query and no Run (D276)", async () => {
+    const spy = await renderAt("/ask-ai");
+    await askQuestion("10.20.30.40");
+    const block = await screen.findByRole("region", { name: "Question: 10.20.30.40" });
+    const answer = await within(block).findByRole("status");
+    expect(answer).toHaveTextContent("10.20.30.40 is an address.");
+    expect(answer).toHaveTextContent("Names looked up:14 names");
+    expect(answer).toHaveTextContent("DHCP and VPN history:no source you may read");
+    expect(answer).toHaveTextContent(
+      "Looked up directly for the last 7 days, the address page's window, not the time chosen above. No AI model was used.",
+    );
+    // No model badge: no model was used.
+    expect(within(block).queryByText("Local")).toBeNull();
+    expect(within(block).queryByRole("button", { name: "Run query" })).toBeNull();
+    expect(within(block).queryByText("How I got this")).toBeNull();
+    expect(spy.mock.calls.some(([u]) => String(u).includes("/run"))).toBe(false);
+    // The next question does not send it as an earlier turn: it has no query to refine.
+    await askQuestion("failed logins by source ip");
+    await screen.findByRole("region", { name: "Question: failed logins by source ip" });
+    const last = (posts(spy, "/api/ask/jobs") as { history: unknown[] }[]).at(-1);
+    expect(last?.history).toEqual([]);
+    // The link names the window the answer read, so the page opens on it.
+    const link = within(answer).getByRole("link", { name: "Open the address page" });
+    expect(link).toHaveAttribute("href", "/investigate/people#ip=10.20.30.40&range=7d");
+    await userEvent.click(link);
+    expect(window.location.hash).toBe("#ip=10.20.30.40&range=7d");
+  });
+
   it("waits for Run query when the install keeps click-to-run", async () => {
     const spy = await renderAt("/ask-ai");
     await askQuestion("click to run failed logins");
@@ -97,7 +129,7 @@ describe("Ask (ADR-0042 slice 1a)", () => {
       name: "Question: click to run failed logins",
     });
     await within(block).findByRole("button", { name: "Run query" });
-    const runs = () => spy.mock.calls.filter(([u]) => String(u).includes("/run")).length;
+    const runs = () => posts(spy, "/api/ask/a1/jobs").length;
     expect(runs()).toBe(0);
     expect(within(block).queryByRole("table", { name: "Results" })).toBeNull();
     await userEvent.click(within(block).getByRole("button", { name: "Run query" }));
@@ -124,7 +156,7 @@ describe("Ask (ADR-0042 slice 1a)", () => {
     await screen.findByRole("region", { name: "Question: failed logins" });
     await askQuestion("only from 203.0.113.9");
     await screen.findByRole("region", { name: "Question: only from 203.0.113.9" });
-    const [, second] = posts(spy, "/api/ask") as { history: { question: string }[] }[];
+    const [, second] = posts(spy, "/api/ask/jobs") as { history: { question: string }[] }[];
     expect(second?.history.map((t) => t.question)).toEqual(["failed logins"]);
     const answers = screen.getByLabelText("Answers");
     const heads = within(answers).getAllByRole("heading", { level: 3 });
@@ -134,7 +166,7 @@ describe("Ask (ADR-0042 slice 1a)", () => {
     await userEvent.click(screen.getByRole("button", { name: "New question" }));
     expect(screen.queryByLabelText("Answers")).toBeNull();
     await askQuestion("anything");
-    const third = (posts(spy, "/api/ask") as { history: unknown[] }[])[2];
+    const third = (posts(spy, "/api/ask/jobs") as { history: unknown[] }[])[2];
     expect(third?.history).toEqual([]);
   });
 
@@ -158,7 +190,7 @@ describe("Ask (ADR-0042 slice 1a)", () => {
     fireEvent.change(screen.getByLabelText("To"), { target: { value: "2026-11-02T08:00" } });
     await askQuestion("failed logins");
     const block = await screen.findByRole("region", { name: "Question: failed logins" });
-    const asked = (posts(spy, "/api/ask") as { start?: string; end?: string }[]).at(-1);
+    const asked = (posts(spy, "/api/ask/jobs") as { start?: string; end?: string }[]).at(-1);
     expect(asked?.start).toBe(new Date("2026-11-01T08:00").toISOString());
     expect(asked?.end).toBe(new Date("2026-11-02T08:00:59.999").toISOString());
     await within(block).findByRole("table", { name: "Results" });
@@ -228,9 +260,340 @@ describe("Ask (ADR-0042 slice 1a)", () => {
     expect(within(over).getByLabelText("Question")).toHaveValue("failed logins today");
     await userEvent.click(within(over).getByRole("button", { name: "Ask" }));
     expect(await within(over).findByRole("table", { name: "Results" })).toBeVisible();
-    expect(posts(spy, "/api/ask")).toHaveLength(1);
+    expect(posts(spy, "/api/ask/jobs")).toHaveLength(1);
     await userEvent.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "Ask AI" })).toBeNull();
+  });
+});
+
+describe("Ask as a background job (D269, owner 2026-11-17)", () => {
+  it("shows each step with its time, the rows as soon as the query ran, then the summary", async () => {
+    await renderAt("/ask-ai");
+    await askQuestion("summarize step by step");
+    const block = await screen.findByRole("region", { name: "Question: summarize step by step" });
+    const steps = await within(block).findByRole("list", { name: "Progress" });
+    await vi.waitFor(
+      () => expect(steps).toHaveTextContent(/^Writing query 1\.2 s›Running query… \d+ s$/),
+      { timeout: 3000 },
+    );
+    // The table first; the summary step still runs above the code's headline.
+    const table = await within(block).findByRole("table", { name: "Results" }, { timeout: 3000 });
+    expect(within(block).getByRole("list", { name: "Progress" })).toHaveTextContent(
+      /Running query under 0\.1 s›Summarizing… \d+ s$/,
+    );
+    expect(within(block).getByText("2 rows. First row: user dana.")).toBeVisible();
+    expect(within(block).queryByRole("list", { name: "Summary" })).toBeNull();
+    await within(block).findByRole("list", { name: "Summary" }, { timeout: 3000 });
+    // The steps stay, each with its time, so nothing above the table moves when it ends.
+    expect(within(block).getByRole("list", { name: "Progress" })).toHaveTextContent(
+      /^Writing query 1\.2 s›Running query under 0\.1 s›Summarizing 1\.2 s$/,
+    );
+    expect(table).toBeVisible();
+    await userEvent.click(within(block).getByText("How I got this"));
+    expect(
+      within(block).getByText(
+        /Writing the query 1\.2 s, running it under 0\.1 s, summarizing 1\.2 s/,
+      ),
+    ).toBeVisible();
+  });
+
+  it("keeps the table when the summary times out, and says so under it", async () => {
+    await renderAt("/ask-ai");
+    await askQuestion("summarize, too slow");
+    const block = await screen.findByRole("region", { name: "Question: summarize, too slow" });
+    const table = await within(block).findByRole("table", { name: "Results" });
+    const note = await within(block).findByText(
+      "The model took too long to summarize. Results are above.",
+    );
+    expect(table.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(block).queryByRole("alert")).toBeNull();
+    expect(within(block).queryByRole("list", { name: "Summary" })).toBeNull();
+  });
+
+  it("says a proxy's 504 took too long, never that the server cannot be reached", async () => {
+    const spy = await renderAt("/ask-ai");
+    const real = spy.getMockImplementation() as typeof fetch;
+    spy.mockImplementation(async (url, init) =>
+      String(url).endsWith("/api/ask/jobs")
+        ? new Response("<html>504 Gateway Time-out</html>", { status: 504 })
+        : real(url, init),
+    );
+    await askQuestion("failed logins");
+    const block = await screen.findByRole("region", { name: "Question: failed logins" });
+    expect(await within(block).findByRole("alert")).toHaveTextContent(
+      /^The request took too long\s*Try again$/,
+    );
+    expect(screen.queryByText(/Can't reach the server|504/)).toBeNull();
+  });
+
+  it("tries a poll again when it fails once or twice, and the answer still comes", async () => {
+    const spy = await renderAt("/ask-ai");
+    const real = spy.getMockImplementation() as typeof fetch;
+    let dropped = 0;
+    spy.mockImplementation(async (url, init) =>
+      /\/api\/ask\/jobs\/j1$/.test(String(url)) && dropped++ < 2
+        ? new Response("Bad Gateway", { status: 502 })
+        : real(url, init),
+    );
+    await askQuestion("failed logins");
+    const block = await screen.findByRole("region", { name: "Question: failed logins" });
+    expect(
+      await within(block).findByRole("table", { name: "Results" }, { timeout: 5000 }),
+    ).toBeVisible();
+    expect(dropped).toBeGreaterThanOrEqual(2);
+    expect(within(block).queryByRole("alert")).toBeNull();
+  });
+
+  it("stops every step and every read when the job is gone", async () => {
+    const spy = await renderAt("/ask-ai");
+    const real = spy.getMockImplementation() as typeof fetch;
+    let gone = false;
+    spy.mockImplementation(async (url, init) =>
+      gone && /\/api\/ask\/jobs\/j1$/.test(String(url))
+        ? new Response(
+            JSON.stringify({ detail: "That question has expired. Ask again.", code: "not_found" }),
+            { status: 404, headers: { "Content-Type": "application/json" } },
+          )
+        : real(url, init),
+    );
+    await askQuestion("this never finishes");
+    const block = await screen.findByRole("region", { name: "Question: this never finishes" });
+    const steps = await within(block).findByRole("list", { name: "Progress" });
+    await vi.waitFor(() => expect(steps).toHaveTextContent(/^Writing query… \d+ s$/));
+    gone = true;
+    expect(await within(block).findByRole("alert", {}, { timeout: 3000 })).toHaveTextContent(
+      "That question has expired. Ask again.",
+    );
+    expect(steps).toHaveTextContent(/^Writing query stopped at (under 0\.1|\d+\.\d) s$/);
+    const reads = () =>
+      spy.mock.calls.filter(([u]) => /\/api\/ask\/(jobs\/j1|providers\/p1\/queue)$/.test(String(u)))
+        .length;
+    const before = reads();
+    await new Promise((r) => setTimeout(r, 2500));
+    expect(reads()).toBe(before);
+  });
+
+  it("stops the Run step when its submit fails", async () => {
+    const spy = await renderAt("/ask-ai");
+    const real = spy.getMockImplementation() as typeof fetch;
+    spy.mockImplementation(async (url, init) =>
+      String(url).endsWith("/api/ask/a1/jobs")
+        ? new Response(
+            JSON.stringify({ detail: "Something went wrong. Ask again.", code: "internal_error" }),
+            { status: 500, headers: { "Content-Type": "application/json" } },
+          )
+        : real(url, init),
+    );
+    await askQuestion("click to run failed logins");
+    const block = await screen.findByRole("region", {
+      name: "Question: click to run failed logins",
+    });
+    await userEvent.click(await within(block).findByRole("button", { name: "Run query" }));
+    expect(await within(block).findByRole("alert")).toHaveTextContent("Something went wrong.");
+    expect(within(block).getByRole("list", { name: "Progress" })).toHaveTextContent(
+      /Running query stopped at (under 0\.1|\d+\.\d) s$/,
+    );
+    expect(within(block).getByRole("list", { name: "Progress" })).not.toHaveTextContent("…");
+  });
+
+  it("keeps Ask off after New question until the server ends the running question", async () => {
+    const spy = await renderAt("/ask-ai");
+    const real = spy.getMockImplementation() as typeof fetch;
+    let ended = false;
+    spy.mockImplementation(async (url, init) =>
+      ended && /\/api\/ask\/jobs\/j1$/.test(String(url))
+        ? new Response(JSON.stringify({ job_id: "j1", state: "done", steps: [] }), {
+            headers: { "Content-Type": "application/json" },
+          })
+        : real(url, init),
+    );
+    await askQuestion("this never finishes");
+    await screen.findByRole("region", { name: "Question: this never finishes" });
+    await userEvent.click(screen.getByRole("button", { name: "New question" }));
+    expect(screen.queryByLabelText("Answers")).toBeNull();
+    await userEvent.type(screen.getByLabelText("Question"), "anything");
+    const askButton = screen.getByRole("button", { name: "Ask" });
+    expect(askButton).toHaveAttribute("aria-disabled", "true");
+    expect(askButton).toHaveAccessibleDescription("Your previous question is still running");
+    expect(
+      screen.getByText(/Your previous question is still running\. Ask comes back/),
+    ).toBeVisible();
+    await userEvent.click(askButton);
+    expect(posts(spy, "/api/ask/jobs")).toHaveLength(1); // nothing sent while it runs
+    ended = true;
+    await vi.waitFor(() => expect(askButton).toHaveAttribute("aria-disabled", "false"), {
+      timeout: 3000,
+    });
+    expect(screen.queryByText(/Ask comes back/)).toBeNull();
+  });
+
+  it("turns off Run query, Try again, and Check your data while a question runs", async () => {
+    const spy = await renderAt("/ask-ai");
+    await askQuestion("how should I harden sshd?");
+    await screen.findByRole("button", { name: "Check your data instead?" });
+    await askQuestion("hits the output limit");
+    await screen.findByRole("button", { name: "Try again" });
+    await askQuestion("click to run failed logins");
+    await screen.findByRole("button", { name: "Run query" });
+    await askQuestion("this never finishes");
+    await screen.findByRole("region", { name: "Question: this never finishes" });
+    const sent = posts(spy, "/api/ask/jobs").length;
+    for (const name of ["Check your data instead?", "Try again", "Run query"]) {
+      const button = screen.getByRole("button", { name });
+      expect(button).toHaveAttribute("aria-disabled", "true");
+      expect(button).toHaveAccessibleDescription("Your previous question is still running");
+      await userEvent.click(button);
+    }
+    expect(posts(spy, "/api/ask/jobs")).toHaveLength(sent);
+    expect(spy.mock.calls.filter(([u]) => /\/api\/ask\/a\d+\/jobs$/.test(String(u)))).toHaveLength(
+      0,
+    );
+  });
+
+  it("ends the running steps of a question the page stops following", () => {
+    const turn = {
+      id: 1,
+      question: "q",
+      phase: "writing" as const,
+      steps: [
+        { name: "sql" as const, state: "done" as const, ms: 1200 },
+        { name: "summary" as const, state: "running" as const, ms: null },
+      ],
+      seen: { summary: 1000 },
+      result: { rows: [] } as never,
+    };
+    const left = halted(turn, 4000);
+    expect(left.phase).toBe("done");
+    expect(left.steps?.map((x) => [x.name, x.state, x.ms])).toEqual([
+      ["sql", "done", 1200],
+      ["summary", "failed", 3000],
+    ]);
+    expect(halted({ ...turn, result: undefined }, 4000).phase).toBe("failed");
+    expect(halted({ ...turn, steps: [turn.steps[0]!] }, 4000)).toEqual({});
+  });
+
+  it("keeps an answer and its Run query when the server says a question still runs", async () => {
+    const spy = await renderAt("/ask-ai");
+    const real = spy.getMockImplementation() as typeof fetch;
+    const still = () =>
+      new Response(
+        JSON.stringify({ detail: "Your previous question is still running", code: "rate_limited" }),
+        { status: 429, headers: { "Content-Type": "application/json" } },
+      );
+    spy.mockImplementation(async (url, init) =>
+      /\/api\/ask\/a1\/jobs$/.test(String(url)) ? still() : real(url, init),
+    );
+    await askQuestion("click to run failed logins");
+    const block = await screen.findByRole("region", {
+      name: "Question: click to run failed logins",
+    });
+    await userEvent.click(await within(block).findByRole("button", { name: "Run query" }));
+    expect(await screen.findByText("Your previous question is still running")).toBeVisible();
+    expect(within(block).queryByRole("alert")).toBeNull();
+    expect(within(block).getByRole("button", { name: "Run query" })).not.toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    expect(within(block).getByRole("list", { name: "Progress" })).not.toHaveTextContent(
+      "Running query",
+    );
+  });
+
+  it("keeps a failed answer, and the typed question, when Try again or Ask meets a running one", async () => {
+    const spy = await renderAt("/ask-ai");
+    await askQuestion("hits the output limit");
+    const block = await screen.findByRole("region", { name: "Question: hits the output limit" });
+    await within(block).findByRole("alert");
+    const real = spy.getMockImplementation() as typeof fetch;
+    spy.mockImplementation(async (url, init) =>
+      String(url).endsWith("/api/ask/jobs") && init?.method === "POST"
+        ? new Response(
+            JSON.stringify({
+              detail: "Your previous question is still running",
+              code: "rate_limited",
+            }),
+            { status: 429, headers: { "Content-Type": "application/json" } },
+          )
+        : real(url, init),
+    );
+    await userEvent.click(within(block).getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("Your previous question is still running")).toBeVisible();
+    const again = screen.getByRole("region", { name: "Question: hits the output limit" });
+    expect(within(again).getByRole("alert")).toHaveTextContent("output limit");
+    expect(within(again).getByRole("button", { name: "Try again" })).toBeVisible();
+    await askQuestion("anything else");
+    await vi.waitFor(() => expect(screen.getByLabelText("Question")).toHaveValue("anything else"));
+    expect(screen.queryByRole("region", { name: "Question: anything else" })).toBeNull();
+    expect(screen.getAllByRole("region", { name: /^Question: / })).toHaveLength(1);
+  });
+
+  it("drops the summary placeholder when the job fails or cannot be read while summarizing", async () => {
+    for (const how of ["gone", "failed"] as const) {
+      const spy = await renderAt("/ask-ai");
+      const real = spy.getMockImplementation() as typeof fetch;
+      let broken = false;
+      spy.mockImplementation(async (url, init) => {
+        if (!broken || !/\/api\/ask\/jobs\/j1$/.test(String(url))) return real(url, init);
+        if (how === "gone")
+          return new Response(
+            JSON.stringify({ detail: "That question has expired. Ask again.", code: "not_found" }),
+            { status: 404, headers: { "Content-Type": "application/json" } },
+          );
+        const job = (await (await real(url, init)).json()) as Record<string, unknown>;
+        const steps = (job.steps as { name: string }[]).map((st) =>
+          st.name === "summary" ? { ...st, state: "failed", ms: 900 } : st,
+        );
+        const error = { code: "internal_error", message: "Something went wrong. Ask again." };
+        return new Response(
+          JSON.stringify({ ...job, state: "failed", summary: null, steps, error }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      });
+      await askQuestion("summarize step by step");
+      const block = await screen.findByRole("region", { name: "Question: summarize step by step" });
+      await within(block).findByRole("table", { name: "Results" }, { timeout: 3000 });
+      expect(block.querySelector("[data-skeleton]")).not.toBeNull();
+      broken = true;
+      await within(block).findByRole("alert", {}, { timeout: 3000 });
+      expect(block.querySelector("[data-skeleton]")).toBeNull();
+      expect(within(block).getByRole("list", { name: "Progress" })).toHaveTextContent(
+        /Summarizing stopped at/,
+      );
+      cleanup();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("reads a running job every 0.5 s at first, then every second, and says when the model is busy", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const spy = await renderAt("/ask-ai");
+      const real = spy.getMockImplementation() as typeof fetch;
+      const at: number[] = [];
+      spy.mockImplementation(async (url, init) => {
+        const u = String(url);
+        if (/\/api\/ask\/jobs\/j1$/.test(u)) at.push(Date.now());
+        if (u.endsWith("/api/ask/providers/p1/queue"))
+          return new Response(JSON.stringify({ slots: 1, running: 1, waiting: 2 }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        return real(url, init);
+      });
+      await askQuestion("this never finishes");
+      await screen.findByRole("region", { name: "Question: this never finishes" });
+      await vi.advanceTimersByTimeAsync(10_000);
+      const gaps = at.slice(1).map((t, i) => t - at[i]!);
+      expect(gaps.length).toBeGreaterThan(8);
+      for (const g of gaps.slice(0, 4)) expect(g).toBeGreaterThanOrEqual(450);
+      for (const g of gaps.slice(0, 4)) expect(g).toBeLessThan(700);
+      for (const g of gaps.slice(-3)) expect(g).toBeGreaterThanOrEqual(950);
+      for (const g of gaps.slice(-3)) expect(g).toBeLessThan(1200);
+      expect(screen.getByRole("list", { name: "Progress" })).toHaveTextContent(
+        /Writing query… \d+ s · model busy, waiting for a free slot$/,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -283,7 +646,7 @@ describe("Ask AI, search first (D256)", () => {
     expect(screen.getByText(/Reads as a KQL or SPL query/)).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Ask" }));
     await screen.findByRole("region", { name: /^Question: index=main/ });
-    expect((posts(spy, "/api/ask") as { sources?: string[] }[]).at(-1)?.sources).toEqual([
+    expect((posts(spy, "/api/ask/jobs") as { sources?: string[] }[]).at(-1)?.sources).toEqual([
       "linux_sshd",
     ]);
   });
@@ -301,7 +664,7 @@ describe("Ask AI, search first (D256)", () => {
     const second = await screen.findByRole("region", { name: "Question: only for dana" });
     expect(second.compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // The follow-up is the request the page always sent: the earlier turn, oldest first.
-    const [one, two] = posts(spy, "/api/ask") as Record<string, unknown>[];
+    const [one, two] = posts(spy, "/api/ask/jobs") as Record<string, unknown>[];
     expect(Object.keys(two ?? {}).sort()).toEqual(
       ["history", "provider_id", "question", "start", "tz"].sort(),
     );
@@ -344,7 +707,7 @@ describe("Ask AI, search first (D256)", () => {
     await userEvent.keyboard(" ");
     expect(box.closest("form")).toBeNull();
     expect(screen.getByLabelText("From").closest("form")).toBeNull();
-    expect(posts(spy, "/api/ask")).toHaveLength(0);
+    expect(posts(spy, "/api/ask/jobs")).toHaveLength(0);
     expect(prompt).toHaveValue("failed logins");
   });
 
@@ -417,7 +780,7 @@ describe("Ask routing (ADR-0042 slice 1b)", () => {
     const how = within(block).getByText("How I got this").closest("details") as HTMLElement;
     expect(within(how).getByText("linux_auth/ssh_logins@1.0.0")).toBeInTheDocument();
     expect(within(how).getByText("user = dana@example.com (also dana)")).toBeInTheDocument();
-    const [sent] = posts(spy, "/api/ask") as { tz?: string }[];
+    const [sent] = posts(spy, "/api/ask/jobs") as { tz?: string }[];
     expect(sent?.tz).toBeTruthy(); // "today" is the asker's day
     // The question's own time wins over the picker, and the line says so (owner, 2026-11-08).
     expect(
@@ -437,8 +800,8 @@ describe("Ask routing (ADR-0042 slice 1b)", () => {
     const block = await screen.findByRole("region", { name: "Question: who uses claude code" });
     expect(await within(block).findByRole("table", { name: "Results" })).toBeVisible();
     watch.disconnect();
-    // The model wait ("Finding the right query", shown after 2 s) never appeared.
-    expect(seen.filter((t) => t.includes("Finding the right query"))).toEqual([]);
+    // The model wait ("model busy", shown after 2 s) never appeared.
+    expect(seen.filter((t) => t.includes("model busy"))).toEqual([]);
     const how = within(block).getByText("How I got this").closest("details") as HTMLElement;
     expect(within(how).getByText("ai_agents/agents_claude_code_users@1.1.0")).toBeInTheDocument();
     expect(
@@ -455,13 +818,13 @@ describe("Ask routing (ADR-0042 slice 1b)", () => {
     const status = await within(block).findByRole("status");
     expect(status).toHaveTextContent("Treated as general guidance.");
     expect(within(block).queryByText("How I got this")).toBeNull();
-    expect(spy.mock.calls.some(([u]) => String(u).includes("/run"))).toBe(false);
+    expect(posts(spy, "/api/ask/a1/jobs")).toHaveLength(0);
     await userEvent.click(within(status).getByRole("button", { name: "Check your data instead?" }));
     const again = await screen.findByRole("region", {
       name: "Question: how should I harden sshd?",
     });
     expect(await within(again).findByRole("table", { name: "Results" })).toBeVisible();
-    const bodies = posts(spy, "/api/ask") as { route?: string }[];
+    const bodies = posts(spy, "/api/ask/jobs") as { route?: string }[];
     expect(bodies.map((b) => b.route)).toEqual([undefined, "data"]);
     // The switched turn replaced the first one; it did not stack a second block.
     expect(screen.getAllByRole("region", { name: /^Question: how should I/ })).toHaveLength(1);
@@ -498,7 +861,7 @@ describe("Ask routing (ADR-0042 slice 1b)", () => {
     await askQuestion("failed ssh logins by source");
     const found = await screen.findByRole("region", { name: "Library suggestions" });
     const open = within(found).getByRole("button", { name: "SSH failures by source address" });
-    expect(posts(spy, "/api/ask")).toHaveLength(0); // no model call at all
+    expect(posts(spy, "/api/ask/jobs")).toHaveLength(0); // no model call at all
     // Longer than Logs takes: shown, but disabled with the plain reason (review of 636).
     const big = within(found).getByRole("button", { name: "AI services in use" });
     expect(big).toHaveAttribute("aria-disabled", "true");
@@ -519,11 +882,11 @@ describe("Ask routing (ADR-0042 slice 1b)", () => {
     expect(
       within(block).getByText("1 statement removed: it cited no events from these rows."),
     ).toBeVisible();
-    expect(posts(spy, "/api/ask/a1/answer")).toHaveLength(1);
+    expect(posts(spy, "/api/ask/jobs")).toHaveLength(1); // the job wrote the summary
   });
 
   it("shows no summary when nothing cites, and never asks without event ids", async () => {
-    const spy = await renderAt("/ask-ai");
+    await renderAt("/ask-ai");
     await askQuestion("summarize uncited");
     const block = await screen.findByRole("region", { name: "Question: summarize uncited" });
     expect(
@@ -539,7 +902,8 @@ describe("Ask routing (ADR-0042 slice 1b)", () => {
       "What was counted: Read 1 source for the last 24 hours and counted failures, grouped by address.",
     );
     expect(within(second).queryByText(/^No summary/)).toBeNull();
-    expect(spy.mock.calls.filter(([u]) => String(u).endsWith("/a2/answer"))).toHaveLength(0);
+    // Rows with no event ids to cite: the job wrote no summary.
+    expect(within(second).queryByText(/Summarizing/)).toBeNull();
   });
 
   it("says a library answer with nothing found in one line, and why Logs cannot open it", async () => {
@@ -563,7 +927,7 @@ describe("Ask routing (ADR-0042 slice 1b)", () => {
     expect(open).toHaveAccessibleDescription(/longer than the 20,000 characters Logs takes/);
     // A follow-up names that answer by id and never posts its SQL back (review of 636).
     await askQuestion("only claude");
-    const turns = (posts(spy, "/api/ask") as { history: Record<string, unknown>[] }[]).at(-1);
+    const turns = (posts(spy, "/api/ask/jobs") as { history: Record<string, unknown>[] }[]).at(-1);
     expect(turns?.history).toEqual([{ question: "which ai services are in use", ask_id: "a1" }]);
   });
 
@@ -605,7 +969,9 @@ describe("Ask's example questions (D182)", () => {
     ]);
     await userEvent.click(buttons[0] as HTMLElement);
     await screen.findByRole("region", { name: "Question: Who logged in over SSH?" });
-    expect(posts(spy, "/api/ask").at(-1)).toMatchObject({ question: "Who logged in over SSH?" });
+    expect(posts(spy, "/api/ask/jobs").at(-1)).toMatchObject({
+      question: "Who logged in over SSH?",
+    });
     // Gone once there is an answer to refine.
     expect(screen.queryByRole("region", { name: "Example questions" })).toBeNull();
   });
@@ -628,6 +994,7 @@ describe("pickExamples", () => {
     normal: "",
     tags: [],
     requires: [],
+    sources: [],
     sql,
     pack_sql: sql,
     suggested_schedule: null,
@@ -647,6 +1014,7 @@ describe("pickExamples", () => {
     const { pickExamples } = await import("@/features/ask/AskExamples");
     const lib = {
       hidden: 0,
+      needs: [],
       packs: [
         pack("a", [
           q("a1", ["A one", "A one?"]),

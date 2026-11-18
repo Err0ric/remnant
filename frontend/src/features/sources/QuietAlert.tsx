@@ -26,14 +26,18 @@ interface QuietAlertProps {
   sourceId: string;
   quiet: SourceQuiet | null | undefined;
   canManage: boolean;
+  /** Every file it lists is read by this source: its quiet alert never fires (SPEC 3.5). */
+  readBy?: string | null;
 }
 
 /** The quiet alert setting, for admins. */
-export function QuietAlert({ sourceId, quiet, canManage }: QuietAlertProps) {
+export function QuietAlert({ sourceId, quiet, canManage, readBy }: QuietAlertProps) {
   const [open, setOpen] = useState(false);
   // Whether it is quiet now, and for how long, is the status word above ("Quiet 34 h"),
   // shown to every role; the setting itself is for admins.
   if (!canManage) return null;
+  // It stores nothing by design while another source reads its files: no quiet alert.
+  if (readBy) return <span className="text-sm text-text-secondary">No quiet alert</span>;
   if (open) {
     return <QuietEditor sourceId={sourceId} quiet={quiet ?? null} onClose={() => setOpen(false)} />;
   }

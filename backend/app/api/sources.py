@@ -105,6 +105,15 @@ class ListenerOut(BaseModel):
     senders: list[SenderOut] = []
 
 
+class SharedFileOut(BaseModel):
+    """A file this source lists that another source reads (one reader per file)."""
+
+    file: str
+    reader: str
+    # Both sources are equally specific (the older one reads it): no advice to remove.
+    tie: bool = False
+
+
 class StatusOut(BaseModel):
     state: Literal["waiting", "reading", "error", "disabled"]
     files: int
@@ -121,6 +130,9 @@ class StatusOut(BaseModel):
     # Event times steadily this many hours off (positive: early): check the time zone.
     time_offset_h: float | None = None
     time_offset_text: str | None = None
+    # Files another source reads (SPEC 3.5), and that source when it reads every file.
+    shared: list[SharedFileOut] = []
+    read_by: str | None = None
 
 
 class QuietOut(BaseModel):
@@ -217,6 +229,8 @@ def _status_out(source: SourceConfig, st: SourceStatus | None) -> StatusOut:
         retry_at=st.retry_at,
         time_offset_h=st.time_offset_h,
         time_offset_text=skew_text(st.time_offset_h) if st.time_offset_h else None,
+        shared=[SharedFileOut(file=f, reader=r, tie=t) for f, r, t in st.shared],
+        read_by=st.read_by,
     )
 
 

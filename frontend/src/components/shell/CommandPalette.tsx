@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { api, type LookupHit } from "@/lib/api";
 import { CoverageLines } from "@/features/investigate/EmptyAddress";
 import { guestLabel, showGuestEvents } from "@/features/investigate/InventoryLine";
-import { openEntity } from "@/lib/entity";
+import { isIpAddress, openEntity } from "@/lib/entity";
 import { setAskProvider, useAskProvider } from "@/lib/askProvider";
 import { openAsk } from "@/lib/askSlideOver";
 import { LOGS_VIEWS, visibleNav, visibleSections } from "@/lib/nav";
@@ -40,12 +40,15 @@ const SECTIONS = {
   service: "AI services",
 } as const;
 
-function count(n: number | null): string {
-  return n === null ? "" : `${n.toLocaleString()} ${n === 1 ? "event" : "events"}`;
+/** "1,133 events in 30 days": the lookup's own window, so it does not read against a
+ * page's. */
+function count(n: number | null, days?: number): string {
+  if (n === null) return "";
+  return `${n.toLocaleString()} ${n === 1 ? "event" : "events"}${days ? ` in ${days} days` : ""}`;
 }
 
 /** One entity from the lookup; opening it goes to its page. */
-function hitItem(h: LookupHit): PaletteItem {
+function hitItem(h: LookupHit, days?: number): PaletteItem {
   const where = h.geo
     ? [
         h.geo.country_name ?? h.geo.country,
@@ -61,7 +64,7 @@ function hitItem(h: LookupHit): PaletteItem {
     hint:
       h.kind === "service"
         ? "AI service"
-        : [where, h.aliases?.length ? `also ${h.aliases.join(", ")}` : "", count(h.events)]
+        : [where, h.aliases?.length ? `also ${h.aliases.join(", ")}` : "", count(h.events, days)]
             .filter(Boolean)
             .join(", "),
     found: true,
@@ -193,6 +196,15 @@ export function CommandPalette({
       aliases: ["saved searches", "grimoire"],
       run: () => navigate("saved"),
     });
+    // Logs > Library opens queries in the SQL editor, so it is for those who may run SQL.
+    if (canRunSql)
+      out.push({
+        key: "nav:library",
+        section: "Navigate",
+        label: "Logs › Library",
+        aliases: ["query library", "library", "grimoire", "packs", "shipped queries"],
+        run: () => navigate("library"),
+      });
     // The views of Logs are server-built lists: open to everyone, with or without SQL.
     for (const v of LOGS_VIEWS)
       out.push({
@@ -213,17 +225,6 @@ export function CommandPalette({
         run: () => (page === "ask" ? navigate("ask") : openAsk()),
       });
     }
-    out.push({
-      key: "nav:library",
-      section: "Navigate",
-      label: "Query library",
-      hint: "Logs",
-      aliases: ["library", "grimoire", "packs", "shipped queries"],
-      run: () => {
-        seedSearch({ library: true });
-        navigate("logs");
-      },
-    });
     out.push({
       key: "nav:me",
       section: "Navigate",
@@ -288,7 +289,20 @@ export function CommandPalette({
     }
     const text = query.trim();
     if (text.length >= 2) {
-      for (const h of lookup.data?.hits ?? []) out.push(hitItem(h));
+      const hits = lookup.data?.hits ?? [];
+      // An address typed whole opens its page at once, found or not, ahead of "Search
+      // events for" (P4); the lookup's own row for it takes its place once it answers.
+      if (isIpAddress(text) && !hits.some((h) => h.kind === "ip" && h.value === text))
+        out.push({
+          key: `entity:ip:${text}`,
+          section: "Addresses",
+          label: text,
+          hint: "Address page",
+          found: true,
+          mono: true,
+          run: () => openEntity({ kind: "ip", value: text }),
+        });
+      for (const h of hits) out.push(hitItem(h, lookup.data?.days));
       for (const m of inventory.data?.matches[typed] ?? []) {
         out.push({
           key: `inventory:${m.source_id}:${m.vmid}`,

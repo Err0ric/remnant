@@ -2,6 +2,7 @@
 
 import math
 import re
+import time
 from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Annotated, Any
@@ -14,7 +15,7 @@ from app.api.access import CurrentUser, SqlUser, client_ip
 from app.auth.service import AuthService
 from app.auth.users import User
 from app.core import clock
-from app.core.errors import AppError, ParamInvalidError, SearchInvalidError
+from app.core.errors import AppError, ParamInvalidError, QueryTimeoutError, SearchInvalidError
 from app.core.times import UtcDateTime
 from app.engine.duckdb import QueryEngine, QueryResult, QueryScope
 from app.engine.export import to_csv
@@ -22,6 +23,7 @@ from app.engine.views import permitted_sources, scope_sources
 from app.enrich.geoip import GeoIP
 from app.enrich.intel import ThreatIntel
 from app.meta.db import MetaDB
+from app.search.facet_days import Newest, newest_with_matches
 from app.search.identity import identity_values
 from app.search.newest import newest_first
 from app.search.params import IDENTITY_PARAMS, RESERVED, compile_sql, placeholders
@@ -284,6 +286,9 @@ FACET_COLUMNS = (
 )
 FACET_VALUES = 10
 FACET_TIMEOUT_S = 10.0
+# A Filters search counts the whole range for this long, then the newest days in what is
+# left of the timeout (`search/facet_days.py`), so the panel shows counts, labeled.
+FACET_WHOLE_S = 7.0
 _TRAILING = re.compile(r"[\s;]+$")
 
 
@@ -314,6 +319,13 @@ class Facet(BaseModel):
 class FacetResponse(BaseModel):
     facets: list[Facet]
     elapsed_ms: int
+    # Set when counting the whole range took too long: the counts are from the newest
+    # `sampled_days` days with matches only (0: none was reached in time), `sampled_items`
+    # matches in all; `sampled_skipped`: some newer day in range held no match. The panel
+    # says so.
+    sampled_days: int | None = None
+    sampled_items: int | None = None
+    sampled_skipped: bool = False
 
 
 INTEL_FACET = (
@@ -416,28 +428,45 @@ async def search_facets(body: FacetRequest, request: Request, user: SqlUser) -> 
         sql, params = text_facet_sql(body.text, intel=with_intel)
     else:
         sql = facet_sql(query, wanted, intel=with_intel)
+
+    def count() -> tuple[QueryResult | None, Newest | None]:
+        if body.text is None:  # the SQL on screen: its own order and limit pick its rows
+            return engine.run(sql, scope, params or None, timeout_s=FACET_TIMEOUT_S), None
+        deadline = time.monotonic() + FACET_TIMEOUT_S
+        try:
+            return engine.run(sql, scope, params or None, timeout_s=FACET_WHOLE_S), None
+        except QueryTimeoutError:
+            assert body.text is not None
+            newest = newest_with_matches(engine, body.text, sql, scope, params or None, deadline)
+            if newest is None:
+                raise
+            return newest.result, (None if newest.whole else newest)
+
     try:
-        result = await run_in_threadpool(
-            lambda: engine.run(sql, scope, params or None, timeout_s=FACET_TIMEOUT_S)
-        )
+        result, sampled = await run_in_threadpool(count)
     except AppError as exc:
         detail["error"] = type(exc).__name__
         await run_in_threadpool(
             auth.audit.write, "query.facets", "failure", user.user_id, client_ip(request), detail
         )
         raise
-    detail["sources_in_scope"] = result.sources
+    detail["sources_in_scope"] = result.sources if result else engine.sources_in(scope)
+    if sampled is not None:
+        detail["sampled_days"] = sampled.days
     await run_in_threadpool(
         auth.audit.write, "query.facets", "success", user.user_id, client_ip(request), detail
     )
     # Threat intel first: when a search touches a list, that is the field people look at.
     grouped: dict[str, list[FacetValue]] = {"intel": []} if with_intel else {}
     grouped |= {c: [] for c in wanted}
-    for facet, value, n in result.rows:
+    for facet, value, n in result.rows if result else []:
         grouped[str(facet)].append(FacetValue(value=value, count=int(n)))
     return FacetResponse(
         facets=[Facet(field=c, values=v) for c, v in grouped.items() if v],
-        elapsed_ms=result.elapsed_ms,
+        elapsed_ms=result.elapsed_ms if result else 0,
+        sampled_days=sampled.days if sampled else None,
+        sampled_items=sampled.items if sampled else None,
+        sampled_skipped=bool(sampled and sampled.skipped),
     )
 
 

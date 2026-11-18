@@ -12,6 +12,29 @@ interface FacetSidebarProps {
   onTerm: ((term: string) => void) | null;
   /** SQL and Ask mode: adds the filter to the SQL on screen and runs it. */
   onRefine?: ((field: string, value: string | null, exclude: boolean) => void) | null;
+  /** The results card's count for the same run ("1,133", or "10,000+" at the limit). */
+  total?: { count: number; more: boolean } | null;
+}
+
+/** The note over counts taken from the newest days only, with the numbers named. */
+export function sampledNote(
+  days: number,
+  items: number,
+  skipped: boolean,
+  total: { count: number; more: boolean } | null,
+): string {
+  if (days === 0)
+    return "None of the matches fell in the days that could be counted in time. The results are not affected.";
+  const span = `the newest ${days === 1 ? "day" : `${days} days`}${skipped ? " with matches" : ""}`;
+  const counted = `${items.toLocaleString()} ${items === 1 ? "item" : "items"}`;
+  // Never a part larger than its whole: past the results' own count (the first page stops
+  // at its limit), say how many were counted and where the results stop.
+  const of = !total
+    ? ` (${counted})`
+    : items > total.count
+      ? ` (${counted} counted${total.more ? `; the results stop at ${total.count.toLocaleString()}` : ""})`
+      : ` (${items.toLocaleString()} of ${total.count.toLocaleString()}${total.more ? "+" : ""} items)`;
+  return `Counts from ${span} only${of}: the whole range took too long to count. The results are not affected.`;
 }
 
 // Simple-search names for the facet columns (the short aliases where one exists).
@@ -59,7 +82,12 @@ function storedOpen(): boolean {
 }
 
 /** Top values of a few fields for the whole result, from the server (ADR-0016 row 2). */
-export function FacetSidebar({ request, onTerm, onRefine = null }: FacetSidebarProps) {
+export function FacetSidebar({
+  request,
+  onTerm,
+  onRefine = null,
+  total = null,
+}: FacetSidebarProps) {
   const [open, setOpenState] = useState(storedOpen);
   const setOpen = (v: boolean) => {
     setOpenState(v);
@@ -79,6 +107,8 @@ export function FacetSidebar({ request, onTerm, onRefine = null }: FacetSidebarP
   });
 
   const clickable = onTerm !== null || onRefine !== null;
+  // Counted over the newest days only (null: the whole range was counted).
+  const sampled = facets.data != null && facets.data.sampled_days != null;
   const pick = (field: string, value: string | null, exclude: boolean) => {
     if (!onTerm) {
       onRefine?.(field, value, exclude);
@@ -141,7 +171,17 @@ export function FacetSidebar({ request, onTerm, onRefine = null }: FacetSidebarP
           </button>
         </div>
       ) : null}
-      {facets.data && facets.data.facets.length === 0 ? (
+      {sampled ? (
+        <p className="border-b border-border px-3 py-2 text-xs text-text-muted" role="note">
+          {sampledNote(
+            facets.data?.sampled_days ?? 0,
+            facets.data?.sampled_items ?? 0,
+            Boolean(facets.data?.sampled_skipped),
+            total,
+          )}
+        </p>
+      ) : null}
+      {facets.data && facets.data.facets.length === 0 && !sampled ? (
         <p className="px-3 py-2 text-sm text-text-muted">
           No countable fields in this result. Facets cover source, host, user, addresses, severity,
           status, class, and parse status.

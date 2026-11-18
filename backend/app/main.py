@@ -112,6 +112,7 @@ from app.core.errors import (
     LastAdminError,
     LinkInvalidError,
     LoginFailedError,
+    ModelTimeoutError,
     NotFoundError,
     ParamInvalidError,
     PayloadTooLargeError,
@@ -190,6 +191,7 @@ from app.ops.backup import BACKUPS_DIR
 from app.ops.integrity import IntegrityService
 from app.ops.scheduled_backup import BackupScheduler
 from app.search import m365 as m365_facts
+from app.search.ask_jobs import AskJobs
 from app.search.ask_runs import AskRuns
 from app.search.dashboard import unplaced
 from app.search.dashboards import DashboardStore
@@ -249,6 +251,7 @@ _ERROR_STATUS: dict[type[Exception], tuple[int, str]] = {
     ProviderBusyError: (503, "provider_busy"),
     QueryBusyError: (503, "busy"),
     CallCancelledError: (409, "cancelled"),
+    ModelTimeoutError: (504, "model_timeout"),
     AnswerShapeError: (502, "provider_error"),
     ProviderConfigError: (400, "provider_invalid"),
     ClassificationBlockedError: (403, "classification_blocked"),
@@ -603,10 +606,13 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         config.llm,
         lambda: app.state.auth.clock(),
         redaction_key=SecretBox(config.paths.data_dir).install_key,
+        model_timeout_s=config.ask.model_timeout_s,
     )
     app.state.explainer = Explainer(app.state.gate, app.state.engine)
     app.state.ask = AskAgent(app.state.gate, app.state.engine, base_vocabulary())
     app.state.ask_runs = AskRuns()
+    app.state.ask_jobs = AskJobs()
+    app.state.error_codes = {k: v[1] for k, v in _ERROR_STATUS.items()}  # for job errors
     load_prompt(config.llm.ask_prompt)  # a missing prompt file stops start-up, not an Ask
     app.state.ask.prompt = config.llm.ask_prompt
     app.state.sources = SourceStore(
@@ -765,6 +771,9 @@ def create_app(config: AppConfig | None = None, sso_http: HttpFactory | None = N
         items=app.state.alert_items,
         quiet_days=lambda: {s.source_id: s.quiet_ok_days for s in app.state.sources.list()},
         last_event=lambda sid, days, now: app.state.overview.newest_event(sid, days, now),
+        shared=lambda: {
+            sid: st.read_by for sid, st in app.state.ingest.status().items() if st.read_by
+        },
     )
     # One-time fixes (D168): each runs once per install and records that it did.
     app.state.quiet.retire_push_defaults()

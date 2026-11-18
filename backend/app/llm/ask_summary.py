@@ -2,7 +2,8 @@
 each citing event ids. Zero tools. The rows go under `data` with the sources of the query
 declared, so the gate's classification check covers them (a `local_only` source in scope
 blocks a cloud provider) and redaction applies as configured. Audited under purpose `ask`
-with the prompt `ask_answer.v1`, as routing is with `ask_route.v1` (owner, 2026-11-02).
+with the prompt `ask_answer.v2`, as routing is with `ask_route.v1` (owner, 2026-11-02).
+v2 (D270): at most 10 rows plus per-column stats over the whole result, computed by code.
 
 Nothing in the answer is run or followed. Statements that cite no sent row are removed in
 code (`app.search.ask_summary.check_claims`), never shown labeled.
@@ -20,7 +21,7 @@ from app.engine.duckdb import QueryScope
 from app.llm.gate import GateRequest, LLMGate, data_message
 from app.search.ask_summary import Sample
 
-PROMPT = "ask_answer.v1"
+PROMPT = "ask_answer.v2"
 # Five statements with a few 36-character ids each fit; ADR-0042 row 15 said 400, which
 # a UUID-citing answer outgrows (recorded under As built).
 MAX_TOKENS = 600
@@ -63,6 +64,7 @@ def summarize(
         "question": question,
         "columns": rows.columns,
         "rows": rows.rows,
+        "column_stats": rows.stats,
         "row_count": rows.row_count,
         "truncated": rows.truncated,
     }

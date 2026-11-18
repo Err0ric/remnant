@@ -152,6 +152,7 @@ RECORDED: frozenset[tuple[str, str]] = frozenset(
         ("DELETE", "/api/searches/{search_id}"),
         ("PUT", "/api/searches/{search_id}"),
         ("PUT", "/api/searches/{search_id}/verified"),
+        ("PUT", "/api/settings/ask-time-limit"),
         ("PUT", "/api/settings/auditor-sql"),
         ("PUT", "/api/settings/backups"),
         ("PUT", "/api/settings/live"),
@@ -179,8 +180,10 @@ READ_ONLY: frozenset[tuple[str, str]] = frozenset(
     {
         ("POST", "/api/ai/watch/check"),
         ("POST", "/api/ask"),
+        ("POST", "/api/ask/jobs"),
         ("POST", "/api/ask/{ask_id}/answer"),
         ("POST", "/api/ask/{ask_id}/drill"),
+        ("POST", "/api/ask/{ask_id}/jobs"),
         ("POST", "/api/ask/{ask_id}/run"),
         ("POST", "/api/explain"),
         ("POST", "/api/query"),

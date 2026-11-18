@@ -307,6 +307,22 @@ describe("Saved searches under Logs (ADR-0052 section 3.3, redesign build row 8)
     ).toHaveAttribute("aria-current", "page");
   });
 
+  it("points to the Library, a tab of the same page (owner, 2026-11-17)", async () => {
+    await renderAt("/investigate/saved");
+    await screen.findByRole("table", { name: "Saved searches" });
+    const line = screen.getByText(/Start from a tested query in the/);
+    const link = within(line).getByRole("link", { name: "Library" });
+    expect(link).toHaveAttribute("href", "/investigate/library");
+    await userEvent.click(link);
+    expect(window.location.pathname).toBe("/investigate/library");
+  });
+
+  it("has no Library pointer for an Auditor without SQL, who has no Library", async () => {
+    await renderAt("/investigate/saved", { mode: "login", signedIn: true, role: "auditor" });
+    await screen.findByRole("table", { name: "Saved searches" });
+    expect(screen.queryByText(/Start from a tested query/)).toBeNull();
+  });
+
   it("says which searches are scheduled, and the link opens that schedule", async () => {
     await renderAt("/investigate/saved");
     const table = await screen.findByRole("table", { name: "Saved searches" });

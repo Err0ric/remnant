@@ -111,7 +111,11 @@ class QuietWatch:
         items: AlertItems | None = None,
         quiet_days: Callable[[], dict[str, int | None]] = dict,
         last_event: Callable[[str, int, datetime], LastEvent | None] | None = None,
+        shared: Callable[[], dict[str, str]] = dict,
     ) -> None:
+        # Sources whose every file another source reads, and that source (SPEC 3.5): silent
+        # by design, so their quiet alert never fires, and one already open is resolved.
+        self._shared = shared
         self._items = items
         # Each source's "Quiet is normal for up to N days" (D260): its quiet alert is held
         # while the silence is inside those days, and fires once they pass (D262).
@@ -252,12 +256,31 @@ class QuietWatch:
         now = self._clock().astimezone(UTC)
         received = self._received()
         days = {k: v for k, v in self._quiet_days().items() if v}
+        shared = self._shared()
         changed = 0
         for w in watches:
             before = _parse(w.last_seen)
             seen = _latest(received.get(w.source_id), before)
             if seen is not None and seen != before:
                 self._update(w.source_id, last_seen=seen.isoformat())
+            if w.source_id in shared:
+                if w.state == "quiet" and self._move(
+                    w.source_id, "quiet", state="ok", quiet_since=None
+                ):
+                    text = (
+                        f"Its files are read by source {shared[w.source_id]} now, so nothing is"
+                        " expected from it"
+                    )
+                    if self._items is not None and w.quiet_since:
+                        self._items.resolve(
+                            "gap",
+                            f"{w.source_id}@{w.quiet_since}",
+                            text,
+                            group=(w.source_id, "gap"),
+                        )
+                    self._alert(w, "resumed", text, seen or now)
+                    changed += 1
+                continue
             if seen is None:
                 continue
             quiet_for = (now - seen).total_seconds()

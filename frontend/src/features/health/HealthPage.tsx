@@ -29,13 +29,13 @@ import { SpeedTable } from "./SpeedTable";
 import { BackgroundFailures } from "./BackgroundFailures";
 import { EntityLink } from "@/components/EntityLink";
 import { openGaps } from "./flow";
-import { readerStatus, sourceStatus, type SourceStatusView } from "./sourceStatus";
+import { readerStatus, sharedFileText, sourceStatus, type SourceStatusView } from "./sourceStatus";
 import { SourceFlow } from "./SourceFlow";
 import { StatusLine } from "./StatusLine";
 import { SystemStrip, type SourceTally } from "./SystemStrip";
 import { Select } from "@/components/forms/Select";
 
-type Level = "unhealthy" | "attention" | "paused" | "healthy";
+type Level = "unhealthy" | "attention" | "paused" | "healthy" | "shared";
 type TabId =
   "sources" | "enrichment" | "agents" | "devices" | "alerts" | "backups" | "rollups" | "speed";
 
@@ -58,6 +58,8 @@ interface Row {
   detailTitle?: string;
   /** The reason is only the quiet sentence, left out under a gap's own sentence (D255). */
   quietNote?: boolean;
+  /** A neutral line: files another source reads (`sharedFileText`). */
+  note?: string | null;
 }
 
 const LEVELS: { id: Level; label: string; color: string }[] = [
@@ -65,19 +67,24 @@ const LEVELS: { id: Level; label: string; color: string }[] = [
   { id: "attention", label: "Needs attention", color: "border-t-warn text-warn" },
   { id: "paused", label: "Paused", color: "border-t-border-strong text-text-secondary" },
   { id: "healthy", label: "Healthy", color: "border-t-ok text-ok" },
+  { id: "shared", label: "Read by another source", color: "text-text-secondary" },
 ];
 const BADGE: Record<Level, string> = {
   unhealthy: "border border-danger text-danger",
   attention: "border border-warn text-warn",
   paused: "bg-info-bg text-info-tx",
   healthy: "bg-local-bg text-local-tx",
+  shared: "bg-info-bg text-info-tx",
 };
 /** The Status filter (D255): Problems is Unhealthy and Needs attention together. */
 const STATUSES: { id: HealthStatus; label: string; levels: Level[] }[] = [
-  { id: "all", label: "All", levels: ["unhealthy", "attention", "paused", "healthy"] },
+  { id: "all", label: "All", levels: ["unhealthy", "attention", "paused", "healthy", "shared"] },
   { id: "problems", label: "Problems", levels: ["unhealthy", "attention"] },
   { id: "paused", label: "Paused", levels: ["paused"] },
   { id: "healthy", label: "Healthy", levels: ["healthy"] },
+  // Sources whose files another source reads (D273): shown only when there is one, so the
+  // segments add up to All.
+  { id: "shared", label: "Shared", levels: ["shared"] },
 ];
 /** What the bar's count counts, one and many. */
 const NOUN: Record<TabId, [string, string]> = {
@@ -139,6 +146,7 @@ function sourceRow(s: Source, st: SourceStatusView): Row {
     detail: KIND_LABEL[kind] ?? kind,
     last: s.status.last_event_at,
     page: "sources",
+    note: sharedFileText(s),
     ...st,
   };
 }
@@ -527,7 +535,12 @@ export function HealthPage({ isAdmin, scope = "health" }: HealthPageProps) {
                     label: "Status",
                     value: status,
                     onChange: setStatus,
-                    options: STATUSES.map((x) => ({
+                    options: STATUSES.filter(
+                      (x) =>
+                        x.id !== "shared" ||
+                        status === "shared" ||
+                        rows[tab].some((r) => r.level === "shared"),
+                    ).map((x) => ({
                       id: x.id,
                       label: x.label,
                       count: levelled[tab]
@@ -633,6 +646,7 @@ export function HealthPage({ isAdmin, scope = "health" }: HealthPageProps) {
                       word: r.word,
                       reason: r.reason,
                       quietNote: r.quietNote,
+                      note: r.note,
                       last: r.last,
                       // Its settings, at the same row (F61): one more click from Health.
                       onOpen: r.page
@@ -786,7 +800,7 @@ const PRODUCT_NOTE = "Nothing connects to the device.";
 function RANK(r: Row): number {
   if (r.level === "unhealthy") return 0;
   if (r.word === "Gap") return 1;
-  return { unhealthy: 0, attention: 2, paused: 3, healthy: 4 }[r.level];
+  return { unhealthy: 0, attention: 2, paused: 3, healthy: 4, shared: 5 }[r.level];
 }
 
 const RESULT: Record<string, string> = {

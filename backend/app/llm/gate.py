@@ -39,6 +39,7 @@ from app.core.errors import (
     AnswerShapeError,
     CallCancelledError,
     ClassificationBlockedError,
+    ModelTimeoutError,
     NotFoundError,
     ProviderBusyError,
     ProviderConfigError,
@@ -51,6 +52,7 @@ from app.engine.duckdb import QueryEngine, QueryScope
 from app.llm.locality import Endpoint, provider_endpoint
 from app.llm.prompt_files import PROMPT_DIR, Prompt, load_prompt
 from app.llm.provider import ChatMessage, Locality, Provider, ProviderHealth, ProviderResponse
+from app.llm.provider_http import CALL_DEADLINE
 from app.llm.providers.anthropic import AnthropicProvider
 from app.llm.providers.openai_compat import OpenAICompatibleProvider
 from app.llm.queue import (
@@ -280,6 +282,7 @@ class LLMGate:
         prompt_dir: Path = PROMPT_DIR,
         redaction_key: Callable[[], bytes] | None = None,
         queues: ProviderQueues = QUEUES,
+        model_timeout_s: float | None = None,
     ) -> None:
         self._meta = meta
         self._providers = providers
@@ -290,6 +293,9 @@ class LLMGate:
         self._prompt_dir = prompt_dir
         self._redaction_key = redaction_key
         self._queues = queues
+        # Ask calls only (D270, `ask.model_timeout_s`): each provider request is closed at
+        # this many seconds; waiting for a queue slot is not counted.
+        self.model_timeout_s = model_timeout_s
 
     def call(self, req: GateRequest) -> GateResult:
         record = self._providers.get(req.provider_id)  # unknown id: nothing to call or record
@@ -352,12 +358,15 @@ class LLMGate:
                 scope,
                 sources,
                 wait,
-                lambda: provider.chat(
-                    messages,
-                    tools=tools,
-                    json_mode=req.response_model is not None and not tools,
-                    max_tokens=req.max_tokens,
-                    temperature=req.temperature,
+                lambda: self._timed(
+                    req,
+                    lambda: provider.chat(
+                        messages,
+                        tools=tools,
+                        json_mode=req.response_model is not None and not tools,
+                        max_tokens=req.max_tokens,
+                        temperature=req.temperature,
+                    ),
                 ),
             )
         except _RefusedError as refusal:  # a re-check before a retry refused (ADR-0028)
@@ -366,6 +375,11 @@ class LLMGate:
             raise refusal.exc from None
         except CallCancelledError as exc:
             self._finish(row["call_id"], started, None, "cancelled", wait=wait)
+            exc.call_id = row["call_id"]  # type: ignore[attr-defined]  # for the caller's audit row
+            raise
+        except ModelTimeoutError as exc:
+            self._finish(row["call_id"], started, None, "timeout", wait=wait)
+            log.warning("llm.timeout", call_id=row["call_id"], purpose=req.purpose)
             exc.call_id = row["call_id"]  # type: ignore[attr-defined]  # for the caller's audit row
             raise
         except ProviderBusyError as exc:
@@ -421,6 +435,39 @@ class LLMGate:
             citation_check=check,
         )
         return GateResult(row["call_id"], endpoint.locality, response, parsed, check)
+
+    def _timed(self, req: GateRequest, send: Callable[[], ProviderResponse]) -> ProviderResponse:
+        """One provider request under the Ask time limit (D270). The adapters' HTTP client
+        reads the deadline, bounds every step of the request by the time left, and closes
+        the connection when it passes, so nothing keeps running after the timeout."""
+        limit = self.time_limit()[0] if req.purpose == "ask" else None
+        if not limit:
+            return send()
+        token = CALL_DEADLINE.set(time.monotonic() + limit)
+        try:
+            return send()
+        finally:
+            CALL_DEADLINE.reset(token)
+
+    def time_limit(self) -> tuple[float | None, bool]:
+        """The Ask time limit in force (D270, D277), and whether an Admin saved it: the
+        whole seconds saved in Settings > AI providers, else `ask.model_timeout_s`. The one
+        place it is read."""
+        with self._meta.connect() as con:
+            row = con.execute(
+                "SELECT ask_model_timeout_s FROM install_settings WHERE id = 1"
+            ).fetchone()
+        return (int(row[0]), True) if row and row[0] else (self.model_timeout_s, False)
+
+    def set_time_limit(self, seconds: int | None, user_id: str) -> None:
+        """Save whole seconds, or None to follow `ask.model_timeout_s` again."""
+        with self._meta.connect() as con:
+            con.execute(
+                "INSERT INTO install_settings (id, ask_model_timeout_s, updated_by)"
+                " VALUES (1, ?, ?) ON CONFLICT (id) DO UPDATE SET ask_model_timeout_s ="
+                " excluded.ask_model_timeout_s, updated_by = excluded.updated_by",
+                (seconds, user_id),
+            )
 
     # --- the queue and busy retries (ADR-0028) -------------------------------------------
 

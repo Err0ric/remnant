@@ -4,6 +4,10 @@ from typing import Any
 
 import pytest
 
+from app.api import query as query_api
+from app.core.errors import QueryTimeoutError
+from app.engine.duckdb import QueryEngine, QueryScope
+from app.search import facet_days
 from tests.integration.test_schedules import make_lab
 
 
@@ -113,3 +117,57 @@ def test_sql_mode_click_adds_a_quoted_filter_that_runs(lab: dict[str, Any]) -> N
 def test_refine_refuses_other_fields_and_shapes(lab: dict[str, Any], body: dict[str, Any]) -> None:
     res = lab["admin"].post("/api/query/refine", json=body, headers=lab["h"])
     assert res.status_code == 400
+
+
+def test_a_whole_range_too_slow_to_count_is_counted_over_the_newest_days_with_matches(
+    lab: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Owner item P6 (2026-11-17) and the designer's finding on PR 662: the whole count
+    stopped for time, so the answer is the newest days with matches, with how many days
+    and items; a newer day without matches is passed over, never shown as nothing to
+    count; the SQL on screen still fails as before."""
+    engine: QueryEngine = lab["admin"].app.state.engine
+    real = engine.run
+    scopes: list[QueryScope] = []
+
+    def slow_whole(sql: str, scope: QueryScope, *a: Any, **k: Any) -> Any:
+        scopes.append(scope)
+        if scope.files is None and "GROUPING SETS" in sql:
+            raise QueryTimeoutError("Query exceeded 7s and was stopped")
+        return real(sql, scope, *a, **k)
+
+    def two_days(e: QueryEngine, sql: str, scope: QueryScope, p: Any, rows: int) -> Any:
+        """The lab's events are all on one day: say the Windows files are the newest day
+        and the Linux files the day before."""
+        files = [f for f, _ in e.newest_files(sql, scope, p)]
+        win = frozenset(f for f in files if "source=win_dc" in f)
+        return [(win, 1), (frozenset(files) - win, 1)]
+
+    monkeypatch.setattr(engine, "run", slow_whole)
+    monkeypatch.setattr(facet_days, "day_batches", two_days)
+    res = facets(lab["admin"], {"text": ""}, lab["h"])
+    assert res.status_code == 200, res.text
+    win = real("SELECT count(*) FROM events WHERE source_id = 'win_dc'", QueryScope(None))
+    body = res.json()
+    assert (body["sampled_days"], body["sampled_skipped"]) == (1, False)
+    assert body["sampled_items"] == win.rows[0][0]
+    assert {
+        v["value"] for f in body["facets"] if f["field"] == "source_id" for v in f["values"]
+    } == {"win_dc"}
+    assert scopes[-1].files is not None
+    # Every Linux line is on the older "day": the newer one is passed over.
+    lin = facets(lab["admin"], {"text": "source:lin_auth"}, lab["h"]).json()
+    assert lin["sampled_skipped"] is True and lin["sampled_items"] > 0
+    assert {
+        v["value"] for f in lin["facets"] if f["field"] == "source_id" for v in f["values"]
+    } == {"lin_auth"}
+    # No time left to check any day: counting took too long (the panel offers Retry).
+    monkeypatch.setattr(query_api, "FACET_TIMEOUT_S", 0.0)
+    assert facets(lab["admin"], {"text": "source:lin_auth"}, lab["h"]).status_code == 408
+    sql_mode = {"sql": "SELECT * FROM events", "columns": ["source_id"]}
+    assert facets(lab["admin"], sql_mode, lab["h"]).status_code == 408
+
+
+def test_counts_of_the_whole_range_say_nothing_was_left_out(lab: dict[str, Any]) -> None:
+    body = facets(lab["admin"], {"text": ""}, lab["h"]).json()
+    assert body["sampled_days"] is None and body["sampled_items"] is None

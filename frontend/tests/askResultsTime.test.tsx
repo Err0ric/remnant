@@ -33,6 +33,17 @@ describe("Ask results times (owner, 2026-11-04)", () => {
   });
 });
 
+describe("Ask results with no rows (D274)", () => {
+  it("leave a library query's own words to the headline, once; else the generic line", () => {
+    const none = { ...result, columns: ["event_id", "time"], rows: [], row_count: 0 };
+    const words = "No DHCP lease for this address in the range. It may be a static address.";
+    const { container, rerender } = render(<AskResults result={{ ...none, empty: words }} />);
+    expect(container).toBeEmptyDOMElement();
+    rerender(<AskResults result={none} />);
+    expect(screen.getByText("No rows matched in this time range.")).toBeVisible();
+  });
+});
+
 describe("Logs and Microsoft 365 tables read times the same way (owner, 2026-11-08)", () => {
   it("shows local time with UTC on hover by default, not the raw UTC stamp", async () => {
     const { ResultsTable } = await import("@/features/search/ResultsTable");

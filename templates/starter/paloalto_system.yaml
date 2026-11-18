@@ -94,3 +94,15 @@ tests:
       parse_status: ok
       class_uid: 0
       fields: { severity_id: 4, message: "HA Group 1: Moved from state Active to state Passive" }
+  - name: DHCP lease start keeps the description, interface unquoted
+    input: "<14>Oct  9 20:44:00 pa-fw01 1,2026/10/09 20:44:00,012345678901,SYSTEM,dhcp,0,2026/10/09 20:44:00,vsys1,lease-start,,0,0,general,informational,\"DHCP lease started ip 10.20.1.5 --> mac 00:00:5e:00:53:05 - hostname ws-0105, interface ae0.120\",7290000204,0x0,0,0,0,0,,pa-fw01"
+    expect:
+      parse_status: ok
+      class_uid: 0
+      fields: { message: "DHCP lease started ip 10.20.1.5 --> mac 00:00:5e:00:53:05 - hostname ws-0105, interface ae0.120" }
+  - name: DHCP lease end keeps the description, interface quoted
+    input: "<14>Oct  9 20:45:00 pa-fw01 1,2026/10/09 20:45:00,012345678901,SYSTEM,dhcp,0,2026/10/09 20:45:00,vsys1,lease-end,,0,0,general,informational,\"DHCP lease ended ip 10.20.2.14 --> mac 00:00:5e:00:53:14 - hostname ws-0214, interface \"\"vlan20\"\"\",7290000205,0x0,0,0,0,0,,pa-fw01"
+    expect:
+      parse_status: ok
+      class_uid: 0
+      fields: { message: "DHCP lease ended ip 10.20.2.14 --> mac 00:00:5e:00:53:14 - hostname ws-0214, interface \"vlan20\"" }

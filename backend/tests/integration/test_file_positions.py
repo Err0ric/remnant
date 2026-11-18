@@ -350,7 +350,10 @@ def test_a_source_deleted_and_added_again_starts_afresh(env: dict[str, Path]) ->
     assert svc.run_once() == 2
     store.delete("linux_auth")
     with sqlite3.connect(env["data"] / "meta.sqlite") as con:
-        assert con.execute("SELECT count(*) FROM file_positions").fetchone() == (0,)
+        # Kept for another source that reads the file on, never for this one again.
+        assert con.execute(
+            "SELECT count(*) FROM file_positions WHERE source_id = 'linux_auth'"
+        ).fetchone() == (0,)
     _file(store, f)
     assert svc.run_once() == 2  # as before ADR-0051: a new source reads its file
 

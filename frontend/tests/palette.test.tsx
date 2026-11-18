@@ -51,7 +51,7 @@ describe("Command palette", () => {
     await userEvent.type(box, "203.0.113");
     const addresses = await within(dialog).findByRole("group", { name: "Addresses" });
     const hit = within(addresses).getByRole("option", { name: /203\.0\.113\.77/ });
-    expect(hit).toHaveTextContent("Netherlands, AS64500 Example Net, 61 events");
+    expect(hit).toHaveTextContent("Netherlands, AS64500 Example Net, 61 events in 30 days");
     // The first option is the address: Enter opens its page.
     await userEvent.keyboard("{Enter}");
     expect(window.location.pathname).toBe("/investigate/people");
@@ -62,6 +62,21 @@ describe("Command palette", () => {
     expect(within(ai).getByRole("option", { name: /Claude/ })).toBeInTheDocument();
     expect(within(again).getByRole("group", { name: "Logs" })).toHaveTextContent(
       'Search events for "claude"',
+    );
+  });
+
+  it("opens the address page for a whole address at once, never raw SQL in Logs (P4)", async () => {
+    await renderAt("/overview");
+    const dialog = await openWithKeys();
+    // Enter before the lookup answers: the address page, not "Search events for".
+    await userEvent.type(within(dialog).getByRole("combobox"), "10.20.30.40{Enter}");
+    expect(window.location.pathname).toBe("/investigate/people");
+    expect(window.location.hash).toBe("#ip=10.20.30.40");
+    const again = await openWithKeys();
+    await userEvent.type(within(again).getByRole("combobox"), "2001:db8::7");
+    const addresses = await within(again).findByRole("group", { name: "Addresses" });
+    expect(within(addresses).getByRole("option", { name: /2001:db8::7/ })).toHaveTextContent(
+      "Address page",
     );
   });
 

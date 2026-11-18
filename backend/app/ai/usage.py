@@ -7,6 +7,7 @@ like any other, so people see only sources they may read.
 
 from __future__ import annotations
 
+import ipaddress
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -191,13 +192,17 @@ _HOUR_ROWS = f"""{WHO_EXPR} AS who0, nullif(src_endpoint_hostname, '') AS shost,
          max(coalesce(time, time_observed)) AS last_t"""
 
 
-def _match_ctes(pairs: list[tuple[str, str]]) -> str:
+# The address page's AI services (P4): only rows from one address, a bound placeholder.
+FROM_IP = "src_endpoint_ip = {{ip}}"
+
+
+def _match_ctes(pairs: list[tuple[str, str]], only: str = "") -> str:
     """Catalog domains, the distinct hosts of the events `where` selects, and which
-    service each host is."""
+    service each host is. `only` is a fixed condition from this module (FROM_IP)."""
     return f"""cat(service_id, domain) AS (VALUES {_values(pairs)}),
 hosts AS (
   SELECT DISTINCT {HOST_EXPR} AS host FROM events
-  WHERE {_ANY_HOST}
+  WHERE {_ANY_HOST}{only}
 ),
 hm AS (
   SELECT host, arg_max(service_id, length(domain)) AS service_id
@@ -231,7 +236,7 @@ GROUP BY 1
 LIMIT 5000"""  # noqa: S608  # fixed SQL text; domains checked against DOMAIN in _values
 
 
-def _use_ctes(pairs: list[tuple[str, str]], rollup: bool) -> str:
+def _use_ctes(pairs: list[tuple[str, str]], rollup: bool, only: str = "") -> str:
     """Events reduced to service, person, machine, address, and hour, with rows that name
     only an address given the person and machine that had it at the time, from logon and
     User-ID events (ADR-0020 row 1). Ends in `r`, one row per service, person, machine,
@@ -259,11 +264,11 @@ def _use_ctes(pairs: list[tuple[str, str]], rollup: bool) -> str:
         if rollup
         else ""
     )
-    return f"""{_match_ctes(pairs)},
+    return f"""{_match_ctes(pairs, only)},
 hj AS (
   SELECT hm.service_id, source_id, {_HOUR_ROWS}
   FROM events JOIN hm ON {HOST_EXPR} = hm.host
-  WHERE {_ANY_HOST}
+  WHERE {_ANY_HOST}{only}
   GROUP BY ALL{from_rollup}
 ),
 {address_ctes("hj", "who0 IS NULL OR shost IS NULL", kept=rollup)},
@@ -316,6 +321,25 @@ def drill_sql(table: list[tuple[str, str]], ids: set[str], kind: str) -> str:
     return f"WITH {_use_ctes(drill_pairs(table, ids), False).strip()}\n{select}"
 
 
+def events_sql(table: list[tuple[str, str]], service_id: str, ip: str) -> str:
+    """Logs SQL for the events one address counted toward one AI service (the address
+    page, P4): the rows `answer_sql(from_ip=True)` counts for it, one per event. Logs
+    takes SQL text, so the address is written in as a quoted literal, as every entity
+    handoff to Logs is: only a parsed address without a scope id, quotes doubled anyway;
+    `service_id` only as a plain catalog id. The guard still checks the result."""
+    if "%" in ip:
+        raise ValueError("an address with a scope id")
+    lit = "'" + str(ipaddress.ip_address(ip)).replace("'", "''") + "'"
+    if not service_id.replace("_", "").isalnum():
+        raise ValueError("not a catalog service id")
+    only = f" AND src_endpoint_ip = {lit}"
+    return f"""WITH {_match_ctes(drill_pairs(table, {service_id}), only)}
+SELECT time, source_id, device_hostname, actor_user_name, src_endpoint_ip, message, event_id
+FROM events JOIN hm ON {HOST_EXPR} = hm.host
+WHERE {_ANY_HOST}{only} AND hm.service_id = '{service_id}'
+ORDER BY coalesce(time, time_observed) DESC"""  # noqa: S608  # checked above
+
+
 def services_sql(pairs: list[tuple[str, str]], rollup: bool = False) -> str:
     """Use per service (see `_use_ctes`)."""
     return f"""
@@ -336,7 +360,7 @@ def _name(text: str) -> str:
     return "'" + "".join(c for c in text if c.isprintable())[:80].replace("'", "''") + "'"
 
 
-def answer_sql(services: Sequence[Any]) -> str:
+def answer_sql(services: Sequence[Any], from_ip: bool = False) -> str:
     """AI services in use, for the query library's "Which AI services are people using?"
     (fix list 2026-11-16 item 20): the use rows the AI usage Services list counts
     (`_use_ctes`, every source that names a destination host), from events, with the
@@ -344,14 +368,15 @@ def answer_sql(services: Sequence[Any]) -> str:
     non-usage hosts left out as the page leaves them out, and the sources
     each service was seen in; one row per service id, as the page lists them, so two
     services with one name stay two rows. `services` are catalog entries (`Service` or the shipped
-    `ServiceDef`)."""
+    `ServiceDef`). With `from_ip`, only the rows whose source address is `{{ip}}` (P4)."""
     pairs = [(s.id, d) for s in services for d in s.domains]
     names = ", ".join(
         f"('{s.id}', {_name(s.name)})"
         for s in services
         if s.kind != NON_USAGE and s.id.replace("_", "").isalnum()
     )
-    return f"""WITH {_use_ctes(pairs, False).strip()},
+    only = f" AND {FROM_IP}" if from_ip else ""
+    return f"""WITH {_use_ctes(pairs, False, only).strip()},
 names(service_id, service) AS (VALUES {names or "('none', 'none')"})
 SELECT any_value(names.service) AS service, sum(n)::BIGINT AS events,
        count(DISTINCT who) AS people, count(DISTINCT machine) AS machines,
@@ -869,7 +894,9 @@ FROM m GROUP BY 1 LIMIT 100000"""  # noqa: S608  # fixed SQL text; ids quoted
                 " LIMIT 100000"
             )
 
-        result = self._run_use(build, scope, "ai_use.unreviewed_people")
+        # The start's day from the rollup's whole hours too, as AI usage reads it (owner,
+        # 2026-11-17: reading that day's DNS from events was most of the People & devices ranking).
+        result = self._run_use(build, scope, "ai_use.unreviewed_people", head=True)
         return [
             (None if w is None else str(w), None if m is None else str(m)) for w, m in result.rows
         ]

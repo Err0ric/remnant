@@ -206,6 +206,99 @@ def test_person_and_address_pages_list_every_class_in_one_click(tmp_path: Path) 
     assert got == {"failed": 2, "interrupted": 2, "expired": 2, "other": 1, "all": 8}
 
 
+def test_each_what_it_did_row_opens_exactly_its_events(tmp_path: Path) -> None:
+    """Review of PR 671: a row's link filters on the rule that grouped it, so a sign-in with
+    no status (outcome other) opens itself, not the person's other sign-ins too; and a row
+    with no user or no target opens only the rows without one (the address's page)."""
+    from app.search.entity_summary import entity_summary
+
+    engine = make_lab(tmp_path)["app"].state.engine
+    rows = _signins(datetime(2026, 10, 28, 10, tzinfo=UTC))
+    for status in (None, 0, 99):
+        r = _row(
+            "m365_signin", "successful sign-in", "m365_signin",
+            createdDateTime="2026-10-28T11:00:00Z", userPrincipalName="dave@example.com",
+        )  # fmt: skip
+        r["status_id"] = status
+        rows.append(r)
+    for column in ("actor_user_name", "device_hostname"):  # no user; no target
+        r = _row("m365_signin", "successful sign-in", "m365_signin")
+        r[column] = None
+        rows.append(r)
+    _write(engine, rows)
+    scope = QueryScope(None, datetime(2026, 10, 1, tzinfo=UTC), NOW)
+    s = entity_summary(engine, scope, "user", "dave@example.com")
+    assert {a.outcome for a in s.activities} >= {"succeeded", "other", "not_counted"}
+    ip = entity_summary(engine, scope, "ip", "203.0.113.10")  # every test sign-in's address
+    assert any(a.user is None for a in ip.activities)
+    assert any(a.target is None for a in ip.activities)
+    for a in s.activities + ip.activities:
+        got = len(engine.run(a.search_sql, scope).rows)
+        assert got == a.events, (a.outcome, a.user, a.target)
+
+
+def test_access_outcome_names_each_outcome(tmp_path: Path) -> None:
+    """The one outcome rule (D279), one row per outcome: firewall traffic, a sign-out, and
+    a sign-in that succeeded, really failed, was not counted (D158), or says nothing."""
+    engine = make_lab(tmp_path)["app"].state.engine
+    cases = [
+        ("4001, 1, 1, 'paloalto_traffic', NULL, NULL", "allowed"),
+        ("4001, 1, 2, 'paloalto_traffic', NULL, NULL", "denied"),
+        ("4001, 1, 3, 'paloalto_traffic', NULL, NULL", "other"),
+        ("3002, 2, 1, 'linux_sshd', NULL, NULL", "signed out"),
+        ("3002, 1, 1, 'linux_sshd', NULL, NULL", "succeeded"),
+        ("3002, 1, 2, 'linux_sshd', NULL, NULL", "failed"),
+        ("3002, 1, 2, 'm365_signin', '50126', NULL", "failed"),
+        ("3002, 1, 2, 'm365_signin', NULL, '{\"status\": {\"errorCode\": 50126}}'", "failed"),
+        ("3002, 1, 2, 'm365_signin', NULL, '{\"status\": {\"errorCode\": 50074}}'", "not counted"),
+        ("3002, 1, NULL, 'linux_sshd', NULL, NULL", "other"),
+    ]
+    values = ", ".join(f"({v})" for v, _ in cases)
+    got = engine.run(
+        f"SELECT {signin_classes.ACCESS_OUTCOME} FROM (VALUES {values})"
+        " AS t(class_uid, activity_id, status_id, template_id, status_code, raw)",
+        QueryScope(None),
+    ).rows
+    assert [r[0] for r in got] == [want for _, want in cases]
+
+
+def test_the_entity_pages_sign_in_rule_reads_the_code_as_the_plain_conditions(
+    tmp_path: Path,
+) -> None:
+    """Speed (owner, 2026-11-17): the entity pages' one sign-in rule (`access_outcome`,
+    the summary's counts, the person record) reads the error code only on Microsoft 365
+    sign-ins; on every row it agrees with `REAL_FAILURE_SQL` and `class_sql`, with the code
+    from the record (no column) and with other sources' sign-ins too."""
+    from app.search import entities as en
+
+    engine = make_lab(tmp_path)["app"].state.engine  # Windows and Linux sign-ins as well
+    rows = _signins(datetime(2026, 10, 28, 10, tzinfo=UTC))
+    for r in rows[1::2]:
+        r["status_code"] = None  # stored before the column: the code comes from the record
+    _write(engine, rows)
+    pairs = [(signin_classes.REAL_FAILURE_SQL, signin_classes.REAL_FAILURE)]
+    pairs += [
+        (f"template_id = 'm365_signin' AND {signin_classes.class_sql(c)}", en.failed_class(c))
+        for c in ("failed", "interrupted", "expired", "other")
+    ]
+    attempt = "class_uid = 3002 AND coalesce(activity_id, 0) <> 2"
+    pairs += [
+        (
+            f"{attempt} AND {signin_classes.REAL_FAILURE_SQL}",
+            f"{attempt} AND {signin_classes.ACCESS_OUTCOME} = 'failed'",
+        )
+    ]
+    for shown, counted in pairs:
+        same = f"coalesce({shown}, false) = coalesce({counted}, false)"
+        got = engine.run(
+            f"SELECT count(*), count(*) FILTER (WHERE {same}),"
+            f" count(*) FILTER (WHERE class_uid = 3002 AND {shown}) FROM events",
+            QueryScope(None),
+        ).rows[0]
+        assert got[0] == got[1] and got[0] > 10, shown
+        assert got[2] > 0, shown  # each condition matches sign-ins here
+
+
 def test_an_unsatisfied_external_challenge_is_interrupted(tmp_path: Path) -> None:
     """Owner 2026-11-02: 50158 (external security challenge not yet satisfied) ships as
     interrupted; 81014 stays other for now."""

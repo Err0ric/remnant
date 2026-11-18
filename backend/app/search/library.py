@@ -53,6 +53,10 @@ LIBRARY_DIR = Path(__file__).resolve().parents[3] / "library"
 PackId = Annotated[str, StringConstraints(pattern=r"^[a-z0-9][a-z0-9_]{0,40}$")]
 Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=400)]
 FLAG = re.compile(r"^(above|below) \d+$|^change \d+%$")
+# Plain text for a sentence the app shows as is (D274): one line (no control characters,
+# NEL, or line and paragraph separators), no markup, no template braces, and no Markdown
+# emphasis, code, or links (`*`, `_`, `~`, backticks, brackets): the field is plain prose.
+PLAIN = "^[^\\x00-\\x1f\\x7f-\\x9f\u2028\u2029<>{}\\[\\]`*_~]+$"
 SEEN_DAYS = 30  # which templates the viewer's sources have used, for what is offered
 # The longest SQL a saved search or Logs takes (typed SQL). A builtin built from a large
 # AI catalog can be longer: it still runs in Ask, by id, but cannot be saved as a search.
@@ -120,6 +124,17 @@ class LibraryQuery(BaseModel):
     # event ids to cite (fix list 2026-11-16 item 21): what was counted ("events") and what
     # one row is ("AI service"), from the pack, never from a model.
     counted: Counted | None = None
+
+    # What a run with no rows says in place of the generic empty text (D274), in Logs while
+    # the query is unedited and in Ask's answer: "No DHCP lease for this address in the
+    # range. It may be a static address." Plain text from the pack, never from a model.
+    empty: (
+        Annotated[
+            str,
+            StringConstraints(strip_whitespace=True, min_length=1, max_length=160, pattern=PLAIN),
+        ]
+        | None
+    ) = None
 
     @model_validator(mode="after")
     def _has_sql(self) -> LibraryQuery:

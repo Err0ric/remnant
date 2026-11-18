@@ -1334,7 +1334,9 @@ class ExcludeIn(BaseModel):
     reason: str = Field(min_length=1, max_length=500)
 
 
-async def _inventory(request: Request, user: User, days: int) -> tuple[list[Any], list[str]]:
+async def _inventory(
+    request: Request, user: User, days: int, reviewed_only: bool = False
+) -> tuple[list[Any], list[str]]:
     meta: MetaDB = request.app.state.meta
     allowed = await run_in_threadpool(permitted_sources, meta, user)
     ident = await run_in_threadpool(request.app.state.identities.load)
@@ -1350,6 +1352,7 @@ async def _inventory(request: Request, user: User, days: int) -> tuple[list[Any]
         app_now(request),
         days,
         can_view_people(user),
+        reviewed_only,
     )
 
 
@@ -1404,7 +1407,7 @@ async def ai_inventory_count(request: Request, user: CurrentUser) -> InventoryCo
     key = ("ai_inventory_count", scope_key(allowed), can_view_people(user))
     hit = cache.get(key)
     if hit is None:
-        items, _ = await _inventory(request, user, 30)
+        items, _ = await _inventory(request, user, 30, reviewed_only=True)
         hit = (to_review(items), not_approved(items))
         cache.put(key, hit)
     review, refused = hit

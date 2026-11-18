@@ -97,6 +97,7 @@ class CardOut(BaseModel):
     badges: list[str]
     search_sql: str | None
     group: str
+    hint: str = ""  # a real line behind a plain label (sign-in cards), for hover
 
 
 class EdgeOut(BaseModel):

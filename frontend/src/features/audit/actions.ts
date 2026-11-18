@@ -66,6 +66,7 @@ const ACTIONS: Record<string, string> = {
   "schedule.run": "Schedule ran",
   "schedule.run_now": "Ran a schedule now",
   "schedule.update": "Changed a schedule",
+  "settings.ask_time_limit": "Changed the Ask time limit",
   "pin.add": "Pinned to the left menu",
   "pin.remove": "Unpinned from the left menu",
   "search.create": "Saved a search",

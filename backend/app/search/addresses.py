@@ -9,8 +9,14 @@ people and machines, as **spans** with a start and an end:
   mapping; cap 12 h.
 - logon: a successful OCSF Authentication (Windows 4624 and others) gives the person and
   workstation; ends at the next logon on the address; cap 12 h.
-- dhcp: a DHCP lease (Palo Alto system log, subtype dhcp) gives the machine and MAC; ends
-  at the next lease of the address; cap 24 h.
+- dhcp: a DHCP lease (Palo Alto system log, subtype dhcp) gives the machine and MAC. As
+  in the library's `who_had_ip` (D272, D278), lines in its order (a start before an end in
+  the same second): a lease runs from its start line until its machine's end line, the
+  next start on the address, or 24 h, whichever is first. An end line while another
+  machine's lease runs ends nothing; one with no lease running covers back to the later of
+  the address's previous line and 24 h before it. So an hour resolves the same whatever
+  the range, as long as the lines within 24 h of it are read (the point lookup reads 24 h
+  each side).
 
 A span that ran into its cap is marked `capped`: shown as "no logout seen (assumed until
 ...)", never as fact (D107 C1). DHCP names a machine, never a person (row 6). A machine
@@ -56,11 +62,15 @@ _HOST = (
 )
 _BAD_IP = "('', '-', '127.0.0.1', '::1', '0.0.0.0')"
 _TS = "coalesce(time, time_observed)"
-_DHCP_IP = "regexp_extract(message, 'lease started ip ([0-9a-fA-F.:]+)', 1)"
-_DHCP_HOST = "nullif(regexp_extract(message, 'hostname ([^,\\s]+)', 1), '[Unavailable]')"
-_DHCP_MAC = "nullif(regexp_extract(message, 'mac ([0-9A-Fa-f:]{17})', 1), '')"
+# What a DHCP line says, read the same way by the library's who_had_ip, which embeds these
+# verbatim (a test holds them equal): the address, machine, MAC, and whether it ended.
+DHCP_IP = "regexp_extract(message, 'lease (?:started|ended) ip ([0-9a-fA-F.:]+)', 1)"
+DHCP_HOST = "nullif(nullif(regexp_extract(message, 'hostname ([^,\\s]+)', 1), ''), '[Unavailable]')"
+DHCP_MAC = "nullif(regexp_extract(message, 'mac ([0-9A-Fa-f:]{17})', 1), '')"
+DHCP_ENDED = "message LIKE '%lease ended%'"
 _CAP = "CASE kind " + " ".join(f"WHEN '{k}' THEN INTERVAL {h} HOUR" for k, h in CAPS.items())
 _CAP += " END"
+_DHCP_CAP = f"INTERVAL {CAPS['dhcp']} HOUR"
 
 # Every event that starts (`fin` false) or ends (`fin` true) a span on an address, and
 # every Microsoft 365 sign-in on a machine (`sign`, with `dev`): the raw observations, read
@@ -88,10 +98,10 @@ IDENT_RAW = f"""
   WHERE template_id = 'paloalto_globalprotect' AND coalesce(activity_id, 1) IN (1, 2)
     AND coalesce(json_extract_string(unmapped, '$.private_ip'), '') NOT IN {_BAD_IP}
   UNION ALL
-  SELECT 'dhcp', {_DHCP_IP}, {_TS}, NULL, {_DHCP_HOST}, {_DHCP_MAC}, false, source_id, NULL
+  SELECT 'dhcp', {DHCP_IP}, {_TS}, NULL, {DHCP_HOST}, {DHCP_MAC}, {DHCP_ENDED}, source_id, NULL
   FROM events
   WHERE template_id = 'paloalto_system' AND json_extract_string(unmapped, '$.subtype') = 'dhcp'
-    AND {_DHCP_IP} <> ''
+    AND {DHCP_IP} <> ''
   UNION ALL
   SELECT 'sign', NULL, {_TS}, {_WHO}, NULL, NULL, false, source_id, lower(device_hostname)
   FROM events
@@ -112,7 +122,28 @@ def obs_sql(kept: bool = False) -> str:
     return f"""addr_raw AS ({IDENT_RAW}{IDENT_KEPT if kept else ""}
 ),
 addr_ev AS (
-  SELECT kind, ip, t, who, host, mac, fin, src FROM addr_raw WHERE kind <> 'sign'
+  SELECT kind, ip, t, who, host, mac, fin, src FROM addr_raw
+  WHERE kind NOT IN ('sign', 'dhcp')
+),
+-- DHCP lines (D278) in who_had_ip's order. `nxt`: the next start on the address; `own`:
+-- this machine's next end line; `prv`: the address's previous line.
+addr_dl AS (
+  SELECT ip, t, host, mac, fin, src, coalesce(mac, host, '') AS h, lag(t) OVER a AS prv,
+         min(CASE WHEN NOT fin THEN t END)
+           OVER (a ROWS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING) AS nxt,
+         min(CASE WHEN fin THEN t END) OVER (
+           PARTITION BY ip, coalesce(mac, host, '') ORDER BY t, fin
+           ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) AS own
+  FROM addr_raw WHERE kind = 'dhcp'
+  WINDOW a AS (PARTITION BY ip ORDER BY t, fin)
+),
+-- The lease running at each line: the last start's stop and machine.
+addr_dr AS (
+  SELECT *, last_value(CASE WHEN NOT fin THEN least(nxt, own, t + {_DHCP_CAP}) END IGNORE NULLS)
+              OVER r AS run_stop,
+            last_value(CASE WHEN NOT fin THEN h END IGNORE NULLS) OVER r AS run_h
+  FROM addr_dl
+  WINDOW r AS (PARTITION BY ip ORDER BY t, fin ROWS UNBOUNDED PRECEDING)
 ),
 addr_span AS (
   SELECT kind, ip, t AS start, who, host, mac, src,
@@ -121,6 +152,13 @@ addr_span AS (
   FROM (
     SELECT *, lead(t) OVER (PARTITION BY kind, ip ORDER BY t, fin DESC) AS nxt FROM addr_ev
   ) WHERE NOT fin
+  UNION ALL
+  SELECT 'dhcp', ip, t, NULL, host, mac, src, run_stop,
+         coalesce(least(nxt, own) > t + {_DHCP_CAP}, true)
+  FROM addr_dr WHERE NOT fin
+  UNION ALL
+  SELECT 'dhcp', ip, greatest(prv, t - {_DHCP_CAP}), NULL, host, mac, src, t, false
+  FROM addr_dr WHERE fin AND (run_stop IS NULL OR run_stop < t OR (run_stop = t AND run_h <> h))
 ),
 addr_user AS (
   SELECT ip, start AS t, stop, who, kind, capped, src,
@@ -257,7 +295,10 @@ def spans(engine: QueryEngine, scope: QueryScope, ip: str, at: datetime) -> list
     except ValueError as exc:
         raise ParamInvalidError("Give an IP address") from exc
     at = at.astimezone(UTC)
-    window = QueryScope(scope.sources, at - timedelta(hours=MAX_AGE_HOURS), at)
+    # Lines up to 24 h after `at` too: an end line there can be what held it (D278).
+    window = QueryScope(
+        scope.sources, at - timedelta(hours=MAX_AGE_HOURS), at + timedelta(hours=MAX_AGE_HOURS)
+    )
     out: list[Span] = []
     hosts: list[str] = []
     for kind, start, stop, capped, who, host, mac, src in engine.run(

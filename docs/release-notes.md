@@ -4,6 +4,119 @@
 
 <!-- unreleased:start -->
 
+### One outcome rule for the access card and the entity pages (2026-11-18)
+
+- The address page's "Sign-ins and access" card and the person, address, and host pages' "What it did" and lanes now read an event's outcome (allowed, denied, signed out, succeeded, failed, not counted, other) from one SQL function, `access_outcome`, that every query defines, instead of two copies of the rule.
+- The library query "Sign-ins and access for one address" (Addresses pack 1.0.1) calls that function, so its SQL is shorter; its rows and counts are the same, and it reads the Microsoft 365 error code only on Microsoft 365 sign-ins, as the entity pages do.
+- Each row of What it did opens exactly its own events in Logs: a sign-in with no outcome recorded (Other) no longer opens the person's other sign-ins to the same target as well, and a row with no user or no target opens only the events without one, not those of every user or target.
+- What you will notice: an Other row, or a row with no user or no target, in What it did opens only its own events; the SQL of that library query is shorter in Library and Logs.
+- What changes for existing installs: nothing to do. A copy of the Addresses pack's query saved before the update keeps its own SQL and shows as updated in Library. To go back, install the previous version as in `docs/install/` (`update-systemd.sh --rollback`).
+
+### People & devices: faster person, address, and host pages, and a faster AI usage count (2026-11-17)
+
+- A person's page loads in a fraction of the time: the entity pages' sign-in rule reads the Microsoft 365 error code only on Microsoft 365 sign-ins, instead of from every line in the range (the page went from 7.1 s to 0.9 s on the speed check's lake; the sign-in summary query alone from 6.7 s to 0.14 s); the person's activity chart counts failures the same way. Address and host pages gain the same way, and read only their own rows' records (1.5 s to about 0.5 s for an address over 30 days of the work install's volume).
+- A person's lanes find their rows with a quick name match before the exact identity test, as the summary above them already did.
+- The People & devices ranking reads who used an unreviewed AI service from the daily AI rollup for the day the range starts in too, as AI usage does, instead of reading that day's network logs again.
+- The AI usage count in the side rail reads only services and MCP servers, the only items with a review status, and no longer the agents and Microsoft 365 apps.
+- Every number, list, and link is the same as before.
+- What you will notice: person, address, and host pages open much faster; the People & devices list itself is about as fast as before; nothing else changes.
+- What changes for existing installs: nothing to do.
+
+### Ask's time limit in Settings > AI providers (2026-11-17)
+
+- An Admin can set Ask's time limit, the longest one Ask model call may take, in Settings > AI providers (Ask time limit), from 5 to 3600 seconds. The help says: "CPU-only local models may need 240 s or more."
+- A saved value takes the place of `ask.model_timeout_s` from the config, and "Use the configured value" clears it; the page says whether the limit in force is saved there or from the install's configuration. Each change is in the audit log as "Changed the Ask time limit", with the old and new value.
+- The live search time limit in Settings > About and licenses is drawn by the same control; it looks and works as before.
+- What you will notice: Settings > AI providers has an Ask time limit box an Admin can change.
+- What changes for existing installs: the default stays 90 seconds, or what `ask.model_timeout_s` says, until an Admin saves a value. CPU-only local models may need 240 s or more. To go back, click "Use the configured value"; rolling back as in `docs/install/` (`update-systemd.sh --rollback`) also works, and the older version ignores the saved value.
+
+### Address resolution reads DHCP lease ended lines (2026-11-17)
+
+- Where an address is matched to a machine (People & devices, the person and address pages, AI usage), a DHCP lease now ends at its "lease ended" line instead of running on until the next lease of the address or 24 hours.
+- A lease that started before the time range and ended inside it now names its machine from the end line, so the first hours of a range are matched too.
+- An end line logged after another machine took the address no longer cuts that machine's lease short.
+- An hour is matched to the same machine whatever time range the page shows, and the address lookup (who had it at a time) reads the lines up to 24 hours after that time too, so it sees the end line of a lease that was still running.
+- These are the same rules as the library query "Who had this address", and both read a DHCP line the same way, so the two name the same machine for an address at a time.
+- What you will notice: an address is matched to the machine that held it at the time, also in the first hours of a range and after a lease ended.
+- What changes for existing installs: nothing to do. Lines already stored are read with the new rule on the next page load; AI usage reads days it summarized before the update with start lines only, and days from the update on with both. To go back, install the previous version as in `docs/install/` (`update-systemd.sh --rollback`).
+
+### Ask AI answers a bare address with its page (2026-11-17)
+
+- Asking Ask AI only an address answers at once, without calling an AI model, with a link to the address page and its four sections in brief for the page's own 7 days, whatever time is chosen in Ask. It works on any turn of a conversation. Host and user names are asked as before.
+- What you will notice: Ask AI answers a bare address at once with a link to its page instead of a query.
+- What changes for existing installs: nothing to do.
+
+### The address page answers who had it, what it looked up, how it signed in, and which AI services it reached (2026-11-17)
+
+- Typing an address in the top bar search opens its page, even before the search has answered; it no longer drops into a raw SQL search in Logs.
+- An address's page under People & devices has four new sections: DHCP and VPN history, the names it looked up in DNS with first and last seen, its sign-ins and firewall allows and denies by kind, and the AI services seen from it as AI usage counts them. Each reads only the sources you may read, says which sources it read, and says plainly when you have no source for it.
+- On every person, host, and address page, a sign-out (such as sshd's "Disconnected from user") no longer counts as a sign-in, sign-ins in the activity lanes are one card per outcome, and firewall traffic in What it did reads Allowed or Denied. Outcome badges are the same everywhere; a success from an address is marked once, on its Succeeded number, in amber with a tooltip.
+- With no events, an entity page shows one line and no empty numbers or lanes; "View all events in Logs" sits after the opening sentence and is not shown at 0.
+- What you will notice: an address typed in the top bar opens its page, which has four new sections; sign-in counts on person, host, and address pages no longer include sign-outs, and empty pages are shorter.
+- What changes for existing installs: nothing to do.
+
+### Logs: searching for a word or an address is about twice as fast, and field counts no longer give up on long ranges (2026-11-17)
+
+- A word, phrase, or address typed in Filters is found with a plain substring search instead of a case-insensitive pattern match. It finds exactly the same lines, in the same order. On a 30-day lake at the work install's rate (about 10.7 million events), a search for one address went from 5.4 s to 2.5 s for the first page and from 5.1 s to 2.3 s for the field counts; at 7 days from 1.7 s to 0.8 s. A word with a `*` in it is matched as before.
+- When the field counts of a Filters search cannot finish for the whole range in 7 seconds, the Fields panel counts the newest days that hold matches instead (about 2 million events at a time, passing over days without matches) and names the numbers: "Counts from the newest 4 days only (159 of 1,133 items): the whole range took too long to count." Before, it showed only "Counting fields took too long for this range."
+- Show SQL and Edit as SQL show the new form of the match, `contains(lower(raw), lower('text'))`, or `contains(raw, '192.0.2.15')` for text with no letter.
+- What you will notice: Logs searches over long ranges come back sooner, and the Fields panel shows counts (sometimes from the newest days only, with a note) where it used to say counting took too long.
+- What changes for existing installs: nothing to do.
+
+### Ask AI: results first, and no more "Can't reach the server" behind a slow proxy (2026-11-17)
+
+- The Ask AI page now asks in the background and checks on the question every second or so, so no request stays open while the model works and a reverse proxy's time limit no longer ends a question.
+- Each question shows its steps as they happen, Writing query, Running query, and Summarizing, the current one with the seconds so far and the finished ones with how long they took.
+- The table shows as soon as the query has run; the summary fills in afterward. When the model takes too long to summarize, the table stays and one line under it says "The model took too long to summarize. Results are above."
+- Across the app, a request a proxy gave up on says "The request took too long" (or "The server is busy"), and "Can't reach the server" shows only when the request got no answer at all.
+- Ask no longer has a Cancel button: the server finishes the question it started.
+- What you will notice: Ask AI shows the results table first with its progress steps, and a slow model no longer ends in "Can't reach the server" behind a proxy.
+- What changes for existing installs: nothing to do.
+
+### Who had this address: says when there is no lease (2026-11-17)
+
+- When "Who had this address" (`who_had_ip`) finds nothing, Logs and Ask AI say "No DHCP lease for this address in the range. It may be a static address." in place of "Try a wider time range or remove a source filter."
+- In Logs this holds while the query opened from Library is unchanged or only its address is; after any other edit the usual text shows.
+- A query library pack may give any query its own words for no rows, with the new optional field `empty:` (plain text, at most 160 characters). The Palo Alto pack is now version 1.2.0.
+- What you will notice: an address lookup that finds no lease says so, and that the address may be static.
+- What changes for existing installs: nothing to do. To go back, roll back the update (`docs/install/team-vm.md`, Rolling back, `update-systemd.sh --rollback`), but first remove `empty:` from your own packs (the folder `paths.library` names): the older version refuses a pack that has it, and leaves that pack's queries out until it is removed. The packs shipped with the product need nothing.
+
+### Who had this address: the interface, lease ended lines, one row per lease (2026-11-17)
+
+- The library query "Who had this address" (`who_had_ip`) now fills its interface column whether the firewall writes the interface quoted (`interface "vlan20"`) or not (`interface ae0.120`).
+- It finds leases and VPN tunnels with a start or end line in the time range: it reads "lease ended" lines as well as "lease started" lines, so a lease that started before the range shows from its end line. A lease with neither line in the range is not found.
+- It gives one row per DHCP lease or VPN tunnel, newest first, with the first and last time it was seen in the range (`first_seen`, `last_seen`), in place of one row per log line. A row ends at the next holder's start, even when its end line is logged later.
+- Its description now says it reads the time range only; it said it looked back 7 days before the range, which it never could.
+- What you will notice: "Who had this address" shows the interface and each lease's first and last time seen, and finds leases with a start or end line in the range.
+- What changes for existing installs: lines already stored show the interface and their end times too, since the query reads the stored description; no reparse is needed. A copy saved with Save as my own keeps the old query until you use Replace my copy.
+
+### Logs: the query library is a tab (2026-11-17)
+
+- Logs has a third tab, Library, beside Search and Saved searches, at its own address (`/investigate/library`), so a link or a refresh opens it.
+- It lists every shipped, tested query by pack, each with its description, what is normal, and the sources it reads, with Run, Save as my own, and Add to dashboard. Run opens the query in the SQL editor over the last 24 hours; press Run there to see the results.
+- A filter row finds a query by pack, name, or description.
+- Queries for sources you have no events from are listed at the end under "Needs sources you don't have", with the names of those sources, instead of a count.
+- Saved searches points to the Library; the Logs "..." menu and Ctrl+K "Logs › Library" open the tab.
+- What you will notice: a Library tab on Logs lists the ready-made queries, including the ones waiting for a source you do not have yet.
+- What changes for existing installs: nothing to do.
+
+### One log file is read by one source only (2026-11-17)
+
+- Two sources that reach the same log file (a folder source and a file source inside that folder, a link to the file, or a link to its folder) each stored every line of it, so the lines were counted twice. Now one source reads the file: the most specific one (a source set to that file before a folder source, a folder before a recursive pattern; between equals, the one added first). It stays the reader through log rotations and restarts, so new lines keep its parser, classification, retention, and access. The other source skips that file. When that is every file it lists, it says "Read by" and the source's name, with a hollow dot: it is not counted as a problem or in Sources healthy, it raises no quiet alert (one already open on it is resolved), and under its path Settings > Sources says what to do ("demo.log is already read by dns_bind, so nothing is stored here. Remove this source.", or without the advice when both sources are equally specific); Health shows the same line and lists such sources under their own Status segment, Shared. A source with only some files read elsewhere keeps its usual status and shows the line too. Whichever source reads a file starts where any source last stopped in it, so no line is stored twice: if the reading source is turned off or deleted, or no longer lists the file, the other carries on from there. Windows event log (.evtx) files are not covered yet: two sources over one .evtx folder each store every record.
+- Different files that hold the same lines are still both read: for example a syslog daemon that writes each line of the DNS server to two files. Nothing is ever dropped for looking like another line.
+- A source that takes over a file reads on from where the other stopped also when a restart or a remount changed the file's device number.
+- The ingest guide (`docs/ingest/README.md`) says how to avoid both cases ("Rotating log files") and gives a Logs SQL check that shows where doubled lines came from ("Lines stored twice").
+- What you will notice: if two of your sources read the same file, one of them stops storing its lines and says "Read by" the other, without counting as a problem; counts from that file are no longer doubled.
+- What changes for existing installs: lines already stored twice stay in the lake until retention removes them; the Logs SQL check in the ingest guide shows which sources the copies came from. Only new lines are stored once. When a source is deleted, a source that lists the same files carries on from where it stopped; a source added later reads the files no other source lists from their start, as before. To go back, install the previous version as `docs/install/` describes (`update-systemd.sh --rollback`); the two sources then both read the file again, and the one that skipped it stores the lines it skipped meanwhile, so they are counted twice again.
+
+### Ask AI: a slow model no longer ends in an error (2026-11-17)
+
+- Ask AI now runs in the background on the server: asking returns at once, and the server keeps the question's progress, the query, the rows, and the summary for the page to pick up (the page moves to this in the next update; until then it works as before).
+- Each model call Ask makes has a time limit, 90 seconds by default. When the model takes longer to write the query, Ask says "The model took too long to write a query."; when it takes longer to summarize, the rows and the query stay and Ask says "The model took too long to summarize. Results are above." The request to the model is stopped, not left running.
+- The summary is written from at most 10 rows plus how many values and how many different ones each column has, and the range of numbers and times, over the whole result, worked out by the server; no names or other text from the rows not shown are sent.
+- What you will notice: nothing visible yet; the Ask page moves to the background job, and with it the end of "Can't reach the server" on a slow model, in the next update.
+- What changes for existing installs: a new setting, `ask.model_timeout_s` (default 90; `APP__ASK__MODEL_TIMEOUT_S`), the longest one Ask model call may take; a reverse proxy's timeout no longer matters for Ask once the page uses the background job. Nothing to do. To go back, remove the setting (or the environment line) and roll back as in `docs/install/` (`update-systemd.sh --rollback`); jobs are held in memory only and are lost on any restart.
+
 ### Dashboard: loads in its final layout, with nothing moving (2026-11-17)
 
 - The Dashboard draws every part in its final place at once: the key numbers have all their tiles from the start, each a placeholder until its number arrives, and AI Watch, Identity, Attacks and access, and Detections each show their title and cards while their numbers load, in a box of the same size they have when loaded.

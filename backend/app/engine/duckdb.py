@@ -282,6 +282,7 @@ class QueryEngine:
         self._tpl_cache: dict[tuple[Path, str], tuple[int, list[tuple[Any, Any]] | None]] = {}
         self._time_cache: dict[Path, tuple[int, datetime | None]] = {}
         self._tmax_cache: dict[Path, tuple[int, datetime | None]] = {}
+        self._rows_cache: dict[str, tuple[int, int | None]] = {}
         # Where a query spills when it needs more than its memory share (F46). DuckDB's
         # default is ".tmp" in the working directory, which a read-only container or a
         # sandboxed service cannot write: the query then fails instead of spilling.
@@ -883,6 +884,25 @@ class QueryEngine:
             self._tmax_cache.clear()
         self._tmax_cache[path] = (stamp, high)
         return high
+
+    def file_rows(self, path: str) -> int | None:
+        """Rows in one lake file, from its Parquet footer (cached per file version); None
+        when it cannot be read."""
+        try:
+            stamp = os.stat(path).st_mtime_ns
+        except OSError:
+            return None
+        hit = self._rows_cache.get(path)
+        if hit is not None and hit[0] == stamp:
+            return hit[1]
+        try:
+            rows: int | None = pq.read_metadata(path).num_rows
+        except (OSError, ValueError, pa.ArrowException):
+            rows = None
+        if len(self._rows_cache) > 50_000:
+            self._rows_cache.clear()
+        self._rows_cache[path] = (stamp, rows)
+        return rows
 
     def first_days(self, scope: QueryScope) -> dict[str, str]:
         """Each source in scope -> its earliest day folder with files, inside the range."""

@@ -126,8 +126,29 @@ def set_overrides(overrides: Mapping[int, SignInClass]) -> None:
     ACTIVE.set_overrides(overrides)
 
 
+# A Microsoft 365 sign-in's class (D158), its code read from the record only on those rows
+# (NULL on others). The same answer as `REAL_FAILURE_SQL` and `class_sql` on every row
+# (test_signin_classes), but in an aggregate's FILTER those read the record of every row in
+# range (owner, 2026-11-17: a person's page took 6.7 s on the bench lake, 0.14 s this way).
+M365_CLASS: Final[str] = f"CASE WHEN template_id = 'm365_signin' THEN signin_class({CODE_SQL}) END"
+REAL_FAILURE: Final[str] = f"status_id = 2 AND coalesce({M365_CLASS}, 'failed') = 'failed'"
+# An event's outcome, one rule (D279) for the address page's access card (the library's
+# `addresses/access_from_ip`) and the entity pages' What it did and sign-in lanes.
+ACCESS_OUTCOME: Final[str] = (
+    "access_outcome(class_uid, activity_id, status_id, template_id, status_code, raw)"
+)
+_OUTCOME_MACRO: Final[str] = (
+    f"CREATE OR REPLACE TEMP MACRO {ACCESS_OUTCOME} AS CASE"
+    " WHEN class_uid = 4001 AND status_id = 1 THEN 'allowed'"
+    " WHEN class_uid = 4001 AND status_id = 2 THEN 'denied'"
+    " WHEN class_uid = 3002 AND activity_id = 2 THEN 'signed out'"
+    f" WHEN status_id = 1 THEN 'succeeded' WHEN {REAL_FAILURE} THEN 'failed'"
+    " WHEN status_id = 2 THEN 'not counted' ELSE 'other' END"
+)
+
+
 def macro_sql() -> str:
-    return ACTIVE.macro
+    return f"{ACTIVE.macro};\n{_OUTCOME_MACRO}"
 
 
 def version() -> str:

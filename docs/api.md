@@ -33,6 +33,7 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | Method | Path | What it does | Query | JSON body (`?` optional) |
 |---|---|---|---|---|
 | `GET` | `/api/addresses/{ip}` | The spans that held this address at `at` (default now), newest first: logons, User-ID, GlobalProtect, DHCP leases, and the sign-ins that name a machine's person (ADR-0029). | `?at` (optional): date-time |  |
+| `GET` | `/api/addresses/{ip}/sections/{name}` | One section of the address page: `dhcp` (who had it: DHCP leases and VPN tunnels), `dns` (the names it looked up), `access` (sign-ins, access checks, and firewall traffic by kind and outcome), `ai` (the AI services seen from it, as AI usage counts them). Each is a shipped library query through the guard on the caller's view; the page asks for each on its own, so a slow one holds up no other. | `?start` (optional): date-time<br>`?end` (optional): date-time |  |
 
 ### Ai
 
@@ -92,11 +93,14 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | Method | Path | What it does | Query | JSON body (`?` optional) |
 |---|---|---|---|---|
 | `POST` | `/api/ask` | Ask |  | `question`: string<br>`provider_id`?: string<br>`start`?: date-time<br>`end`?: date-time<br>`sources`?: list of string<br>`history`?: list of Turn<br>`tz`?: string<br>`route`?: `auto` &#124; `data` |
+| `POST` | `/api/ask/jobs` | Ask as a background job: returns at once with `job_id`; poll GET /ask/jobs/{id}. |  | `question`: string<br>`provider_id`?: string<br>`start`?: date-time<br>`end`?: date-time<br>`sources`?: list of string<br>`history`?: list of Turn<br>`tz`?: string<br>`route`?: `auto` &#124; `data` |
+| `GET` | `/api/ask/jobs/{job_id}` | What the job has so far; only for the person who submitted it (others get 404). |  |  |
 | `GET` | `/api/ask/providers` | Enabled providers an analyst can choose, local first. No URLs or key state. |  |  |
 | `GET` | `/api/ask/providers/{provider_id}/queue` | Provider Queue |  |  |
 | `GET` | `/api/ask/suggest` | Library queries that match the question's words, best first, at most 3, with no model at all (ADR-0042 C4): what Ask offers when no AI provider is set up. Reads only which templates the caller's sources have used. | `?q`: string |  |
 | `POST` | `/api/ask/{ask_id}/answer` | The answer step (ADR-0042 row 8, slice 1c): statements about the rows the run kept, each citing their event ids; never rows from the client. Statements that cite no sent row are removed and counted. Any failure of the model leaves the rows and the headline without a summary. Audited as ask.answer. |  |  |
 | `POST` | `/api/ask/{ask_id}/drill` | "Show events" for one row of an aggregate library answer (D173): the library query's own WHERE and parameters plus each group key equal to the row's value, built by code, never by a model. Nothing runs here: Search runs it through the guard on the caller's view and audits it like any query. |  | `values`: object |
+| `POST` | `/api/ask/{ask_id}/jobs` | Run an answer's SQL (the Run click) and then summarize it, as a background job. |  |  |
 | `POST` | `/api/ask/{ask_id}/run` | Run the SQL an answer produced, as the person who asked, on their current view. Audited as query.run with purpose `ask`, the answer's id, its model call ids, and its origin (`generated`, or the library query `<pack>/<id>@<version>`). Returns a headline written by code from the rows. |  |  |
 
 ### Audit
@@ -289,6 +293,8 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | `DELETE` | `/api/providers/{provider_id}` | Delete Provider |  |  |
 | `GET` | `/api/providers/{provider_id}/runtime` | Local Ollama providers: the models loaded now, whether each runs on GPU, CPU, or both, and its context length (Ollama's /api/ps). Read-only; sends no prompt. |  |  |
 | `POST` | `/api/providers/{provider_id}/test` | Test Provider |  |  |
+| `GET` | `/api/settings/ask-time-limit` | Ask's model time limit in force (D270, D277), where it comes from, and its bounds. |  |  |
+| `PUT` | `/api/settings/ask-time-limit` | Set Ask's model time limit for every Ask call, or null to use the config's again (D277). Audited `settings.ask_time_limit`. |  | `seconds`: integer |
 
 ### Query
 
@@ -337,8 +343,8 @@ The `remnant` command-line client wraps the same API (`remnant query ... -o json
 | Method | Path | What it does | Query | JSON body (`?` optional) |
 |---|---|---|---|---|
 | `GET` | `/api/events/{event_id}/around` | Rows within 5 minutes of the event by the same person or device, from every source the caller may read; at most 50, newest last, with a Likely cause hint. Audited `search.around`. | `?at`: date-time |  |
-| `GET` | `/api/library` | The packs, with only the queries whose templates the viewer's sources produced in the last 30 days, and the viewer's own copies. |  |  |
-| `POST` | `/api/library/{pack_id}/dashboard` | Add a pack (ADR-0033 row 5): each ticked query becomes the user's private saved search (their copy if they have one), a private schedule with the query's suggested interval and flag, and a panel in a section named after the query's group. Every object is ordinary and editable; each is audited as if made by hand. |  | `query_ids`: list of string<br>`dashboard_id`?: string |
+| `GET` | `/api/library` | The packs, with only the queries whose templates the viewer's sources produced in the last 30 days, and the viewer's own copies; the other queries under `needs`. |  |  |
+| `POST` | `/api/library/{pack_id}/dashboard` | Add a pack (ADR-0033 row 5): each ticked query becomes the user's private saved search (their copy if they have one), a private schedule with the query's suggested interval and flag, and a panel in a section named after the query's group. Every object is ordinary and editable; each is audited as if made by hand. A query whose copy already has a panel on that dashboard is returned as it is, and nothing is made. |  | `query_ids`: list of string<br>`dashboard_id`?: string |
 | `POST` | `/api/library/{pack_id}/{query_id}/copy` | Save as my own (row 4): a private saved search the user owns. Audited search.create with the library entry. |  |  |
 | `POST` | `/api/library/{pack_id}/{query_id}/replace` | Replace my copy (row 7): the user's copy takes the pack's current SQL and version. Audited search.update; the user's schedules of it take the change as an edit does. |  |  |
 | `GET` | `/api/m365/list` | One Microsoft 365 tab's list over the page window (ADR-0038 section 5): `name` is a list, and for sign-ins `cls` and `mode` pick the filtered one. | `?name`: string<br>`?start`: date-time<br>`?end`: date-time<br>`?cls` (optional): string<br>`?mode` (optional): string |  |

@@ -51,15 +51,23 @@ export function isEntityValue(value: unknown): value is string {
 
 /** The Investigations address for an entity; kept in the fragment, so it never reaches a
  * server or proxy log, like Search (D90). */
-export function entitySection(e: Entity, tab?: EntityTab): string {
-  return `${e.kind}=${encodeURIComponent(e.value)}${tab ? `&tab=${tab}` : ""}`;
+export function entitySection(e: Entity, tab?: EntityTab, range?: EntityRange): string {
+  return `${e.kind}=${encodeURIComponent(e.value)}${tab ? `&tab=${tab}` : ""}${range ? `&range=${range}` : ""}`;
+}
+
+/** A page window named in the address (Ask's direct answer, D276): the page opens on it. */
+export type EntityRange = "1h" | "24h" | "7d" | "30d";
+
+export function parseEntityRange(section: string): EntityRange | null {
+  const m = /(?:^|&)range=(1h|24h|7d|30d)(?:&|$)/.exec(section);
+  return m ? (m[1] as EntityRange) : null;
 }
 
 /** A person's page can open on a tab: AI usage and Agents open "AI use" (D189). */
 export type EntityTab = "ai";
 
-export function entityHref(e: Entity, tab?: EntityTab): string {
-  return `${pathFor("investigate")}#${entitySection(e, tab)}`;
+export function entityHref(e: Entity, tab?: EntityTab, range?: EntityRange): string {
+  return `${pathFor("investigate")}#${entitySection(e, tab, range)}`;
 }
 
 /** The tab named in an entity address (`user=dana%40example.com&tab=ai`), if any. */
@@ -82,6 +90,20 @@ export function parseEntity(full: string): Entity | null {
 }
 
 /** Opens the entity's page (a new history entry, so Back returns here). */
-export function openEntity(e: Entity, tab?: EntityTab): void {
-  navigate("investigate", entitySection(e, tab));
+export function openEntity(e: Entity, tab?: EntityTab, range?: EntityRange): void {
+  navigate("investigate", entitySection(e, tab, range));
+}
+
+const IPV4 = /^(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
+
+/** An IPv4 or IPv6 address written whole, as the server's address page takes it. */
+export function isIpAddress(value: string): boolean {
+  if (IPV4.test(value)) return true;
+  if (!value.includes(":") || !/^[0-9a-fA-F:.]+$/.test(value)) return false;
+  try {
+    new URL(`http://[${value}]/`);
+    return true;
+  } catch {
+    return false;
+  }
 }

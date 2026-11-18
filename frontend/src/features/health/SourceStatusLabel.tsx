@@ -5,6 +5,8 @@ const DOT: Record<StatusLevel, string> = {
   attention: "bg-warn",
   paused: "bg-text-muted",
   healthy: "bg-ok",
+  // Neutral and apart from the grey of quiet or never sent: a ring, no fill (SPEC 3.5).
+  shared: "border border-text-secondary bg-transparent",
 };
 
 interface SourceStatusLabelProps {
@@ -24,7 +26,7 @@ export function SourceStatusLabel({ level, word, greyed = false }: SourceStatusL
         data-dot=""
         className={`inline-block size-2 shrink-0 rounded-full ${greyed ? "bg-text-muted" : DOT[level]}`}
       />
-      <span className="truncate" data-status-word="">
+      <span className="truncate" data-status-word="" title={word}>
         {word}
       </span>
     </span>

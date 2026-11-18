@@ -21,7 +21,9 @@ it("exports through the server with exactly the request that produced the table"
   });
   render(<App initialTheme="dark" queryClient={client} />);
   // Export CSV is under More actions on Logs; it is enabled once a result is on screen.
-  await vi.waitFor(async () => expect(await fromMore("Export CSV")).toBeEnabled());
+  // Wait for the result itself, then open the menu once: a retried fromMore toggles it.
+  await screen.findByText("Failed password for invalid user oracle");
+  expect(await fromMore("Export CSV")).toBeEnabled();
   await userEvent.click(screen.getByRole("menuitem", { name: "Export CSV" }));
   await vi.waitFor(() => expect(click).toHaveBeenCalled());
   const bodies = (suffix: string) =>

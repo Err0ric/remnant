@@ -42,7 +42,7 @@ export const COUNTED = {
   events24h:
     "Events stored from every source you may read in the last 24 hours, by when each event happened, against the 24 hours before.",
   sourcesHealthy:
-    "Turned-on sources reading without errors or warnings, not quiet, and with no gap in event volume in the last 24 hours. Quiet means no events in 24 hours, a quiet alert firing, or an open gap alert; a built-in source that records only refusals is expected to be quiet and is never counted as quiet. Paused sources are counted in the total but never healthy. The Dashboard's Sources line uses the same count.",
+    "Turned-on sources reading without errors or warnings, not quiet, and with no gap in event volume in the last 24 hours. Quiet means no events in 24 hours, a quiet alert firing, or an open gap alert; a built-in source that records only refusals is expected to be quiet and is never counted as quiet. Paused sources are counted in the total but never healthy. A source whose every file another source already reads stores nothing by design: it is left out of the total and of every problem, and named on a line of its own. The Dashboard's Sources line uses the same count.",
   openAlerts:
     "Alerts not yet resolved or dismissed, from rules and schedules on sources you may read.",
   delivery:

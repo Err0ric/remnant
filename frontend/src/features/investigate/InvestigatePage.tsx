@@ -1,10 +1,10 @@
 import { Skeleton } from "@/components/Skeleton";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { ApiError, api, type EntityRisk, type GraphCard, type GraphKind } from "@/lib/api";
 import { navigate, useSection } from "@/lib/route";
-import { entitySection, parseEntity, parseEntityTab } from "@/lib/entity";
+import { entitySection, parseEntity, parseEntityRange, parseEntityTab } from "@/lib/entity";
 import { FilterBar } from "@/components/FilterBar";
 import { usePageTimeState } from "@/lib/timeChoice";
 import type { TimeChoice } from "@/lib/timeWindow";
@@ -12,6 +12,7 @@ import { seedSearch } from "@/lib/searchSeed";
 import { CardDetail } from "./CardDetail";
 import { LaneGraph } from "./LaneGraph";
 import { EntitySummary } from "./EntitySummary";
+import { AddressSections } from "./AddressSections";
 import { PersonRecord } from "./PersonRecord";
 import { RiskTable } from "./RiskTable";
 import { TargetedTable } from "./TargetedTable";
@@ -62,6 +63,15 @@ export function InvestigatePage() {
   const section = useSection();
   const linked = parseEntity(section);
   const linkedTab = parseEntityTab(section);
+  // A link that names a window (Ask's direct answer) opens the page on it, even when the
+  // page was already open on another (D276).
+  const linkedRange = parseEntityRange(section);
+  // Once per address: the setter is read from a ref, as it changes with every choice.
+  const setTime = useRef(time.bar.onChange);
+  setTime.current = time.bar.onChange;
+  useEffect(() => {
+    if (linkedRange) setTime.current(linkedRange);
+  }, [linkedRange, section]);
   // The rail's Recent (D258): every way here (a link, the top bar search, Back) passes
   // through this address, so an entity is kept here and nowhere else.
   const { userId = "", canViewPeople = true } = useViewer();
@@ -373,21 +383,35 @@ export function InvestigatePage() {
                   rangeWords={rangeWords}
                   onSearch={openSearch}
                 />
-                {/* The summary answers first; the lanes sit below it and fold away. */}
-                <details open className="group rounded-card border border-border bg-surface">
-                  <summary className="cursor-pointer px-3 py-2 text-sm font-semibold">
-                    How it connects{" "}
-                    <span className="font-normal text-text-muted">
-                      sources, activities, and targets as lanes
-                    </span>
-                  </summary>
-                  <section
-                    aria-label="Investigation graph"
-                    className="overflow-hidden border-t border-border bg-inset"
-                  >
-                    {canvas}
-                  </section>
-                </details>
+                {entity.kind === "ip" ? (
+                  <AddressSections
+                    ip={entity.value}
+                    quiet={summary.data?.events === 0}
+                    start={start}
+                    end={end}
+                    range={range}
+                    rangeWords={rangeWords}
+                    onSearch={openSearch}
+                  />
+                ) : null}
+                {/* The summary answers first; the lanes sit below it and fold away. With
+                    no events there is nothing to draw: the summary says so once. */}
+                {summary.data?.events === 0 ? null : (
+                  <details open className="group rounded-card border border-border bg-surface">
+                    <summary className="cursor-pointer px-3 py-2 text-sm font-semibold">
+                      How it connects{" "}
+                      <span className="font-normal text-text-muted">
+                        sources, activities, and targets as lanes
+                      </span>
+                    </summary>
+                    <section
+                      aria-label="Investigation graph"
+                      className="overflow-hidden border-t border-border bg-inset"
+                    >
+                      {canvas}
+                    </section>
+                  </details>
+                )}
               </>
             ) : (
               <section

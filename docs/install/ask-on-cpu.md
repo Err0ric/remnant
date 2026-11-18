@@ -96,6 +96,7 @@ Practical settings for a CPU box:
 - Keep **Thinking** off. On a CPU, thinking tokens can add minutes.
 - Leave `ask.auto_run` on (the default; `APP__ASK__AUTO_RUN`): rows appear as soon as the query is written, without a second wait for a click.
 - When the Ask summary setting ships (`ask.summarize`, ADR-0042 slice 1c), turn it off here: Ask then shows the headline and the rows and skips the extra model call that writes the answer, which on a CPU is the slowest part. Until then, each question that is not a library match makes one call that writes both the query and its explanation.
+- Each Ask model call stops after the Ask time limit (default 90 seconds). A query that takes longer ends with "The model took too long to write a query."; a summary that takes longer leaves the rows in place. CPU-only local models may need 240 s or more: an Admin sets it in Settings > AI providers (Ask time limit), and that value takes the place of `ask.model_timeout_s` (`APP__ASK__MODEL_TIMEOUT_S`) until "Use the configured value" clears it. The page says which one applies. Waiting behind another question does not count toward it.
 - Saved searches and the query library answer common questions without a model call beyond routing, so adding your team's frequent questions there is the biggest speed-up on a CPU.
 
 ## 4. Measure it

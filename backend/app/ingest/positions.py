@@ -105,6 +105,28 @@ class FilePositions:
             ).fetchall()
         return [_position(source_id, r) for r in rows]
 
+    def for_file(self, device: int, inode: int, source_id: str | None = None) -> list[FilePosition]:
+        """The records that may stand for this file, by one identity rule for a source's
+        own record and for another source's (ADR-0051 row 2, D251): per source, its record
+        under this device number, or when it has none, its records of this inode under any
+        other device number (a restart or a remount changes it). The caller checks content
+        (`same_content`) before using one from another device. With `source_id`, that
+        source's only; otherwise every source's."""
+        with self._meta.connect() as con:
+            rows = con.execute(
+                f"SELECT source_id, {_COLUMNS} FROM file_positions"  # noqa: S608  # fixed list
+                " WHERE inode = ?" + (" AND source_id = ?" if source_id is not None else ""),
+                (_signed(inode), *([source_id] if source_id is not None else [])),
+            ).fetchall()
+        by_source: dict[str, list[FilePosition]] = {}
+        for r in rows:
+            by_source.setdefault(r["source_id"], []).append(_position(r["source_id"], r))
+        out: list[FilePosition] = []
+        for found in by_source.values():
+            exact = [p for p in found if p.device == device]
+            out += exact or found
+        return out
+
     def save(
         self,
         pos: FilePosition,

@@ -1,0 +1,84 @@
+schema_version: 1
+id: addresses
+name: Addresses
+version: 1.0.1
+description: 'What one address did: the names it looked up in DNS, and its sign-ins and firewall
+  traffic. The address page under People & devices shows these.'
+queries:
+- id: dns_names_from_ip
+  keys: [name]
+  name: Names one address looked up
+  group: DNS / Names
+  tags:
+  - dns
+  requires:
+  - dns_bind
+  - dns_unbound
+  - dns_windows
+  - dns_powerdns
+  why: What one device asks DNS for most, and when it first and last asked.
+  normal: Your own domains, Microsoft, Google, and update servers at the top.
+  suggested_schedule: null
+  flag: null
+  description: Queried names (class 4003, the name is in message) from one client address, with
+    queries and first and last seen; `names` is how many names it asked for in all.
+  sql: |-
+    SELECT lower(rtrim(message, '.')) AS name, count(*) AS queries,
+           min(time) AS first_seen, max(time) AS last_seen, count(*) OVER () AS names,
+           list(DISTINCT source_id ORDER BY source_id) AS sources
+    FROM events
+    WHERE class_uid = 4003 AND src_endpoint_ip = {{ip}} AND time BETWEEN {{start}} AND {{end}}
+    GROUP BY 1
+    ORDER BY queries DESC, name
+    LIMIT 20
+  params:
+  - name: ip
+    type: string
+    default: 10.20.1.5
+    description: The client address
+  ask:
+  - 'What names did this address look up?'
+  - 'Top DNS lookups from one client address'
+- id: access_from_ip
+  keys: [kind, outcome]
+  name: Sign-ins and access for one address
+  group: Addresses / Access
+  tags:
+  - identity
+  - network
+  requires: []
+  why: 'Every way one address signed in or was let through: SSH, the web auth proxy, other sign-ins,
+    and firewall allow and deny.'
+  normal: An internal device signs in to a few hosts and is allowed out. Denies and failures from an
+    outside address are the rows to read.
+  suggested_schedule: null
+  flag: null
+  description: 'Sign-ins (class 3002), access checks (3003), and firewall traffic (4001) to or from one
+    address, by kind and outcome, with the newest line of each. A sign-out is its own outcome,
+    not a sign-in, and a Microsoft 365 sign-in that was interrupted or expired is not a failure,
+    as on the address page.'
+  sql: |-
+    SELECT CASE
+             WHEN template_id = 'linux_sshd' THEN 'SSH'
+             WHEN template_id = 'authelia' THEN 'Web auth proxy'
+             WHEN template_id = 'm365_signin' THEN 'Microsoft 365 sign-in'
+             WHEN class_uid = 4001 THEN 'Firewall'
+             WHEN class_uid = 3003 THEN 'Access check'
+             ELSE 'Sign-in' END AS kind,
+           access_outcome(class_uid, activity_id, status_id, template_id, status_code, raw) AS outcome,
+           count(*) AS events, min(time) AS first_seen, max(time) AS last_seen,
+           arg_max(message, time) AS newest, list(DISTINCT source_id ORDER BY source_id) AS sources
+    FROM events
+    WHERE (src_endpoint_ip = {{ip}} OR dst_endpoint_ip = {{ip}})
+      AND (class_uid IN (3002, 3003, 4001) OR template_id IN ('linux_sshd', 'authelia'))
+      AND time BETWEEN {{start}} AND {{end}}
+    GROUP BY 1, 2
+    ORDER BY events DESC, kind, outcome
+  params:
+  - name: ip
+    type: string
+    default: 10.20.1.5
+    description: The address
+  ask:
+  - 'How did this address sign in?'
+  - 'Firewall allows and denies for one address'

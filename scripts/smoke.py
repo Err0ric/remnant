@@ -4,6 +4,11 @@ an Analyst, and an Auditor, and fail on any console error, any 4xx or 5xx respon
 role is not expected to get, any blank panel, and any list with more rows than it shows
 that has no working pager. As the Admin it also loads the Dashboard with its answers held
 back, at 1280 and 1440 px, and fails when anything in it moves (`dashboard_shift.py`).
+With `--lake`, the Admin and the Analyst also ask a question through a proxy that gives up
+after 2 s, with a model that is slow to summarize (`ask_slow.py`; `--ask-only` runs just
+that step): the table must appear, the summary must time out cleanly, and no 504 or
+"Can't reach the server" may reach the page. For it the Analyst gets one source through a
+group named "Ask check".
 
     cd backend && uv run python ../scripts/smoke.py --url http://127.0.0.1:8090  # a demo install
     cd backend && uv run python ../scripts/smoke.py --lake ../data/bench/lake    # this checkout
@@ -41,6 +46,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, str(HERE))
 
+import ask_slow  # noqa: E402  # sibling script
 import bench_compare as bc  # noqa: E402  # sibling script, standard library only
 import dashboard_shift  # noqa: E402  # sibling script
 import devauth  # noqa: E402  # same
@@ -183,7 +189,9 @@ def main_text(page) -> str:  # type: ignore[no-untyped-def]  # a Playwright page
     return str(page.inner_text("main")) if page.locator("main").count() else ""
 
 
-def check(base: str, roles: tuple[tuple[str, str], ...] = ROLES) -> list[str]:
+def check(
+    base: str, roles: tuple[tuple[str, str], ...] = ROLES, ask: str = "", ask_only: bool = False
+) -> list[str]:
     from playwright.sync_api import sync_playwright
 
     problems: list[str] = []
@@ -195,6 +203,14 @@ def check(base: str, roles: tuple[tuple[str, str], ...] = ROLES) -> list[str]:
             res = ctx.request.post(base + "/api/auth/login", data={"username": name, "password": PASSWORD})  # fmt: skip
             if not res.ok:
                 problems.append(f"{role}: login failed ({res.status})")
+                ctx.close()
+                continue
+            if ask and role != "auditor":  # Ask through the slow proxy (ask_slow.py)
+                csrf = str(res.json().get("csrf_token") or "")
+                asking = ctx.new_page()
+                problems += [f"{role} /ask-ai: {p}" for p in ask_slow.check(asking, ask, csrf)]
+                asking.close()
+            if ask_only:
                 ctx.close()
                 continue
             page = ctx.new_page()
@@ -262,11 +278,11 @@ def check(base: str, roles: tuple[tuple[str, str], ...] = ROLES) -> list[str]:
     return problems
 
 
-def parallel(base: str) -> list[str]:
+def parallel(base: str, extra: list[str]) -> list[str]:
     """The three roles at once, one browser process each (owner, 2026-11-08)."""
     kids = [
         subprocess.Popen(  # noqa: S603  # this script, fixed arguments
-            [sys.executable, __file__, "--url", base, "--role", role],
+            [sys.executable, __file__, "--url", base, "--role", role, *extra],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
         )
         for _, role in ROLES
@@ -288,10 +304,12 @@ def main() -> int:
     ap.add_argument("--data", type=Path, default=ROOT / "data" / "demo" / "state",
                     help="with --url: that server's data folder (default: the demo's)")  # fmt: skip
     ap.add_argument("--role", choices=[r for _, r in ROLES], help=argparse.SUPPRESS)  # one child
+    ap.add_argument("--ask-proxy", default="", help=argparse.SUPPRESS)  # the children's proxy
+    ap.add_argument("--ask-only", action="store_true", help="with --lake: only the Ask step")
     ap.add_argument("--python", default=str(ROOT / "backend" / ".venv" / "bin" / "python"))
     args = ap.parse_args()
     tmp = Path(tempfile.mkdtemp(prefix="smoke-"))
-    proc = None
+    proc = model = proxy = None
     try:
         base = (args.url or "").rstrip("/")
         if args.lake:
@@ -302,15 +320,29 @@ def main() -> int:
             shutil.copytree(lake / "data", tmp / "data")
             port = bc.free_port()
             dist = ROOT / "frontend" / "dist"
-            proc = bc.serve(ROOT, tmp / "data", lake, port, tmp / "server.log", args.python, dist)
+            limit = {"APP__ASK__MODEL_TIMEOUT_S": str(ask_slow.MODEL_TIMEOUT_S)}
+            proc = bc.serve(ROOT, tmp / "data", lake, port, tmp / "server.log", args.python, dist, extra=limit)  # fmt: skip
             base = f"http://127.0.0.1:{port}"
         if args.role:  # one of the parallel children below
-            for p in check(base, tuple(x for x in ROLES if x[1] == args.role)):
+            roles = tuple(x for x in ROLES if x[1] == args.role)
+            for p in check(base, roles, args.ask_proxy, args.ask_only):
                 print(f"FAIL {p}")
             return 0
         accounts(base, tmp / "data" if args.lake else args.data)
+        extra = ["--ask-only"] if args.ask_only else []
+        if args.lake:  # the server's model time limit is set here, so Ask can be timed
+            model_port = bc.free_port()
+            model = ask_slow.start_model(model_port)
+            ask_slow.add_provider(bc.Api(base), model_port)
+            ask_slow.grant(bc.Api(base), "bob")  # the Analyst asks about one source
+            proxy = ask_slow.Proxy(base).start()
+            extra += ["--ask-proxy", proxy.url]
+        else:
+            print("ask: skipped (needs --lake, where the model time limit is set)")
         t = time.monotonic()
-        problems = parallel(base)
+        problems = parallel(base, extra)
+        if proxy is not None:  # only the control calls may outlast the proxy
+            problems += [f"ask: the proxy gave up on {p}" for p in proxy.gave_up if not p.endswith("/answer")]  # fmt: skip
         n = len(routes(ROOT / "frontend" / "src" / "lib" / "route.ts"))
         print(json.dumps({"pages": n, "roles": len(ROLES), "seconds": round(time.monotonic() - t)}))  # fmt: skip
         for p in problems:
@@ -321,6 +353,10 @@ def main() -> int:
         print(f"smoke could not run: {exc}", file=sys.stderr)
         return 2
     finally:
+        if proxy is not None:
+            proxy.shutdown()
+        if model is not None:
+            model.terminate()
         if proc is not None:
             bc.stop(proc)
         shutil.rmtree(tmp, ignore_errors=True)

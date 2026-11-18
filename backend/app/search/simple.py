@@ -324,9 +324,24 @@ class _Builder:
         if tok.field is None:
             if tok.op != "=":
                 raise SearchInvalidError("Use > and < after a field name, as in severity:>=4")
-            p = self._param(_like(tok.parts, contains=True))
             # A term is never NULL, so NOT and - behave as people expect on empty fields.
-            return f"coalesce(raw ILIKE {p} ESCAPE '\\' OR message ILIKE {p} ESCAPE '\\', false)"
+            if any(p is _WILD for p in tok.parts):
+                p = self._param(_like(tok.parts, contains=True))
+                return (
+                    f"coalesce(raw ILIKE {p} ESCAPE '\\' OR message ILIKE {p} ESCAPE '\\', false)"
+                )
+            # No wildcard: the same rows as `ILIKE '%text%'`, which DuckDB runs as LIKE on
+            # both sides lowered, found with a plain substring search instead (owner item
+            # P6, 2026-11-17: an address searched over 30 days took 21 to 27 s). Text with
+            # no letter (an address, a time, a number) has no case: no lowering at all.
+            text = "".join(tok.parts)
+            p = self._param(text)
+            if text.isascii() and not any(c.isalpha() for c in text):
+                return f"coalesce(contains(raw, {p}) OR contains(message, {p}), false)"
+            return (
+                f"coalesce(contains(lower(raw), lower({p}))"
+                f" OR contains(lower(message), lower({p})), false)"
+            )
         if tok.field.lower() == INTEL_FIELD:
             return self._intel(tok)
         expr, kind, label = self.resolve(tok.field, tok.pos)

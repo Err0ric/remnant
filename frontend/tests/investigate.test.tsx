@@ -791,3 +791,73 @@ describe("People & devices: the time filter (ADR-0052 section 3.7; owner, 2026-1
     expect(window.location.hash).toBe("");
   });
 });
+
+describe("The address page's sections (P4)", () => {
+  it("asks for each section on its own and says what each read", async () => {
+    const spy = await openInvestigate("/investigate/people#ip=203.0.113.9");
+    const dns = await screen.findByRole("region", { name: "Names looked up" });
+    expect(await within(dns).findByText("chatgpt.com")).toBeVisible();
+    expect(within(dns).getByText("2 names")).toBeVisible();
+    expect(dns).toHaveTextContent("From DNS (dns)");
+    expect(
+      within(dns).getByRole("img", { name: /the library query Query dns/ }),
+    ).toBeInTheDocument();
+    // A count opens its events in Logs, with the server's SQL.
+    await userEvent.click(within(dns).getByRole("button", { name: "3" }));
+    expect(window.location.pathname).toBe("/investigate/logs");
+    window.history.back();
+    const calls = spy.mock.calls.map(([u]) => String(u)).filter((u) => u.includes("/sections/"));
+    for (const name of ["dhcp", "dns", "access", "ai"])
+      expect(calls.some((u) => u.includes(`/api/addresses/203.0.113.9/sections/${name}?`))).toBe(
+        true,
+      );
+  });
+
+  it("shows a section with no source, an empty one, and a failed one apart", async () => {
+    await openInvestigate("/investigate/people#ip=203.0.113.9");
+    const dhcp = await screen.findByRole("region", { name: "DHCP and VPN history" });
+    expect(
+      await within(dhcp).findByText(
+        "None of the sources you may read is set to Palo Alto system or GlobalProtect, so nothing was read.",
+      ),
+    ).toBeVisible();
+    const ai = screen.getByRole("region", { name: "AI services" });
+    // Empty: one line beside the title, the sources checked on hover.
+    expect(await within(ai).findByText("None in the last 7 days")).toHaveAttribute(
+      "title",
+      "Checked 1 source: dns",
+    );
+    const access = screen.getByRole("region", { name: "Sign-ins and access" });
+    expect(await within(access).findByRole("alert")).toHaveTextContent(
+      "This section took too long",
+    );
+  });
+
+  it("marks a success from an address on its KPI only, in warn, with what it counts", async () => {
+    await openInvestigate("/investigate/people#ip=198.51.100.23");
+    const summary = await screen.findByRole("region", { name: "Summary" });
+    const kpi = within(summary).getByText("Succeeded").closest("div") as HTMLElement;
+    expect(kpi).toHaveAttribute("title", "Sign-ins that succeeded from this address");
+    expect(within(kpi).getByText("3")).toHaveClass("text-warn");
+    expect(within(kpi).getByText("3")).not.toHaveClass("text-danger");
+    // The outcome badges stay the app's one mapping: Failed is the failure tag.
+    const acts = within(summary).getByRole("list", { name: "Activities" });
+    expect(within(acts).getByText("Failed")).toHaveClass("text-danger");
+  });
+
+  it("opens on the window its link names (an Ask answer's 7 days, D276)", async () => {
+    const spy = await openInvestigate("/investigate/people#ip=203.0.113.9&range=30d");
+    await screen.findByRole("region", { name: "Summary" });
+    await vi.waitFor(() => {
+      const call = spy.mock.calls.map(([u]) => String(u)).filter((u) => u.includes("/sections/"));
+      expect(call.length).toBeGreaterThan(0);
+    });
+    expect(screen.getByRole("button", { name: "30 days" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("is only on an address's page", async () => {
+    const spy = await openInvestigate("/investigate/people#host=ftp-01");
+    await screen.findByRole("region", { name: "Summary" });
+    expect(spy.mock.calls.some(([u]) => String(u).includes("/sections/"))).toBe(false);
+  });
+});

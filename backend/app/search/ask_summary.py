@@ -11,15 +11,19 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-ANSWER_ROWS = 20  # rows a model may see (ADR-0042 row 8)
+# What the summary call is sent (D270): at most 10 rows plus per-column stats over every
+# row the run kept, together within the 7,000 characters (about 2,000 tokens) the 20 rows
+# alone had, so the call is no slower than before and sees the whole result's shape.
+ANSWER_ROWS = 10  # rows a model may see (ADR-0042 row 8 said 20; D270)
 MAX_VALUE = 300  # characters per value sent
 MAX_COLUMNS = 12
-MAX_CHARS = 7_000  # the rows as JSON, about 2,000 tokens: the answer prompt stays small
+MAX_CHARS = 4_000  # the rows as JSON
+STATS_CHARS = 3_000  # the column stats as JSON (counts and ranges only: well under it)
 MAX_CLAIMS = 5
 FIRST_COLUMNS = 3  # values of the first row shown in a generic headline
 
@@ -119,13 +123,15 @@ def headline(
     truncated: bool,
     template: str | None = None,
     tz: str | None = None,
+    empty: str | None = None,
 ) -> str:
     """One sentence about the result, written by code. A template names `{n}` (rows) and
     `{first.<column>}` (the first row's value); when the result cannot fill it, the
-    generic headline is used instead, so a headline never shows a blank."""
+    generic headline is used instead, so a headline never shows a blank. With no rows, a
+    library query's own `empty` text says what that means (D274)."""
     n = len(rows)
     if n == 0:
-        return "No matching rows in this time range."
+        return empty or "No matching rows in this time range."
     first = dict(zip(columns, rows[0], strict=False))
     if template:
         names = [m[0] for m in TEMPLATE.findall(template)]
@@ -184,16 +190,20 @@ def counted_line(
     sources: int,
     window: str,
     counted: tuple[str, str, str] | None,
+    empty: str | None = None,
 ) -> str | None:
     """What a run read and counted, when its rows have no event ids to cite (fix list
     2026-11-16 item 21): written by code from the run's own facts (the sources it read and
     its window) and the library entry's words (`counted`: what was counted, one row, many
     rows). The headline and the table already give the count, so it is not repeated; with
     no rows this is the one line the answer shows. Never model text, and it states nothing
-    the query did not compute."""
+    the query did not compute. With no rows, a library query's own `empty` text follows
+    what was read (D274)."""
     if "event_id" in columns:
         return None
     read = "1 source" if sources == 1 else f"{sources:,} sources"
+    if n == 0 and empty:
+        return f"Read {read} {window}. {empty}"
     if n == 0:
         return f"Read {read} {window}: no {counted[2] if counted else 'rows'}."
     if counted is None:
@@ -204,14 +214,16 @@ def counted_line(
 
 @dataclass(frozen=True, slots=True)
 class Sample:
-    """What a model may see of a result: at most 20 rows, 12 columns, and 300 characters a
-    value, under about 2,000 tokens, with the event ids it may cite."""
+    """What a model may see of a result: at most 10 rows, 12 columns, and 300 characters a
+    value, plus stats per column over every kept row, under about 2,000 tokens in all,
+    with the event ids it may cite (only those of the rows sent)."""
 
     columns: list[str]
     rows: list[list[Any]]
     event_ids: frozenset[str]
     row_count: int
     truncated: bool
+    stats: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 def sample(columns: list[str], rows: list[list[Any]], truncated: bool) -> Sample | None:
@@ -236,7 +248,41 @@ def sample(columns: list[str], rows: list[list[Any]], truncated: bool) -> Sample
     if not out:
         return None
     ids = frozenset(str(r[0]) for r in out)
-    return Sample(keep, out, ids, len(rows), truncated)
+    stats = column_stats(keep[1:], [[r[i] for i in at[1:]] for r in rows])
+    return Sample(keep, out, ids, len(rows), truncated, stats)
+
+
+def _key(value: Any) -> str:
+    return value if isinstance(value, str) else json.dumps(value, default=str, sort_keys=True)
+
+
+def _stat_value(value: datetime | date) -> str:
+    return value.isoformat()
+
+
+def _is_number(v: Any) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def column_stats(columns: list[str], rows: list[list[Any]]) -> dict[str, dict[str, Any]]:
+    """Per column, over every row given, computed by code: how many values and how many
+    distinct; min and max for numbers and times; counts of true and false for booleans.
+
+    No text value is ever listed: the stats cover rows the model is not sent, and a
+    column's name says nothing reliable about what it holds (`actor_user_name AS who`),
+    so a listed value could name a person or a host past the redactor (ADR-0010)."""
+    out: dict[str, dict[str, Any]] = {}
+    for i, col in enumerate(columns):
+        values = [r[i] for r in rows if r[i] is not None]
+        st: dict[str, Any] = {"values": len(values), "distinct": len({_key(v) for v in values})}
+        if values and all(isinstance(v, bool) for v in values):
+            st |= {"true": sum(1 for v in values if v), "false": sum(1 for v in values if not v)}
+        elif values and all(_is_number(v) for v in values):
+            st |= {"min": min(values), "max": max(values)}
+        elif values and all(isinstance(v, (datetime, date)) for v in values):
+            st |= {"min": _stat_value(min(values)), "max": _stat_value(max(values))}
+        out[col] = st
+    return out
 
 
 def _cut(value: Any) -> Any:

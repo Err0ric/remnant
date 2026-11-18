@@ -121,10 +121,13 @@ def inventory(
     now: datetime,
     days: int,
     named: bool = True,
+    reviewed_only: bool = False,
 ) -> tuple[list[Item], list[str]]:
     """Every item seen in the last `days`, newest last seen first, and the sources read.
     Not `named` (no View people in AI usage, D242): agents as `agents.masked` shows them,
-    with the same counts and exclusions."""
+    with the same counts and exclusions. `reviewed_only`: only the items with a review
+    status, services and MCP servers, for `to_review` and `not_approved` alone (the rail,
+    D258), without reading the agents and Microsoft 365 apps (owner, 2026-11-17)."""
     now = now.astimezone(UTC)
     # Open-ended and to the minute, as AI usage asks: the two pages share the answer.
     scope = QueryScope(allowed, (now - timedelta(days=days)).replace(second=0, microsecond=0), None)
@@ -144,6 +147,10 @@ def inventory(
             Item("mcp", m.name, m.name, m.status, m.people, m.machines, m.first_seen,
                  m.last_seen, where)
         )  # fmt: skip
+    if reviewed_only:
+        for it in out:
+            it.excluded = excluded.get((it.type, it.key))
+        return ordered(out), sorted(set(sources) | set(mcp_read))
     start = now - timedelta(days=days)
     listed = agents(engine, allowed, now)
     for a, real in masked(listed) if not named else [(x, x) for x in listed]:
